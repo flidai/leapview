@@ -4576,9 +4576,9 @@ paths:
                     - id: echarts
                       kinds:
                         - cartesian
-                      schemaVersion: 1
+                      schemaVersion: 7
                       version: example
-                  schemaVersion: 1
+                  schemaVersion: 7
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -6681,7 +6681,7 @@ paths:
                         spatialLatitudeFieldID: example
                         spatialLongitudeFieldID: example
                     rendererID: example
-                    schemaVersion: 1
+                    schemaVersion: 11
                     selection:
                       - datum:
                           blockID: example
@@ -7324,7 +7324,7 @@ paths:
                     spatialLatitudeFieldID: example
                     spatialLongitudeFieldID: example
                 rendererID: example
-                schemaVersion: 1
+                schemaVersion: 11
                 selection:
                   - datum:
                       blockID: example
@@ -24199,7 +24199,7 @@ paths:
                           spatialLatitudeFieldID: example
                           spatialLongitudeFieldID: example
                       rendererID: example
-                      schemaVersion: 1
+                      schemaVersion: 11
                       selection:
                         - datum:
                             blockID: example
@@ -70142,9 +70142,9 @@ components:
             - id: echarts
               kinds:
                 - cartesian
-              schemaVersion: 1
+              schemaVersion: 7
               version: example
-          schemaVersion: 1
+          schemaVersion: 7
     Capability:
       type: string
       enum:
@@ -72779,7 +72779,7 @@ components:
                   spatialLatitudeFieldID: example
                   spatialLongitudeFieldID: example
               rendererID: example
-              schemaVersion: 1
+              schemaVersion: 11
               selection:
                 - datum:
                     blockID: example
@@ -72850,7 +72850,7 @@ components:
                 spatialLatitudeFieldID: example
                 spatialLongitudeFieldID: example
             rendererID: example
-            schemaVersion: 1
+            schemaVersion: 11
             selection:
               - datum:
                   blockID: example
@@ -73343,7 +73343,7 @@ components:
                   spatialLatitudeFieldID: example
                   spatialLongitudeFieldID: example
               rendererID: example
-              schemaVersion: 1
+              schemaVersion: 11
               selection:
                 - datum:
                     blockID: example
@@ -77350,7 +77350,7 @@ components:
                   spatialLatitudeFieldID: example
                   spatialLongitudeFieldID: example
               rendererID: example
-              schemaVersion: 1
+              schemaVersion: 11
               selection:
                 - datum:
                     blockID: example
@@ -77398,7 +77398,7 @@ components:
                 spatialLatitudeFieldID: example
                 spatialLongitudeFieldID: example
             rendererID: example
-            schemaVersion: 1
+            schemaVersion: 11
             selection:
               - datum:
                   blockID: example
@@ -83081,6 +83081,8 @@ components:
       properties:
         files:
           type: array
+          minItems: 1
+          maxItems: 10000
           items:
             $ref: '#/components/schemas/ManagedDataFileMetadata'
           example:
@@ -83100,6 +83102,7 @@ components:
       properties:
         items:
           type: array
+          maxItems: 200
           items:
             $ref: '#/components/schemas/ManagedDataRevisionSummaryResponse'
           example:
@@ -83298,6 +83301,8 @@ components:
       properties:
         parts:
           type: array
+          minItems: 1
+          maxItems: 10000
           items:
             $ref: '#/components/schemas/ManagedDataS3CompletedPart'
           example:
@@ -83398,6 +83403,7 @@ components:
           example: example
         headers:
           type: array
+          maxItems: 32
           items:
             $ref: '#/components/schemas/ManagedDataHTTPHeader'
           example:
@@ -83672,6 +83678,8 @@ components:
           $ref: '#/components/schemas/ManagedDataManifest'
         files:
           type: array
+          minItems: 1
+          maxItems: 10000
           items:
             $ref: '#/components/schemas/ManagedDataFileUploadResponse'
           example:
@@ -89332,6 +89340,7 @@ components:
       properties:
         dimensions:
           type: array
+          maxItems: 50
           items:
             $ref: '#/components/schemas/SemanticFieldRef'
           example:
@@ -89339,6 +89348,7 @@ components:
               field: example
         metrics:
           type: array
+          maxItems: 50
           items:
             $ref: '#/components/schemas/SemanticFieldRef'
           example:
@@ -89346,6 +89356,7 @@ components:
               field: example
         filters:
           type: array
+          maxItems: 100
           items:
             $ref: '#/components/schemas/SemanticFilter'
           example:
@@ -89358,6 +89369,7 @@ components:
                 - example
         sort:
           type: array
+          maxItems: 50
           items:
             $ref: '#/components/schemas/SemanticSort'
           example:
@@ -89399,6 +89411,7 @@ components:
       properties:
         dimensions:
           type: array
+          maxItems: 50
           items:
             $ref: '#/components/schemas/SemanticFieldRef'
           example:
@@ -89406,6 +89419,7 @@ components:
               field: example
         metrics:
           type: array
+          maxItems: 50
           items:
             $ref: '#/components/schemas/SemanticFieldRef'
           example:
@@ -89415,6 +89429,7 @@ components:
           $ref: '#/components/schemas/SemanticTimeRef'
         filters:
           type: array
+          maxItems: 100
           items:
             $ref: '#/components/schemas/SemanticFilter'
           example:
@@ -89427,6 +89442,7 @@ components:
                 - example
         sort:
           type: array
+          maxItems: 50
           items:
             $ref: '#/components/schemas/SemanticSort'
           example:
@@ -91544,7 +91560,9 @@ components:
       properties:
         schemaVersion:
           type: integer
-          example: 1
+          enum:
+            - 7
+          example: 7
         renderers:
           type: array
           items:
@@ -91553,16 +91571,16 @@ components:
             - id: echarts
               kinds:
                 - cartesian
-              schemaVersion: 1
+              schemaVersion: 7
               version: example
       example:
         renderers:
           - id: echarts
             kinds:
               - cartesian
-            schemaVersion: 1
+            schemaVersion: 7
             version: example
-        schemaVersion: 1
+        schemaVersion: 7
     VisualizationCardinality:
       type: object
       required:
@@ -92093,7 +92111,9 @@ components:
       properties:
         schemaVersion:
           type: integer
-          example: 1
+          enum:
+            - 11
+          example: 11
         visualID:
           type: string
           example: example
@@ -92177,7 +92197,7 @@ components:
             spatialLatitudeFieldID: example
             spatialLongitudeFieldID: example
         rendererID: example
-        schemaVersion: 1
+        schemaVersion: 11
         selection:
           - datum:
               blockID: example
@@ -93790,7 +93810,9 @@ components:
           example: example
         schemaVersion:
           type: integer
-          example: 1
+          enum:
+            - 7
+          example: 7
         kinds:
           type: array
           items:
@@ -93801,7 +93823,7 @@ components:
         id: echarts
         kinds:
           - cartesian
-        schemaVersion: 1
+        schemaVersion: 7
         version: example
     VisualizationRendererID:
       type: string

@@ -3,6 +3,7 @@ import type {
   VisualizationDataStateTransport,
   VisualizationEnvelope,
 } from '../../../generated/visualization'
+import { currentVisualizationSchemaVersion } from '../../../generated/visualization/schema-version'
 import type { DashboardVisualizationSignal } from '../../../generated/signals'
 
 type CachedDataState = {
@@ -48,7 +49,7 @@ export class DashboardVisualizationSignalDecoder {
       consumerIdentity: _consumerIdentity,
       ...envelope
     } = signal
-    return { ...envelope, dataState: dataState.value }
+    return { ...envelope, schemaVersion: currentVisualizationSchemaVersion, dataState: dataState.value }
   }
 }
 

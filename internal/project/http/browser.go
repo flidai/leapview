@@ -1500,26 +1500,33 @@ func projectAreaType(area string) string {
 }
 
 func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
-	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, true, false)
+	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, true, false, false)
 }
 
-func (h *BrowserHandler) dataExplorerSignalsForRestoredCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
-	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, executeQuery, true)
+func (h *BrowserHandler) dataExplorerSignalsForRestoredCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery, legacyURLState bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, executeQuery, true, legacyURLState)
 }
 
-func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery, strictURLState bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery, strictURLState, legacyURLState bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
 	command = normalizeDataExplorerCommand(command)
 	project := h.navigationCatalog(r).Project
 	page := projectsignals.DataExplorerPageSignal{Kind: projectsignals.RouteKindData, Title: "Data Explorer", Description: projectsignals.Optional("Explore governed semantic data."), Tabs: []projectsignals.ResourceTabSignal{}, Context: projectsignals.DataExplorerContextSignal{Active: true, Environment: h.Environment, ProjectID: project.ID, ProjectTitle: projectsignals.Optional(project.Title)}}
-	exploreCommand := projectsignals.DataExploreCommand{Dimensions: []string{}, Metrics: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: dataExplorerDefaultLimit}
+	exploreCommand := projectsignals.DataExploreCommand{Spec: defaultExplorationSpec()}
 	if command.Explore != nil {
 		exploreCommand = *command.Explore
 	}
-	if value := strings.TrimSpace(r.URL.Query().Get("semanticModel")); value != "" && exploreCommand.SemanticModelID == nil {
-		exploreCommand.SemanticModelID = projectsignals.Optional(value)
+	if value := strings.TrimSpace(r.URL.Query().Get("model")); value != "" && strings.TrimSpace(exploreCommand.Spec.ModelID) == "" {
+		exploreCommand.Spec.ModelID = value
 	}
-	if value := strings.TrimSpace(r.URL.Query().Get("dataset")); value != "" && exploreCommand.DatasetID == nil {
-		exploreCommand.DatasetID = projectsignals.Optional(value)
+	// The canonical URL uses semanticModel terminology, while the v1/v2
+	// exploration spec retains ModelID for its semantic-model resource. Accept
+	// both at this boundary so restored SavedExploration state remains portable
+	// across the terminology migration.
+	if value := strings.TrimSpace(r.URL.Query().Get("semanticModel")); value != "" && strings.TrimSpace(exploreCommand.Spec.ModelID) == "" {
+		exploreCommand.Spec.ModelID = value
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("dataset")); value != "" && exploreCommand.Spec.DatasetID == nil {
+		exploreCommand.Spec.DatasetID = projectsignals.Optional(value)
 	}
 	command.Explore = &exploreCommand
 	explorer := projectsignals.DataExplorerSignal{Command: command, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, SemanticModels: []projectsignals.DataExploreSemanticModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: emptyDataExplorerBlocks(command), Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: command.Count, RowHeight: dataExplorerRowHeight}}
@@ -1537,9 +1544,19 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
 	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels)
+	if strictURLState && legacyURLState && projectsignals.ValueOrZero(command.Mode) == "explore" {
+		if err := adaptLegacyExplorationFilterValues(&exploreCommand.Spec, projection.Fields); err != nil {
+			stdhttp.Error(w, "invalid legacy exploration URL state: "+err.Error(), stdhttp.StatusBadRequest)
+			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+		}
+		// Filter literal kinds do not affect field projection, but the adapted
+		// spec must be carried through the command that is subsequently restored
+		// and executed.
+		projection = BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels)
+	}
 	if strictURLState && projectsignals.ValueOrZero(command.Mode) == "explore" {
-		semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.SemanticModelID))
-		if err := validateRestoredDataExploreState(exploreCommand, projection, definition.SemanticModels[semanticModelID], compiledModels); err != nil {
+		modelID := strings.TrimSpace(projection.Command.Spec.ModelID)
+		if err := validateRestoredDataExploreState(exploreCommand, projection, definition.SemanticModels[modelID], compiledModels); err != nil {
 			stdhttp.Error(w, "invalid exploration URL state: "+err.Error(), stdhttp.StatusBadRequest)
 			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 		}
@@ -1559,7 +1576,8 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 		}
-		exploreCommand, explorer.Explore.Result = dataExplorerSemanticResult(r.Context(), h.QueryExecutor, projectID, exploreCommand, explorer.Explore.Fields)
+		semanticModel := definition.SemanticModels[exploreCommand.Spec.ModelID]
+		exploreCommand, explorer.Explore.Result = dataExplorerSemanticResult(r.Context(), h.QueryExecutor, projectID, exploreCommand, explorer.Explore.Fields, semanticModel)
 		explorer.Explore.Result.Warnings = append(explorer.Explore.Result.Warnings, projection.Warnings...)
 		explorer.Explore.Command = exploreCommand
 		explorer.Command.Explore = &exploreCommand
@@ -1569,10 +1587,10 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 	requestedObject := strings.TrimSpace(projectsignals.ValueOrZero(command.ObjectKey))
 	if projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
 		requestedObject = ""
-		semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.SemanticModelID))
-		datasetID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.DatasetID))
+		modelID := strings.TrimSpace(exploreCommand.Spec.ModelID)
+		datasetID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.Spec.DatasetID))
 		for _, object := range explorer.Objects {
-			if object.Layer == "model" && projectsignals.ValueOrZero(object.SemanticModelID) == semanticModelID && projectsignals.ValueOrZero(object.DatasetID) == datasetID {
+			if object.Layer == "model" && projectsignals.ValueOrZero(object.SemanticModelID) == modelID && projectsignals.ValueOrZero(object.DatasetID) == datasetID {
 				requestedObject = object.Key
 				break
 			}
@@ -1618,11 +1636,11 @@ func (h *BrowserHandler) dataExplorerSignalsForAssetCommand(w stdhttp.ResponseWr
 		command.ObjectKey = projectsignals.Pointer(asset.ID)
 	} else {
 		command.Mode = projectsignals.Pointer("explore")
-		explore := projectsignals.DataExploreCommand{}
+		explore := projectsignals.DataExploreCommand{Spec: defaultExplorationSpec()}
 		if command.Explore != nil {
 			explore = *command.Explore
 		}
-		explore.SemanticModelID = projectsignals.Pointer(asset.ID)
+		explore.Spec.ModelID = asset.ID
 		command.Explore = &explore
 	}
 

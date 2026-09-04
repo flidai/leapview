@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -82,7 +83,7 @@ func TestDataExplorerSemanticDatasetDeepLinksHydrateDistinctModelBindings(t *tes
 		if projectsignals.ValueOrZero(explorer.SelectedKey) != wantKey || projectsignals.ValueOrZero(explorer.Command.ObjectKey) != wantKey {
 			t.Fatalf("dataset %q selection state = %#v/%#v, want hydrated binding key", datasetID, explorer.SelectedKey, explorer.Command.ObjectKey)
 		}
-		if projectsignals.ValueOrZero(explorer.Explore.Command.SemanticModelID) != semanticModelID || projectsignals.ValueOrZero(explorer.Explore.Command.DatasetID) != datasetID {
+		if explorer.Explore.Command.Spec.ModelID != semanticModelID || projectsignals.ValueOrZero(explorer.Explore.Command.Spec.DatasetID) != datasetID {
 			t.Fatalf("dataset %q explore command = %#v, want canonical semantic target", datasetID, explorer.Explore.Command)
 		}
 		if executor.query.ModelID != semanticModelID || executor.query.Target != datasetID {
@@ -100,20 +101,28 @@ func TestDataExploreCommandFromQueryRoundTripsDurableState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if projectsignals.ValueOrZero(command.SemanticModelID) != "semantic:sales" || projectsignals.ValueOrZero(command.DatasetID) != "orders" {
-		t.Fatalf("target = %q/%q", projectsignals.ValueOrZero(command.SemanticModelID), projectsignals.ValueOrZero(command.DatasetID))
+	if command.Spec.ModelID != "semantic:sales" || projectsignals.ValueOrZero(command.Spec.DatasetID) != "orders" {
+		t.Fatalf("target = %q/%q", command.Spec.ModelID, projectsignals.ValueOrZero(command.Spec.DatasetID))
 	}
-	if !reflect.DeepEqual(command.Dimensions, []string{"orders.month", "customers.state"}) || !reflect.DeepEqual(command.Metrics, []string{"revenue"}) {
-		t.Fatalf("fields = %#v / %#v", command.Dimensions, command.Metrics)
+	if !reflect.DeepEqual([]string{command.Spec.Dimensions[0].Field, command.Spec.Dimensions[1].Field}, []string{"orders.month", "customers.state"}) || !reflect.DeepEqual([]string{command.Spec.Metrics[0].Field}, []string{"revenue"}) {
+		t.Fatalf("fields = %#v / %#v", command.Spec.Dimensions, command.Spec.Metrics)
 	}
-	if len(command.Filters) != 1 || command.Filters[0].Field != "customers.state" || command.Filters[0].Values[0] != "CA" {
-		t.Fatalf("filters = %#v", command.Filters)
+	if len(command.Spec.Filters) != 1 || command.Spec.Filters[0].Field != "customers.state" {
+		t.Fatalf("filters = %#v", command.Spec.Filters)
 	}
-	if len(command.Sort) != 1 || command.Sort[0].Field != "revenue" || command.Sort[0].Direction != "desc" {
-		t.Fatalf("sort = %#v", command.Sort)
+	filter, ok := command.Spec.Filters[0].Expression.Value.(*exploration.ComparisonExplorationFilterExpression)
+	if !ok {
+		t.Fatalf("filter expression = %T, want comparison", command.Spec.Filters[0].Expression.Value)
 	}
-	if command.Time == nil || command.Time.Field != "orders.created_at" || command.Time.Grain != "month" || command.Limit != 250 {
-		t.Fatalf("time/limit = %#v / %d", command.Time, command.Limit)
+	filterValue, ok := filter.Value.Value.(*exploration.StringExplorationFilterValue)
+	if !ok || filterValue.Value != "CA" {
+		t.Fatalf("filter value = %#v, want CA", filter.Value.Value)
+	}
+	if len(command.Spec.Sort) != 1 || command.Spec.Sort[0].Field != "revenue" || command.Spec.Sort[0].Direction != "desc" {
+		t.Fatalf("sort = %#v", command.Spec.Sort)
+	}
+	if command.Spec.Time == nil || command.Spec.Time.Field != "orders.created_at" || command.Spec.Time.Grain != "month" || command.Spec.Limit != 250 {
+		t.Fatalf("time/limit = %#v / %d", command.Spec.Time, command.Spec.Limit)
 	}
 	if command.RequestSeq != 0 || command.ResetVersion != 0 {
 		t.Fatalf("runtime state leaked into URL command: %#v", command)

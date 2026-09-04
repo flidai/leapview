@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
@@ -69,10 +70,26 @@ func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, 
 	if err != nil {
 		return agent.TurnContext{}, err
 	}
-	modelID := strings.TrimSpace(candidate.ModelID)
-	datasetID := strings.TrimSpace(candidate.DatasetID)
-	if modelID == "" || datasetID == "" {
-		return agent.TurnContext{}, errors.New("data context requires semantic model and dataset")
+	if candidate.Exploration == nil {
+		return agent.TurnContext{}, errors.New("data context requires an exploration spec")
+	}
+	explorationSpec, err := candidate.NormalizedDataExploration()
+	if err != nil {
+		return agent.TurnContext{}, fmt.Errorf("invalid exploration spec: %w", err)
+	}
+	modelID := strings.TrimSpace(explorationSpec.ModelID)
+	datasetID := ""
+	if explorationSpec.DatasetID != nil {
+		datasetID = strings.TrimSpace(*explorationSpec.DatasetID)
+	}
+	if modelID == "" {
+		return agent.TurnContext{}, errors.New("exploration spec requires semantic model")
+	}
+	if candidate.ModelID != "" && strings.TrimSpace(candidate.ModelID) != modelID {
+		return agent.TurnContext{}, errors.New("top-level modelId does not match exploration spec")
+	}
+	if candidate.DatasetID != "" && strings.TrimSpace(candidate.DatasetID) != datasetID {
+		return agent.TurnContext{}, errors.New("top-level datasetId does not match exploration spec")
 	}
 	scope.ProjectID = projectID
 	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceUse) {
@@ -93,73 +110,13 @@ func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, 
 	if !ok || model == nil {
 		return agent.TurnContext{}, fmt.Errorf("unknown semantic model %q", modelID)
 	}
-	if _, ok := model.Tables[datasetID]; !ok {
-		return agent.TurnContext{}, fmt.Errorf("unknown dataset %q", datasetID)
-	}
-	exploration := candidate.NormalizedDataExploration()
-	if err := validateDataExploration(model, exploration); err != nil {
+	if err := exploration.ValidateAgainstModel(model, explorationSpec); err != nil {
 		return agent.TurnContext{}, err
 	}
 	return agent.TurnContext{
 		Surface: "data", ModelID: resolvedModel.String(), DatasetID: datasetID,
-		Exploration: exploration,
+		Exploration: explorationSpec,
 	}, nil
-}
-
-func validateDataExploration(model interface {
-	ValidateQueryDimension(string) error
-	ValidateAggregateMember(string) error
-}, exploration *agent.DataExploration) error {
-	if exploration == nil {
-		return nil
-	}
-	for _, dimension := range exploration.Dimensions {
-		if err := model.ValidateQueryDimension(dimension); err != nil {
-			return fmt.Errorf("invalid exploration dimension %q: %w", dimension, err)
-		}
-	}
-	for _, metric := range exploration.Metrics {
-		if err := model.ValidateAggregateMember(metric); err != nil {
-			return fmt.Errorf("invalid exploration metric %q: %w", metric, err)
-		}
-	}
-	allowedFilterOperators := map[string]bool{
-		"equals": true, "in": true, "contains": true, "not_contains": true, "starts_with": true,
-		"greater_than_or_equal": true, "less_than": true, "is_null": true, "is_not_null": true,
-	}
-	for _, filter := range exploration.Filters {
-		if err := model.ValidateQueryDimension(filter.Field); err != nil {
-			return fmt.Errorf("invalid exploration filter field %q: %w", filter.Field, err)
-		}
-		if !allowedFilterOperators[filter.Operator] {
-			return fmt.Errorf("invalid exploration filter operator %q", filter.Operator)
-		}
-		valueFree := filter.Operator == "is_null" || filter.Operator == "is_not_null"
-		if valueFree != (len(filter.Values) == 0) {
-			return fmt.Errorf("invalid values for exploration filter operator %q", filter.Operator)
-		}
-	}
-	if exploration.Time != nil {
-		if err := model.ValidateQueryDimension(exploration.Time.Field); err != nil {
-			return fmt.Errorf("invalid exploration time field %q: %w", exploration.Time.Field, err)
-		}
-		if !map[string]bool{"day": true, "week": true, "month": true, "quarter": true, "year": true}[exploration.Time.Grain] {
-			return fmt.Errorf("invalid exploration time grain %q", exploration.Time.Grain)
-		}
-	}
-	selected := map[string]struct{}{}
-	for _, field := range append(append([]string(nil), exploration.Dimensions...), exploration.Metrics...) {
-		selected[field] = struct{}{}
-	}
-	for _, sort := range exploration.Sort {
-		if _, ok := selected[sort.Field]; !ok {
-			return fmt.Errorf("exploration sort field %q is not selected", sort.Field)
-		}
-		if sort.Direction != "asc" && sort.Direction != "desc" {
-			return fmt.Errorf("invalid exploration sort direction %q", sort.Direction)
-		}
-	}
-	return nil
 }
 
 func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {

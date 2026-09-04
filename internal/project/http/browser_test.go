@@ -16,6 +16,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
@@ -320,9 +321,11 @@ type browserDataQueryStub struct {
 	query  dataquery.Query
 	result dataquery.Result
 	err    error
+	calls  int
 }
 
 func (s *browserDataQueryStub) ExecuteDataQuery(_ context.Context, query dataquery.Query) (dataquery.Result, error) {
+	s.calls++
 	s.query = query
 	return s.result, s.err
 }
@@ -830,7 +833,7 @@ func TestConnectionAssetBootstrapUsesConnectionPageSignalOnCanonicalStream(t *te
 func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	const projectID = "project:test"
 	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
-		"orders": {ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+		"orders": {ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status", Type: "string", Datatype: semanticmodel.DataTypeString}}},
 	}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}
 	compiled, err := semanticquery.CompileDatasetBindings(model)
 	if err != nil {
@@ -871,33 +874,8 @@ func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	if !ok || projectsignals.ValueOrZero(semanticExplorer.Command.Mode) != "explore" || semanticExplorer.SelectedObject == nil || semanticExplorer.SelectedObject.ResourceID != "model:orders" {
 		t.Fatalf("semantic deep link = %#v", semanticExplorer)
 	}
-	if !reflect.DeepEqual(semanticExplorer.Explore.Command.Dimensions, []string{"orders.status"}) || len(semanticExplorer.Explore.Command.Filters) != 1 || len(semanticExplorer.Explore.Command.Sort) != 1 || semanticExplorer.Explore.Command.Limit != 25 {
+	if !reflect.DeepEqual([]string{semanticExplorer.Explore.Command.Spec.Dimensions[0].Field}, []string{"orders.status"}) || len(semanticExplorer.Explore.Command.Spec.Filters) != 1 || len(semanticExplorer.Explore.Command.Spec.Sort) != 1 || semanticExplorer.Explore.Command.Spec.Limit != 25 {
 		t.Fatalf("semantic deep-link state = %#v", semanticExplorer.Explore.Command)
-	}
-}
-
-func TestDataExploreCommandFromQueryUsesCanonicalDefaultsAndRejectsMalformedState(t *testing.T) {
-	canonical, err := dataExploreCommandFromQuery(url.Values{"semanticModel": {"semantic:sales"}, "dataset": {"orders"}})
-	if err != nil || canonical.Limit != dataExplorerDefaultLimit || canonical.Dimensions == nil || canonical.Metrics == nil {
-		t.Fatalf("canonical query = %#v, %v", canonical, err)
-	}
-	legacy, err := dataExploreCommandFromQuery(url.Values{"model": {"semantic:legacy"}})
-	if err != nil || legacy.SemanticModelID != nil {
-		t.Fatalf("legacy model alias was decoded: %#v, %v", legacy, err)
-	}
-
-	tests := []url.Values{
-		{"v": {"2"}},
-		{"limit": {"0"}},
-		{"limit": {"1001"}},
-		{"filter": {`{"field":"status","operator":"equals","values":[],"unexpected":true}`}},
-		{"sort": {`{"field":"revenue","direction":"sideways"}`}},
-		{"time": {`{"field":"created_at","grain":"month"} trailing`}},
-	}
-	for _, values := range tests {
-		if command, err := dataExploreCommandFromQuery(values); err == nil {
-			t.Fatalf("query %#v accepted as %#v", values, command)
-		}
 	}
 }
 
@@ -946,25 +924,31 @@ func TestDataExplorerSemanticExploreExecutesGovernedAggregate(t *testing.T) {
 		Columns: []dataquery.Column{{Name: "status"}, {Name: "orders"}},
 		Rows:    []dataquery.Row{{"status": "paid", "orders": int64(7)}}, SQL: "select status, count(*)", DurationMS: 12,
 	}}
+	dimensionAlias := "status_label"
+	dimensionGrain := exploration.ExplorationTimeGrainDay
 	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
-		SemanticModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("orders"),
-		Dimensions: []string{"orders.status"}, Metrics: []string{"orders"}, Filters: []projectsignals.DataExploreFilterSignal{},
-		Sort: []projectsignals.DataExploreSortSignal{{Field: "orders", Direction: "desc"}}, Limit: 100,
+		Spec: exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic-model:sales", DatasetID: projectsignals.Pointer("orders"),
+			Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status", Alias: &dimensionAlias, Grain: &dimensionGrain}}, Metrics: []exploration.ExplorationMetricRef{{Field: "orders"}}, Filters: []exploration.ExplorationFilter{},
+			Sort: []exploration.ExplorationSort{{Field: "orders", Direction: "desc"}}, Limit: 100},
 	}, []projectsignals.DataExploreFieldSignal{
 		{ID: "orders.status", Label: "Status", Kind: "dimension", DatasetID: "orders", Compatible: true},
 		{ID: "orders", Label: "Orders", Kind: "metric", DatasetID: "orders", Compatible: true},
+	}, &semanticmodel.Model{
+		Tables:   map[string]semanticmodel.Table{"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"status": {Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ}}}},
+		Metrics:  map[string]semanticmodel.Metric{"orders": {Type: "aggregate"}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {}},
 	})
 
 	if result.Error != nil || result.RowsReturned != 1 || len(result.Rows) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
-	if len(command.Dimensions) != 1 || len(command.Metrics) != 1 {
+	if len(command.Spec.Dimensions) != 1 || len(command.Spec.Metrics) != 1 {
 		t.Fatalf("normalized command = %#v", command)
 	}
 	if executor.query.Kind != dataquery.KindSemanticAggregate || executor.query.ProjectID != "project:test" || executor.query.Operation != dataquery.OperationSemanticExplore {
 		t.Fatalf("query = %#v", executor.query)
 	}
-	if executor.query.Fields[0].Alias != "status" || executor.query.Metrics[0].Alias != "orders" {
+	if executor.query.Fields[0].Alias != "status_label" || executor.query.Fields[0].Grain != "day" || executor.query.Metrics[0].Alias != "orders" {
 		t.Fatalf("query aliases = %#v / %#v", executor.query.Fields, executor.query.Metrics)
 	}
 }
@@ -975,18 +959,21 @@ func TestDataExplorerSemanticExploreUnscopesMultiRootMetric(t *testing.T) {
 		Rows:    []dataquery.Row{{"order_share": 0.5}}, SQL: "select order_share",
 	}}
 	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
-		SemanticModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("customers"),
-		Metrics: []string{"order_share"}, Limit: 100,
+		Spec: exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic-model:sales", DatasetID: projectsignals.Pointer("customers"),
+			Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{{Field: "order_share"}}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
 	}, []projectsignals.DataExploreFieldSignal{
 		// An empty datasetId is the projection contract for a derived/ratio
 		// metric whose dependencies span more than one physical dataset.
 		{ID: "order_share", Label: "Order share", Kind: "metric", Compatible: true},
+	}, &semanticmodel.Model{
+		Metrics:  map[string]semanticmodel.Metric{"order_share": {Type: "aggregate"}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"customers": {}},
 	})
 
 	if result.Error != nil {
 		t.Fatalf("result error = %q", *result.Error)
 	}
-	if len(command.Metrics) != 1 || executor.query.Kind != dataquery.KindSemanticAggregate {
+	if len(command.Spec.Metrics) != 1 || executor.query.Kind != dataquery.KindSemanticAggregate {
 		t.Fatalf("normalized command/query = %#v / %#v", command, executor.query)
 	}
 	if executor.query.Target != "" {
@@ -1037,7 +1024,7 @@ func TestAssetDataExplorerScopesModelsAndSemanticModels(t *testing.T) {
 		if test.mode == "browse" && len(explorer.Preview.Blocks["a"].Rows) != 1 {
 			t.Fatalf("model preview = %#v", explorer.Preview)
 		}
-		if test.mode == "explore" && projectsignals.ValueOrZero(explorer.Explore.Command.SemanticModelID) != test.asset {
+		if test.mode == "explore" && explorer.Explore.Command.Spec.ModelID != test.asset {
 			t.Fatalf("semantic command = %#v", explorer.Explore.Command)
 		}
 	}

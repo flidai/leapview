@@ -90,6 +90,10 @@ func generatedOutputs(root string, doc ir.Document) (map[string][]byte, error) {
 		source, err := modelgo.Emit(targetDoc, modelgo.Options{
 			PackageName: "signals",
 			ContractImports: map[string]modelgo.ContractImport{
+				"LeapViewExploration": {
+					GoPackage: "github.com/flidai/leapview/internal/analytics/exploration",
+					GoAlias:   "exploration",
+				},
 				"LeapViewVisualization": {
 					GoPackage: "github.com/flidai/leapview/internal/dashboard/visualization/ir",
 					GoAlias:   "visualizationir",

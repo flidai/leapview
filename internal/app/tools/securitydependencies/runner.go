@@ -23,15 +23,20 @@ import (
 )
 
 const (
-	govulncheckVersion = "v1.6.0"
-	auditLevel         = "critical"
-	defaultTimeout     = 10 * time.Minute
-	rootLookupTimeout  = 30 * time.Second
-	maxDiagnosticBytes = 64 << 10
+	govulncheckVersion  = "v1.6.0"
+	auditLevel          = "critical"
+	defaultTimeout      = 10 * time.Minute
+	defaultScanBudget   = 40 * time.Minute
+	rootLookupTimeout   = 30 * time.Second
+	maxDiagnosticBytes  = 64 << 10
+	bunAuditMaxAttempts = 3
+	bunAuditMaxRetries  = 3
 )
 
 var ghsaPattern = regexp.MustCompile(`GHSA-[A-Za-z0-9-]+`)
 var sensitiveDiagnostic = regexp.MustCompile(`(?i)(\b(?:token|password|secret|api[_-]?key|authorization|private[_-]?key)\b\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)`)
+var bunTransportError = regexp.MustCompile(`(?:(?:ConnectionClosed|Timeout): audit request failed|audit request failed \(status 503\))`)
+var errDependencyScanBudget = errors.New("dependency scan budget exhausted")
 
 type exceptionContract = securitypolicy.Exceptions
 type findingIdentity = securitypolicy.Finding
@@ -49,10 +54,14 @@ type commandResult struct {
 }
 
 type runner struct {
-	root    string
-	timeout time.Duration
-	stdout  io.Writer
-	stderr  io.Writer
+	root                string
+	timeout             time.Duration
+	stdout              io.Writer
+	stderr              io.Writer
+	bunTransportRetries int
+	scanBudget          time.Duration
+	scanDeadline        time.Time
+	now                 func() time.Time
 }
 
 // commandOutput is used instead of passing scanner output directly to a
@@ -71,14 +80,18 @@ func commandOutput(data []byte) []byte {
 }
 
 func (r *runner) command(dir, name string, args ...string) commandResult {
-	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+	deadline, err := r.commandDeadline(dir, name)
+	if err != nil {
+		return commandResult{status: 1, err: err}
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = dir
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
-	err := command.Run()
+	err = command.Run()
 	status := 0
 	if err != nil {
 		status = 1
@@ -90,13 +103,19 @@ func (r *runner) command(dir, name string, args ...string) commandResult {
 			}
 		}
 		if ctx.Err() != nil {
-			err = fmt.Errorf("%w (command timed out after %s)", ctx.Err(), r.timeout)
+			if r.scanBudgetExpired() {
+				err = fmt.Errorf("%w while running %s %s", errDependencyScanBudget, name, dir)
+			} else {
+				err = fmt.Errorf("%w (command timed out after %s)", ctx.Err(), r.timeout)
+			}
 		}
 	}
 	return commandResult{stdout: stdout.Bytes(), stderr: stderr.Bytes(), status: status, err: err}
 }
 
 func (r *runner) run() error {
+	r.bunTransportRetries = 0
+	r.scanDeadline = r.currentTime().Add(r.scanBudgetOrDefault())
 	contract, err := r.loadContract()
 	if err != nil {
 		return err
@@ -197,6 +216,11 @@ func (r *runner) scanGo(moduleFile string, contract *exceptionContract) error {
 	}
 	args = append(args, "./...")
 	result := r.command(dir, "go", args...)
+	if errors.Is(result.err, errDependencyScanBudget) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "govulncheck %s: dependency scan budget exhausted; failing closed\n", dir)
+		return commandError("govulncheck", dir, result)
+	}
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("govulncheck", dir, result)
@@ -219,7 +243,12 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 	if contract != nil {
 		args = append(args, "--json")
 	}
-	result := r.command(dir, "bun", args...)
+	result := r.runBunAudit(dir, args...)
+	if errors.Is(result.err, errDependencyScanBudget) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "bun audit %s: dependency scan budget exhausted; failing closed\n", dir)
+		return commandError("bun audit", dir, result)
+	}
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("bun audit", dir, result)
@@ -255,6 +284,70 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 	return statusError("bun audit", dir, status)
 }
 
+func (r *runner) runBunAudit(dir string, args ...string) commandResult {
+	for attempt := 1; attempt <= bunAuditMaxAttempts; attempt++ {
+		result := r.command(dir, "bun", args...)
+		if !retryableBunAuditTransport(result) {
+			return result
+		}
+		if attempt == bunAuditMaxAttempts {
+			fmt.Fprintf(r.stdout, "bun audit %s: transient transport failure; per-lock retry budget exhausted after %d attempts\n", dir, bunAuditMaxAttempts)
+			return result
+		}
+		if r.scanBudgetExpired() {
+			fmt.Fprintf(r.stdout, "bun audit %s: dependency scan budget exhausted before retry; failing closed\n", dir)
+			return result
+		}
+		if r.bunTransportRetries >= bunAuditMaxRetries {
+			fmt.Fprintf(r.stdout, "bun audit %s: global transient transport retry budget exhausted after %d retries\n", dir, bunAuditMaxRetries)
+			return result
+		}
+		r.bunTransportRetries++
+		fmt.Fprintf(r.stdout, "bun audit %s: transient transport failure; retrying (attempt %d/%d)\n", dir, attempt+1, bunAuditMaxAttempts)
+	}
+	return commandResult{status: 1, err: errors.New("bun audit retry budget was invalid")}
+}
+
+func retryableBunAuditTransport(result commandResult) bool {
+	return result.status != 0 && len(bytes.TrimSpace(result.stdout)) == 0 && bunTransportError.Match(result.stderr)
+}
+
+func (r *runner) commandDeadline(dir, name string) (time.Time, error) {
+	now := r.currentTime()
+	if r.timeout <= 0 {
+		return time.Time{}, errors.New("scanner command timeout must be positive")
+	}
+	deadline := now.Add(r.timeout)
+	if r.scanDeadline.IsZero() {
+		return deadline, nil
+	}
+	if !r.scanDeadline.After(now) {
+		return time.Time{}, fmt.Errorf("%w before running %s %s", errDependencyScanBudget, name, dir)
+	}
+	if r.scanDeadline.Before(deadline) {
+		return r.scanDeadline, nil
+	}
+	return deadline, nil
+}
+
+func (r *runner) currentTime() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
+
+func (r *runner) scanBudgetOrDefault() time.Duration {
+	if r.scanBudget > 0 {
+		return r.scanBudget
+	}
+	return defaultScanBudget
+}
+
+func (r *runner) scanBudgetExpired() bool {
+	return !r.scanDeadline.IsZero() && !r.scanDeadline.After(r.currentTime())
+}
+
 func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 	dir := filepath.Dir(lockFile)
 	fmt.Fprintf(r.stdout, "npm audit %s\n", dir)
@@ -263,12 +356,38 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 		args = append(args, "--json")
 	}
 	result := r.command(dir, "npm", args...)
+	if errors.Is(result.err, errDependencyScanBudget) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "npm audit %s: dependency scan budget exhausted; failing closed\n", dir)
+		return commandError("npm audit", dir, result)
+	}
+	retried := false
+	if contract != nil && retryableNPMAuditTransport(result) {
+		fmt.Fprintf(r.stdout, "npm audit %s: transient transport failure; retrying once\n", dir)
+		retried = true
+		result = r.command(dir, "npm", args...)
+	}
+	if errors.Is(result.err, errDependencyScanBudget) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "npm audit %s: dependency scan budget exhausted; failing closed\n", dir)
+		return commandError("npm audit", dir, result)
+	}
+	if retried && result.status == 0 && !validNPMAuditReport(result.stdout) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "npm audit %s: scanner output after retry is not a valid audit report\n", dir)
+		return errors.New("npm audit output after retry was malformed")
+	}
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("npm audit", dir, result)
 	}
 	if result.status == 0 {
 		return nil
+	}
+	if !validNPMAuditReport(result.stdout) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "npm audit %s: scanner output is not a valid audit report\n", dir)
+		return errors.New("npm audit output was malformed")
 	}
 	if allNPMFindingsWaived(result.stdout, *contract) {
 		fmt.Fprintf(r.stdout, "npm audit %s: all findings match exact, active exceptions\n", dir)
@@ -277,6 +396,101 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 	r.emitFailure(result)
 	return commandError("npm audit", dir, result)
 }
+
+func retryableNPMAuditTransport(result commandResult) bool {
+	if result.status == 0 {
+		return false
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(result.stdout, &envelope); err != nil || envelope == nil {
+		return false
+	}
+	for field := range envelope {
+		switch field {
+		case "statusCode", "message", "method", "uri", "headers", "body", "error":
+		default:
+			return false
+		}
+	}
+	var payload struct {
+		StatusCode      int                        `json:"statusCode"`
+		Message         string                     `json:"message"`
+		Method          string                     `json:"method"`
+		URI             string                     `json:"uri"`
+		Headers         json.RawMessage            `json:"headers"`
+		Body            map[string]json.RawMessage `json:"body"`
+		Error           json.RawMessage            `json:"error"`
+		Vulnerabilities json.RawMessage            `json:"vulnerabilities"`
+	}
+	if err := json.Unmarshal(result.stdout, &payload); err != nil || payload.Vulnerabilities != nil {
+		return false
+	}
+	if payload.StatusCode != 503 || payload.Message != npmAuditBulk503Message {
+		return false
+	}
+	if payload.Method != "" && payload.Method != "POST" || payload.URI != "" && payload.URI != npmAuditBulkEndpoint {
+		return false
+	}
+	if payload.Headers != nil {
+		var headers map[string]json.RawMessage
+		if json.Unmarshal(payload.Headers, &headers) != nil || headers == nil {
+			return false
+		}
+	}
+	if payload.Error != nil && !validNPMAuditTransportError(payload.Error) {
+		return false
+	}
+	if len(payload.Body) != 1 {
+		return false
+	}
+	bodyError, ok := payload.Body["error"]
+	if !ok {
+		return false
+	}
+	var bodyErrorText string
+	if json.Unmarshal(bodyError, &bodyErrorText) != nil || bodyErrorText != "Service Unavailable" {
+		return false
+	}
+	diagnostic := string(result.stderr)
+	return strings.Contains(diagnostic, "npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable") &&
+		strings.Contains(diagnostic, "npm error audit endpoint returned an error")
+}
+
+func validNPMAuditTransportError(data []byte) bool {
+	var diagnostic map[string]json.RawMessage
+	if json.Unmarshal(data, &diagnostic) != nil || len(diagnostic) != 2 {
+		return false
+	}
+	for _, field := range []string{"summary", "detail"} {
+		var value string
+		raw, present := diagnostic[field]
+		if !present || json.Unmarshal(raw, &value) != nil || value != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func validNPMAuditReport(data []byte) bool {
+	var report map[string]json.RawMessage
+	if err := json.Unmarshal(data, &report); err != nil || report == nil {
+		return false
+	}
+	for _, errorField := range []string{"statusCode", "message", "body", "error"} {
+		if _, present := report[errorField]; present {
+			return false
+		}
+	}
+	vulnerabilities, ok := report["vulnerabilities"]
+	if !ok {
+		return false
+	}
+	var object map[string]json.RawMessage
+	return json.Unmarshal(vulnerabilities, &object) == nil && object != nil
+}
+
+const npmAuditBulkEndpoint = "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk"
+const npmAuditBulk503Message = "503 Service Unavailable - POST " + npmAuditBulkEndpoint + " - Service Unavailable"
 
 func (r *runner) emitDirect(result commandResult) {
 	if len(result.stdout) > 0 {

@@ -24,7 +24,7 @@ func main() {
 	if *timeoutFlag <= 0 {
 		fail("dependency security: invalid timeout", errors.New("timeout must be positive"))
 	}
-	runner := &runner{root: root, timeout: *timeoutFlag, stdout: os.Stdout, stderr: os.Stderr}
+	runner := &runner{root: root, timeout: *timeoutFlag, scanBudget: defaultScanBudget, stdout: os.Stdout, stderr: os.Stderr}
 	if err := runner.run(); err != nil {
 		fail("dependency security", err)
 	}

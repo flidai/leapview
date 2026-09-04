@@ -1,9 +1,10 @@
 package ui
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/url"
-	"strconv"
+	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
@@ -65,32 +66,34 @@ func dataExplorerUpdatesURL(command uisignals.DataExplorerCommand) string {
 		return "/updates?" + values.Encode()
 	}
 	explore := command.Explore
-	values.Set("v", "1")
 	values.Set("mode", "explore")
-	values.Set("semanticModel", uisignals.ValueOrZero(explore.SemanticModelID))
-	values.Set("dataset", uisignals.ValueOrZero(explore.DatasetID))
-	for _, dimension := range explore.Dimensions {
-		values.Add("dimension", dimension)
+	// The browser initializes the explorer with an empty model placeholder.
+	// That is useful incremental UI state, but it is not a valid canonical
+	// ExplorationSpec and must not be emitted as v2 URL state.
+	if strings.TrimSpace(explore.Spec.ModelID) == "" {
+		return "/updates?" + values.Encode()
 	}
-	for _, metric := range explore.Metrics {
-		values.Add("metric", metric)
-	}
-	for _, filter := range explore.Filters {
-		encoded, _ := json.Marshal(filter)
-		values.Add("filter", string(encoded))
-	}
-	for _, sorting := range explore.Sort {
-		encoded, _ := json.Marshal(sorting)
-		values.Add("sort", string(encoded))
-	}
-	if explore.Time != nil {
-		encoded, _ := json.Marshal(explore.Time)
-		values.Set("time", string(encoded))
-	}
-	if explore.Limit != dataExplorerDefaultLimit {
-		values.Set("limit", strconv.FormatInt(explore.Limit, 10))
-	}
+	values.Set("v", "2")
+	encoded, _ := canonicalExplorationJSON(explore.Spec)
+	values.Set("state", string(encoded))
 	return "/updates?" + values.Encode()
+}
+
+// canonicalExplorationJSON mirrors the browser URL codec: object keys are
+// sorted lexicographically at every level while array order is preserved.
+// Re-decoding through UseNumber avoids changing decimal/int lexical values.
+func canonicalExplorationJSON(value any) ([]byte, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var normalized any
+	if err := decoder.Decode(&normalized); err != nil {
+		return nil, err
+	}
+	return json.Marshal(normalized)
 }
 
 const dataExplorerDefaultLimit = int64(100)
@@ -127,16 +130,15 @@ func DataExplorerBootstrapSignalsWithAgent(_ catalog.Catalog, page uisignals.Dat
 
 func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal) uisignals.AgentContextSignal {
 	command := explorer.Explore.Command
-	modelID := uisignals.ValueOrZero(command.SemanticModelID)
-	datasetID := uisignals.ValueOrZero(command.DatasetID)
+	spec := command.Spec
+	modelID := spec.ModelID
+	explorationSpec := &spec
+	if strings.TrimSpace(modelID) == "" {
+		explorationSpec = nil
+	}
 	return uisignals.AgentContextSignal{
-		Surface: "data", ModelID: modelID, DatasetID: &datasetID,
-		DashboardID: "", DashboardTitle: "", PageID: "", PageTitle: "",
-		Exploration: &uisignals.DataExploreAgentContextSignal{
-			Dimensions: append([]string(nil), command.Dimensions...), Metrics: append([]string(nil), command.Metrics...),
-			Filters: append([]uisignals.DataExploreFilterSignal(nil), command.Filters...),
-			Sort:    append([]uisignals.DataExploreSortSignal(nil), command.Sort...), Time: command.Time, Limit: command.Limit,
-		},
+		Surface: "data", ModelID: modelID, DatasetID: spec.DatasetID,
+		DashboardID: "", DashboardTitle: "", PageID: "", PageTitle: "", Exploration: explorationSpec,
 		Filters: uisignals.DashboardFilterState{
 			AppliedControls: map[string]uisignals.DashboardAppliedFilterState{},
 			DraftControls:   map[string]uisignals.DashboardFilterExpression{}, DirtyBindings: []string{},

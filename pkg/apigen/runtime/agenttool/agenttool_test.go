@@ -96,6 +96,26 @@ func TestBuildRequestValidatesNestedSchemasRangesAndTrailingJSON(t *testing.T) {
 	require.ErrorContains(t, err, "trailing JSON")
 }
 
+func TestSchemaValidationEnforcesNumericConstantsAndArrayBounds(t *testing.T) {
+	constant := 1.0
+	minimum := 1
+	maximum := 2
+	schema := ValueSchema{
+		Type: "array", MinItems: &minimum, MaxItems: &maximum,
+		Items: &ValueSchema{Type: "integer", Const: &constant},
+	}
+
+	require.True(t, matchesSchema([]any{float64(1)}, schema))
+	require.False(t, matchesSchema([]any{}, schema))
+	require.False(t, matchesSchema([]any{float64(1), float64(1), float64(1)}, schema))
+	require.False(t, matchesSchema([]any{float64(2)}, schema))
+
+	err := validatePortableSchema([]any{float64(1), float64(1), float64(1)}, json.RawMessage(`{"type":"array","maxItems":2,"items":{"type":"integer","const":1}}`))
+	require.ErrorContains(t, err, "at most 2 items")
+	err = validatePortableSchema([]any{float64(2)}, json.RawMessage(`{"type":"array","items":{"type":"integer","const":1}}`))
+	require.ErrorContains(t, err, "schema constant")
+}
+
 func TestProjectResponseProjectsArraysMapsCountsAndCursor(t *testing.T) {
 	contract := Contract{
 		Name: "query_page",

@@ -27,3 +27,16 @@ func TestRefPreservesPatternsAndPropertyNames(t *testing.T) {
 	require.Equal(t, "^[a-z_]+$", got["propertyNames"].(map[string]any)["pattern"])
 	require.Equal(t, map[string]any{"type": "string"}, got["additionalProperties"])
 }
+
+func TestRefPreservesNumericConstantsAndArrayBounds(t *testing.T) {
+	constant := 1.0
+	minimum := 1
+	maximum := 100
+	got := Ref(ir.Document{}, ir.SchemaRef{
+		Type: "array", MinItems: &minimum, MaxItems: &maximum,
+		Items: &ir.SchemaRef{Type: "integer", Const: &constant},
+	})
+	require.Equal(t, 1, got["minItems"])
+	require.Equal(t, 100, got["maxItems"])
+	require.Equal(t, float64(1), got["items"].(map[string]any)["const"])
+}

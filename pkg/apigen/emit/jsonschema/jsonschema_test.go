@@ -75,6 +75,33 @@ func TestEmit_PreservesPatternAndPropertyNames(t *testing.T) {
 	require.Equal(t, map[string]any{"type": "string"}, refSibling["additionalProperties"])
 }
 
+func TestEmit_PreservesLiteralAndArrayConstraints(t *testing.T) {
+	schemaVersion := 1.0
+	maxItems := 100
+	doc := ir.Document{
+		Info:      ir.Info{Title: "Exploration", Version: "1"},
+		Contracts: []ir.Contract{{Name: "ExplorationSpec", Schema: ir.SchemaRef{Ref: "ExplorationSpec"}}},
+		Schemas: map[string]ir.Schema{
+			"ExplorationSpec": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"schemaVersion": {Schema: ir.SchemaRef{Type: "integer", Const: &schemaVersion}},
+					"dimensions":    {Schema: ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Type: "string"}, MaxItems: &maxItems}},
+				},
+				Required: []string{"dimensions", "schemaVersion"},
+			},
+		},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	decoded := decodedObject(t, b)
+	definition := decoded["$defs"].(map[string]any)["ExplorationSpec"].(map[string]any)
+	properties := definition["properties"].(map[string]any)
+	require.Equal(t, float64(1), properties["schemaVersion"].(map[string]any)["const"])
+	require.Equal(t, float64(100), properties["dimensions"].(map[string]any)["maxItems"])
+}
+
 func TestEmit_PreservesDiscriminatedComposition(t *testing.T) {
 	doc := ir.Document{
 		Info: ir.Info{Title: "Visuals", Version: "1"},

@@ -2,14 +2,17 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectview "github.com/flidai/leapview/internal/project"
@@ -21,6 +24,91 @@ import (
 
 type countingDataQueryExecutor struct {
 	calls int
+}
+
+func testExplorationCommand(spec exploration.ExplorationSpec) projectsignals.DataExploreCommand {
+	if spec.SchemaVersion == 0 {
+		spec.SchemaVersion = 1
+	}
+	if spec.Limit == 0 {
+		spec.Limit = 100
+	}
+	if spec.Dimensions == nil {
+		spec.Dimensions = []exploration.ExplorationDimensionRef{}
+	}
+	if spec.Metrics == nil {
+		spec.Metrics = []exploration.ExplorationMetricRef{}
+	}
+	if spec.Filters == nil {
+		spec.Filters = []exploration.ExplorationFilter{}
+	}
+	if spec.Sort == nil {
+		spec.Sort = []exploration.ExplorationSort{}
+	}
+	return projectsignals.DataExploreCommand{Spec: spec}
+}
+
+func TestDataExploreCommandFromQueryRoundTripsCanonicalSpec(t *testing.T) {
+	values, err := url.ParseQuery("v=1&mode=explore&model=semantic%3Asales&dataset=orders&dimension=orders.month&dimension=customers.state&metric=revenue&filter=%7B%22field%22%3A%22customers.state%22%2C%22operator%22%3A%22equals%22%2C%22values%22%3A%5B%22CA%22%5D%7D&sort=%7B%22field%22%3A%22revenue%22%2C%22direction%22%3A%22desc%22%7D&time=%7B%22field%22%3A%22orders.created_at%22%2C%22grain%22%3A%22month%22%7D&limit=250")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := dataExploreCommandFromQuery(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.Spec.ModelID != "semantic:sales" || projectsignals.ValueOrZero(command.Spec.DatasetID) != "orders" {
+		t.Fatalf("target = %q/%q", command.Spec.ModelID, projectsignals.ValueOrZero(command.Spec.DatasetID))
+	}
+	if !reflect.DeepEqual([]string{command.Spec.Dimensions[0].Field, command.Spec.Dimensions[1].Field}, []string{"orders.month", "customers.state"}) || !reflect.DeepEqual([]string{command.Spec.Metrics[0].Field}, []string{"revenue"}) {
+		t.Fatalf("fields = %#v / %#v", command.Spec.Dimensions, command.Spec.Metrics)
+	}
+	if len(command.Spec.Filters) != 1 || command.Spec.Filters[0].Field != "customers.state" {
+		t.Fatalf("filters = %#v", command.Spec.Filters)
+	}
+	if len(command.Spec.Sort) != 1 || command.Spec.Sort[0].Field != "revenue" || command.Spec.Sort[0].Direction != "desc" {
+		t.Fatalf("sort = %#v", command.Spec.Sort)
+	}
+	if command.Spec.Time == nil || command.Spec.Time.Field != "orders.created_at" || command.Spec.Time.Grain != "month" || command.Spec.Limit != 250 {
+		t.Fatalf("time/limit = %#v / %d", command.Spec.Time, command.Spec.Limit)
+	}
+	if command.RequestSeq != 0 || command.ResetVersion != 0 {
+		t.Fatalf("runtime state leaked into URL command: %#v", command)
+	}
+}
+
+func TestDataExploreCommandFromQueryRejectsMalformedState(t *testing.T) {
+	tests := []url.Values{
+		{"v": {"2"}},
+		{"limit": {"0"}},
+		{"limit": {"1001"}},
+		{"filter": {`{"field":"status","operator":"equals","values":[],"unexpected":true}`}},
+		{"sort": {`{"field":"revenue","direction":"sideways"}`}},
+		{"time": {`{"field":"created_at","grain":"month"} trailing`}},
+	}
+	for _, values := range tests {
+		if command, err := dataExploreCommandFromQuery(values); err == nil {
+			t.Fatalf("query %#v accepted as %#v", values, command)
+		}
+	}
+}
+
+func testStringFilter(field, operator string, values ...string) exploration.ExplorationFilter {
+	items := make([]exploration.ExplorationFilterValue, 0, len(values))
+	for _, value := range values {
+		items = append(items, exploration.ExplorationFilterValue{Value: &exploration.StringExplorationFilterValue{Kind: "string", Value: value}})
+	}
+	op := operator
+	var expression exploration.ExplorationFilterExpressionVariant
+	switch operator {
+	case "is_null", "is_not_null":
+		expression = &exploration.NullCheckExplorationFilterExpression{Kind: "null_check", Operator: op}
+	case "in", "not_in":
+		expression = &exploration.SetExplorationFilterExpression{Kind: "set", Operator: op, Values: items}
+	default:
+		expression = &exploration.ComparisonExplorationFilterExpression{Kind: "comparison", Operator: op, Value: items[0]}
+	}
+	return exploration.ExplorationFilter{Field: field, Expression: exploration.ExplorationFilterExpression{Value: expression}}
 }
 
 func (e *countingDataQueryExecutor) ExecuteDataQuery(context.Context, dataquery.Query) (dataquery.Result, error) {
@@ -40,6 +128,11 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"status":     {Label: "Status", Type: "string"},
 					"created_at": {Label: "Created at", Type: "timestamp"},
+					"quantity":   {Label: "Quantity", Type: "number", Datatype: semanticmodel.DataTypeInteger},
+					"amount":     {Label: "Amount", Type: "number", Datatype: semanticmodel.DataTypeDecimal},
+					"order_date": {Label: "Order date", Type: "date", Datatype: semanticmodel.DataTypeDate},
+					"active":     {Label: "Active", Type: "boolean", Datatype: semanticmodel.DataTypeBoolean},
+					"event_at":   {Label: "Event at", Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ},
 				},
 			},
 		},
@@ -89,7 +182,7 @@ func TestDataExplorerDocumentDefersSemanticExecutionToCanonicalUpdates(t *testin
 	if executor.calls != 0 {
 		t.Fatalf("document executed %d analytical queries, want 0", executor.calls)
 	}
-	for _, want := range []string{"mode=explore", "semanticModel=semantic%3Asales", "dataset=orders", "dimension=orders.status"} {
+	for _, want := range []string{"mode=explore", "v=2", "state="} {
 		if !strings.Contains(document.Body.String(), want) {
 			t.Fatalf("document shell missing normalized updates URL component %q:\n%s", want, document.Body.String())
 		}
@@ -137,7 +230,7 @@ func TestDataExplorerRestoredURLCanonicalizesSpacedOperandsBeforeExecution(t *te
 		t.Fatalf("spaced document executed %d analytical queries, want 0", executor.calls)
 	}
 	body := document.Body.String()
-	if !strings.Contains(body, "dimension=orders.status") || strings.Contains(body, "dimension=+orders.status+") {
+	if !strings.Contains(body, "v=2") || !strings.Contains(body, "state=") || strings.Contains(body, "+orders.status+") {
 		t.Fatalf("spaced field was not canonicalized in updates URL:\n%s", body)
 	}
 }
@@ -153,17 +246,316 @@ func TestDataExploreCommandFromQueryTrimsMetadataButPreservesFilterValues(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(command.Dimensions) != 1 || command.Dimensions[0] != "orders.status" || len(command.Metrics) != 1 || command.Metrics[0] != "revenue" {
-		t.Fatalf("trimmed fields = %#v/%#v", command.Dimensions, command.Metrics)
+	if len(command.Spec.Dimensions) != 1 || command.Spec.Dimensions[0].Field != "orders.status" || len(command.Spec.Metrics) != 1 || command.Spec.Metrics[0].Field != "revenue" {
+		t.Fatalf("trimmed fields = %#v/%#v", command.Spec.Dimensions, command.Spec.Metrics)
 	}
-	if len(command.Filters) != 1 || command.Filters[0].Field != "orders.status" || command.Filters[0].Operator != "equals" || projectsignals.ValueOrZero(command.Filters[0].DatasetID) != "orders" || len(command.Filters[0].Values) != 1 || command.Filters[0].Values[0] != " paid " {
-		t.Fatalf("trimmed filter metadata or changed value = %#v", command.Filters)
+	if len(command.Spec.Filters) != 1 || command.Spec.Filters[0].Field != "orders.status" || command.Spec.Filters[0].DatasetID == nil || *command.Spec.Filters[0].DatasetID != "orders" {
+		t.Fatalf("trimmed filter metadata = %#v", command.Spec.Filters)
 	}
-	if len(command.Sort) != 1 || command.Sort[0].Field != "revenue" || command.Sort[0].Direction != "desc" {
-		t.Fatalf("trimmed sort = %#v", command.Sort)
+	if len(command.Spec.Sort) != 1 || command.Spec.Sort[0].Field != "revenue" || command.Spec.Sort[0].Direction != "desc" {
+		t.Fatalf("trimmed sort = %#v", command.Spec.Sort)
 	}
-	if command.Time == nil || command.Time.Field != "orders.created_at" || command.Time.Grain != "month" || projectsignals.ValueOrZero(command.Time.Alias) != "order_month" {
-		t.Fatalf("trimmed time = %#v", command.Time)
+	if command.Spec.Time == nil || command.Spec.Time.Field != "orders.created_at" || command.Spec.Time.Grain != "month" || projectsignals.ValueOrZero(command.Spec.Time.Alias) != "order_month" {
+		t.Fatalf("trimmed time = %#v", command.Spec.Time)
+	}
+}
+
+func TestDataExplorerLegacyURLAdaptsTypedFilterValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		field    string
+		value    string
+		wantKind string
+		version  string
+	}{
+		{name: "integer", field: "orders.quantity", value: "42", wantKind: "integer", version: "1"},
+		{name: "date", field: "orders.order_date", value: "2026-09-03", wantKind: "date", version: ""},
+		{name: "boolean", field: "orders.active", value: "true", wantKind: "boolean", version: "1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h, executor := newDataExplorerURLTestHandler(t)
+			filter, err := json.Marshal(map[string]any{
+				"field": test.field, "operator": "equals", "values": []string{test.value},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			values := url.Values{
+				"mode":      {"explore"},
+				"model":     {"semantic:sales"},
+				"dataset":   {"orders"},
+				"dimension": {test.field},
+				"filter":    {string(filter)},
+			}
+			if test.version != "" {
+				values.Set("v", test.version)
+			}
+			recorder := httptest.NewRecorder()
+			_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+values.Encode(), nil), true)
+			if !ok {
+				t.Fatalf("legacy URL rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if executor.calls != 1 {
+				t.Fatalf("legacy URL executed %d analytical queries, want 1", executor.calls)
+			}
+			if len(explorer.Explore.Command.Spec.Filters) != 1 {
+				t.Fatalf("filters = %#v", explorer.Explore.Command.Spec.Filters)
+			}
+			kind, err := explorer.Explore.Command.Spec.Filters[0].Expression.Value.(*exploration.ComparisonExplorationFilterExpression).Value.Kind()
+			if err != nil || kind != test.wantKind {
+				t.Fatalf("adapted filter kind = %q, %v; want %q", kind, err, test.wantKind)
+			}
+		})
+	}
+}
+
+func TestDataExplorerLegacyURLAdaptsDecimalAndTimestampSetValues(t *testing.T) {
+	decimalFilter, err := json.Marshal(map[string]any{
+		"field": "orders.amount", "operator": "in", "values": []string{"1.25", "2.50"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	timestampFilter, err := json.Marshal(map[string]any{
+		"field": "orders.event_at", "operator": "in", "values": []string{"2026-09-03T00:00:00Z", "2026-09-04T00:00:00Z"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, executor := newDataExplorerURLTestHandler(t)
+	values := url.Values{
+		"v":         {"1"},
+		"mode":      {"explore"},
+		"model":     {"semantic:sales"},
+		"dataset":   {"orders"},
+		"dimension": {"orders.amount", "orders.event_at"},
+		"filter":    {string(decimalFilter), string(timestampFilter)},
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+values.Encode(), nil), true)
+	if !ok {
+		t.Fatalf("legacy URL rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 1 {
+		t.Fatalf("legacy URL executed %d analytical queries, want 1", executor.calls)
+	}
+	if len(explorer.Explore.Command.Spec.Filters) != 2 {
+		t.Fatalf("filters = %#v, want decimal and timestamp set filters", explorer.Explore.Command.Spec.Filters)
+	}
+	wantKinds := []string{"decimal", "timestamp"}
+	for index, wantKind := range wantKinds {
+		expression, ok := explorer.Explore.Command.Spec.Filters[index].Expression.Value.(*exploration.SetExplorationFilterExpression)
+		if !ok {
+			t.Fatalf("filter %d expression = %T, want set", index, explorer.Explore.Command.Spec.Filters[index].Expression.Value)
+		}
+		if len(expression.Values) != 2 {
+			t.Fatalf("filter %d values = %#v, want both legacy values adapted", index, expression.Values)
+		}
+		for valueIndex := range expression.Values {
+			kind, err := expression.Values[valueIndex].Kind()
+			if err != nil || kind != wantKind {
+				t.Fatalf("filter %d value %d kind = %q, %v; want %q", index, valueIndex, kind, err, wantKind)
+			}
+		}
+	}
+}
+
+func TestDataExplorerLegacyURLWithoutModelUsesProjectedDefaultModel(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	values := url.Values{
+		"v":         {"1"},
+		"mode":      {"explore"},
+		"dataset":   {"orders"},
+		"dimension": {"orders.status"},
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+values.Encode(), nil), true)
+	if !ok {
+		t.Fatalf("legacy URL without model rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 1 {
+		t.Fatalf("legacy URL without model executed %d analytical queries, want 1", executor.calls)
+	}
+	if got := explorer.Explore.Command.Spec.ModelID; got != "semantic:sales" {
+		t.Fatalf("restored default model = %q, want semantic:sales", got)
+	}
+}
+
+func TestDataExplorerLegacyURLRejectsInvalidTypedFilterLiteralWithoutExecution(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	filter, err := json.Marshal(map[string]any{
+		"field": "orders.quantity", "operator": "equals", "values": []string{"not-an-integer"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"v": {"1"}, "mode": {"explore"}, "model": {"semantic:sales"}, "dataset": {"orders"}, "dimension": {"orders.quantity"}, "filter": {string(filter)}}
+	recorder := httptest.NewRecorder()
+	_, _, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+values.Encode(), nil), true)
+	if ok || recorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid legacy URL accepted: ok=%v status=%d body=%s", ok, recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "integer") {
+		t.Fatalf("invalid legacy URL feedback = %q, want integer diagnostic", recorder.Body.String())
+	}
+	if executor.calls != 0 {
+		t.Fatalf("invalid legacy URL executed %d analytical queries, want 0", executor.calls)
+	}
+}
+
+func TestDataExplorerLegacyURLRejectsMissingProjectedLogicalType(t *testing.T) {
+	command := testExplorationCommand(exploration.ExplorationSpec{
+		ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}},
+		Filters: []exploration.ExplorationFilter{testStringFilter("orders.status", "equals", "paid")},
+	})
+	err := adaptLegacyExplorationFilterValues(&command.Spec, []projectsignals.DataExploreFieldSignal{{ID: "orders.status", Kind: "dimension", Compatible: true}})
+	if err == nil || !strings.Contains(err.Error(), "no logical type") {
+		t.Fatalf("missing logical type conversion error = %v, want fail-closed type diagnostic", err)
+	}
+}
+
+func TestDataExplorerV2URLDoesNotInferLegacyFilterValueKind(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	dataset := "orders"
+	spec := exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &dataset,
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.quantity"}},
+		Metrics:    []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{{Field: "orders.quantity", Expression: exploration.ExplorationFilterExpression{Value: &exploration.ComparisonExplorationFilterExpression{
+			Kind: "comparison", Operator: "equals", Value: exploration.ExplorationFilterValue{Value: &exploration.StringExplorationFilterValue{Kind: "string", Value: "42"}},
+		}}}},
+		Sort: []exploration.ExplorationSort{}, Limit: 100,
+	}
+	state, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"v": {"2"}, "mode": {"explore"}, "state": {string(state)}}
+	recorder := httptest.NewRecorder()
+	_, _, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+values.Encode(), nil), true)
+	if ok || recorder.Code != http.StatusBadRequest {
+		t.Fatalf("wrong-kind v2 URL accepted: ok=%v status=%d body=%s", ok, recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "value kind") {
+		t.Fatalf("wrong-kind v2 feedback = %q, want value-kind diagnostic", recorder.Body.String())
+	}
+	if executor.calls != 0 {
+		t.Fatalf("wrong-kind v2 URL executed %d analytical queries, want 0", executor.calls)
+	}
+}
+
+func TestDataExploreV2URLRoundTripsFullSpec(t *testing.T) {
+	alias := "order_month"
+	grain := exploration.ExplorationTimeGrainMonth
+	lower := "2025-01-01T00:00:00Z"
+	upper := "2025-02-01T00:00:00Z"
+	spec := exploration.ExplorationSpec{
+		SchemaVersion: 1,
+		ModelID:       "semantic:sales",
+		DatasetID:     projectsignals.Optional("orders"),
+		Dimensions:    []exploration.ExplorationDimensionRef{{Field: "orders.created_at", Alias: &alias, Grain: &grain}},
+		Metrics:       []exploration.ExplorationMetricRef{{Field: "revenue", Alias: projectsignals.Optional("total_revenue")}},
+		Filters: []exploration.ExplorationFilter{{Field: "orders.status", Expression: exploration.ExplorationFilterExpression{Value: &exploration.SetExplorationFilterExpression{
+			Kind: "set", Operator: "in",
+			Values: []exploration.ExplorationFilterValue{{Value: &exploration.StringExplorationFilterValue{Kind: "string", Value: "paid"}}},
+		}}}},
+		Time: &exploration.ExplorationTimeSelection{Field: "orders.created_at", Grain: exploration.ExplorationTimeGrainMonth, Range: &exploration.ExplorationTimeRange{Value: &exploration.AbsoluteExplorationTimeRange{
+			Kind: "absolute", Lower: &exploration.ExplorationTimeBound{Value: exploration.ExplorationTemporalValue{Value: &exploration.TimestampExplorationTemporalValue{Kind: "timestamp", Value: lower}}, Inclusive: true}, Upper: &exploration.ExplorationTimeBound{Value: exploration.ExplorationTemporalValue{Value: &exploration.TimestampExplorationTemporalValue{Kind: "timestamp", Value: upper}}, Inclusive: false},
+		}}},
+		Sort: []exploration.ExplorationSort{{Field: "revenue", Direction: exploration.ExplorationSortDirectionDesc}}, Limit: 250,
+		Pivot:         &exploration.ExplorationPivotConfig{Rows: []exploration.ExplorationDimensionRef{{Field: "orders.created_at"}}, Columns: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{{Field: "revenue"}}, Window: &exploration.ExplorationPivotWindow{Limit: 50}},
+		Table:         &exploration.ExplorationTableDisplayConfig{Columns: &[]exploration.ExplorationTableColumn{{Field: "revenue", Width: projectsignals.Pointer(int32(120))}}},
+		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.TableExplorationVisualization{Kind: "table", Columns: []exploration.ExplorationVisualizationFieldRef{{Field: "revenue"}}}},
+	}
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := dataExploreCommandFromQuery(url.Values{"v": {"2"}, "mode": {"explore"}, "state": {string(raw)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(command.Spec, spec) {
+		t.Fatalf("full spec changed across v2 URL decode:\nwant %#v\n got %#v", spec, command.Spec)
+	}
+}
+
+func TestDataExplorerURLRejectsAmbiguousOrIncompatibleShape(t *testing.T) {
+	tests := []struct {
+		name   string
+		values url.Values
+	}{
+		{name: "duplicate version", values: url.Values{"v": {"1", "1"}, "object": {"model:orders"}}},
+		{name: "duplicate mode", values: url.Values{"mode": {"browse", "browse"}, "object": {"model:orders"}}},
+		{name: "duplicate object", values: url.Values{"object": {"model:orders", "model:orders"}}},
+		{name: "duplicate model", values: url.Values{"mode": {"explore"}, "model": {"semantic:sales", "semantic:sales"}}},
+		{name: "duplicate dataset", values: url.Values{"mode": {"explore"}, "dataset": {"orders", "orders"}}},
+		{name: "duplicate time", values: url.Values{"mode": {"explore"}, "time": {`{"field":"orders.created_at","grain":"day"}`, `{"field":"orders.created_at","grain":"day"}`}}},
+		{name: "duplicate limit", values: url.Values{"mode": {"explore"}, "limit": {"100", "100"}}},
+		{name: "blank browse object", values: url.Values{"object": {"  "}}},
+		{name: "blank model", values: url.Values{"mode": {"explore"}, "model": {""}}},
+		{name: "blank semantic model", values: url.Values{"mode": {"explore"}, "semanticModel": {""}}},
+		{name: "ambiguous semantic model aliases", values: url.Values{"mode": {"explore"}, "model": {"semantic:sales"}, "semanticModel": {"semantic:sales"}}},
+		{name: "blank dataset", values: url.Values{"mode": {"explore"}, "dataset": {""}}},
+		{name: "ambiguous filter dataset aliases", values: url.Values{"mode": {"explore"}, "filter": {`{"field":"orders.status","operator":"equals","dataset":"orders","datasetId":"orders","values":["paid"]}`}}},
+		{name: "blank time", values: url.Values{"mode": {"explore"}, "time": {""}}},
+		{name: "blank limit", values: url.Values{"mode": {"explore"}, "limit": {""}}},
+		{name: "unsupported version in browse", values: url.Values{"v": {"2"}, "object": {"model:orders"}}},
+		{name: "unsupported mode", values: url.Values{"mode": {"preview"}, "object": {"model:orders"}}},
+		{name: "missing mode with explore operands", values: url.Values{"dimension": {"orders.status"}}},
+		{name: "browse with explore operands", values: url.Values{"mode": {"browse"}, "metric": {"revenue"}}},
+		{name: "explore with object", values: url.Values{"mode": {"explore"}, "object": {"model:orders"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h, _ := newDataExplorerURLTestHandler(t)
+			recorder := httptest.NewRecorder()
+			_, _, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/explore?"+test.values.Encode(), nil), false)
+			if ok {
+				t.Fatalf("URL was accepted: %s", recorder.Body.String())
+			}
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestDataExploreCommandFromQueryRejectsDuplicateSortFields(t *testing.T) {
+	_, err := dataExploreCommandFromQuery(url.Values{"sort": {
+		`{"field":"revenue","direction":"asc"}`,
+		`{"field":"revenue","direction":"desc"}`,
+	}})
+	if err == nil || !strings.Contains(err.Error(), "specified more than once") {
+		t.Fatalf("duplicate sort fields error = %v, want duplicate diagnostic", err)
+	}
+}
+
+func TestDataExploreCommandFromQueryRejectsDuplicateFieldIdentifiers(t *testing.T) {
+	tests := []url.Values{
+		{"dimension": {"orders.status", "orders.status"}},
+		{"metric": {"revenue", "revenue"}},
+		{"dimension": {"orders.status"}, "metric": {"orders.status"}},
+		{"dimension": {" orders.status ", "orders.status"}},
+	}
+	for _, values := range tests {
+		if command, err := dataExploreCommandFromQuery(values); err == nil {
+			t.Fatalf("duplicate field URL accepted as %#v", command)
+		}
+	}
+}
+
+func TestDataExploreCommandFromQueryNormalizesBlankTimeAliasToAbsent(t *testing.T) {
+	command, err := dataExploreCommandFromQuery(url.Values{"time": {`{"field":"orders.created_at","grain":"day","alias":"  "}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.Spec.Time == nil {
+		t.Fatal("time selection was dropped")
+	}
+	if command.Spec.Time.Alias != nil {
+		t.Fatalf("blank alias = %q, want absent", *command.Spec.Time.Alias)
 	}
 }
 
@@ -185,6 +577,122 @@ func TestDataExplorerRestoredURLFailsClosedForStaleField(t *testing.T) {
 	}
 	if executor.calls != 0 {
 		t.Fatalf("stale URL executed %d analytical queries, want 0", executor.calls)
+	}
+}
+
+func TestDataExplorerRestoredURLFailsClosedForUnauthorizedModel(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	h.Graph = browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{
+		{ID: "model:orders", ProjectID: "project:test", ServingStateID: "state", Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
+	}}}
+	recorder := httptest.NewRecorder()
+	state, err := json.Marshal(exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"v": {"2"}, "mode": {"explore"}, "state": {string(state)}}
+	_, _, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/explore?"+values.Encode(), nil), true)
+	if ok {
+		t.Fatal("exploration restored against an unauthorized model")
+	}
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("unauthorized model status = %d, want 400: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "semantic:sales") || !strings.Contains(recorder.Body.String(), "no longer available") {
+		t.Fatalf("unauthorized model feedback = %q, want actionable model diagnostic", recorder.Body.String())
+	}
+	if executor.calls != 0 {
+		t.Fatalf("unauthorized model executed %d analytical queries, want 0", executor.calls)
+	}
+}
+
+func TestDataExplorerRestoredV2URLAcceptsSortByExplicitMetricAlias(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	state, err := json.Marshal(exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}},
+		Metrics:    []exploration.ExplorationMetricRef{{Field: "revenue", Alias: projectsignals.Optional("total_revenue")}},
+		Filters:    []exploration.ExplorationFilter{},
+		Sort:       []exploration.ExplorationSort{{Field: "total_revenue", Direction: exploration.ExplorationSortDirectionDesc}}, Limit: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"v": {"2"}, "mode": {"explore"}, "state": {string(state)}}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+values.Encode(), nil), true)
+	if !ok {
+		t.Fatalf("sort alias URL rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if explorer.Explore.Command.Spec.Sort[0].Field != "total_revenue" || executor.calls != 1 {
+		t.Fatalf("restored sort/execution = %#v/%d", explorer.Explore.Command.Spec.Sort, executor.calls)
+	}
+}
+
+func TestDataExplorerRestoredV2URLAcceptsTimeOnlySortAlias(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	state, err := json.Marshal(exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{},
+		Time: &exploration.ExplorationTimeSelection{Field: "orders.created_at", Grain: exploration.ExplorationTimeGrainDay, Alias: projectsignals.Optional("order_day")},
+		Sort: []exploration.ExplorationSort{{Field: "order_day", Direction: exploration.ExplorationSortDirectionAsc}}, Limit: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?mode=explore&v=2&state="+url.QueryEscape(string(state)), nil), true)
+	if !ok {
+		t.Fatalf("time-only sort URL rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 1 || len(explorer.Explore.Command.Spec.Sort) != 1 || explorer.Explore.Command.Spec.Sort[0].Field != "order_day" {
+		t.Fatalf("restored time sort/execution = %#v/%d, want alias sort and one query", explorer.Explore.Command.Spec.Sort, executor.calls)
+	}
+}
+
+func TestDataExplorerRestoredV2URLAcceptsDateTimeTzTimeSelection(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	state, err := json.Marshal(exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{},
+		Time: &exploration.ExplorationTimeSelection{Field: "orders.event_at", Grain: exploration.ExplorationTimeGrainDay},
+		Sort: []exploration.ExplorationSort{}, Limit: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?mode=explore&v=2&state="+url.QueryEscape(string(state)), nil), true)
+	if !ok {
+		t.Fatalf("DateTimeTz time URL rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 1 || explorer.Explore.Command.Spec.Time == nil || explorer.Explore.Command.Spec.Time.Field != "orders.event_at" {
+		t.Fatalf("restored DateTimeTz time/execution = %#v/%d, want event_at and one query", explorer.Explore.Command.Spec.Time, executor.calls)
+	}
+}
+
+func TestDataExplorerRestoredV2URLAcceptsDateTimeTzDimensionGrain(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	grain := exploration.ExplorationTimeGrainDay
+	state, err := json.Marshal(exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.event_at", Grain: &grain}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{},
+		Sort: []exploration.ExplorationSort{}, Limit: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?mode=explore&v=2&state="+url.QueryEscape(string(state)), nil), true)
+	if !ok {
+		t.Fatalf("DateTimeTz dimension URL rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 1 || len(explorer.Explore.Command.Spec.Dimensions) != 1 || explorer.Explore.Command.Spec.Dimensions[0].Field != "orders.event_at" {
+		t.Fatalf("restored DateTimeTz dimension/execution = %#v/%d, want event_at and one query", explorer.Explore.Command.Spec.Dimensions, executor.calls)
 	}
 }
 
@@ -298,9 +806,7 @@ func TestValidateRestoredDataExploreStateRejectsWrongKindsAndIncompatibleOperand
 		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
 		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
 		Fields:         make([]projectsignals.DataExploreFieldSignal, 0, len(fields)),
-		Command: projectsignals.DataExploreCommand{
-			SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
-		},
+		Command:        testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
 	}
 	for _, field := range fields {
 		projection.Fields = append(projection.Fields, field)
@@ -318,12 +824,11 @@ func TestValidateRestoredDataExploreStateRejectsWrongKindsAndIncompatibleOperand
 		command projectsignals.DataExploreCommand
 		want    string
 	}{
-		{name: "dimension wrong kind", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Metrics: []string{"orders.status"}}, want: "not a metric"},
-		{name: "filter wrong kind", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Filters: []projectsignals.DataExploreFilterSignal{{Field: "revenue", Operator: "equals", Values: []string{"1"}}}}, want: "not a dimension"},
-		{name: "filter value cardinality", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Filters: []projectsignals.DataExploreFilterSignal{{Field: "orders.status", Operator: "equals", Values: []string{"paid", "shipped"}}}}, want: "exactly one value"},
-		{name: "sort not selected", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Sort: []projectsignals.DataExploreSortSignal{{Field: "orders.status", Direction: "asc"}}}, want: "not selected"},
-		{name: "incompatible", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Dimensions: []string{"orders.incompatible"}}, want: "no safe relationship path"},
-		{name: "time wrong kind", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Time: &projectsignals.DataExploreTimeSignal{Field: "orders.status", Grain: "month"}}, want: "not a date or timestamp"},
+		{name: "dimension wrong kind", command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Metrics: []exploration.ExplorationMetricRef{{Field: "orders.status"}}}), want: "not a metric"},
+		{name: "filter wrong kind", command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Filters: []exploration.ExplorationFilter{testStringFilter("revenue", "equals", "1")}}), want: "not a dimension"},
+		{name: "sort not selected", command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Sort: []exploration.ExplorationSort{{Field: "orders.status", Direction: "asc"}}}), want: "not selected"},
+		{name: "incompatible", command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.incompatible"}}}), want: "no safe relationship path"},
+		{name: "time wrong kind", command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Time: &exploration.ExplorationTimeSelection{Field: "orders.status", Grain: "month"}}), want: "not a date or timestamp"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := validateRestoredDataExploreState(test.command, projection, nil, compiledModels); err == nil || !strings.Contains(err.Error(), test.want) {
@@ -338,9 +843,7 @@ func TestValidateRestoredDataExploreStateRejectsEmptyMembershipFilters(t *testin
 		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
 		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
 		Fields:         []projectsignals.DataExploreFieldSignal{{ID: "orders.status", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("string")}},
-		Command: projectsignals.DataExploreCommand{
-			SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
-		},
+		Command:        testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
 	}
 	compiled, err := semanticquery.CompileDatasetBindings(&semanticmodel.Model{
 		Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders"}},
@@ -350,10 +853,10 @@ func TestValidateRestoredDataExploreStateRejectsEmptyMembershipFilters(t *testin
 		t.Fatal(err)
 	}
 	for _, operator := range []string{"in", "not_in"} {
-		err := validateRestoredDataExploreState(projectsignals.DataExploreCommand{
-			SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
-			Filters: []projectsignals.DataExploreFilterSignal{{Field: "orders.status", Operator: operator, Values: []string{}}},
-		}, projection, nil, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled})
+		err := validateRestoredDataExploreState(testExplorationCommand(exploration.ExplorationSpec{
+			ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+			Filters: []exploration.ExplorationFilter{testStringFilter("orders.status", operator)},
+		}), projection, nil, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled})
 		if err == nil || !strings.Contains(err.Error(), "at least one value") {
 			t.Fatalf("empty %s filter error = %v, want non-empty arity diagnostic", operator, err)
 		}
@@ -364,9 +867,7 @@ func TestValidateRestoredDataExploreStateRejectsUnavailableTargets(t *testing.T)
 	projection := DataExplorerProjection{
 		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
 		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
-		Command: projectsignals.DataExploreCommand{
-			SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
-		},
+		Command:        testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
 	}
 	compiled, err := semanticquery.CompileDatasetBindings(&semanticmodel.Model{
 		Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders"}},
@@ -380,8 +881,8 @@ func TestValidateRestoredDataExploreStateRejectsUnavailableTargets(t *testing.T)
 		command projectsignals.DataExploreCommand
 		want    string
 	}{
-		{name: "semantic model", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:removed")}, want: "semantic model \"semantic:removed\" is no longer available"},
-		{name: "dataset", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("removed")}, want: "dataset \"removed\" is no longer available"},
+		{name: "semantic model", command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:removed"}), want: "semantic model \"semantic:removed\" is no longer available"},
+		{name: "dataset", command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("removed")}), want: "dataset \"removed\" is no longer available"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := validateRestoredDataExploreState(test.command, projection, nil, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}); err == nil || !strings.Contains(err.Error(), test.want) {
@@ -420,24 +921,24 @@ func TestValidateRestoredDataExploreStateConstrainsFilterDatasetParticipation(t 
 			{ID: "orders.status", Kind: "dimension", Compatible: true},
 			{ID: "combined", Kind: "metric", Compatible: true},
 		},
-		Command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders")},
+		Command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
 	}
-	filter := func(dataset string) []projectsignals.DataExploreFilterSignal {
-		return []projectsignals.DataExploreFilterSignal{{Field: "orders.status", DatasetID: projectsignals.Optional(dataset), Operator: "equals", Values: []string{"paid"}}}
+	filter := func(dataset string) []exploration.ExplorationFilter {
+		f := testStringFilter("orders.status", "equals", "paid")
+		f.DatasetID = projectsignals.Optional(dataset)
+		return []exploration.ExplorationFilter{f}
 	}
-	singleRoot := projectsignals.DataExploreCommand{
-		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Filters: filter("customers"),
-	}
+	singleRoot := testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Filters: filter("customers")})
 	if err := validateRestoredDataExploreState(singleRoot, base, model, compiledModels); err == nil || !strings.Contains(err.Error(), "does not participate") {
 		t.Fatalf("single-root filter dataset error = %v, want participation diagnostic", err)
 	}
 	multiRoot := singleRoot
-	multiRoot.Metrics = []string{"combined"}
+	multiRoot.Spec.Metrics = []exploration.ExplorationMetricRef{{Field: "combined"}}
 	if err := validateRestoredDataExploreState(multiRoot, base, model, compiledModels); err != nil {
 		t.Fatalf("participating multi-root filter dataset rejected: %v", err)
 	}
 	nonParticipating := multiRoot
-	nonParticipating.Filters = filter("other")
+	nonParticipating.Spec.Filters = filter("other")
 	if err := validateRestoredDataExploreState(nonParticipating, base, model, compiledModels); err == nil || !strings.Contains(err.Error(), "does not participate") {
 		t.Fatalf("nonparticipating multi-root filter dataset error = %v, want participation diagnostic", err)
 	}
@@ -469,25 +970,23 @@ func TestValidateRestoredDataExploreStateChecksDeclaredTimeGrains(t *testing.T) 
 			{ID: "created", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("timestamp")},
 			{ID: "orders.created_at", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("timestamp")},
 		},
-		Command: projectsignals.DataExploreCommand{
-			SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
-		},
+		Command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
 	}
 	compiled, err := semanticquery.CompileModel(model)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = validateRestoredDataExploreState(projectsignals.DataExploreCommand{
-		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
-		Time: &projectsignals.DataExploreTimeSignal{Field: "created", Grain: "month"},
-	}, projection, model, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled})
-	if err == nil || !strings.Contains(err.Error(), "does not support grain") {
+	err = validateRestoredDataExploreState(testExplorationCommand(exploration.ExplorationSpec{
+		ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Time: &exploration.ExplorationTimeSelection{Field: "created", Grain: "month"},
+	}), projection, model, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled})
+	if err == nil || !strings.Contains(err.Error(), "grain") {
 		t.Fatalf("time grain validation error = %v, want declared-grain diagnostic", err)
 	}
-	if err := validateRestoredDataExploreState(projectsignals.DataExploreCommand{
-		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
-		Time: &projectsignals.DataExploreTimeSignal{Field: "orders.created_at", Grain: "month"},
-	}, projection, model, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}); err != nil {
+	if err := validateRestoredDataExploreState(testExplorationCommand(exploration.ExplorationSpec{
+		ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Time: &exploration.ExplorationTimeSelection{Field: "orders.created_at", Grain: "month"},
+	}), projection, model, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}); err != nil {
 		t.Fatalf("globally valid grain on physical binding rejected: %v", err)
 	}
 }
@@ -516,12 +1015,9 @@ func TestValidateRestoredDataExploreStateAcceptsSafeRebase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := projectsignals.DataExploreCommand{
-		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
-		Dimensions: []string{"customers.region", "orders.status"},
-	}
+	command := testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("customers"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "customers.region"}, {Field: "orders.status"}}})
 	projection := BuildDataExplorerProjection(assets, project, command, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled})
-	if got := projectsignals.ValueOrZero(projection.Command.DatasetID); got != "orders" {
+	if got := projectsignals.ValueOrZero(projection.Command.Spec.DatasetID); got != "orders" {
 		t.Fatalf("safe rebase dataset = %q, want orders", got)
 	}
 	if err := validateRestoredDataExploreState(command, projection, model, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}); err != nil {

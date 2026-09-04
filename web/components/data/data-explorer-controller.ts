@@ -1,9 +1,9 @@
 import type {
   DataExploreCommand,
-  DataExploreFieldSignal,
   DataExplorerCommand,
-  DataExplorerObjectSignal,
 } from '../../generated/signals'
+import type { ExplorationSpec } from '../../generated/exploration'
+import { explorationSpecFor } from './data-explorer-spec'
 
 const dataExplorerAgentStorageKey = 'leapview-data-explorer-agent-state'
 
@@ -146,20 +146,29 @@ export class DataExplorerSelectionController {
  * reset sequence. The server can therefore safely ignore stale responses.
  */
 export class DataExplorerQueryController {
-  explore(current: DataExploreCommand, next: Partial<DataExploreCommand>, requestNow = false): DataExploreCommand {
+  explore(current: DataExploreCommand, next: Partial<ExplorationSpec>, requestNow = false): DataExploreCommand {
+    const currentSpec = explorationSpecFor(current)
+    const datasetID = Object.prototype.hasOwnProperty.call(next, 'datasetId')
+      ? next.datasetId
+      : currentSpec.datasetId
+    const spec: ExplorationSpec = {
+      ...currentSpec,
+      ...next,
+      schemaVersion: next.schemaVersion ?? currentSpec.schemaVersion ?? 1,
+      modelId: next.modelId ?? currentSpec.modelId ?? '',
+      datasetId: datasetID || undefined,
+      dimensions: [...(next.dimensions ?? currentSpec.dimensions ?? [])],
+      metrics: [...(next.metrics ?? currentSpec.metrics ?? [])],
+      filters: [...(next.filters ?? currentSpec.filters ?? [])],
+      sort: [...(next.sort ?? currentSpec.sort ?? [])],
+      limit: next.limit ?? currentSpec.limit ?? 100,
+    }
     const command: DataExploreCommand = {
       ...current,
-      ...next,
-      semanticModelId: next.semanticModelId ?? current.semanticModelId ?? '',
-      datasetId: next.datasetId ?? current.datasetId ?? '',
-      dimensions: [...(next.dimensions ?? current.dimensions ?? [])],
-      metrics: [...(next.metrics ?? current.metrics ?? [])],
-      filters: [...(next.filters ?? current.filters ?? [])],
-      sort: [...(next.sort ?? current.sort ?? [])],
-      limit: next.limit || current.limit || 100,
-      requestSeq: Math.max(current.requestSeq ?? 0, next.requestSeq ?? 0) + 1,
-      resetVersion: Math.max(current.resetVersion ?? 0, next.resetVersion ?? 0) + 1,
-      columnWidths: next.columnWidths ?? current.columnWidths ?? {},
+      spec,
+      requestSeq: (current.requestSeq ?? 0) + 1,
+      resetVersion: (current.resetVersion ?? 0) + 1,
+      columnWidths: current.columnWidths ?? {},
     }
     // The flag is intentionally accepted for call-site readability. Debounce
     // scheduling belongs to the route because it owns its lifecycle timer.
@@ -168,9 +177,10 @@ export class DataExplorerQueryController {
   }
 
   command(current: DataExplorerCommand, partial: Partial<DataExplorerCommand>): DataExplorerCommand {
+    const explore = partial.explore ?? current.explore
     return {
       mode: partial.mode ?? current.mode ?? 'browse',
-      explore: partial.explore ?? current.explore,
+      explore: explore ? { ...explore, spec: explorationSpecFor(explore) } : undefined,
       objectKey: partial.objectKey ?? current.objectKey ?? '',
       offset: partial.offset ?? current.offset ?? 0,
       limit: partial.limit ?? current.limit ?? 100,
@@ -196,17 +206,4 @@ export function toggleVisibleColumns(columns: string[], key: string, checked: bo
     ? allKeys.filter((candidate) => candidate === key || visible.includes(candidate))
     : visible.filter((candidate) => candidate !== key)
   return next.length === allKeys.length ? [] : next
-}
-
-export function objectDatasetID(object: DataExplorerObjectSignal): string {
-  return object.datasetId?.trim() || object.title.trim()
-}
-
-export function fieldColumnID(field: DataExploreFieldSignal): string {
-  const parts = field.id.split('.')
-  return parts[parts.length - 1] || field.id
-}
-
-export function exploreContextMatchesObject(command: DataExploreCommand, object: DataExplorerObjectSignal): boolean {
-  return command.semanticModelId === (object.semanticModelId ?? '')
 }

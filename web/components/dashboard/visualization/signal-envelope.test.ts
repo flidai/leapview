@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import type { DashboardVisualizationSignal } from '../../../generated/signals'
+import { currentVisualizationSchemaVersion } from '../../../generated/visualization/schema-version'
 import { DashboardVisualizationSignalDecoder } from './signal-envelope'
 
 test('dashboard visualization signals keep large frames opaque and reconstruct canonical envelopes', () => {
@@ -14,6 +15,7 @@ test('dashboard visualization signals keep large frames opaque and reconstruct c
 
   expect(signal.dataState.schemaVersion).toBe(1)
   expect(typeof signal.dataState.payload).toBe('string')
+  expect(envelope?.schemaVersion).toBe(currentVisualizationSchemaVersion)
   expect((envelope?.dataState as any).datasets[0].rows).toHaveLength(20_000)
   expect(envelope).not.toHaveProperty('filterRevision')
   expect(envelope).not.toHaveProperty('interactionRevision')
@@ -61,7 +63,7 @@ function visualizationSignal(state: Record<string, unknown>): DashboardVisualiza
   const dataRevision = state.dataRevision as number
   const generation = state.generation as number
   return {
-    schemaVersion: 9,
+    schemaVersion: 4,
     visualID: 'map',
     rendererID: 'maplibre',
     specRevision: 'spec-1',

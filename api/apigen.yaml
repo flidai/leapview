@@ -84,6 +84,10 @@ targets:
     ir_out: gen/ui-signals-ir.json
     ts_out: ../web/generated/signals/index.ts
     contract_imports:
+      LeapViewExploration:
+        go_package: github.com/flidai/leapview/internal/analytics/exploration
+        go_alias: exploration
+        typescript_module: ../exploration
       LeapViewVisualization:
         go_package: github.com/flidai/leapview/internal/dashboard/visualization/ir
         go_alias: visualizationir
@@ -97,6 +101,15 @@ targets:
     go_models_package: ir
     ts_out: ../web/generated/visualization/index.ts
     json_schema_out: gen/visualization.schema.json
+  - name: exploration-contracts
+    kind: contracts
+    typespec_dir: .
+    typespec_entrypoint: exploration/main.tsp
+    ir_out: gen/exploration-ir.json
+    go_models_out: ../internal/analytics/exploration/models.gen.go
+    go_models_package: exploration
+    ts_out: ../web/generated/exploration/index.ts
+    json_schema_out: gen/exploration.schema.json
   - name: dashboard-contracts
     kind: contracts
     typespec_dir: .

@@ -14,9 +14,9 @@ const root = join(projectRoot, '.tmp/data-explorer-test')
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/') {
+    if (url.pathname === '/' || url.pathname === '/explore') {
       response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
+      response.end(testDocument(url.pathname === '/explore'))
       return
     }
     const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
@@ -343,8 +343,8 @@ test('data explorer distinguishes same-title aliases with dataset subtitles', as
         },
       ]
       const exploreCommand = {
-        semanticModelId: 'semantic:sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [],
-        limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {},
+        spec: { schemaVersion: 1, modelId: 'semantic:sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 },
+        requestSeq: 0, resetVersion: 0, columnWidths: {},
       }
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({
@@ -399,7 +399,7 @@ test('data explorer prompts for a selection when objects are available', async (
           }],
           preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
           command: { offset: 0, limit: 100, start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
-          explore: { command: { dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
+          explore: { command: { spec: { schemaVersion: 1, modelId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 }, requestSeq: 0, resetVersion: 0, columnWidths: {} }, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
           warnings: [],
         },
       })
@@ -417,6 +417,40 @@ test('data explorer prompts for a selection when objects are available', async (
   }
 })
 
+test('data explorer tolerates a partially hydrated legacy exploration command', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+
+    const rendered = await page.evaluate(async () => {
+      const element = document.createElement('lv-data-explorer') as any
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const object = { key: 'model:model:orders', resourceId: 'model:orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columnCount: 1, columns: [{ key: 'status', label: 'Status', type: 'string' }] }
+      const legacyExploreCommand = { modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [object], selectedKey: object.key, selectedObject: object,
+          command: { mode: 'explore', objectKey: object.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: legacyExploreCommand },
+          explore: { command: legacyExploreCommand, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } },
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} }, warnings: [],
+        },
+      })
+      document.body.append(element)
+      for (let index = 0; index < 10; index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      return element.shadowRoot?.querySelector('.main')?.textContent?.replace(/\s+/g, ' ').trim()
+    })
+
+    expect(rendered).toContain('Select at least one field')
+  } finally {
+    await page.close()
+  }
+})
+
 test('data explorer builds a governed semantic exploration and filter command', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
@@ -429,8 +463,9 @@ test('data explorer builds a governed semantic exploration and filter command', 
         kind: 'data', title: 'Data Explorer', description: 'Inspect or explore data.', tabs: [],
       }
       const exploreCommand = {
-        semanticModelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], metrics: ['revenue'],
-        filters: [], sort: [{ field: 'revenue', direction: 'desc' }], limit: 100, requestSeq: 1, resetVersion: 1, columnWidths: {},
+        spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [{ field: 'revenue' }],
+          filters: [], sort: [{ field: 'revenue', direction: 'desc' }], limit: 100 },
+        requestSeq: 1, resetVersion: 1, columnWidths: {},
       }
       const selectedObject = {
         key: 'model:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'orders',
@@ -438,6 +473,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
         columns: [
           { key: 'order_id', label: 'Order ID', type: 'string' },
           { key: 'status', label: 'Status', type: 'string' },
+          { key: 'order_status', label: 'Order status', type: 'string' },
         ],
       }
       const customersObject = {
@@ -465,6 +501,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
           fields: [
             { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: false },
             { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
+            { id: 'order_status', label: 'Order status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: false },
             { id: 'customers.customer_id', label: 'Customer ID', kind: 'dimension', datasetId: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
             { id: 'customers.state', label: 'State', kind: 'dimension', datasetId: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
             { id: 'items.sku', label: 'SKU', kind: 'dimension', datasetId: 'items', type: 'string', compatible: false, compatibilityReason: 'Not available from Orders because no grain-preserving relationship path reaches Items.', selected: false },
@@ -511,9 +548,41 @@ test('data explorer builds a governed semantic exploration and filter command', 
       applyButton.click()
       await element.updateComplete
       await new Promise((resolve) => setTimeout(resolve, 380))
+      const physicalFilter = commands.at(-1)?.explore?.spec?.filters?.at(-1)
+
+      const semanticRow = Array.from(root.querySelectorAll<HTMLElement>('.column-item')).find((row) => row.textContent?.includes('Order status'))
+      const semanticFilterButton = semanticRow?.querySelector<HTMLButtonElement>('.field-action')
+      if (!semanticFilterButton) throw new Error(`Conformed dimension filter button was not rendered: ${root.textContent}`)
+      semanticFilterButton.click()
+      await element.updateComplete
+      const semanticFilterInput = root.querySelector<HTMLInputElement>('.filter-editor label:nth-child(3) input')!
+      semanticFilterInput.value = 'paid'
+      semanticFilterInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      const semanticApplyButton = Array.from(root.querySelectorAll<HTMLButtonElement>('.filter-editor .text-button')).find((button) => button.textContent?.trim() === 'Apply')
+      if (!semanticApplyButton) throw new Error(`Apply conformed filter button was not rendered: ${root.textContent}`)
+      semanticApplyButton.click()
+      await element.updateComplete
+      await new Promise((resolve) => setTimeout(resolve, 380))
+      const semanticFilter = commands.at(-1)?.explore?.spec?.filters?.find((filter: any) => filter.field === 'order_status')
 
       const table = root.querySelector('lv-data-explore-table') as any
       await table.updateComplete
+      const exploreRequestSeqBeforeWidth = table.command.requestSeq
+      table.dispatchEvent(new CustomEvent('lv-data-explore-table-command', {
+        bubbles: true, composed: true, detail: { columnWidths: { revenue: 240 } },
+      }))
+      await element.updateComplete
+      const nestedWidthCommand = commands.at(-1)
+      const windowedTable = table.shadowRoot.querySelector('lv-windowed-table')
+      windowedTable.dispatchEvent(new CustomEvent('lv-windowed-table-request', {
+        bubbles: true, composed: true, detail: { start: 0, sort: { key: 'status', direction: 'asc' } },
+      }))
+      await element.updateComplete
+      await new Promise((resolve) => setTimeout(resolve, 380))
+      const derivedSortCommand = commands.at(-1)
+      table.command = { ...table.command, spec: { ...table.command.spec, sort: [{ field: 'orders.status', direction: 'asc' }] } }
+      await table.updateComplete
+      const tableSortPayload = table.shadowRoot.querySelector('lv-windowed-table')?.table?.sort
       const stateField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('State'))!
       const skuField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('SKU'))!
       skuField.click()
@@ -529,7 +598,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
       const unavailableField = { disabled: skuField.disabled, text: skuField.textContent?.replace(/\s+/g, ' ').trim(), title: skuField.title }
 
       const customerCommand = {
-        ...exploreCommand, datasetId: 'customers', dimensions: ['customers.state'], metrics: [], sort: [], requestSeq: 100, resetVersion: 100,
+        ...exploreCommand, spec: { ...exploreCommand.spec, datasetId: 'customers', dimensions: [{ field: 'customers.state' }], metrics: [], sort: [] }, requestSeq: 100, resetVersion: 100,
       }
       const customerExplorer = {
         ...dataExplorer,
@@ -561,10 +630,16 @@ test('data explorer builds a governed semantic exploration and filter command', 
       const rebaseCommand = commands.at(-1)?.explore
       return {
         ...initialState,
+        physicalFilter,
+        semanticFilter,
         unavailableField,
         rebaseField: { disabled: rebaseField.disabled, text: rebaseField.textContent?.replace(/\s+/g, ' ').trim(), title: rebaseField.title },
         rebaseCommand,
         tableSelectionCommand,
+        nestedWidthCommand,
+        exploreRequestSeqBeforeWidth,
+        derivedSortCommand,
+        tableSortPayload,
         commands,
       }
     })
@@ -576,6 +651,9 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.chips.join(' ')).toContain('Revenue')
     expect(state.grain).toContain('Grain: order_id')
     expect(state.tableRows).toEqual([{ status: 'delivered', revenue: 1200 }])
+    expect(state.physicalFilter).toMatchObject({ field: 'orders.status', datasetId: 'orders' })
+    expect(state.semanticFilter).toMatchObject({ field: 'order_status' })
+    expect(state.semanticFilter).not.toHaveProperty('datasetId')
     expect(state.relatedField.disabled).toBe(false)
     expect(state.relatedField.text).toContain('related')
     expect(state.relatedField.title).toContain('orders_customers')
@@ -585,14 +663,20 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.rebaseField.disabled).toBe(false)
     expect(state.rebaseField.text).toContain('changes grain')
     expect(state.rebaseField.title).toContain('change grain from Customers to Orders')
-    expect(state.rebaseCommand.datasetId).toBe('customers')
-    expect(state.rebaseCommand.dimensions).toEqual(['customers.state', 'orders.status'])
-    expect(state.tableSelectionCommand.datasetId).toBe('customers')
-    expect(state.tableSelectionCommand.dimensions).toEqual(['customers.customer_id', 'customers.state'])
-    expect(state.tableSelectionCommand.metrics).toEqual([])
-    expect(state.commands.some((command) => command.explore?.dimensions?.includes('items.sku'))).toBe(false)
-    expect(state.commands.some((command) => command.mode === 'explore' && command.explore?.dimensions?.includes('orders.order_id'))).toBe(true)
-    expect(state.commands.some((command) => command.explore?.filters?.[0]?.field === 'orders.status' && command.explore.filters[0].values[0] === 'delivered')).toBe(true)
+    expect(state.rebaseCommand.spec.datasetId).toBe('customers')
+    expect(state.rebaseCommand.spec.dimensions.map((field: any) => field.field)).toEqual(['customers.state', 'orders.status'])
+    expect(state.tableSelectionCommand.spec.datasetId).toBe('customers')
+    expect(state.tableSelectionCommand.spec.dimensions.map((field: any) => field.field)).toEqual(['customers.customer_id', 'customers.state'])
+    expect(state.tableSelectionCommand.spec.metrics).toEqual([])
+    expect(state.nestedWidthCommand.explore.columnWidths).toEqual({ revenue: 240 })
+    expect(state.nestedWidthCommand.columnWidths).toEqual({})
+    expect(state.nestedWidthCommand.explore.requestSeq).toBe(state.exploreRequestSeqBeforeWidth)
+    expect(state.nestedWidthCommand.requestSeq).toBe(0)
+    expect(state.derivedSortCommand.explore.spec.sort).toEqual([{ field: 'orders.status', direction: 'asc' }])
+    expect(state.tableSortPayload).toEqual({ key: 'status', column: 'status', direction: 'asc' })
+    expect(state.commands.some((command) => command.explore?.spec?.dimensions?.some((field: any) => field.field === 'items.sku'))).toBe(false)
+    expect(state.commands.some((command) => command.mode === 'explore' && command.explore?.spec?.dimensions?.some((field: any) => field.field === 'orders.order_id'))).toBe(true)
+    expect(state.commands.some((command) => command.explore?.spec?.filters?.some((filter: any) => filter.field === 'orders.status' && filter.expression?.value?.value === 'delivered'))).toBe(true)
   } finally {
     await page.close()
   }
@@ -630,8 +714,8 @@ test('data preview and semantic query failures expose retry and reset actions', 
         columns: [{ key: 'status', label: 'Status', type: 'string' }],
       }
       const exploreCommand = {
-        semanticModelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], metrics: [], filters: [], sort: [],
-        limit: 100, requestSeq: 4, resetVersion: 3, columnWidths: {},
+        spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 },
+        requestSeq: 4, resetVersion: 3, columnWidths: {},
       }
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({
@@ -670,14 +754,104 @@ test('data preview and semantic query failures expose retry and reset actions', 
     expect(state.previewCommands[0]).toMatchObject({ objectKey: 'orders', requestSeq: 8, resetVersion: 2 })
     expect(state.previewCommands[1]).toMatchObject({ objectKey: 'orders', offset: 0, start: 0, block: 'all', requestSeq: 8, resetVersion: 3, sort: {} })
     expect(state.exploreAlert).toContain('Query service is unavailable.')
-    expect(state.exploreCommands[0].explore).toMatchObject({ semanticModelId: 'sales', datasetId: 'orders' })
-    expect(state.exploreCommands[1].explore).toMatchObject({ dimensions: [], metrics: [], filters: [], sort: [] })
+    expect(state.exploreCommands[0].explore.spec).toMatchObject({ modelId: 'sales', datasetId: 'orders' })
+    expect(state.exploreCommands[1].explore.spec).toMatchObject({ dimensions: [], metrics: [], filters: [], sort: [] })
   } finally {
     await page.close()
   }
 })
 
-function testDocument() {
+test('non-embedded explorer reloads the selected Back/Forward entries exactly once', { timeout: 15_000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const reloadURLs: string[] = []
+  const onRequest = (request: import('@playwright/test').Request) => {
+    const url = new URL(request.url())
+    if (url.pathname === '/explore' && url.search) reloadURLs.push(request.url())
+  }
+  page.on('request', onRequest)
+  try {
+    await page.goto(`${baseURL}/explore`)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+
+    const historyState = await page.evaluate(async () => {
+      const object = (table: string) => ({
+        key: `model:model:sales.${table}`,
+        resourceId: `model:sales.${table}`,
+        layer: 'model', semanticModelId: 'sales', datasetId: table, title: table, columnCount: 1,
+        columns: [{ key: 'status', label: 'Status', type: 'string' }],
+      })
+      const first = object('orders')
+      const second = object('customers')
+      const third = object('products')
+      const exploreCommand = {
+        spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 },
+        requestSeq: 0, resetVersion: 0, columnWidths: {},
+      }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [first, second, third], selectedKey: first.key, selectedObject: first,
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, blocks: {}, sort: {} },
+          command: { mode: 'browse', objectKey: first.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, },
+          explore: {
+            command: exploreCommand, semanticModels: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }] }],
+            datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }], fields: [],
+            result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
+          }, warnings: [],
+        },
+      })
+      const explorer = document.querySelector('lv-data-explorer') as any
+      for (let index = 0; index < 20 && explorer.shadowRoot?.querySelectorAll('.object-button').length !== 3; index += 1) {
+        await explorer.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const buttons = Array.from(explorer.shadowRoot.querySelectorAll<HTMLButtonElement>('.object-button'))
+      buttons.find((button) => button.textContent?.includes('customers'))?.click()
+      buttons.find((button) => button.textContent?.includes('products'))?.click()
+      return {
+        first: first.key, second: second.key, third: third.key,
+        current: new URL(window.location.href).searchParams.get('object'),
+      }
+    })
+
+    expect(historyState.current).toBe(historyState.third)
+    expect(reloadURLs).toHaveLength(0)
+
+    const backRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url())
+      return url.pathname === '/explore' && url.search
+    })
+    const backLoad = page.waitForEvent('load')
+    const backNavigation = page.goBack({ waitUntil: 'commit' })
+    const [backDocument] = await Promise.all([backRequest, backNavigation, backLoad])
+    expect(backDocument.isNavigationRequest()).toBe(true)
+    expect(backDocument.resourceType()).toBe('document')
+    await backDocument.response()
+    await page.waitForFunction(() => customElements.get('lv-data-explorer') && document.querySelector('lv-data-explorer'))
+    expect(new URL(page.url()).searchParams.get('object')).toBe(historyState.second)
+    expect(reloadURLs).toHaveLength(1)
+
+    const forwardRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url())
+      return url.pathname === '/explore' && url.search
+    })
+    const forwardLoad = page.waitForEvent('load')
+    const forwardNavigation = page.goForward({ waitUntil: 'commit' })
+    const [forwardDocument] = await Promise.all([forwardRequest, forwardNavigation, forwardLoad])
+    expect(forwardDocument.isNavigationRequest()).toBe(true)
+    expect(forwardDocument.resourceType()).toBe('document')
+    await forwardDocument.response()
+    await page.waitForFunction(() => customElements.get('lv-data-explorer') && document.querySelector('lv-data-explorer'))
+    expect(new URL(page.url()).searchParams.get('object')).toBe(historyState.third)
+    expect(reloadURLs).toHaveLength(2)
+  } finally {
+    page.off('request', onRequest)
+    await page.close()
+  }
+})
+
+function testDocument(withExplorer = false) {
   return `
     <!doctype html>
     <html>
@@ -690,6 +864,7 @@ function testDocument() {
       </head>
       <body>
         <main data-signals="{}"></main>
+        ${withExplorer ? '<lv-data-explorer></lv-data-explorer>' : ''}
         <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
         <script type="module" src="/data-explorer-under-test.js"></script>
       </body>

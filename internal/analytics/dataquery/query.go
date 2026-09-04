@@ -108,6 +108,10 @@ type SpatialMetadata struct {
 type Field struct {
 	Field string
 	Alias string
+	// Grain is an optional temporal grain for a selected semantic dimension.
+	// It allows canonical exploration specs to carry multiple independently
+	// grained time dimensions through the governed query boundary.
+	Grain string
 }
 
 type Time struct {

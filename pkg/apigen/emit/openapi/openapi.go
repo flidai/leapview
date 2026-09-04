@@ -752,6 +752,12 @@ func (r *exampleResolver) deriveSchemaExample(schema ir.Schema) any {
 }
 
 func deriveInlineSchemaRefExample(ref ir.SchemaRef, resolver *exampleResolver) any {
+	if ref.Const != nil {
+		if ref.Type == "integer" {
+			return int64(*ref.Const)
+		}
+		return *ref.Const
+	}
 	switch ref.Type {
 	case "array":
 		if ref.Items == nil {
@@ -817,7 +823,7 @@ func exampleStringForFormat(format string) string {
 }
 
 func isPureRef(ref ir.SchemaRef) bool {
-	return ref.Ref != "" && ref.Type == "" && ref.Format == "" && len(ref.Enum) == 0 && ref.Minimum == nil && ref.Maximum == nil && ref.MinLength == nil && ref.MaxLength == nil && ref.Pattern == "" && ref.Items == nil && ref.AdditionalProperties == nil && ref.PropertyNames == nil
+	return ref.Ref != "" && ref.Type == "" && ref.Format == "" && ref.Const == nil && len(ref.Enum) == 0 && ref.Minimum == nil && ref.Maximum == nil && ref.MinLength == nil && ref.MaxLength == nil && ref.MinItems == nil && ref.MaxItems == nil && ref.Pattern == "" && ref.Items == nil && ref.AdditionalProperties == nil && ref.PropertyNames == nil
 }
 
 func cloneExampleValue(value any) any {
@@ -847,7 +853,7 @@ func schemaRefNode(ref ir.SchemaRef) *yaml.Node {
 		appendKeyValue(node, "$ref", stringNode("#/components/schemas/"+ref.Ref))
 		return node
 	}
-	if ref.Ref == "" && ref.Type == "" && ref.Format == "" && ref.Pattern == "" && ref.MinProperties == nil && ref.Items == nil && ref.AdditionalProperties == nil && ref.PropertyNames == nil {
+	if ref.Ref == "" && ref.Type == "" && ref.Format == "" && ref.Const == nil && ref.Pattern == "" && ref.MinProperties == nil && ref.MinItems == nil && ref.MaxItems == nil && ref.Items == nil && ref.AdditionalProperties == nil && ref.PropertyNames == nil {
 		return mappingNode()
 	}
 
@@ -860,6 +866,11 @@ func schemaRefNode(ref ir.SchemaRef) *yaml.Node {
 	}
 	if ref.Format != "" {
 		appendKeyValue(node, "format", stringNode(ref.Format))
+	}
+	if ref.Const != nil {
+		enum := sequenceNode()
+		enum.Content = append(enum.Content, floatNode(*ref.Const))
+		appendKeyValue(node, "enum", enum)
 	}
 	if len(ref.Enum) > 0 {
 		enum := sequenceNode()
@@ -879,6 +890,12 @@ func schemaRefNode(ref ir.SchemaRef) *yaml.Node {
 	}
 	if ref.MaxLength != nil {
 		appendKeyValue(node, "maxLength", intNode(*ref.MaxLength))
+	}
+	if ref.MinItems != nil {
+		appendKeyValue(node, "minItems", intNode(*ref.MinItems))
+	}
+	if ref.MaxItems != nil {
+		appendKeyValue(node, "maxItems", intNode(*ref.MaxItems))
 	}
 	if ref.MinProperties != nil {
 		appendKeyValue(node, "minProperties", intNode(*ref.MinProperties))

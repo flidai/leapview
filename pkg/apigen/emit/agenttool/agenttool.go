@@ -135,7 +135,7 @@ func buildInput(doc ir.Document, endpoint ir.Endpoint, responseContentType strin
 		}
 		bindings = append(bindings, binding)
 		if mode == "model" {
-			property := schemaRefJSON(doc, source.Schema, map[string]bool{})
+			property := portableInputSchemaJSON(doc, source.Schema)
 			if description != "" {
 				property["description"] = description
 			}
@@ -155,6 +155,71 @@ func buildInput(doc ir.Document, endpoint ir.Endpoint, responseContentType strin
 		return nil, nil, fmt.Errorf("encode input schema: %w", err)
 	}
 	return bindings, encoded, nil
+}
+
+// portableInputSchemaJSON projects canonical JSON Schema onto the subset
+// accepted by the agent provider. Binding schemas retain the canonical
+// constraints for server-side validation, while provider schemas express
+// numeric constants as one-value enums and omit unsupported cardinality
+// keywords.
+func portableInputSchemaJSON(doc ir.Document, ref ir.SchemaRef) map[string]any {
+	return projectPortableInputSchema(schemaRefJSON(doc, ref, map[string]bool{})).(map[string]any)
+}
+
+func projectPortableInputSchema(value any) any {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+	projected := make(map[string]any, len(object))
+	var constant any
+	hasConstant := false
+	for key, child := range object {
+		switch key {
+		case "minItems", "maxItems", "minProperties":
+			continue
+		case "const":
+			// Defer setting enum until after the loop so a canonical enum
+			// cannot override the const projection.
+			constant, hasConstant = child, true
+		case "properties":
+			properties, ok := child.(map[string]any)
+			if !ok {
+				projected[key] = child
+				continue
+			}
+			projectedProperties := make(map[string]any, len(properties))
+			for name, property := range properties {
+				projectedProperties[name] = projectPortableInputSchema(property)
+			}
+			projected[key] = projectedProperties
+		case "items", "additionalProperties", "propertyNames":
+			// These keywords contain one schema, while boolean
+			// additionalProperties is already portable as-is.
+			if _, ok := child.(map[string]any); ok {
+				projected[key] = projectPortableInputSchema(child)
+			} else {
+				projected[key] = child
+			}
+		case "oneOf", "allOf":
+			branches, ok := child.([]any)
+			if !ok {
+				projected[key] = child
+				continue
+			}
+			projectedBranches := make([]any, len(branches))
+			for index, branch := range branches {
+				projectedBranches[index] = projectPortableInputSchema(branch)
+			}
+			projected[key] = projectedBranches
+		default:
+			projected[key] = child
+		}
+	}
+	if hasConstant {
+		projected["enum"] = []any{constant}
+	}
+	return projected
 }
 
 func buildOutput(doc ir.Document, endpoint ir.Endpoint) (runtime.Output, json.RawMessage, string, error) {
@@ -234,18 +299,22 @@ func projectionKind(doc ir.Document, ref ir.SchemaRef) (string, ir.SchemaRef) {
 }
 
 func valueSchema(doc ir.Document, ref ir.SchemaRef) runtime.ValueSchema {
+	result := runtime.ValueSchema{
+		Type: ref.Type, Format: ref.Format, Const: ref.Const, Enum: append([]string(nil), ref.Enum...),
+		Minimum: ref.Minimum, Maximum: ref.Maximum, MinLength: ref.MinLength, MaxLength: ref.MaxLength,
+		MinItems: ref.MinItems, MaxItems: ref.MaxItems,
+		AdditionalProperties: ref.AdditionalProperties != nil,
+	}
 	if schema, ok := concreteSchema(doc, ref); ok {
-		result := runtime.ValueSchema{Type: schema.Type, Enum: append([]string(nil), schema.Enum...)}
+		result.Type = schema.Type
+		if len(result.Enum) == 0 {
+			result.Enum = append([]string(nil), schema.Enum...)
+		}
 		if schema.Items != nil {
 			item := valueSchema(doc, *schema.Items)
 			result.Items = &item
 		}
 		return result
-	}
-	result := runtime.ValueSchema{
-		Type: ref.Type, Format: ref.Format, Enum: append([]string(nil), ref.Enum...),
-		Minimum: ref.Minimum, Maximum: ref.Maximum, MinLength: ref.MinLength, MaxLength: ref.MaxLength,
-		AdditionalProperties: ref.AdditionalProperties != nil,
 	}
 	if ref.Items != nil {
 		item := valueSchema(doc, *ref.Items)
@@ -255,6 +324,7 @@ func valueSchema(doc ir.Document, ref ir.SchemaRef) runtime.ValueSchema {
 }
 
 func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[string]any {
+	out := map[string]any{}
 	if ref.Ref != "" {
 		name, _ := ir.NormalizedSchemaRefName(ref)
 		if seen[name] {
@@ -262,13 +332,13 @@ func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[
 		}
 		seen[name] = true
 		schema, _ := ir.ResolveSchema(doc, ref)
-		out := schemaJSON(doc, schema, seen)
+		out = schemaJSON(doc, schema, seen)
 		delete(seen, name)
-		return out
-	}
-	out := map[string]any{}
-	if ref.Type != "" {
+	} else if ref.Type != "" {
 		out["type"] = ref.Type
+	}
+	if ref.Const != nil {
+		out["const"] = *ref.Const
 	}
 	if len(ref.Enum) > 0 {
 		out["enum"] = ref.Enum
@@ -284,6 +354,12 @@ func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[
 	}
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
+	}
+	if ref.MinItems != nil {
+		out["minItems"] = *ref.MinItems
+	}
+	if ref.MaxItems != nil {
+		out["maxItems"] = *ref.MaxItems
 	}
 	if ref.MinProperties != nil {
 		out["minProperties"] = *ref.MinProperties
@@ -397,6 +473,9 @@ func valueSchemaJSON(schema runtime.ValueSchema) map[string]any {
 	if schema.Type != "" {
 		out["type"] = schema.Type
 	}
+	if schema.Const != nil {
+		out["const"] = *schema.Const
+	}
 	if len(schema.Enum) > 0 {
 		out["enum"] = schema.Enum
 	}
@@ -411,6 +490,12 @@ func valueSchemaJSON(schema runtime.ValueSchema) map[string]any {
 	}
 	if schema.MaxLength != nil {
 		out["maxLength"] = *schema.MaxLength
+	}
+	if schema.MinItems != nil {
+		out["minItems"] = *schema.MinItems
+	}
+	if schema.MaxItems != nil {
+		out["maxItems"] = *schema.MaxItems
 	}
 	if schema.Items != nil {
 		out["items"] = valueSchemaJSON(*schema.Items)

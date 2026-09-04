@@ -2,10 +2,15 @@ package http
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
@@ -55,6 +60,9 @@ func normalizeDataExplorerCommand(command projectsignals.DataExplorerCommand) pr
 	command.Sort = dataExplorerSortForColumns(command.Sort, command.VisibleColumns)
 	if command.Mode == nil || strings.TrimSpace(*command.Mode) == "" {
 		command.Mode = projectsignals.Pointer("browse")
+	}
+	if command.Explore != nil {
+		command.Explore.Spec = normalizeExplorationSpec(command.Explore.Spec)
 	}
 	return command
 }
@@ -237,58 +245,84 @@ func dataExplorerRows(rows []dataquery.Row) []map[string]any {
 	return out
 }
 
-func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, command projectsignals.DataExploreCommand, fields []projectsignals.DataExploreFieldSignal) (projectsignals.DataExploreCommand, projectsignals.DataExploreResultSignal) {
+func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, command projectsignals.DataExploreCommand, fields []projectsignals.DataExploreFieldSignal, model *semanticmodel.Model) (projectsignals.DataExploreCommand, projectsignals.DataExploreResultSignal) {
+	spec := normalizeExplorationSpec(command.Spec)
 	resultSignal := projectsignals.DataExploreResultSignal{
 		Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}, RequestSeq: command.RequestSeq,
 	}
-	if command.Limit <= 0 {
-		command.Limit = dataExplorerDefaultLimit
+	command.Spec = spec
+	if !explorationSpecIsEmpty(spec) {
+		if err := exploration.ValidateShape(&spec); err != nil {
+			resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
+			return command, resultSignal
+		}
 	}
-	if command.Limit > dataExplorerMaximumLimit {
-		command.Limit = dataExplorerMaximumLimit
+	if spec.Pivot != nil {
+		// Pivot changes the result shape and cannot be represented by the
+		// existing aggregate executor. Do not silently execute the non-pivot
+		// query in its place, including for a pivot-only selection.
+		resultSignal.Error = projectsignals.Pointer("pivot exploration execution is not supported")
+		return command, resultSignal
 	}
+	state := dataExploreStateFromSpec(spec)
 	fieldByID := make(map[string]projectsignals.DataExploreFieldSignal, len(fields))
 	for _, field := range fields {
 		fieldByID[field.ID] = field
 	}
-	command.Dimensions = validExplorerFields(command.Dimensions, "dimension", fieldByID)
-	command.Metrics = validExplorerFields(command.Metrics, "metric", fieldByID)
-	command.Filters = validExplorerFilters(command.Filters, fieldByID)
-	command.Sort = validExplorerSort(command.Sort, command)
-	if len(command.Dimensions) == 0 && len(command.Metrics) == 0 && command.Time == nil {
+	if err := validateExplorerProjectedSpec(spec, fieldByID); err != nil {
+		resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
+		return command, resultSignal
+	}
+	state.Dimensions = validExplorerFields(state.Dimensions, "dimension", fieldByID)
+	state.Metrics = validExplorerFields(state.Metrics, "metric", fieldByID)
+	state.Sort = validExplorerSort(state.Sort, state, explorationSpecSortAliases(spec))
+	command.Spec = explorationSpecWithState(spec, state)
+	spec = command.Spec
+	if !explorationSpecIsEmpty(spec) {
+		if err := exploration.ValidateAgainstModel(model, &spec); err != nil {
+			resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
+			return command, resultSignal
+		}
+	}
+	if len(state.Dimensions) == 0 && len(state.Metrics) == 0 && spec.Time == nil {
 		return command, resultSignal
 	}
 	if executor == nil {
 		resultSignal.Error = projectsignals.Pointer("governed exploration execution is unavailable")
 		return command, resultSignal
 	}
-	semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(command.SemanticModelID))
-	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
-	clearTarget := explorerCommandHasMultiRootMetric(command.Metrics, fieldByID)
-	if semanticModelID == "" || datasetID == "" {
+	modelID := strings.TrimSpace(spec.ModelID)
+	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(spec.DatasetID))
+	clearTarget := explorerCommandHasMultiRootMetric(state.Metrics, fieldByID)
+	if modelID == "" || datasetID == "" {
 		resultSignal.Error = projectsignals.Pointer("semantic exploration target is incomplete")
 		return command, resultSignal
 	}
-	aliases := explorerQueryAliases(command.Dimensions, command.Metrics)
-	dimensions := make([]dataquery.Field, 0, len(command.Dimensions))
-	for _, field := range command.Dimensions {
-		dimensions = append(dimensions, dataquery.Field{Field: field, Alias: aliases[field]})
-	}
-	metrics := make([]dataquery.Field, 0, len(command.Metrics))
-	for _, field := range command.Metrics {
-		metrics = append(metrics, dataquery.Field{Field: field, Alias: aliases[field]})
-	}
-	filters := make([]dataquery.Filter, 0, len(command.Filters))
-	for _, filter := range command.Filters {
-		values := make([]any, 0, len(filter.Values))
-		for _, value := range filter.Values {
-			values = append(values, value)
+	aliases := explorerSpecQueryAliases(spec)
+	dimensions := make([]dataquery.Field, 0, len(spec.Dimensions))
+	timeDecoratesDimension := false
+	for _, field := range spec.Dimensions {
+		alias := projectsignals.ValueOrZero(field.Alias)
+		grain := string(projectsignals.ValueOrZero(field.Grain))
+		if spec.Time != nil && field.Field == spec.Time.Field {
+			timeDecoratesDimension = true
+			alias = firstExplorerNonEmpty(alias, projectsignals.ValueOrZero(spec.Time.Alias))
+			grain = firstExplorerNonEmpty(grain, string(spec.Time.Grain))
 		}
-		filters = append(filters, dataquery.Filter{Field: filter.Field, Dataset: projectsignals.ValueOrZero(filter.DatasetID), Operator: filter.Operator, Values: values})
+		dimensions = append(dimensions, dataquery.Field{Field: field.Field, Alias: firstExplorerNonEmpty(alias, aliases[field.Field]), Grain: string(grain)})
 	}
-	sortSpec := make([]dataquery.Sort, 0, len(command.Sort))
-	for _, sortSignal := range command.Sort {
-		sortSpec = append(sortSpec, dataquery.Sort{Field: sortSignal.Field, Direction: sortSignal.Direction})
+	metrics := make([]dataquery.Field, 0, len(spec.Metrics))
+	for _, field := range spec.Metrics {
+		metrics = append(metrics, dataquery.Field{Field: field.Field, Alias: firstExplorerNonEmpty(projectsignals.ValueOrZero(field.Alias), aliases[field.Field])})
+	}
+	filters, err := lowerExplorationFilters(spec, fieldByID)
+	if err != nil {
+		resultSignal.Error = projectsignals.Pointer(err.Error())
+		return command, resultSignal
+	}
+	sortSpec := make([]dataquery.Sort, 0, len(spec.Sort))
+	for _, sortSignal := range spec.Sort {
+		sortSpec = append(sortSpec, dataquery.Sort{Field: sortSignal.Field, Direction: string(sortSignal.Direction)})
 	}
 	// A metric with multiple physical roots is not owned by the selected
 	// browser dataset. Leave the target unscoped so the governed planner can
@@ -297,13 +331,13 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	if clearTarget {
 		queryTarget = ""
 	}
-	query := dataquery.SemanticAggregate(semanticModelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(command.Limit)+1)
-	if command.Time != nil {
-		query.Time = dataquery.Time{Field: command.Time.Field, Grain: command.Time.Grain, Alias: projectsignals.ValueOrZero(command.Time.Alias)}
+	query := dataquery.SemanticAggregate(modelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(spec.Limit)+1)
+	if spec.Time != nil && !timeDecoratesDimension {
+		query.Time = dataquery.Time{Field: spec.Time.Field, Grain: string(spec.Time.Grain), Alias: projectsignals.ValueOrZero(spec.Time.Alias)}
 	}
 	query = query.WithMetadata(dataquery.Metadata{
 		ProjectID: projectID, Surface: dataquery.SurfaceDataExplorer, Operation: dataquery.OperationSemanticExplore,
-		ObjectType: "semantic_dataset", ObjectID: semanticModelID + ":" + datasetID,
+		ObjectType: "semantic_dataset", ObjectID: modelID + ":" + datasetID,
 	})
 	executed, err := executor.ExecuteDataQuery(ctx, query)
 	if err != nil {
@@ -315,9 +349,9 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		return command, resultSignal
 	}
 	rows := executed.Rows
-	truncated := int64(len(rows)) > command.Limit
+	truncated := int64(len(rows)) > int64(spec.Limit)
 	if truncated {
-		rows = rows[:command.Limit]
+		rows = rows[:spec.Limit]
 	}
 	labels := explorerResultLabels(fields, aliases)
 	columns := make([]projectsignals.DataPreviewColumnSignal, 0, len(executed.Columns))
@@ -328,6 +362,204 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		Columns: columns, Rows: dataExplorerRows(rows), SQL: projectsignals.Optional(executed.SQL), Plan: projectsignals.Optional(executed.PlanText),
 		DurationMS: executed.DurationMS, RowsReturned: int64(len(rows)), Truncated: truncated,
 		Warnings: append([]string(nil), executed.Warnings...), RequestSeq: command.RequestSeq,
+	}
+}
+
+func explorerSpecQueryAliases(spec exploration.ExplorationSpec) map[string]string {
+	fields := make([]string, 0, len(spec.Dimensions)+len(spec.Metrics)+1)
+	aliases := make(map[string]string, len(fields))
+	dimensionFields := make(map[string]struct{}, len(spec.Dimensions))
+	for _, dimension := range spec.Dimensions {
+		fields = append(fields, dimension.Field)
+		dimensionFields[dimension.Field] = struct{}{}
+		if alias := strings.TrimSpace(projectsignals.ValueOrZero(dimension.Alias)); alias != "" {
+			aliases[dimension.Field] = alias
+		}
+	}
+	for _, metric := range spec.Metrics {
+		fields = append(fields, metric.Field)
+		if alias := strings.TrimSpace(projectsignals.ValueOrZero(metric.Alias)); alias != "" {
+			aliases[metric.Field] = alias
+		}
+	}
+	if spec.Time != nil {
+		if _, exists := dimensionFields[spec.Time.Field]; !exists {
+			fields = append(fields, spec.Time.Field)
+		}
+		if alias := strings.TrimSpace(projectsignals.ValueOrZero(spec.Time.Alias)); alias != "" {
+			// A time selection may decorate an existing dimension. Preserve an
+			// explicit dimension alias; otherwise the time alias is the merged
+			// output alias for that one dimension.
+			if _, exists := aliases[spec.Time.Field]; !exists {
+				aliases[spec.Time.Field] = alias
+			}
+		}
+	}
+	derived := explorerQueryAliases(fields, nil)
+	for field, alias := range aliases {
+		derived[field] = alias
+	}
+	return derived
+}
+
+func lowerExplorationFilters(spec exploration.ExplorationSpec, fields map[string]projectsignals.DataExploreFieldSignal) ([]dataquery.Filter, error) {
+	filters := make([]dataquery.Filter, 0, len(spec.Filters)+2)
+	for index, authored := range spec.Filters {
+		field, ok := fields[authored.Field]
+		if !ok || field.Kind != "dimension" || !field.Compatible {
+			return nil, fmt.Errorf("filter %d field %q is unavailable", index+1, authored.Field)
+		}
+		dataset := strings.TrimSpace(projectsignals.ValueOrZero(authored.DatasetID))
+		if rangeExpression, ok := authored.Expression.Value.(*exploration.RangeExplorationFilterExpression); ok {
+			if rangeExpression.Lower == nil && rangeExpression.Upper == nil {
+				return nil, fmt.Errorf("filter %d range requires a lower or upper bound", index+1)
+			}
+			if rangeExpression.Lower != nil {
+				value, err := lowerExplorationFilterValue(rangeExpression.Lower.Value)
+				if err != nil {
+					return nil, fmt.Errorf("filter %d lower bound: %w", index+1, err)
+				}
+				op := "greater_than"
+				if rangeExpression.Lower.Inclusive {
+					op = "greater_than_or_equal"
+				}
+				filters = append(filters, dataquery.Filter{Field: authored.Field, Dataset: dataset, Operator: op, Values: []any{value}})
+			}
+			if rangeExpression.Upper != nil {
+				value, err := lowerExplorationFilterValue(rangeExpression.Upper.Value)
+				if err != nil {
+					return nil, fmt.Errorf("filter %d upper bound: %w", index+1, err)
+				}
+				op := "less_than"
+				if rangeExpression.Upper.Inclusive {
+					op = "less_than_or_equal"
+				}
+				filters = append(filters, dataquery.Filter{Field: authored.Field, Dataset: dataset, Operator: op, Values: []any{value}})
+			}
+			continue
+		}
+		operator, values, err := lowerExplorationFilterExpression(authored.Expression)
+		if err != nil {
+			return nil, fmt.Errorf("filter %d: %w", index+1, err)
+		}
+		if operator != "" {
+			filters = append(filters, dataquery.Filter{Field: authored.Field, Dataset: dataset, Operator: operator, Values: values})
+		}
+	}
+	if spec.Time != nil && spec.Time.Range != nil {
+		bounds, err := lowerExplorationTimeRange(spec.Time.Field, *spec.Time.Range)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, bounds...)
+	}
+	return filters, nil
+}
+
+func lowerExplorationFilterExpression(expression exploration.ExplorationFilterExpression) (string, []any, error) {
+	switch expression := expression.Value.(type) {
+	case *exploration.UnfilteredExplorationFilterExpression:
+		return "", nil, nil
+	case *exploration.NullCheckExplorationFilterExpression:
+		return string(expression.Operator), nil, nil
+	case *exploration.SetExplorationFilterExpression:
+		values := make([]any, 0, len(expression.Values))
+		for _, value := range expression.Values {
+			native, err := lowerExplorationFilterValue(value)
+			if err != nil {
+				return "", nil, err
+			}
+			values = append(values, native)
+		}
+		return string(expression.Operator), values, nil
+	case *exploration.ComparisonExplorationFilterExpression:
+		value, err := lowerExplorationFilterValue(expression.Value)
+		if err != nil {
+			return "", nil, err
+		}
+		return string(expression.Operator), []any{value}, nil
+	case *exploration.RangeExplorationFilterExpression:
+		return "", nil, errors.New("range expression must be lowered as two predicates")
+	case *exploration.RelativePeriodExplorationFilterExpression:
+		return "", nil, errors.New("relative-period filters are not supported by the exploration executor")
+	case nil:
+		return "", nil, errors.New("filter expression is required")
+	default:
+		return "", nil, fmt.Errorf("unsupported filter expression %T", expression)
+	}
+}
+
+func lowerExplorationFilterValue(value exploration.ExplorationFilterValue) (any, error) {
+	switch value := value.Value.(type) {
+	case *exploration.StringExplorationFilterValue:
+		return value.Value, nil
+	case *exploration.BooleanExplorationFilterValue:
+		return value.Value, nil
+	case *exploration.IntegerExplorationFilterValue:
+		parsed, err := strconv.ParseInt(value.Value, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer value %q", value.Value)
+		}
+		return parsed, nil
+	case *exploration.DecimalExplorationFilterValue:
+		return json.Number(value.Value), nil
+	case *exploration.DateExplorationFilterValue:
+		return value.Value, nil
+	case *exploration.TimestampExplorationFilterValue:
+		return value.Value, nil
+	case nil:
+		return nil, errors.New("filter value is required")
+	default:
+		return nil, fmt.Errorf("unsupported filter value %T", value)
+	}
+}
+
+func lowerExplorationTimeRange(field string, rangeSpec exploration.ExplorationTimeRange) ([]dataquery.Filter, error) {
+	switch rangeValue := rangeSpec.Value.(type) {
+	case *exploration.AbsoluteExplorationTimeRange:
+		filters := make([]dataquery.Filter, 0, 2)
+		if rangeValue.Lower != nil {
+			value, err := lowerExplorationTemporalValue(rangeValue.Lower.Value)
+			if err != nil {
+				return nil, err
+			}
+			direction := "greater_than"
+			if rangeValue.Lower.Inclusive {
+				direction = "greater_than_or_equal"
+			}
+			filters = append(filters, dataquery.Filter{Field: field, Operator: direction, Values: []any{value}})
+		}
+		if rangeValue.Upper != nil {
+			value, err := lowerExplorationTemporalValue(rangeValue.Upper.Value)
+			if err != nil {
+				return nil, err
+			}
+			direction := "less_than"
+			if rangeValue.Upper.Inclusive {
+				direction = "less_than_or_equal"
+			}
+			filters = append(filters, dataquery.Filter{Field: field, Operator: direction, Values: []any{value}})
+		}
+		return filters, nil
+	case *exploration.RelativeExplorationTimeRange:
+		return nil, errors.New("relative time ranges are not supported by the exploration executor")
+	case nil:
+		return nil, errors.New("time range variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported time range %T", rangeValue)
+	}
+}
+
+func lowerExplorationTemporalValue(value exploration.ExplorationTemporalValue) (any, error) {
+	switch value := value.Value.(type) {
+	case *exploration.DateExplorationTemporalValue:
+		return value.Value, nil
+	case *exploration.TimestampExplorationTemporalValue:
+		return value.Value, nil
+	case nil:
+		return nil, errors.New("time bound value is required")
+	default:
+		return nil, fmt.Errorf("unsupported time bound value %T", value)
 	}
 }
 
@@ -358,25 +590,84 @@ func validExplorerFields(values []string, kind string, fields map[string]project
 	return out
 }
 
-func validExplorerFilters(filters []projectsignals.DataExploreFilterSignal, fields map[string]projectsignals.DataExploreFieldSignal) []projectsignals.DataExploreFilterSignal {
-	out := make([]projectsignals.DataExploreFilterSignal, 0, len(filters))
-	for _, filter := range filters {
-		field, ok := fields[filter.Field]
-		if !ok || field.Kind != "dimension" || !field.Compatible || strings.TrimSpace(filter.Operator) == "" {
-			continue
+// validateExplorerProjectedSpec checks the authored field references against
+// the authorized active-generation projection before any incremental state
+// normalization can discard an operand. The canonical semantic validator
+// separately checks the model's field/type authorization; this check ensures
+// the browser projection has not removed or marked the same operand unsafe.
+func validateExplorerProjectedSpec(spec exploration.ExplorationSpec, fields map[string]projectsignals.DataExploreFieldSignal) error {
+	validate := func(reference, kind, label string) error {
+		field, ok := fields[reference]
+		if !ok {
+			return fmt.Errorf("%s field %q is unavailable from the authorized projection", label, reference)
 		}
-		filter.Values = append([]string(nil), filter.Values...)
-		out = append(out, filter)
+		if field.Kind != kind {
+			return fmt.Errorf("%s field %q has kind %q, want %q", label, reference, field.Kind, kind)
+		}
+		if !field.Compatible {
+			reason := strings.TrimSpace(projectsignals.ValueOrZero(field.CompatibilityReason))
+			if reason == "" {
+				return fmt.Errorf("%s field %q is incompatible with the authorized projection", label, reference)
+			}
+			return fmt.Errorf("%s field %q is incompatible with the authorized projection: %s", label, reference, reason)
+		}
+		return nil
 	}
-	return out
+	for index, dimension := range spec.Dimensions {
+		if err := validate(dimension.Field, "dimension", fmt.Sprintf("dimension %d", index+1)); err != nil {
+			return err
+		}
+	}
+	for index, metric := range spec.Metrics {
+		if err := validate(metric.Field, "metric", fmt.Sprintf("metric %d", index+1)); err != nil {
+			return err
+		}
+	}
+	for index, filter := range spec.Filters {
+		if err := validate(filter.Field, "dimension", fmt.Sprintf("filter %d", index+1)); err != nil {
+			return err
+		}
+	}
+	if spec.Time != nil {
+		if err := validate(spec.Time.Field, "dimension", "time"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func validExplorerSort(sortSignals []projectsignals.DataExploreSortSignal, command projectsignals.DataExploreCommand) []projectsignals.DataExploreSortSignal {
+func explorationSpecSortAliases(spec exploration.ExplorationSpec) map[string]struct{} {
+	selected := map[string]struct{}{}
+	if spec.Time != nil {
+		selected[spec.Time.Field] = struct{}{}
+		if spec.Time.Alias != nil && strings.TrimSpace(*spec.Time.Alias) != "" {
+			selected[*spec.Time.Alias] = struct{}{}
+		}
+	}
+	for _, dimension := range spec.Dimensions {
+		if dimension.Alias != nil && strings.TrimSpace(*dimension.Alias) != "" {
+			selected[*dimension.Alias] = struct{}{}
+		}
+	}
+	for _, metric := range spec.Metrics {
+		if metric.Alias != nil && strings.TrimSpace(*metric.Alias) != "" {
+			selected[*metric.Alias] = struct{}{}
+		}
+	}
+	return selected
+}
+
+func validExplorerSort(sortSignals []dataExploreSort, command dataExploreState, aliases ...map[string]struct{}) []dataExploreSort {
 	selected := map[string]struct{}{}
 	for _, field := range append(append([]string(nil), command.Dimensions...), command.Metrics...) {
 		selected[field] = struct{}{}
 	}
-	out := make([]projectsignals.DataExploreSortSignal, 0, len(sortSignals))
+	for _, aliasSet := range aliases {
+		for alias := range aliasSet {
+			selected[alias] = struct{}{}
+		}
+	}
+	out := make([]dataExploreSort, 0, len(sortSignals))
 	for _, sortSignal := range sortSignals {
 		direction := strings.ToLower(strings.TrimSpace(sortSignal.Direction))
 		if _, ok := selected[sortSignal.Field]; !ok || (direction != "asc" && direction != "desc") {
