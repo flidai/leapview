@@ -2,6 +2,7 @@ package deploymentpostgres
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
@@ -26,6 +27,10 @@ func TestActivationLineageVerifierAdapterResolvesExactBinding(t *testing.T) {
 	const targetID = "target-lineage"
 	const generationID = "generation-lineage"
 	const projectID = "project_lineage"
+	projection, err := lineagepostgres.FromGraph(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tx, err := p.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -49,14 +54,17 @@ func TestActivationLineageVerifierAdapterResolvesExactBinding(t *testing.T) {
 		defer readTx.Rollback(t.Context())
 		return verifier.VerifyActivationLineage(t.Context(), readTx, input)
 	}
-	if err := verify(deploymentnative.ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: generationID}); err != nil {
+	if err := verify(deploymentnative.ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: generationID, CompiledGraphDigest: projection.Digest}); err != nil {
 		t.Fatalf("exact activation lineage binding rejected: %v", err)
+	}
+	if err := verify(deploymentnative.ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: generationID, CompiledGraphDigest: "sha256:" + "0" + strings.Repeat("1", 63)}); err == nil || !errors.Is(err, deploymentnative.ErrConflict) {
+		t.Fatalf("mismatched activation lineage digest error = %v, want deployment conflict", err)
 	}
 	for name, input := range map[string]deploymentnative.ActivationLineageInput{
 		"wrong project":    {TargetID: targetID, ProjectID: "project_other", GenerationID: generationID},
 		"wrong target":     {TargetID: "target-other", ProjectID: projectID, GenerationID: generationID},
 		"wrong generation": {TargetID: targetID, ProjectID: projectID, GenerationID: "generation-other"},
-		"missing project":  {TargetID: targetID, GenerationID: generationID},
+		"missing project":  {TargetID: targetID, GenerationID: generationID, CompiledGraphDigest: projection.Digest},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := verify(input); err == nil || !errors.Is(err, deploymentnative.ErrConflict) {

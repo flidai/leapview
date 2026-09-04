@@ -47,5 +47,11 @@ func (v *ActivationLineageVerifierAdapter) VerifyActivationLineage(ctx context.C
 	if projection.ProjectID != input.ProjectID {
 		return fmt.Errorf("%w: activation lineage project differs", deploymentnative.ErrConflict)
 	}
+	if input.CompiledGraphDigest == "" {
+		return fmt.Errorf("%w: activation lineage graph digest is missing", deploymentnative.ErrConflict)
+	}
+	if projection.Digest != input.CompiledGraphDigest {
+		return fmt.Errorf("%w: activation lineage graph digest differs from generation", deploymentnative.ErrConflict)
+	}
 	return nil
 }

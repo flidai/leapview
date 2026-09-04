@@ -47,7 +47,7 @@ func (v *integrationActivationLineage) VerifyActivationLineage(_ context.Context
 	if v == nil || tx == nil {
 		return errors.New("activation lineage verifier requires a transaction")
 	}
-	if input.TargetID == "" || input.ProjectID == "" || input.GenerationID == "" {
+	if input.TargetID == "" || input.ProjectID == "" || input.GenerationID == "" || input.CompiledGraphDigest == "" {
 		return errors.New("activation lineage identity is incomplete")
 	}
 	if input != v.expected {
@@ -495,7 +495,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if deliveryPlan.ArtifactDigest == plan.ArtifactDigest {
 		t.Fatal("fixture must keep serving and source artifact digests distinct")
 	}
-	lineage := &integrationActivationLineage{expected: deploymentpostgres.ActivationLineageInput{TargetID: "target_concrete_prod", ProjectID: "project_concrete", GenerationID: generationID}}
+	lineage := &integrationActivationLineage{expected: deploymentpostgres.ActivationLineageInput{TargetID: "target_concrete_prod", ProjectID: "project_concrete", GenerationID: generationID, CompiledGraphDigest: deliveryPlan.CompiledGraphDigest}}
 	delivery := deploymentpostgres.NewWithOptions(db, deploymentpostgres.Options{ActivationAudit: deploymentaudit.NewWithRepository(accesspostgres.New()), Lineage: lineage})
 	basePublicationID := "0198f2c0-7c7a-7f00-8a11-000000000106"
 	basePublication, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{PublicationID: basePublicationID, TargetID: "target_concrete_prod", GenerationID: generationID, CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", ExpectedTargetRevision: 1, ActorID: "operator-concrete", RequestDigest: digest('8')})

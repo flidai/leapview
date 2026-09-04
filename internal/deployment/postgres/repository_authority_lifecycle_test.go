@@ -18,7 +18,7 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 		"generation": "0198f2c0-7c7a-7f00-8a11-000000000005", "publication": "0198f2c0-7c7a-7f00-8a11-000000000006",
 		"lease": "0198f2c0-7c7a-7f00-8a11-000000000007",
 	}
-	lineage := &testActivationLineage{expected: ActivationLineageInput{TargetID: "target_sales_prod", ProjectID: "project_sales", GenerationID: ids["generation"]}}
+	lineage := &testActivationLineage{expected: ActivationLineageInput{TargetID: "target_sales_prod", ProjectID: "project_sales", GenerationID: ids["generation"], CompiledGraphDigest: testDigest('b')}}
 	r := NewWithOptions(p, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: "target_sales_prod", ProjectID: "project_sales", Environment: "prod"}); err != nil {
 		t.Fatal(err)
@@ -54,6 +54,12 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	}
 	generationInput := GenerationInput{GenerationID: ids["generation"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], PlanID: ids["plan"], PlanDigest: planDigest, ArtifactRoot: sealInput.ArtifactRoot, ArtifactRootDigest: sealInput.ArtifactRootDigest, ServingArtifactDigest: testDigest('e'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), GenerationRevision: 1}
 	if _, err := r.CreateGeneration(ctx, generationInput); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(ctx, `INSERT INTO ducklake.catalog_identity(physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema) VALUES($1,$2,$3,$4::uuid,$5)`, sealInput.PhysicalPoolID, sealInput.CatalogDatabase, sealInput.CatalogID, sealInput.CatalogUUID, "lake"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(ctx, `INSERT INTO ducklake.snapshot_retention(physical_pool_id,catalog_id,snapshot_id,state) VALUES($1,$2,$3,'live')`, sealInput.PhysicalPoolID, sealInput.CatalogID, sealInput.DuckLakeSnapshotID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.CreateRetentionRoot(ctx, DeliveryRetentionRoot{RootID: ids["candidate"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], GenerationID: ids["generation"], SnapshotSealID: ids["seal"], RootKind: "candidate", State: "live", ExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
@@ -99,6 +105,14 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The repository must pass the admitted generation digest through the
+	// direct activation API. A verifier bound to another graph must reject the
+	// activation before the target CAS can advance.
+	lineage.expected.CompiledGraphDigest = testDigest('c')
+	if _, err := r.Activate(ctx, input); !errors.Is(err, ErrConflict) {
+		t.Fatalf("mismatched generation graph digest = %v, want ErrConflict", err)
+	}
+	lineage.expected.CompiledGraphDigest = testDigest('b')
 	for _, test := range []struct {
 		name string
 		err  error

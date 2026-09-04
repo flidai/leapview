@@ -42,7 +42,7 @@ func TestPostgresActivationCapabilityRuntimeConformance(t *testing.T) {
 
 	adminRepository := New(admin)
 	input, ids := prepareLostAckActivation(t, adminRepository)
-	lineage := &testActivationLineage{expected: ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation}}
+	lineage := &testActivationLineage{expected: ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation, CompiledGraphDigest: testDigest('b')}}
 	runtimeRepository := NewWithOptions(runtime, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 
 	// A caller cannot substitute another target for the publication tuple. The

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
@@ -262,6 +263,10 @@ func generationAdmissionDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	if err := servingnative.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := ducklakepostgres.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}

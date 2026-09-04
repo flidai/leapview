@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
@@ -146,7 +147,7 @@ func (v *nativePGActivationLineage) VerifyActivationLineage(_ context.Context, t
 	if v == nil || tx == nil {
 		return errors.New("activation lineage verifier requires a transaction")
 	}
-	if input.TargetID == "" || input.ProjectID == "" || input.GenerationID == "" {
+	if input.TargetID == "" || input.ProjectID == "" || input.GenerationID == "" || input.CompiledGraphDigest == "" {
 		return errors.New("activation lineage identity is incomplete")
 	}
 	if input != v.expected {
@@ -202,7 +203,7 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, schema := range []string{accesspostgres.SchemaSQL(), eventspostgres.SchemaSQL(), jobspostgres.SchemaSQL(), operationpostgres.SchemaSQL(), deploymentpostgres.SchemaSQL()} {
+	for _, schema := range []string{accesspostgres.SchemaSQL(), eventspostgres.SchemaSQL(), jobspostgres.SchemaSQL(), operationpostgres.SchemaSQL(), deploymentpostgres.SchemaSQL(), ducklakepostgres.SchemaSQL()} {
 		if _, err := tx.Exec(t.Context(), schema); err != nil {
 			_ = tx.Rollback(t.Context())
 			t.Fatal(err)
@@ -218,9 +219,9 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 		ids[i] = uuid.New().String()
 	}
 	planID, candidateID, attemptID, sealID, generationID := ids[0], ids[1], ids[2], ids[3], ids[4]
-	lineage := &nativePGActivationLineage{expected: deploymentpostgres.ActivationLineageInput{TargetID: targetID, ProjectID: "project_sales", GenerationID: generationID}}
-	repo := deploymentpostgres.NewWithOptions(db, deploymentpostgres.Options{ActivationAudit: nativePGActivationAudit{repo: accessAudit}, Lineage: lineage})
 	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
+	lineage := &nativePGActivationLineage{expected: deploymentpostgres.ActivationLineageInput{TargetID: targetID, ProjectID: "project_sales", GenerationID: generationID, CompiledGraphDigest: digest('b')}}
+	repo := deploymentpostgres.NewWithOptions(db, deploymentpostgres.Options{ActivationAudit: nativePGActivationAudit{repo: accessAudit}, Lineage: lineage})
 	ctx := t.Context()
 	if _, err := repo.CreateTarget(ctx, deploymentpostgres.TargetInput{TargetID: targetID, ProjectID: "project_sales", Environment: "prod"}); err != nil {
 		t.Fatal(err)
@@ -265,6 +266,12 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 		t.Fatal(err)
 	}
 	if _, err := repo.CreateSnapshotSeal(ctx, deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: "pool", TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects", CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: uuid.New().String(), CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/42", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/" + digest('e'), ArtifactRootDigest: digest('7'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: digest('2'), ServingArtifactID: "artifact-native", ServingArtifactDigest: digest('e'), DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO ducklake.catalog_identity(physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema) VALUES ($1,$2,$3,$4,$5)`, "pool", "ducklake", "catalog", uuid.New().String(), "metadata"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO ducklake.snapshot_retention(physical_pool_id,catalog_id,snapshot_id,state) VALUES ($1,$2,$3,'live')`, "pool", "catalog", 42); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.QualifyCandidate(ctx, candidateID, sealID, digest('3')); err != nil {

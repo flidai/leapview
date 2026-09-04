@@ -514,6 +514,11 @@ type ActivationAuditPort interface {
 // the delivery target (never a build-operation or commit-marker ID).
 type ActivationLineageInput struct {
 	TargetID, ProjectID, GenerationID string
+	// CompiledGraphDigest is the immutable digest admitted on the delivery
+	// generation. Activation must prove that lineage is bound to this exact
+	// compiler graph, rather than merely to the target/project/generation
+	// coordinates.
+	CompiledGraphDigest string
 }
 
 // ActivationLineageVerifier is the narrow composition seam for activation's
@@ -3664,6 +3669,16 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 	if p.ActorID != actor {
 		return ActivationResult{}, fmt.Errorf("%w: activation actor differs from publication", ErrConflict)
 	}
+	generation, err := depdb.New(tx).GetGeneration(ctx, dbUUID(p.GenerationID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ActivationResult{}, ErrNotFound
+	}
+	if err != nil {
+		return ActivationResult{}, err
+	}
+	if generation.GenerationID != p.GenerationID || generation.TargetID != target || generation.CandidateID != p.CandidateID || generation.SnapshotSealID != p.SnapshotSealID {
+		return ActivationResult{}, fmt.Errorf("%w: activation generation identity differs", ErrConflict)
+	}
 	if p.State == "committed" {
 		if p.ResultTargetRevision <= 0 {
 			return ActivationResult{}, ErrConflict
@@ -3672,7 +3687,7 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 		if err != nil {
 			return ActivationResult{}, err
 		}
-		if err := r.verifyActivationLineage(ctx, tx, pointer.TargetID, pointer.ProjectID, p.GenerationID); err != nil {
+		if err := r.verifyActivationLineage(ctx, tx, pointer.TargetID, pointer.ProjectID, p.GenerationID, generation.CompiledGraphDigest); err != nil {
 			return ActivationResult{}, err
 		}
 		event, audit, err := r.loadActivationEvidence(ctx, tx, p, actor, in.CorrelationID, pid)
@@ -3720,7 +3735,7 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 	if err != nil {
 		return ActivationResult{}, err
 	}
-	if err := r.verifyActivationLineage(ctx, tx, targetRecord.TargetID, targetRecord.ProjectID, p.GenerationID); err != nil {
+	if err := r.verifyActivationLineage(ctx, tx, targetRecord.TargetID, targetRecord.ProjectID, p.GenerationID, generation.CompiledGraphDigest); err != nil {
 		return ActivationResult{}, err
 	}
 	currentRev, currentGeneration := tr.TargetRevision, tr.ActiveGenerationID
@@ -3890,14 +3905,15 @@ func commitActivationTransition(ctx context.Context, tx Tx, publicationID, targe
 	})
 }
 
-func (r *Repository) verifyActivationLineage(ctx context.Context, tx Tx, targetID, projectID, generationID string) error {
+func (r *Repository) verifyActivationLineage(ctx context.Context, tx Tx, targetID, projectID, generationID, compiledGraphDigest string) error {
 	if r == nil || r.lineage == nil {
 		return fmt.Errorf("%w: activation lineage verifier is required", ErrInvalid)
 	}
-	if targetID == "" || projectID == "" || generationID == "" {
+	if targetID == "" || projectID == "" || generationID == "" || compiledGraphDigest == "" {
 		return fmt.Errorf("%w: activation lineage identity is incomplete", ErrConflict)
 	}
-	if err := r.lineage.VerifyActivationLineage(ctx, tx, ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: generationID}); err != nil {
+	input := ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: generationID, CompiledGraphDigest: compiledGraphDigest}
+	if err := r.lineage.VerifyActivationLineage(ctx, tx, input); err != nil {
 		// Integrity or identity failures mean this generation is not eligible
 		// for activation. Operational failures (for example cancellation or a
 		// database outage) must remain retryable rather than being flattened
@@ -4061,11 +4077,28 @@ func normalizeActivationAuditError(err error, operation string) error {
 // Retention roots are reachability records, not seal identity.  Seals remain
 // immutable historical evidence even after their physical snapshot expires.
 func (r *Repository) CreateRetentionRoot(ctx context.Context, root DeliveryRetentionRoot) (DeliveryRetentionRoot, error) {
-	db, err := requireDB(r)
+	if r == nil {
+		return DeliveryRetentionRoot{}, ErrInvalid
+	}
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
-	return createRetentionRoot(ctx, db, root)
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	created, err := r.CreateRetentionRootTx(ctx, tx, root)
+	if err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	committed = true
+	return created, nil
 }
 
 // CreateRetentionRootTx records an immutable live retention root through a
@@ -4114,7 +4147,7 @@ func createRetentionRoot(ctx context.Context, db DBTX, root DeliveryRetentionRoo
 	if root.State != "live" {
 		return DeliveryRetentionRoot{}, ErrInvalid
 	}
-	if (root.RootKind == "candidate" || root.RootKind == "generation") && (root.CandidateID == "" || root.GenerationID == "" || root.SnapshotSealID == "") {
+	if (root.RootKind == "candidate" || root.RootKind == "generation" || root.RootKind == "rollback") && (root.CandidateID == "" || root.GenerationID == "" || root.SnapshotSealID == "") {
 		return DeliveryRetentionRoot{}, ErrInvalid
 	}
 	if root.RootKind == "recovery" && (root.GenerationID == "" || root.SnapshotSealID == "" || root.ExpiresAt.IsZero()) {
@@ -4137,6 +4170,11 @@ func createRetentionRoot(ctx context.Context, db DBTX, root DeliveryRetentionRoo
 			err = ErrConflict
 		}
 	} else {
+		if root.SnapshotSealID != "" {
+			if err := requireLiveSnapshotRetention(ctx, db, root.SnapshotSealID); err != nil {
+				return DeliveryRetentionRoot{}, err
+			}
+		}
 		err = depdb.New(db).InsertRetentionRoot(ctx, depdb.InsertRetentionRootParams{RootID: dbUUID(id), TargetID: target, CandidateID: dbUUID(root.CandidateID), GenerationID: dbUUID(root.GenerationID), SnapshotSealID: dbUUID(root.SnapshotSealID), RootKind: root.RootKind, State: root.State, ExpiresAt: nullablePgTime(root.ExpiresAt), Evidence: evidence})
 	}
 	if err != nil {
@@ -4160,6 +4198,42 @@ func createRetentionRoot(ctx context.Context, db DBTX, root DeliveryRetentionRoo
 		return DeliveryRetentionRoot{}, ErrConflict
 	}
 	return persisted, nil
+}
+
+// requireLiveSnapshotRetention verifies and locks the physical DuckLake
+// retention row for a delivery seal. The lock is held by the caller-owned
+// transaction through the subsequent delivery-root insert, closing the race
+// with a concurrent physical retire/expire transition. An installation that
+// has not installed the DuckLake retention ledger fails closed just like a
+// missing or non-live physical row.
+func requireLiveSnapshotRetention(ctx context.Context, db DBTX, sealID string) error {
+	var installed bool
+	if err := db.QueryRow(ctx, `SELECT to_regclass('ducklake.snapshot_retention') IS NOT NULL`).Scan(&installed); err != nil {
+		return err
+	}
+	if !installed {
+		return fmt.Errorf("%w: DuckLake physical retention ledger is unavailable", ErrConflict)
+	}
+	var state string
+	err := db.QueryRow(ctx, `
+		SELECT retention.state
+		  FROM ducklake.snapshot_retention AS retention
+		  JOIN delivery.delivery_snapshot_seal AS seal
+		    ON seal.physical_pool_id = retention.physical_pool_id
+		   AND seal.catalog_id = retention.catalog_id
+		   AND seal.ducklake_snapshot_id = retention.snapshot_id
+		 WHERE seal.seal_id = $1::uuid
+		 FOR UPDATE OF retention`, dbUUID(sealID)).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: physical snapshot retention is unavailable", ErrConflict)
+	}
+	if err != nil {
+		return err
+	}
+	if state != "live" {
+		return fmt.Errorf("%w: physical snapshot retention is not live", ErrConflict)
+	}
+	return nil
 }
 
 // RetireRetentionRoot transitions one live retention root to retiring through

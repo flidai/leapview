@@ -22,8 +22,29 @@ func (candidatePhysicalAdmissionStub) Configured() bool { return true }
 func (candidatePhysicalAdmissionStub) ValidateBuildAdmissionTx(context.Context, ducklakepostgres.Tx, string, string) error {
 	return nil
 }
-func (candidatePhysicalAdmissionStub) AdmitSnapshotRetentionFromSealTx(context.Context, ducklakepostgres.Tx, string) error {
-	return nil
+func (candidatePhysicalAdmissionStub) AdmitSnapshotRetentionFromSealTx(ctx context.Context, tx ducklakepostgres.Tx, sealID string) error {
+	// Generation-admission fixtures install the DuckLake ledger and use this
+	// stub for the surrounding migration/fence proof. Mirror the real
+	// admission's durable row so the delivery retention-root check exercises
+	// the same physical gate. Older candidate-only fixtures intentionally omit
+	// DuckLake; retain their isolated scope when the table is absent.
+	var installed bool
+	if err := tx.QueryRow(ctx, `SELECT to_regclass('ducklake.snapshot_retention') IS NOT NULL`).Scan(&installed); err != nil {
+		return err
+	}
+	if !installed {
+		return nil
+	}
+	var physicalPool, catalog, catalogUUID string
+	var snapshot int64
+	if err := tx.QueryRow(ctx, `SELECT physical_pool_id,catalog_id,catalog_uuid::text,ducklake_snapshot_id FROM delivery.delivery_snapshot_seal WHERE seal_id=$1::uuid`, sealID).Scan(&physicalPool, &catalog, &catalogUUID, &snapshot); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO ducklake.catalog_identity(physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema) VALUES($1,'ducklake',$2,$3::uuid,'lake') ON CONFLICT DO NOTHING`, physicalPool, catalog, catalogUUID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO ducklake.snapshot_retention(physical_pool_id,catalog_id,snapshot_id,state) VALUES($1,$2,$3,'live') ON CONFLICT DO NOTHING`, physicalPool, catalog, snapshot)
+	return err
 }
 
 func candidateAdmissionDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }

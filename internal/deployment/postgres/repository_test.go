@@ -14,8 +14,10 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -69,7 +71,7 @@ func (v *testActivationLineage) VerifyActivationLineage(_ context.Context, tx Tx
 		return ErrInvalid
 	}
 	v.calls++
-	if input.TargetID == "" || input.ProjectID == "" || input.GenerationID == "" {
+	if input.TargetID == "" || input.ProjectID == "" || input.GenerationID == "" || input.CompiledGraphDigest == "" {
 		return fmt.Errorf("%w: incomplete activation lineage identity", ErrConflict)
 	}
 	if v.expected != (ActivationLineageInput{}) && input != v.expected {
@@ -167,6 +169,14 @@ func deliveryTestDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := servingstatepostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := ducklakepostgres.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -976,5 +986,44 @@ func TestRetentionRootLifecycleTxReplayGraceAndExpiry(t *testing.T) {
 	retireAfterExpiry, err := r.RetireRetentionRoot(ctx, rootID)
 	if err != nil || retireAfterExpiry.State != "expired" || !retireAfterExpiry.ExpiredAt.Equal(expired.ExpiredAt) {
 		t.Fatalf("retire replay after expiry = %#v, err=%v", retireAfterExpiry, err)
+	}
+}
+
+func TestRetentionRootRequiresLivePhysicalSnapshotRetention(t *testing.T) {
+	p := deliveryTestDB(t)
+	r := New(p)
+	_, ids := prepareLostAckActivation(t, r)
+	ctx := t.Context()
+	if _, err := p.Exec(ctx, `INSERT INTO ducklake.catalog_identity(physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema) VALUES ('pool-lost-ack','ducklake','catalog-lost-ack','0198f2c0-7c7a-7f00-8a11-000000001008','lake')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(ctx, `INSERT INTO ducklake.snapshot_retention(physical_pool_id,catalog_id,snapshot_id,state) VALUES ('pool-lost-ack','catalog-lost-ack',42,'live')`); err != nil {
+		t.Fatal(err)
+	}
+	root := DeliveryRetentionRoot{RootID: "0198f2c0-7c7a-7f00-8a11-000000001010", TargetID: ids.target, CandidateID: "0198f2c0-7c7a-7f00-8a11-000000001002", GenerationID: ids.generation, SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000001004", RootKind: "candidate", State: "live", ExpiresAt: time.Now().UTC().Add(time.Hour)}
+	if _, err := r.CreateRetentionRoot(ctx, root); err != nil {
+		t.Fatalf("live physical snapshot root: %v", err)
+	}
+	if _, err := p.Exec(ctx, `UPDATE delivery.delivery_retention_root SET expires_at=clock_timestamp()-interval '1 second' WHERE root_id=$1::uuid`, root.RootID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.RetireRetentionRoot(ctx, root.RootID); err != nil {
+		t.Fatalf("retire delivery root before physical retirement: %v", err)
+	}
+	if _, err := r.ExpireRetentionRoot(ctx, root.RootID); err != nil {
+		t.Fatalf("expire delivery root before physical retirement: %v", err)
+	}
+	if _, err := p.Exec(ctx, `ALTER TABLE ducklake.snapshot_retention DISABLE TRIGGER snapshot_retention_identity_immutable; UPDATE ducklake.snapshot_retention SET state='retiring',retired_at=clock_timestamp() WHERE physical_pool_id='pool-lost-ack' AND catalog_id='catalog-lost-ack' AND snapshot_id=42; ALTER TABLE ducklake.snapshot_retention ENABLE TRIGGER snapshot_retention_identity_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateRetentionRoot(ctx, root); !errors.Is(err, ErrConflict) {
+		t.Fatalf("retiring physical snapshot root replay = %v, want ErrConflict", err)
+	}
+	if _, err := p.Exec(ctx, `ALTER TABLE ducklake.snapshot_retention DISABLE TRIGGER snapshot_retention_identity_immutable; UPDATE ducklake.snapshot_retention SET state='expired',expired_at=clock_timestamp() WHERE physical_pool_id='pool-lost-ack' AND catalog_id='catalog-lost-ack' AND snapshot_id=42; ALTER TABLE ducklake.snapshot_retention ENABLE TRIGGER snapshot_retention_identity_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	root.RootID = "0198f2c0-7c7a-7f00-8a11-000000001011"
+	if _, err := r.CreateRetentionRoot(ctx, root); !errors.Is(err, ErrConflict) {
+		t.Fatalf("expired physical snapshot root = %v, want ErrConflict", err)
 	}
 }

@@ -38,7 +38,7 @@ func TestPostgreSQL18MultiNodeActivationServingStateQualification(t *testing.T) 
 	})
 
 	input, ids := prepareLostAckActivation(t, nodeA)
-	lineageA.expected = ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation}
+	lineageA.expected = ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation, CompiledGraphDigest: testDigest('b')}
 	lineageB.expected = lineageA.expected
 	second := prepareSecondActivationGeneration(t, nodeA, ids.generation)
 
