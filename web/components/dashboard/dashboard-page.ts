@@ -148,11 +148,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       transition: grid-template-columns var(--lv-duration-fast) var(--motion-easing-move);
     }
 
-    .route > .rail-footer {
-      grid-column: 1;
-      grid-row: 3;
-    }
-
     .route > .header {
       grid-column: 2 / -1;
       grid-row: 1;
@@ -160,9 +155,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
     .route > lv-sub-sidebar {
       grid-column: 1;
-      grid-row: 1 / 3;
+      grid-row: 1 / 4;
       --lv-sub-sidebar-header-height: calc(var(--control-medium-size) + (2 * var(--lv-space-control, var(--base-size-8))) + var(--borderWidth-thin));
       --lv-sub-sidebar-header-padding-block: var(--lv-space-control, var(--base-size-8));
+      --lv-sub-sidebar-footer-height: var(--control-medium-size);
       --lv-sub-sidebar-nav-padding-block-start: 0px;
     }
 
@@ -202,7 +198,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       text-decoration: underline;
     }
 
-    :host([presentation='embed']) .rail-footer,
     :host([presentation='embed']) .header,
     :host([presentation='embed']) lv-report-footer {
       display: none;
@@ -270,29 +265,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .dashboard-heading .dashboard-favorite,
     .dashboard-heading .dashboard-options {
       flex: 0 0 auto;
-    }
-
-    .rail-footer {
-      box-sizing: border-box;
-      min-width: 0;
-      contain: inline-size;
-      overflow: hidden;
-      border-right: var(--lv-border-muted);
-      background: var(--lv-sidebar-bg);
-    }
-
-    .rail-footer {
-      display: grid;
-      min-height: var(--control-medium-size);
-      align-items: center;
-      justify-items: start;
-      border-top: var(--lv-border-muted);
-      padding: 0 var(--base-size-16);
-    }
-
-    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-footer {
-      justify-items: center;
-      padding-inline: 0;
     }
 
     .breadcrumb-root {
@@ -796,10 +768,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         overflow: hidden;
       }
 
-      .route > .rail-footer {
-        display: none;
-      }
-
       .route > .header {
         grid-column: 1;
         grid-row: 1;
@@ -1171,7 +1139,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const activeFilterCount = this.activeFilterCount(snapshot)
     return html`
 			<div class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`}>
-          <footer class="rail-footer"></footer>
           <header class="header">
 						<div class="dashboard-heading">
 						${renderBreadcrumb([

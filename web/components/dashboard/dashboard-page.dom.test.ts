@@ -456,7 +456,7 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
       await sidebar.updateComplete
       const root = sidebar.shadowRoot!
       const reportHeader = element.shadowRoot.querySelector('.header') as HTMLElement
-      const railFooter = element.shadowRoot.querySelector('.rail-footer') as HTMLElement
+      const railFooter = root.querySelector('.sidebar-footer') as HTMLElement
       const back = root.querySelector('.back-link') as HTMLAnchorElement
       const backLabel = back.querySelector('.back-label') as HTMLElement
       const search = root.querySelector('.sidebar-search input') as HTMLInputElement
@@ -545,11 +545,11 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
         sidebarStartsWithHeader: Math.abs(sidebarRect.top - reportHeaderRect.top) < 2,
         mainBelowHeader: Math.abs(mainRect.top - reportHeaderRect.bottom) < 2,
         railHeaderCount: element.shadowRoot.querySelectorAll('.rail-header').length,
-        sidebarEndsAtFooter: Math.abs(sidebarRect.bottom - railFooterRect.top) < 2,
+        sidebarFooterAtBottom: Math.abs(sidebarRect.bottom - railFooterRect.bottom) < 2,
         railFooterMatchesReportFooter: Math.abs(railFooterRect.top - reportFooterRect.top) < 2
           && Math.abs(railFooterRect.bottom - reportFooterRect.bottom) < 2,
         footerAligned: Math.round(reportFooterRect.left) === Math.round(mainRect.left),
-        collapsedSidebarEndsAtFooter: Math.abs(collapsedSidebarRect.bottom - collapsedRailFooterRect.top) < 2,
+        collapsedSidebarFooterAtBottom: Math.abs(collapsedSidebarRect.bottom - collapsedRailFooterRect.bottom) < 2,
         collapsedRailFooterMatchesReportFooter: Math.abs(collapsedRailFooterRect.top - collapsedReportFooterRect.top) < 2
           && Math.abs(collapsedRailFooterRect.bottom - collapsedReportFooterRect.bottom) < 2,
         collapsedBreadcrumbInset: Math.round(collapsedBreadcrumbRect.left - collapsedMainRect.left),
@@ -615,17 +615,17 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
       sidebarStartsWithHeader: true,
       mainBelowHeader: true,
       railHeaderCount: 0,
-      sidebarEndsAtFooter: true,
+      sidebarFooterAtBottom: true,
       railFooterMatchesReportFooter: true,
       footerAligned: true,
-      collapsedSidebarEndsAtFooter: true,
+      collapsedSidebarFooterAtBottom: true,
       collapsedRailFooterMatchesReportFooter: true,
       collapsedBreadcrumbInset: 16,
       collapsedFooterAligned: true,
       collapsedBackCentered: true,
       collapsedBackWidth: 28,
       breadcrumbMovesWithCanvas: true,
-      collapseInHeader: true,
+      collapseInHeader: false,
       expandedWidth: 144,
       collapseTag: 'BUTTON',
       collapseLabel: 'Expand Report pages',
@@ -633,7 +633,7 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
       railLabelDisplay: 'none',
       collapsedPageMovesUp: true,
       toggleIconDistinctFromBack: true,
-      toggleIconChanges: false,
+      toggleIconChanges: true,
     })
   } finally {
     await page.close()
