@@ -105,6 +105,55 @@ func TestScannerJobsInvokeTheirRepositoryOwnedGoGates(t *testing.T) {
 	}
 }
 
+func TestDependencyScannerPreparesGeneratedGoSourceImmediatelyBeforeGate(t *testing.T) {
+	workflow := repositoryYAML(t, ".github/workflows/security.yml")
+	var document struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string            `yaml:"name"`
+				Run  string            `yaml:"run"`
+				Env  map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(workflow), &document); err != nil {
+		t.Fatal(err)
+	}
+
+	job, ok := document.Jobs["dependency-validation"]
+	if !ok {
+		t.Fatal("security workflow is missing dependency-validation")
+	}
+	gateIndex := -1
+	for index, step := range job.Steps {
+		if strings.TrimSpace(step.Run) == "task security:dependencies" {
+			gateIndex = index
+			break
+		}
+	}
+	if gateIndex < 1 {
+		t.Fatal("dependency-validation does not have a preparation step immediately before its dependency gate")
+	}
+
+	preparation := job.Steps[gateIndex-1]
+	if preparation.Name != "Prepare generated Go source for dependency scan" {
+		t.Fatalf("dependency gate preparation step is %q, want %q", preparation.Name, "Prepare generated Go source for dependency scan")
+	}
+	if preparation.Env["NPM_CONFIG_AUDIT"] != "false" {
+		t.Fatalf("dependency gate preparation must disable npm audit, got NPM_CONFIG_AUDIT=%q", preparation.Env["NPM_CONFIG_AUDIT"])
+	}
+	var commands []string
+	for _, line := range strings.Split(preparation.Run, "\n") {
+		if command := strings.TrimSpace(line); command != "" {
+			commands = append(commands, command)
+		}
+	}
+	want := []string{"task db:generate", "task config:generate", "task ui-signals:generate"}
+	if strings.Join(commands, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("dependency gate preparation runs %q, want exactly %q", commands, want)
+	}
+}
+
 func TestDependencyGateUsesOfflineEvidenceAndSeparateRefresh(t *testing.T) {
 	taskfile := repositoryText(t, "Taskfile.yml")
 	required := taskDefinition(t, taskfile, "security:dependencies")

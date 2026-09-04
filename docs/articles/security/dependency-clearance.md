@@ -1,7 +1,11 @@
 # Dependency security clearance
 
 The required Security workflow evaluates JavaScript vulnerability evidence
-offline and evaluates Go vulnerabilities against the current source. The
+offline and evaluates Go vulnerabilities against the current source. Before
+that gate, the workflow separately prepares the ignored generated Go source
+needed by source-aware `govulncheck` with `task db:generate`, `task
+config:generate`, and `task ui-signals:generate`; this step does not run a
+JavaScript audit or advisory query, or refresh the controlled evidence. The
 default `task security:dependencies` command reads
 `.security/javascript-vulnerability-evidence.json`; it does not refresh that
 document or call a live JavaScript audit. The evidence must cover exactly five
