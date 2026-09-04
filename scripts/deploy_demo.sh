@@ -74,88 +74,137 @@ data_path="$(cd -P "$data_link" && pwd)"
   --from "$data_path" \
   --target "$demo_target" \
   --token "$publisher_token"
-"$leapview" dev --once --no-browser --format json \
-  --project "$project_path" \
+
+# Delivery is deliberately split into the target-owned plan, build, and
+# publication commands. Each command persists an immutable checkpoint that
+# the next command resolves, so the candidate cannot be redirected to another
+# project or target by a later invocation.
+plan="$("$leapview" plan "$project_path" \
   --target "$demo_target" \
   --token "$publisher_token" \
   --candidate-key "$candidate_key" \
-  --source-repository github.com/flidai/leapview \
-  --source-ref refs/heads/main \
-  --source-revision "$source_revision"
-publication="$("$leapview" publish --format json \
-  --project "$project_path" \
-  --target "$demo_target" \
-  --token "$publisher_token" \
-  --candidate-key "$candidate_key")"
-deployment_id="$(jq -r '.deploymentId' <<<"$publication")"
-[[ "$deployment_id" == deployment_* ]] || {
-  echo "demo publication did not return a deployment identity" >&2
+  --format json)"
+plan_id="$(jq -er '.planId | strings | select(length > 0)' <<<"$plan")"
+[[ "$(jq -r '.projectId' <<<"$plan")" == "$project_id" ]] || {
+  echo "demo delivery plan has an unexpected project identity" >&2
+  exit 1
+}
+[[ "$(jq -r '.status' <<<"$plan")" == "planned" ]] || {
+  echo "demo delivery plan did not remain planned" >&2
   exit 1
 }
 
-deployment="$("$leapview" api call getDeployment \
+build="$("$leapview" build "$plan_id" \
+  --token "$publisher_token" \
+  --format json)"
+[[ "$(jq -r '.status' <<<"$build")" == "sealed" ]] || {
+  echo "demo delivery build did not seal" >&2
+  exit 1
+}
+candidate_id="$(jq -er '.candidateId | strings | select(length > 0)' <<<"$build")"
+
+candidate_status="$("$leapview" api call getDeliveryCandidateStatus \
   --target "$demo_target" \
-  --token "$release_token" \
+  --token "$publisher_token" \
   --path "project=$project_id" \
-  --path "deployment=$deployment_id")"
-status="$(jq -r '.status' <<<"$deployment")"
-if [[ "$status" != "active" ]]; then
-  approval_id="$(jq -r '.approval.id // empty' <<<"$deployment")"
-  approval_status="$(jq -r '.approval.status // empty' <<<"$deployment")"
-  approval_revision="$(jq -r '.approval.revision // empty' <<<"$deployment")"
-  if [[ "$approval_status" == "pending" ]]; then
-    [[ -n "$approval_id" && "$approval_revision" =~ ^[0-9]+$ ]] || {
-      echo "demo deployment has invalid approval evidence" >&2
-      exit 1
-    }
-    "$leapview" api call approveDeployment \
-      --target "$demo_target" \
-      --token "$release_token" \
-      --path "project=$project_id" \
-      --path "deployment=$deployment_id" \
-      --path "approval=$approval_id" \
-      --body-json "{\"expectedRevision\":$approval_revision}" \
-      --idempotency-key "demo-approve-$source_revision" >/dev/null
-  elif [[ "$approval_status" != "approved" ]]; then
-    echo "demo deployment approval is $approval_status" >&2
+  --path "candidate=$candidate_id")"
+[[ "$(jq -r '.status' <<<"$candidate_status")" == "ready" ]] || {
+  echo "demo delivery candidate is not ready" >&2
+  exit 1
+}
+
+publication="$("$leapview" publish "$candidate_id" \
+  --format json \
+  --token "$publisher_token")"
+publication_id="$(jq -er '.publicationId | strings | select(length > 0)' <<<"$publication")"
+generation_id="$(jq -er '.generationId | strings | select(length > 0)' <<<"$publication")"
+publication_status="$(jq -r '.status' <<<"$publication")"
+[[ "$(jq -r '.candidateId' <<<"$publication")" == "$candidate_id" ]] || {
+  echo "demo publication did not preserve the sealed candidate identity" >&2
+  exit 1
+}
+
+# Protected targets return a pending publication. Request its approval as the
+# publisher, then make the decision with the independent release principal.
+if [[ "$publication_status" == "pending" ]]; then
+  approval="$("$leapview" api call requestDeliveryPublicationApproval \
+    --target "$demo_target" \
+    --token "$publisher_token" \
+    --path "project=$project_id" \
+    --path "publication=$publication_id" \
+    --idempotency-key "demo-request-approval-$source_revision")"
+  approval_id="$(jq -er '.id | strings | select(length > 0)' <<<"$approval")"
+  approval_revision="$(jq -er '.revision' <<<"$approval")"
+  approval_status="$(jq -r '.status' <<<"$approval")"
+  [[ "$approval_status" == "pending" && "$approval_revision" =~ ^[0-9]+$ ]] || {
+    echo "demo publication approval request is invalid" >&2
     exit 1
-  fi
-  "$leapview" api call activateDeployment \
+  }
+  approved="$("$leapview" api call approveDeliveryPublicationApproval \
     --target "$demo_target" \
     --token "$release_token" \
     --path "project=$project_id" \
-    --path "deployment=$deployment_id" \
-    --idempotency-key "demo-activate-$source_revision" >/dev/null
+    --path "publication=$publication_id" \
+    --path "approval=$approval_id" \
+    --body-json "{\"expectedRevision\":$approval_revision}" \
+    --idempotency-key "demo-approve-$source_revision")"
+  [[ "$(jq -r '.status' <<<"$approved")" == "approved" ]] || {
+    echo "demo publication approval was not granted" >&2
+    exit 1
+  }
+  approval_status="$("$leapview" api call getDeliveryPublicationApproval \
+    --target "$demo_target" \
+    --token "$release_token" \
+    --path "project=$project_id" \
+    --path "publication=$publication_id" \
+    --path "approval=$approval_id")"
+  [[ "$(jq -r '.status' <<<"$approval_status")" == "approved" ]] || {
+    echo "demo publication approval status did not persist" >&2
+    exit 1
+  }
+elif [[ "$publication_status" != "committed" ]]; then
+  echo "demo publication has unexpected status $publication_status" >&2
+  exit 1
 fi
 
 for _ in $(seq 1 120); do
-  deployment="$("$leapview" api call getDeployment \
+  publication_status_json="$("$leapview" api call getDeliveryPublicationEvidence \
     --target "$demo_target" \
     --token "$release_token" \
     --path "project=$project_id" \
-    --path "deployment=$deployment_id")"
-  status="$(jq -r '.status' <<<"$deployment")"
-  case "$status" in
-    active) break ;;
-    failed|cancelled|superseded)
-      echo "demo deployment ended in $status" >&2
+    --path "publication=$publication_id")"
+  publication_status="$(jq -r '.status' <<<"$publication_status_json")"
+  case "$publication_status" in
+    committed) break ;;
+    rejected|indeterminate)
+      echo "demo publication ended in $publication_status" >&2
       exit 1
       ;;
   esac
   sleep 2
 done
-if [[ "$status" != "active" ]]; then
-  echo "demo deployment did not become active" >&2
+if [[ "$publication_status" != "committed" ]]; then
+  echo "demo publication did not become committed" >&2
   exit 1
 fi
+
+generation_status="$("$leapview" api call getDeliveryGenerationStatus \
+  --target "$demo_target" \
+  --token "$release_token" \
+  --path "project=$project_id" \
+  --path "generation=$generation_id")"
+[[ "$(jq -r '.status' <<<"$generation_status")" == "active" ]] || {
+  echo "demo serving generation did not become active" >&2
+  exit 1
+}
 
 "$leapview" api call getProject \
   --target "$demo_target" \
   --token "$release_token" \
   --path "project=$project_id" >/dev/null
 
-jq -e --arg project "$project_id" '
-  .projectId == $project and .evidence.projectId == $project
-' <<<"$deployment" >/dev/null
+jq -e --arg project "$project_id" --arg candidate "$candidate_id" --arg generation "$generation_id" '
+  .projectId == $project and .candidateId == $candidate and .generationId == $generation
+' <<<"$publication_status_json" >/dev/null
 curl --fail --silent --show-error --max-time 15 "$demo_target/readyz" >/dev/null
 printf 'published the canonical project showcase to %s\n' "$demo_target"
