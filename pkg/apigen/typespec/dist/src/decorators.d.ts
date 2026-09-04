@@ -1,4 +1,4 @@
-import { type DecoratorContext, type Enum, type Interface, type Model, type ModelProperty, type Namespace, type Operation, type Scalar } from "@typespec/compiler";
+import { type DecoratorContext, type Enum, type Interface, type Model, type ModelProperty, type Namespace, type Operation, type Scalar, type Union } from "@typespec/compiler";
 export interface CLIArg {
     source: "path" | "query" | "body";
     name: string;
@@ -165,6 +165,7 @@ export declare function $responseShape(context: DecoratorContext, target: Model,
 export declare function $package(context: DecoratorContext, target: Namespace, options: PackageOptions): void;
 export declare function $contract(context: DecoratorContext, target: Model | Enum, options?: ContractOptions): void;
 export declare function $metadata(context: DecoratorContext, target: Model | ModelProperty | Enum, value: Record<string, unknown>): void;
+export declare function $exactNumbers(context: DecoratorContext, target: Union): void;
 export declare function $tool(context: DecoratorContext, target: Operation, options: ToolOptions): void;
 export declare function $transportErrors(context: DecoratorContext, target: Namespace, schema: Model, options: TransportErrorsOptions): void;
 export declare function $propertyNames(context: DecoratorContext, target: ModelProperty, key: Scalar): void;
@@ -195,6 +196,7 @@ export declare const $decorators: {
         package: typeof $package;
         contract: typeof $contract;
         metadata: typeof $metadata;
+        exactNumbers: typeof $exactNumbers;
         tool: typeof $tool;
         transportErrors: typeof $transportErrors;
         propertyNames: typeof $propertyNames;
@@ -265,6 +267,9 @@ export declare function getContracts(context: {
 export declare function getMetadata(context: {
     program: DecoratorContext["program"];
 }, target: Model | ModelProperty | Enum): Record<string, unknown> | undefined;
+export declare function hasExactNumbers(context: {
+    program: DecoratorContext["program"];
+}, target: Union): boolean;
 export declare function getTool(context: {
     program: DecoratorContext["program"];
 }, target: Operation): ToolOptions | undefined;

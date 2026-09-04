@@ -222,7 +222,6 @@ func (value *DashboardConditionalRule) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -618,7 +617,6 @@ func (value *DashboardFilterControl) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -898,7 +896,6 @@ func (value *DashboardFilterExpression) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1208,7 +1205,6 @@ func (value *DashboardFilterOptions) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1394,7 +1390,6 @@ func (value *DashboardFilterValue) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1692,7 +1687,6 @@ func (value *DashboardGeographicLayer) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -2062,7 +2056,6 @@ func (value *DashboardInteraction) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -2482,7 +2475,6 @@ func (value *DashboardPageComponent) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -2772,7 +2764,6 @@ func (value *DashboardPresentation) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -3123,7 +3114,6 @@ func (value *DashboardQuery) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -3502,7 +3492,6 @@ func (value *DashboardReferenceValue) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}

@@ -3,6 +3,7 @@ package compiler
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -154,7 +155,13 @@ func rejectSemanticAccessPolicy(spec projectcontracts.SemanticModelSpec) error {
 	if spec.AccessGrants != nil {
 		return fmt.Errorf("SemanticModel spec accessGrants: %s", pending)
 	}
-	for name, dataset := range spec.Datasets {
+	datasetNames := make([]string, 0, len(spec.Datasets))
+	for name := range spec.Datasets {
+		datasetNames = append(datasetNames, name)
+	}
+	sort.Strings(datasetNames)
+	for _, name := range datasetNames {
+		dataset := spec.Datasets[name]
 		if dataset.RequiredAccessGrants != nil {
 			return fmt.Errorf("SemanticModel dataset %q requiredAccessGrants: %s", name, pending)
 		}
@@ -163,13 +170,25 @@ func rejectSemanticAccessPolicy(spec projectcontracts.SemanticModelSpec) error {
 		}
 	}
 	if spec.Dimensions != nil {
-		for name, dimension := range *spec.Dimensions {
+		dimensionNames := make([]string, 0, len(*spec.Dimensions))
+		for name := range *spec.Dimensions {
+			dimensionNames = append(dimensionNames, name)
+		}
+		sort.Strings(dimensionNames)
+		for _, name := range dimensionNames {
+			dimension := (*spec.Dimensions)[name]
 			if dimension.RequiredAccessGrants != nil {
 				return fmt.Errorf("SemanticModel dimension %q requiredAccessGrants: %s", name, pending)
 			}
 		}
 	}
-	for name, metric := range spec.Metrics {
+	metricNames := make([]string, 0, len(spec.Metrics))
+	for name := range spec.Metrics {
+		metricNames = append(metricNames, name)
+	}
+	sort.Strings(metricNames)
+	for _, name := range metricNames {
+		metric := spec.Metrics[name]
 		var required *[]string
 		switch variant := metric.Value.(type) {
 		case *projectcontracts.SemanticMetricAggregateVariant:

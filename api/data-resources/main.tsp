@@ -590,6 +590,7 @@ model SemanticNumberAllowedValues is float64[];
 model SemanticBooleanAllowedValues is boolean[];
 
 /** Access-grant values are homogeneous by JSON scalar category. */
+@apigen.exactNumbers
 union SemanticAllowedValues {
   text: SemanticTextAllowedValues,
   number: SemanticNumberAllowedValues,
@@ -697,6 +698,7 @@ model NotSemanticFilter {
 }
 
 /** Recursive filters remain wrapper-free and select exactly one leaf or boolean node. */
+@apigen.exactNumbers
 union SemanticFilter {
   equals: EqualsSemanticFilter,
   not_equals: NotEqualsSemanticFilter,

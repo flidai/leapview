@@ -190,6 +190,7 @@ extern dec responseShape(target: Model, options: valueof ResponseShapeOptions);
 extern dec `package`(target: Namespace, options: valueof PackageOptions);
 extern dec contract(target: Model | Enum, options?: valueof ContractOptions);
 extern dec `metadata`(target: Model | ModelProperty, value: valueof unknown);
+extern dec exactNumbers(target: Union);
 extern dec tool(target: Operation, options: valueof ToolOptions);
 extern dec transportErrors(target: Namespace, schema: Model, options: valueof TransportErrorsOptions);
 extern dec propertyNames(target: ModelProperty, key: Scalar);

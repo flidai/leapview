@@ -192,7 +192,6 @@ func (value *ConnectionSpec) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -773,7 +772,6 @@ func (value *ModelCheck) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1006,7 +1004,6 @@ func (value *ModelDefinition) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1289,7 +1286,6 @@ func (value *PathSourceLocation) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1781,6 +1777,53 @@ type SemanticAccessGrant struct {
 }
 
 type SemanticAllowedValues []any
+
+func (value *SemanticAllowedValues) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal SemanticAllowedValues into nil receiver")
+	}
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("decode SemanticAllowedValues: %w", err)
+	}
+	if len(raw) == 0 {
+		return fmt.Errorf("decode SemanticAllowedValues: at least one value is required")
+	}
+	parsed := make([]any, len(raw))
+	var kind string
+	for index, item := range raw {
+		decoder := json.NewDecoder(bytes.NewReader(item))
+		decoder.UseNumber()
+		if err := decoder.Decode(&parsed[index]); err != nil {
+			return fmt.Errorf("decode SemanticAllowedValues item %d: %w", index, err)
+		}
+		var itemKind string
+		switch parsed[index].(type) {
+		case string:
+			itemKind = "string"
+		case json.Number:
+			itemKind = "number"
+		case bool:
+			itemKind = "boolean"
+		default:
+			return fmt.Errorf("decode SemanticAllowedValues item %d: value does not match an allowed scalar array branch", index)
+		}
+		switch itemKind {
+		case "boolean":
+		case "number":
+		case "string":
+		default:
+			return fmt.Errorf("decode SemanticAllowedValues item %d: value does not match an allowed scalar array branch", index)
+		}
+		if kind == "" {
+			kind = itemKind
+		} else if kind != itemKind {
+			return fmt.Errorf("decode SemanticAllowedValues: values must be homogeneous (item %d is %s, want %s)", index, itemKind, kind)
+		}
+	}
+	*value = SemanticAllowedValues(parsed)
+	return nil
+}
 
 type SemanticDataset struct {
 	Model                string                  `json:"model" yaml:"model"`
@@ -2431,7 +2474,6 @@ func (value *SemanticMetric) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -2649,7 +2691,6 @@ func (value *SemanticRelationshipEndpoint) UnmarshalJSON(data []byte) error {
 	var failures []string
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -2774,7 +2815,6 @@ func (value *SourceFreshness) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -2920,7 +2960,6 @@ func (value *SourceLocation) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -3069,7 +3108,6 @@ func (value *SourceSchema) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}

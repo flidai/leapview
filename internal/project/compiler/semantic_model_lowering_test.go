@@ -131,4 +131,50 @@ func TestSemanticModelLoweringRejectsEveryAccessPolicyBoundary(t *testing.T) {
 	}
 }
 
+func TestSemanticModelAccessPolicyDiagnosticsAreDeterministic(t *testing.T) {
+	grants := []string{"can_view"}
+	dimensions := map[string]projectcontracts.SemanticDimension{
+		"zeta":  {RequiredAccessGrants: &grants},
+		"alpha": {RequiredAccessGrants: &grants},
+	}
+	cases := []struct {
+		name string
+		spec projectcontracts.SemanticModelSpec
+		want string
+	}{
+		{
+			name: "datasets",
+			spec: projectcontracts.SemanticModelSpec{Datasets: map[string]projectcontracts.SemanticDataset{
+				"zeta":  {RequiredAccessGrants: &grants},
+				"alpha": {RequiredAccessGrants: &grants},
+			}},
+			want: `SemanticModel dataset "alpha" requiredAccessGrants: compiled access-policy support is not available`,
+		},
+		{
+			name: "dimensions",
+			spec: projectcontracts.SemanticModelSpec{Dimensions: &dimensions},
+			want: `SemanticModel dimension "alpha" requiredAccessGrants: compiled access-policy support is not available`,
+		},
+		{
+			name: "metrics",
+			spec: projectcontracts.SemanticModelSpec{Metrics: map[string]projectcontracts.SemanticMetric{
+				"zeta":  {Value: &projectcontracts.SemanticMetricAggregateVariant{AggregateSemanticMetric: projectcontracts.AggregateSemanticMetric{RequiredAccessGrants: &grants}}},
+				"alpha": {Value: &projectcontracts.SemanticMetricAggregateVariant{AggregateSemanticMetric: projectcontracts.AggregateSemanticMetric{RequiredAccessGrants: &grants}}},
+			}},
+			want: `SemanticModel metric "alpha" requiredAccessGrants: compiled access-policy support is not available`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for run := 0; run < 100; run++ {
+				err := rejectSemanticAccessPolicy(tc.spec)
+				if err == nil || err.Error() != tc.want {
+					t.Fatalf("run %d diagnostic = %v, want %q", run, err, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func stringPtr(value string) *string { return &value }

@@ -42,7 +42,11 @@ func Emit(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, ty
 	b.WriteString("\tvar tag struct { Value string \x60json:\"" + schema.Discriminator.PropertyName + "\"\x60 }\n")
 	b.WriteString("\tif err := json.Unmarshal(data, &tag); err != nil { return fmt.Errorf(\"decode " + unionName + " discriminator: %w\", err) }\n")
 	b.WriteString("\tif tag.Value == \"\" { return fmt.Errorf(\"" + unionName + " discriminator " + schema.Discriminator.PropertyName + " is required\") }\n")
-	b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.UseNumber(); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	if schema.ExactNumbers {
+		b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.UseNumber(); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	} else {
+		b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	}
 	b.WriteString("\tswitch tag.Value {\n")
 	for _, discriminatorValue := range values {
 		variantSchemaName := schema.Discriminator.Mapping[discriminatorValue]
@@ -225,7 +229,11 @@ func EmitObject(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 	b.WriteString("\tvar matched string\n")
 	b.WriteString("\tvar decoded any\n")
 	b.WriteString("\tvar failures []string\n")
-	b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.UseNumber(); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	if schema.ExactNumbers {
+		b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.UseNumber(); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	} else {
+		b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	}
 	for _, variant := range variants {
 		fmt.Fprintf(b, "\t{ valid := true\n")
 		for _, required := range requiredProperties(doc, variant) {
@@ -247,6 +255,101 @@ func EmitObject(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 	}
 	b.WriteString("\t}\n\treturn nil\n}\n\n")
 	return nil
+}
+
+// EmitExactNumberArray emits an explicitly opted-in array union that retains
+// JSON number lexemes as json.Number. The generated decoder accepts exactly
+// one of the homogeneous scalar categories present in the IR branches and
+// rejects empty, mixed, or otherwise invalid arrays.
+func EmitExactNumberArray(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, typeName func(string) string) error {
+	unionName := typeName(name)
+	kinds, err := exactNumberArrayKinds(doc, name, schema)
+	if err != nil {
+		return err
+	}
+
+	b.WriteString("type " + unionName + " []any\n\n")
+	b.WriteString("func (value *" + unionName + ") UnmarshalJSON(data []byte) error {\n")
+	b.WriteString("\tif value == nil { return fmt.Errorf(\"cannot unmarshal " + unionName + " into nil receiver\") }\n")
+	b.WriteString("\tvar raw []json.RawMessage\n")
+	b.WriteString("\tif err := json.Unmarshal(data, &raw); err != nil { return fmt.Errorf(\"decode " + unionName + ": %w\", err) }\n")
+	b.WriteString("\tif len(raw) == 0 { return fmt.Errorf(\"decode " + unionName + ": at least one value is required\") }\n")
+	b.WriteString("\tparsed := make([]any, len(raw))\n")
+	b.WriteString("\tvar kind string\n")
+	b.WriteString("\tfor index, item := range raw {\n")
+	b.WriteString("\t\tdecoder := json.NewDecoder(bytes.NewReader(item)); decoder.UseNumber()\n")
+	b.WriteString("\t\tif err := decoder.Decode(&parsed[index]); err != nil { return fmt.Errorf(\"decode " + unionName + " item %d: %w\", index, err) }\n")
+	b.WriteString("\t\tvar itemKind string\n")
+	b.WriteString("\t\tswitch parsed[index].(type) {\n")
+	b.WriteString("\t\tcase string:\n\t\t\titemKind = \"string\"\n")
+	b.WriteString("\t\tcase json.Number:\n\t\t\titemKind = \"number\"\n")
+	b.WriteString("\t\tcase bool:\n\t\t\titemKind = \"boolean\"\n")
+	b.WriteString("\t\tdefault:\n\t\t\treturn fmt.Errorf(\"decode " + unionName + " item %d: value does not match an allowed scalar array branch\", index)\n")
+	b.WriteString("\t\t}\n")
+	allowed := make([]string, 0, len(kinds))
+	for kind := range kinds {
+		allowed = append(allowed, kind)
+	}
+	sort.Strings(allowed)
+	b.WriteString("\t\tswitch itemKind {\n")
+	for _, kind := range allowed {
+		fmt.Fprintf(b, "\t\tcase %q:\n", kind)
+	}
+	b.WriteString("\t\tdefault:\n\t\t\treturn fmt.Errorf(\"decode " + unionName + " item %d: value does not match an allowed scalar array branch\", index)\n")
+	b.WriteString("\t\t}\n")
+	b.WriteString("\t\tif kind == \"\" { kind = itemKind } else if kind != itemKind { return fmt.Errorf(\"decode " + unionName + ": values must be homogeneous (item %d is %s, want %s)\", index, itemKind, kind) }\n")
+	b.WriteString("\t}\n")
+	b.WriteString("\t*value = " + unionName + "(parsed)\n")
+	b.WriteString("\treturn nil\n")
+	b.WriteString("}\n\n")
+	return nil
+}
+
+func exactNumberArrayKinds(doc ir.Document, name string, schema ir.Schema) (map[string]struct{}, error) {
+	if schema.Type != "union" || len(schema.OneOf) < 2 {
+		return nil, fmt.Errorf("exact number union %q must be an array union with at least two branches", name)
+	}
+	kinds := make(map[string]struct{}, len(schema.OneOf))
+	for index, branch := range schema.OneOf {
+		array := branch
+		if branch.Ref != "" {
+			branchName, ok := ir.NormalizedSchemaRefName(branch)
+			if !ok {
+				return nil, fmt.Errorf("exact number union %q branch %d has an invalid schema reference", name, index)
+			}
+			candidate, ok := doc.Schemas[branchName]
+			if !ok {
+				return nil, fmt.Errorf("exact number union %q branch %d references missing schema %q", name, index, branchName)
+			}
+			if candidate.Type != "array" || candidate.Items == nil {
+				return nil, fmt.Errorf("exact number union %q branch %d must be an array with scalar items", name, index)
+			}
+			array = ir.SchemaRef{Type: candidate.Type, Items: candidate.Items}
+		}
+		if !strings.EqualFold(strings.TrimSpace(array.Type), "array") || array.Items == nil {
+			return nil, fmt.Errorf("exact number union %q branch %d must be an array with scalar items", name, index)
+		}
+		item := *array.Items
+		if item.Ref != "" || item.Items != nil || item.AdditionalProperties != nil {
+			return nil, fmt.Errorf("exact number union %q branch %d must contain scalar items", name, index)
+		}
+		var kind string
+		switch strings.ToLower(strings.TrimSpace(item.Type)) {
+		case "string":
+			kind = "string"
+		case "number", "integer":
+			kind = "number"
+		case "boolean":
+			kind = "boolean"
+		default:
+			return nil, fmt.Errorf("exact number union %q branch %d has unsupported item type %q", name, index, item.Type)
+		}
+		if _, exists := kinds[kind]; exists {
+			return nil, fmt.Errorf("exact number union %q has duplicate %s array branches", name, kind)
+		}
+		kinds[kind] = struct{}{}
+	}
+	return kinds, nil
 }
 
 type requiredStringLiteral struct {

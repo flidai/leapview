@@ -1,4 +1,4 @@
-import { isArrayModelType, isRecordModelType, type DecoratorContext, type Enum, type Interface, type Model, type ModelProperty, type Namespace, type Operation, type Scalar, type Type } from "@typespec/compiler";
+import { isArrayModelType, isRecordModelType, type DecoratorContext, type Enum, type Interface, type Model, type ModelProperty, type Namespace, type Operation, type Scalar, type Type, type Union } from "@typespec/compiler";
 
 import { reportDiagnostic } from "./lib.js";
 
@@ -176,6 +176,7 @@ const responseShapeKey = Symbol.for("@yacobolo/apigen.responseShape");
 const packageKey = Symbol.for("@yacobolo/apigen.package");
 const contractKey = Symbol.for("@yacobolo/apigen.contract");
 const metadataKey = Symbol.for("@yacobolo/apigen.metadata");
+const exactNumbersKey = Symbol.for("@yacobolo/apigen.exactNumbers");
 const toolKey = Symbol.for("@yacobolo/apigen.tool");
 const transportErrorsKey = Symbol.for("@yacobolo/apigen.transportErrors");
 const propertyNamesKey = Symbol.for("@yacobolo/apigen.propertyNames");
@@ -392,6 +393,10 @@ export function $metadata(
   context.program.stateMap(metadataKey).set(target, value);
 }
 
+export function $exactNumbers(context: DecoratorContext, target: Union) {
+  context.program.stateSet(exactNumbersKey).add(target);
+}
+
 export function $tool(context: DecoratorContext, target: Operation, options: ToolOptions) {
   context.program.stateMap(toolKey).set(target, options);
 }
@@ -521,6 +526,7 @@ export const $decorators = {
     package: $package,
     contract: $contract,
     metadata: $metadata,
+    exactNumbers: $exactNumbers,
     tool: $tool,
     transportErrors: $transportErrors,
     propertyNames: $propertyNames,
@@ -651,6 +657,10 @@ export function getMetadata(
   target: Model | ModelProperty | Enum,
 ) {
   return context.program.stateMap(metadataKey).get(target) as Record<string, unknown> | undefined;
+}
+
+export function hasExactNumbers(context: { program: DecoratorContext["program"] }, target: Union) {
+  return context.program.stateSet(exactNumbersKey).has(target);
 }
 
 export function getTool(context: { program: DecoratorContext["program"] }, target: Operation) {

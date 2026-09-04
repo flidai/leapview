@@ -97,7 +97,6 @@ func (value *PipelineSpec) UnmarshalJSON(data []byte) error {
 	var failures []string
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}

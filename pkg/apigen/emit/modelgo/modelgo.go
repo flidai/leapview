@@ -81,7 +81,13 @@ func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 	switch schema.Type {
 	case "union":
 		if schema.Discriminator == nil {
-			if isArrayUnion(doc, schema) {
+			if schema.ExactNumbers && isArrayUnion(doc, schema) {
+				if err := gounion.EmitExactNumberArray(b, doc, name, schema, resolveName); err != nil {
+					return err
+				}
+			} else if schema.ExactNumbers && !isObjectUnion(doc, schema) {
+				return fmt.Errorf("exact number union %q must be an array union", name)
+			} else if isArrayUnion(doc, schema) {
 				b.WriteString("type " + typeName + " []any\n\n")
 			} else if isObjectUnion(doc, schema) {
 				if err := gounion.EmitObject(b, doc, name, schema, resolveName); err != nil {
@@ -177,7 +183,7 @@ func emitImports(b *strings.Builder, values map[string]string) {
 
 func hasUnion(doc ir.Document, names []string) bool {
 	for _, name := range names {
-		if schema := doc.Schemas[name]; schema.Type == "union" && !isArrayUnion(doc, schema) && (schema.Discriminator != nil || hasNonScalarUnionVariant(schema)) {
+		if schema := doc.Schemas[name]; schema.Type == "union" && (schema.ExactNumbers || (!isArrayUnion(doc, schema) && (schema.Discriminator != nil || hasNonScalarUnionVariant(schema)))) {
 			return true
 		}
 	}

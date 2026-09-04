@@ -59,6 +59,7 @@ import {
   getTransportErrors,
   getUI,
   getUnauditedReason,
+  hasExactNumbers,
   isTarget,
   isManual,
   isQuery,
@@ -273,6 +274,7 @@ interface Schema {
   one_of?: SchemaRef[];
   discriminator?: { property_name: string; mapping: Record<string, string> };
   enum?: string[];
+  exact_numbers?: boolean;
   extensions?: Record<string, unknown>;
 }
 
@@ -543,13 +545,19 @@ class IRBuilder {
   }
 
   private unionSchema(type: Union): Schema {
+    const withUnionMetadata = (schema: Schema): Schema => {
+      if (hasExactNumbers({ program: this.program }, type)) {
+        schema.exact_numbers = true;
+      }
+      return schema;
+    };
     const scalarVariants = [...type.variants.values()];
     if (scalarVariants.length > 0 && scalarVariants.every((variant) => isJSONScalarType(variant.type))) {
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-      };
+      });
     }
     // A compact authored reference may intentionally be either a JSON scalar
     // (for example an unaliased metric name) or a closed object carrying the
@@ -560,11 +568,11 @@ class IRBuilder {
     // a strict scalar/object wrapper; contextual visual/query compatibility
     // remains compiler-owned.
     if (scalarVariants.some((variant) => isJSONScalarType(variant.type))) {
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-      };
+      });
     }
     const [union, diagnostics] = getDiscriminatedUnion(this.program, type);
     if (union) {
@@ -604,7 +612,7 @@ class IRBuilder {
         oneOf.push({ ref: name });
         mapping[value] = name;
       }
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: oneOf,
@@ -612,7 +620,7 @@ class IRBuilder {
           property_name: union.options.discriminatorPropertyName,
           mapping,
         },
-      };
+      });
     }
 
     // A structural object union is useful when the authored object remains
@@ -622,11 +630,11 @@ class IRBuilder {
     // all-or-none shape and language emitters can dispatch by strict field
     // decoding. Discriminators remain reserved for explicitly tagged unions.
     if (scalarVariants.every((variant) => variant.type.kind === "Model")) {
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-      };
+      });
     }
 
     if (!type.name) {
