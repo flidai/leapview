@@ -97,10 +97,10 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 	legend := document.DashboardLegendPositionTop
 	labels := document.DashboardLabelPolicy{Density: document.DashboardLabelDensityAlways}
 	orientation := document.DashboardOrientationHorizontal
+	initialDepth := int32(2)
+	roam := true
 	units := visualizationir.VisualizationDisplayUnitsBillions
-	nodeGap, curveness := 18.0, .32
 	layout := visualizationir.VisualizationHierarchyLayoutCircular
-	focus := visualizationir.VisualizationGraphFocusAdjacency
 	cases := []struct {
 		name       string
 		visualType document.DashboardVisualType
@@ -119,10 +119,10 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 		},
 		{
 			name: "hierarchy", visualType: document.DashboardVisualTypeTree,
-			value: document.DashboardPresentation{Value: &document.HierarchyDashboardPresentation{Type: "hierarchy", Orientation: &orientation, Layout: &layout, NodeGap: &nodeGap, Curveness: &curveness, Focus: &focus}},
+			value: document.DashboardPresentation{Value: &document.HierarchyDashboardPresentation{Type: "hierarchy", Orientation: &orientation, InitialDepth: &initialDepth, Roam: &roam, Layout: &layout}},
 			check: func(t *testing.T, value any) {
 				got := value.(visualizationir.HierarchyVisualizationPresentation)
-				if got.Orientation != visualizationir.VisualizationOrientationHorizontal || got.Legend != visualizationir.VisualizationLegendPositionBottom || got.Layout == nil || *got.Layout != visualizationir.VisualizationHierarchyLayoutCircular || got.NodeGap == nil || *got.NodeGap != 18 || got.Curveness == nil || *got.Curveness != .32 || got.Focus == nil || *got.Focus != visualizationir.VisualizationGraphFocusAdjacency {
+				if got.Orientation != visualizationir.VisualizationOrientationHorizontal || got.Legend != visualizationir.VisualizationLegendPositionBottom || got.InitialDepth == nil || *got.InitialDepth != 2 || !got.Roam || got.Layout == nil || *got.Layout != visualizationir.VisualizationHierarchyLayoutCircular {
 					t.Fatalf("hierarchy = %#v", got)
 				}
 			},
@@ -170,6 +170,240 @@ func TestLowerCanonicalPresentationRejectsIncompatibleAndInvalidValues(t *testin
 	zero := int32(0)
 	if _, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.TableDashboardPresentation{Type: "table", RowHeight: zero}}, document.DashboardVisualTypeTable); err == nil {
 		t.Fatal("zero table row height accepted")
+	}
+}
+
+func TestLowerCanonicalHierarchyPresentationSupportsOptionsByVisualType(t *testing.T) {
+	tests := []struct {
+		name        string
+		visualTypes []document.DashboardVisualType
+		set         func(*document.HierarchyDashboardPresentation)
+		check       func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation)
+	}{
+		{
+			name: "orientation", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeTree, document.DashboardVisualTypeSankey},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				orientation := document.DashboardOrientationHorizontal
+				value.Orientation = &orientation
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Orientation != visualizationir.VisualizationOrientationHorizontal {
+					t.Fatalf("orientation = %q", got.Orientation)
+				}
+			},
+		},
+		{
+			name: "initialDepth", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeTree, document.DashboardVisualTypeTreemap},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				initialDepth := int32(0)
+				value.InitialDepth = &initialDepth
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.InitialDepth == nil || *got.InitialDepth != 0 {
+					t.Fatalf("initialDepth = %v", got.InitialDepth)
+				}
+			},
+		},
+		{
+			name: "roam", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeGraph, document.DashboardVisualTypeTree, document.DashboardVisualTypeTreemap, document.DashboardVisualTypeSunburst},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				roam := false
+				value.Roam = &roam
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Roam {
+					t.Fatal("roam = true, want explicit false")
+				}
+			},
+		},
+		{
+			name: "layout", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeGraph, document.DashboardVisualTypeTree},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				layout := visualizationir.VisualizationHierarchyLayoutStandard
+				value.Layout = &layout
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Layout == nil || *got.Layout != visualizationir.VisualizationHierarchyLayoutStandard {
+					t.Fatalf("layout = %v", got.Layout)
+				}
+			},
+		},
+		{
+			name: "breadcrumb", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeTreemap},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				breadcrumb := false
+				value.Breadcrumb = &breadcrumb
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Breadcrumb == nil || *got.Breadcrumb {
+					t.Fatalf("breadcrumb = %v", got.Breadcrumb)
+				}
+			},
+		},
+		{
+			name: "nodeGap", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeSankey},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				nodeGap := 0.0
+				value.NodeGap = &nodeGap
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.NodeGap == nil || *got.NodeGap != 0 {
+					t.Fatalf("nodeGap = %v", got.NodeGap)
+				}
+			},
+		},
+		{
+			name: "curveness", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeGraph, document.DashboardVisualTypeSankey},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				curveness := 0.0
+				value.Curveness = &curveness
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Curveness == nil || *got.Curveness != 0 {
+					t.Fatalf("curveness = %v", got.Curveness)
+				}
+			},
+		},
+		{
+			name: "focus", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeGraph},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				focus := visualizationir.VisualizationGraphFocusNone
+				value.Focus = &focus
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Focus == nil || *got.Focus != visualizationir.VisualizationGraphFocusNone {
+					t.Fatalf("focus = %v", got.Focus)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		for _, visualType := range test.visualTypes {
+			t.Run(test.name+"/"+string(visualType), func(t *testing.T) {
+				value := &document.HierarchyDashboardPresentation{Type: "hierarchy"}
+				test.set(value)
+				lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, visualType)
+				if err != nil {
+					t.Fatalf("lower %s: %v", visualType, err)
+				}
+				got, ok := lowered.(visualizationir.HierarchyVisualizationPresentation)
+				if !ok {
+					t.Fatalf("lowered type = %T", lowered)
+				}
+				test.check(t, got)
+			})
+		}
+	}
+}
+
+func TestLowerCanonicalHierarchyPresentationRejectsInapplicableOptions(t *testing.T) {
+	tests := []struct {
+		name       string
+		visualType document.DashboardVisualType
+		set        func(*document.HierarchyDashboardPresentation)
+		want       string
+	}{
+		{
+			name: "orientation on treemap", visualType: document.DashboardVisualTypeTreemap,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				orientation := document.DashboardOrientationHorizontal
+				value.Orientation = &orientation
+			}, want: "presentation.orientation",
+		},
+		{
+			name: "initialDepth on sunburst", visualType: document.DashboardVisualTypeSunburst,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				initialDepth := int32(0)
+				value.InitialDepth = &initialDepth
+			}, want: "presentation.initialDepth",
+		},
+		{
+			name: "roam on sankey", visualType: document.DashboardVisualTypeSankey,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				roam := false
+				value.Roam = &roam
+			}, want: "presentation.roam",
+		},
+		{
+			name: "layout on sunburst", visualType: document.DashboardVisualTypeSunburst,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				layout := visualizationir.VisualizationHierarchyLayoutStandard
+				value.Layout = &layout
+			}, want: "presentation.layout",
+		},
+		{
+			name: "breadcrumb on tree", visualType: document.DashboardVisualTypeTree,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				breadcrumb := false
+				value.Breadcrumb = &breadcrumb
+			}, want: "presentation.breadcrumb",
+		},
+		{
+			name: "nodeGap on graph", visualType: document.DashboardVisualTypeGraph,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				nodeGap := 0.0
+				value.NodeGap = &nodeGap
+			}, want: "presentation.nodeGap",
+		},
+		{
+			name: "curveness on tree", visualType: document.DashboardVisualTypeTree,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				curveness := 0.0
+				value.Curveness = &curveness
+			}, want: "presentation.curveness",
+		},
+		{
+			name: "focus on treemap", visualType: document.DashboardVisualTypeTreemap,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				focus := visualizationir.VisualizationGraphFocusNone
+				value.Focus = &focus
+			}, want: "presentation.focus",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.HierarchyDashboardPresentation{Type: "hierarchy"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, test.visualType)
+			if err == nil || !strings.Contains(err.Error(), test.want+" is not supported for "+string(test.visualType)+" visuals") {
+				t.Fatalf("error = %v, want path-bearing applicability error for %s", err, test.want)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalHierarchyPresentationRejectsUnknownEnums(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*document.HierarchyDashboardPresentation)
+		want string
+	}{
+		{
+			name: "layout",
+			set: func(value *document.HierarchyDashboardPresentation) {
+				layout := visualizationir.VisualizationHierarchyLayout("spiral")
+				value.Layout = &layout
+			},
+			want: "presentation.layout must be standard or circular",
+		},
+		{
+			name: "focus",
+			set: func(value *document.HierarchyDashboardPresentation) {
+				focus := visualizationir.VisualizationGraphFocus("neighbors")
+				value.Focus = &focus
+			},
+			want: "presentation.focus must be none or adjacency",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.HierarchyDashboardPresentation{Type: "hierarchy"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, document.DashboardVisualTypeGraph)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

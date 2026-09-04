@@ -2027,7 +2027,6 @@ spec:
       title: Category, state, and status sunburst
       presentation:
         type: hierarchy
-        initialDepth: 2
         roam: true
     orders_table:
       type: table

@@ -28,6 +28,9 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 	if kind != expected {
 		return nil, fmt.Errorf("visual type %q requires %s presentation, got %s", visualType, expected, kind)
 	}
+	if err := validateCanonicalPresentationApplicability(value, visualType); err != nil {
+		return nil, err
+	}
 	switch variant := value.Value.(type) {
 	case *document.CartesianDashboardPresentation:
 		if variant.Series != nil && visualType != document.DashboardVisualTypeCombo {
@@ -190,11 +193,25 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if variant.Roam != nil {
 			out.Roam = *variant.Roam
 		}
-		out.Layout = variant.Layout
+		if variant.Layout != nil {
+			switch *variant.Layout {
+			case visualizationir.VisualizationHierarchyLayoutStandard, visualizationir.VisualizationHierarchyLayoutCircular:
+				out.Layout = variant.Layout
+			default:
+				return nil, fmt.Errorf("presentation.layout must be standard or circular")
+			}
+		}
 		out.Breadcrumb = variant.Breadcrumb
 		out.NodeGap = variant.NodeGap
 		out.Curveness = variant.Curveness
-		out.Focus = variant.Focus
+		if variant.Focus != nil {
+			switch *variant.Focus {
+			case visualizationir.VisualizationGraphFocusNone, visualizationir.VisualizationGraphFocusAdjacency:
+				out.Focus = variant.Focus
+			default:
+				return nil, fmt.Errorf("presentation.focus must be none or adjacency")
+			}
+		}
 		if out.InitialDepth != nil && *out.InitialDepth < 0 {
 			return nil, fmt.Errorf("hierarchy initialDepth must not be negative")
 		}
@@ -350,6 +367,42 @@ func LowerCanonicalDashboardPresentationForQuery(value document.DashboardPresent
 		}
 	}
 	return lowered, nil
+}
+
+func validateCanonicalPresentationApplicability(value document.DashboardPresentation, visualType document.DashboardVisualType) error {
+	variant, ok := value.Value.(*document.HierarchyDashboardPresentation)
+	if !ok || variant == nil {
+		return nil
+	}
+
+	optionSupported := func(option string, present bool, supported bool) error {
+		if present && !supported {
+			return fmt.Errorf("presentation.%s is not supported for %s visuals", option, visualType)
+		}
+		return nil
+	}
+	if err := optionSupported("orientation", variant.Orientation != nil, visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeSankey); err != nil {
+		return err
+	}
+	if err := optionSupported("initialDepth", variant.InitialDepth != nil, visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeTreemap); err != nil {
+		return err
+	}
+	if err := optionSupported("roam", variant.Roam != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeTreemap || visualType == document.DashboardVisualTypeSunburst); err != nil {
+		return err
+	}
+	if err := optionSupported("layout", variant.Layout != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeTree); err != nil {
+		return err
+	}
+	if err := optionSupported("breadcrumb", variant.Breadcrumb != nil, visualType == document.DashboardVisualTypeTreemap); err != nil {
+		return err
+	}
+	if err := optionSupported("nodeGap", variant.NodeGap != nil, visualType == document.DashboardVisualTypeSankey); err != nil {
+		return err
+	}
+	if err := optionSupported("curveness", variant.Curveness != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeSankey); err != nil {
+		return err
+	}
+	return optionSupported("focus", variant.Focus != nil, visualType == document.DashboardVisualTypeGraph)
 }
 
 // lowerCanonicalComboSeries maps the closed Dashboard combo policy into the
