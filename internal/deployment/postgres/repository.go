@@ -4208,6 +4208,9 @@ func createRetentionRoot(ctx context.Context, db DBTX, root DeliveryRetentionRoo
 // missing or non-live physical row.
 func requireLiveSnapshotRetention(ctx context.Context, db DBTX, sealID string) error {
 	var installed bool
+	// sqlc-exception: analyzer-incompatible. The DuckLake retention ledger is
+	// installed by a separate capability, so it is intentionally absent from
+	// this package's sqlc schema and must be discovered at runtime.
 	if err := db.QueryRow(ctx, `SELECT to_regclass('ducklake.snapshot_retention') IS NOT NULL`).Scan(&installed); err != nil {
 		return err
 	}
@@ -4215,6 +4218,9 @@ func requireLiveSnapshotRetention(ctx context.Context, db DBTX, sealID string) e
 		return fmt.Errorf("%w: DuckLake physical retention ledger is unavailable", ErrConflict)
 	}
 	var state string
+	// sqlc-exception: analyzer-incompatible. This lock joins the separately
+	// installed DuckLake capability inside the caller-owned delivery transaction;
+	// sqlc cannot analyze that table against this package's isolated schema.
 	err := db.QueryRow(ctx, `
 		SELECT retention.state
 		  FROM ducklake.snapshot_retention AS retention
