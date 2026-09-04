@@ -25,7 +25,8 @@ func TestScanGoRejectsLifecycleDiagnosticsAndIncompleteStreams(t *testing.T) {
 	contract := exceptionContract{Exceptions: []securitypolicy.Exception{{
 		Scanner: "govulncheck", Rule: "GO-2026-test", Resource: "example/module",
 	}}}
-	complete := []byte(`{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module"}],"severity":"low"}}`)
+	complete := []byte(govulnConfigMessage + "\n" + govulnSBOMMessage + "\n" + `{"osv":{"id":"GO-2026-test"}}
+{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module"}]}}`)
 	tests := map[string]commandResult{
 		"timeout with partial JSON": {stdout: []byte(`{"finding":`), status: 1, timedOut: true},
 		"canceled":                  {stdout: complete, status: 1, canceled: true},
@@ -52,7 +53,7 @@ func TestScanGoRejectsLifecycleDiagnosticsAndIncompleteStreams(t *testing.T) {
 	}
 }
 
-const govulnConfigMessage = `{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scanner_version":"v1.6.0","db":"https://vuln.go.dev","db_last_modified":"2026-09-04T00:00:00Z","scan_mode":"source"}}`
+const govulnConfigMessage = `{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scanner_version":"v1.6.0","db":"https://vuln.go.dev","db_last_modified":"2026-09-04T00:00:00Z","scan_level":"symbol","scan_mode":"source"}}`
 const govulnSBOMMessage = `{"SBOM":{"go_version":"go1.25.0","modules":[{"path":"example/root"}],"roots":["example/root"]}}`
 const cleanGovulnStream = govulnConfigMessage + "\n" + govulnSBOMMessage
 
@@ -172,7 +173,16 @@ func TestRunBootstrapsGovulncheckOnceForMultipleModules(t *testing.T) {
 func TestScanGoEvaluatesStatusZeroJSONFindings(t *testing.T) {
 	vulnerable := []byte(cleanGovulnStream + "\n" +
 		`{"osv":{"id":"GO-2026-test"}}` + "\n" +
+		`{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module","package":"example/module/pkg","function":"Vulnerable"}]}}`)
+	moduleOnly := []byte(cleanGovulnStream + "\n" +
+		`{"osv":{"id":"GO-2026-test"}}` + "\n" +
 		`{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module"}]}}`)
+	packageOnly := []byte(cleanGovulnStream + "\n" +
+		`{"osv":{"id":"GO-2026-test"}}` + "\n" +
+		`{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module","package":"example/module/pkg"}]}}`)
+	called := []byte(cleanGovulnStream + "\n" +
+		`{"osv":{"id":"GO-2026-test"}}` + "\n" +
+		`{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module","package":"example/module/pkg","function":"Vulnerable"},{"module":"example/root","package":"example/root","function":"main"}]}}`)
 	tests := []struct {
 		name    string
 		result  commandResult
@@ -180,12 +190,19 @@ func TestScanGoEvaluatesStatusZeroJSONFindings(t *testing.T) {
 	}{
 		{name: "clean", result: commandResult{stdout: []byte(cleanGovulnStream)}},
 		{name: "finding with documented json status", result: commandResult{stdout: vulnerable}, wantErr: "reported finding GO-2026-test in example/module"},
+		{name: "multi-frame called finding", result: commandResult{stdout: called}, wantErr: "reported finding GO-2026-test in example/module"},
+		{name: "module finding is informational", result: commandResult{stdout: moduleOnly}},
+		{name: "package finding is informational", result: commandResult{stdout: packageOnly}},
 		{name: "unknown nonzero status", result: commandResult{stdout: []byte(cleanGovulnStream), status: 2}, wantErr: "status 2"},
 		{name: "progress without config", result: commandResult{stdout: []byte(`{"progress":{"message":"checking"}}`)}, wantErr: "config must be the first message"},
 		{name: "empty envelope", result: commandResult{stdout: []byte(`{}`)}, wantErr: "exactly one field"},
 		{name: "wrong scanner version", result: commandResult{stdout: []byte(strings.Replace(cleanGovulnStream, `"scanner_version":"v1.6.0"`, `"scanner_version":"v1.5.0"`, 1))}, wantErr: "config identity is unsupported"},
+		{name: "missing scan level", result: commandResult{stdout: []byte(strings.Replace(cleanGovulnStream, `,"scan_level":"symbol"`, "", 1))}, wantErr: "config identity is unsupported"},
+		{name: "wrong scan level", result: commandResult{stdout: []byte(strings.Replace(cleanGovulnStream, `"scan_level":"symbol"`, `"scan_level":"package"`, 1))}, wantErr: "config identity is unsupported"},
 		{name: "config only", result: commandResult{stdout: []byte(govulnConfigMessage)}, wantErr: "source SBOM is missing"},
 		{name: "empty source sbom", result: commandResult{stdout: []byte(govulnConfigMessage + "\n" + `{"SBOM":{}}`)}, wantErr: "source SBOM is incomplete"},
+		{name: "function without package", result: commandResult{stdout: []byte(cleanGovulnStream + "\n" + `{"osv":{"id":"GO-2026-test"}}` + "\n" + `{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module","function":"Vulnerable"}]}}`)}, wantErr: "finding trace is malformed"},
+		{name: "mixed package and call trace", result: commandResult{stdout: []byte(cleanGovulnStream + "\n" + `{"osv":{"id":"GO-2026-test"}}` + "\n" + `{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module","package":"example/module/pkg"},{"module":"example/root","package":"example/root","function":"main"}]}}`)}, wantErr: "finding trace is malformed"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
