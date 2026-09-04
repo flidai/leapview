@@ -801,9 +801,14 @@ func TestDashboardBuilderPreviewAndExport(t *testing.T) {
 		t.Fatalf("preview response: status=%d content-type=%q", previewRec.Code, previewRec.Header().Get("Content-Type"))
 	}
 	previewBody := previewRec.Body.String()
-	for _, want := range []string{`<lv-dashboard-page`, `presentation="public"`, `read-only`, `Draft preview`, `_signals=1`, `Back to builder`} {
+	for _, want := range []string{`<lv-dashboard-page`, `presentation="app"`, `read-only`, `authoring-action-label="Edit dashboard"`, `authoring-action-href="/dashboards/revenue/edit?draft=draft-1&amp;page=overview"`, `_signals=1`} {
 		if !strings.Contains(previewBody, want) {
 			t.Fatalf("preview shell missing %q: %s", want, previewBody)
+		}
+	}
+	for _, unwanted := range []string{"Draft preview", "Back to builder", "Read only"} {
+		if strings.Contains(previewBody, unwanted) {
+			t.Fatalf("preview shell retained hybrid chrome %q: %s", unwanted, previewBody)
 		}
 	}
 	if strings.Contains(previewBody, "url-sync.js") {
@@ -849,7 +854,7 @@ func TestDashboardBuilderPreviewBindsExactDraftRevisionAndPage(t *testing.T) {
 		t.Fatalf("preview signal patches = %#v", patches)
 	}
 	page, ok := patches[0]["page"].(map[string]any)
-	if !ok || page["pageId"] != "details" || page["presentation"] != "public" {
+	if !ok || page["pageId"] != "details" || page["presentation"] != "app" {
 		t.Fatalf("preview page signal = %#v", patches[0]["page"])
 	}
 	if strings.Contains(rec.Body.String(), "datastar=") {

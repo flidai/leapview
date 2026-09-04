@@ -388,16 +388,16 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
     .authoring-action {
       display: inline-flex;
+      width: var(--control-medium-size);
       height: var(--control-medium-size);
       box-sizing: border-box;
       align-items: center;
       justify-content: center;
-      gap: var(--base-size-6);
       border: var(--lv-border-default);
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-control, var(--lv-bg-panel-muted));
       color: var(--lv-fg-default);
-      padding: 0 var(--base-size-12);
+			padding: 0;
       text-decoration: none;
       white-space: nowrap;
       font: var(--lv-type-body-compact);
@@ -1206,17 +1206,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 						], 'Breadcrumb')}
 						<div class="actions">
 							${this.renderMobilePageMenu(page)}
-							${this.authoringActionLabel && this.authoringActionHref ? html`
-							<a
-								class="authoring-action"
-								href=${this.authoringActionHref}
-								aria-label=${this.authoringActionLabel}
-								title=${this.authoringActionLabel}
-							>
-								${this.authoringActionLabel === 'Make a copy' ? lucideIcon(Copy) : lucideIcon(PencilLine)}
-								<span>${this.authoringActionLabel}</span>
-							</a>
-							` : nothing}
 							<button
 								type="button"
 								class="icon-button mobile-filter-toggle"
@@ -1239,6 +1228,16 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 								title="Ask"
 								@click=${() => { this.setAgentDrawerOpen(!this.agentDrawerOpen) }}
 							>${agentIcon()}<span>Ask</span></button>
+							` : nothing}
+							${this.authoringActionLabel && this.authoringActionHref ? html`
+							<a
+								class="authoring-action"
+								href=${this.authoringActionHref}
+								aria-label=${this.authoringActionLabel}
+								title=${this.authoringActionLabel}
+							>
+								${this.authoringActionLabel === 'Make a copy' ? lucideIcon(Copy) : lucideIcon(PencilLine)}
+							</a>
 							` : nothing}
 						</div>
           </header>

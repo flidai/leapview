@@ -168,19 +168,11 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 		)
 	}
 	if routes.BasePath == "" {
-		agentTurn := "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; $agentContext.filters = $filterState; $agentContext.generation = $status.generation; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")
-		agentRestore := "$agent.activeConversationId = evt.detail.conversationId; " + uiactions.Get("/chats/restore", "agent")
-		componentAttrs = append(componentAttrs,
-			g.Attr("data-on:lv-chat-submit", agentTurn),
-			g.Attr("data-on:lv-chat-restore", agentRestore),
-			g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
-		)
+		componentAttrs = append(componentAttrs, dashboardAgentComponentAttrs(commands)...)
 	}
 	contentAttrs := []g.Node{}
 	if routes.BasePath == "" {
-		contentAttrs = append(contentAttrs,
-			g.Attr("data-on:lv-chat-reference-search__debounce.200ms", "$agentReferenceSearch.query = evt.detail.query; $agentReferenceSearch.requestId = evt.detail.requestId; "+uiactions.Get("/chats/references/search", "agentReferenceSearch", "agentContext")),
-		)
+		contentAttrs = append(contentAttrs, dashboardAgentContentAttrs()...)
 	}
 	return webpage.Render(layout, webpage.Spec{
 		Title: layout.Presentation.ProductName, CSRFToken: csrfToken,
@@ -193,6 +185,22 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 		ContentAttrs: contentAttrs,
 		Content:      g.El("lv-dashboard-page", componentAttrs...),
 	})
+}
+
+func dashboardAgentComponentAttrs(commands AgentCommandBindings) []g.Node {
+	agentTurn := "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; $agentContext.filters = $filterState; $agentContext.generation = $status.generation; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")
+	agentRestore := "$agent.activeConversationId = evt.detail.conversationId; " + uiactions.Get("/chats/restore", "agent")
+	return []g.Node{
+		g.Attr("data-on:lv-chat-submit", agentTurn),
+		g.Attr("data-on:lv-chat-restore", agentRestore),
+		g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
+	}
+}
+
+func dashboardAgentContentAttrs() []g.Node {
+	return []g.Node{
+		g.Attr("data-on:lv-chat-reference-search__debounce.200ms", "$agentReferenceSearch.query = evt.detail.query; $agentReferenceSearch.requestId = evt.detail.requestId; "+uiactions.Get("/chats/references/search", "agentReferenceSearch", "agentContext")),
+	}
 }
 
 // PublicPage renders the report component without authenticated application

@@ -38,11 +38,20 @@ test('dashboard exposes its contextual authoring action in the header', async ()
       element.setAttribute('authoring-action-href', '/dashboards/executive-sales/edit?draft=draft-7&page=overview')
       await element.updateComplete
       const link = element.shadowRoot.querySelector('.authoring-action') as HTMLAnchorElement
-      return { label: link?.textContent?.trim(), href: link?.getAttribute('href') }
+      return {
+        label: link?.getAttribute('aria-label'),
+        title: link?.getAttribute('title'),
+        href: link?.getAttribute('href'),
+        text: link?.textContent?.trim(),
+        previousClass: link?.previousElementSibling?.className,
+      }
     })
     expect(action).toEqual({
       label: 'Continue editing',
+      title: 'Continue editing',
       href: '/dashboards/executive-sales/edit?draft=draft-7&page=overview',
+      text: '',
+      previousClass: 'icon-button agent-toggle',
     })
   } finally {
     await page.close()

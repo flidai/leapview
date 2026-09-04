@@ -608,12 +608,15 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 		if h.Layout != nil {
 			providers = []webpage.Provider{h.Layout(r)}
 		}
-		revisionLabel := fmt.Sprintf("Revision %d", request.ExpectedRevision.Number)
 		title := strings.TrimSpace(compilation.Definition.Title)
 		if title == "" {
 			title = "Draft dashboard"
 		}
-		if err := ui.DashboardDraftPreviewPage(title, dashboardID, request.PageID, revisionLabel, backHref, updatesURL, providers...).Render(w); err != nil {
+		csrfToken := ""
+		if h.CSRFToken != nil {
+			csrfToken = h.CSRFToken(r)
+		}
+		if err := ui.DashboardDraftPreviewPage(title, dashboardID, request.PageID, backHref, updatesURL, csrfToken, h.AgentCommands, providers...).Render(w); err != nil {
 			nethttp.Error(w, "dashboard draft preview unavailable", nethttp.StatusInternalServerError)
 		}
 		return
@@ -631,7 +634,11 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 		values.Set("page", page.ID)
 		pageHrefs[page.ID] = dashboardBuilderBasePath(dashboardID) + "/preview?" + values.Encode()
 	}
-	signals, err := ui.DashboardDraftPreviewBootstrapSignals(result.Definition, result.PagePatch, request.PageID, result.SemanticEvidence.Identity.GenerationID, pageHrefs)
+	var providers []webpage.Provider
+	if h.Layout != nil {
+		providers = []webpage.Provider{h.Layout(r)}
+	}
+	signals, err := ui.DashboardDraftPreviewBootstrapSignals(result.Definition, result.PagePatch, request.PageID, result.SemanticEvidence.Identity.GenerationID, pageHrefs, providers...)
 	if err != nil {
 		writeBuilderError(w, r, err)
 		return
