@@ -445,12 +445,8 @@ func nativeApprovalResponse(project, environment string, approval nativepostgres
 	return response
 }
 
-func deploymentLocation(project, deploymentID string) string {
-	return "/api/v1/projects/" + project + "/deployments/" + deploymentID
-}
-
-func approvalLocation(project, deploymentID, approvalID string) string {
-	return deploymentLocation(project, deploymentID) +
+func approvalLocation(project, publicationID, approvalID string) string {
+	return "/api/v1/projects/" + project + "/delivery/publications/" + publicationID +
 		"/approval-requests/" + approvalID
 }
 

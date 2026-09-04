@@ -304,6 +304,9 @@ func TestCanonicalPublicationApprovalEndpointsPreservePublicationAndReleaseScope
 	if created.Code != http.StatusCreated {
 		t.Fatalf("request status = %d: %s", created.Code, created.Body.String())
 	}
+	if got, want := created.Header().Get("Location"), "/api/v1/projects/finance/delivery/publications/publication-1/approval-requests/approval-1"; got != want {
+		t.Fatalf("approval location = %q, want %q", got, want)
+	}
 	var requested deploymentapi.ApprovalResponse
 	if err := json.Unmarshal(created.Body.Bytes(), &requested); err != nil {
 		t.Fatal(err)
