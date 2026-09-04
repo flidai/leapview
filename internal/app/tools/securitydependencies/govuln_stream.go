@@ -18,6 +18,7 @@ type govulnStream struct {
 type govulnConfig struct {
 	ProtocolVersion string `json:"protocol_version"`
 	ScannerName     string `json:"scanner_name"`
+	ScannerVersion  string `json:"scanner_version"`
 	Database        string `json:"db"`
 	DBLastModified  string `json:"db_last_modified"`
 	ScanMode        string `json:"scan_mode"`
@@ -79,7 +80,7 @@ func parseGovulnStream(data []byte) (govulnStream, error) {
 				if err := json.Unmarshal(payload, &config); err != nil {
 					return govulnStream{}, errors.New("config is malformed")
 				}
-				if config.ProtocolVersion != govulnProtocolVersion || config.ScannerName != "govulncheck" || config.ScanMode != "source" {
+				if config.ProtocolVersion != govulnProtocolVersion || config.ScannerName != "govulncheck" || config.ScannerVersion != govulncheckVersion || config.ScanMode != "source" {
 					return govulnStream{}, errors.New("config identity is unsupported")
 				}
 				if strings.TrimSpace(config.Database) == "" || strings.TrimSpace(config.DBLastModified) == "" {

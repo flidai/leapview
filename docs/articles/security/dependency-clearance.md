@@ -23,6 +23,10 @@ to at most 7 days (168 hours). Future-dated, stale, malformed, missing, or
 mismatched evidence fails closed. The same
 required task performs a live, source-aware Go `govulncheck` scan for every
 maintained Go module, so a Go feed/tool outage also remains a gate failure.
+Before those scans, the evaluator provisions the pinned `govulncheck@v1.6.0`
+binary once into a private temporary directory and verifies its `-version`
+identity. Provisioning accepts only Go module download-progress diagnostics;
+the scanner's own stderr remains forbidden.
 The evidence names the npm advisory API as its provider and records the exact
 Bun or npm scanner identity and version used for each graph.
 Treat every evidence change as a security-policy input: review the refresh

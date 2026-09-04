@@ -61,8 +61,15 @@ type runner struct {
 	bunRetryUsed  bool
 	bunRetrySleep func(time.Duration)
 	bunCommand    func(string, ...string) commandResult
-	goCommand     func(string, ...string) commandResult
-	npmCommand    func(string, ...string) commandResult
+	// goInstallCommand and govulnCommand are injectable seams for hermetic
+	// tests. The default path provisions a private govulncheck binary and
+	// invokes that binary directly, keeping scanner runs independent of Go's
+	// module-download diagnostics.
+	goInstallCommand func(string, string, ...string) commandResult
+	govulnCommand    func(string, string, ...string) commandResult
+	goCommand        func(string, ...string) commandResult
+	npmCommand       func(string, ...string) commandResult
+	govulncheckPath  string
 }
 
 // commandOutput is used instead of passing scanner output directly to a
@@ -81,33 +88,7 @@ func commandOutput(data []byte) []byte {
 }
 
 func (r *runner) command(dir, name string, args ...string) commandResult {
-	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
-	defer cancel()
-	command := exec.CommandContext(ctx, name, args...)
-	command.Dir = dir
-	var stdout, stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	err := command.Run()
-	status := 0
-	var timedOut, canceled, signaled bool
-	if err != nil {
-		status = 1
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
-			status = exitError.ExitCode()
-			if status < 0 {
-				signaled = true
-				status = 1
-			}
-		}
-		if ctx.Err() != nil {
-			err = fmt.Errorf("%w (command timed out after %s)", ctx.Err(), r.timeout)
-			timedOut = errors.Is(ctx.Err(), context.DeadlineExceeded)
-			canceled = errors.Is(ctx.Err(), context.Canceled)
-		}
-	}
-	return commandResult{stdout: stdout.Bytes(), stderr: stderr.Bytes(), status: status, err: err, timedOut: timedOut, canceled: canceled, signaled: signaled}
+	return r.commandWithEnv(dir, name, nil, args...)
 }
 
 func (r *runner) run() error {
@@ -122,6 +103,18 @@ func (r *runner) run() error {
 	modules, buns, npms, err := discover(r.root)
 	if err != nil {
 		return err
+	}
+	var cleanup func()
+	if len(modules) > 0 {
+		var scannerPath string
+		scannerPath, cleanup, err = r.prepareGovulncheck()
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		previousPath := r.govulncheckPath
+		r.govulncheckPath = scannerPath
+		defer func() { r.govulncheckPath = previousPath }()
 	}
 	for _, path := range modules {
 		if err := r.scanGo(path, contract); err != nil {
@@ -231,9 +224,13 @@ func excludedPath(path string) bool {
 func (r *runner) scanGo(moduleFile string, _ *exceptionContract) error {
 	dir := filepath.Dir(moduleFile)
 	fmt.Fprintf(r.stdout, "govulncheck %s\n", dir)
-	args := []string{"run", "golang.org/x/vuln/cmd/govulncheck@" + govulncheckVersion, "-json"}
-	args = append(args, "./...")
-	result := r.runGoCommand(dir, args...)
+	var result commandResult
+	if r.govulncheckPath != "" {
+		result = r.runGovulnCommand(dir, r.govulncheckPath, "-json", "./...")
+	} else {
+		args := []string{"run", "golang.org/x/vuln/cmd/govulncheck@" + govulncheckVersion, "-json", "./..."}
+		result = r.runGoCommand(dir, args...)
+	}
 	if isCommandLifecycleError(result) {
 		r.emitFailure(result)
 		return commandError("govulncheck", dir, result)

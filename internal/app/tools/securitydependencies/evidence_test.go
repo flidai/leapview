@@ -28,7 +28,10 @@ func TestDefaultRunEvaluatesCompleteEvidenceWithoutLaunchingJavaScript(t *testin
 	var stdout, stderr bytes.Buffer
 	r := &runner{
 		root: fixture.root, timeout: time.Second, stdout: &stdout, stderr: &stderr, now: func() time.Time { return evidenceTestNow },
-		goCommand: func(string, ...string) commandResult { goCalls++; return cleanGovulnCommandResult() },
+		goCommand: func(_ string, args ...string) commandResult {
+			goCalls++
+			return cleanGovulnCommandResultForArgs(args...)
+		},
 		bunCommand: func(string, ...string) commandResult {
 			bunCalls++
 			return commandResult{err: errors.New("Bun must not run in default mode")}
@@ -41,8 +44,8 @@ func TestDefaultRunEvaluatesCompleteEvidenceWithoutLaunchingJavaScript(t *testin
 	if err := r.run(); err != nil {
 		t.Fatalf("default run rejected clean evidence: %v", err)
 	}
-	if goCalls != 1 || bunCalls != 0 || npmCalls != 0 {
-		t.Fatalf("scanner calls = go:%d bun:%d npm:%d, want live Go only", goCalls, bunCalls, npmCalls)
+	if goCalls != 3 || bunCalls != 0 || npmCalls != 0 {
+		t.Fatalf("scanner calls = go:%d bun:%d npm:%d, want one Go install, version, and scan", goCalls, bunCalls, npmCalls)
 	}
 }
 
@@ -73,7 +76,7 @@ func TestCheckedInEvidenceMustBeRegularAndTracked(t *testing.T) {
 		}
 		r := &runner{
 			root: fixture.root, timeout: time.Second, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, now: func() time.Time { return evidenceTestNow },
-			goCommand: func(string, ...string) commandResult { return cleanGovulnCommandResult() },
+			goCommand: func(_ string, args ...string) commandResult { return cleanGovulnCommandResultForArgs(args...) },
 		}
 		if err := r.run(); err == nil || !strings.Contains(err.Error(), "must be tracked") {
 			t.Fatalf("untracked evidence was accepted: %v", err)
@@ -86,7 +89,7 @@ func TestCheckedInEvidenceRejectsCriticalAndAcceptsBelowThreshold(t *testing.T) 
 	critical := fixture.evidence(&javascriptEvidenceFinding{Advisory: "GHSA-evidence-1", Dependency: "example-package", Severity: "critical"})
 	fixture.writeEvidence(t, critical)
 	var stdout, stderr bytes.Buffer
-	r := &runner{root: fixture.root, timeout: time.Second, stdout: &stdout, stderr: &stderr, now: func() time.Time { return evidenceTestNow }, goCommand: func(string, ...string) commandResult { return cleanGovulnCommandResult() }}
+	r := &runner{root: fixture.root, timeout: time.Second, stdout: &stdout, stderr: &stderr, now: func() time.Time { return evidenceTestNow }, goCommand: func(_ string, args ...string) commandResult { return cleanGovulnCommandResultForArgs(args...) }}
 	if err := r.run(); err == nil || !strings.Contains(err.Error(), "GHSA-evidence-1") || !strings.Contains(err.Error(), "example-package") {
 		t.Fatalf("critical evidence was not rejected with identity: %v", err)
 	}
@@ -306,7 +309,7 @@ func TestRefreshAtomicPreservationOnMalformedScannerOutput(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	r := &runner{
 		root: fixture.root, timeout: time.Second, stdout: &stdout, stderr: &stderr, now: func() time.Time { return evidenceTestNow },
-		goCommand: func(string, ...string) commandResult { return cleanGovulnCommandResult() },
+		goCommand: func(_ string, args ...string) commandResult { return cleanGovulnCommandResultForArgs(args...) },
 		bunCommand: func(_ string, args ...string) commandResult {
 			if len(args) == 1 && args[0] == "--version" {
 				return commandResult{stdout: []byte("1.2.3\n")}
@@ -479,7 +482,7 @@ func TestRefreshTransportRetryThenCriticalWritesEvidenceAndFails(t *testing.T) {
 	r := &runner{
 		root: fixture.root, timeout: time.Second, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, now: func() time.Time { return evidenceTestNow },
 		bunRetrySleep: func(delay time.Duration) { waits = append(waits, delay) },
-		goCommand:     func(string, ...string) commandResult { return cleanGovulnCommandResult() },
+		goCommand:     func(_ string, args ...string) commandResult { return cleanGovulnCommandResultForArgs(args...) },
 		bunCommand: func(_ string, args ...string) commandResult {
 			if len(args) == 1 && args[0] == "--version" {
 				return commandResult{stdout: []byte("1.2.3\n")}

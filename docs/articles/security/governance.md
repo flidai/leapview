@@ -58,7 +58,7 @@ commands are:
 | --- | --- | --- | --- |
 | JavaScript vulnerability evidence evaluation | `task security:dependencies` → repository-owned evaluator (offline default) | Frontend/security owner | `.security/javascript-vulnerability-evidence.json`; five manifest+lock graphs and SHA-256 bindings |
 | JavaScript vulnerability evidence refresh | `task security:dependencies:evidence:refresh` → same evaluator with `-refresh-javascript-evidence` | Frontend/security owner | Atomic replacement of the evidence document after live Bun/npm scans |
-| Go dependency and call-path audit | `task security:dependencies` → live `go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...` | Go/platform owner | Current source, every declared Go module, and govulncheck output |
+| Go dependency and call-path audit | `task security:dependencies` → repository-owned private pinned `govulncheck@v1.6.0` bootstrap and live source-aware scan | Go/platform owner | Current source, every declared Go module, and govulncheck output |
 
 JavaScript evidence blocks Critical findings. High findings remain visible in
 the bounded evidence and are triaged by the component owner; this distinction
