@@ -28,30 +28,55 @@ test('dashboard fixtures satisfy the fail-closed visualization contract', () => 
   }
 })
 
-test('dashboard exposes its contextual authoring action in the header', async () => {
+test('dashboard header exposes favorite and contextual actions without crowding the breadcrumb', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
     const action = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      localStorage.removeItem('leapview.dashboard-catalog.favorites.v1')
+      window.dispatchEvent(new StorageEvent('storage', { key: 'leapview.dashboard-catalog.favorites.v1' }))
       element.setAttribute('authoring-action-label', 'Continue editing')
       element.setAttribute('authoring-action-href', '/dashboards/executive-sales/edit?draft=draft-7&page=overview')
       await element.updateComplete
-      const link = element.shadowRoot.querySelector('.authoring-action') as HTMLAnchorElement
+      const favorite = element.shadowRoot.querySelector('.dashboard-favorite') as HTMLButtonElement
+      const trigger = element.shadowRoot.querySelector('.dashboard-options-trigger') as HTMLButtonElement
+      const initialFavoriteLabel = favorite.getAttribute('aria-label')
+      favorite.click()
+      trigger.click()
+      await element.updateComplete
+      const link = element.shadowRoot.querySelector('.dashboard-options-menu a') as HTMLAnchorElement
+      const open = trigger.getAttribute('aria-expanded')
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await element.updateComplete
       return {
-        label: link?.getAttribute('aria-label'),
-        title: link?.getAttribute('title'),
+        breadcrumb: Array.from(element.shadowRoot.querySelectorAll('.breadcrumb-label')).map((item: Element) => item.textContent?.trim()),
+        initialFavoriteLabel,
+        favoriteLabel: favorite.getAttribute('aria-label'),
+        favoritePressed: favorite.getAttribute('aria-pressed'),
+        storedFavorites: JSON.parse(localStorage.getItem('leapview.dashboard-catalog.favorites.v1') ?? '[]'),
+        triggerLabel: trigger.getAttribute('aria-label'),
+        triggerHasPopup: trigger.getAttribute('aria-haspopup'),
+        open,
+        closed: trigger.getAttribute('aria-expanded'),
+        label: link?.textContent?.trim(),
         href: link?.getAttribute('href'),
-        text: link?.textContent?.trim(),
-        previousClass: link?.previousElementSibling?.className,
+        directActionCount: element.shadowRoot.querySelectorAll('.authoring-action').length,
       }
     })
     expect(action).toEqual({
+      breadcrumb: ['Dashboards', 'Executive Sales Dashboard'],
+      initialFavoriteLabel: 'Add Executive Sales Dashboard to favorites',
+      favoriteLabel: 'Remove Executive Sales Dashboard from favorites',
+      favoritePressed: 'true',
+      storedFavorites: ['executive-sales'],
+      triggerLabel: 'Dashboard options',
+      triggerHasPopup: 'menu',
+      open: 'true',
+      closed: 'false',
       label: 'Continue editing',
-      title: 'Continue editing',
       href: '/dashboards/executive-sales/edit?draft=draft-7&page=overview',
-      text: '',
-      previousClass: 'icon-button agent-toggle',
+      directActionCount: 0,
     })
   } finally {
     await page.close()
@@ -333,7 +358,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
           tableAfterChart: (tableFrame?.top ?? 0) > (chart?.bottom ?? 0),
         }
       })
-      expect(state.title).toBe('Overview')
+      expect(state.title).toBe('Executive Sales Dashboard')
       expect(state.hostCount).toBe(3)
       expect(state.legacyCount).toBe(0)
       expect(state.kinds).toEqual(['cartesian', 'kpi', 'table'])
@@ -547,15 +572,14 @@ test('app report frame puts page navigation at the top and dashboard navigation 
       title: 'All dashboards',
       expandedBackLabelDisplay: 'block',
       collapsedBackLabelDisplay: 'none',
-      reportTitle: 'Overview',
+      reportTitle: 'Executive Sales Dashboard',
       reportTitleCount: 1,
       breadcrumbLabel: 'Breadcrumb',
       breadcrumbItems: [
         { text: 'Dashboards', href: '/', current: null },
-        { text: 'Executive Sales Dashboard', href: '/dashboards/executive-sales/pages/overview', current: null },
-        { text: 'Overview', href: null, current: 'page' },
+        { text: 'Executive Sales Dashboard', href: null, current: 'page' },
       ],
-      breadcrumbSeparatorCount: 2,
+      breadcrumbSeparatorCount: 1,
       dashboardGlyph: {
         icon: 'gallery-vertical-end',
         color: 'blue',
@@ -1928,7 +1952,7 @@ test('mobile report header combines page and filter controls without stacked rai
       const header = root.querySelector('.header') as HTMLElement
       const pageMenu = root.querySelector('.mobile-page-menu') as HTMLDetailsElement
       const breadcrumb = root.querySelector('.breadcrumb') as HTMLElement
-      const breadcrumbCurrent = breadcrumb.querySelector('.breadcrumb-current') as HTMLElement
+      const breadcrumbCurrent = breadcrumb.querySelector('[aria-current="page"]') as HTMLElement
       const filterTrigger = root.querySelector('.mobile-filter-toggle') as HTMLButtonElement
       const agentTrigger = root.querySelector('.agent-toggle') as HTMLButtonElement
       const dockRail = dock.shadowRoot.querySelector('.rail') as HTMLButtonElement
@@ -1968,8 +1992,8 @@ test('mobile report header combines page and filter controls without stacked rai
     expect(compact).toMatchObject({
       sidebarDisplay: 'none',
       pageMenuDisplay: 'block',
-      breadcrumbLabels: ['Dashboards', 'Executive Sales Dashboard', 'Overview'],
-      breadcrumbCurrentDisplay: 'none',
+      breadcrumbLabels: ['Dashboards', 'Executive Sales Dashboard'],
+      breadcrumbCurrentDisplay: 'flex',
       pageLabel: 'Overview',
       pageOptions: ['Overview', 'Details'],
       filterLabel: 'Filters, 1 active',

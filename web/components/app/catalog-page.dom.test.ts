@@ -424,6 +424,45 @@ test('dashboard tabs expose favorites and owned dashboards without hiding either
   }
 })
 
+test('dashboard favorites use resource ids when catalog ids are qualified', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const dashboards = element.page.dashboards.map((dashboard: any) => ({
+        ...dashboard,
+        id: `instance:project:test:${dashboard.dashboardId}`,
+      }))
+      mergePatch({ page: { ...element.page, dashboards } })
+      localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['operations-health']))
+      element.reloadDiscoveryPreferences()
+      await element.updateComplete
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(2)') as HTMLButtonElement).click()
+      await element.updateComplete
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const button = list.querySelector('.entity-list-favorite') as HTMLButtonElement
+      const titles = Array.from(list.querySelectorAll('.entity-list-title')).map((row: Element) => row.textContent?.trim())
+      const pressedBeforeToggle = button.getAttribute('aria-pressed')
+      button.click()
+      await element.updateComplete
+      return {
+        titles,
+        pressedBeforeToggle,
+        stored: JSON.parse(localStorage.getItem('leapview.dashboard-catalog.favorites.v1') ?? '[]'),
+      }
+    })
+
+    expect(state.titles).toEqual(['Operations Health'])
+    expect(state.pressedBeforeToggle).toBe('true')
+    expect(state.stored).toEqual([])
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard overflow actions open a permission-aware menu and details drawer', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

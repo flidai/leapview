@@ -347,8 +347,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             title: dashboard.title,
             href: dashboard.href,
             icon: 'dashboard',
-            favorite: this.favoriteDashboardIDs.includes(dashboard.id),
-            favoriteLabel: this.favoriteDashboardIDs.includes(dashboard.id) ? `Remove ${dashboard.title} from favorites` : `Add ${dashboard.title} to favorites`,
+            favorite: this.isDashboardFavorite(dashboard),
+            favoriteLabel: this.isDashboardFavorite(dashboard) ? `Remove ${dashboard.title} from favorites` : `Add ${dashboard.title} to favorites`,
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
             iconTreatment: 'framed' as const,
@@ -535,7 +535,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   private visibleDashboards(dashboards: CatalogDashboard[]): CatalogDashboard[] {
     const filtered = dashboards.filter((dashboard) => {
       if (this.catalogScope === 'mine' && dashboard.catalogScope !== 'mine') return false
-      if (this.catalogScope === 'favorites' && !this.favoriteDashboardIDs.includes(dashboard.id)) return false
+      if (this.catalogScope === 'favorites' && !this.isDashboardFavorite(dashboard)) return false
       if (this.catalogModel !== 'all' && dashboard.semanticModel !== this.catalogModel) return false
       if (this.catalogStatus !== 'all' && dashboard.status !== this.catalogStatus) return false
       return true
@@ -552,7 +552,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     const recent = () => timestamp(this.recentDashboardIDs[right.id]) - timestamp(this.recentDashboardIDs[left.id])
     const popularity = () => popularityRank(right.popularity) - popularityRank(left.popularity)
     const recommended = () =>
-      Number(this.favoriteDashboardIDs.includes(right.id)) - Number(this.favoriteDashboardIDs.includes(left.id)) ||
+      Number(this.isDashboardFavorite(right)) - Number(this.isDashboardFavorite(left)) ||
       popularity() || recent() || updated() || name()
     switch (this.catalogSort) {
       case 'recent': return recent() || recommended()
@@ -568,13 +568,18 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     this.recentDashboardIDs = readStringRecord(catalogRecentsStorageKey)
   }
 
-  private toggleDashboardFavorite = (event: CustomEvent<{ item?: { id?: string } }>): void => {
+  private isDashboardFavorite(dashboard: CatalogDashboard): boolean {
+    const dashboardID = dashboard.dashboardId.trim()
+    return this.favoriteDashboardIDs.some(id => id === dashboardID || id === dashboard.id)
+  }
+
+  private toggleDashboardFavorite = (event: CustomEvent<{ item?: { id?: string, dashboardId?: string } }>): void => {
     const id = event.detail?.item?.id?.trim()
-    if (!id) return
-    const favorites = new Set(this.favoriteDashboardIDs)
-    if (favorites.has(id)) favorites.delete(id)
-    else favorites.add(id)
-    this.favoriteDashboardIDs = Array.from(favorites)
+    const dashboardID = event.detail?.item?.dashboardId?.trim()
+    if (!id || !dashboardID) return
+    const wasFavorite = this.favoriteDashboardIDs.some(value => value === id || value === dashboardID)
+    this.favoriteDashboardIDs = this.favoriteDashboardIDs.filter(value => value !== id && value !== dashboardID)
+    if (!wasFavorite) this.favoriteDashboardIDs = [...this.favoriteDashboardIDs, dashboardID]
     writeStorage(catalogFavoritesStorageKey, this.favoriteDashboardIDs)
   }
 

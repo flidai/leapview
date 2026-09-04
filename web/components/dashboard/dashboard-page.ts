@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ArrowLeft, ChevronDown, Copy, PencilLine, SlidersHorizontal } from 'lucide'
+import { ArrowLeft, ChevronDown, Copy, EllipsisVertical, PencilLine, SlidersHorizontal, Star } from 'lucide'
 import type {
   AgentContextSignal,
   AgentReferenceSignal,
@@ -63,6 +63,8 @@ const emptyStatus: DashboardStatus = {
   progressPercent: 100,
 }
 
+const dashboardFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
+
 type DashboardRenderSnapshot = {
   page: DashboardPageSignal
   filterContract: DashboardFilterContract
@@ -91,6 +93,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   @state() private agentReferences: AgentReferenceSignal[] = []
   @state() private reportLayout: 'desktop' | 'mobile' = 'desktop'
   @state() private filterDockOpen = false
+  @state() private dashboardFavorite = false
+  @state() private dashboardOptionsOpen = false
+  private favoriteDashboardID = ''
   private agentStateInitialized = false
   private agentRestoreDispatched = false
   private restoredAgentConversationID = ''
@@ -386,39 +391,68 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       gap: var(--base-size-8);
     }
 
-    .authoring-action {
-      display: inline-flex;
-      width: var(--control-medium-size);
-      height: var(--control-medium-size);
-      box-sizing: border-box;
-      align-items: center;
-      justify-content: center;
+    .icon-button.dashboard-favorite,
+    .icon-button.dashboard-options-trigger {
+      border-color: transparent;
+      color: var(--lv-fg-muted);
+    }
+
+    .dashboard-favorite[aria-pressed='true'] {
+      color: var(--display-yellow-fgColor, var(--lv-fg-default));
+    }
+
+    .dashboard-favorite[aria-pressed='true'] svg {
+      fill: currentColor;
+    }
+
+    .dashboard-options {
+      position: relative;
+    }
+
+    .dashboard-options-menu {
+      position: absolute;
+      z-index: var(--zIndex-popover, 300);
+      top: calc(100% + var(--base-size-6));
+      right: 0;
+      display: grid;
+      width: max-content;
+      min-width: 12rem;
+      gap: var(--base-size-2);
       border: var(--lv-border-default);
       border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
+      background: var(--lv-bg-panel);
+      padding: var(--base-size-6);
+      box-shadow: var(--shadow-floating-small);
+    }
+
+    .dashboard-options-menu a {
+      display: flex;
+      min-height: var(--control-medium-size);
+      align-items: center;
+      gap: var(--base-size-8);
+      border-radius: var(--lv-radius-default);
       color: var(--lv-fg-default);
-			padding: 0;
+      padding: 0 var(--base-size-8);
       text-decoration: none;
       white-space: nowrap;
       font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-medium);
     }
 
-    .authoring-action:hover,
-    .authoring-action:focus-visible {
+    .dashboard-options-menu a:hover,
+    .dashboard-options-menu a:focus-visible {
       background: var(--lv-bg-control-hover);
       outline: 0;
     }
 
-    .authoring-action:focus-visible {
+    .dashboard-options-menu a:focus-visible {
       outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
+      outline-offset: calc(-1 * var(--focus-outline-offset));
     }
 
-    .authoring-action svg {
+    .dashboard-options-menu svg {
       width: var(--base-size-16);
       height: var(--base-size-16);
-      flex: 0 0 auto;
+      color: var(--lv-fg-muted);
     }
 
     .mobile-page-menu,
@@ -828,10 +862,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         padding: var(--base-size-8) var(--base-size-12);
       }
 
-      :host(:not([presentation='embed'])) .breadcrumb-current {
-        display: none;
-      }
-
       :host(:not([presentation='embed'])) .dashboard-back-link {
         width: var(--control-medium-size);
         height: var(--control-medium-size);
@@ -855,14 +885,14 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
       :host(:not([presentation='embed'])) .mobile-filter-toggle,
       :host(:not([presentation='embed'])) .agent-toggle,
-      :host(:not([presentation='embed'])) .authoring-action {
+      :host(:not([presentation='embed'])) .dashboard-favorite,
+      :host(:not([presentation='embed'])) .dashboard-options-trigger {
         width: var(--control-medium-size);
         padding-inline: 0;
       }
 
       :host(:not([presentation='embed'])) .mobile-filter-label,
-      :host(:not([presentation='embed'])) .agent-toggle span,
-      :host(:not([presentation='embed'])) .authoring-action span {
+      :host(:not([presentation='embed'])) .agent-toggle span {
         display: none;
       }
 
@@ -968,6 +998,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     super.connectedCallback()
     document.addEventListener('pointerdown', this.handleMobilePageMenuPointerDown, true)
     document.addEventListener('keydown', this.handleMobilePageMenuKeyDown, true)
+    document.addEventListener('pointerdown', this.handleDashboardOptionsPointerDown, true)
+    document.addEventListener('keydown', this.handleDashboardOptionsKeyDown, true)
+    window.addEventListener('storage', this.handleDashboardFavoriteStorage)
     this.addEventListener('lv-interaction-select', this.handleOptimisticInteraction as EventListener, { capture: true })
     this.addEventListener('lv-interaction-spatial-select', this.handleOptimisticSpatialInteraction as EventListener, { capture: true })
     this.addEventListener('lv-filter-mutate', this.handleFilterMutation as EventListener, { capture: true })
@@ -978,6 +1011,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   disconnectedCallback(): void {
     document.removeEventListener('pointerdown', this.handleMobilePageMenuPointerDown, true)
     document.removeEventListener('keydown', this.handleMobilePageMenuKeyDown, true)
+    document.removeEventListener('pointerdown', this.handleDashboardOptionsPointerDown, true)
+    document.removeEventListener('keydown', this.handleDashboardOptionsKeyDown, true)
+    window.removeEventListener('storage', this.handleDashboardFavoriteStorage)
     this.removeEventListener('lv-interaction-select', this.handleOptimisticInteraction as EventListener, { capture: true })
     this.removeEventListener('lv-interaction-spatial-select', this.handleOptimisticSpatialInteraction as EventListener, { capture: true })
     this.removeEventListener('lv-filter-mutate', this.handleFilterMutation as EventListener, { capture: true })
@@ -1006,6 +1042,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     }
     const page = this.page
     if (!page) return
+    if (this.favoriteDashboardID !== page.dashboardId) {
+      this.favoriteDashboardID = page.dashboardId
+      this.dashboardFavorite = dashboardIsFavorite(readDashboardFavorites(), page.dashboardId)
+    }
     checkSignalContract('dashboard page', page, {
       dashboardId: 'required',
       pageId: 'required',
@@ -1175,7 +1215,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const refreshProgress = this.refreshProgress(snapshot)
     const agentEnabled = this.presentation === 'app'
     const activeFilterCount = this.activeFilterCount(snapshot)
-    const dashboardHref = page.pages[0]?.href ?? `/dashboards/${page.dashboardId}`
     return html`
 			<div class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`}>
           <footer class="rail-footer">
@@ -1193,7 +1232,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 						  { label: 'Dashboards', href: '/', className: 'breadcrumb-root' },
 						  {
 							label: page.dashboardTitle,
-							href: dashboardHref,
+							current: true,
 							className: 'breadcrumb-dashboard',
 							prefix: html`<span
 							  class=${`breadcrumb-glyph dashboard-appearance-glyph appearance-color-${appearanceColor(page.appearanceColor)}`}
@@ -1202,7 +1241,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 							  aria-hidden="true"
 							>${lucideIcon(lucideIconByCanonicalName(page.appearanceIcon), { size: 16, strokeWidth: 1.75 })}</span>`,
 						  },
-						  { label: page.pageTitle, current: true, className: 'breadcrumb-current' },
 						], 'Breadcrumb')}
 						<div class="actions">
 							${this.renderMobilePageMenu(page)}
@@ -1229,16 +1267,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 								@click=${() => { this.setAgentDrawerOpen(!this.agentDrawerOpen) }}
 							>${agentIcon()}<span>Ask</span></button>
 							` : nothing}
-							${this.authoringActionLabel && this.authoringActionHref ? html`
-							<a
-								class="authoring-action"
-								href=${this.authoringActionHref}
-								aria-label=${this.authoringActionLabel}
-								title=${this.authoringActionLabel}
-							>
-								${this.authoringActionLabel === 'Make a copy' ? lucideIcon(Copy) : lucideIcon(PencilLine)}
-							</a>
-							` : nothing}
+							${this.presentation === 'app' ? this.renderDashboardHeaderActions(page) : nothing}
 						</div>
           </header>
         <lv-sub-sidebar .config=${this.pageSidebar(page)} @click=${this.handlePageNavigation}></lv-sub-sidebar>
@@ -1368,6 +1397,76 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         </nav>
       </details>
     `
+  }
+
+  private renderDashboardHeaderActions(page: DashboardPageSignal) {
+    const favoriteLabel = this.dashboardFavorite
+      ? `Remove ${page.dashboardTitle} from favorites`
+      : `Add ${page.dashboardTitle} to favorites`
+    return html`
+      <button
+        type="button"
+        class="icon-button dashboard-favorite"
+        aria-label=${favoriteLabel}
+        aria-pressed=${String(this.dashboardFavorite)}
+        title=${favoriteLabel}
+        @click=${this.toggleDashboardFavorite}
+      >${lucideIcon(Star)}</button>
+      ${this.authoringActionLabel && this.authoringActionHref ? html`
+        <div class="dashboard-options">
+          <button
+            type="button"
+            class="icon-button dashboard-options-trigger"
+            aria-label="Dashboard options"
+            aria-haspopup="menu"
+            aria-controls="dashboard-options-menu"
+            aria-expanded=${String(this.dashboardOptionsOpen)}
+            title="Dashboard options"
+            @click=${() => { this.dashboardOptionsOpen = !this.dashboardOptionsOpen }}
+          >${lucideIcon(EllipsisVertical)}</button>
+          ${this.dashboardOptionsOpen ? html`
+            <div id="dashboard-options-menu" class="dashboard-options-menu" role="menu" aria-label="Dashboard options">
+              <a role="menuitem" href=${this.authoringActionHref} @click=${() => { this.dashboardOptionsOpen = false }}>
+                ${this.authoringActionLabel.toLowerCase().includes('copy') ? lucideIcon(Copy) : lucideIcon(PencilLine)}
+                <span>${this.authoringActionLabel}</span>
+              </a>
+            </div>
+          ` : nothing}
+        </div>
+      ` : nothing}
+    `
+  }
+
+  private toggleDashboardFavorite = (): void => {
+    const dashboardID = this.page?.dashboardId.trim() ?? ''
+    if (!dashboardID) return
+    const stored = readDashboardFavorites()
+    const wasFavorite = dashboardIsFavorite(stored, dashboardID)
+    const favorites = stored.filter(id => id !== dashboardID && !id.endsWith(`:${dashboardID}`))
+    if (!wasFavorite) favorites.push(dashboardID)
+    this.dashboardFavorite = !wasFavorite
+    writeDashboardFavorites(favorites)
+  }
+
+  private handleDashboardFavoriteStorage = (event: StorageEvent): void => {
+    if (event.key !== dashboardFavoritesStorageKey || !this.favoriteDashboardID) return
+    this.dashboardFavorite = dashboardIsFavorite(readDashboardFavorites(), this.favoriteDashboardID)
+  }
+
+  private handleDashboardOptionsPointerDown = (event: PointerEvent): void => {
+    if (!this.dashboardOptionsOpen) return
+    const options = this.renderRoot.querySelector<HTMLElement>('.dashboard-options')
+    if (options && event.composedPath().includes(options)) return
+    this.dashboardOptionsOpen = false
+  }
+
+  private handleDashboardOptionsKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !this.dashboardOptionsOpen) return
+    event.preventDefault()
+    this.dashboardOptionsOpen = false
+    void this.updateComplete.then(() => {
+      this.renderRoot.querySelector<HTMLElement>('.dashboard-options-trigger')?.focus()
+    })
   }
 
   private activeFilterCount(snapshot: DashboardRenderSnapshot): number {
@@ -2000,6 +2099,29 @@ function json(value: unknown): string {
 
 function appearanceColor(value: string): string {
   return ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'coral'].includes(value) ? value : 'purple'
+}
+
+function readDashboardFavorites(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(dashboardFavoritesStorageKey) ?? '[]')
+    return Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+      : []
+  } catch {
+    return []
+  }
+}
+
+function writeDashboardFavorites(favorites: string[]): void {
+  try {
+    localStorage.setItem(dashboardFavoritesStorageKey, JSON.stringify(favorites))
+  } catch {
+    // Favorites remain usable for the current view when storage is unavailable.
+  }
+}
+
+function dashboardIsFavorite(favorites: string[], dashboardID: string): boolean {
+  return favorites.some(id => id === dashboardID || id.endsWith(`:${dashboardID}`))
 }
 
 if (!customElements.get('lv-dashboard-page')) customElements.define('lv-dashboard-page', LeapViewDashboardPage)
