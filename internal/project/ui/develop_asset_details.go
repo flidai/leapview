@@ -65,7 +65,9 @@ func refreshPipelineDetailModel(model *assetDetailModel, asset projectview.Devel
 	semanticModel := metaString(asset.Payload, "SemanticModel", "semanticModel")
 	timezone := metaString(asset.Payload, "Timezone", "timezone")
 	schedules := metaSlice(asset.Payload, "Schedules", "schedules")
-	lines := make([]string, 0, len(schedules)+1)
+	// Do not add untrusted collection lengths for a capacity hint; the sum can
+	// overflow before make observes it.
+	lines := make([]string, 0)
 	for _, raw := range schedules {
 		entry, _ := raw.(map[string]any)
 		cron := metaString(entry, "Cron", "cron")
@@ -472,7 +474,9 @@ func semanticModelGraphFields(table map[string]any, joins map[string][]string) [
 	columns := modelSchemaColumns(fields, metaMap(table, "Schema"))
 	entityNames, grainFields := semanticModelGraphFieldIdentity(table)
 	seen := map[string]struct{}{}
-	out := make([]uisignals.SemanticModelGraphFieldSignal, 0, len(columns)+len(joins))
+	// Do not add payload-derived collection lengths for a capacity hint; the
+	// sum can overflow before make observes it.
+	out := make([]uisignals.SemanticModelGraphFieldSignal, 0)
 	for _, column := range columns {
 		name := metaString(column, "Name", "name")
 		if name == "" {
