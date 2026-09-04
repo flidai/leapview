@@ -37,15 +37,6 @@ func TestAppendEventRejectsInvalidIdentityBeforeStorage(t *testing.T) {
 	}
 }
 
-func TestCanonicalCorrelationIDOmitsOpaqueAuditIdentity(t *testing.T) {
-	if got := eventspostgres.CanonicalCorrelationID("corr-client-1"); got != "" {
-		t.Fatalf("opaque correlation projected to event = %q, want empty", got)
-	}
-	if got := eventspostgres.CanonicalCorrelationID("01900000-0000-7000-8000-000000000022"); got != "01900000-0000-7000-8000-000000000022" {
-		t.Fatalf("canonical UUID correlation projected as %q", got)
-	}
-}
-
 func TestAppendEventMapsCanonicalPlatformEvent(t *testing.T) {
 	h := postgrestest.Start(t)
 	database := h.NewDatabase(t, "dashboard_publication_events_adapter")
