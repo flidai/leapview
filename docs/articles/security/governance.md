@@ -121,6 +121,14 @@ convert an outage to “no findings,” reuse an old pass, or create an emergenc
 exception. Retry the same reviewed commit after restoring the scanner or use a
 separately approved maintenance window that still leaves promotion blocked.
 
+The repository-owned dependency scanner may make one process-wide retry when
+an unsuccessful Bun audit includes an exact, recognized transport-failure
+diagnostic. It starts a fresh Bun process after a five-second backoff. A valid
+Critical finding is evaluated immediately and is never retried as an outage;
+unknown or malformed output, another transport failure, and retry exhaustion
+all remain gate failures. The single retry is shared by every Bun lockfile in
+the scan so it cannot multiply against the 45-minute dependency-job budget.
+
 The same rule applies to provenance and SBOM verification: a missing or
 unverifiable attestation is a failed candidate, even when the image starts and
 the checksum is known. Preserve the failure output and feed/tool version in

@@ -27,6 +27,7 @@ const (
 	auditLevel         = "critical"
 	defaultTimeout     = 10 * time.Minute
 	rootLookupTimeout  = 30 * time.Second
+	bunRetryBackoff    = 5 * time.Second
 	maxDiagnosticBytes = 64 << 10
 )
 
@@ -49,10 +50,12 @@ type commandResult struct {
 }
 
 type runner struct {
-	root    string
-	timeout time.Duration
-	stdout  io.Writer
-	stderr  io.Writer
+	root          string
+	timeout       time.Duration
+	stdout        io.Writer
+	stderr        io.Writer
+	bunRetryUsed  bool
+	bunRetrySleep func(time.Duration)
 }
 
 // commandOutput is used instead of passing scanner output directly to a
@@ -97,6 +100,10 @@ func (r *runner) command(dir, name string, args ...string) commandResult {
 }
 
 func (r *runner) run() error {
+	// A runner corresponds to one scanner process invocation. Keep the Bun
+	// transport retry budget process-wide rather than spending one retry per
+	// discovered lockfile.
+	r.bunRetryUsed = false
 	contract, err := r.loadContract()
 	if err != nil {
 		return err
@@ -225,10 +232,22 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 		return commandError("bun audit", dir, result)
 	}
 	count, critical, err := bunFindingCounts(result.stdout)
+	if critical == 0 && r.shouldRetryBun(result) {
+		r.bunRetryUsed = true
+		fmt.Fprintf(r.stdout, "bun audit %s: retrying once after transport failure (%s backoff)\n", dir, bunRetryBackoff)
+		r.waitForBunRetry()
+		result = r.command(dir, "bun", args...)
+		count, critical, err = bunFindingCounts(result.stdout)
+	}
 	if err != nil {
 		r.emitFailure(result)
 		fmt.Fprintf(r.stderr, "bun audit %s: scanner output is not valid JSON\n", dir)
 		return errors.New("bun audit output is malformed")
+	}
+	if critical == 0 && isBunTransportFailure(result) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "bun audit %s: transport failure exhausted the bounded retry budget\n", dir)
+		return statusError("bun audit", dir, result.status)
 	}
 	if critical == 0 {
 		if result.status == 1 && count > 0 {
@@ -253,6 +272,34 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 	}
 	r.emitFailure(result)
 	return statusError("bun audit", dir, status)
+}
+
+func (r *runner) shouldRetryBun(result commandResult) bool {
+	return !r.bunRetryUsed && isBunTransportFailure(result)
+}
+
+func (r *runner) waitForBunRetry() {
+	if r.bunRetrySleep != nil {
+		r.bunRetrySleep(bunRetryBackoff)
+		return
+	}
+	time.Sleep(bunRetryBackoff)
+}
+
+func isBunTransportFailure(result commandResult) bool {
+	return !errors.Is(result.err, context.Canceled) &&
+		!errors.Is(result.err, context.DeadlineExceeded) &&
+		(hasBunTransportSignature(result.stdout) || hasBunTransportSignature(result.stderr))
+}
+
+func hasBunTransportSignature(data []byte) bool {
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if bytes.Equal(line, []byte("Timeout: audit request failed")) || bytes.Equal(line, []byte("ConnectionClosed: audit request failed")) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {

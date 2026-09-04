@@ -161,6 +161,51 @@ bun-nonblocking)
   if [[ "$tool" == "bun" ]]; then printf '{"example-package":[{"id":123,"severity":"moderate"}]}\n'; exit 1; fi ;;
 bun-outage)
   if [[ "$tool" == "bun" ]]; then printf '{}\n'; printf 'bun scanner unavailable\n' >&2; exit 70; fi ;;
+bun-transport-recovery-then-exhausted)
+  if [[ "$tool" == "bun" ]]; then
+    if [[ "$PWD" == */desktop ]]; then
+      printf 'malformed scanner output\n'
+      printf 'Timeout: audit request failed\n' >&2
+      exit 70
+    fi
+    if [[ ! -f "$SECURITY_TEST_LOG.attempt" ]]; then
+      : > "$SECURITY_TEST_LOG.attempt"
+      printf 'Timeout: audit request failed\n' >&2
+      exit 70
+    fi
+    printf '{"example-package":[{"id":123,"severity":"moderate"}]}\n'
+    exit 1
+  fi ;;
+bun-transport-exhausted)
+  if [[ "$tool" == "bun" ]]; then
+    printf 'malformed scanner output\n'
+    printf 'TOKEN=sentinel_value\n' >&2
+    printf 'ConnectionClosed: audit request failed\n' >&2
+    exit 70
+  fi ;;
+bun-valid-transport-recovery)
+  if [[ "$tool" == "bun" ]]; then
+    if [[ ! -f "$SECURITY_TEST_LOG.valid-attempt" ]]; then
+      : > "$SECURITY_TEST_LOG.valid-attempt"
+      printf '{"example-package":[{"id":123,"severity":"moderate"}]}\n'
+      printf 'Timeout: audit request failed\n' >&2
+      exit 1
+    fi
+    printf '{"example-package":[{"id":123,"severity":"moderate"}]}\n'
+    exit 1
+  fi ;;
+bun-unknown-malformed)
+  if [[ "$tool" == "bun" ]]; then
+    printf 'malformed scanner output\n'
+    printf 'unrecognized scanner failure\n' >&2
+    exit 1
+  fi ;;
+bun-critical-transport)
+  if [[ "$tool" == "bun" ]]; then
+    printf '{"example-package":[{"id":"GHSA-test-1","severity":"critical"}]}\n'
+    printf 'Timeout: audit request failed\n' >&2
+    exit 1
+  fi ;;
 esac
 exit 0
 `
