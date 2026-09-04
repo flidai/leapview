@@ -21,7 +21,6 @@ import (
 
 const (
 	integrityTerminalError = "completed object failed integrity verification"
-	sqliteTimestampLayout  = "2006-01-02 15:04:05.000000000"
 	multipartClaimLease    = 5 * time.Minute
 	multipartClaimRenewal  = time.Minute
 )
@@ -618,7 +617,7 @@ func requireOpenSession(session manageddata.UploadSession, now time.Time) error 
 	if session.Status != manageddata.UploadStatusOpen {
 		return fmt.Errorf("%w: upload session is %s", control.ErrConflict, session.Status)
 	}
-	expiresAt, err := time.Parse(sqliteTimestampLayout, session.ExpiresAt)
+	expiresAt, err := time.Parse(time.RFC3339Nano, session.ExpiresAt)
 	if err != nil {
 		return control.ErrIntegrity
 	}
