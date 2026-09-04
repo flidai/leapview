@@ -132,6 +132,38 @@ func TestDBTWarehouseBoundaryDoesNotEnterLeapViewRuntime(t *testing.T) {
 	}
 }
 
+func TestDBTWarehouseBoundaryTasksSequencePrerequisites(t *testing.T) {
+	root := repoRoot(t)
+	taskfile, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
+	if err != nil {
+		t.Fatalf("read Taskfile.yml: %v", err)
+	}
+
+	for _, task := range []string{"dbt:warehouse:qualify", "dbt:warehouse"} {
+		block := taskfileTaskBlock(t, string(taskfile), task)
+		if strings.Contains(block, "\n    deps:") {
+			t.Fatalf("%s must sequence prerequisites in cmds so generation cannot race build", task)
+		}
+
+		previous := -1
+		for _, command := range []string{
+			"      - task: generate",
+			"      - task: build",
+			"      - task: map-assets:install",
+			"      - task: dbt:warehouse:build",
+		} {
+			index := strings.Index(block, command)
+			if index < 0 {
+				t.Fatalf("%s is missing ordered prerequisite %q", task, command)
+			}
+			if index <= previous {
+				t.Fatalf("%s runs prerequisite %q out of order", task, command)
+			}
+			previous = index
+		}
+	}
+}
+
 func isDBTModulePath(path string) bool {
 	return isDBTText(path)
 }

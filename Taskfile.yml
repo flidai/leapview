@@ -37,22 +37,20 @@ tasks:
 
   dbt:warehouse:qualify:
     desc: Run the physical dbt Parquet publication through the ordinary headless LeapView candidate lifecycle
-    deps:
-      - generate
-      - build
-      - map-assets:install
-      - dbt:warehouse:build
     cmds:
+      - task: generate
+      - task: build
+      - task: map-assets:install
+      - task: dbt:warehouse:build
       - ./scripts/dev-server.sh once examples/dbt-warehouse-boundary/leapview/leapview.yaml warehouse examples/dbt-warehouse-boundary/published
 
   dbt:warehouse:
     desc: Build the dbt-duckdb showcase and start LeapView through the managed development flow
-    deps:
-      - generate
-      - build
-      - map-assets:install
-      - dbt:warehouse:build
     cmds:
+      - task: generate
+      - task: build
+      - task: map-assets:install
+      - task: dbt:warehouse:build
       - ./scripts/dev-server.sh start examples/dbt-warehouse-boundary/leapview/leapview.yaml warehouse examples/dbt-warehouse-boundary/published
 
   bootstrap:
