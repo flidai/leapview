@@ -93,7 +93,7 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 14 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() {
+	if len(recorder.sqls) != 16 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() || recorder.sqls[14] != ContractPublicationIntegritySQL() {
 		t.Fatal("Apply() did not execute the authored migrations in order")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
@@ -297,6 +297,41 @@ func TestAccessAuthorityCompatibilityMigrationPreservesLegacyRowsAndAddsReposito
 	}
 }
 
+func TestContractPublicationIntegrityMigrationBindsCanonicalEvidence(t *testing.T) {
+	sql := ContractPublicationIntegritySQL()
+	for _, marker := range []string{
+		"contract publication integrity migration found",
+		"canonical_digest IS DISTINCT FROM",
+		"'sha256:' || encode(sha256(canonical_bytes), 'hex')",
+		"canonical.envelope ->> 'apiVersion' IS DISTINCT FROM",
+		"'leapview.dev/v1'",
+		"projection_profile IS DISTINCT FROM",
+		"canonical.envelope ->> 'profile'",
+		"authored_id IS DISTINCT FROM",
+		"canonical.envelope -> 'metadata' ->> 'id'",
+		"resource_kind IS DISTINCT FROM",
+		"WHEN 'SemanticModel' THEN 'semantic_model'",
+		"version IS DISTINCT FROM",
+		"canonical.envelope -> 'metadata' -> 'contract' ->> 'version'",
+		"version_baseline IS DISTINCT FROM",
+		"split_part(publication.version, '+', 1)",
+		"contract_publication_canonical_digest_check",
+		"contract_publication_api_version_check",
+		"contract_publication_projection_profile_check",
+		"contract_publication_authored_id_check",
+		"contract_publication_resource_kind_check",
+		"contract_publication_version_baseline_check",
+		"contract_publication_version_check",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("contract publication integrity migration missing %q", marker)
+		}
+	}
+	if strings.Contains(sql, "003_contract_publication_evidence.sql") {
+		t.Fatal("integrity migration must not rewrite revision 003")
+	}
+}
+
 func validRevisions() map[int64]recordingRow {
 	return map[int64]recordingRow{
 		BaselineRevision: {
@@ -319,6 +354,9 @@ func validRevisions() map[int64]recordingRow {
 		},
 		AccessAuthorityCompatibilityRevision: {
 			revision: AccessAuthorityCompatibilityRevision, migrationID: AccessAuthorityCompatibilityMigrationID, checksum: AccessAuthorityCompatibilityChecksum(),
+		},
+		ContractPublicationIntegrityRevision: {
+			revision: ContractPublicationIntegrityRevision, migrationID: ContractPublicationIntegrityMigrationID, checksum: ContractPublicationIntegrityChecksum(),
 		},
 	}
 }

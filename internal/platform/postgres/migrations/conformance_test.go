@@ -110,6 +110,12 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if revision != IdentityRestoreTransitionRevision {
 		t.Fatalf("identity restore transition schema revision = %d, want %d", revision, IdentityRestoreTransitionRevision)
 	}
+	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, ContractPublicationIntegrityMigrationID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != ContractPublicationIntegrityRevision {
+		t.Fatalf("contract publication integrity schema revision = %d, want %d", revision, ContractPublicationIntegrityRevision)
+	}
 	var nullable string
 	if err := db.QueryRow(ctx, `
 		SELECT is_nullable
@@ -498,5 +504,201 @@ func TestAccessAuthorityCompatibilityPostgreSQL18(t *testing.T) {
 	}
 	if oauthTables != 5 || roleTriggers != 1 {
 		t.Fatalf("post-007 access contract = oauth tables:%d principal identity triggers:%d", oauthTables, roleTriggers)
+	}
+}
+
+// TestContractPublicationIntegrityPostgreSQL18 exercises the persistence edge
+// directly.  The repository tests cover the application replay path; this
+// test proves that a caller which bypasses that path cannot write inconsistent
+// publication evidence, and that rerunning migrations leaves valid evidence
+// unchanged.
+func TestContractPublicationIntegrityPostgreSQL18(t *testing.T) {
+	h := postgrestest.Start(t)
+	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
+	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{
+		Name: "leapview_control_runtime", Password: "leapview-conformance-secret", Login: true,
+	})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
+	h.GrantRole(t, owner, migrator)
+	database := h.NewDatabase(t, "leapview_control_integrity")
+	h.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	db, err := pgxpool.New(ctx, database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	conn, err := db.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `SET ROLE leapview_control_migrator`); err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	if err := Apply(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		conn.Release()
+		t.Fatalf("apply migrations: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	conn.Release()
+	var integrityRevision int64
+	var integrityChecksum string
+	if err := db.QueryRow(ctx, `
+		SELECT revision, checksum
+		FROM platform.schema_revision
+		WHERE migration_id = $1`, ContractPublicationIntegrityMigrationID).
+		Scan(&integrityRevision, &integrityChecksum); err != nil {
+		t.Fatal(err)
+	}
+	if integrityRevision != ContractPublicationIntegrityRevision || integrityChecksum != ContractPublicationIntegrityChecksum() {
+		t.Fatalf("contract publication integrity metadata = %d/%q, want %d/%q", integrityRevision, integrityChecksum, ContractPublicationIntegrityRevision, ContractPublicationIntegrityChecksum())
+	}
+
+	runtime, err := pgxpool.New(ctx, database.URL(runtimeRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+
+	const validationJSON = `{"version":"1","checks":[{"name":"integrity-test","outcome":"passed","reference":"migration-test"}]}`
+	const canonicalSource = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"contract":{"compatibility":"backward","version":"1.2.3"},"id":"source:integrity","name":"integrity"},"profile":"leapview.contract/v1"}`
+	const canonicalWrongDigest = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"contract":{"compatibility":"backward","version":"1.2.3"},"id":"source:integrity-digest","name":"integrity"},"profile":"leapview.contract/v1"}`
+	const canonicalWrongAPIVersion = `{"apiVersion":"wrong.api/v1","kind":"Source","metadata":{"contract":{"compatibility":"backward","version":"1.2.3"},"id":"source:integrity-api-version","name":"integrity"},"profile":"leapview.contract/v1"}`
+	const canonicalWrongProfile = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"contract":{"compatibility":"backward","version":"1.2.3"},"id":"source:integrity-profile","name":"integrity"},"profile":"wrong.profile/v1"}`
+	const canonicalWrongAuthoredID = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"contract":{"compatibility":"backward","version":"1.2.3"},"id":"source:canonical-id","name":"integrity"},"profile":"leapview.contract/v1"}`
+	const canonicalWrongKind = `{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"contract":{"compatibility":"backward","version":"1.2.3"},"id":"source:integrity-kind","name":"integrity"},"profile":"leapview.contract/v1"}`
+	const canonicalWrongVersion = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"contract":{"compatibility":"backward","version":"1.2.3"},"id":"source:integrity-version","name":"integrity"},"profile":"leapview.contract/v1"}`
+	const canonicalWrongVersionBaseline = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"contract":{"compatibility":"backward","version":"1.2.3"},"id":"source:integrity-version-baseline","name":"integrity"},"profile":"leapview.contract/v1"}`
+
+	malformed := []struct {
+		name, instance, authoredID, storedKind, storedVersion, canonical string
+		wrongDigest, wrongVersionBaseline                                bool
+	}{
+		{name: "digest", instance: "instance-integrity-digest", authoredID: "source:integrity-digest", storedKind: "source", storedVersion: "1.2.3", canonical: canonicalWrongDigest, wrongDigest: true},
+		{name: "api version", instance: "instance-integrity-api-version", authoredID: "source:integrity-api-version", storedKind: "source", storedVersion: "1.2.3", canonical: canonicalWrongAPIVersion},
+		{name: "profile", instance: "instance-integrity-profile", authoredID: "source:integrity-profile", storedKind: "source", storedVersion: "1.2.3", canonical: canonicalWrongProfile},
+		{name: "authored id", instance: "instance-integrity-authored-id", authoredID: "source:integrity-authored-id", storedKind: "source", storedVersion: "1.2.3", canonical: canonicalWrongAuthoredID},
+		{name: "resource kind", instance: "instance-integrity-kind", authoredID: "source:integrity-kind", storedKind: "source", storedVersion: "1.2.3", canonical: canonicalWrongKind},
+		{name: "version", instance: "instance-integrity-version", authoredID: "source:integrity-version", storedKind: "source", storedVersion: "1.2.4", canonical: canonicalWrongVersion},
+		{name: "version baseline", instance: "instance-integrity-version-baseline", authoredID: "source:integrity-version-baseline", storedKind: "source", storedVersion: "1.2.3", canonical: canonicalWrongVersionBaseline, wrongVersionBaseline: true},
+	}
+	for _, testCase := range malformed {
+		t.Run("reject "+testCase.name, func(t *testing.T) {
+			if _, err := db.Exec(ctx, `
+				INSERT INTO project.resource_identity
+				    (instance_id, authored_id, resource_kind, lifecycle_state, active_bundle_id)
+				VALUES ($1, $2, $3, 'active', $4)`,
+				testCase.instance, testCase.authoredID, testCase.storedKind, "bundle-"+testCase.instance); err != nil {
+				t.Fatal(err)
+			}
+			versionBaseline := testCase.storedVersion
+			if testCase.wrongVersionBaseline {
+				versionBaseline = "1.2.4"
+			}
+			var err error
+			if testCase.wrongDigest {
+				_, err = runtime.Exec(ctx, `
+					INSERT INTO project.contract_publication(
+					    instance_id, authored_id, resource_kind, version, version_baseline,
+					    projection_profile, canonical_bytes, canonical_digest, validation_evidence_json)
+					VALUES ($1, $2, $3, $4, $5, 'leapview.contract/v1', $6,
+					        'sha256:' || repeat('0', 64), $7)`,
+					testCase.instance, testCase.authoredID, testCase.storedKind, testCase.storedVersion,
+					versionBaseline, []byte(testCase.canonical), validationJSON)
+			} else {
+				_, err = runtime.Exec(ctx, `
+					INSERT INTO project.contract_publication(
+					    instance_id, authored_id, resource_kind, version, version_baseline,
+					    projection_profile, canonical_bytes, canonical_digest, validation_evidence_json)
+					VALUES ($1, $2, $3, $4, $5, 'leapview.contract/v1', $6,
+					        'sha256:' || encode(sha256($6::bytea), 'hex'), $7)`,
+					testCase.instance, testCase.authoredID, testCase.storedKind, testCase.storedVersion,
+					versionBaseline, []byte(testCase.canonical), validationJSON)
+			}
+			if err == nil {
+				t.Fatal("malformed publication insert unexpectedly succeeded")
+			}
+		})
+	}
+
+	const validInstance = "instance-integrity-valid"
+	if _, err := db.Exec(ctx, `
+		INSERT INTO project.resource_identity
+		    (instance_id, authored_id, resource_kind, lifecycle_state, active_bundle_id)
+		VALUES ($1, 'source:integrity', 'source', 'active', 'bundle-integrity-valid')`, validInstance); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Exec(ctx, `
+		INSERT INTO project.contract_publication(
+		    instance_id, authored_id, resource_kind, version, version_baseline,
+		    projection_profile, canonical_bytes, canonical_digest, validation_evidence_json)
+		VALUES ($1, 'source:integrity', 'source', '1.2.3', '1.2.3',
+		        'leapview.contract/v1', $2,
+		        'sha256:' || encode(sha256($2::bytea), 'hex'), $3)`,
+		validInstance, []byte(canonicalSource), validationJSON); err != nil {
+		t.Fatalf("valid publication insert: %v", err)
+	}
+
+	var beforeVersion, beforeBaseline, beforeProfile, beforeDigest string
+	var beforeBytes, beforeEvidence []byte
+	var beforePublished time.Time
+	readPublication := func() (string, string, string, string, []byte, []byte, time.Time) {
+		var version, baseline, profile, digest, evidence string
+		var canonical []byte
+		var published time.Time
+		if err := db.QueryRow(ctx, `
+			SELECT version, version_baseline, projection_profile, canonical_digest,
+			       canonical_bytes, published_at, validation_evidence_json
+			FROM project.contract_publication
+			WHERE instance_id=$1 AND authored_id='source:integrity'`, validInstance).
+			Scan(&version, &baseline, &profile, &digest, &canonical, &published, &evidence); err != nil {
+			t.Fatal(err)
+		}
+		return version, baseline, profile, digest, canonical, []byte(evidence), published
+	}
+	beforeVersion, beforeBaseline, beforeProfile, beforeDigest, beforeBytes, beforeEvidence, beforePublished = readPublication()
+
+	conn, err = db.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `SET ROLE leapview_control_migrator`); err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	tx, err = conn.Begin(ctx)
+	if err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	if err := Apply(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		conn.Release()
+		t.Fatalf("reapply migrations: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	conn.Release()
+
+	afterVersion, afterBaseline, afterProfile, afterDigest, afterBytes, afterEvidence, afterPublished := readPublication()
+	if beforeVersion != afterVersion || beforeBaseline != afterBaseline || beforeProfile != afterProfile || beforeDigest != afterDigest || string(beforeBytes) != string(afterBytes) || string(beforeEvidence) != string(afterEvidence) || !beforePublished.Equal(afterPublished) {
+		t.Fatalf("valid publication changed across migration replay: before=%q/%q/%q/%q/%s/%s/%v after=%q/%q/%q/%q/%s/%s/%v",
+			beforeVersion, beforeBaseline, beforeProfile, beforeDigest, beforeBytes, beforeEvidence, beforePublished,
+			afterVersion, afterBaseline, afterProfile, afterDigest, afterBytes, afterEvidence, afterPublished)
 	}
 }

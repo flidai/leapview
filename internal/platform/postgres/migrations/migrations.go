@@ -45,6 +45,9 @@ var identityRestoreTransitionSQL string
 //go:embed 007_access_authority_compatibility.sql
 var accessAuthorityCompatibilitySQL string
 
+//go:embed 008_contract_publication_integrity.sql
+var contractPublicationIntegritySQL string
+
 // IdentityLedgerRevision introduces the PostgreSQL-only FAI-617 resource
 // identity ledger.
 const IdentityLedgerRevision int64 = 2
@@ -81,6 +84,12 @@ const IdentityRestoreTransitionMigrationID = "006_identity_restore_transition"
 const AccessAuthorityCompatibilityRevision int64 = 7
 
 const AccessAuthorityCompatibilityMigrationID = "007_access_authority_compatibility"
+
+// ContractPublicationIntegrityRevision binds publication identity fields to
+// the exact canonical bytes stored by revision three.
+const ContractPublicationIntegrityRevision int64 = 8
+
+const ContractPublicationIntegrityMigrationID = "008_contract_publication_integrity"
 
 // BaselineSQL returns the exact authored baseline migration.  Callers should
 // execute it as a migration authority, inside a transaction where the driver
@@ -137,6 +146,13 @@ func AccessAuthorityCompatibilityChecksum() string {
 	return hex.EncodeToString(sum[:])
 }
 
+func ContractPublicationIntegritySQL() string { return contractPublicationIntegritySQL }
+
+func ContractPublicationIntegrityChecksum() string {
+	sum := sha256.Sum256([]byte(contractPublicationIntegritySQL))
+	return hex.EncodeToString(sum[:])
+}
+
 // Tx is the transaction boundary required by Apply.  pgx.Tx and pgxpool.Tx
 // both satisfy it; keeping the boundary here avoids opening a second
 // connection or introducing repository policy into the schema package.
@@ -169,6 +185,7 @@ func Apply(ctx context.Context, tx Tx) error {
 		{ActivationTransitionReferencesRevision, ActivationTransitionReferencesMigrationID, activationTransitionReferencesSQL, ActivationTransitionReferencesChecksum()},
 		{IdentityRestoreTransitionRevision, IdentityRestoreTransitionMigrationID, identityRestoreTransitionSQL, IdentityRestoreTransitionChecksum()},
 		{AccessAuthorityCompatibilityRevision, AccessAuthorityCompatibilityMigrationID, accessAuthorityCompatibilitySQL, AccessAuthorityCompatibilityChecksum()},
+		{ContractPublicationIntegrityRevision, ContractPublicationIntegrityMigrationID, contractPublicationIntegritySQL, ContractPublicationIntegrityChecksum()},
 	}
 	for _, migration := range migrations {
 		if err := applyOne(ctx, tx, migration.revision, migration.id, migration.sql, migration.checksum); err != nil {
