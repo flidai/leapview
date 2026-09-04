@@ -93,7 +93,7 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 		},
 		{
 			ID: "dashboard:managed", StableID: "project:project:test:dashboard:managed", ProjectID: "project:test", Title: "Executive sales",
-			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceProject, Owner: "analytics", PageCount: 1, Featured: true,
+			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceProject, Owner: "analytics", PageCount: 1,
 		},
 		{
 			ID: "dashboard:pending", StableID: "instance:project:test:dashboard:pending", ProjectID: "project:test", Title: "Pending analysis",
@@ -125,7 +125,7 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 	if mine.CatalogScope != "mine" || mine.Status != "private_draft" || mine.Href != wantMineHref || mine.Owner != "You" || mine.UpdatedAt != now.Format(time.RFC3339) {
 		t.Fatalf("mine = %#v", mine)
 	}
-	if managed.CatalogScope != "managed" || managed.Owner != "analytics" || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" || !managed.Featured || managed.Popularity != "high" {
+	if managed.CatalogScope != "managed" || managed.Owner != "analytics" || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" || managed.Popularity != "high" {
 		t.Fatalf("managed = %#v", managed)
 	}
 	if pending.CatalogScope != "mine" || pending.Status != "unpublished_changes" || pending.Href != "/dashboards/dashboard:pending" {

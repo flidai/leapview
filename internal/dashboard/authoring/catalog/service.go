@@ -77,7 +77,6 @@ type Dashboard struct {
 	PageCount       int                       `json:"pageCount"`
 	FirstPageID     string                    `json:"-"`
 	Tags            []string                  `json:"tags,omitempty"`
-	Featured        bool                      `json:"featured,omitempty"`
 	ServingIdentity graph.ServingIdentity     `json:"servingIdentity,omitempty"`
 	Revision        *RevisionEvidence         `json:"revision,omitempty"`
 	Publication     *PublicationEvidence      `json:"publication,omitempty"`
@@ -376,7 +375,6 @@ func enrichProjectItem(runtime projectruntime.Runtime, item *Dashboard) error {
 	if len(item.Tags) == 0 {
 		item.Tags = append([]string(nil), source.Metadata.Tags...)
 	}
-	item.Featured = source.Document.Metadata.Featured != nil && *source.Document.Metadata.Featured
 	item.Owner, item.SourcePath = source.Metadata.Owner, source.Path
 	return nil
 }
@@ -479,7 +477,6 @@ func (s *Service) enrichInstanceItem(ctx context.Context, projectID graph.Resour
 	if revision.Document.Metadata.Description != nil {
 		item.Description = *revision.Document.Metadata.Description
 	}
-	item.Featured = revision.Document.Metadata.Featured != nil && *revision.Document.Metadata.Featured
 	item.PageCount = len(revision.Document.Spec.Pages)
 	if len(revision.Document.Spec.Pages) > 0 {
 		item.FirstPageID = strings.TrimSpace(revision.Document.Spec.Pages[0].ID)

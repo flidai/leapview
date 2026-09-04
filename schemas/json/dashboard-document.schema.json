@@ -1547,10 +1547,6 @@
         "domain": {
           "type": "string"
         },
-        "featured": {
-          "description": "Organization-curated discovery signal used to feature this dashboard.",
-          "type": "boolean"
-        },
         "id": {
           "maxLength": 128,
           "minLength": 1,

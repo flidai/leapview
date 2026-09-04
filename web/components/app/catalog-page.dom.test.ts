@@ -700,7 +700,6 @@ test('catalog discovery keeps source, sorting, and filters in one compact toolba
         ...element.page,
         dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({
           ...dashboard,
-          featured: index === 1,
           status: index === 3 ? 'private_draft' : dashboard.status,
         })),
       } })
@@ -722,7 +721,6 @@ test('catalog discovery keeps source, sorting, and filters in one compact toolba
         visible: Array.from(list.querySelectorAll('.entity-list-title')).map((title: Element) => title.textContent?.trim()),
         activeFilters: root.querySelector('.catalog-filter-count')?.textContent?.trim(),
         dataModels: Array.from(list.querySelectorAll('.entity-list-cell:first-of-type')).map((model: Element) => model.textContent?.trim()),
-        featured: Array.from(list.querySelectorAll('.entity-list-badge-featured')).map((badge: Element) => badge.textContent?.trim()),
         popularity: Array.from(list.querySelectorAll('.entity-list-popularity')).map((badge: Element) => badge.getAttribute('aria-label')),
         hasRedundantFavoritesFilter: Array.from(root.querySelectorAll('.catalog-filter-check')).some((label: Element) => label.textContent?.includes('Favorites only')),
       }
@@ -734,7 +732,6 @@ test('catalog discovery keeps source, sorting, and filters in one compact toolba
       visible: ['Operations Health'],
       activeFilters: '1',
       dataModels: ['Operations'],
-      featured: ['Featured'],
       popularity: ['Medium popularity — top 20% in the last 30 days'],
       hasRedundantFavoritesFilter: false,
     })
