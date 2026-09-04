@@ -2325,8 +2325,8 @@ test('generated API outlines keep operations and omit repeated operation details
     expect(visibleOutlineLabels).not.toContain('Request body')
     expect(visibleOutlineLabels).not.toContain('Responses')
 
-		const listRoles = article.locator('h3#list-roles')
-		const listRolesDetail = listRoles.locator('xpath=following-sibling::h4[1]')
+		const listInstanceRoles = article.locator('h3#list-instance-roles')
+		const listRolesDetail = listInstanceRoles.locator('xpath=following-sibling::h4[1]')
 		await listRolesDetail.evaluate((heading) => {
       document.documentElement.style.scrollBehavior = 'auto'
       window.scrollTo({ top: heading.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.2 })
