@@ -5902,6 +5902,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS delivery_one_live_generation_root_idx
     ON delivery.delivery_retention_root(generation_id)
     WHERE root_kind = 'generation' AND state = 'live';
 
+-- Delivery-root admission must serialize with physical-retention retirement,
+-- but runtime roles intentionally cannot lock or mutate the DuckLake ledger
+-- directly. This narrow capability takes the physical row lock and returns
+-- whether the seal still has an exact live retention record.
+CREATE OR REPLACE FUNCTION delivery.lock_live_snapshot_retention(p_snapshot_seal_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, delivery, ducklake
+-- +goose StatementBegin
+AS $$
+DECLARE
+    snapshot_state text;
+BEGIN
+    SELECT retention.state
+      INTO snapshot_state
+      FROM ducklake.snapshot_retention AS retention
+      JOIN delivery.delivery_snapshot_seal AS seal
+        ON seal.physical_pool_id = retention.physical_pool_id
+       AND seal.catalog_id = retention.catalog_id
+       AND seal.ducklake_snapshot_id = retention.snapshot_id
+     WHERE seal.seal_id = p_snapshot_seal_id
+     FOR UPDATE OF retention;
+    RETURN FOUND AND snapshot_state = 'live';
+END;
+$$;
+-- +goose StatementEnd
+
 -- Recovery retention is an operator mutation, but the maintenance role is
 -- intentionally denied direct INSERT on delivery_retention_root.  Keep this
 -- narrow capability function SECURITY DEFINER and require the exact
@@ -5927,7 +5955,6 @@ DECLARE
     v_recovery_set_id uuid;
     v_frontier_digest text;
     existing_root delivery.delivery_retention_root;
-    snapshot_state text;
 BEGIN
     IF p_root_id IS NULL OR p_target_id IS NULL OR p_target_id <> btrim(p_target_id) OR btrim(p_target_id) = '' THEN
         RAISE EXCEPTION 'recovery retention root identity is required';
@@ -5963,12 +5990,10 @@ BEGIN
         RAISE EXCEPTION 'recovery retention root target/generation/seal tuple is unknown';
     END IF;
 
-    -- Lock the physical DuckLake retention row before creating/replaying the
-    -- root. This closes the race with a concurrent retire/expire operation.
-    SELECT retention_state
-      INTO snapshot_state
-      FROM ducklake.admit_snapshot_retention_from_seal(p_snapshot_seal_id);
-    IF NOT FOUND OR snapshot_state <> 'live' THEN
+    -- Require and lock the physical DuckLake retention row before
+    -- creating/replaying the root. Recovery evidence must never synthesize
+    -- retention authority that was absent from the admitted snapshot.
+    IF NOT delivery.lock_live_snapshot_retention(p_snapshot_seal_id) THEN
         RAISE EXCEPTION 'recovery retention root snapshot retention is not live';
     END IF;
 
@@ -7053,12 +7078,14 @@ REVOKE ALL ON FUNCTION delivery.expire_retention_root(uuid, interval) FROM PUBLI
 REVOKE ALL ON FUNCTION delivery.maintain_retention_roots(text, text, interval, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.lock_retention_root(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION delivery.lock_live_snapshot_retention(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) FROM PUBLIC;
 -- +goose StatementBegin
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT EXECUTE ON FUNCTION delivery.lock_retention_root(uuid) TO leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION delivery.lock_live_snapshot_retention(uuid) TO leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid) TO leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) TO leapview_control_runtime;
         -- Expiry is maintenance/drain-owned. Runtime activation may retire
@@ -7068,6 +7095,7 @@ BEGIN
         GRANT USAGE ON SCHEMA delivery TO leapview_control_maintenance;
         GRANT SELECT ON delivery.delivery_retention_root TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION delivery.lock_retention_root(uuid) TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION delivery.lock_live_snapshot_retention(uuid) TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid) TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION delivery.expire_retention_root(uuid, interval) TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION delivery.maintain_retention_roots(text, text, interval, integer) TO leapview_control_maintenance;

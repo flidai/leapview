@@ -38,6 +38,7 @@ func TestPostgreSQL18MultiNodeActivationServingStateQualification(t *testing.T) 
 	})
 
 	input, ids := prepareLostAckActivation(t, nodeA)
+	seedPhysicalRetentionFixture(t, poolA, ids.seal)
 	lineageA.expected = ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation, CompiledGraphDigest: testDigest('b')}
 	lineageB.expected = lineageA.expected
 	second := prepareSecondActivationGeneration(t, nodeA, ids.generation)
@@ -281,6 +282,7 @@ func prepareSecondActivationGeneration(t *testing.T, r *Repository, firstGenerat
 	if _, err := r.CreateSnapshotSeal(ctx, secondSeal); err != nil {
 		t.Fatal(err)
 	}
+	seedPhysicalRetentionFixture(t, r.db, secondSeal)
 	if _, err := r.QualifyCandidate(ctx, candidateID, sealID, testDigest('5')); err != nil {
 		t.Fatal(err)
 	}

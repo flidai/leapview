@@ -6,6 +6,7 @@ import (
 	"time"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,6 +43,7 @@ func TestPostgresActivationCapabilityRuntimeConformance(t *testing.T) {
 
 	adminRepository := New(admin)
 	input, ids := prepareLostAckActivation(t, adminRepository)
+	seedPhysicalRetentionFixture(t, admin, ids.seal)
 	lineage := &testActivationLineage{expected: ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation, CompiledGraphDigest: testDigest('b')}}
 	runtimeRepository := NewWithOptions(runtime, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 
@@ -109,14 +111,17 @@ func applyActivationSchemas(t *testing.T, admin *pgxpool.Pool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, schema := range map[string]string{
-		"access":   accesspostgres.SchemaSQL(),
-		"event":    eventspostgres.SchemaSQL(),
-		"delivery": SchemaSQL(),
+	for _, item := range []struct {
+		name, schema string
+	}{
+		{name: "access", schema: accesspostgres.SchemaSQL()},
+		{name: "event", schema: eventspostgres.SchemaSQL()},
+		{name: "delivery", schema: SchemaSQL()},
+		{name: "ducklake", schema: ducklakepostgres.SchemaSQL()},
 	} {
-		if _, err := tx.Exec(t.Context(), schema); err != nil {
+		if _, err := tx.Exec(t.Context(), item.schema); err != nil {
 			_ = tx.Rollback(t.Context())
-			t.Fatalf("apply %s schema: %v", name, err)
+			t.Fatalf("apply %s schema: %v", item.name, err)
 		}
 	}
 	if err := tx.Commit(t.Context()); err != nil {

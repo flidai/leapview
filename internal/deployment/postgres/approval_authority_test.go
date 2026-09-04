@@ -107,6 +107,7 @@ func newApprovalFixture(t *testing.T) approvalFixture {
 	if _, err := repository.CreateSnapshotSeal(ctx, seal); err != nil {
 		t.Fatal(err)
 	}
+	seedPhysicalRetentionFixture(t, db, seal)
 	if _, err := repository.QualifyCandidate(ctx, ids["candidate"], ids["seal"], testDigest('3')); err != nil {
 		t.Fatal(err)
 	}

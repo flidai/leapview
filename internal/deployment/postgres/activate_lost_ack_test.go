@@ -27,6 +27,10 @@ func TestPostgresActivateReplaysAfterCommitLostAcknowledgement(t *testing.T) {
 	r := NewWithOptions(p, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 	input, ids := prepareLostAckActivation(t, r)
 	lineage.expected = ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation, CompiledGraphDigest: testDigest('b')}
+	if _, err := r.Activate(t.Context(), input); !errors.Is(err, ErrConflict) {
+		t.Fatalf("activation without physical retention error = %v, want conflict", err)
+	}
+	seedPhysicalRetentionFixture(t, p, ids.seal)
 
 	// Setup uses the real pool so its commits are ordinary. Swap only the
 	// activation database handle after setup; the wrapper preserves every
@@ -82,6 +86,25 @@ func TestPostgresActivateReplaysAfterCommitLostAcknowledgement(t *testing.T) {
 
 type lostAckActivationIDs struct {
 	target, generation, publication string
+	seal                            SnapshotSealInput
+}
+
+func seedPhysicalRetentionFixture(t testing.TB, db DBTX, seal SnapshotSealInput) {
+	t.Helper()
+	if _, err := db.Exec(t.Context(), `
+		INSERT INTO ducklake.catalog_identity(
+			physical_pool_id, catalog_database, catalog_id, catalog_uuid, metadata_schema
+		) VALUES ($1, $2, $3, $4::uuid, 'lake')`,
+		seal.PhysicalPoolID, seal.CatalogDatabase, seal.CatalogID, seal.CatalogUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `
+		INSERT INTO ducklake.snapshot_retention(
+			physical_pool_id, catalog_id, snapshot_id, state
+		) VALUES ($1, $2, $3, 'live')`,
+		seal.PhysicalPoolID, seal.CatalogID, seal.DuckLakeSnapshotID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func prepareLostAckActivation(t *testing.T, r *Repository) (ActivationInput, lostAckActivationIDs) {
@@ -138,6 +161,7 @@ func prepareLostAckActivation(t *testing.T, r *Repository) (ActivationInput, los
 		t.Fatal(err)
 	}
 	sealInput := SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: "pool-lost-ack", TenantDomain: "tenant-lost-ack", Region: "us-east", EncryptionDomain: "enc-lost-ack", ObjectNamespace: "objects/lost-ack", CatalogDatabase: "ducklake", CatalogID: "catalog-lost-ack", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000001008", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/lost-ack", RelationManifestDigest: testDigest('1'), ClosureDigest: testDigest('8'), ObjectRoot: "objects/lost-ack/42", ObjectRootDigest: testDigest('6'), ArtifactRoot: "artifacts/" + artifactDigest, ArtifactRootDigest: testDigest('7'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), RequestDigest: testDigest('f'), PlanDigest: planDigest, CompatibilityDigest: testDigest('2'), ServingArtifactID: "artifact-lost-ack", ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}
+	ids.seal = sealInput
 	if _, err := r.CreateSnapshotSeal(ctx, sealInput); err != nil {
 		t.Fatal(err)
 	}

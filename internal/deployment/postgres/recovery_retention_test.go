@@ -119,7 +119,15 @@ func TestRecoveryRetentionRootMaintenanceRetiresAndExpires(t *testing.T) {
 	if _, err := p.Exec(ctx, `SELECT delivery.create_recovery_retention_root($1::uuid,$2,$3::uuid,$4::uuid,NULL,$5::jsonb)`, rootID, targetID, generationID, sealID, evidence); err == nil {
 		t.Fatal("recovery retention root accepted an unbounded expiry")
 	}
-	if _, err := New(p).CreateRetentionRoot(ctx, DeliveryRetentionRoot{RootID: rootID, TargetID: targetID, GenerationID: generationID, SnapshotSealID: sealID, RootKind: "recovery", State: "live", ExpiresAt: time.Now().UTC().Add(time.Hour), Evidence: evidence}); err != nil {
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	root := DeliveryRetentionRoot{RootID: rootID, TargetID: targetID, GenerationID: generationID, SnapshotSealID: sealID, RootKind: "recovery", State: "live", ExpiresAt: expiresAt, Evidence: evidence}
+	if _, err := New(p).CreateRetentionRoot(ctx, root); err == nil {
+		t.Fatal("recovery retention root synthesized missing physical retention")
+	}
+	if _, err := p.Exec(ctx, `INSERT INTO ducklake.snapshot_retention(physical_pool_id,catalog_id,snapshot_id,state) VALUES ('recovery-pool','recovery-catalog',1,'live')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(p).CreateRetentionRoot(ctx, root); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.Exec(ctx, `UPDATE delivery.delivery_retention_root SET expires_at=clock_timestamp()-interval '1 second' WHERE root_id=$1::uuid`, rootID); err != nil {

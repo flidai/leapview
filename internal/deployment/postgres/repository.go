@@ -3977,6 +3977,9 @@ func activationMetadata(p DeliveryPublication) json.RawMessage {
 }
 
 func ensureActivationRoot(ctx context.Context, tx Tx, p DeliveryPublication, target string) error {
+	if err := requireLiveSnapshotRetention(ctx, tx, p.SnapshotSealID); err != nil {
+		return err
+	}
 	found, err := depdb.New(tx).FindLiveGenerationRoot(ctx, depdb.FindLiveGenerationRootParams{TargetID: target, GenerationID: dbUUID(p.GenerationID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = depdb.New(tx).InsertGenerationRoot(ctx, depdb.InsertGenerationRootParams{RootID: dbUUID(generationRootID(p.PublicationID)), TargetID: target, CandidateID: dbUUID(p.CandidateID), GenerationID: dbUUID(p.GenerationID), SnapshotSealID: dbUUID(p.SnapshotSealID)})
@@ -4217,27 +4220,16 @@ func requireLiveSnapshotRetention(ctx context.Context, db DBTX, sealID string) e
 	if !installed {
 		return fmt.Errorf("%w: DuckLake physical retention ledger is unavailable", ErrConflict)
 	}
-	var state string
-	// sqlc-exception: analyzer-incompatible. This lock joins the separately
-	// installed DuckLake capability inside the caller-owned delivery transaction;
-	// sqlc cannot analyze that table against this package's isolated schema.
-	err := db.QueryRow(ctx, `
-		SELECT retention.state
-		  FROM ducklake.snapshot_retention AS retention
-		  JOIN delivery.delivery_snapshot_seal AS seal
-		    ON seal.physical_pool_id = retention.physical_pool_id
-		   AND seal.catalog_id = retention.catalog_id
-		   AND seal.ducklake_snapshot_id = retention.snapshot_id
-		 WHERE seal.seal_id = $1::uuid
-		 FOR UPDATE OF retention`, dbUUID(sealID)).Scan(&state)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("%w: physical snapshot retention is unavailable", ErrConflict)
-	}
+	var live bool
+	// sqlc-exception: analyzer-incompatible. This capability function locks the
+	// separately installed DuckLake ledger inside the caller-owned transaction;
+	// it is intentionally outside this package's generated query surface.
+	err := db.QueryRow(ctx, `SELECT delivery.lock_live_snapshot_retention($1::uuid)`, dbUUID(sealID)).Scan(&live)
 	if err != nil {
 		return err
 	}
-	if state != "live" {
-		return fmt.Errorf("%w: physical snapshot retention is not live", ErrConflict)
+	if !live {
+		return fmt.Errorf("%w: physical snapshot retention is unavailable or not live", ErrConflict)
 	}
 	return nil
 }
