@@ -458,9 +458,13 @@ The typed projection is normalized and serialized as RFC 8785 canonical JSON,
 then identified by a SHA-256 digest. The profile defines map, set, and ordered
 collection behavior; Unicode, number, date, timestamp, URL, default, null, and
 logical-type normalization; and independent cross-language golden fixtures.
-Every public field must be classified in TypeSpec as contract, descriptive,
-operational, secret, or derived so an unreviewed field cannot silently enter or
-leave the digest.
+The data-resource generator compares every reachable authored leaf against the
+generated projection DTO and the reviewed exclusion manifest. Exclusions record
+their security/privacy and compatibility implications and pin the generated
+source shape; projection-only fields require an explicit allowlist. Generation
+fails when a field is new, removed, renamed, included and excluded, unclassified,
+or changes its reviewed type, enum, or requiredness, so an unreviewed field
+cannot silently enter or leave the digest.
 
 Once a contract version has been published, its profile, canonical bytes, and
 digest are immutable. A candidate that reuses the version with different bytes
@@ -594,23 +598,17 @@ not described as LeapView-executable guarantees.
 
 ### ODCS is the data-contract interchange standard
 
-The initial ODCS profile pins version 3.1.0 and provides validation, import, and
-export. The adapter maps stable resource identity, schema, field semantics,
-quality checks, freshness, ownership metadata, and authoritative definitions
-where the mapping is lossless. LeapView-only execution semantics use a
-versioned namespaced ODCS extension only when the standard permits one.
+The initial implemented ODCS profile pins version 3.1.0 and provides validated
+Source/Model export only. The adapter maps stable resource identity, schema,
+field semantics, quality checks, freshness, ownership metadata, and
+authoritative definitions where the mapping is lossless. LeapView-only
+provenance uses a versioned namespaced ODCS extension only where the profile
+explicitly permits it.
 
-Portable export omits target endpoints and secrets. A separately authorized
-target-specific test projection may include non-secret connection coordinates
-when the caller can inspect that binding, but credentials are always supplied
-out of band and never serialized. Imported server blocks resolve only through
-an explicit existing Connection and target-binding workflow; they do not create
-credentials, widen network authority, or bypass connector admission.
-
-Imported arbitrary SQL quality rules are never executed. The adapter either
-maps a rule to the closed native check vocabulary, preserves it as explicitly
-non-executable standard metadata, or rejects the import with a precise
-diagnostic. It never reports successful import after dropping the rule.
+Portable export omits target endpoints, connection details, executable SQL,
+unsupported quality semantics, and secrets. ODCS import, server-block lowering,
+arbitrary-SQL handling, and round-trip fidelity remain deferred capabilities;
+the implemented adapter neither accepts nor executes them.
 
 ### Bitol ODPS is the data-product interchange target
 
@@ -770,7 +768,9 @@ Independent conformance tooling remains a development and CI oracle. It may
 increase CI setup and update cost, but does not enter the production binary or
 receive production credentials by default.
 
-## Qualification state
+## Confirmation
+
+### Qualification state
 
 The labels below distinguish repository evidence already implemented from
 work that is still blocked or deliberately deferred. FAI-632 may convert this
@@ -855,6 +855,15 @@ qualified.
   `leapview.contract/v1` projection and defaults, produce byte-identical RFC
   8785 and SHA-256 results in Go and an independent implementation, and reject
   reuse of a published version with different bytes.
+- **IMPLEMENTED, live PostgreSQL qualification pending (FAI-662):** canonicalization accepts only private-payload
+  projector results; published bytes decode through strict generated read views
+  that cannot re-enter canonicalization. The generator enforces exact authored,
+  excluded, and explicitly projection-only coverage with reviewed source-shape
+  fingerprints. PostgreSQL revision 008 binds digest, API version, profile,
+  authored ID, kind, version, and SemVer baseline to the exact canonical bytes.
+  Focused projection, generator, publication, adapter, migration, and architecture
+  tests pass; the Docker-gated PostgreSQL process test remains an environment
+  skip and final FAI-632 qualification remains blocked by the dependencies above.
 - **QUALIFIED for export only (FAI-623):** pinned ODCS 3.1.0 export fixtures pass
   the vendored schema and independent CI oracle. Mapping/loss and secret
   exclusion tests cover the implemented Source/Model export profile. ODCS
@@ -864,7 +873,7 @@ qualified.
   fixture-conformance claim is active.
 - **DEFERRED:** DCAT 3 export is capability-gated; no implementation or
   deterministic RDF qualification claim is active.
-- OpenLineage contract tests validate standard schema, version, quality,
+- **QUALIFIED for projection/document emission (FAI-629):** OpenLineage contract tests validate standard schema, version, quality,
   statistics, parent, and lineage facets plus immutable canonical schema URLs
   for every LeapView extension facet. The export-only projection and its
   evidence boundaries are recorded in the [OpenLineage conformance
