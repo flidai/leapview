@@ -180,3 +180,72 @@ func TestFAI616LiveControlAuthorityBoundary(t *testing.T) {
 		}
 	}
 }
+
+// TestFAI617LiveControlLifecycleProjection proves the production activation
+// path consumes the PostgreSQL live control authority without reviving the
+// retired authored-grant path. Candidate previews stay immutable and private;
+// only active generation preparation installs the live projection.
+func TestFAI617LiveControlLifecycleProjection(t *testing.T) {
+	root := repoRoot(t)
+	required := map[string][]string{
+		"internal/app/composition.go": {
+			"AuthorizationSnapshotProjector:",
+			"accesssnapshot.ProjectLiveAuthorizationSnapshot",
+			"accessBundle.Control",
+		},
+		"internal/app/runtimefactory/factory.go": {
+			"type AuthorizationSnapshotProjector func",
+			"if input.Candidate != nil || f.authorizationSnapshotProjector == nil",
+		},
+		"internal/access/snapshot/control.go": {
+			"ProjectLiveAuthorizationSnapshot",
+			"compatibility.DataPolicies()",
+			"store.ReactivateGrant",
+		},
+		"internal/app/identity_lifecycle.go": {
+			"Live grants belong to",
+			"reference.OwnerKind == identityledger.ReferenceOwnerKindGrant",
+		},
+		"internal/deployment/module/jobs.go": {
+			"PublishWithActivation",
+			"RollbackWithActivation",
+			"activateSealedGeneration",
+		},
+	}
+	for relative, fragments := range required {
+		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := string(body)
+		for _, fragment := range fragments {
+			if !strings.Contains(source, fragment) {
+				t.Errorf("%s is missing FAI-617 lifecycle evidence %q", relative, fragment)
+			}
+		}
+		if relative == "internal/access/snapshot/control.go" || relative == "internal/app/identity_lifecycle.go" {
+			for _, forbidden := range []string{`"crypto/sha256"`, `"crypto/sha512"`, "jsoncanonicalizer"} {
+				if strings.Contains(source, forbidden) {
+					t.Errorf("%s introduces a second identity/canonicalization authority %q", relative, forbidden)
+				}
+			}
+		}
+	}
+
+	identityLifecycle, err := os.ReadFile(filepath.Join(root, "internal", "app", "identity_lifecycle.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(identityLifecycle), "artifacts.Compiler.Manifest.Access.Grants") {
+		t.Fatal("production identity lifecycle still projects authored manifest grants")
+	}
+	jobs, err := os.ReadFile(filepath.Join(root, "internal", "deployment", "module", "jobs.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"sealedCoordinator.Publish(ctx, request)", "sealedCoordinator.Rollback(ctx, request)", "sealedReconcile"} {
+		if strings.Contains(string(jobs), forbidden) {
+			t.Errorf("sealed deployment jobs retain post-CAS runtime reconciliation path %q", forbidden)
+		}
+	}
+}

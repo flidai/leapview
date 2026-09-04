@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
@@ -22,41 +23,54 @@ import (
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
+// AuthorizationSnapshotProjector replaces an artifact compatibility snapshot
+// with the live instance control projection for an active runtime. Candidate
+// preparation deliberately skips this callback because candidate identities
+// are private and may not yet be activated in the live control store.
+type AuthorizationSnapshotProjector func(context.Context, accesssnapshot.AuthorizationSnapshot, projectgraph.ServingIdentity, projectgraph.ProjectGraph) (accesssnapshot.AuthorizationSnapshot, error)
+
 type FactoryConfig struct {
-	DuckDBDir          string
-	RuntimeDir         string
-	DashboardRuntime   dashboardruntimefactory.Builder
-	SealedLeaseHolder  string
-	ActivationEvidence ActivationEvidenceSource
+	DuckDBDir                      string
+	RuntimeDir                     string
+	DashboardRuntime               dashboardruntimefactory.Builder
+	SealedLeaseHolder              string
+	ActivationEvidence             ActivationEvidenceSource
+	AuthorizationSnapshotProjector AuthorizationSnapshotProjector
 }
 
 type servingStateRuntimeFactory struct {
-	duckDBDir          string
-	runtimeDir         string
-	dashboardRuntime   dashboardruntimefactory.Builder
-	activationEvidence ActivationEvidenceSource
+	duckDBDir                      string
+	runtimeDir                     string
+	dashboardRuntime               dashboardruntimefactory.Builder
+	activationEvidence             ActivationEvidenceSource
+	authorizationSnapshotProjector AuthorizationSnapshotProjector
 }
 
 func NewFactory(config FactoryConfig) runtimehost.RuntimeFactory {
 	return servingStateRuntimeFactory{
 		duckDBDir: config.DuckDBDir, runtimeDir: config.RuntimeDir, dashboardRuntime: config.DashboardRuntime,
-		activationEvidence: config.ActivationEvidence,
+		activationEvidence: config.ActivationEvidence, authorizationSnapshotProjector: config.AuthorizationSnapshotProjector,
 	}
+}
+
+// RebuildOnSameGeneration refreshes the mutable live authorization projection
+// when a generation is prepared again after its first activation.
+func (f servingStateRuntimeFactory) RebuildOnSameGeneration() bool {
+	return f.authorizationSnapshotProjector != nil
 }
 
 func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
 	duckDBDir := runtimeFirstNonEmpty(input.DuckDBDir, f.duckDBDir)
-	runtimeDir := runtimeFirstNonEmpty(input.RuntimeDir, f.runtimeDir)
-	targetDir := filepath.Join(
-		runtimeDir,
-		runtimeExtractionIdentity(input)+"-"+shortDigest(input.Artifact.Digest),
-	)
-	if err := os.RemoveAll(targetDir); err != nil {
+	targetDir, ownedExtraction, err := f.prepareExtractionDirectory(input)
+	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		return nil, err
-	}
+	keepExtraction := false
+	defer func() {
+		if ownedExtraction && !keepExtraction {
+			_ = os.RemoveAll(targetDir)
+		}
+	}()
 	if err := projectbundle.ExtractArtifact(input.Artifact.Path, targetDir); err != nil {
 		return nil, err
 	}
@@ -86,9 +100,13 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 			return nil, fmt.Errorf("decode serving authorization policy: %w", err)
 		}
 	}
-	authorization, err := projectmanifest.CompileAuthorizationSnapshot(identity, compiled.Graph, policy)
+	compatibility, err := projectmanifest.CompileAuthorizationSnapshot(identity, compiled.Graph, policy)
 	if err != nil {
 		return nil, fmt.Errorf("compile serving authorization snapshot: %w", err)
+	}
+	authorization, err := f.projectAuthorization(ctx, input, identity, compiled.Graph, compatibility)
+	if err != nil {
+		return nil, err
 	}
 	if f.dashboardRuntime == nil {
 		return nil, fmt.Errorf("dashboard runtime builder is required")
@@ -146,13 +164,18 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 		_ = service.Close()
 		return nil, fmt.Errorf("authored dashboard sources: %w", err)
 	}
-	return dashboardRuntimeWithGraph{
+	runtime := &dashboardRuntimeWithGraph{
 		Service: service, projectID: input.State.ProjectID,
-		servingStateID:  string(input.State.ID),
-		authorization:   authorization,
+		servingStateID: string(input.State.ID),
+		authorization:  authorization, authorizationEvidence: compatibility,
 		authoredSources: authoredSources,
 		projectManifest: compiled.Manifest,
-	}, nil
+	}
+	if ownedExtraction {
+		runtime.closeState = &runtimeCloseState{extractionDir: targetDir}
+	}
+	keepExtraction = true
+	return runtime, nil
 }
 
 // prepareDashboard is the common sealed path project-artifact loader. The
@@ -162,14 +185,16 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	if builder == nil || environment == nil {
 		return nil, fmt.Errorf("sealed dashboard builder and environment are required")
 	}
-	runtimeDir := runtimeFirstNonEmpty(input.RuntimeDir, f.runtimeDir)
-	targetDir := filepath.Join(runtimeDir, runtimeExtractionIdentity(input)+"-"+shortDigest(input.Artifact.Digest))
-	if err := os.RemoveAll(targetDir); err != nil {
+	targetDir, ownedExtraction, err := f.prepareExtractionDirectory(input)
+	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		return nil, err
-	}
+	keepExtraction := false
+	defer func() {
+		if ownedExtraction && !keepExtraction {
+			_ = os.RemoveAll(targetDir)
+		}
+	}()
 	if err := projectbundle.ExtractArtifact(input.Artifact.Path, targetDir); err != nil {
 		return nil, err
 	}
@@ -198,9 +223,13 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 			return nil, fmt.Errorf("decode serving authorization policy: %w", err)
 		}
 	}
-	authorization, err := projectmanifest.CompileAuthorizationSnapshot(identity, compiled.Graph, policy)
+	compatibility, err := projectmanifest.CompileAuthorizationSnapshot(identity, compiled.Graph, policy)
 	if err != nil {
 		return nil, fmt.Errorf("compile serving authorization snapshot: %w", err)
+	}
+	authorization, err := f.projectAuthorization(ctx, input, identity, compiled.Graph, compatibility)
+	if err != nil {
+		return nil, err
 	}
 	models := make(map[projectgraph.ResourceID]*semanticmodel.Model, len(compiled.Manifest.SemanticModels))
 	for id, model := range compiled.Manifest.SemanticModels {
@@ -241,7 +270,49 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	if err != nil {
 		return nil, err
 	}
-	return &dashboardRuntimeWithGraph{Service: service, projectID: input.State.ProjectID, servingStateID: string(input.State.ID), authorization: authorization, authoredSources: authoredSources, projectManifest: compiled.Manifest}, nil
+	runtime := &dashboardRuntimeWithGraph{Service: service, projectID: input.State.ProjectID, servingStateID: string(input.State.ID), authorization: authorization, authorizationEvidence: compatibility, authoredSources: authoredSources, projectManifest: compiled.Manifest}
+	if ownedExtraction {
+		runtime.closeState = &runtimeCloseState{extractionDir: targetDir}
+	}
+	keepExtraction = true
+	return runtime, nil
+}
+
+func (f servingStateRuntimeFactory) prepareExtractionDirectory(input runtimehost.RuntimeInput) (string, bool, error) {
+	runtimeDir := runtimeFirstNonEmpty(input.RuntimeDir, f.runtimeDir)
+	base := runtimeExtractionIdentity(input) + "-" + shortDigest(input.Artifact.Digest)
+	if input.Candidate == nil && f.authorizationSnapshotProjector != nil {
+		if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+			return "", false, err
+		}
+		targetDir, err := os.MkdirTemp(runtimeDir, base+"-")
+		return targetDir, true, err
+	}
+	targetDir := filepath.Join(runtimeDir, base)
+	if err := os.RemoveAll(targetDir); err != nil {
+		return "", false, err
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return "", false, err
+	}
+	return targetDir, false, nil
+}
+
+func (f servingStateRuntimeFactory) projectAuthorization(ctx context.Context, input runtimehost.RuntimeInput, identity projectgraph.ServingIdentity, project projectgraph.ProjectGraph, compatibility accesssnapshot.AuthorizationSnapshot) (accesssnapshot.AuthorizationSnapshot, error) {
+	if input.Candidate != nil || f.authorizationSnapshotProjector == nil {
+		return compatibility, nil
+	}
+	projected, err := f.authorizationSnapshotProjector(ctx, compatibility, identity, project)
+	if err != nil {
+		return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("project live serving authorization snapshot: %w", err)
+	}
+	if err := projected.Validate(project); err != nil {
+		return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("validate live serving authorization snapshot: %w", err)
+	}
+	if projected.Identity() != identity {
+		return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("live serving authorization snapshot identity does not match serving identity")
+	}
+	return projected, nil
 }
 
 func runtimeExtractionIdentity(input runtimehost.RuntimeInput) string {

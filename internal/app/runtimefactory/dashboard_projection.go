@@ -3,7 +3,10 @@ package runtimefactory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"sync"
 
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
@@ -40,11 +43,21 @@ func (r dashboardRuntimeWithGraph) CompiledSemanticModel(modelID string) (*seman
 
 type dashboardRuntimeWithGraph struct {
 	*dashboardruntime.Service
-	projectID       projectgraph.ResourceID
-	servingStateID  string
-	authorization   accesssnapshot.AuthorizationSnapshot
-	authoredSources map[string]dashboardauthoring.AuthoredDashboardSource
-	projectManifest projectmanifest.Project
+	projectID             projectgraph.ResourceID
+	servingStateID        string
+	authorization         accesssnapshot.AuthorizationSnapshot
+	authorizationEvidence accesssnapshot.AuthorizationSnapshot
+	authoredSources       map[string]dashboardauthoring.AuthoredDashboardSource
+	projectManifest       projectmanifest.Project
+	closeState            *runtimeCloseState
+}
+
+// runtimeCloseState is shared by any value copies of the runtime adapter so
+// value-receiver projection methods never copy a live synchronization value.
+type runtimeCloseState struct {
+	once          sync.Once
+	extractionDir string
+	err           error
 }
 
 // AuthorizationSnapshot returns the immutable authorization policy compiled
@@ -52,6 +65,44 @@ type dashboardRuntimeWithGraph struct {
 // project-resource guards can authorize against the exact active generation.
 func (r dashboardRuntimeWithGraph) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
 	return r.authorization
+}
+
+// AuthorizationSnapshotForInstallation returns the artifact-compiled
+// compatibility snapshot used as immutable installation evidence. The
+// fallback keeps manually constructed and older runtimes compatible while
+// projected runtimes retain the live snapshot above for reader authorization.
+func (r dashboardRuntimeWithGraph) AuthorizationSnapshotForInstallation() accesssnapshot.AuthorizationSnapshot {
+	if r.authorizationEvidence.Identity() == (projectgraph.ServingIdentity{}) {
+		return r.authorization
+	}
+	return r.authorizationEvidence
+}
+
+// Close releases the runtime before removing a preparation-owned extraction
+// directory. Deterministic legacy extraction directories remain cache-owned
+// and therefore leave extractionDir empty.
+func (r *dashboardRuntimeWithGraph) Close() error {
+	if r == nil {
+		return nil
+	}
+	if r.closeState == nil {
+		if r.Service == nil {
+			return nil
+		}
+		return r.Service.Close()
+	}
+	r.closeState.once.Do(func() {
+		var runtimeErr error
+		if r.Service != nil {
+			runtimeErr = r.Service.Close()
+		}
+		var extractionErr error
+		if r.closeState.extractionDir != "" {
+			extractionErr = os.RemoveAll(r.closeState.extractionDir)
+		}
+		r.closeState.err = errors.Join(runtimeErr, extractionErr)
+	})
+	return r.closeState.err
 }
 
 // ProjectManifest returns a detached copy of the complete compiled project

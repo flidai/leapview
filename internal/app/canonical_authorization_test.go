@@ -355,7 +355,7 @@ func TestActivateCanonicalServingStatePreparesBeforeCommit(t *testing.T) {
 	if err := activateCanonicalServingState(t.Context(), alreadyActive, "state_pending", func() error { committed++; return nil }); err != nil {
 		t.Fatalf("already-active retry: %v", err)
 	}
-	if alreadyActive.prepareID != "" || alreadyActive.activateCalls != 0 || committed != 1 {
+	if alreadyActive.prepareID != "state_pending" || alreadyActive.activateCalls != 1 || committed != 1 {
 		t.Fatalf("already-active retry prepared=%q activated=%d committed=%d", alreadyActive.prepareID, alreadyActive.activateCalls, committed)
 	}
 }

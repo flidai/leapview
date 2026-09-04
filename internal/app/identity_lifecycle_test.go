@@ -317,7 +317,7 @@ func TestPrepareIdentityRestoreTransitionCarriesExactAuthorization(t *testing.T)
 	}
 }
 
-func TestProjectIdentityReferencesProjectsReviewedGrantAndPublicationTargets(t *testing.T) {
+func TestProjectIdentityReferencesExcludesAuthoredGrantsAndRetainsPublicationTargets(t *testing.T) {
 	resources := []projectgraph.Resource{{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"}}
 	for _, item := range []struct {
 		id   string
@@ -350,13 +350,13 @@ func TestProjectIdentityReferencesProjectsReviewedGrantAndPublicationTargets(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(references) != 7 {
-		t.Fatalf("reference count = %d, want one grant plus six publication dependencies: %#v", len(references), references)
+	if len(references) != 6 {
+		t.Fatalf("reference count = %d, want six publication dependencies and no authored grants: %#v", len(references), references)
 	}
 	seen := make(map[projectgraph.Kind]bool)
 	for _, reference := range references {
-		if reference.ReferenceID == "grant:grant-project" {
-			t.Fatal("project-wide control grant became an analytics resource reference")
+		if reference.OwnerKind != identityledger.ReferenceOwnerKindDashboardPublication {
+			t.Fatalf("reference owner kind = %q, want dashboard publication: %#v", reference.OwnerKind, reference)
 		}
 		seen[reference.ExpectedKind] = true
 	}
@@ -380,8 +380,8 @@ func TestProjectIdentityReferencesRejectsMissingAndOversizedBindings(t *testing.
 			"grant/bad": {ID: "grant/bad", Object: projectmanifest.SecurableRef{ID: "source_orders", Kind: string(projectgraph.KindSource)}},
 		}},
 	}}}
-	if _, err := ProjectIdentityReferences("instance-1", invalidOwner); err == nil {
-		t.Fatal("invalid grant authored identity was accepted")
+	if references, err := ProjectIdentityReferences("instance-1", invalidOwner); err != nil || len(references) != 0 {
+		t.Fatalf("invalid authored grant was projected: references=%#v error=%v", references, err)
 	}
 	invalidPublication := release.CandidateArtifactSet{Compiler: release.CandidateCompilerEvidence{Graph: graph, Manifest: projectmanifest.Project{
 		Publications: map[string]publication.Definition{
@@ -412,7 +412,10 @@ func TestProjectIdentityReferencesRejectsMissingAndOversizedBindings(t *testing.
 func TestIdentitySealedCoordinatorPublishesAfterSealedPreflightBeforeTargetCommit(t *testing.T) {
 	graph := identityLifecycleGraph(t)
 	events := []string{}
-	published := identityledger.Transition{TransitionID: "identity-publish:candidate-1", Operation: identityledger.OperationPublish, InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "generation-next", ExpectedBundleID: "generation-current", ActorID: "actor-1", GraphDigest: graph.Digest(), Resources: []identityledger.Resource{{AuthoredID: "source_orders", Kind: projectgraph.KindSource}}, References: []identityledger.DurableReference{{InstanceID: "instance-1", ReferenceID: "grant:reader", OwnerAuthoredID: "reader", OwnerKind: "grant", TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource}}}
+	published := identityledger.Transition{TransitionID: "identity-publish:candidate-1", Operation: identityledger.OperationPublish, InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "generation-next", ExpectedBundleID: "generation-current", ActorID: "actor-1", GraphDigest: graph.Digest(), Resources: []identityledger.Resource{{AuthoredID: "source_orders", Kind: projectgraph.KindSource}}, References: []identityledger.DurableReference{
+		{InstanceID: "instance-1", ReferenceID: "grant:reader", OwnerAuthoredID: "reader", OwnerKind: identityledger.ReferenceOwnerKindGrant, TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource},
+		{InstanceID: "instance-1", ReferenceID: "dashboard_publication:5:share:13:source_orders", OwnerAuthoredID: "share", OwnerKind: identityledger.ReferenceOwnerKindDashboardPublication, TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource},
+	}}
 	repository := &identityLifecycleRepositoryFake{published: published, observed: "generation-current", events: &events}
 	sealed := &identityLifecycleSealedFake{publishResult: deployment.PublicationIntent{ID: "publication-1"}, events: &events}
 	coordinator, err := NewIdentitySealedCoordinator(IdentitySealedCoordinatorConfig{InstanceID: "instance-1", Transitions: repository, Sealed: sealed})
@@ -426,8 +429,11 @@ func TestIdentitySealedCoordinatorPublishesAfterSealedPreflightBeforeTargetCommi
 	if got.ID != "publication-1" || sealed.publishCalls != 1 {
 		t.Fatalf("publication = %#v, sealed calls = %d", got, sealed.publishCalls)
 	}
-	if indexOfIdentityEvent(events, "sealed-preflight") > indexOfIdentityEvent(events, "activate") || indexOfIdentityEvent(events, "activate") > indexOfIdentityEvent(events, "sealed-commit") {
+	if indexOfIdentityEvent(events, "sealed-preflight") > indexOfIdentityEvent(events, "activate") || indexOfIdentityEvent(events, "activate") > indexOfIdentityEvent(events, "references") || indexOfIdentityEvent(events, "references") > indexOfIdentityEvent(events, "sealed-commit") {
 		t.Fatalf("identity activation was not nested after sealed preflight and before target commit: %#v", events)
+	}
+	if len(repository.references) != 1 || repository.references[0].OwnerKind != identityledger.ReferenceOwnerKindDashboardPublication {
+		t.Fatalf("reconciled references = %#v, want only publication reference", repository.references)
 	}
 	if indexOfIdentityEvent(events, "references") > indexOfIdentityEvent(events, "sealed-publish") {
 		t.Fatalf("sealed publication ran before durable references: %#v", events)
@@ -561,7 +567,7 @@ func TestIdentitySealedCoordinatorReconcilesReferenceSetAndRetries(t *testing.T)
 		{InstanceID: "instance-1", ReferenceID: "grant:reader", OwnerAuthoredID: "reader", OwnerKind: identityledger.ReferenceOwnerKindGrant, TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource},
 		{InstanceID: "instance-1", ReferenceID: "dashboard_publication:5:share:13:source_orders", OwnerAuthoredID: "share", OwnerKind: identityledger.ReferenceOwnerKindDashboardPublication, TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource},
 	}
-	normalizedDesired, err := identityledger.NormalizeReferences("instance-1", desired)
+	normalizedDesired, err := identityledger.NormalizeReferences("instance-1", desired[1:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -582,7 +588,7 @@ func TestIdentitySealedCoordinatorReconcilesReferenceSetAndRetries(t *testing.T)
 	if _, err := coordinator.Publish(t.Context(), identityLifecyclePublishRequest("generation-current")); err != nil {
 		t.Fatal(err)
 	}
-	if sealed.publishCalls != 1 || len(repository.references) != len(desired) {
+	if sealed.publishCalls != 1 || len(repository.references) != len(normalizedDesired) {
 		t.Fatalf("retry reconciliation calls = %d, references = %#v", sealed.publishCalls, repository.references)
 	}
 	for index := range normalizedDesired {
@@ -594,7 +600,10 @@ func TestIdentitySealedCoordinatorReconcilesReferenceSetAndRetries(t *testing.T)
 
 func TestIdentitySealedCoordinatorRollbackReusesPublishedEvidence(t *testing.T) {
 	graph := identityLifecycleGraph(t)
-	published := identityledger.Transition{TransitionID: "identity-publish:candidate-1", Operation: identityledger.OperationPublish, InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "generation-old", ExpectedBundleID: "generation-base", ActorID: "actor-publish", GraphDigest: graph.Digest(), Phase: identityledger.PhaseCompleted, Resources: []identityledger.Resource{{AuthoredID: "model_orders", Kind: projectgraph.KindModel}, {AuthoredID: "source_orders", Kind: projectgraph.KindSource}}}
+	published := identityledger.Transition{TransitionID: "identity-publish:candidate-1", Operation: identityledger.OperationPublish, InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "generation-old", ExpectedBundleID: "generation-base", ActorID: "actor-publish", GraphDigest: graph.Digest(), Phase: identityledger.PhaseCompleted, Resources: []identityledger.Resource{{AuthoredID: "model_orders", Kind: projectgraph.KindModel}, {AuthoredID: "source_orders", Kind: projectgraph.KindSource}}, References: []identityledger.DurableReference{
+		{InstanceID: "instance-1", ReferenceID: "grant:revoked", OwnerAuthoredID: "revoked", OwnerKind: identityledger.ReferenceOwnerKindGrant, TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource},
+		{InstanceID: "instance-1", ReferenceID: "dashboard_publication:5:share:13:source_orders", OwnerAuthoredID: "share", OwnerKind: identityledger.ReferenceOwnerKindDashboardPublication, TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource},
+	}}
 	repository := &identityLifecycleRepositoryFake{published: published, observed: "generation-current"}
 	sealed := &identityLifecycleSealedFake{rollbackResult: deployment.RollbackResult{RequestDigest: "result-1"}}
 	coordinator, err := NewIdentitySealedCoordinator(IdentitySealedCoordinatorConfig{InstanceID: "instance-1", Transitions: repository, Sealed: sealed})
@@ -614,6 +623,9 @@ func TestIdentitySealedCoordinatorRollbackReusesPublishedEvidence(t *testing.T) 
 	}
 	if repository.transition.TransitionID != "identity-rollback:rollback-1" {
 		t.Fatalf("rollback transition ID = %q", repository.transition.TransitionID)
+	}
+	if len(repository.references) != 1 || repository.references[0].ReferenceID != "dashboard_publication:5:share:13:source_orders" {
+		t.Fatalf("rollback reconciled references = %#v, want only publication reference", repository.references)
 	}
 }
 
@@ -685,7 +697,10 @@ func TestIdentitySealedCoordinatorFailsClosedWhenEvidenceOrDeliveryUnavailable(t
 	sealed.publishCalls = 0
 	repository.transition = identityledger.Transition{}
 	repository.observed = "generation-current"
-	repository.published.References = []identityledger.DurableReference{{InstanceID: "instance-1", ReferenceID: "grant:reader", OwnerAuthoredID: "reader", OwnerKind: "grant", TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource}}
+	repository.published.References = []identityledger.DurableReference{
+		{InstanceID: "instance-1", ReferenceID: "grant:reader", OwnerAuthoredID: "reader", OwnerKind: identityledger.ReferenceOwnerKindGrant, TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource},
+		{InstanceID: "instance-1", ReferenceID: "dashboard_publication:5:share:13:source_orders", OwnerAuthoredID: "share", OwnerKind: identityledger.ReferenceOwnerKindDashboardPublication, TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource},
+	}
 	repository.referenceErr = errors.New("reference unavailable")
 	_, err = coordinator.Publish(t.Context(), identityLifecyclePublishRequest("generation-current"))
 	if !errors.Is(err, repository.referenceErr) || sealed.publishCalls != 0 {
@@ -700,15 +715,17 @@ func TestIdentitySealedCoordinatorRejectsReferenceWriterBindingDrift(t *testing.
 		InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "generation-next",
 		ExpectedBundleID: "generation-current", ActorID: "actor-1", GraphDigest: graph.Digest(),
 		Resources: []identityledger.Resource{{AuthoredID: "source_orders", Kind: projectgraph.KindSource}},
-		References: []identityledger.DurableReference{{
-			InstanceID: "instance-1", ReferenceID: "grant:reader", OwnerAuthoredID: "reader", OwnerKind: "grant",
-			TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource,
-		}},
+		References: []identityledger.DurableReference{
+			{InstanceID: "instance-1", ReferenceID: "grant:reader", OwnerAuthoredID: "reader", OwnerKind: identityledger.ReferenceOwnerKindGrant,
+				TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource},
+			{InstanceID: "instance-1", ReferenceID: "dashboard_publication:5:share:13:source_orders", OwnerAuthoredID: "share", OwnerKind: identityledger.ReferenceOwnerKindDashboardPublication,
+				TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource},
+		},
 	}
 	repository := &identityLifecycleRepositoryFake{
 		published: published, observed: "generation-current",
 		referenceResult: identityledger.DurableReference{
-			InstanceID: "instance-1", ReferenceID: "grant:reader", OwnerAuthoredID: "other", OwnerKind: "grant",
+			InstanceID: "instance-1", ReferenceID: "dashboard_publication:5:share:13:source_orders", OwnerAuthoredID: "other", OwnerKind: identityledger.ReferenceOwnerKindDashboardPublication,
 			TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource,
 		},
 	}

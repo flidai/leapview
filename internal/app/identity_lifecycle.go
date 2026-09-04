@@ -193,42 +193,17 @@ func prepareIdentityTransition(
 	return prepared, nil
 }
 
-// ProjectIdentityReferences projects only reviewed control relations from the
-// exact compiled candidate evidence. It never reads mutable runtime models or
-// derives target kinds from names.
+// ProjectIdentityReferences projects only reviewed dashboard-publication
+// relations from the exact compiled candidate evidence. Live grants belong to
+// the instance ControlStore and are deliberately not projected from the
+// retained manifest. It never reads mutable runtime models or derives target
+// kinds from names.
 func ProjectIdentityReferences(instanceID string, artifacts release.CandidateArtifactSet) ([]identityledger.DurableReference, error) {
 	graph := artifacts.Compiler.Graph
 	if err := graph.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: reference graph: %w", ErrIdentityLifecycleInvalid, err)
 	}
 	references := make([]identityledger.DurableReference, 0)
-	for key, grant := range artifacts.Compiler.Manifest.Access.Grants {
-		if grant.ID == "" || grant.ID != key {
-			return nil, fmt.Errorf("%w: grant %q identity changed", ErrIdentityLifecycleInvalid, key)
-		}
-		if _, err := projectgraph.NewResourceID(grant.ID); err != nil {
-			return nil, fmt.Errorf("%w: grant %q has invalid authored identity: %v", ErrIdentityLifecycleInvalid, grant.ID, err)
-		}
-		expectedKind := projectgraph.Kind(grant.Object.Kind)
-		if expectedKind == projectgraph.KindProject {
-			// Project-wide capability is instance administration, not a durable
-			// reference to one authored analytics resource.
-			continue
-		}
-		if !identityledger.IsAuthoredKind(expectedKind) {
-			return nil, fmt.Errorf("%w: grant %q has unsupported target kind %q", ErrIdentityLifecycleInvalid, grant.ID, grant.Object.Kind)
-		}
-		targetID := projectgraph.ResourceID(grant.Object.ID)
-		resource, ok := graph.Resource(targetID)
-		if !ok || resource.Kind != expectedKind {
-			return nil, fmt.Errorf("%w: grant %q target %q does not match graph kind %q", ErrIdentityLifecycleInvalid, grant.ID, targetID, expectedKind)
-		}
-		references = append(references, identityledger.DurableReference{
-			InstanceID: instanceID, ReferenceID: "grant:" + grant.ID,
-			OwnerAuthoredID: grant.ID, OwnerKind: identityledger.ReferenceOwnerKindGrant,
-			TargetAuthoredID: targetID, ExpectedKind: expectedKind,
-		})
-	}
 	for key, publication := range artifacts.Compiler.Manifest.Publications {
 		if publication.Name == "" || publication.Name != key {
 			return nil, fmt.Errorf("%w: dashboard publication %q identity changed", ErrIdentityLifecycleInvalid, key)
@@ -585,13 +560,26 @@ func (c *IdentitySealedCoordinator) validate() error {
 }
 
 func (c *IdentitySealedCoordinator) registerReferences(ctx context.Context, references []identityledger.DurableReference) error {
-	stored, err := c.references.ReconcileReferences(ctx, c.instanceID, references)
+	// Transitions prepared before live grant ownership moved to the FAI-616
+	// ControlStore may still carry manifest-derived grant references. They are
+	// immutable replay evidence, but must never be sent back to the reconciler:
+	// doing so could reactivate a grant that was revoked after that transition
+	// was prepared. Dashboard-publication references remain the reviewed subset
+	// owned by this lifecycle boundary.
+	publicationReferences := make([]identityledger.DurableReference, 0, len(references))
+	for _, reference := range references {
+		if reference.OwnerKind == identityledger.ReferenceOwnerKindGrant {
+			continue
+		}
+		publicationReferences = append(publicationReferences, reference)
+	}
+	want, err := identityledger.NormalizeReferences(c.instanceID, publicationReferences)
+	if err != nil {
+		return fmt.Errorf("normalize durable publication references: %w", err)
+	}
+	stored, err := c.references.ReconcileReferences(ctx, c.instanceID, want)
 	if err != nil {
 		return fmt.Errorf("reconcile durable identity references: %w", err)
-	}
-	want, err := identityledger.NormalizeReferences(c.instanceID, references)
-	if err != nil {
-		return fmt.Errorf("normalize durable identity references: %w", err)
 	}
 	if len(stored) != len(want) {
 		return fmt.Errorf("%w: durable reference reconciler returned %d bindings, want %d", ErrIdentityLifecycleInvalid, len(stored), len(want))

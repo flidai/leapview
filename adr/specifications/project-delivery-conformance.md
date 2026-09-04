@@ -107,7 +107,7 @@ change; a lane that was not run is recorded as unsupported.
 | CQ-05 | Permitted stale qualification uses retained exact base and inputs. | `internal/deployment/lifecycle_test.go:TestDeliveryLifecycleAllowRetainedBaseRequiresExactSealedIdentity` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | CQ-06 | Stale candidates are permanently ineligible without mutation. | `internal/deployment/plan_delivery_contracts_test.go:TestDeliveryBuildSealAndCandidateTransitionsAreChecked` | [upgrades](../../docs/articles/operate/upgrades.md) |
 | CQ-07 | Approval binds one exact candidate/plan and never carries forward. | `internal/deployment/approval_test.go:TestApprovalBindsDecisionToExactDeploymentPlan` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
-| CQ-08 | Candidate preview applies live grants and policies. | `internal/dashboard/queryauthz/canonical_test.go:TestCanonicalRLSMasksAndPolicyFingerprint`; `internal/dashboard/queryauthz/canonical_test.go:TestCanonicalPublicPublicationAndCandidateClosures`; active delivery object authorization is asserted by `internal/app/canonical_authorization_test.go:TestDeliveryAuthorizationRequiresEveryAffectedResource`. | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
+| CQ-08 | Candidate preview applies its immutable compatibility snapshot; current live roles/grants apply only to active-generation preparation, while DataPolicy remains transitional compatibility evidence. | `internal/app/runtimefactory/dashboard_projection_test.go:TestProjectAuthorizationSkipsLiveProjectionForCandidate`; `internal/dashboard/queryauthz/canonical_test.go:TestCanonicalRLSMasksAndPolicyFingerprint`; active delivery object authorization is asserted by `internal/app/canonical_authorization_test.go:TestDeliveryAuthorizationRequiresEveryAffectedResource`. | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | PI-01 | Each build uses a private writable DuckLake catalog. | `internal/analytics/candidatecatalog/catalog_test.go:TestConcurrentBuildsFromOneBaseAreDistinct` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | PI-02 | Concurrent same/different-table candidates remain isolated. | `internal/analytics/candidatecatalog/catalog_test.go:TestConcurrentBuildsFromOneBaseAreDistinct` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | PI-03 | Shared data reuse requires one admitted physical-pool compatibility tuple. | `internal/analytics/ducklake/shared_pool_safety_test.go:TestSharedPoolConformanceLocalClosedCloneFixture`; `internal/analytics/ducklake/conformance_artifact_test.go:TestSharedPoolEvidenceArtifactIsCompleteAndPortable` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
@@ -254,8 +254,10 @@ change; a lane that was not run is recorded as unsupported.
   a candidate revision.
 - **CQ-07:** Approval binds one exact candidate and plan digest and never carries
   forward to a replacement candidate or replan.
-- **CQ-08:** Candidate preview applies live grants and data policies and cannot
-  expose ungoverned physical storage.
+- **CQ-08:** Candidate preview applies the candidate's reviewed immutable
+  authorization inputs and cannot expose ungoverned physical storage. Current
+  live role/grant state is projected only when preparing an active generation;
+  transitional DataPolicy remains part of candidate compatibility evidence.
 
 ## DuckLake catalog isolation and reuse
 

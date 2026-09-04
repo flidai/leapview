@@ -1,10 +1,16 @@
 package runtimefactory
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/runtimehost"
 	"github.com/flidai/leapview/internal/servingstate"
@@ -29,6 +35,48 @@ func TestBindManagedDataRootsUsesTrustedRuntimeResolution(t *testing.T) {
 	}
 	if got := definition.SemanticModels["sales"].Connections["cloud"].Scope; got != "s3://warehouse/" {
 		t.Fatalf("cloud scope = %q", got)
+	}
+}
+
+func TestLiveProjectionOwnsUniqueExtractionDirectories(t *testing.T) {
+	runtimeDir := t.TempDir()
+	factory := servingStateRuntimeFactory{runtimeDir: runtimeDir, authorizationSnapshotProjector: func(context.Context, accesssnapshot.AuthorizationSnapshot, projectgraph.ServingIdentity, projectgraph.ProjectGraph) (accesssnapshot.AuthorizationSnapshot, error) {
+		return accesssnapshot.AuthorizationSnapshot{}, nil
+	}}
+	input := runtimehost.RuntimeInput{State: servingstate.State{ID: "state_sales"}, Artifact: servingstate.Artifact{Digest: "sha256:" + strings.Repeat("a", 64)}}
+	first, firstOwned, err := factory.prepareExtractionDirectory(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, secondOwned, err := factory.prepareExtractionDirectory(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(first)
+		_ = os.RemoveAll(second)
+	})
+	if !firstOwned || !secondOwned || first == second {
+		t.Fatalf("extraction directories first=%q/%t second=%q/%t", first, firstOwned, second, secondOwned)
+	}
+	marker := filepath.Join(first, "active-reader")
+	if err := os.WriteFile(marker, []byte("retained"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	third, _, err := factory.prepareExtractionDirectory(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(third) })
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("later preparation disturbed active extraction: %v", err)
+	}
+	runtime := &dashboardRuntimeWithGraph{closeState: &runtimeCloseState{extractionDir: first}}
+	if err := runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(first); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("closed runtime extraction still exists: %v", err)
 	}
 }
 

@@ -221,7 +221,7 @@ belong in LeapView's data-engineering source contract.
 | Dashboard and nested visuals | Perses open dashboard specification and Vega-Lite | Retain the governed BI document. Perses is observability- and plugin-oriented, while Vega-Lite permits data loading, transformations, and expression behavior that would bypass the semantic query boundary. Both are useful migration or visualization references, not native authority. |
 | Group | SCIM 2.0 Group, SAML/OIDC claims, and dashboard product team APIs | Remove from analytics YAML. LeapView's SCIM service owns provisioned users and groups; SAML/OIDC or the admin API supplies group and attribute mappings. SCIM deliberately leaves authorization meaning to the service provider. |
 | RoleBinding and Grant | Product RBAC APIs, SAML/OIDC role mapping, Terraform providers, Kubernetes RBAC, OpenFGA, and Cedar | Remove from analytics YAML. Keep LeapView's closed capabilities and authorization engine, but manage assignments through the control-plane UI/API or a future IaC provider. Repository deployment must not replace live role or grant state. |
-| DataPolicy | Looker access filters/grants, Lightdash user-attribute filters, Rill metrics-view security, Cedar, and database row/column policies | Remove the standalone, subject-bound resource. SemanticModel is the only authored policy target; ADR-0017 defines its Looker-aligned `accessGrants`, `requiredAccessGrants`, and `accessFilters`. Attribute values and assignments remain in the control plane. |
+| DataPolicy | Looker access filters/grants, Lightdash user-attribute filters, Rill metrics-view security, Cedar, and database row/column policies | Target state: remove the standalone, subject-bound resource. SemanticModel is the only authored policy target; ADR-0017 defines its Looker-aligned `accessGrants`, `requiredAccessGrants`, and `accessFilters`. Attribute values and assignments remain in the control plane. Standalone `DataPolicy` remains a transitional exception until FAI-648/649 complete that cutover. |
 | DashboardPublication | Grafana dashboard/folder permissions, Looker content access, W3C CSP `frame-ancestors`, and product sharing APIs | Remove from analytics YAML. Publication, sharing state, embed origins, URLs, and revision activation are environment-specific security and lifecycle state managed through UI/API. Headless automation uses a service principal and API or a future IaC provider. |
 
 The resulting public authoring registry has six top-level resource kinds:
@@ -260,14 +260,15 @@ documents, interactive authoring, APIs, and agents must all lower through the
 same generated contracts, compiler, graph validation, candidate gates, and
 publication lifecycle.
 
-The public source contract contains only Connection, Source, Model,
+The target public source contract contains only Connection, Source, Model,
 SemanticModel, Pipeline, and Dashboard. `Project`, `Group`, `RoleBinding`,
-`Grant`, `DataPolicy`, and `DashboardPublication` cease to be accepted authored
-resource kinds. `Project` also ceases to be a public API, identity, route, and
-authorization resource: repository root, deployment, active generation, and
-instance are sufficient boundaries. Internally, code may temporarily use
-`project` to name the compiled graph during migration, but it is not a public
-concept or stable contract.
+`Grant`, and `DashboardPublication` are no longer accepted as fresh authored
+resource kinds. `DataPolicy` remains a transitional exception until the
+FAI-648/649 ADR-0017 cutover; it is not part of FAI-617. `Project` also ceases
+to be a public API, identity, route, and authorization resource: repository
+root, deployment, active generation, and instance are sufficient boundaries.
+Internally, code may temporarily use `project` to name the compiled graph
+during migration, but it is not a public concept or stable contract.
 
 This ADR amends ADR-0005 by removing Project as a public resource while
 retaining one atomic compiled graph per instance and by moving authorization
@@ -366,22 +367,28 @@ are safely reactivated. External standard projections qualify the portable
 authored ID with a stable instance or tenant URI rather than claiming that the
 raw ID is globally unique.
 
-FAI-617 adds an immutable transition-evidence boundary for legacy compiled
-references. At candidate readiness, the application projects references only
-from the retained compiler manifest and graph: Grant objects are allowlisted to
-the six authored analytics kinds, Project targets are excluded from the
-resource-reference set, and every DashboardPublication dependency is resolved
-to its graph kind before the transition is prepared. The PostgreSQL activation journal stores this exact
-reference set beside the authored-resource evidence. Applying this evidence is
-additive: omission from an analytics candidate never deletes or suspends live
-instance control state. Target tombstoning still suspends dependent references.
-A complete removal reconciliation must come from the live control repositories
-as part of the remaining FAI-616 migration, not from an empty modern compiler
-manifest. Reference IDs remain
-readable and collision-safe (`grant:<grantID>` and length-prefixed
-`dashboard_publication:<owner-bytes>:<owner>:<target-bytes>:<target>` forms), and an overlong ID is rejected
-rather than hashed or truncated. Rollback copies the original publish evidence;
-it does not reconstruct references from a moving source tree.
+FAI-617 completes the transition-evidence boundary without reclaiming live
+grant ownership. At candidate readiness, the application projects only
+DashboardPublication dependencies from the retained compiler manifest and
+graph; every dependency is resolved to its authored graph kind before the
+transition is prepared. The FAI-616 ControlStore owns live Grant rows and
+bindings; identity-ledger tombstoning suspends their durable target references,
+and FAI-617 graph revalidation CAS-reactivates only eligible current grants.
+Older immutable transition rows may retain legacy
+Grant reference evidence, but activation filters those rows from reference
+reconciliation so a historical publication cannot revive a subsequently
+revoked grant. The PostgreSQL activation journal stores the reviewed
+DashboardPublication reference set beside authored-resource evidence.
+Applying this evidence is additive: omission from an analytics candidate never
+deletes or suspends live instance control state, while target tombstoning still
+suspends dependent references. Reference IDs remain readable and
+collision-safe (`grant:<grantID>` for the live control owner and the
+length-prefixed
+`dashboard_publication:<owner-bytes>:<owner>:<target-bytes>:<target>` form), and
+an overlong ID is rejected rather than hashed or truncated. Rollback copies the
+original publish evidence instead of reconstructing it from a moving source
+tree, filters legacy Grant references, and projects current live controls onto
+the historical graph.
 
 The identity builder is production-only PostgreSQL composition. Local and
 development composition receive no fake or SQLite identity ledger. Canonical
@@ -398,8 +405,18 @@ persistence, and canonical Build carry that intent without adding a second hash
 or approval authority. Ordinary candidate publication cannot add restore data.
 Publication consumes that immutable intent through the existing sealed
 activation path; FAI-663 intentionally adds no parallel restore endpoint or
-approval system. Live control-store reference reconciliation remains FAI-616
-work. Live PostgreSQL end-to-end qualification was not run because Docker is
+approval system. Active serving preparation now projects the current
+PostgreSQL role/grant state into the runtime reader snapshot while retaining
+the artifact-compiled compatibility snapshot as immutable installation
+evidence. Same-generation retries and restart reconciliation refresh the live
+projection; private candidate preparation retains the artifact-compiled
+compatibility snapshot. Existing readers retain their generation snapshot until
+drain. Worker publish and rollback jobs use the same prepared-runtime activation
+callback as canonical delivery: the target CAS is verified at the exact next
+revision before runtime publication, and the legacy deployment marker runs only
+after that cutover succeeds. This prevents delayed or committed-retry jobs from
+re-publishing a retained generation after the durable target advances. Live
+PostgreSQL end-to-end qualification was not run because Docker is
 unavailable in the validation environment, and
 FAI-648/649's transitional DataPolicy removal and semantic access migration
 remain outside this layer.
@@ -409,9 +426,10 @@ collision, tombstone, restore, rollback, and projection requirements.
 
 ### Semantic access policy has a separate decision
 
-The standalone `DataPolicy` resource is removed because it combines authored
-query-governance logic with instance-bound subjects. The rule that changes a
-consumer query result is SemanticModel code; the assignment of identity
+The standalone `DataPolicy` resource will be removed because it combines
+authored query-governance logic with instance-bound subjects. It remains a
+transitional compatibility exception until FAI-648/649. The rule that changes
+a consumer query result is SemanticModel code; the assignment of identity
 attributes is control-plane state.
 
 ADR-0017 defines the exact Looker-aligned semantic access contract, its
@@ -789,8 +807,8 @@ qualified.
   no longer expose Project identity in their generated response contracts.
   Project-shaped deployment, release, managed-data, and delivery routes remain
   legitimate operational target scopes, not authored Project resources.
-  Missing control API implementations remain tracked by FAI-616 and are not
-  represented as complete here.
+  Any remaining control API work is limited to the role-assignment mutation
+  surface and does not change the completed PostgreSQL live authority boundary.
 - **IMPLEMENTED, qualification incomplete (FAI-617/FAI-663):** identity fixtures prove candidate-wide cross-kind ID uniqueness, stable
   instance-qualified authored identities across source-root and file moves,
   kind-change rejection, tombstone non-reuse, rollback identity, and durable
@@ -801,19 +819,25 @@ qualified.
   ordinary candidate publication has no restore input. Publication consumes
   the immutable intent through the existing sealed activation path; no second
   restore endpoint or approval authority is introduced. Focused domain,
-  module, API, and SQLite restart/idempotency tests validate this path. Live
-  control-store reconciliation remains FAI-616 work; live PostgreSQL process
-  qualification was not run because Docker is unavailable.
-- **IMPLEMENTED, qualification incomplete (FAI-617):** transition evidence fixtures prove that legacy Grant and
+  module, API, and SQLite restart/idempotency tests validate this path. Active
+  runtime preparation consumes current live role/grant authority while
+  retaining immutable generation installation evidence. Live PostgreSQL
+  process qualification was not run because Docker is unavailable.
+- **IMPLEMENTED, qualification incomplete (FAI-617):** transition evidence fixtures prove that
   DashboardPublication references are projected from the retained compiler
-  manifest and graph, preserve expected target kinds, exclude Project targets,
-  reject missing targets and overlong readable IDs, and replay exactly through
-  the immutable PostgreSQL transition journal. Architecture tests prove the
+  manifest and graph, preserve expected target kinds, reject missing targets
+  and overlong readable IDs, and replay exactly through the immutable
+  PostgreSQL transition journal. Legacy Grant reference evidence is filtered
+  during reconciliation; live Grant references remain ControlStore-owned.
+  Architecture tests prove the
   production identity builder is PostgreSQL-backed, local composition has no
   substitute ledger, canonical publish/rollback are identity-fenced before
-  sealed delivery, and the lifecycle adds no hash authority. Omitted bindings
-  do not mutate live control state; complete live-reference ownership remains a
-  FAI-616 boundary.
+  sealed delivery, worker jobs use the same target-CAS/runtime activation
+  protocol with exact committed-retry verification, and the lifecycle adds no
+  hash authority. Omitted bindings
+  do not mutate live control state. Rollback uses the historical graph with
+  current live controls, so revoked grants are not restored by old transition
+  evidence.
 - **IMPLEMENTED, live PostgreSQL qualification pending (FAI-617/FAI-609):**
   production access composition now reuses the identity authority's exact
   bounded PostgreSQL pool, rejects SQLite and non-transactional database
@@ -851,11 +875,12 @@ qualified.
 - Architecture fixtures reject authored access-policy fields outside
   SemanticModel and delegate the access-rule schema and compiler corpus to the
   ADR-0017 conformance specification.
-- **BLOCKED (FAI-616/FAI-648):** users, groups, and dashboard-publication
-  administration have control-plane paths. Role/grant/effective-capability
-  operations are still generated without complete handlers, and analytics
-  activation still consumes compatibility snapshots; full control ownership
-  is therefore not yet claimed.
+- **BLOCKED (FAI-648/FAI-649):** users, groups, role assignments, grants,
+  effective-capability checks, and dashboard-publication administration have
+  control-plane paths, and active analytics runtimes consume the live
+  role/grant projection. The remaining control-ownership exception is the
+  transitional standalone `DataPolicy`; its ADR-0017 cutover is not claimed by
+  FAI-617.
 - Schema and compiler tests reject duplicate check IDs, invalid semantic
   versions, unknown compatibility policies, malformed authoritative links,
   contradictory deprecation replacements, and generic extension bags.

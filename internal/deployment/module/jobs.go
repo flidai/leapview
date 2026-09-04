@@ -157,7 +157,7 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	}
 	var row apiadapter.Deployment
 	if m.sealedCoordinator != nil {
-		if m.sealedPublishRequest == nil || m.sealedRollbackRequest == nil || m.sealedActivationMarker == nil {
+		if m.sealedPublishRequest == nil || m.sealedRollbackRequest == nil || m.sealedActivationMarker == nil || m.sealedActivate == nil || m.sealedTargetVerifier == nil {
 			return fmt.Errorf("sealed publication lifecycle is incomplete")
 		}
 		if payload.Rollback {
@@ -165,20 +165,19 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 			if resolveErr != nil {
 				return resolveErr
 			}
-			result, publishErr := m.sealedCoordinator.Rollback(ctx, request)
+			_, publishErr := m.sealedCoordinator.RollbackWithActivation(ctx, request, func(activationCtx context.Context, commit func() error) error {
+				return m.activateSealedGeneration(activationCtx, sealedGenerationActivation{
+					TargetID: request.Request.TargetID, ProjectID: request.Request.ProjectID.String(), Environment: request.Request.Environment,
+					GenerationID: request.Request.GenerationID, TargetRevision: request.Request.ExpectedTargetRevision + 1,
+				}, commit)
+			})
 			if publishErr != nil {
 				m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
 				return publishErr
 			}
-			activation := sealedActivationInput(pending, payload.Actor, result.CatalogDigest)
-			activated, markErr := m.sealedActivationMarker(ctx, activation)
+			activated, markErr := m.sealedActivationMarker(ctx, sealedActivationInput(pending, payload.Actor, request.Request.VerifiedSeal.CatalogDigest))
 			if markErr != nil {
 				return markErr
-			}
-			if m.sealedReconcile != nil {
-				if reconcileErr := m.sealedReconcile(ctx, pending.GenerationID); reconcileErr != nil {
-					return reconcileErr
-				}
 			}
 			row = mapSealedDeployment(activated)
 		} else {
@@ -187,29 +186,26 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 			if resolveErr != nil {
 				return resolveErr
 			}
-			_, publishErr := m.sealedCoordinator.Publish(ctx, request)
+			_, publishErr := m.sealedCoordinator.PublishWithActivation(ctx, request, func(activationCtx context.Context, commit func() error) error {
+				return m.activateSealedGeneration(activationCtx, sealedGenerationActivation{
+					TargetID: request.Publication.TargetID, ProjectID: request.Publication.ProjectID.String(), Environment: request.Publication.Environment,
+					GenerationID: request.Generation.ServingStateID, TargetRevision: request.Publication.ExpectedTargetRevision + 1,
+				}, commit)
+			})
 			if publishErr != nil {
 				logger.ErrorContext(ctx, "deployment activation sealed publish failed", "deployment", payload.Deployment, "error", publishErr)
 				m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
 				return publishErr
 			}
 			logger.InfoContext(ctx, "deployment activation sealed publish committed", "deployment", payload.Deployment)
-			activation := sealedActivationInput(pending, payload.Actor, request.Seal.CatalogDigest)
 			logger.InfoContext(ctx, "deployment activation sealed marker starting", "deployment", payload.Deployment)
-			activated, markErr := m.sealedActivationMarker(ctx, activation)
+			activated, markErr := m.sealedActivationMarker(ctx, sealedActivationInput(pending, payload.Actor, request.Seal.CatalogDigest))
 			if markErr != nil {
 				logger.ErrorContext(ctx, "deployment activation sealed marker failed", "deployment", payload.Deployment, "error", markErr)
 				return markErr
 			}
 			logger.InfoContext(ctx, "deployment activation sealed marker committed", "deployment", payload.Deployment)
-			if m.sealedReconcile != nil {
-				logger.InfoContext(ctx, "deployment activation sealed reconcile starting", "deployment", payload.Deployment)
-				if reconcileErr := m.sealedReconcile(ctx, pending.GenerationID); reconcileErr != nil {
-					logger.ErrorContext(ctx, "deployment activation sealed reconcile failed", "deployment", payload.Deployment, "error", reconcileErr)
-					return reconcileErr
-				}
-				logger.InfoContext(ctx, "deployment activation sealed reconcile completed", "deployment", payload.Deployment)
-			}
+			logger.InfoContext(ctx, "deployment activation sealed runtime committed", "deployment", payload.Deployment)
 			row = mapSealedDeployment(activated)
 		}
 	} else {
@@ -242,6 +238,26 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 		row,
 	)
 	return err
+}
+
+type sealedGenerationActivation struct {
+	TargetID       string
+	ProjectID      string
+	Environment    string
+	GenerationID   string
+	TargetRevision int64
+}
+
+func (m *Module) activateSealedGeneration(ctx context.Context, input sealedGenerationActivation, commit func() error) error {
+	if m.sealedActivate == nil || m.sealedTargetVerifier == nil || commit == nil {
+		return fmt.Errorf("sealed publication activation lifecycle is incomplete")
+	}
+	return m.sealedActivate(ctx, input.GenerationID, func() error {
+		if err := commit(); err != nil {
+			return err
+		}
+		return m.sealedTargetVerifier(ctx, input.TargetID, input.ProjectID, input.Environment, input.GenerationID, input.TargetRevision)
+	})
 }
 
 func sealedActivationInput(pending apiadapter.Deployment, actor, verificationDigest string) deployment.ActivationInput {

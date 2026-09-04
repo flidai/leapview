@@ -45,11 +45,12 @@ type Module struct {
 	authorizeActivation       func(context.Context, deployment.ApprovalActor, string, string) error
 	bootstrapPolicies         BootstrapPolicyStore
 	authorizeBootstrap        func(context.Context, deployment.BootstrapActivationPolicy) error
-	sealedCoordinator         SealedCoordinator
+	sealedCoordinator         SealedCoordinatorWithActivation
 	sealedPublishRequest      SealedPublishRequestResolver
 	sealedRollbackRequest     SealedRollbackRequestResolver
 	sealedActivationMarker    SealedActivationMarker
-	sealedReconcile           func(context.Context, string) error
+	sealedActivate            SealedRuntimeActivation
+	sealedTargetVerifier      SealedTargetVerifier
 	sealedRollbackFence       func(context.Context, string) (string, int64, error)
 	requireSealedCoordinator  bool
 	deliveryReader            deployment.DeliveryReader
@@ -164,9 +165,17 @@ type SealedCoordinator interface {
 	Rollback(context.Context, sealedcontrol.RollbackRequest) (deployment.RollbackResult, error)
 }
 
+type SealedCoordinatorWithActivation interface {
+	SealedCoordinator
+	PublishWithActivation(context.Context, sealedcontrol.PublishRequest, sealedcontrol.PublicationActivation) (deployment.PublicationIntent, error)
+	RollbackWithActivation(context.Context, sealedcontrol.RollbackRequest, sealedcontrol.PublicationActivation) (deployment.RollbackResult, error)
+}
+
 type SealedPublishRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor, bool) (sealedcontrol.PublishRequest, error)
 type SealedRollbackRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor, string, int64) (sealedcontrol.RollbackRequest, error)
 type SealedActivationMarker func(context.Context, deployment.ActivationInput) (deployment.Deployment, error)
+type SealedRuntimeActivation func(context.Context, string, func() error) error
+type SealedTargetVerifier func(context.Context, string, string, string, string, int64) error
 
 type Config struct {
 	Database *sql.DB
@@ -229,7 +238,8 @@ type Config struct {
 	SealedPublishRequest     SealedPublishRequestResolver
 	SealedRollbackRequest    SealedRollbackRequestResolver
 	SealedActivationMarker   SealedActivationMarker
-	SealedReconcile          func(context.Context, string) error
+	SealedActivate           SealedRuntimeActivation
+	SealedTargetVerifier     SealedTargetVerifier
 	SealedRollbackFence      func(context.Context, string) (string, int64, error)
 	RequireSealedCoordinator bool
 	// DeliveryMutations owns the canonical plan -> build -> publish/rollback
@@ -249,7 +259,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.RequireCanonicalDelivery && config.DeliveryCandidateBuilder == nil {
 		return nil, fmt.Errorf("canonical delivery lifecycle is required")
 	}
-	if config.RequireSealedCoordinator && (config.SealedCoordinator == nil || config.SealedPublishRequest == nil || config.SealedRollbackRequest == nil || config.SealedReconcile == nil || config.SealedRollbackFence == nil) {
+	sealedCoordinator, _ := config.SealedCoordinator.(SealedCoordinatorWithActivation)
+	if config.RequireSealedCoordinator && (sealedCoordinator == nil || config.SealedPublishRequest == nil || config.SealedRollbackRequest == nil || config.SealedActivate == nil || config.SealedTargetVerifier == nil || config.SealedRollbackFence == nil) {
 		return nil, fmt.Errorf("sealed publication coordinator and durable request resolvers are required")
 	}
 	executions, err := loadDeploymentExecutionContracts()
@@ -406,9 +417,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		authorizeApproval:    config.AuthorizeApproval,
 		authorizeActivation:  config.AuthorizeActivation,
 		bootstrapPolicies:    config.BootstrapPolicies, authorizeBootstrap: config.AuthorizeBootstrap,
-		sealedCoordinator: config.SealedCoordinator, sealedPublishRequest: config.SealedPublishRequest,
+		sealedCoordinator: sealedCoordinator, sealedPublishRequest: config.SealedPublishRequest,
 		sealedRollbackRequest: config.SealedRollbackRequest, sealedActivationMarker: config.SealedActivationMarker,
-		sealedReconcile: config.SealedReconcile, sealedRollbackFence: config.SealedRollbackFence,
+		sealedActivate: config.SealedActivate, sealedTargetVerifier: config.SealedTargetVerifier, sealedRollbackFence: config.SealedRollbackFence,
 		requireSealedCoordinator: config.RequireSealedCoordinator, deliveryReader: config.DeliveryReader,
 		deliveryMutations: config.DeliveryMutations,
 	}

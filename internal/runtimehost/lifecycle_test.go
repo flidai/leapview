@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -29,6 +30,92 @@ func (r *lifecycleRuntime) Close() error {
 func (r *lifecycleRuntime) Verify(context.Context) error { return r.verifyErr }
 func (r *lifecycleRuntime) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
 	return r.authorization
+}
+
+type lifecycleRuntimeWithInstallationSnapshot struct {
+	*lifecycleRuntime
+	installation accesssnapshot.AuthorizationSnapshot
+}
+
+func (r *lifecycleRuntimeWithInstallationSnapshot) AuthorizationSnapshotForInstallation() accesssnapshot.AuthorizationSnapshot {
+	return r.installation
+}
+
+type projectorLifecycleFactory struct {
+	lifecycleFactory
+}
+
+func (*projectorLifecycleFactory) RebuildOnSameGeneration() bool { return true }
+
+func (f *projectorLifecycleFactory) Prepare(ctx context.Context, input RuntimeInput) (PreparedRuntime, error) {
+	prepared, err := f.lifecycleFactory.Prepare(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	base := prepared.(*lifecycleRuntime)
+	compatibility := base.authorization
+	identity := base.authorization.Identity()
+	project := base.authorization.Project()
+	live, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, project, []accesssnapshot.RoleBinding{{
+		ID: "live-binding", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal_live"},
+		Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin),
+	}}, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	base.authorization = live
+	return &lifecycleRuntimeWithInstallationSnapshot{lifecycleRuntime: base, installation: compatibility}, nil
+}
+
+type blockingProjectorLifecycleFactory struct {
+	projectorLifecycleFactory
+	mu        sync.Mutex
+	calls     int
+	blockCall int
+	started   chan struct{}
+	release   chan struct{}
+}
+
+func (f *blockingProjectorLifecycleFactory) Prepare(ctx context.Context, input RuntimeInput) (PreparedRuntime, error) {
+	f.mu.Lock()
+	f.calls++
+	block := f.calls == f.blockCall
+	if block {
+		close(f.started)
+	}
+	f.mu.Unlock()
+	if block {
+		select {
+		case <-f.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return f.projectorLifecycleFactory.Prepare(ctx, input)
+}
+
+type installationEvidenceLifecycleFactory struct {
+	*lifecycleFactory
+}
+
+func (f *installationEvidenceLifecycleFactory) Prepare(ctx context.Context, input RuntimeInput) (PreparedRuntime, error) {
+	prepared, err := f.lifecycleFactory.Prepare(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	base := prepared.(*lifecycleRuntime)
+	compatibility := base.authorization
+	identity := compatibility.Identity()
+	project := compatibility.Project()
+	live, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, project, []accesssnapshot.RoleBinding{{
+		ID: "live-binding", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal_live"},
+		Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin),
+	}}, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	base.authorization = live
+	return &lifecycleRuntimeWithInstallationSnapshot{lifecycleRuntime: base, installation: compatibility}, nil
 }
 
 type lifecycleFactory struct {
@@ -317,6 +404,52 @@ type reloadActivationRaceRepo struct {
 	allowConfirmation   chan struct{}
 }
 
+type blockingActiveArtifactRepo struct {
+	*lifecycleRepo
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingActiveArtifactRepo) ActiveArtifact(ctx context.Context, project projectgraph.ResourceID, env servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
+	state, artifact, err := r.lifecycleRepo.ActiveArtifact(ctx, project, env)
+	r.once.Do(func() {
+		close(r.started)
+		<-r.release
+	})
+	return state, artifact, err
+}
+
+type blockingByIDRepo struct {
+	*lifecycleRepo
+	mu      sync.Mutex
+	armed   bool
+	target  servingstate.ID
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingByIDRepo) Arm() {
+	r.mu.Lock()
+	r.armed = true
+	r.mu.Unlock()
+}
+
+func (r *blockingByIDRepo) ByID(ctx context.Context, id servingstate.ID) (servingstate.State, error) {
+	state, err := r.lifecycleRepo.ByID(ctx, id)
+	r.mu.Lock()
+	block := r.armed && id == r.target
+	if block {
+		r.armed = false
+	}
+	r.mu.Unlock()
+	if block {
+		close(r.started)
+		<-r.release
+	}
+	return state, err
+}
+
 func (r *reloadActivationRaceRepo) ActiveArtifact(ctx context.Context, project projectgraph.ResourceID, env servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
 	r.mu.Lock()
 	r.calls++
@@ -575,6 +708,120 @@ func TestReloadNoActiveConfirmationSerializesActivationAttempt(t *testing.T) {
 	// loser is acceptable; the active generation must never be cleared after
 	// publication.
 	_ = <-activationDone
+	lease, err := registry.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	if lease.Identity().GenerationID != string(state2.ID) {
+		t.Fatalf("active generation = %s, want %s", lease.Identity().GenerationID, state2.ID)
+	}
+}
+
+func TestReloadCannotRepublishGenerationReadBeforeNewerCutover(t *testing.T) {
+	digest1 := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	digest2 := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	state1 := servingstate.State{ID: "generation_1", ProjectID: "project_demo", Environment: "prod", Status: servingstate.StatusValidated, Digest: digest1}
+	state2 := state1
+	state2.ID, state2.Digest = "generation_2", digest2
+	base := &lifecycleRepo{
+		state: state1, artifact: servingstate.Artifact{ID: "artifact_1", ServingStateID: state1.ID, Digest: digest1},
+		states: map[servingstate.ID]servingstate.State{state1.ID: state1, state2.ID: state2},
+		artifacts: map[servingstate.ID]servingstate.Artifact{
+			state1.ID: {ID: "artifact_1", ServingStateID: state1.ID, Digest: digest1},
+			state2.ID: {ID: "artifact_2", ServingStateID: state2.ID, Digest: digest2},
+		},
+	}
+	repo := &blockingActiveArtifactRepo{lifecycleRepo: base, started: make(chan struct{}), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	releaseRead := func() { releaseOnce.Do(func() { close(repo.release) }) }
+	defer releaseRead()
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, ProjectID: "project_demo", Environment: "prod", Factory: &lifecycleFactory{}, Authorization: &lifecycleAuth{}})
+	defer registry.Close()
+	initial, err := registry.PrepareServingState(t.Context(), string(state1.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(initial, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	newer, err := registry.PrepareServingState(t.Context(), string(state2.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadDone := make(chan error, 1)
+	go func() { reloadDone <- registry.Reload(t.Context()) }()
+	select {
+	case <-repo.started:
+	case <-time.After(time.Second):
+		t.Fatal("reload did not block after its durable active read")
+	}
+	if err := registry.ActivatePrepared(newer, func() error {
+		base.state, base.artifact = state2, base.artifacts[state2.ID]
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	releaseRead()
+	if err := <-reloadDone; err != nil {
+		t.Fatal(err)
+	}
+	lease, err := registry.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	if lease.Identity().GenerationID != string(state2.ID) {
+		t.Fatalf("active generation = %s, want %s", lease.Identity().GenerationID, state2.ID)
+	}
+}
+
+func TestReconcileSealedCannotRepublishGenerationReadBeforeNewerCutover(t *testing.T) {
+	digest1 := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	digest2 := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	state1 := servingstate.State{ID: "generation_1", ProjectID: "project_demo", Environment: "prod", Status: servingstate.StatusValidated, Digest: digest1}
+	state2 := state1
+	state2.ID, state2.Digest = "generation_2", digest2
+	base := &lifecycleRepo{
+		state: state1, artifact: servingstate.Artifact{ID: "artifact_1", ServingStateID: state1.ID, Digest: digest1},
+		states: map[servingstate.ID]servingstate.State{state1.ID: state1, state2.ID: state2},
+		artifacts: map[servingstate.ID]servingstate.Artifact{
+			state1.ID: {ID: "artifact_1", ServingStateID: state1.ID, Digest: digest1},
+			state2.ID: {ID: "artifact_2", ServingStateID: state2.ID, Digest: digest2},
+		},
+	}
+	repo := &blockingByIDRepo{lifecycleRepo: base, target: state1.ID, started: make(chan struct{}), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	releaseRead := func() { releaseOnce.Do(func() { close(repo.release) }) }
+	defer releaseRead()
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, ProjectID: "project_demo", Environment: "prod", Factory: &lifecycleFactory{}, Authorization: &lifecycleAuth{}})
+	defer registry.Close()
+	initial, err := registry.PrepareServingState(t.Context(), string(state1.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(initial, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	newer, err := registry.PrepareServingState(t.Context(), string(state2.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.Arm()
+	reconcileDone := make(chan error, 1)
+	go func() { reconcileDone <- registry.ReconcileSealed(t.Context(), state1.ID) }()
+	select {
+	case <-repo.started:
+	case <-time.After(time.Second):
+		t.Fatal("sealed reconciliation did not block after its generation read")
+	}
+	if err := registry.ActivatePrepared(newer, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	releaseRead()
+	if err := <-reconcileDone; !errors.Is(err, ErrPreparedStale) {
+		t.Fatalf("stale sealed reconciliation = %v, want ErrPreparedStale", err)
+	}
 	lease, err := registry.Acquire(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -918,5 +1165,144 @@ func TestPrepareActiveServingStateReusesRuntimeButStillRunsActivation(t *testing
 	case <-activeRuntime.closed:
 		t.Fatal("repeated activation closed the active runtime")
 	default:
+	}
+}
+
+func TestProjectedRuntimeUsesLiveSnapshotAndInstallsCompatibilityEvidence(t *testing.T) {
+	repo := &lifecycleRepo{state: servingstate.State{ID: "generation_1", ProjectID: "project_demo", Environment: "prod", Status: servingstate.StatusValidated, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, artifact: servingstate.Artifact{ID: "artifact_1", ServingStateID: "generation_1", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+	auth := &lifecycleAuth{}
+	factory := &projectorLifecycleFactory{}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, ProjectID: "project_demo", Environment: "prod", Factory: factory, Authorization: auth})
+	defer registry.Close()
+	prepared, err := registry.PrepareServingState(t.Context(), "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(prepared, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := registry.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeSnapshot := lease.Runtime().(interface {
+		AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+	}).AuthorizationSnapshot()
+	lease.Release()
+	installedDigest, err := auth.snapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveDigest, err := runtimeSnapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installedDigest == liveDigest {
+		t.Fatalf("installer and runtime received the same snapshot digest %q", installedDigest)
+	}
+}
+
+func TestProjectedFactoryRebuildsRepeatedSameGenerationPreparation(t *testing.T) {
+	repo := &lifecycleRepo{state: servingstate.State{ID: "generation_1", ProjectID: "project_demo", Environment: "prod", Status: servingstate.StatusValidated, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, artifact: servingstate.Artifact{ID: "artifact_1", ServingStateID: "generation_1", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, ProjectID: "project_demo", Environment: "prod", Factory: &projectorLifecycleFactory{}, Authorization: &lifecycleAuth{}})
+	defer registry.Close()
+	first, err := registry.PrepareServingState(t.Context(), "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(first, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	factory := registry.manager.factory.(*projectorLifecycleFactory)
+	repeated, err := registry.PrepareServingState(t.Context(), "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repeated.Close()
+	if got := len(factory.runtimes); got != 2 {
+		t.Fatalf("projected same-generation preparation built %d runtimes, want 2", got)
+	}
+}
+
+func TestOlderSameGenerationProjectionCannotReplaceNewerCutover(t *testing.T) {
+	repo := &lifecycleRepo{state: servingstate.State{ID: "generation_1", ProjectID: "project_demo", Environment: "prod", Status: servingstate.StatusValidated, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, artifact: servingstate.Artifact{ID: "artifact_1", ServingStateID: "generation_1", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+	factory := &blockingProjectorLifecycleFactory{
+		blockCall: 2,
+		started:   make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+	var releaseOnce sync.Once
+	releaseOlder := func() { releaseOnce.Do(func() { close(factory.release) }) }
+	defer releaseOlder()
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, ProjectID: "project_demo", Environment: "prod", Factory: factory, Authorization: &lifecycleAuth{}})
+	defer registry.Close()
+	initial, err := registry.PrepareServingState(t.Context(), "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(initial, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	type preparationResult struct {
+		prepared *Prepared
+		err      error
+	}
+	olderResult := make(chan preparationResult, 1)
+	go func() {
+		prepared, prepareErr := registry.PrepareServingState(t.Context(), "generation_1")
+		olderResult <- preparationResult{prepared: prepared, err: prepareErr}
+	}()
+	<-factory.started
+	newer, err := registry.PrepareServingState(t.Context(), "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(newer, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	releaseOlder()
+	result := <-olderResult
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	older := result.prepared
+	if err := registry.ActivatePrepared(older, func() error { return nil }); !errors.Is(err, ErrPreparedStale) {
+		t.Fatalf("older same-generation activation = %v, want ErrPreparedStale", err)
+	}
+}
+
+func TestNoChangePreparationRetainsDistinctInstallationEvidence(t *testing.T) {
+	repo := &lifecycleRepo{state: servingstate.State{ID: "generation_1", ProjectID: "project_demo", Environment: "prod", Status: servingstate.StatusValidated, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, artifact: servingstate.Artifact{ID: "artifact_1", ServingStateID: "generation_1", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+	auth := &lifecycleAuth{}
+	factory := &installationEvidenceLifecycleFactory{lifecycleFactory: &lifecycleFactory{}}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, ProjectID: "project_demo", Environment: "prod", Factory: factory, Authorization: auth})
+	defer registry.Close()
+	first, err := registry.PrepareServingState(t.Context(), "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(first, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	firstInstalled, err := auth.snapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := registry.PrepareServingState(t.Context(), "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(repeated, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	repeatedInstalled, err := auth.snapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeatedInstalled != firstInstalled {
+		t.Fatalf("no-change installation digest = %q, want %q", repeatedInstalled, firstInstalled)
+	}
+	if got := len(factory.runtimes); got != 1 {
+		t.Fatalf("no-change preparation built %d runtimes, want 1", got)
 	}
 }

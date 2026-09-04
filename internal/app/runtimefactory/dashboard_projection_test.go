@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
@@ -15,7 +16,66 @@ import (
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
+	"github.com/flidai/leapview/internal/runtimehost"
 )
+
+func TestProjectAuthorizationSkipsLiveProjectionForCandidate(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
+		{ID: "dashboard_main", Kind: projectgraph.KindDashboard, Name: "main"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_demo", Environment: "production", GenerationID: "generation_1"}
+	compatibility, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := 0
+	factory := servingStateRuntimeFactory{authorizationSnapshotProjector: func(context.Context, accesssnapshot.AuthorizationSnapshot, projectgraph.ServingIdentity, projectgraph.ProjectGraph) (accesssnapshot.AuthorizationSnapshot, error) {
+		called++
+		return compatibility, nil
+	}}
+	input := runtimehost.RuntimeInput{Candidate: &runtimehost.CandidateRuntimeContext{CandidateID: "candidate_1"}}
+	projected, err := factory.projectAuthorization(context.Background(), input, identity, project, compatibility)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if called != 0 || projected.Identity() != compatibility.Identity() {
+		t.Fatalf("candidate projection called=%d projected identity=%#v", called, projected.Identity())
+	}
+}
+
+func TestProjectAuthorizationUsesLiveProjectionForActiveGeneration(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
+		{ID: "dashboard_main", Kind: projectgraph.KindDashboard, Name: "main"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_demo", Environment: "production", GenerationID: "generation_1"}
+	compatibility, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := 0
+	factory := servingStateRuntimeFactory{authorizationSnapshotProjector: func(_ context.Context, got accesssnapshot.AuthorizationSnapshot, gotIdentity projectgraph.ServingIdentity, gotProject projectgraph.ProjectGraph) (accesssnapshot.AuthorizationSnapshot, error) {
+		called++
+		if got.Identity() != compatibility.Identity() || gotIdentity != identity || gotProject.Digest() != project.Digest() {
+			t.Fatalf("projection input snapshot=%#v identity=%#v graph=%q", got.Identity(), gotIdentity, gotProject.Digest())
+		}
+		return accesssnapshot.NewAuthorizationSnapshot(identity, project, nil, nil)
+	}}
+	projected, err := factory.projectAuthorization(context.Background(), runtimehost.RuntimeInput{}, identity, project, compatibility)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if called != 1 || projected.Identity() != identity {
+		t.Fatalf("active projection called=%d projected identity=%#v", called, projected.Identity())
+	}
+}
 
 type compiledPlannerDataRuntime struct{ planner consumer.Planner }
 

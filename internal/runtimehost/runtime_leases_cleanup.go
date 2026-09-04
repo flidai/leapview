@@ -109,23 +109,24 @@ func (m *Manager) release(runtime *managedRuntime) {
 }
 
 type managedRuntime struct {
-	identity                projectgraph.ServingIdentity
-	authorization           accesssnapshot.AuthorizationSnapshot
-	servingStateID          servingstate.ID
-	digest, managedRevision string
-	runtime                 Runtime
-	managedData             ManagedDataLifetime
-	snapshotLease           *persistentSnapshotLease
-	runtimeLifetime         RuntimeLifetime
-	snapshotID              int64
-	sealed                  bool
-	refs                    int
-	closing                 bool
-	cleanupState            generationCleanupState
-	cleanupDone             chan struct{}
-	cleanupErr              error
-	cleanupOnce             sync.Once
-	cleanupResults          []cleanupResult
+	identity                  projectgraph.ServingIdentity
+	authorization             accesssnapshot.AuthorizationSnapshot
+	installationAuthorization accesssnapshot.AuthorizationSnapshot
+	servingStateID            servingstate.ID
+	digest, managedRevision   string
+	runtime                   Runtime
+	managedData               ManagedDataLifetime
+	snapshotLease             *persistentSnapshotLease
+	runtimeLifetime           RuntimeLifetime
+	snapshotID                int64
+	sealed                    bool
+	refs                      int
+	closing                   bool
+	cleanupState              generationCleanupState
+	cleanupDone               chan struct{}
+	cleanupErr                error
+	cleanupOnce               sync.Once
+	cleanupResults            []cleanupResult
 }
 type generationCleanupState uint8
 

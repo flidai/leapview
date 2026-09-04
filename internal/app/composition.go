@@ -370,38 +370,15 @@ type sealedRuntimeActivator interface {
 	ActivatePreparedContext(context.Context, *runtimehost.Prepared, func() error) error
 }
 
-type sealedRuntimeActiveReader interface {
-	ActiveArtifact(context.Context) (servingstate.State, servingstate.Artifact, error)
-}
-
-type sealedRuntimeLeaseReader interface {
-	Acquire(context.Context) (runtimehost.Lease, error)
-}
-
 func activateCanonicalServingState(ctx context.Context, runtime sealedRuntimeActivator, generationID string, activate func() error) error {
 	generationID = strings.TrimSpace(generationID)
 	if runtime == nil || generationID == "" || activate == nil {
 		return fmt.Errorf("canonical sealed runtime, generation, and activation callback are required")
 	}
-	if leaseReader, ok := runtime.(sealedRuntimeLeaseReader); ok {
-		lease, err := leaseReader.Acquire(ctx)
-		if err == nil && lease != nil {
-			activeGenerationID := lease.Identity().GenerationID
-			lease.Release()
-			if activeGenerationID == generationID {
-				return activate()
-			}
-		}
-	}
-	if activeReader, ok := runtime.(sealedRuntimeActiveReader); ok {
-		active, _, err := activeReader.ActiveArtifact(ctx)
-		switch {
-		case err == nil && string(active.ID) == generationID:
-			return activate()
-		case err != nil && !errors.Is(err, servingstate.ErrNotFound):
-			return fmt.Errorf("resolve active canonical sealed serving state: %w", err)
-		}
-	}
+	// Runtimehost owns same-generation reuse. Factories that project mutable
+	// live control state deliberately rebuild here so retries and rollbacks
+	// refresh reader authorization without replacing immutable installation
+	// evidence.
 	prepared, err := runtime.PrepareServingState(ctx, generationID)
 	if err != nil {
 		return fmt.Errorf("prepare canonical sealed serving state %q: %w", generationID, err)
@@ -1139,6 +1116,15 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	// sealed catalog object. The legacy process-wide catalog remains available
 	// to evaluation/tests, but is not opened in production.
 	var servingFactory runtimehost.RuntimeFactory
+	var authorizationSnapshotProjector appruntimefactory.AuthorizationSnapshotProjector
+	if production {
+		if accessBundle.Control == nil {
+			return fail(fmt.Errorf("production live access control authority is unavailable"))
+		}
+		authorizationSnapshotProjector = func(projectCtx context.Context, compatibility accesssnapshot.AuthorizationSnapshot, servingIdentity projectgraph.ServingIdentity, project projectgraph.ProjectGraph) (accesssnapshot.AuthorizationSnapshot, error) {
+			return accesssnapshot.ProjectLiveAuthorizationSnapshot(projectCtx, accessBundle.Control, instanceID, "", servingIdentity, project, compatibility)
+		}
+	}
 	var gcMaintenance *gcadapter.Maintenance
 	{
 		var gcErr error
@@ -1165,8 +1151,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), LeaseHolder: instanceID,
 			ProjectRuntimeFactory: analyticsModule.ProjectRuntimeFactoryForEnvironment,
 			DashboardMaxRows:      cfg.QueryResultMaxRows, DashboardMaxBytes: cfg.QueryResultMaxBytes,
-			PoolS3:             gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
-			ActivationEvidence: activeRuntimeEvidence,
+			PoolS3:                         gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
+			ActivationEvidence:             activeRuntimeEvidence,
+			AuthorizationSnapshotProjector: authorizationSnapshotProjector,
 			Authorize: func(ctx context.Context, evidence appruntimefactory.SealedAuthorizationInput) error {
 				if err := ctx.Err(); err != nil {
 					return err
@@ -1912,8 +1899,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		ActivationHooks:   deploymentmodule.ActivationHooks{},
 		SealedCoordinator: sealedCoordinator, SealedPublishRequest: sealedPublishRequest,
 		SealedRollbackRequest: sealedRollbackRequest, SealedRollbackFence: sealedRollbackFence, RequireSealedCoordinator: true,
-		SealedReconcile: func(ctx context.Context, generationID string) error {
-			return runtimeHostModule.ReconcileSealed(ctx, servingstatemodule.ID(generationID))
+		SealedActivate: func(ctx context.Context, generationID string, commit func() error) error {
+			return activateCanonicalServingState(ctx, runtimeHostModule, generationID, commit)
+		},
+		SealedTargetVerifier: func(ctx context.Context, targetID, projectID, activationEnvironment, generationID string, targetRevision int64) error {
+			return verifyCanonicalDeliveryTarget(ctx, sealedDelivery, targetID, projectID, activationEnvironment, generationID, targetRevision)
 		},
 	}
 	runtimeMetrics := dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{

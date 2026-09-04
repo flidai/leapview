@@ -55,6 +55,23 @@ type AuthorizationSnapshotInstaller interface {
 	InstallAuthorizationSnapshot(context.Context, accesssnapshot.AuthorizationSnapshot) error
 }
 
+// AuthorizationInstallationEvidence is an optional runtime capability.
+// Runtime.AuthorizationSnapshot is the snapshot consumed by readers, while
+// this capability lets a runtime retain a separate immutable artifact
+// compatibility snapshot for installation/evidence. Existing runtimes do not
+// implement it; runtimehost then uses AuthorizationSnapshot for both roles.
+type AuthorizationInstallationEvidence interface {
+	AuthorizationSnapshotForInstallation() accesssnapshot.AuthorizationSnapshot
+}
+
+// RuntimeFactoryPreparationPolicy is an optional factory capability. Factories
+// whose runtime authorization is projected from mutable live control state
+// must rebuild a repeated same-generation preparation so the projection is
+// refreshed. Factories without this capability retain no-change reuse.
+type RuntimeFactoryPreparationPolicy interface {
+	RebuildOnSameGeneration() bool
+}
+
 type Runtime = projectruntime.Runtime
 type RuntimeSnapshot interface{ DuckLakeSnapshotID() int64 }
 type RuntimeLifetime interface{ Close() error }
@@ -199,6 +216,7 @@ type Manager struct {
 	onCleanupFailure       func(CleanupFailure)
 	leaseRenewalErrors     map[string]error
 	current                *managedRuntime
+	cutoverEpoch           uint64
 	retired                []*managedRuntime
 	cleanupWorkerRunning   bool
 	cleanupDrainTimeout    time.Duration
@@ -208,25 +226,27 @@ type Manager struct {
 }
 
 type Prepared struct {
-	mu              sync.Mutex
-	owner           *Manager
-	state           preparedState
-	servingStateID  servingstate.ID
-	digest          string
-	managedRevision string
-	runtime         Runtime
-	managedData     ManagedDataLifetime
-	snapshotLease   *persistentSnapshotLease
-	runtimeLifetime RuntimeLifetime
-	snapshotID      int64
-	sealed          bool
-	authorization   accesssnapshot.AuthorizationSnapshot
-	noChange        bool
-	baseActiveID    servingstate.ID
-	candidateID     string
-	candidateOwner  string
-	candidateExpiry time.Time
-	candidateHash   [32]byte
+	mu                        sync.Mutex
+	owner                     *Manager
+	state                     preparedState
+	servingStateID            servingstate.ID
+	digest                    string
+	managedRevision           string
+	runtime                   Runtime
+	managedData               ManagedDataLifetime
+	snapshotLease             *persistentSnapshotLease
+	runtimeLifetime           RuntimeLifetime
+	snapshotID                int64
+	sealed                    bool
+	authorization             accesssnapshot.AuthorizationSnapshot
+	installationAuthorization accesssnapshot.AuthorizationSnapshot
+	noChange                  bool
+	baseActiveID              servingstate.ID
+	baseCutoverEpoch          uint64
+	candidateID               string
+	candidateOwner            string
+	candidateExpiry           time.Time
+	candidateHash             [32]byte
 }
 
 type candidatePreparationContext struct {
@@ -417,6 +437,7 @@ func (m *Manager) ReconcileSealed(ctx context.Context, id servingstate.ID) error
 	if m == nil || id == "" {
 		return errors.New("sealed serving generation is required")
 	}
+	fence := m.capturePreparationFence()
 	state, err := m.repo.ByID(ctx, id)
 	if err != nil {
 		return err
@@ -428,7 +449,7 @@ func (m *Manager) ReconcileSealed(ctx context.Context, id servingstate.ID) error
 	if err := m.validateGeneration(state, artifact); err != nil {
 		return err
 	}
-	prepared, err := m.prepare(ctx, state, artifact, nil)
+	prepared, err := m.prepareAt(ctx, state, artifact, nil, fence)
 	if err != nil {
 		return err
 	}
@@ -440,6 +461,7 @@ func (m *Manager) reloadOnce(ctx context.Context) error {
 		return m.reloadUnbound(ctx)
 	}
 	projectID := m.ProjectID()
+	fence := m.capturePreparationFence()
 	current, artifact, err := m.repo.ActiveArtifact(ctx, projectID, m.environment)
 	if errors.Is(err, servingstate.ErrNotFound) {
 		// A no-active read is only authoritative while serialized with
@@ -472,12 +494,12 @@ func (m *Manager) reloadOnce(ctx context.Context) error {
 		return err
 	}
 	m.mu.RLock()
-	unchanged := m.current != nil && m.current.servingStateID == current.ID && m.current.digest == artifact.Digest && m.current.snapshotID == current.DuckLakeSnapshotID
+	unchanged := !m.rebuildOnSameGeneration() && m.current != nil && m.current.servingStateID == current.ID && m.current.digest == artifact.Digest && m.current.snapshotID == current.DuckLakeSnapshotID
 	m.mu.RUnlock()
 	if unchanged {
 		return nil
 	}
-	prepared, err := m.prepare(ctx, current, artifact, nil)
+	prepared, err := m.prepareAt(ctx, current, artifact, nil, fence)
 	if err != nil {
 		return err
 	}
@@ -550,6 +572,7 @@ func (m *Manager) reloadUnbound(ctx context.Context) error {
 }
 
 func (m *Manager) PrepareServingState(ctx context.Context, id string) (*Prepared, error) {
+	fence := m.capturePreparationFence()
 	state, err := m.repo.ByID(ctx, servingstate.ID(id))
 	if err != nil {
 		return nil, err
@@ -561,7 +584,7 @@ func (m *Manager) PrepareServingState(ctx context.Context, id string) (*Prepared
 	if err := m.validateGeneration(state, artifact); err != nil {
 		return nil, err
 	}
-	return m.prepare(ctx, state, artifact, nil)
+	return m.prepareAt(ctx, state, artifact, nil, fence)
 }
 
 func (m *Manager) validateGeneration(state servingstate.State, artifact servingstate.Artifact) error {
@@ -596,7 +619,57 @@ func (m *Manager) validateGeneration(state servingstate.State, artifact servings
 	return nil
 }
 
-func (m *Manager) prepare(ctx context.Context, state servingstate.State, artifact servingstate.Artifact, candidate *candidatePreparationContext) (*Prepared, error) {
+func (m *Manager) rebuildOnSameGeneration() bool {
+	if m == nil || m.factory == nil {
+		return false
+	}
+	policy, ok := m.factory.(RuntimeFactoryPreparationPolicy)
+	return ok && policy.RebuildOnSameGeneration()
+}
+
+func validateAuthorizationSnapshot(snapshot accesssnapshot.AuthorizationSnapshot, expectedIdentity projectgraph.ServingIdentity, role string) error {
+	if snapshot.Identity() != expectedIdentity {
+		return fmt.Errorf("%s authorization snapshot identity = %#v, want %#v", role, snapshot.Identity(), expectedIdentity)
+	}
+	if err := snapshot.ValidateBound(); err != nil {
+		return fmt.Errorf("%s authorization snapshot is invalid: %w", role, err)
+	}
+	if snapshot.Project().ProjectID() != expectedIdentity.ProjectID {
+		return fmt.Errorf("%s authorization snapshot project = %q, want %q", role, snapshot.Project().ProjectID(), expectedIdentity.ProjectID)
+	}
+	return nil
+}
+
+func validateAuthorizationSnapshots(runtime, installation accesssnapshot.AuthorizationSnapshot, expectedIdentity projectgraph.ServingIdentity) error {
+	if err := validateAuthorizationSnapshot(runtime, expectedIdentity, "runtime"); err != nil {
+		return err
+	}
+	if err := validateAuthorizationSnapshot(installation, expectedIdentity, "installation"); err != nil {
+		return err
+	}
+	if runtime.Project().Digest() != installation.Project().Digest() {
+		return fmt.Errorf("runtime and installation authorization snapshots are bound to different project graphs")
+	}
+	return nil
+}
+
+type preparationFence struct {
+	current      *managedRuntime
+	activeID     servingstate.ID
+	cutoverEpoch uint64
+}
+
+func (m *Manager) capturePreparationFence() preparationFence {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	fence := preparationFence{current: m.current, cutoverEpoch: m.cutoverEpoch}
+	if m.current != nil {
+		fence.activeID = m.current.servingStateID
+	}
+	return fence
+}
+
+func (m *Manager) prepareAt(ctx context.Context, state servingstate.State, artifact servingstate.Artifact, candidate *candidatePreparationContext, fence preparationFence) (*Prepared, error) {
 	if err := m.validateGeneration(state, artifact); err != nil {
 		return nil, errors.Join(err, closeCandidatePreparationLifetime(candidate))
 	}
@@ -604,29 +677,26 @@ func (m *Manager) prepare(ctx context.Context, state servingstate.State, artifac
 	// reviewed candidate. Keep the active runtime and its cache scope, but
 	// return a consumable preparation so the caller can still commit the
 	// publication metadata under the normal activation fence.
-	if candidate == nil {
-		m.mu.RLock()
-		current := m.current
-		if current != nil && current.servingStateID == state.ID {
-			if current.digest != artifact.Digest {
-				m.mu.RUnlock()
-				return nil, fmt.Errorf("active serving state %s digest = %q, requested artifact digest = %q", state.ID, current.digest, artifact.Digest)
+	if candidate == nil && !m.rebuildOnSameGeneration() {
+		if fence.current != nil && fence.current.servingStateID == state.ID {
+			if fence.current.digest != artifact.Digest {
+				return nil, fmt.Errorf("active serving state %s digest = %q, requested artifact digest = %q", state.ID, fence.current.digest, artifact.Digest)
 			}
 			prepared := &Prepared{
-				owner:           m,
-				servingStateID:  state.ID,
-				digest:          current.digest,
-				managedRevision: current.managedRevision,
-				snapshotID:      current.snapshotID,
-				sealed:          current.sealed,
-				authorization:   current.authorization,
-				noChange:        true,
-				baseActiveID:    current.servingStateID,
+				owner:                     m,
+				servingStateID:            state.ID,
+				digest:                    fence.current.digest,
+				managedRevision:           fence.current.managedRevision,
+				snapshotID:                fence.current.snapshotID,
+				sealed:                    fence.current.sealed,
+				authorization:             fence.current.authorization,
+				installationAuthorization: fence.current.installationAuthorization,
+				noChange:                  true,
+				baseActiveID:              fence.activeID,
+				baseCutoverEpoch:          fence.cutoverEpoch,
 			}
-			m.mu.RUnlock()
 			return prepared, nil
 		}
-		m.mu.RUnlock()
 	}
 	var data ManagedDataResolution
 	var err error
@@ -636,10 +706,15 @@ func (m *Manager) prepare(ctx context.Context, state servingstate.State, artifac
 			return nil, err
 		}
 	}
-	return m.prepareResolvedWithCandidate(ctx, state, artifact, data, candidate)
+	return m.prepareResolvedWithCandidateAt(ctx, state, artifact, data, candidate, fence.activeID, fence.cutoverEpoch)
 }
 
 func (m *Manager) prepareResolvedWithCandidate(ctx context.Context, state servingstate.State, artifact servingstate.Artifact, data ManagedDataResolution, candidate *candidatePreparationContext) (*Prepared, error) {
+	fence := m.capturePreparationFence()
+	return m.prepareResolvedWithCandidateAt(ctx, state, artifact, data, candidate, fence.activeID, fence.cutoverEpoch)
+}
+
+func (m *Manager) prepareResolvedWithCandidateAt(ctx context.Context, state servingstate.State, artifact servingstate.Artifact, data ManagedDataResolution, candidate *candidatePreparationContext, baseActiveID servingstate.ID, baseCutoverEpoch uint64) (*Prepared, error) {
 	if err := m.validateGeneration(state, artifact); err != nil {
 		return nil, errors.Join(err, releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
 	}
@@ -686,11 +761,15 @@ func (m *Manager) prepareResolvedWithCandidate(ctx context.Context, state servin
 		return nil, errors.Join(err, closeRuntime(runtime), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
 	}
 	authorization := runtime.AuthorizationSnapshot()
-	if authorization.Identity() != expectedIdentity {
-		return nil, errors.Join(fmt.Errorf("authorization snapshot identity = %#v, want %#v", authorization.Identity(), expectedIdentity), closeRuntime(runtime), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
+	installationAuthorization := authorization
+	if evidence, ok := runtime.(AuthorizationInstallationEvidence); ok {
+		installationAuthorization = evidence.AuthorizationSnapshotForInstallation()
 	}
-	if err := authorization.ValidateBound(); err != nil {
-		return nil, errors.Join(fmt.Errorf("authorization snapshot is invalid: %w", err), closeRuntime(runtime), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
+	if err := validateAuthorizationSnapshot(authorization, expectedIdentity, "runtime"); err != nil {
+		return nil, errors.Join(err, closeRuntime(runtime), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
+	}
+	if err := validateAuthorizationSnapshot(installationAuthorization, expectedIdentity, "installation"); err != nil {
+		return nil, errors.Join(err, closeRuntime(runtime), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
 	}
 	snapshotID := int64(0)
 	if !sealed {
@@ -706,13 +785,7 @@ func (m *Manager) prepareResolvedWithCandidate(ctx context.Context, state servin
 			return nil, errors.Join(err, closeRuntime(runtime), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
 		}
 	}
-	m.mu.RLock()
-	baseActiveID := servingstate.ID("")
-	if m.current != nil {
-		baseActiveID = m.current.servingStateID
-	}
-	m.mu.RUnlock()
-	p := &Prepared{owner: m, servingStateID: state.ID, digest: artifact.Digest, managedRevision: data.RevisionID, runtime: runtime, managedData: data.Lifetime, snapshotLease: lease, snapshotID: snapshotID, sealed: sealed, authorization: authorization, baseActiveID: baseActiveID}
+	p := &Prepared{owner: m, servingStateID: state.ID, digest: artifact.Digest, managedRevision: data.RevisionID, runtime: runtime, managedData: data.Lifetime, snapshotLease: lease, snapshotID: snapshotID, sealed: sealed, authorization: authorization, installationAuthorization: installationAuthorization, baseActiveID: baseActiveID, baseCutoverEpoch: baseCutoverEpoch}
 	if candidate != nil {
 		p.runtimeLifetime = candidate.lifetime
 		candidate.lifetime = nil
@@ -741,12 +814,13 @@ func (m *Manager) activatePreparedContext(ctx context.Context, candidate *Prepar
 	defer m.cutoverMu.Unlock()
 	m.mu.RLock()
 	currentID := servingstate.ID("")
+	currentEpoch := m.cutoverEpoch
 	boundProjectID := m.projectID
 	if m.current != nil {
 		currentID = m.current.servingStateID
 	}
 	m.mu.RUnlock()
-	if currentID != sealed.baseActiveID {
+	if currentID != sealed.baseActiveID || currentEpoch != sealed.baseCutoverEpoch {
 		return errors.Join(ErrPreparedStale, sealed.abort())
 	}
 	if boundProjectID != "" && sealed.authorization.Identity().ProjectID != boundProjectID {
@@ -756,19 +830,16 @@ func (m *Manager) activatePreparedContext(ctx context.Context, candidate *Prepar
 		boundProjectID = sealed.authorization.Identity().ProjectID
 	}
 	expectedIdentity, err := projectgraph.NewServingIdentity(boundProjectID, string(m.environment), string(sealed.servingStateID))
-	if err != nil || sealed.authorization.Identity() != expectedIdentity {
-		if err == nil {
-			err = fmt.Errorf("authorization snapshot identity = %#v, want %#v", sealed.authorization.Identity(), expectedIdentity)
-		}
+	if err != nil {
 		return errors.Join(err, sealed.abort())
 	}
-	if err := sealed.authorization.ValidateBound(); err != nil {
-		return errors.Join(fmt.Errorf("authorization snapshot is invalid: %w", err), sealed.abort())
+	if err := validateAuthorizationSnapshots(sealed.authorization, sealed.installationAuthorization, expectedIdentity); err != nil {
+		return errors.Join(err, sealed.abort())
 	}
 	if m.authorization == nil {
 		return errors.Join(errors.New("authorization snapshot installer is required"), sealed.abort())
 	}
-	if err := m.authorization.InstallAuthorizationSnapshot(ctx, sealed.authorization); err != nil {
+	if err := m.authorization.InstallAuthorizationSnapshot(ctx, sealed.installationAuthorization); err != nil {
 		return errors.Join(err, sealed.abort())
 	}
 	if activate == nil {
@@ -802,11 +873,13 @@ type sealedPrepared struct {
 	snapshotID                  int64
 	sealed                      bool
 	authorization               accesssnapshot.AuthorizationSnapshot
+	installationAuthorization   accesssnapshot.AuthorizationSnapshot
 	noChange                    bool
 	candidateID, candidateOwner string
 	candidateExpiry             time.Time
 	candidateHash               [32]byte
 	baseActiveID                servingstate.ID
+	baseCutoverEpoch            uint64
 }
 
 func (m *Manager) sealPrepared(candidate *Prepared) (*sealedPrepared, error) {
@@ -824,7 +897,7 @@ func (m *Manager) sealPrepared(candidate *Prepared) (*sealedPrepared, error) {
 	if candidate.runtime == nil && !candidate.noChange {
 		return nil, errors.New("prepared runtime is incomplete")
 	}
-	s := &sealedPrepared{manager: m, source: candidate, servingStateID: candidate.servingStateID, digest: candidate.digest, managedRevision: candidate.managedRevision, runtime: candidate.runtime, managedData: candidate.managedData, snapshotLease: candidate.snapshotLease, runtimeLifetime: candidate.runtimeLifetime, snapshotID: candidate.snapshotID, sealed: candidate.sealed, authorization: candidate.authorization, noChange: candidate.noChange, candidateID: candidate.candidateID, candidateOwner: candidate.candidateOwner, candidateExpiry: candidate.candidateExpiry, candidateHash: candidate.candidateHash, baseActiveID: candidate.baseActiveID}
+	s := &sealedPrepared{manager: m, source: candidate, servingStateID: candidate.servingStateID, digest: candidate.digest, managedRevision: candidate.managedRevision, runtime: candidate.runtime, managedData: candidate.managedData, snapshotLease: candidate.snapshotLease, runtimeLifetime: candidate.runtimeLifetime, snapshotID: candidate.snapshotID, sealed: candidate.sealed, authorization: candidate.authorization, installationAuthorization: candidate.installationAuthorization, noChange: candidate.noChange, candidateID: candidate.candidateID, candidateOwner: candidate.candidateOwner, candidateExpiry: candidate.candidateExpiry, candidateHash: candidate.candidateHash, baseActiveID: candidate.baseActiveID, baseCutoverEpoch: candidate.baseCutoverEpoch}
 	candidate.runtime = nil
 	candidate.managedData = nil
 	candidate.snapshotLease = nil
@@ -840,10 +913,11 @@ func (s *sealedPrepared) publish() *managedRuntime {
 		s.finish(preparedStatePublished)
 		return nil
 	}
-	next := &managedRuntime{identity: projectgraph.ServingIdentity{ProjectID: s.manager.projectID, Environment: string(s.manager.environment), GenerationID: string(s.servingStateID)}, authorization: s.authorization, servingStateID: s.servingStateID, digest: s.digest, managedRevision: s.managedRevision, runtime: s.runtime, managedData: s.managedData, snapshotLease: s.snapshotLease, runtimeLifetime: s.runtimeLifetime, snapshotID: s.snapshotID, sealed: s.sealed}
+	next := &managedRuntime{identity: projectgraph.ServingIdentity{ProjectID: s.manager.projectID, Environment: string(s.manager.environment), GenerationID: string(s.servingStateID)}, authorization: s.authorization, installationAuthorization: s.installationAuthorization, servingStateID: s.servingStateID, digest: s.digest, managedRevision: s.managedRevision, runtime: s.runtime, managedData: s.managedData, snapshotLease: s.snapshotLease, runtimeLifetime: s.runtimeLifetime, snapshotID: s.snapshotID, sealed: s.sealed}
 	s.manager.mu.Lock()
 	old := s.manager.current
 	s.manager.current = next
+	s.manager.cutoverEpoch++
 	retired := s.manager.retireLocked(old)
 	s.manager.mu.Unlock()
 	s.runtime = nil
@@ -860,7 +934,7 @@ func (s *sealedPrepared) consumeCandidate() (*managedRuntime, error) {
 		}
 		return nil, errors.New("candidate preparation must own an isolated runtime")
 	}
-	next := &managedRuntime{identity: projectgraph.ServingIdentity{ProjectID: s.manager.projectID, Environment: string(s.manager.environment), GenerationID: string(s.servingStateID)}, authorization: s.authorization, servingStateID: s.servingStateID, digest: s.digest, managedRevision: s.managedRevision, runtime: s.runtime, managedData: s.managedData, snapshotLease: s.snapshotLease, runtimeLifetime: s.runtimeLifetime, snapshotID: s.snapshotID, sealed: s.sealed}
+	next := &managedRuntime{identity: projectgraph.ServingIdentity{ProjectID: s.manager.projectID, Environment: string(s.manager.environment), GenerationID: string(s.servingStateID)}, authorization: s.authorization, installationAuthorization: s.installationAuthorization, servingStateID: s.servingStateID, digest: s.digest, managedRevision: s.managedRevision, runtime: s.runtime, managedData: s.managedData, snapshotLease: s.snapshotLease, runtimeLifetime: s.runtimeLifetime, snapshotID: s.snapshotID, sealed: s.sealed}
 	s.runtime = nil
 	s.managedData = nil
 	s.snapshotLease = nil

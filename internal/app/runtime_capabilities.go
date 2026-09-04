@@ -34,6 +34,7 @@ type analyticsCapabilityBundle struct {
 type accessCapabilityBundle struct {
 	Module                 *accessmodule.Module
 	Repository             access.Repository
+	Control                access.ControlStore
 	AuthorizationInstaller runtimehostmodule.AuthorizationSnapshotInstaller
 }
 
@@ -166,7 +167,8 @@ func completeAccessCapability(module *accessmodule.Module) (accessCapabilityBund
 	if err != nil {
 		return accessCapabilityBundle{}, err
 	}
-	return accessCapabilityBundle{Module: module, Repository: repository, AuthorizationInstaller: installer}, nil
+	control, _ := repository.(access.ControlStore)
+	return accessCapabilityBundle{Module: module, Repository: repository, Control: control, AuthorizationInstaller: installer}, nil
 }
 
 type workloadCapabilityConfig struct {
