@@ -32,11 +32,7 @@ var ErrUnavailable = errors.New("dashboard PostgreSQL session store is unavailab
 
 const maxExpiredBatch = 1000
 
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 //go:embed schema.sql
 var schemaSQL string
@@ -47,7 +43,7 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrUnavailable
 	}
-	_, err := tx.Exec(ctxOrBackground(ctx), schemaSQL) // sqlc-exception: schema-ddl
+	_, err := tx.Exec(ctx, schemaSQL) // sqlc-exception: schema-ddl
 	return err
 }
 
@@ -92,7 +88,7 @@ func (s *Store) Ping(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return ErrUnavailable
 	}
-	_, err := db.New(s.db).Ping(ctxOrBackground(ctx))
+	_, err := db.New(s.db).Ping(ctx)
 	return err
 }
 
@@ -108,7 +104,7 @@ func (s *Store) Create(ctx context.Context, key session.Key, state session.State
 		return session.Record{}, err
 	}
 	expires := s.expiry()
-	changed, err := db.New(s.db).Create(ctxOrBackground(ctx), db.CreateParams{ID: key.ID(), ProjectID: key.ProjectID.String(), PublicationID: key.PublicationID, PrincipalOrClient: key.PrincipalOrClient, DashboardID: key.DashboardID.String(), ServingStateID: key.ServingStateID, StreamInstanceID: key.StreamInstanceID, KeyJson: []byte(keyJSON), StateJson: []byte(stateJSON), ExpiresAt: expires})
+	changed, err := db.New(s.db).Create(ctx, db.CreateParams{ID: key.ID(), ProjectID: key.ProjectID.String(), PublicationID: key.PublicationID, PrincipalOrClient: key.PrincipalOrClient, DashboardID: key.DashboardID.String(), ServingStateID: key.ServingStateID, StreamInstanceID: key.StreamInstanceID, KeyJson: []byte(keyJSON), StateJson: []byte(stateJSON), ExpiresAt: expires})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -126,7 +122,7 @@ func (s *Store) Load(ctx context.Context, key session.Key) (session.Record, erro
 	if s == nil || s.db == nil {
 		return session.Record{}, ErrUnavailable
 	}
-	row, err := db.New(s.db).GetActive(ctxOrBackground(ctx), db.GetActiveParams{ID: key.ID(), Now: s.clock().UTC()})
+	row, err := db.New(s.db).GetActive(ctx, db.GetActiveParams{ID: key.ID(), Now: s.clock().UTC()})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return session.Record{}, session.ErrNotFound
 	}
@@ -145,7 +141,7 @@ func (s *Store) CompareAndSwap(ctx context.Context, key session.Key, version uin
 		return session.Record{}, err
 	}
 	expires := s.expiry()
-	changed, err := db.New(s.db).CompareAndSwap(ctxOrBackground(ctx), db.CompareAndSwapParams{StateJson: []byte(stateJSON), ExpiresAt: expires, ID: key.ID(), Version: int64(version), Now: s.clock().UTC()})
+	changed, err := db.New(s.db).CompareAndSwap(ctx, db.CompareAndSwapParams{StateJson: []byte(stateJSON), ExpiresAt: expires, ID: key.ID(), Version: int64(version), Now: s.clock().UTC()})
 	if err != nil {
 		return session.Record{}, err
 	}
@@ -162,7 +158,7 @@ func (s *Store) Touch(ctx context.Context, key session.Key) error {
 	if s == nil || s.db == nil {
 		return ErrUnavailable
 	}
-	changed, err := db.New(s.db).Touch(ctxOrBackground(ctx), db.TouchParams{ExpiresAt: s.expiry(), ID: key.ID(), Now: s.clock().UTC()})
+	changed, err := db.New(s.db).Touch(ctx, db.TouchParams{ExpiresAt: s.expiry(), ID: key.ID(), Now: s.clock().UTC()})
 	if err != nil {
 		return err
 	}
@@ -202,13 +198,6 @@ func decodeRecord(key session.Key, projectID, publicationID, principalOrClient, 
 		return session.Record{}, fmt.Errorf("decode dashboard session state: %w", err)
 	}
 	return session.Record{Key: storedKey, Version: uint64(version), State: state, ExpiresAt: expires}, nil
-}
-
-func ctxOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 var _ session.Store = (*Store)(nil)

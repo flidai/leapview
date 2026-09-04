@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/sha256"
 	_ "embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +17,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingdb "github.com/flidai/leapview/internal/servingstate/postgres/internal/db"
@@ -36,11 +36,7 @@ type DBTX interface {
 // Tx is a strict caller-owned PostgreSQL transaction surface. Pools satisfy
 // DBTX for reads but intentionally do not satisfy Tx, preventing multi-step
 // admission/lease mutations from accidentally autocommitting per statement.
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
@@ -93,7 +89,6 @@ func AdmitGenerationBundleTx(ctx context.Context, tx Tx, input GenerationBundleI
 	if _, ok := tx.(pgx.Tx); !ok {
 		return Bundle{}, errors.New("caller-owned serving-state admission must be a PostgreSQL transaction")
 	}
-	ctx = contextOrBackground(ctx)
 	gen, err := uuid.Parse(input.GenerationID)
 	if err != nil {
 		return Bundle{}, fmt.Errorf("generation id must be UUID: %w", err)
@@ -108,10 +103,10 @@ func AdmitGenerationBundleTx(ctx context.Context, tx Tx, input GenerationBundleI
 	if err := validateArtifactIdentity(input.Artifact, input.GenerationID, locator); err != nil {
 		return Bundle{}, err
 	}
-	if !isCanonicalDigest(input.ProjectDigest) {
+	if platformdigest.ValidateSHA256Identity(input.ProjectDigest) != nil {
 		return Bundle{}, errors.New("project digest must be a canonical SHA-256 identity")
 	}
-	if !isCanonicalDigest(input.ArtifactMetadataDigest) {
+	if platformdigest.ValidateSHA256Identity(input.ArtifactMetadataDigest) != nil {
 		return Bundle{}, errors.New("artifact metadata digest must be a canonical SHA-256 identity")
 	}
 	if err := validateStorageSecurityDomain(input.StorageSecurityDomain); err != nil {
@@ -220,7 +215,7 @@ func verifyGraphProjection(ctx context.Context, db DBTX, generation string, grap
 	if err != nil {
 		return err
 	}
-	rows, err := querySet(db).ListAssets(contextOrBackground(ctx), id)
+	rows, err := querySet(db).ListAssets(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -243,7 +238,7 @@ func verifyGraphProjection(ctx context.Context, db DBTX, generation string, grap
 		id := "edge_" + shortDigest(generation+"|"+edge.From.String()+"|"+edge.To.String()+"|"+edge.Relation)
 		expectedEdges[id] = edgeKey{id: id, from: edge.From.String(), to: edge.To.String(), typ: edge.Relation}
 	}
-	erows, err := querySet(db).ListAssetEdges(contextOrBackground(ctx), id)
+	erows, err := querySet(db).ListAssetEdges(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -266,7 +261,6 @@ func verifyGraphProjection(ctx context.Context, db DBTX, generation string, grap
 type Repository struct{ db DBTX }
 
 func New(db DBTX) *Repository                  { return &Repository{db: db} }
-func NewRepository(db DBTX) *Repository        { return New(db) }
 func (r *Repository) WithTx(tx Tx) *Repository { return New(tx) }
 func (*Repository) NativePersistence()         {}
 func (r *Repository) Configured() bool         { return r != nil && r.db != nil }
@@ -281,19 +275,13 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if _, ok := tx.(pgx.Tx); !ok {
 		return errors.New("retention guard requires a caller-owned PostgreSQL transaction")
 	}
-	_, err := tx.Exec(contextOrBackground(ctx), schemaSQL)
+	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
 
 //go:embed schema.sql
 var schemaSQL string
 
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
-}
 func querySet(db DBTX) *servingdb.Queries { return servingdb.New(db) }
 func pgUUID(value string) (pgtype.UUID, error) {
 	id, err := uuid.Parse(value)
@@ -309,17 +297,6 @@ func (r *Repository) dbOrErr() (DBTX, error) {
 	return r.db, nil
 }
 
-func isCanonicalDigest(value string) bool {
-	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	hexPart := value[len("sha256:"):]
-	if _, err := hex.DecodeString(hexPart); err != nil {
-		return false
-	}
-	return strings.ToLower(hexPart) == hexPart
-}
-
 func validateArtifactIdentity(artifact servingstate.Artifact, generationID, locator string) error {
 	if artifact.ServingStateID != servingstate.ID(generationID) {
 		return errors.New("artifact serving-state identity does not match generation")
@@ -327,7 +304,7 @@ func validateArtifactIdentity(artifact servingstate.Artifact, generationID, loca
 	if artifact.Path != "" {
 		return errors.New("artifact filesystem path must be empty")
 	}
-	if !isCanonicalDigest(artifact.Digest) {
+	if platformdigest.ValidateSHA256Identity(artifact.Digest) != nil {
 		return errors.New("artifact digest must be a canonical SHA-256 identity")
 	}
 	wantID := "artifact-" + strings.TrimPrefix(artifact.Digest, "sha256:")
@@ -394,7 +371,7 @@ func readBundle(ctx context.Context, db DBTX, generation string) (Bundle, error)
 	if err != nil {
 		return Bundle{}, err
 	}
-	row, err := querySet(db).GetBundle(contextOrBackground(ctx), id)
+	row, err := querySet(db).GetBundle(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Bundle{}, servingstate.ErrNotFound
 	}
@@ -443,7 +420,7 @@ func (r *Repository) ByID(ctx context.Context, id servingstate.ID) (servingstate
 	if err != nil {
 		return servingstate.State{}, err
 	}
-	active, err := querySet(db).ActiveFlag(contextOrBackground(ctx), gen)
+	active, err := querySet(db).ActiveFlag(ctx, gen)
 	if err != nil {
 		return servingstate.State{}, err
 	}
@@ -507,7 +484,7 @@ func (r *Repository) ActiveArtifact(ctx context.Context, p projectgraph.Resource
 	return bundleToState(b, servingstate.StatusActive), bundleArtifact(b), nil
 }
 func readActiveBundle(ctx context.Context, db DBTX, p projectgraph.ResourceID, e string) (Bundle, error) {
-	row, err := querySet(db).GetActiveBundle(contextOrBackground(ctx), servingdb.GetActiveBundleParams{ProjectID: p.String(), Environment: e})
+	row, err := querySet(db).GetActiveBundle(ctx, servingdb.GetActiveBundleParams{ProjectID: p.String(), Environment: e})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Bundle{}, servingstate.ErrNotFound
 	}
@@ -521,7 +498,7 @@ func (r *Repository) ListActiveScopes(ctx context.Context) ([]servingstate.Activ
 	if err != nil {
 		return nil, err
 	}
-	rows, err := querySet(db).ListActiveScopes(contextOrBackground(ctx))
+	rows, err := querySet(db).ListActiveScopes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -552,7 +529,7 @@ func (r *Repository) ActiveScopeForTarget(ctx context.Context, targetID string) 
 	if err != nil {
 		return servingstate.ActiveScope{}, false, err
 	}
-	row, err := querySet(db).GetActiveScopeForTarget(contextOrBackground(ctx), targetID)
+	row, err := querySet(db).GetActiveScopeForTarget(ctx, targetID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return servingstate.ActiveScope{}, false, nil
 	}
@@ -582,19 +559,13 @@ func (r *Repository) CreateQuerySnapshotLease(ctx context.Context, in servingsta
 	if !ok {
 		return "", errors.New("standalone reader lease requires a PostgreSQL transaction-capable database")
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
-	if err != nil {
-		return "", err
-	}
-	lease, err := createQuerySnapshotLease(ctx, tx, in)
-	if err != nil {
-		_ = tx.Rollback(contextOrBackground(ctx))
-		return "", err
-	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
-		return "", err
-	}
-	return lease, nil
+	var lease string
+	err = pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		var err error
+		lease, err = createQuerySnapshotLease(ctx, tx, in)
+		return err
+	})
+	return lease, err
 }
 
 // CreateQuerySnapshotLeaseTx composes lease admission with the caller's
@@ -626,7 +597,7 @@ func GuardReaderSnapshotRetentionTx(ctx context.Context, tx Tx, generation servi
 		return errors.New("invalid reader lease generation or snapshot")
 	}
 	id, _ := pgUUID(string(generation))
-	covered, err := querySet(tx).GuardReaderSnapshotRetention(contextOrBackground(ctx), servingdb.GuardReaderSnapshotRetentionParams{Column1: id, PSnapshot: snapshot})
+	covered, err := querySet(tx).GuardReaderSnapshotRetention(ctx, servingdb.GuardReaderSnapshotRetentionParams{Column1: id, PSnapshot: snapshot})
 	if errors.Is(err, pgx.ErrNoRows) || (!covered && err == nil) {
 		return errors.New("generation snapshot is not covered by a live delivery retention root")
 	}
@@ -650,7 +621,7 @@ func createQuerySnapshotLease(ctx context.Context, db Tx, in servingstate.Snapsh
 		expiry = pgtype.Timestamptz{Time: in.ExpiresAt.UTC(), Valid: true}
 	}
 	genUUID, _ := pgUUID(string(in.ServingStateID))
-	tag, err := querySet(db).CreateReaderLease(contextOrBackground(ctx), servingdb.CreateReaderLeaseParams{LeaseID: id, Column2: genUUID, DucklakeSnapshotID: in.DuckLakeSnapshotID, OwnerID: in.OwnerID, Column5: expiry})
+	tag, err := querySet(db).CreateReaderLease(ctx, servingdb.CreateReaderLeaseParams{LeaseID: id, Column2: genUUID, DucklakeSnapshotID: in.DuckLakeSnapshotID, OwnerID: in.OwnerID, Column5: expiry})
 	if err != nil {
 		return "", err
 	}
@@ -667,7 +638,7 @@ func (r *Repository) ReleaseQuerySnapshotLease(ctx context.Context, id string) e
 	if err != nil {
 		return err
 	}
-	_, err = querySet(db).ReleaseReaderLease(contextOrBackground(ctx), id)
+	_, err = querySet(db).ReleaseReaderLease(ctx, id)
 	return err
 }
 func (r *Repository) ExtendQuerySnapshotLease(ctx context.Context, id string, expires time.Time) error {
@@ -682,19 +653,9 @@ func (r *Repository) ExtendQuerySnapshotLease(ctx context.Context, id string, ex
 	if !ok {
 		return errors.New("standalone reader lease extension requires a PostgreSQL transaction-capable database")
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
-	if err != nil {
-		return err
-	}
-	err = extendQuerySnapshotLeaseTx(ctx, tx, id, expires)
-	if err != nil {
-		_ = tx.Rollback(contextOrBackground(ctx))
-		return err
-	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
-		return err
-	}
-	return nil
+	return pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		return extendQuerySnapshotLeaseTx(ctx, tx, id, expires)
+	})
 }
 
 // ExtendQuerySnapshotLeaseTx rechecks the exact live delivery retention root
@@ -710,7 +671,7 @@ func (r *Repository) ExtendQuerySnapshotLeaseTx(ctx context.Context, tx Tx, id s
 }
 
 func extendQuerySnapshotLeaseTx(ctx context.Context, tx Tx, id string, expires time.Time) error {
-	lease, err := querySet(tx).ReaderLease(contextOrBackground(ctx), id)
+	lease, err := querySet(tx).ReaderLease(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return servingstate.ErrSnapshotLeaseLost
 	}
@@ -720,7 +681,7 @@ func extendQuerySnapshotLeaseTx(ctx context.Context, tx Tx, id string, expires t
 	if err := GuardReaderSnapshotRetentionTx(ctx, tx, servingstate.ID(lease.GenerationID), lease.DucklakeSnapshotID); err != nil {
 		return servingstate.ErrSnapshotLeaseLost
 	}
-	tag, err := querySet(tx).ExtendReaderLease(contextOrBackground(ctx), servingdb.ExtendReaderLeaseParams{LeaseID: id, ExpiresAt: pgtype.Timestamptz{Time: expires.UTC(), Valid: true}})
+	tag, err := querySet(tx).ExtendReaderLease(ctx, servingdb.ExtendReaderLeaseParams{LeaseID: id, ExpiresAt: pgtype.Timestamptz{Time: expires.UTC(), Valid: true}})
 	if err != nil {
 		return err
 	}
@@ -741,15 +702,9 @@ func (r *Repository) ReleaseExpiredQuerySnapshotLeases(ctx context.Context, e st
 	if !ok {
 		return errors.New("expired reader lease reconciliation requires a PostgreSQL transaction-capable database")
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
-	if err != nil {
-		return err
-	}
-	if err := r.ReleaseExpiredQuerySnapshotLeasesTx(ctx, tx, e); err != nil {
-		_ = tx.Rollback(contextOrBackground(ctx))
-		return err
-	}
-	return tx.Commit(contextOrBackground(ctx))
+	return pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		return r.ReleaseExpiredQuerySnapshotLeasesTx(ctx, tx, e)
+	})
 }
 
 // ReleaseExpiredQuerySnapshotLeasesTx runs one bounded expired-lease batch on
@@ -767,7 +722,7 @@ func (r *Repository) ReleaseExpiredQuerySnapshotLeasesTx(ctx context.Context, tx
 	if err := servingstate.ValidateEnvironment(servingstate.Environment(e)); err != nil {
 		return err
 	}
-	_, err := querySet(tx).ReleaseExpiredLeases(contextOrBackground(ctx), servingdb.ReleaseExpiredLeasesParams{Environment: e, BatchLimit: retentionBatchLimit})
+	_, err := querySet(tx).ReleaseExpiredLeases(ctx, servingdb.ReleaseExpiredLeasesParams{Environment: e, BatchLimit: retentionBatchLimit})
 	return err
 }
 
@@ -779,7 +734,7 @@ func (r *Repository) LeasedDuckLakeSnapshots(ctx context.Context, e string) ([]i
 	if err != nil {
 		return nil, err
 	}
-	rows, err := querySet(db).LeasedSnapshots(contextOrBackground(ctx), e)
+	rows, err := querySet(db).LeasedSnapshots(ctx, e)
 	if err != nil {
 		return nil, err
 	}
@@ -793,7 +748,7 @@ func (r *Repository) ReferencedDuckLakeSnapshots(ctx context.Context, e string) 
 	if err != nil {
 		return nil, err
 	}
-	return querySet(db).ReferencedSnapshots(contextOrBackground(ctx), e)
+	return querySet(db).ReferencedSnapshots(ctx, e)
 }
 func (r *Repository) ActiveDuckLakeSnapshots(ctx context.Context, e string) ([]int64, error) {
 	return r.ReferencedDuckLakeSnapshots(ctx, e)
@@ -806,7 +761,7 @@ func (r *Repository) ForeignEnvironmentDuckLakeSnapshots(ctx context.Context, e 
 	if err != nil {
 		return nil, err
 	}
-	return querySet(db).ForeignSnapshots(contextOrBackground(ctx), e)
+	return querySet(db).ForeignSnapshots(ctx, e)
 }
 func (r *Repository) ActiveServingStateGraph(ctx context.Context, p projectgraph.ResourceID, e string) (servingstate.AssetGraph, bool, error) {
 	s, _, err := r.ActiveArtifact(ctx, p, servingstate.Environment(e))
@@ -837,7 +792,7 @@ func (r *Repository) ServingStateGraph(ctx context.Context, p projectgraph.Resou
 	if err != nil {
 		return servingstate.AssetGraph{}, false, err
 	}
-	rows, err := querySet(db).ListAssets(contextOrBackground(ctx), genUUID)
+	rows, err := querySet(db).ListAssets(ctx, genUUID)
 	if err != nil {
 		return servingstate.AssetGraph{}, false, err
 	}
@@ -849,7 +804,7 @@ func (r *Repository) ServingStateGraph(ctx context.Context, p projectgraph.Resou
 		}
 		g.Assets = append(g.Assets, servingstate.Asset{ID: rid, SnapshotID: row.SnapshotID, ProjectID: p, ServingStateID: id, Type: row.AssetType, Key: row.AssetKey, ParentID: projectgraph.ResourceID(row.ParentLogicalAssetID), Title: row.Title, Description: row.Description, SourceFile: row.SourceFile, PayloadSchema: row.PayloadSchema, PayloadJSON: row.PayloadJson, ContentHash: row.ContentHash})
 	}
-	erows, err := querySet(db).ListAssetEdges(contextOrBackground(ctx), genUUID)
+	erows, err := querySet(db).ListAssetEdges(ctx, genUUID)
 	if err != nil {
 		return servingstate.AssetGraph{}, false, err
 	}
@@ -880,7 +835,7 @@ func (r *Repository) AssetVersions(ctx context.Context, p projectgraph.ResourceI
 	if err != nil {
 		return nil, err
 	}
-	rows, err := querySet(db).AssetVersions(contextOrBackground(ctx), servingdb.AssetVersionsParams{ProjectID: p.String(), Environment: e, LogicalAssetID: a.String()})
+	rows, err := querySet(db).AssetVersions(ctx, servingdb.AssetVersionsParams{ProjectID: p.String(), Environment: e, LogicalAssetID: a.String()})
 	if err != nil {
 		return nil, err
 	}

@@ -65,7 +65,7 @@ func TestAdapterBacksNativeProductServiceWithCanonicalAccessAudit(t *testing.T) 
 	if _, err := db.Exec(t.Context(), `INSERT INTO access.principal(id, principal_type, status) VALUES ($1::uuid, 'user', 'active')`, principalID); err != nil {
 		t.Fatal(err)
 	}
-	repo, err := productpostgres.NewWithOptions(db, productpostgres.Options{Audit: New()})
+	repo, err := productpostgres.NewWithOptions(db, productpostgres.Options{Audit: NewWithRepository(accesspostgres.New())})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestAdapterCanonicalAuditReplayAndConflict(t *testing.T) {
 	if _, err := db.Exec(t.Context(), `INSERT INTO access.principal(id, principal_type, status) VALUES ($1::uuid, 'user', 'active')`, principalID); err != nil {
 		t.Fatal(err)
 	}
-	adapter := New()
+	adapter := NewWithRepository(accesspostgres.New())
 	input := productpostgres.AuditInput{EventID: "20000000-0000-0000-0000-000000000011", PrincipalID: principalID, Source: "admin.product", Operation: "product.identity.updated", Action: "product.identity.updated", ResourceKind: "product", ResourceID: "instance", Capability: "RESOURCE_MANAGE", Outcome: "success", RequestID: "30000000-0000-0000-0000-000000000011", CorrelationID: "40000000-0000-0000-0000-000000000011", AggregateKey: "product:instance", AggregateSequence: 1, MetadataJSON: `{"fields":["displayName"]}`}
 	for i := 0; i < 2; i++ {
 		tx, err := db.Begin(t.Context())

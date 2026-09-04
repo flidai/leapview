@@ -165,6 +165,8 @@ func (m *PostgresCatalogMaintenance) Run(ctx context.Context, request PostgresCa
 	if m == nil || nilMaintenanceValue(m.conn) {
 		return PostgresCatalogMaintenanceResult{}, fmt.Errorf("%w: executor is unavailable", ErrPostgresCatalogMaintenanceConnection)
 	}
+	// Physical maintenance is a lifecycle boundary: normalize once before
+	// lease/fence checks and all phase callbacks share this context.
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -293,9 +295,6 @@ func (m *PostgresCatalogMaintenance) runFilePhase(ctx context.Context, function 
 }
 
 func (m *PostgresCatalogMaintenance) runPhase(ctx context.Context, fn func(context.Context) error) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -324,9 +323,6 @@ func (m *PostgresCatalogMaintenance) executePhase(ctx context.Context, fn func(c
 }
 
 func (m *PostgresCatalogMaintenance) phaseContext(ctx context.Context) (context.Context, context.CancelFunc, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	deadline := m.contract.Lease.ExpiresAt
 	if fenceDeadline := m.contract.Fence.LeaseExpiresAt; fenceDeadline.Before(deadline) {
 		deadline = fenceDeadline

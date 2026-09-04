@@ -219,7 +219,7 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 	}
 	intent.EventID = ""
 	cancelCtx = refreshrun.WithAuditIntent(cancelCtx, *intent)
-	cancel, cancelErr := m.cancelRuns()
+	cancel, cancelErr := m.readRuns()
 	if cancelErr != nil {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("unavailable", "Refresh service is unavailable"))
 		return

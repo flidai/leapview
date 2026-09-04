@@ -26,7 +26,7 @@ func (a *Adapter) AppendApprovalEvent(ctx context.Context, tx depauth.Tx, input 
 	if err != nil {
 		return err
 	}
-	stored, err := a.events.AppendEvent(ctx, tx, eventspostgres.EventInput{
+	_, err = a.events.AppendEvent(ctx, tx, eventspostgres.EventInput{
 		EventID: input.Evidence.EventID, ScopeID: input.Request.TargetID,
 		AggregateType: "delivery_approval", AggregateID: input.Request.RequestID,
 		EventType: eventType, SchemaVersion: 1, CorrelationID: input.Evidence.EventID,
@@ -38,9 +38,6 @@ func (a *Adapter) AppendApprovalEvent(ctx context.Context, tx depauth.Tx, input 
 			return fmt.Errorf("%w: approval event identity differs", depauth.ErrConflict)
 		}
 		return err
-	}
-	if stored.EventID != input.Evidence.EventID || stored.ScopeID != input.Request.TargetID || stored.AggregateType != "delivery_approval" || stored.AggregateID != input.Request.RequestID || stored.EventType != eventType || stored.SchemaVersion != 1 || stored.CorrelationID != input.Evidence.EventID {
-		return fmt.Errorf("%w: approval event identity differs", depauth.ErrConflict)
 	}
 	return nil
 }

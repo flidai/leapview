@@ -16,6 +16,7 @@ import (
 
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	dbgen "github.com/flidai/leapview/internal/analytics/ducklake/postgres/internal/db"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -168,9 +169,6 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// sqlc-exception:schema-ddl -- capability-owned schema DDL.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
@@ -221,9 +219,6 @@ func QuarantineMarker(ctx context.Context, tx DBTX, in MarkerQuarantineInput) (M
 	if tx == nil || !validMarkerQuarantineInput(in) {
 		return MarkerQuarantine{}, ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	evidence, err := canonicalEvidence(in.Evidence)
 	if err != nil {
 		return MarkerQuarantine{}, fmt.Errorf("%w: marker quarantine evidence is required", ErrInvalid)
@@ -267,9 +262,6 @@ func (r *Repository) QuarantineMarker(ctx context.Context, in MarkerQuarantineIn
 func LoadMarkerQuarantine(ctx context.Context, db DBTX, physicalPoolID, catalogID, attemptID string) (MarkerQuarantine, error) {
 	if db == nil || !validID(physicalPoolID) || !validID(catalogID) || !validUUID(attemptID) {
 		return MarkerQuarantine{}, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	row, err := querygen(db).GetMarkerQuarantine(ctx, dbgen.GetMarkerQuarantineParams{PhysicalPoolID: physicalPoolID, CatalogID: catalogID, AttemptID: pgUUID(attemptID)})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -315,9 +307,6 @@ func lockMarkerQuarantineScope(ctx context.Context, db DBTX, physicalPoolID stri
 	if db == nil || !validID(physicalPoolID) {
 		return ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	queries := querygen(db)
 	if err := queries.AcquireMarkerQuarantineScopeLock(ctx, physicalPoolID); err != nil {
 		return err
@@ -343,9 +332,6 @@ func lockMarkerQuarantineScope(ctx context.Context, db DBTX, physicalPoolID stri
 func lockAttemptAdmissionScope(ctx context.Context, db DBTX, physicalPoolID, catalogID string) error {
 	if db == nil || !validID(physicalPoolID) || !validID(catalogID) {
 		return ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	err := querygen(db).AssertAttemptAdmissionFence(ctx, dbgen.AssertAttemptAdmissionFenceParams{PhysicalPoolID: physicalPoolID, CatalogID: catalogID})
 	if err == nil {
@@ -416,9 +402,6 @@ func databaseClock(ctx context.Context, db DBTX) (time.Time, error) {
 	if db == nil {
 		return time.Time{}, ErrClockUnavailable
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	value, err := querygen(db).DatabaseClock(ctx)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("%w: %v", ErrClockUnavailable, err)
@@ -435,9 +418,6 @@ func RegisterCatalog(ctx context.Context, tx DBTX, identity CatalogIdentity) (Ca
 	}
 	if err := validateCatalog(identity); err != nil {
 		return CatalogIdentity{}, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	err := querygen(tx).InsertCatalogIdentity(ctx, dbgen.InsertCatalogIdentityParams{PhysicalPoolID: identity.PhysicalPoolID, CatalogDatabase: identity.CatalogDatabase, CatalogID: identity.CatalogID, CatalogUuid: identity.CatalogUUID, MetadataSchema: identity.MetadataSchema})
 	if err != nil {
@@ -494,9 +474,6 @@ func (r *Repository) LoadCatalog(ctx context.Context, poolID string) (CatalogIde
 func (r *Repository) AdmitSnapshotRetentionFromSealTx(ctx context.Context, tx Tx, sealID string) error {
 	if r == nil || tx == nil || !r.Configured() || !validUUID(sealID) {
 		return ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	seal, err := querygen(tx).GetSnapshotRetentionSealIdentity(ctx, pgUUID(sealID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -864,8 +841,8 @@ func validSnapshotRef(ref SnapshotRef) bool {
 
 func validMarkerQuarantineInput(in MarkerQuarantineInput) bool {
 	if !validID(in.PhysicalPoolID) || !validID(in.CatalogID) || !validUUID(in.AttemptID) ||
-		!validDigest(in.RequestDigest) || !validDigest(in.PlanDigest) || !validMarkerQuarantineReason(in.Reason) ||
-		!validDigest(in.ObservedMarkerDigest) || len(in.ObservedSnapshotIDs) > 128 {
+		platformdigest.ValidateSHA256Identity(in.RequestDigest) != nil || platformdigest.ValidateSHA256Identity(in.PlanDigest) != nil || !validMarkerQuarantineReason(in.Reason) ||
+		platformdigest.ValidateSHA256Identity(in.ObservedMarkerDigest) != nil || len(in.ObservedSnapshotIDs) > 128 {
 		return false
 	}
 	for _, id := range in.ObservedSnapshotIDs {
@@ -918,18 +895,6 @@ func validSchema(value string) bool {
 	}
 	for i, r := range value {
 		if !(r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || i > 0 && r >= '0' && r <= '9') {
-			return false
-		}
-	}
-	return true
-}
-
-func validDigest(value string) bool {
-	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	for _, r := range value[len("sha256:"):] {
-		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
 			return false
 		}
 	}

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -10,8 +11,30 @@ import (
 
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type countingSourceTx struct {
+	pgx.Tx
+	queries int
+}
+
+func (tx *countingSourceTx) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	tx.queries++
+	return tx.Tx.Exec(ctx, sql, arguments...)
+}
+
+func (tx *countingSourceTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	tx.queries++
+	return tx.Tx.Query(ctx, sql, args...)
+}
+
+func (tx *countingSourceTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	tx.queries++
+	return tx.Tx.QueryRow(ctx, sql, args...)
+}
 
 func sourceTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -338,6 +361,134 @@ func TestSourcePlanBlobSnapshotLifecycle(t *testing.T) {
 		t.Fatalf("post-commit missing=%v err=%v", missing, err)
 	}
 	_ = tx.Rollback(t.Context())
+}
+
+func TestSourcePlanAndSnapshotNearLimitUseBoundedQueries(t *testing.T) {
+	db := sourceTestDB(t)
+	r := New(db)
+	const entryCount = maxSourceSnapshotFiles
+	planEntries := make([]SourceSyncPlanEntryInput, entryCount)
+	snapshotEntries := make([]SourceSnapshotEntryInput, entryCount)
+	for i := range planEntries {
+		path := fmt.Sprintf("files/%05d.yaml", i)
+		digest := sha256Identity([]byte(path))
+		planEntries[i] = SourceSyncPlanEntryInput{Path: path, Digest: digest, SizeBytes: int64(i%17 + 1), Ordinal: i}
+		snapshotEntries[i] = SourceSnapshotEntryInput{Path: path, Digest: digest, SizeBytes: planEntries[i].SizeBytes, Ordinal: i}
+	}
+	projectID := "project:source-near-limit"
+	domain := "runtime"
+	ownerID := "near-limit-owner"
+	source := sourceDigest(projectID, planEntries[0].Path, snapshotEntries)
+	planInput := SyncPlanInput{
+		PlanID: uuid.New(), OperationID: uuid.New(), ProjectID: projectID,
+		StorageSecurityDomain: domain, OwnerID: ownerID, CandidateKey: "near-limit",
+		SourceDigest: source, ProjectFile: planEntries[0].Path,
+		RequestDigest: sourceTestDigest("a"), ExpiresAt: time.Now().Add(5 * time.Minute),
+		Entries: planEntries,
+	}
+
+	baseTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	planTx := &countingSourceTx{Tx: baseTx}
+	plan, err := r.CreateSyncPlanTx(t.Context(), planTx, planInput)
+	if err != nil {
+		_ = planTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if planTx.queries > 8 {
+		_ = planTx.Rollback(t.Context())
+		t.Fatalf("near-limit plan used %d queries, want at most 8", planTx.queries)
+	}
+	if err := planTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Entries) != entryCount || plan.Entries[0].Path != planEntries[0].Path || plan.Entries[entryCount-1].Path != planEntries[entryCount-1].Path {
+		t.Fatalf("near-limit plan ordering changed: entries=%d first=%q last=%q", len(plan.Entries), plan.Entries[0].Path, plan.Entries[len(plan.Entries)-1].Path)
+	}
+
+	entryBatch, err := sourceEntryBatch(planEntries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `
+		INSERT INTO project.source_blob
+			(project_id, storage_security_domain, digest, size_bytes, object_key, content_type, metadata_digest)
+		SELECT $1, $2, entry.digest, entry.size_bytes,
+		       'sources/' || substring(entry.digest from 8), 'text/plain', $3
+		FROM jsonb_to_recordset($4::jsonb)
+			AS entry(path text, digest text, size_bytes bigint, ordinal integer)
+		WHERE entry.ordinal < $5`,
+		projectID, domain, sourceTestDigest("b"), entryBatch, entryCount-1); err != nil {
+		t.Fatal(err)
+	}
+	// Prove that one missing blob aborts before any snapshot state is written.
+	attestationPayload := []byte(`{"sourceDigest":"` + source + `"}`)
+	commit := CommitSnapshotInput{
+		PlanID: plan.PlanID, OwnerID: ownerID, SnapshotID: uuid.New(), ProjectID: projectID,
+		StorageSecurityDomain: domain, SourceDigest: source, ProjectFile: plan.ProjectFile,
+		ProjectDigest: sourceTestDigest("c"), ProjectArtifactObjectKey: "artifacts/project.json",
+		ProjectArtifactDigest: sourceTestDigest("d"), ProjectArtifactSizeBytes: 10,
+		ManifestObjectKey: "manifests/source.json", ManifestObjectDigest: sourceTestDigest("e"),
+		ManifestObjectSizeBytes: 20, CompilerVersion: "compiler:v1", SchemaVersion: 1,
+		Entries: snapshotEntries, Attestation: SourceAttestationInput{
+			AttestationID: uuid.New(), SourceDigest: source,
+			AttestationDigest: sha256Identity(attestationPayload), Payload: attestationPayload,
+		},
+	}
+	missingTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CommitSnapshotTx(t.Context(), missingTx, commit); !errors.Is(err, ErrSourceConflict) {
+		_ = missingTx.Rollback(t.Context())
+		t.Fatalf("near-limit missing blob commit err=%v, want ErrSourceConflict", err)
+	}
+	if err := missingTx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var snapshots int
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM project.source_snapshot WHERE snapshot_id=$1`, commit.SnapshotID).Scan(&snapshots); err != nil || snapshots != 0 {
+		t.Fatalf("missing-blob snapshot rows=%d err=%v, want atomic rollback", snapshots, err)
+	}
+	if _, err := db.Exec(t.Context(), `
+		INSERT INTO project.source_blob
+			(project_id, storage_security_domain, digest, size_bytes, object_key, content_type, metadata_digest)
+		VALUES ($1,$2,$3,$4,$5,'text/plain',$6)`, projectID, domain,
+		planEntries[entryCount-1].Digest, planEntries[entryCount-1].SizeBytes,
+		"sources/"+strings.TrimPrefix(planEntries[entryCount-1].Digest, "sha256:"), sourceTestDigest("b")); err != nil {
+		t.Fatal(err)
+	}
+
+	baseTx, err = db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitTx := &countingSourceTx{Tx: baseTx}
+	snapshot, err := r.CommitSnapshotTx(t.Context(), commitTx, commit)
+	if err != nil {
+		_ = commitTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if commitTx.queries > 16 {
+		_ = commitTx.Rollback(t.Context())
+		t.Fatalf("near-limit snapshot used %d queries, want at most 16", commitTx.queries)
+	}
+	if snapshot.SnapshotID != commit.SnapshotID {
+		_ = commitTx.Rollback(t.Context())
+		t.Fatalf("snapshot id=%s, want %s", snapshot.SnapshotID, commit.SnapshotID)
+	}
+	if err := commitTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := r.SnapshotEntries(t.Context(), snapshot.SnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != entryCount || stored[0].Path != snapshotEntries[0].Path || stored[entryCount-1].Path != snapshotEntries[entryCount-1].Path {
+		t.Fatalf("near-limit snapshot ordering changed: entries=%d first=%q last=%q", len(stored), stored[0].Path, stored[len(stored)-1].Path)
+	}
 }
 
 func TestSourcePlanRollbackAndValidation(t *testing.T) {

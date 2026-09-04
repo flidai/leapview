@@ -15,6 +15,24 @@ analytical snapshots, managed-data revisions, identity/access state, and every
 external store. Keep project source in Git, but do not treat Git as a backup of
 database state or analytical data.
 
+Use a reviewed service record rather than an implied default. At minimum, name
+the provider, region/cluster, backup policy, encryption-key owner, declared RPO,
+declared RTO, and the last measured drill for each boundary:
+
+| Boundary | Recovery point to prove | Recovery time to measure |
+| --- | --- | --- |
+| Control PostgreSQL | WAL/PITR timestamp or provider backup ID, including the control database identity and timeline | Provider restore complete, credentials accepted, and the exact recovery set published |
+| DuckLake PostgreSQL catalog | Catalog database identity, provider PITR point, catalog version, and DuckLake snapshot ID | Catalog reachable and the snapshot seal/closure validates |
+| DuckLake/object roots and serving artifacts | Object URI, immutable version/generation, digest, and provider restore/versioning evidence | Every root readable and `/readyz` passes after the selected frontier is published |
+| Credential and key material | Secret-manager/provider version, role or service identity, TLS CA/certificate, and key references (never secret values) | Secret references restored, pools reconnect, and a bounded governed query succeeds |
+
+Measure RPO from the latest durable provider point to the incident boundary and
+RTO from the start of provider restore to the first admitted request. A drill
+that only opens a TCP connection, restores one database, or proves a copied
+file is not an RPO/RTO result. Keep the provider's native operation IDs and
+timestamps with the LeapView recovery evidence; do not put passwords, bearer
+tokens, private keys, or raw connection URLs in that record.
+
 ## Native protection boundary
 
 Use the PostgreSQL operator's supported backup and point-in-time recovery (PITR)
@@ -30,6 +48,51 @@ availability](/docs/guides/operate/postgresql-operations) for the provider
 ownership boundary, alert conditions, maintenance fencing, credential
 rotation, and failover checks. Do not claim that a local archive or copied
 Parquet files are a supported restore artifact.
+
+## Provider-native restore drill
+
+Run this drill in an isolated target with the same PostgreSQL major, DuckLake
+extension/specification, object naming contract, encryption domains, and
+credential-provider integration as production. The provider operator owns the
+restore APIs and can substitute the managed service's equivalent commands.
+
+1. Select one mutually consistent PostgreSQL PITR timestamp (or provider
+   backup ID) for the control and DuckLake databases. Confirm WAL/archive
+   continuity, the database/cluster identities, and the provider timeline before
+   allowing the restore to proceed.
+2. Restore the control database and DuckLake catalog with the provider-native
+   PITR workflow. Restore each immutable object root and serving-artifact root
+   by its provider version/generation, then verify the object digest and
+   encryption-key version. Do not replace a missing version with the latest
+   object.
+3. Restore the secret-manager references required by the named control and
+   DuckLake pools, including the role credentials, TLS CA/certificate chain,
+   and key-encryption references. Resolve the exact retained provider version;
+   a newly rotated secret is a new recovery input and must be recorded as such.
+   If the secret manager itself was unavailable, recover it using its native
+   export/replication procedure before starting LeapView. Never copy secret
+   values into the recovery-set JSON or evidence.
+4. Keep writes and traffic stopped. Run `leapview admin recovery prepare`, the
+   external provider probes, `leapview admin recovery validate`, and
+   `leapview admin recovery publish` from the qualification sequence below.
+   Capture provider operation IDs, point-in-time/timeline identities, object
+   version IDs, key versions, and command output with secrets redacted.
+5. Set `LEAPVIEW_RECOVERY_SET_ID`, restart, and gate traffic on `/readyz`.
+   Verify a metadata read/write transaction, one governed DuckLake query, one
+   representative dashboard, access policy evaluation, and managed-data
+   revision visibility. Record measured RPO/RTO and retain failed-state
+   evidence until the incident or drill review is closed.
+
+The repository can validate the immutable frontier, evidence digest, and
+active-pointer bindings, but it cannot honestly prove a provider PITR,
+object-store version restore, encryption-key recovery, or secret-manager
+restore in this local test environment. Those steps remain external-provider
+admission gates; a local unit or PostgreSQL conformance test must not be
+reported as completion of this drill. The active serving seal carries the
+object URI and digest, while provider version/frontier identifiers are retained
+in the recovery-set evidence; readiness deliberately does not re-probe those
+providers. A new provider version or frontier therefore requires a new
+recovery-set validation before publication.
 
 ## Recovery qualification and publication
 

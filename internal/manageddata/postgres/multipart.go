@@ -49,11 +49,11 @@ func (r *Repository) CreateS3MultipartUpload(ctx context.Context, in manageddata
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
-	if err := r.audit.RecordAuditIntent(contextOrBackground(ctx), tx, *in.AuditIntent); err != nil {
+	if err := r.audit.RecordAuditIntent(ctx, tx, *in.AuditIntent); err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
 	if owned {
-		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return manageddata.S3MultipartUpload{}, err
 		}
 	}
@@ -62,14 +62,14 @@ func (r *Repository) CreateS3MultipartUpload(ctx context.Context, in manageddata
 
 func (r *Repository) createS3MultipartUploadOn(ctx context.Context, db DBTX, in manageddata.CreateS3MultipartUploadInput, id string) (manageddata.S3MultipartUpload, error) {
 	queries := manageddb.New(db)
-	if err := queries.InsertMultipartUpload(contextOrBackground(ctx), manageddb.InsertMultipartUploadParams{MultipartID: id, UploadID: in.UploadSessionID.String(), LogicalPath: in.LogicalPath, Sha256: in.SHA256, SizeBytes: in.SizeBytes, IdempotencyIdentity: in.IdempotencyIdentity}); err != nil {
+	if err := queries.InsertMultipartUpload(ctx, manageddb.InsertMultipartUploadParams{MultipartID: id, UploadID: in.UploadSessionID.String(), LogicalPath: in.LogicalPath, Sha256: in.SHA256, SizeBytes: in.SizeBytes, IdempotencyIdentity: in.IdempotencyIdentity}); err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
-	row, err := queries.GetMultipartByID(contextOrBackground(ctx), id)
+	row, err := queries.GetMultipartByID(ctx, id)
 	if err != nil {
 		mapped := scanNotFound(err)
 		if errors.Is(mapped, ErrNotFound) {
-			existingID, lookupErr := queries.GetMultipartByIdentity(contextOrBackground(ctx), manageddb.GetMultipartByIdentityParams{UploadID: in.UploadSessionID.String(), IdempotencyIdentity: in.IdempotencyIdentity})
+			existingID, lookupErr := queries.GetMultipartByIdentity(ctx, manageddb.GetMultipartByIdentityParams{UploadID: in.UploadSessionID.String(), IdempotencyIdentity: in.IdempotencyIdentity})
 			if lookupErr == nil && existingID != id {
 				return manageddata.S3MultipartUpload{}, ErrConflict
 			}
@@ -87,7 +87,7 @@ func (r *Repository) S3MultipartUploadByID(ctx context.Context, id manageddata.M
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
-	row, err := manageddb.New(db).GetMultipartByID(contextOrBackground(ctx), id.String())
+	row, err := manageddb.New(db).GetMultipartByID(ctx, id.String())
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, scanNotFound(err)
 	}
@@ -122,11 +122,11 @@ func (r *Repository) InitializeS3MultipartUpload(ctx context.Context, in managed
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
-	if err := r.audit.RecordAuditIntent(contextOrBackground(ctx), tx, *in.AuditIntent); err != nil {
+	if err := r.audit.RecordAuditIntent(ctx, tx, *in.AuditIntent); err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
 	if owned {
-		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return manageddata.S3MultipartUpload{}, err
 		}
 	}
@@ -135,11 +135,11 @@ func (r *Repository) InitializeS3MultipartUpload(ctx context.Context, in managed
 
 func (r *Repository) initializeS3MultipartUploadOn(ctx context.Context, db DBTX, in manageddata.InitializeS3MultipartUploadInput) (manageddata.S3MultipartUpload, error) {
 	queries := manageddb.New(db)
-	tag, err := queries.InitializeMultipart(contextOrBackground(ctx), manageddb.InitializeMultipartParams{MultipartID: in.ID.String(), ObjectKey: in.ObjectKey, ProviderUploadID: in.ProviderUploadID, Existing: in.Existing})
+	tag, err := queries.InitializeMultipart(ctx, manageddb.InitializeMultipartParams{MultipartID: in.ID.String(), ObjectKey: in.ObjectKey, ProviderUploadID: in.ProviderUploadID, Existing: in.Existing})
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
-	row, err := queries.GetMultipartByID(contextOrBackground(ctx), in.ID.String())
+	row, err := queries.GetMultipartByID(ctx, in.ID.String())
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, scanNotFound(err)
 	}
@@ -157,11 +157,11 @@ func (r *Repository) ReserveS3MultipartPart(ctx context.Context, part manageddat
 	if part.MultipartUploadID == "" || part.PartNumber < 1 || part.PartNumber > 10000 || part.SizeBytes <= 0 {
 		return manageddata.S3MultipartPart{}, ErrInvalid
 	}
-	err = manageddb.New(db).InsertMultipartPart(contextOrBackground(ctx), manageddb.InsertMultipartPartParams{MultipartID: part.MultipartUploadID.String(), PartNumber: int32(part.PartNumber), SizeBytes: part.SizeBytes, Sha256: part.SHA256})
+	err = manageddb.New(db).InsertMultipartPart(ctx, manageddb.InsertMultipartPartParams{MultipartID: part.MultipartUploadID.String(), PartNumber: int32(part.PartNumber), SizeBytes: part.SizeBytes, Sha256: part.SHA256})
 	if err != nil {
 		return manageddata.S3MultipartPart{}, err
 	}
-	row, err := manageddb.New(db).GetMultipartPart(contextOrBackground(ctx), manageddb.GetMultipartPartParams{MultipartID: part.MultipartUploadID.String(), PartNumber: int32(part.PartNumber)})
+	row, err := manageddb.New(db).GetMultipartPart(ctx, manageddb.GetMultipartPartParams{MultipartID: part.MultipartUploadID.String(), PartNumber: int32(part.PartNumber)})
 	if err != nil {
 		return manageddata.S3MultipartPart{}, err
 	}
@@ -176,7 +176,7 @@ func (r *Repository) ListS3MultipartParts(ctx context.Context, id manageddata.Mu
 	if err != nil {
 		return nil, err
 	}
-	rows, err := manageddb.New(db).ListMultipartParts(contextOrBackground(ctx), id.String())
+	rows, err := manageddb.New(db).ListMultipartParts(ctx, id.String())
 	if err != nil {
 		return nil, err
 	}
@@ -215,11 +215,11 @@ func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, in managedd
 	if err != nil {
 		return manageddata.S3MultipartCompletion{}, err
 	}
-	if err := r.audit.RecordAuditIntent(contextOrBackground(ctx), tx, *in.AuditIntent); err != nil {
+	if err := r.audit.RecordAuditIntent(ctx, tx, *in.AuditIntent); err != nil {
 		return manageddata.S3MultipartCompletion{}, err
 	}
 	if owned {
-		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return manageddata.S3MultipartCompletion{}, err
 		}
 	}
@@ -228,11 +228,11 @@ func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, in managedd
 
 func (r *Repository) beginS3MultipartCompletionOn(ctx context.Context, db DBTX, in manageddata.BeginS3MultipartCompletionInput) (manageddata.S3MultipartCompletion, error) {
 	queries := manageddb.New(db)
-	tag, err := queries.BeginMultipartCompletion(contextOrBackground(ctx), manageddb.BeginMultipartCompletionParams{MultipartID: in.ID.String(), CompletionIdentity: in.IdempotencyIdentity, CompletionRequestHash: in.RequestHash})
+	tag, err := queries.BeginMultipartCompletion(ctx, manageddb.BeginMultipartCompletionParams{MultipartID: in.ID.String(), CompletionIdentity: in.IdempotencyIdentity, CompletionRequestHash: in.RequestHash})
 	if err != nil {
 		return manageddata.S3MultipartCompletion{}, err
 	}
-	row, err := queries.GetMultipartByID(contextOrBackground(ctx), in.ID.String())
+	row, err := queries.GetMultipartByID(ctx, in.ID.String())
 	if err != nil {
 		return manageddata.S3MultipartCompletion{}, scanNotFound(err)
 	}
@@ -242,7 +242,7 @@ func (r *Repository) beginS3MultipartCompletionOn(ctx context.Context, db DBTX, 
 			return manageddata.S3MultipartCompletion{}, ErrConflict
 		}
 	}
-	partRows, err := queries.ListMultipartParts(contextOrBackground(ctx), in.ID.String())
+	partRows, err := queries.ListMultipartParts(ctx, in.ID.String())
 	if err != nil {
 		return manageddata.S3MultipartCompletion{}, err
 	}
@@ -284,11 +284,11 @@ func (r *Repository) BeginS3MultipartAbort(ctx context.Context, in manageddata.B
 	if err != nil {
 		return manageddata.S3MultipartAbort{}, err
 	}
-	if err := r.audit.RecordAuditIntent(contextOrBackground(ctx), tx, *in.AuditIntent); err != nil {
+	if err := r.audit.RecordAuditIntent(ctx, tx, *in.AuditIntent); err != nil {
 		return manageddata.S3MultipartAbort{}, err
 	}
 	if owned {
-		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return manageddata.S3MultipartAbort{}, err
 		}
 	}
@@ -297,11 +297,11 @@ func (r *Repository) BeginS3MultipartAbort(ctx context.Context, in manageddata.B
 
 func (r *Repository) beginS3MultipartAbortOn(ctx context.Context, db DBTX, in manageddata.BeginS3MultipartAbortInput) (manageddata.S3MultipartAbort, error) {
 	queries := manageddb.New(db)
-	tag, err := queries.BeginMultipartAbort(contextOrBackground(ctx), manageddb.BeginMultipartAbortParams{MultipartID: in.ID.String(), AbortIdentity: in.IdempotencyIdentity})
+	tag, err := queries.BeginMultipartAbort(ctx, manageddb.BeginMultipartAbortParams{MultipartID: in.ID.String(), AbortIdentity: in.IdempotencyIdentity})
 	if err != nil {
 		return manageddata.S3MultipartAbort{}, err
 	}
-	row, err := queries.GetMultipartByID(contextOrBackground(ctx), in.ID.String())
+	row, err := queries.GetMultipartByID(ctx, in.ID.String())
 	if err != nil {
 		return manageddata.S3MultipartAbort{}, scanNotFound(err)
 	}
@@ -319,7 +319,7 @@ func (r *Repository) finishMultipart(ctx context.Context, id manageddata.Multipa
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
-	tag, err := manageddb.New(db).FinishMultipart(contextOrBackground(ctx), manageddb.FinishMultipartParams{MultipartID: id.String(), FromStatus: from, ToStatus: to})
+	tag, err := manageddb.New(db).FinishMultipart(ctx, manageddb.FinishMultipartParams{MultipartID: id.String(), FromStatus: from, ToStatus: to})
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
@@ -343,7 +343,7 @@ func (r *Repository) FailS3MultipartUpload(ctx context.Context, id manageddata.M
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
-	tag, err := manageddb.New(db).FailMultipart(contextOrBackground(ctx), manageddb.FailMultipartParams{MultipartID: id.String(), Error: msg})
+	tag, err := manageddb.New(db).FailMultipart(ctx, manageddb.FailMultipartParams{MultipartID: id.String(), Error: msg})
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
@@ -364,7 +364,7 @@ func (r *Repository) ListRecoverableS3MultipartUploads(ctx context.Context, upda
 	if !updatedCutoff.IsZero() {
 		cutoff = pgtype.Timestamptz{Time: updatedCutoff.UTC(), Valid: true}
 	}
-	rows, err := manageddb.New(db).ListRecoverableMultipart(contextOrBackground(ctx), manageddb.ListRecoverableMultipartParams{Cutoff: cutoff, PLimit: int32(limit)})
+	rows, err := manageddb.New(db).ListRecoverableMultipart(ctx, manageddb.ListRecoverableMultipartParams{Cutoff: cutoff, PLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
@@ -379,7 +379,7 @@ func (r *Repository) ListS3MultipartProviderIDsByDigest(ctx context.Context, dig
 	if err != nil {
 		return nil, err
 	}
-	rows, err := manageddb.New(db).ListProviderIDsByDigest(contextOrBackground(ctx), digest)
+	rows, err := manageddb.New(db).ListProviderIDsByDigest(ctx, digest)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +390,7 @@ func (r *Repository) ListCreatingS3MultipartIDsByDigest(ctx context.Context, dig
 	if err != nil {
 		return nil, err
 	}
-	rows, err := manageddb.New(db).ListCreatingIDsByDigest(contextOrBackground(ctx), digest)
+	rows, err := manageddb.New(db).ListCreatingIDsByDigest(ctx, digest)
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +404,7 @@ func (r *Repository) ClaimS3MultipartDigest(ctx context.Context, digest, owner s
 	if len(digest) != 64 || digest != strings.ToLower(digest) || canonicalText(owner, 255) != nil || until.IsZero() {
 		return 0, false, ErrInvalid
 	}
-	epoch, err := manageddb.New(db).ClaimDigestLease(contextOrBackground(ctx), manageddb.ClaimDigestLeaseParams{Sha256: digest, OwnerID: owner, LeaseUntil: pgtype.Timestamptz{Time: until.UTC(), Valid: true}})
+	epoch, err := manageddb.New(db).ClaimDigestLease(ctx, manageddb.ClaimDigestLeaseParams{Sha256: digest, OwnerID: owner, LeaseUntil: pgtype.Timestamptz{Time: until.UTC(), Valid: true}})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -418,7 +418,7 @@ func (r *Repository) RenewS3MultipartDigest(ctx context.Context, digest, owner s
 	if len(digest) != 64 || digest != strings.ToLower(digest) || canonicalText(owner, 255) != nil || epoch < 1 || until.IsZero() {
 		return false, ErrInvalid
 	}
-	tag, err := manageddb.New(db).RenewDigestLease(contextOrBackground(ctx), manageddb.RenewDigestLeaseParams{Sha256: digest, OwnerID: owner, FencingEpoch: epoch, LeaseUntil: pgtype.Timestamptz{Time: until.UTC(), Valid: true}})
+	tag, err := manageddb.New(db).RenewDigestLease(ctx, manageddb.RenewDigestLeaseParams{Sha256: digest, OwnerID: owner, FencingEpoch: epoch, LeaseUntil: pgtype.Timestamptz{Time: until.UTC(), Valid: true}})
 	return tag.RowsAffected() == 1, err
 }
 func (r *Repository) ReleaseS3MultipartDigest(ctx context.Context, digest, owner string, epoch int64) error {
@@ -429,7 +429,7 @@ func (r *Repository) ReleaseS3MultipartDigest(ctx context.Context, digest, owner
 	if len(digest) != 64 || digest != strings.ToLower(digest) || canonicalText(owner, 255) != nil || epoch < 1 {
 		return ErrInvalid
 	}
-	tag, err := manageddb.New(db).ReleaseDigestLease(contextOrBackground(ctx), manageddb.ReleaseDigestLeaseParams{Sha256: digest, OwnerID: owner, FencingEpoch: epoch})
+	tag, err := manageddb.New(db).ReleaseDigestLease(ctx, manageddb.ReleaseDigestLeaseParams{Sha256: digest, OwnerID: owner, FencingEpoch: epoch})
 	if err == nil && tag.RowsAffected() != 1 {
 		return ErrStaleFence
 	}

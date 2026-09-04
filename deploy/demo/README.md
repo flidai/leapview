@@ -9,8 +9,8 @@ as `task dev`:
 - Visual Showcase
 
 The project source remains in `dashboards/`. This directory contains only the
-deployment contract and the reviewed SSH host identity; it must never contain
-client configuration or secret values.
+content-publication contract; it must never contain client configuration or
+secret values.
 
 ## Delivery
 
@@ -19,9 +19,21 @@ After `Main artifacts` builds and qualifies the `main` revision,
 
 1. downloads the pinned public Olist dataset and synchronizes it as
    managed data;
-2. publishes `dashboards/leapview.yaml` through the normal candidate,
+2. authenticates to `/api/v1/capabilities` and admits the running runtime only
+   when it reports API v1, native PostgreSQL delivery, a clean production
+   build, and a canonical immutable build revision;
+3. publishes `dashboards/leapview.yaml` through the normal candidate,
    approval, and activation APIs; and
-3. verifies the Visual Showcase and public readiness.
+4. verifies the Visual Showcase and public readiness.
+
+This is deliberately a content-only workflow. The `leapview-demo` platform
+operators own runtime image rollout outside this repository workflow, using an
+immutable image that has passed the repository's [release qualification](../../.github/workflows/release.yml)
+and [installed-candidate qualification](../../.github/workflows/installed-candidate.yml).
+The publication records both the selected source revision and the authenticated
+running build revision in its job output; equality is not required, but the
+runtime compatibility contract above is. No SSH host rollout or tracked SSH
+identity is part of the supported path.
 
 The `leapview-demo` GitHub environment authenticates to Infisical through
 GitHub OIDC. The Infisical `prod:/demo/deployment` path supplies:

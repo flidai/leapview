@@ -46,12 +46,9 @@ type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
-// Tx is the subset required by caller-owned transaction methods.
-type Tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
+// Tx is the complete native transaction contract so mutation methods cannot
+// accidentally accept a pool and split one logical unit across connections.
+type Tx = pgx.Tx
 
 var (
 	ErrConflict        = errors.New("operation idempotency conflict")
@@ -175,9 +172,6 @@ type AppendTerminalInput struct {
 func (r *Repository) AppendTerminalTx(ctx context.Context, tx Tx, in AppendTerminalInput) (Operation, error) {
 	if r == nil || tx == nil {
 		return Operation{}, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	operationIDParsed, err := uuid.Parse(strings.TrimSpace(in.OperationID))
 	if err != nil || operationIDParsed.String() != in.OperationID {
@@ -330,9 +324,6 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// sqlc-exception:schema-ddl. schema.sql owns the capability DDL, guards,
 	// functions, and grants; migration callers retain transaction ownership.
 	_, err := tx.Exec(ctx, schemaSQL)
@@ -375,9 +366,6 @@ func RequestDigest(request []byte) (string, error) {
 }
 
 func (r *Repository) Acquire(ctx context.Context, in AcquireInput) (AcquireResult, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if r == nil || !operationDBConfigured(r.db) {
 		return AcquireResult{}, ErrInvalid
 	}
@@ -385,19 +373,13 @@ func (r *Repository) Acquire(ctx context.Context, in AcquireInput) (AcquireResul
 	if !ok {
 		return AcquireResult{}, errors.New("operation repository requires a pgx transaction-capable DB")
 	}
-	tx, err := b.Begin(ctx)
-	if err != nil {
-		return AcquireResult{}, err
-	}
-	result, err := r.AcquireTx(ctx, tx, in)
-	if err != nil {
-		_ = tx.Rollback(ctx)
-		return result, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return AcquireResult{}, err
-	}
-	return result, nil
+	var result AcquireResult
+	err := pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		var err error
+		result, err = r.AcquireTx(ctx, tx, in)
+		return err
+	})
+	return result, err
 }
 
 // AcquireWithAttempt performs acquisition and binds an external attempt in
@@ -410,9 +392,6 @@ func (r *Repository) AcquireWithAttempt(ctx context.Context, in AcquireInput, at
 	}
 	if attemptIdentity == "" || attemptIdentity != strings.TrimSpace(attemptIdentity) || len(attemptIdentity) > 512 {
 		return AcquireResult{}, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	var result AcquireResult
 	err := r.withTx(ctx, func(tx pgx.Tx) error {
@@ -444,9 +423,6 @@ func (r *Repository) AcquireWithAttempt(ctx context.Context, in AcquireInput, at
 func (r *Repository) AcquireTx(ctx context.Context, tx Tx, in AcquireInput) (AcquireResult, error) {
 	if r == nil || tx == nil {
 		return AcquireResult{}, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	digest, err := normalizeInput(&in)
 	if err != nil {
@@ -573,9 +549,6 @@ func (r *Repository) Get(ctx context.Context, scope, idempotencyKey string) (Ope
 	if r == nil || !operationDBConfigured(r.db) {
 		return Operation{}, ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if scope != strings.TrimSpace(scope) || idempotencyKey != strings.TrimSpace(idempotencyKey) || scope == "" || len(scope) > 255 || idempotencyKey == "" || len(idempotencyKey) > 512 {
 		return Operation{}, ErrInvalid
 	}
@@ -597,9 +570,6 @@ func (r *Repository) Get(ctx context.Context, scope, idempotencyKey string) (Ope
 func (r *Repository) GetTxForUpdate(ctx context.Context, tx Tx, scope, idempotencyKey string) (Operation, error) {
 	if r == nil || tx == nil {
 		return Operation{}, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if scope != strings.TrimSpace(scope) || idempotencyKey != strings.TrimSpace(idempotencyKey) || scope == "" || len(scope) > 255 || idempotencyKey == "" || len(idempotencyKey) > 512 {
 		return Operation{}, ErrInvalid
@@ -660,9 +630,6 @@ func (r *Repository) nowTx(ctx context.Context, tx Tx) (time.Time, error) {
 	if tx == nil {
 		return time.Time{}, ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	now, err := operationdb.New(tx).ClockTimestamp(ctx)
 	if err != nil {
 		return time.Time{}, err
@@ -680,9 +647,6 @@ func (r *Repository) Complete(ctx context.Context, lease Lease, outcome json.Raw
 func (r *Repository) CompleteTx(ctx context.Context, tx Tx, lease Lease, outcome json.RawMessage) error {
 	if r == nil || tx == nil {
 		return ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if err := validateLease(lease); err != nil {
 		return err
@@ -716,9 +680,6 @@ func (r *Repository) FailTx(ctx context.Context, tx Tx, lease Lease, outcome jso
 	if r == nil || tx == nil {
 		return ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := validateLease(lease); err != nil {
 		return err
 	}
@@ -750,9 +711,6 @@ func (r *Repository) MarkIndeterminate(ctx context.Context, lease Lease, evidenc
 func (r *Repository) MarkIndeterminateTx(ctx context.Context, tx Tx, lease Lease, evidence json.RawMessage) error {
 	if r == nil || tx == nil {
 		return ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if err := validateLease(lease); err != nil {
 		return err
@@ -810,9 +768,6 @@ func (r *Repository) ExpireAttemptTx(ctx context.Context, tx Tx, lease Lease, ev
 	if r == nil || tx == nil {
 		return ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := validateLease(lease); err != nil {
 		return err
 	}
@@ -865,9 +820,6 @@ func (r *Repository) ConfirmExpiredAttemptTx(ctx context.Context, tx Tx, lease L
 	if r == nil || tx == nil {
 		return Operation{}, ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := validateLease(lease); err != nil {
 		return Operation{}, err
 	}
@@ -902,9 +854,6 @@ func (r *Repository) RenewLease(ctx context.Context, lease Lease, duration time.
 func (r *Repository) RenewLeaseTx(ctx context.Context, tx Tx, lease Lease, duration time.Duration) (Lease, error) {
 	if r == nil || tx == nil {
 		return Lease{}, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if err := validateLease(lease); err != nil {
 		return Lease{}, err
@@ -962,9 +911,6 @@ func (r *Repository) BeginAttemptTx(ctx context.Context, tx Tx, in BeginAttemptI
 	if r == nil || tx == nil {
 		return Attempt{}, ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := validateLease(in.Lease); err != nil {
 		return Attempt{}, err
 	}
@@ -1011,7 +957,6 @@ func (r *Repository) AdmitSuccessorAttemptTx(ctx context.Context, tx Tx, in Succ
 	if r == nil || tx == nil {
 		return SuccessorAttempt{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	if err := validateLease(in.Predecessor); err != nil {
 		return SuccessorAttempt{}, err
 	}
@@ -1126,7 +1071,7 @@ func (r *Repository) CurrentSuccessorAttempt(ctx context.Context, operationID st
 	if err != nil || id != operationID {
 		return SuccessorAttempt{}, false, ErrInvalid
 	}
-	row, err := operationdb.New(r.db).GetCurrentOperationSuccessorAttempt(contextOrBackground(ctx), uuidParam(id))
+	row, err := operationdb.New(r.db).GetCurrentOperationSuccessorAttempt(ctx, uuidParam(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SuccessorAttempt{}, false, nil
 	}
@@ -1150,7 +1095,6 @@ func (r *Repository) LookupSuccessorAttemptTx(ctx context.Context, tx Tx, lease 
 	if err := validateLease(lease); err != nil {
 		return SuccessorAttempt{}, false, err
 	}
-	ctx = contextOrBackground(ctx)
 	publicRow, err := operationdb.New(tx).GetOperationForUpdate(ctx, operationdb.GetOperationForUpdateParams{ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SuccessorAttempt{}, false, ErrNotFound
@@ -1440,9 +1384,6 @@ func (r *Repository) ReconcileAttemptTx(ctx context.Context, tx Tx, in Reconcile
 	if r == nil || tx == nil {
 		return Operation{}, ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if in.Scope != strings.TrimSpace(in.Scope) || in.IdempotencyKey != strings.TrimSpace(in.IdempotencyKey) || in.AttemptID != strings.TrimSpace(in.AttemptID) || in.AttemptIdentity != strings.TrimSpace(in.AttemptIdentity) {
 		return Operation{}, ErrInvalid
 	}
@@ -1593,9 +1534,6 @@ func (m *Maintenance) PruneTx(ctx context.Context, tx Tx, before time.Time, limi
 	if m == nil || tx == nil {
 		return 0, ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if limit <= 0 || limit > 1000 {
 		return 0, ErrInvalid
 	}
@@ -1616,44 +1554,22 @@ func (m *Maintenance) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	if m == nil || !operationDBConfigured(m.db) {
 		return ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	b, ok := m.db.(beginner)
 	if !ok {
 		return errors.New("operation maintenance requires a pgx transaction-capable DB")
 	}
-	tx, err := b.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback(ctx)
-		return err
-	}
-	return tx.Commit(ctx)
+	return pgx.BeginFunc(ctx, b, fn)
 }
 
 func (r *Repository) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	if r == nil || !operationDBConfigured(r.db) {
 		return ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	b, ok := r.db.(beginner)
 	if !ok {
 		return errors.New("operation repository requires a pgx transaction-capable DB")
 	}
-	tx, err := b.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback(ctx)
-		return err
-	}
-	return tx.Commit(ctx)
+	return pgx.BeginFunc(ctx, b, fn)
 }
 
 func operationDBConfigured(db any) bool {
@@ -1861,13 +1777,6 @@ func validUUID(value string) bool {
 		}
 	}
 	return true
-}
-
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 func canonicalSuccessorUUID(value string) (string, error) {

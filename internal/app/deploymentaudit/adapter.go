@@ -28,8 +28,6 @@ type Adapter struct {
 var _ deploymentpostgres.ActivationAuditPort = (*Adapter)(nil)
 
 // New returns an adapter backed by the Access-owned immutable audit table.
-func New() *Adapter { return &Adapter{audit: accesspostgres.New()} }
-
 // NewWithRepository keeps the Access authority explicit at the composition
 // boundary. The audit repository is stateless, so the same adapter can be
 // shared by activation and delivery-mutation audit projections.
@@ -38,8 +36,8 @@ func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {
 }
 
 // AppendActivationAudit appends the canonical Access audit intent in the
-// caller-owned transaction and reads it back before returning. Access and
-// deployment therefore share exactly one commit/rollback boundary.
+// caller-owned transaction. Access validates and reads back the complete
+// immutable row at its canonical boundary.
 func (a *Adapter) AppendActivationAudit(ctx context.Context, tx deploymentpostgres.Tx, input deploymentpostgres.ActivationAuditInput) (deploymentpostgres.AuditEvent, error) {
 	if a == nil || a.audit == nil {
 		return deploymentpostgres.AuditEvent{}, fmt.Errorf("%w: activation audit adapter is not configured", deploymentpostgres.ErrInvalid)
@@ -51,9 +49,6 @@ func (a *Adapter) AppendActivationAudit(ctx context.Context, tx deploymentpostgr
 	stored, err := a.audit.RecordAuditEvent(ctx, tx, intent)
 	if err != nil {
 		return deploymentpostgres.AuditEvent{}, normalize(err, "append")
-	}
-	if err := validateStored(stored, intent); err != nil {
-		return deploymentpostgres.AuditEvent{}, err
 	}
 	return mapAuditEvent(stored), nil
 }
@@ -96,9 +91,6 @@ func (a *Adapter) AppendMutationAudit(ctx context.Context, tx deploymentpostgres
 	stored, err := a.audit.RecordAuditEvent(ctx, tx, intent)
 	if err != nil {
 		return deploymentpostgres.AuditEvent{}, normalize(err, "append delivery mutation")
-	}
-	if err := validateStored(stored, intent); err != nil {
-		return deploymentpostgres.AuditEvent{}, err
 	}
 	return mapAuditEvent(stored), nil
 }

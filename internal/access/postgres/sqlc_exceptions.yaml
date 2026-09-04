@@ -1,7 +1,7 @@
 # ADR-0020 exception inventory. Keep entries exact; static SQL is never allowlisted.
 entries:
   - file: internal/access/postgres/repository.go
-    line: 110
+    line: 103
     function: ApplySchema
     method: Exec
     fingerprint: sha256:a43b73aebae40e2c4f30927ea8e597e2f7973fd6f2f3387db7a82feff8ada6bf

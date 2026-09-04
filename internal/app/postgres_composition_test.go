@@ -221,7 +221,6 @@ func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T
 		"NewPostgresNativeRefreshFinalizer(",
 		"NativeFinalizer: nativeRefreshFinalizer",
 		"NewPostgresNativeRefreshExecutor(",
-		"EnableRefreshDispatcher: true",
 		"RefreshTargetRevision: resolveRefreshTargetRevision",
 		"RefreshSourceDigest: resolveRefreshSourceDigest",
 		"CanonicalRefreshExecutor: nativeRefreshExecutor.Execute",
@@ -251,7 +250,7 @@ func TestPostgresBuildWiresNativeAgentSettingsAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(contents)
-	if !strings.Contains(source, "workflowAssemblyInputs{AgentSettings: graph.Settings") {
+	if !strings.Contains(source, "workflowAssemblyInputs{AgentSettings: graph.Bootstrap") {
 		t.Fatal("PostgreSQL composition does not pass the graph-owned settings authority to workflow assembly")
 	}
 	if strings.Contains(source, "AgentSettings: store") {
@@ -261,9 +260,9 @@ func TestPostgresBuildWiresNativeAgentSettingsAuthority(t *testing.T) {
 
 func TestPostgresSettingsAuthoritySatisfiesAgentSettingsPortAndPreservesIdentity(t *testing.T) {
 	settingsRepository := platformbootstrappostgres.New(nil)
-	graph := &postgresauthority.PostgresAuthorityGraph{Settings: settingsRepository}
+	graph := &postgresauthority.PostgresAuthorityGraph{Bootstrap: settingsRepository}
 
-	var settings agentmodule.Settings = graph.Settings
+	var settings agentmodule.Settings = graph.Bootstrap
 	if settings == nil {
 		t.Fatal("native PostgreSQL settings authority was converted to a nil agent settings port")
 	}

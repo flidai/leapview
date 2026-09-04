@@ -7,9 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
 )
 
 const (
@@ -38,8 +42,15 @@ func MigrationFS() fs.FS { return migrationFiles }
 // goose_db_version table, migration ordering, transaction boundaries, and the
 // advisory session lock. No custom version store or checksum ledger is used.
 func NewProvider(db *sql.DB) (*goose.Provider, error) {
+	return newProvider(db, migrationFiles)
+}
+
+func newProvider(db *sql.DB, source fs.FS) (*goose.Provider, error) {
 	if db == nil {
 		return nil, errors.New("PostgreSQL Goose migration database is nil")
+	}
+	if source == nil {
+		return nil, errors.New("PostgreSQL Goose migration filesystem is nil")
 	}
 	gooseLock, err := lock.NewPostgresSessionLocker(
 		lock.WithLockID(AdvisoryLockKey),
@@ -52,7 +63,7 @@ func NewProvider(db *sql.DB) (*goose.Provider, error) {
 	provider, err := goose.NewProvider(
 		goose.DialectPostgres,
 		db,
-		migrationFiles,
+		source,
 		goose.WithSessionLocker(gooseLock),
 		goose.WithVerbose(false),
 	)
@@ -69,6 +80,8 @@ func ApplyGoose(ctx context.Context, db *sql.DB) error {
 	if db == nil {
 		return errors.New("PostgreSQL Goose migration database is nil")
 	}
+	// Explicit CLI/admin migration boundary: normalize before running the
+	// provider so every migration statement shares one operation context.
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -82,6 +95,51 @@ func ApplyGoose(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// ApplyRiver installs River's upstream-owned schema through the same explicit
+// migration/admin credential as the product Goose baseline.
+func ApplyRiver(ctx context.Context, pool *pgxpool.Pool) error {
+	if pool == nil {
+		return errors.New("PostgreSQL River migration pool is nil")
+	}
+	migrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)
+	if err != nil {
+		return fmt.Errorf("construct River migrator: %w", err)
+	}
+	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+		return fmt.Errorf("apply River migrations: %w", err)
+	}
+	return nil
+}
+
+// VerifyRiver fails closed when the installed upstream River schema is
+// missing, partial, or ahead of the version compiled into this binary.
+func VerifyRiver(ctx context.Context, pool *pgxpool.Pool) error {
+	if pool == nil {
+		return errors.New("PostgreSQL River verification pool is nil")
+	}
+	migrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)
+	if err != nil {
+		return fmt.Errorf("construct River migrator: %w", err)
+	}
+	existing, err := migrator.ExistingVersions(ctx)
+	if err != nil {
+		return fmt.Errorf("read River schema versions: %w", err)
+	}
+	all := migrator.AllVersions()
+	existingVersions := make([]int, len(existing))
+	allVersions := make([]int, len(all))
+	for i := range existing {
+		existingVersions[i] = existing[i].Version
+	}
+	for i := range all {
+		allVersions[i] = all[i].Version
+	}
+	if !slices.Equal(existingVersions, allVersions) {
+		return fmt.Errorf("River schema versions %v do not match required versions %v", existingVersions, allVersions)
+	}
+	return nil
+}
+
 // VerifyGoose checks the authoritative Goose version table without applying
 // anything. A missing, partial, out-of-order, or newer migration set fails
 // closed and leaves migration execution to the explicit upgrade command.
@@ -89,6 +147,8 @@ func VerifyGoose(ctx context.Context, db *sql.DB) error {
 	if db == nil {
 		return errors.New("PostgreSQL Goose verification database is nil")
 	}
+	// Startup/upgrade verification boundary: normalize before reading Goose
+	// status so all checks share one operation context.
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -129,6 +189,8 @@ func ReconcileRolePolicy(ctx context.Context, db *sql.DB, rolePolicySQL string) 
 	if rolePolicySQL == "" {
 		return errors.New("PostgreSQL role policy is empty")
 	}
+	// Explicit CLI/admin ACL reconciliation boundary: normalize before opening
+	// the transaction and applying the complete role policy.
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -151,11 +213,44 @@ REVOKE ALL ON TABLE public.goose_db_version FROM PUBLIC,
     leapview_control_runtime, leapview_control_readonly, leapview_control_backup;
 GRANT SELECT ON TABLE public.goose_db_version TO
     leapview_control_runtime, leapview_control_readonly, leapview_control_backup;
+DO $river_policy$
+DECLARE relation_name text;
+BEGIN
+    FOR relation_name IN
+        SELECT c.relname
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public' AND c.relname LIKE 'river_%'
+           AND c.relkind IN ('r', 'p')
+    LOOP
+        EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC, leapview_control_readonly', relation_name);
+        EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO leapview_control_runtime', relation_name);
+        EXECUTE format('GRANT SELECT ON TABLE public.%I TO leapview_control_backup', relation_name);
+    END LOOP;
+    FOR relation_name IN
+        SELECT c.relname
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public' AND c.relname LIKE 'river_%'
+           AND c.relkind = 'S'
+    LOOP
+        EXECUTE format('REVOKE ALL ON SEQUENCE public.%I FROM PUBLIC, leapview_control_readonly', relation_name);
+        EXECUTE format('GRANT USAGE, SELECT, UPDATE ON SEQUENCE public.%I TO leapview_control_runtime', relation_name);
+        EXECUTE format('GRANT SELECT ON SEQUENCE public.%I TO leapview_control_backup', relation_name);
+    END LOOP;
+END
+$river_policy$;
 `); err != nil {
 		return fmt.Errorf("reconcile PostgreSQL Goose version-table policy: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE leapview_control_owner`); err != nil {
 		return fmt.Errorf("assume PostgreSQL role-policy owner role: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+GRANT USAGE ON SCHEMA public TO
+    leapview_control_runtime, leapview_control_readonly, leapview_control_backup;
+`); err != nil {
+		return fmt.Errorf("reconcile PostgreSQL public-schema policy: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, rolePolicySQL); err != nil {
 		return fmt.Errorf("apply PostgreSQL role policy: %w", err)

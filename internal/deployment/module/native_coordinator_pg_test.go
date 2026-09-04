@@ -18,6 +18,7 @@ import (
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
+	postgresmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -194,6 +195,9 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
+	if err := postgresmigrations.ApplyRiver(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := db.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -314,7 +318,7 @@ func TestNativeCoordinatorPostgresPublishCandidatePersistsEvidenceAndReplays(t *
 	}
 	var activationKind, activationStatus, activationPrincipal, activationPartition, activationResourceKind, activationResourceID string
 	var activationPayload []byte
-	if err := f.db.QueryRow(ctx, `SELECT kind,status,principal_id,partition_key,resource_kind,resource_id,payload::text FROM jobs.job WHERE id=$1`, "deployment:"+first.ID.String()+":activate").Scan(&activationKind, &activationStatus, &activationPrincipal, &activationPartition, &activationResourceKind, &activationResourceID, &activationPayload); err != nil {
+	if err := f.db.QueryRow(ctx, `SELECT kind,status,principal_id,partition_key,resource_kind,resource_id,payload::text FROM jobs.job_history WHERE id=$1`, "deployment:"+first.ID.String()+":activate").Scan(&activationKind, &activationStatus, &activationPrincipal, &activationPartition, &activationResourceKind, &activationResourceID, &activationPayload); err != nil {
 		t.Fatalf("unprotected activation job missing: %v", err)
 	}
 	if activationKind != "deployment.activate" || activationStatus != "queued" || activationPrincipal != request.PrincipalID || activationPartition != "deployment:project_sales:prod" || activationResourceKind != "deployment" || activationResourceID != first.ID.String() {

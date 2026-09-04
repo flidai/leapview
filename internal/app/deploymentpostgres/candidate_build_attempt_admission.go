@@ -92,7 +92,6 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttempt(ctx context.C
 	if a == nil || !deliveryConfigured(a.delivery) || a.physical == nil || !a.physical.Configured() {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: candidate build-attempt admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, err := normalizeCandidateBuildAttemptAdmissionInput(input)
 	if err != nil {
 		return CandidateBuildAttemptAdmissionResult{}, err
@@ -128,7 +127,6 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttemptTx(ctx context
 	if tx == nil {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: candidate build-attempt admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, err := normalizeCandidateBuildAttemptAdmissionInput(input)
 	if err != nil {
 		return CandidateBuildAttemptAdmissionResult{}, err

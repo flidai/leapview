@@ -178,11 +178,13 @@ FROM managed_data.revision
 WHERE collection_id = sqlc.arg(collection_id)
 ORDER BY sequence DESC;
 
--- name: ListManagedDataReachabilitySources :many
+-- name: ListManagedDataReachabilitySourcesPage :many
 -- Keep this query deliberately limited to rows that can retain object bytes:
 -- ready revisions and non-terminal upload manifests.  The maintenance
 -- adapter validates and canonicalizes every manifest before deriving the
--- generation and digest set.
+-- generation and digest set.  The source cursor is ordered by the stable
+-- (source_type, source_id) tuple so every call returns a bounded page without
+-- OFFSET work over long revision history.
 SELECT source_type, source_id, source_status, revision_digest, manifest,
        file_count, size_bytes
 FROM (
@@ -195,6 +197,11 @@ FROM (
            r.size_bytes
       FROM managed_data.revision AS r
      WHERE r.status = 'ready'
+       AND (
+         sqlc.arg(after_source_type)::text < 'revision'
+         OR (sqlc.arg(after_source_type)::text = 'revision'
+             AND r.revision_id > sqlc.arg(after_source_id)::text)
+       )
     UNION ALL
     SELECT 'upload'::text AS source_type,
            u.upload_id AS source_id,
@@ -205,8 +212,22 @@ FROM (
            u.expected_size_bytes AS size_bytes
       FROM managed_data.upload_session AS u
      WHERE u.status IN ('open', 'committing')
+       AND (
+         sqlc.arg(after_source_type)::text < 'upload'
+         OR (sqlc.arg(after_source_type)::text = 'upload'
+             AND u.upload_id > sqlc.arg(after_source_id)::text)
+       )
 ) AS sources
-ORDER BY source_type, source_id;
+ORDER BY source_type, source_id
+LIMIT sqlc.arg(page_size);
+
+-- name: GetManagedDataReachabilityEpoch :one
+-- Lifecycle triggers advance this singleton whenever a row that can retain
+-- object bytes changes.  Stable GC checks this scalar under the SHARE locks
+-- instead of rescanning every manifest while those locks are held.
+SELECT epoch
+FROM managed_data.reachability_epoch
+WHERE singleton = true;
 
 -- name: ConfigureStableReachabilitySnapshot :exec
 SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY;

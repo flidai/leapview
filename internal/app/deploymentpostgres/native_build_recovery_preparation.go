@@ -73,7 +73,6 @@ func PrepareNativeBuildRecovery(
 	if nativeBuildOperationAuthorityIsNil(operations) || nativeBuildAuthorityNil(attemptTermination) {
 		return NativeBuildRecoveryPreparationResult{}, fmt.Errorf("%w: recovery preparation authorities are required", deploymentnative.ErrInvalid)
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, preRead, err := normalizeNativeBuildRecoveryPreparationInput(ctx, repository, input)
 	if err != nil {
 		return NativeBuildRecoveryPreparationResult{}, err

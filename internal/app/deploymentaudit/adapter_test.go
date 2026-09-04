@@ -17,7 +17,7 @@ func TestAppendMutationAuditFailsClosed(t *testing.T) {
 	if _, err := adapter.AppendMutationAudit(context.Background(), nil, deploymentmodule.NativeDeliveryAuditInput{}); !errors.Is(err, deploymentpostgres.ErrInvalid) {
 		t.Fatalf("nil adapter error = %v, want deployment.ErrInvalid", err)
 	}
-	if _, err := New().AppendMutationAudit(context.Background(), nil, deploymentmodule.NativeDeliveryAuditInput{}); !errors.Is(err, deploymentpostgres.ErrInvalid) {
+	if _, err := NewWithRepository(accesspostgres.New()).AppendMutationAudit(context.Background(), nil, deploymentmodule.NativeDeliveryAuditInput{}); !errors.Is(err, deploymentpostgres.ErrInvalid) {
 		t.Fatalf("nil transaction error = %v, want deployment.ErrInvalid", err)
 	}
 }
@@ -33,7 +33,7 @@ func TestAppendMutationAuditUsesCallerTransactionAndReplay(t *testing.T) {
 	if _, err := db.Exec(t.Context(), accesspostgres.SchemaSQL()); err != nil {
 		t.Fatal(err)
 	}
-	adapter := New()
+	adapter := NewWithRepository(accesspostgres.New())
 	input := deploymentmodule.NativeDeliveryAuditInput{
 		AuditID: "01900000-0000-7000-8000-000000000201", DomainEventID: "01900000-0000-7000-8000-000000000202",
 		ScopeID: "target", ActorID: "operator", Action: "publication_created",

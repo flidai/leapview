@@ -59,9 +59,6 @@ func (m *Maintenance) Prune(ctx context.Context, before time.Time, limit int) (R
 	if before.IsZero() || limit < 1 || limit > MaxRetentionBatch {
 		return RetentionResult{}, errors.New("agent retention cutoff and batch limit are required")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	b, ok := m.db.(maintenanceBeginner)
 	if !ok {
 		return RetentionResult{}, errors.New("agent maintenance requires a pgx transaction-capable DB")
@@ -90,9 +87,6 @@ func (m *Maintenance) PruneTx(ctx context.Context, tx Tx, before time.Time, limi
 	}
 	if before.IsZero() || limit < 1 || limit > MaxRetentionBatch {
 		return RetentionResult{}, errors.New("agent retention cutoff and batch limit are required")
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	// PostgreSQL timestamptz stores microsecond precision. Normalize before
 	// sending so the echoed cutoff can be compared exactly as retention

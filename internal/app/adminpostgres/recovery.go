@@ -26,7 +26,6 @@ var ErrRecoveryValidationFailed = errors.New("recovery validation failed")
 // have already been selected by the operator; this method does not perform
 // backup, PITR, or object-store I/O.
 func (o Operations) PrepareRecovery(ctx context.Context, request admincli.RecoveryPrepareRequest) (admincli.RecoveryPrepareResult, error) {
-	ctx = contextOrBackground(ctx)
 	if request.ExpiresAt.IsZero() {
 		return admincli.RecoveryPrepareResult{}, fmt.Errorf("recovery retention root expiry is required")
 	}
@@ -46,14 +45,14 @@ func (o Operations) PrepareRecovery(ctx context.Context, request admincli.Recove
 		return admincli.RecoveryPrepareResult{}, err
 	}
 	defer closePool()
-	tx, err := pool.Begin(contextOrBackground(ctx))
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return admincli.RecoveryPrepareResult{}, fmt.Errorf("begin recovery preparation transaction: %w", err)
 	}
 	rollback := true
 	defer func() {
 		if rollback {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 
@@ -79,7 +78,7 @@ func (o Operations) PrepareRecovery(ctx context.Context, request admincli.Recove
 	if err != nil {
 		return admincli.RecoveryPrepareResult{}, fmt.Errorf("create recovery retention root: %w", err)
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return admincli.RecoveryPrepareResult{}, fmt.Errorf("commit recovery preparation: %w", err)
 	}
 	rollback = false
@@ -91,7 +90,6 @@ func (o Operations) PrepareRecovery(ctx context.Context, request admincli.Recove
 // remains open while provider/PITR/object probes run: the probes are supplied
 // as bounded evidence bytes by the caller.
 func (o Operations) ValidateRecovery(ctx context.Context, request admincli.RecoveryValidateRequest) (admincli.RecoveryValidateResult, error) {
-	ctx = contextOrBackground(ctx)
 	validator := request.Validator
 	if validator == "" || validator != strings.TrimSpace(validator) || len(validator) > 255 {
 		return admincli.RecoveryValidateResult{}, fmt.Errorf("recovery validator identity is required and must be canonical")
@@ -223,7 +221,6 @@ func (o Operations) ValidateRecovery(ctx context.Context, request admincli.Recov
 // provider checks must have been captured in the passed typed validation
 // result before this method is called.
 func (o Operations) PublishRecovery(ctx context.Context, request admincli.RecoveryPublishRequest) (admincli.RecoveryPublishResult, error) {
-	ctx = contextOrBackground(ctx)
 	pool, closePool, err := o.openRecoveryMaintenance(ctx)
 	if err != nil {
 		return admincli.RecoveryPublishResult{}, err
@@ -255,23 +252,16 @@ func (o Operations) openRecoveryMaintenance(ctx context.Context) (MaintenancePoo
 	if strings.TrimSpace(maintenanceConfig.URL) == "" {
 		return nil, func() {}, errors.New("production recovery requires LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL")
 	}
-	pool, err := deps.OpenMaintenance(contextOrBackground(ctx), maintenanceConfig)
+	pool, err := deps.OpenMaintenance(ctx, maintenanceConfig)
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("open PostgreSQL maintenance pool: %w", err)
 	}
 	if nilMaintenancePool(pool) {
 		return nil, func() {}, errors.New("open PostgreSQL maintenance pool returned nil pool")
 	}
-	if err := deps.VerifyBaseline(contextOrBackground(ctx), pool); err != nil {
+	if err := deps.VerifyBaseline(ctx, pool); err != nil {
 		pool.Close()
 		return nil, func() {}, fmt.Errorf("verify PostgreSQL control baseline before recovery: %w", err)
 	}
 	return pool, pool.Close, nil
-}
-
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }

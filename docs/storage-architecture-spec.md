@@ -2,9 +2,19 @@
 
 ## Summary
 
-Production deployments use one PostgreSQL control plane and one process-owned DuckDB `DatabaseInstance`. That DuckDB instance is the sole client of one PostgreSQL-backed DuckLake catalog and executes bounded serving reads and refresh transactions over DuckLake-managed Parquet files. Development and evaluation fixtures may use embedded SQLite and a local DuckLake catalog; those adapters are never selected by production composition.
+Production and development serving use one PostgreSQL control plane and one
+process-owned DuckDB `DatabaseInstance`. That DuckDB instance is the sole
+client of one PostgreSQL-backed DuckLake catalog and executes bounded serving
+reads and refresh transactions over DuckLake-managed Parquet files. Isolated
+development/evaluation fixtures may use embedded SQLite and a local DuckLake
+catalog; those adapters are test-only and are never selected by application
+composition or production serving.
 
-Runtime generations do not own DuckDB engines or catalog attachments. They own immutable compiled plans, an exact DuckLake snapshot id, a cache scope, and snapshot protection.
+Runtime generations do not own DuckDB engines or catalog attachments. They own
+immutable compiled plans, an exact DuckLake snapshot id, a process-memory L1
+cache scope, and snapshot protection. No L2 or L3 cache is admitted; a future
+L2 tier requires independent identity, security, recovery, multi-node,
+retention, and rebuildability evidence.
 
 ## Storage ownership
 

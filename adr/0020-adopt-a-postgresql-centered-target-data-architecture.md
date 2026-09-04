@@ -22,24 +22,24 @@ Related: [ADR-0005](0005-use-project-wide-resource-graph.md),
 [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md), the
 [storage architecture](../docs/storage-architecture-spec.md), and the
 [dependency-aware dashboard query cache](https://linear.app/flid/project/dependency-aware-dashboard-query-cache-e23514b5f578/overview).
-The conditional River admission decision is recorded in the [FAI-595 River
-job admission specification](specifications/fai-595-river-job-admission.md).
+The River execution boundary and its qualification gates are recorded in the
+[FAI-595 River job admission specification](specifications/fai-595-river-job-admission.md).
 
 ## Context and problem statement
 
-LeapView's current implementation places control-plane authority in
-one node-local SQLite database. It owns projects, releases, deployments, active
+Before this target cutover, LeapView placed control-plane authority in one
+node-local SQLite database. It owned projects, releases, deployments, active
 serving pointers, access state, durable jobs, idempotency, leases, and audit
-records. One process-owned DuckDB instance reads one private DuckLake catalog
-and executes governed analytical work over DuckLake-managed Parquet files.
+records. One process-owned DuckDB instance read one private DuckLake catalog
+and executed governed analytical work over DuckLake-managed Parquet files.
 
-That architecture has strong single-process correctness and intentionally
-separates control transitions from immutable physical publication. Its target
-topology is nevertheless bounded to one writable application node. A second
-node cannot safely share the SQLite authority or private catalog, durable work
-and cache coordination are node-local, and recovery is coupled to a local
-filesystem bundle. These are architectural constraints rather than evidence
-that SQLite has failed under the current load.
+That superseded architecture had strong single-process correctness and
+intentionally separated control transitions from immutable physical publication.
+Its topology was nevertheless bounded to one writable application node. A
+second node could not safely share the SQLite authority or private catalog,
+durable work and cache coordination were node-local, and recovery was coupled
+to a local filesystem bundle. These were architectural constraints rather than
+evidence that SQLite had failed under the then-current load.
 
 LeapView also has three emerging cross-node needs:
 
@@ -131,8 +131,9 @@ analytical and cache tiers
 PostgreSQL owns transactional application state, durable domain events, work
 coordination, and lineage projections. DuckLake owns analytical metadata and
 snapshot history, object storage owns immutable analytical files and artifacts,
-DuckDB performs analytical execution, and local memory or disk owns disposable
-hot cache state. This option is selected.
+DuckDB performs analytical execution, and process memory owns the disposable L1
+hot cache. An L2 cache is not part of the current target; any future L2 tier is
+evidence-gated and must be admitted separately. This option is selected.
 
 ## Decision outcome
 
@@ -158,8 +159,8 @@ Application nodes ----------> PostgreSQL HA service
         +----> DuckDB compute nodes ----> DuckLake snapshots
         |                                      |
         |                                      v
-        +----> L1 memory cache            Object storage
-        +----> L2 node-local cache        ├── Parquet and delete files
+        +----> L1 process-memory cache    Object storage
+                                          ├── Parquet and delete files
                                           └── immutable artifacts
 ```
 
@@ -167,7 +168,7 @@ One managed, highly available PostgreSQL service is the default target, with
 two databases from the first deployment:
 
 - `leapview_control` contains application-owned schemas such as `access`,
-  `delivery`, `refresh`, `event`, `audit`, `lineage`, `cache`, and `agent`; and
+  `delivery`, `refresh`, `event`, `audit`, `lineage`, and `agent`; and
 - `leapview_ducklake` contains only the DuckLake-owned metadata schema and
   narrowly scoped operational inspection surfaces.
 
@@ -180,6 +181,14 @@ isolation without changing their contracts. LeapView must not depend on a
 transaction spanning the control database, DuckLake database, or object
 storage.
 
+The optional `control_readonly` pool is an admission probe, not a request-path
+query pool. When its credential is configured, startup must open it, prove the
+read-only session and least-privilege grant contract, and retain it for health
+revalidation so reporting and backup readiness cannot silently rot. No product
+handler may acquire it until a bounded read consumer is explicitly admitted;
+an unconfigured credential opens no pool. The external readonly SQL role and
+backup grants remain required independently of this optional probe.
+
 ### Clean PostgreSQL baseline and capability ownership
 
 The target starts from one authored PostgreSQL baseline. LeapView does not
@@ -187,6 +196,14 @@ translate or replay the SQLite migration chain, preserve temporary or legacy
 tables, or maintain a production repository abstraction that can select either
 database engine. Subsequent schema changes are forward migrations from that
 baseline.
+
+Goose v3.27.1 owns the product migration set, `public.goose_db_version`,
+ordering, transaction boundaries, and the PostgreSQL session advisory lock.
+The explicit initialization/upgrade operation applies the clean baseline and
+then reapplies the product role policy. Serving startup is read-only: it runs
+Goose version/status verification (and River schema verification) and fails
+closed on a missing, partial, out-of-order, or newer schema; it never applies a
+migration implicitly.
 
 Production persistence uses PostgreSQL-native connections and generated query
 code, including native time, UUID, JSON, array, byte, and transaction types.
@@ -264,7 +281,7 @@ The PostgreSQL control database becomes the sole durable runtime authority for:
   audit state;
 - releases, canonical delivery plans, candidates, generations, approvals,
   active serving pointers, rollback and retention roots;
-- durable refresh, deployment, maintenance and cache-warming jobs;
+- durable refresh, deployment, and maintenance jobs;
 - idempotency records, leases, fencing tokens and compare-and-swap revisions;
 - immutable audit events and transactional domain events;
 - admitted immutable lineage projections and their active pointers; and
@@ -508,13 +525,16 @@ PostgreSQL worker with durable claims; `LISTEN/NOTIFY` may only wake it.
 Cross-service or high-throughput fan-out may justify an outbox and broker.
 No generic pub/sub abstraction is retained speculatively.
 
-River OSS owns operational job execution after the `release.finalize`
-compatibility proof passes. LeapView continues to own product job IDs,
-authorization, audit/events/history/evidence, canonical request digests, and
-workload admission. Enqueue uses River's caller-owned transaction, terminal
-domain state and River completion share one transaction, returned worker
-errors are sanitized before River persists them, and there is no dual-run or
-fallback custom executor.
+River OSS owns operational job execution in the current tree. LeapView's
+`jobs.job_history` row is the product-owned history and identity; River's
+`public.river_*` rows are operational queue, claim, retry, lease, and worker
+state and may be cleaned up without deleting product history. LeapView
+continues to own authorization, audit/events/evidence, canonical request
+digests, and workload admission. Enqueue uses River's caller-owned
+transaction, terminal domain state and River completion share one transaction,
+returned worker errors are sanitized before River persists them, and there is
+no dual-run or fallback custom executor. Production support remains gated on
+the `release.finalize` compatibility proof and its recorded evidence.
 
 River is not an event bus and does not own refresh occurrences, deployment
 approvals, release records, serving activation, DuckLake build evidence, or
@@ -612,20 +632,21 @@ in the target-bound stable production partition; candidate partitions remain
 isolated by target and candidate identity. Closing or draining one runtime
 releases its local leases without invalidating otherwise compatible entries.
 
-Events may proactively evict or warm entries, but key rotation is the
-correctness boundary. Missing an event can retain unreachable bytes until
-eviction; it cannot make an obsolete result match a new request. Authorization
-and revocation checks occur before lookup.
+No current event consumer evicts or warms cache entries. A future admitted
+effect may do so, but key rotation remains the correctness boundary: missing an
+event can retain unreachable bytes until eviction, never make an obsolete result
+match a new request. Authorization and revocation checks occur before lookup.
 
-The target cache hierarchy is:
+The current target cache hierarchy has one admitted tier:
 
 1. **L1 process memory.** Retain Arrow results with exact byte and entry
    accounting, independent lookup leases, bounded admission, cancellation-safe
-   singleflight, and stable production or isolated candidate partitions.
-2. **L2 node-local disk, optional.** Store immutable content-addressed result
-   files. SQLite may index path, digest, size, expiry and approximate recency.
-   Both files and index are disposable and must be rebuildable without an
-   authoritative local mirror of PostgreSQL.
+   singleflight, and stable production or isolated candidate partitions. L1 is
+   disposable and is rebuilt after process loss.
+
+L2 node-local disk is not admitted. A future L2 proposal must provide separate
+   evidence for identity, security partitioning, crash recovery, retention,
+   multi-node behavior, and rebuildability before it can change this target.
 Mutable external or streaming sources contribute an explicit watermark or
 custom cache-key value with a bounded lookup TTL. Failure to establish that
 identity bypasses reuse. Immutable managed snapshots rotate by content identity
@@ -691,8 +712,15 @@ high-availability service or an equivalently tested installation with TLS,
 automated failover, continuous WAL archiving, encrypted backups, and regular
 point-in-time recovery exercises following PostgreSQL's
 [continuous-archiving guidance](https://www.postgresql.org/docs/current/continuous-archiving.html).
-Application startup validates server version, required extensions, schema
-revision, role privileges, and read/write intent before advertising readiness.
+Application startup validates server version, required extensions, Goose
+migration version/status, River schema versions, role privileges, and
+read/write intent before advertising readiness.
+
+The multi-node lease/takeover, managed-HA failover, backup/PITR, and operator
+runbook exercises are qualification requirements, not claims that production
+support or recovery readiness is already complete. A deployment is admitted
+only after the relevant evidence is recorded for its topology and PostgreSQL
+major.
 
 The production Admin CLI exposes one exact qualification sequence after native
 providers have restored the selected PostgreSQL and object points far enough
@@ -759,16 +787,15 @@ restore](/docs/guides/operate/backup-restore) procedures; no LeapView recovery
 stage performs that provider I/O.
 
 Connection budgets are assigned per capability and workload rather than per
-handler. Interactive control requests, background workers, event consumers,
-cache coordination, and DuckLake catalog clients use separately observable
-pools with bounded acquisition, statement, lock, and idle-transaction
-timeouts. External I/O and analytical execution do not hold an open control
-transaction. Long-running maintenance is resumable and uses persisted progress,
-leases, and fencing.
+handler. Interactive control requests, River background workers, maintenance,
+and DuckLake catalog clients use separately observable pools with bounded
+acquisition, statement, lock, and idle-transaction timeouts. External I/O and
+analytical execution do not hold an open control transaction. Long-running
+maintenance is resumable and uses persisted progress, leases, and fencing.
 
 Operational telemetry covers pool saturation, transaction age, lock waits,
 deadlocks, statement latency, autovacuum health, table and index growth, WAL
-generation, replication lag, event backlog, job age, and cache-fill contention.
+generation, replication lag, River job age, and L1 cache-fill contention.
 `pg_stat_statements`, PostgreSQL activity and wait views, and structured
 application operation identities provide the initial diagnostic surface. See
 the [`pg_stat_statements` documentation](https://www.postgresql.org/docs/current/pgstatstatements.html).
@@ -783,9 +810,9 @@ must prove that every selected generation resolves its immutable artifact,
 exact DuckLake snapshot seal, relation closure, and required objects. Missing
 evidence blocks readiness or requires an explicit, audited recovery selection
 of a retained verifiable generation; the system must not silently bind a
-generation to the latest DuckLake snapshot. L1 and L2 cache state is excluded
-from backup because it is disposable.
-
+generation to the latest DuckLake snapshot. L1 cache state is excluded from
+backup because it is disposable; no L2 cache is admitted until its separate
+qualification evidence passes.
 Repository and integration conformance run against the supported PostgreSQL
 version with real concurrent connections. SQLite fixtures may test pure domain
 interfaces, but passing them is not evidence for PostgreSQL locking, isolation,
@@ -804,10 +831,14 @@ SQLite is removed as a production control-plane authority and as a DuckLake
 catalog for shared deployments. It may remain in bounded, explicitly
 non-authoritative roles:
 
-- an optional L2 node-cache index;
 - isolated tests and fixtures that exercise an interface without claiming
   production conformance; and
 - packaging or tooling state whose loss cannot alter a target instance.
+
+L2 node-local caching is not part of the current target. A future L2 index or
+store remains non-authoritative and requires the separate identity,
+security-partition, crash-recovery, multi-node, retention, and rebuildability
+evidence described above before admission.
 
 There is no production fallback from PostgreSQL to SQLite, no asynchronous
 SQLite replica of mutable PostgreSQL authority, and no long-lived dual-write
@@ -868,9 +899,10 @@ SQLite import, upgrade, cutover, or backward-compatibility contract.
 The target supports multiple application and compute nodes with one remotely
 recoverable control authority. Durable mutation, domain events, lineage
 admission, job scheduling, leases and active pointers can use PostgreSQL
-transactions and constraints. Cache entries can survive a serving-generation
-change or, when L2 is enabled, a process restart without making disposable
-bytes authoritative.
+transactions and constraints. L1 cache entries can survive a
+serving-generation change without making disposable bytes authoritative; a
+process restart rebuilds L1. An L2 cache remains a separately qualified
+future, not a current durability promise.
 
 PostgreSQL becomes required production infrastructure. LeapView must own
 connection-pool sizing, schema and role isolation, migrations, vacuum and WAL
@@ -905,11 +937,10 @@ accepted because immutable graph identities make verification and retention
 deterministic and because the projection supports lineage, impact analysis,
 operational inspection, and cache explanation across nodes.
 
-The cache remains deliberately heterogeneous. Memory is fastest, local files
-are node-bound, object storage is shared, and PostgreSQL coordinates their
-identity. This is more explicit than one cache table, but avoids imposing the
-latency and write amplification of a transactional database on every cache hit
-or result byte.
+The current cache is deliberately disposable process memory. Its identity comes
+from dependency, policy, query, and format evidence rather than a PostgreSQL
+cache authority, so cache loss only causes recomputation. A future L2 tier would
+add its own storage, security, retention, and multi-node qualification burden.
 
 The clean baseline intentionally discards migration compatibility with the
 pre-release SQLite implementation and file-backed DuckLake catalog. Existing
@@ -927,32 +958,35 @@ Linear; this ADR records the destination and its invariants.
   projection synchronicity, UUIDv7 identity, aggregate ordering, idempotent
   replay, canonical payload handling, and absence of an event transport.
   A future consumer must bring its own delivery and recovery acceptance suite.
-- Multi-node tests prove that durable workers do not execute one lease
-  concurrently, stale owners cannot publish, and active serving transitions
-  converge after a missed notification or node restart. Event-consumer
-  multi-node/lag, backup-restore, and operator-runbook drills are required only
-  after a consumer admission.
+- Multi-node lease/takeover tests must prove that durable workers do not execute
+  one lease concurrently, stale owners cannot publish, and active serving
+  transitions converge after a missed notification or node restart. Managed-HA
+  failover, backup/PITR restore, and operator-runbook drills remain required
+  qualification gates for each supported topology; passing a local test or
+  startup check does not claim those gates complete.
 - Framework conformance currently runs the adapter and canonical envelope
-  invariants without admitting a production consumer. A future consumer must
-  additionally pass the event runtime gates. A River candidate is tested separately, one job kind at a time,
-  against the [FAI-595 gates](specifications/fai-595-river-job-admission.md):
-  caller-owned enqueue/completion rollback, stable identity and digest,
-  admission/fairness, cancellation and stale-worker fencing, retry/recovery,
-  restart, and multi-node takeover. No candidate is authoritative until every
-  gate passes, and tests prove that no second jobs authority is written after
-  cutover.
+  invariants without admitting a production event consumer. A future consumer
+  must additionally pass the event runtime gates. River execution conformance
+  remains a qualification gate, one admitted job kind at a time, against the
+  [FAI-595 gates](specifications/fai-595-river-job-admission.md): caller-owned
+  enqueue/completion rollback, stable identity and digest, admission/fairness,
+  cancellation and stale-worker fencing, retry/recovery, restart, and
+  multi-node takeover. Evidence must prove that no second jobs authority is
+  written after cutover.
 - Lineage conformance reconstructs the canonical `ProjectGraph` from persisted
   nodes and edges, verifies its digest, tests upstream and downstream closure,
   rejects cycles where the resource contract requires a DAG, and binds the
   active graph to the exact admitted artifact.
 - Query-cache tests prove that dashboard-only changes reuse compatible results;
-  semantic, relation, binding, policy, execution and format changes miss; a
-  missed event cannot return stale data; and authorization is evaluated before
-  lookup. They also cover identical query text with distinct typed parameter
-  values, two authorized principals with distinct row filters or masks, and
-  volatile-query bypass unless every volatile input is represented.
-- Cache storage tests prove L1/L2 loss is rebuildable and PostgreSQL contains no
-  bulk Arrow payloads.
+  semantic, relation, binding, policy, execution and format changes miss; cache
+  invalidation or event absence cannot make an obsolete result match; and
+  authorization is evaluated before lookup. They also cover identical query
+  text with distinct typed parameter values, two authorized principals with
+  distinct row filters or masks, and volatile-query bypass unless every
+  volatile input is represented.
+- Cache storage tests prove L1 loss is rebuildable and PostgreSQL contains no
+  bulk Arrow payloads. Any future L2 cache must bring separate qualification
+  evidence before it is admitted.
 - DuckLake qualification tests exercise a PostgreSQL-backed catalog with
   concurrent remote clients while preserving exact snapshot seals, relation
   closure, retention and active-query leases. Lost-commit-acknowledgement tests

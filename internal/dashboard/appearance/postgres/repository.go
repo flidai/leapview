@@ -23,11 +23,7 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 type AuditInput struct {
 	AuditID           string
@@ -91,7 +87,7 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrUnavailable
 	}
-	_, err := tx.Exec(ctxOrBackground(ctx), schemaSQL) // sqlc-exception: schema-ddl
+	_, err := tx.Exec(ctx, schemaSQL) // sqlc-exception: schema-ddl
 	return err
 }
 
@@ -127,7 +123,7 @@ func (r *Repository) Ping(ctx context.Context) error {
 	if r == nil || r.db == nil {
 		return ErrUnavailable
 	}
-	_, err := db.New(r.db).Ping(ctxOrBackground(ctx))
+	_, err := db.New(r.db).Ping(ctx)
 	return err
 }
 
@@ -138,7 +134,7 @@ func (r *Repository) ListProject(ctx context.Context, projectID projectgraph.Res
 	if err := projectID.Validate(); err != nil {
 		return nil, fmt.Errorf("project ID: %w", err)
 	}
-	rows, err := db.New(r.db).ListProject(ctxOrBackground(ctx), projectID.String())
+	rows, err := db.New(r.db).ListProject(ctx, projectID.String())
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +156,7 @@ func (r *Repository) Get(ctx context.Context, key dashboardappearance.Key) (dash
 	if err := validateKey(key); err != nil {
 		return dashboardappearance.Record{}, err
 	}
-	return get(ctxOrBackground(ctx), r.db, key)
+	return get(ctx, r.db, key)
 }
 
 func (r *Repository) ApplyPatch(ctx context.Context, key dashboardappearance.Key, actorID string, patch dashboardappearance.Patch) (dashboardappearance.Record, error) {
@@ -173,27 +169,27 @@ func (r *Repository) ApplyPatch(ctx context.Context, key dashboardappearance.Key
 	if !ok {
 		return dashboardappearance.Record{}, ErrUnavailable
 	}
-	tx, err := b.Begin(ctxOrBackground(ctx))
+	tx, err := b.Begin(ctx)
 	if err != nil {
 		return dashboardappearance.Record{}, err
 	}
-	defer func() { _ = tx.Rollback(ctxOrBackground(ctx)) }()
+	defer func() { _ = tx.Rollback(ctx) }()
 	row, err := r.ApplyPatchTx(ctx, tx, key, actorID, patch)
 	if err != nil {
 		return dashboardappearance.Record{}, err
 	}
-	if err := tx.Commit(ctxOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return dashboardappearance.Record{}, err
 	}
 	return row, nil
 }
 
 func (r *Repository) ApplyPatchTx(ctx context.Context, tx Tx, key dashboardappearance.Key, actorID string, patch dashboardappearance.Patch) (dashboardappearance.Record, error) {
-	return r.applyPatchTx(ctxOrBackground(ctx), tx, key, actorID, patch, 0, false)
+	return r.applyPatchTx(ctx, tx, key, actorID, patch, 0, false)
 }
 
 func (r *Repository) ApplyPatchCAS(ctx context.Context, tx Tx, key dashboardappearance.Key, expectedRevision int64, actorID string, patch dashboardappearance.Patch) (dashboardappearance.Record, error) {
-	return r.applyPatchTx(ctxOrBackground(ctx), tx, key, actorID, patch, expectedRevision, true)
+	return r.applyPatchTx(ctx, tx, key, actorID, patch, expectedRevision, true)
 }
 
 func (r *Repository) applyPatchTx(ctx context.Context, tx Tx, key dashboardappearance.Key, actorID string, patch dashboardappearance.Patch, expected int64, cas bool) (dashboardappearance.Record, error) {
@@ -322,13 +318,6 @@ func validateKey(key dashboardappearance.Key) error {
 		return fmt.Errorf("dashboard ID: %w", err)
 	}
 	return nil
-}
-
-func ctxOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 var _ dashboardappearance.Store = (*Repository)(nil)

@@ -31,6 +31,8 @@ func (o Operations) QualificationPoolArtifacts(ctx context.Context) (adminofflin
 	if err != nil {
 		return adminoffline.QualificationPoolArtifacts{}, err
 	}
+	// Qualification is an offline lifecycle probe and may run without a
+	// request-scoped context before it opens local resources.
 	if ctx == nil {
 		ctx = context.Background()
 	}

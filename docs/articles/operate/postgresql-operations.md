@@ -13,6 +13,11 @@ managed service owns those actions. The application exposes bounded pool
 telemetry so that an operator can correlate application pressure with the
 provider's database telemetry.
 
+This runbook describes the evidence-gathering procedure, not completed
+production qualification. Multi-node lease/takeover, managed-HA failover,
+backup/PITR restore, and the operator drills below remain admission gates for
+each supported topology and PostgreSQL major.
+
 ## Ownership boundary
 
 The application and the database provider answer different questions:
@@ -31,6 +36,13 @@ text, user identity, project ID, or credential material in a metric label.
 No asynchronous event consumer or broker is part of the current deployment
 contract. Do not publish consumer lag, retry, or broker-readiness metrics until
 a named product effect and its durable delivery mechanism are admitted.
+The current query cache is process-memory L1 only; no L2 or L3 cache is admitted.
+An L2 proposal requires separate identity, security, crash-recovery,
+multi-node, retention, and rebuildability evidence.
+
+River owns operational queueing, claims, retries, leases, and worker lifecycle.
+LeapView's `jobs.job_history` remains the product-owned job identity/history;
+River operational-row cleanup must not remove it.
 
 ## Application pool metrics and alerts
 
@@ -156,10 +168,12 @@ Before a provider patch, failover rehearsal, or schema migration:
 2. Check `/readyz`, pool saturation, long transactions, lock waits, and active
    delivery generations. Drain conflicting deployments, refreshes, and
    retention jobs; stop new writes when the change requires it.
-3. Admit one migration owner only. Run the versioned one-shot migration with
-   the maintenance identity and maintenance pool; never run two migrations
-   concurrently or leave the migrator pool serving requests. Use the
-   deployment's upgrade/preflight checks and record their result.
+3. Admit one migration owner only. Run the explicit River upstream-schema and
+   Goose v3.27.1 product-migration operation with the maintenance identity and
+   maintenance pool; never run two migrations concurrently or leave the
+   migrator pool serving requests. Use the deployment's upgrade/preflight
+   checks and record their result. Goose owns `public.goose_db_version` and the
+   migration lock; serving startup must not apply pending migrations.
 4. Verify schema compatibility, readiness, pool acquisition, active
    generation, authorization, and a bounded read/write smoke test before
    resuming traffic. Keep the old application version only while the schema
@@ -168,6 +182,11 @@ Before a provider patch, failover rehearsal, or schema migration:
 If a migration is irreversible or fails after a partial change, stop writers
 and use the provider-native restore/PITR decision. Do not edit control-plane
 rows by hand or treat a larger connection pool as a migration fix.
+
+After an explicit migration, the serve lifecycle performs read-only Goose
+version/status verification and River schema verification before readiness. A
+missing, partial, out-of-order, or newer Goose/River schema fails closed;
+startup does not repair it implicitly.
 
 ## Failover validation
 
@@ -287,7 +306,7 @@ Use the following gates before a release, migration, or planned load test:
 | Jobs, refreshes, and retention | Maintenance pool has idle headroom; job claim latency and lease-expiry backlog are draining; provider CPU/WAL/storage remain below warning thresholds. | Claims queue, lease expiry, or deadlocks rise for 10 minutes, or maintenance work competes with request traffic. |
 | Lineage and metadata projections | Control runtime/read-only pools have at least 20% headroom; projection lag and query latency are at baseline; bounded payload sizes are observed. | Projection lag grows for 15 minutes, lock waits exceed 30 seconds, or metadata writes need retries. |
 
-Run delivery, jobs, lineage, and cache checks together: passing the pool gate does
+Run delivery, jobs, lineage, and L1 cache checks together: passing the pool gate does
 not prove that CPU, I/O, storage, object-store bandwidth, or query plans can
 carry the proposed load. Record the measured limit and rollback signal in the
 change plan.

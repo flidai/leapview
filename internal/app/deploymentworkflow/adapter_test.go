@@ -77,6 +77,22 @@ func TestRecordWorkflowUsesCallerTransactionAndReplay(t *testing.T) {
 		_ = tx.Rollback(t.Context())
 		t.Fatalf("exact replay = %v", err)
 	}
+	second := intent
+	second.Event.Key = "delivery-publication-2"
+	second.Event.EventType = "publication.updated"
+	if err := adapter.RecordWorkflow(t.Context(), tx, second); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("append after exact replay = %v", err)
+	}
+	var maxEventID int64
+	if err := tx.QueryRow(t.Context(), `SELECT count(*), max(event_id) FROM jobs.event`).Scan(&count, &maxEventID); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if count != 2 || maxEventID != 2 {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("event sequence after replay = count %d, max %d; want count 2, max 2", count, maxEventID)
+	}
 	changed := intent
 	changed.Event.Data = []byte(`{"status":"changed"}`)
 	if err := adapter.RecordWorkflow(t.Context(), tx, changed); !errors.Is(err, deploymentpostgres.ErrConflict) {

@@ -43,7 +43,7 @@ func (m *Maintenance) MarkUploadCleanupComplete(ctx context.Context, id managedd
 	if m == nil || m.db == nil || id.String() == "" {
 		return ErrInvalid
 	}
-	marked, err := manageddb.New(m.db).MarkUploadCleanup(contextOrBackground(ctx), id.String())
+	marked, err := manageddb.New(m.db).MarkUploadCleanup(ctx, id.String())
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (m *Maintenance) pruneUploadSessions(ctx context.Context, db MaintenanceDBT
 	if before.IsZero() || limit < 1 || limit > 1000 {
 		return 0, ErrInvalid
 	}
-	return manageddb.New(db).PruneUploadSessions(contextOrBackground(ctx), manageddb.PruneUploadSessionsParams{
+	return manageddb.New(db).PruneUploadSessions(ctx, manageddb.PruneUploadSessionsParams{
 		Cutoff: pgtype.Timestamptz{Time: before.UTC(), Valid: true}, PLimit: int32(limit),
 	})
 }

@@ -159,12 +159,11 @@ func (e *SQLCatalogExecutor) Identity(ctx context.Context) (DatabaseIdentity, er
 	if e == nil {
 		return DatabaseIdentity{}, ErrCatalogExecutor
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	return ReadDatabaseIdentity(ctx, e.IdentityDB)
 }
 func (e *SQLCatalogExecutor) Bootstrap(ctx context.Context, options CatalogBootstrapOptions) error {
+	// Bootstrap is a process/lifecycle boundary: normalize its context once
+	// before catalog attach and privilege provisioning, which span callbacks.
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -241,9 +240,6 @@ func (e *SQLCatalogExecutor) validateCatalogAdmin(ctx context.Context) error {
 	return ValidateDatabaseIdentity(identity, database, role)
 }
 func (e *SQLCatalogExecutor) VerifySnapshot(ctx context.Context, snapshot SnapshotRef, compatibility RuntimeCompatibility) (json.RawMessage, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if e == nil {
 		return nil, ErrCatalogExecutor
 	}
@@ -392,9 +388,6 @@ func executeCatalogStatements(ctx context.Context, exec interface {
 func withBoundedRenewal(ctx context.Context, renew func(context.Context) error) error {
 	if renew == nil {
 		return ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	boundedCtx, cancel := context.WithTimeout(ctx, fenceRenewalTimeout)
 	defer cancel()
@@ -601,6 +594,8 @@ func operationEvidence(raw json.RawMessage, fallback map[string]any) (json.RawMe
 // fences; if migration has begun, failures are persisted with an explicit
 // rollback or forward-recovery decision before the original error is returned.
 func (c *UpgradeCoordinator) Run(ctx context.Context, in UpgradeRequest) (migration CatalogMigration, runErr error) {
+	// Upgrade execution is a lifecycle boundary: the same normalized context
+	// governs fencing, migration, recovery, and bounded cleanup callbacks.
 	if ctx == nil {
 		ctx = context.Background()
 	}

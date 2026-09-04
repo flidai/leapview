@@ -5,14 +5,25 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type retentionQueryCounter struct{ count atomic.Int64 }
+
+func (c *retentionQueryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	c.count.Add(1)
+	return ctx
+}
+
+func (c *retentionQueryCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
 type retentionSessionFake struct {
 	mu        sync.Mutex
@@ -28,6 +39,138 @@ func TestRetentionSnapshotSetDigestIsOrderIndependent(t *testing.T) {
 	second := retentionSnapshotSetDigest([]SnapshotRef{{PhysicalPoolID: "pool", CatalogID: "catalog", SnapshotID: 1}, {PhysicalPoolID: "pool", CatalogID: "catalog", SnapshotID: 2}})
 	if first != second {
 		t.Fatalf("digest depends on enumeration order: %s != %s", first, second)
+	}
+}
+
+func TestPostgres18RetentionCoordinatorControlRoundTripsAreBatchBounded(t *testing.T) {
+	r, p, poolID, catalogID := retentionTestRepository(t, "round_trips")
+	counter := &retentionQueryCounter{}
+	config := p.Config()
+	config.ConnConfig.Tracer = counter
+	countedPool, err := pgxpool.NewWithConfig(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer countedPool.Close()
+	counted := New(countedPool)
+
+	seed := func(snapshotID int64) {
+		t.Helper()
+		ref := SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: snapshotID}
+		if err := ensureSnapshotLive(t.Context(), r.db, ref); err != nil {
+			t.Fatal(err)
+		}
+		if err := retireSnapshot(t.Context(), r.db, ref, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := func(maintenanceID string, ids []int64) int64 {
+		t.Helper()
+		for _, id := range ids {
+			seed(id)
+		}
+		counter.count.Store(0)
+		coordinator := &RetentionCoordinator{Control: counted, OpenSessionFor: func(context.Context, RetentionCatalogSessionInput) (RetentionCatalogSession, error) {
+			return &retentionSessionFake{}, nil
+		}}
+		if _, err := coordinator.Run(t.Context(), RetentionMaintenanceRequest{
+			MaintenanceID: maintenanceID, PhysicalPoolID: poolID, CatalogID: catalogID,
+			OwnerID: "retention-worker", LeaseExpiresAt: time.Now().Add(time.Minute), FileGrace: time.Hour,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return counter.count.Load()
+	}
+
+	one := run("0198f2c0-7c7a-7f00-8a11-000000000095", []int64{22001})
+	many := run("0198f2c0-7c7a-7f00-8a11-000000000096", []int64{22002, 22003, 22004, 22005})
+	if one == 0 || many != one {
+		t.Fatalf("retention control round trips grew with child count: one=%d many=%d", one, many)
+	}
+}
+
+func TestPostgres18RetentionCoordinatorProcessesFixedBatches(t *testing.T) {
+	r, p, poolID, catalogID := retentionTestRepository(t, "bounded_batches")
+	const total = MaxRetentionMaintenanceSnapshots + 1
+	if _, err := p.Exec(t.Context(), `
+INSERT INTO ducklake.snapshot_retention(
+    physical_pool_id,catalog_id,snapshot_id,state,retired_at,created_at
+)
+SELECT $1,$2,20000 + value,'retiring',statement_timestamp(),statement_timestamp()
+FROM generate_series(1,$3::integer) AS value`, poolID, catalogID, total); err != nil {
+		t.Fatal(err)
+	}
+	coordinator := &RetentionCoordinator{Control: r, OpenSessionFor: func(context.Context, RetentionCatalogSessionInput) (RetentionCatalogSession, error) {
+		return &retentionSessionFake{}, nil
+	}}
+	first, err := coordinator.Run(t.Context(), RetentionMaintenanceRequest{
+		MaintenanceID: "0198f2c0-7c7a-7f00-8a11-000000000091", PhysicalPoolID: poolID,
+		CatalogID: catalogID, OwnerID: "retention-worker", LeaseExpiresAt: time.Now().Add(time.Minute), FileGrace: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(first.Snapshots); got != MaxRetentionMaintenanceSnapshots {
+		t.Fatalf("first bounded batch = %d snapshots, want %d", got, MaxRetentionMaintenanceSnapshots)
+	}
+	second, err := coordinator.Run(t.Context(), RetentionMaintenanceRequest{
+		MaintenanceID: "0198f2c0-7c7a-7f00-8a11-000000000092", PhysicalPoolID: poolID,
+		CatalogID: catalogID, OwnerID: "retention-worker", LeaseExpiresAt: time.Now().Add(time.Minute), FileGrace: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(second.Snapshots); got != 1 {
+		t.Fatalf("second bounded batch = %d snapshots, want 1", got)
+	}
+}
+
+func TestPostgres18RetentionCompletionReadFailureIsRetryable(t *testing.T) {
+	r, _, poolID, catalogID := retentionTestRepository(t, "completion_read")
+	ref := SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 21001}
+	if err := ensureSnapshotLive(t.Context(), r.db, ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := retireSnapshot(t.Context(), r.db, ref, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	request := RetentionMaintenanceRequest{
+		MaintenanceID: "0198f2c0-7c7a-7f00-8a11-000000000093", PhysicalPoolID: poolID,
+		CatalogID: catalogID, OwnerID: "retention-worker", LeaseExpiresAt: time.Now().Add(time.Minute), FileGrace: time.Hour,
+	}
+	opened := 0
+	coordinator := &RetentionCoordinator{Control: r, OpenSessionFor: func(context.Context, RetentionCatalogSessionInput) (RetentionCatalogSession, error) {
+		opened++
+		return &retentionSessionFake{}, nil
+	}}
+	readErr := errors.New("completion snapshot read failed")
+	coordinator.listSnapshots = func(ctx context.Context, maintenanceID string) ([]RetentionMaintenanceSnapshot, error) {
+		operation, err := loadRetentionMaintenance(ctx, r.db, maintenanceID)
+		if err == nil && operation.State == "completed" {
+			return nil, readErr
+		}
+		return r.ListRetentionMaintenanceSnapshots(ctx, maintenanceID)
+	}
+	if _, err := coordinator.Run(t.Context(), request); !errors.Is(err, readErr) {
+		t.Fatalf("completion read error = %v, want %v", err, readErr)
+	}
+	persisted, err := loadRetentionMaintenance(t.Context(), r.db, request.MaintenanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.State != "completed" {
+		t.Fatalf("persisted operation state = %q, want completed", persisted.State)
+	}
+	coordinator.listSnapshots = nil
+	result, err := coordinator.Run(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Maintenance.State != "completed" || result.Maintenance.CompletedAt.IsZero() {
+		t.Fatalf("replay operation = %#v", result.Maintenance)
+	}
+	if opened != 1 {
+		t.Fatalf("catalog sessions opened = %d, want 1; completed replay must not repeat native work", opened)
 	}
 }
 

@@ -131,7 +131,6 @@ type NativePhysicalRecoveryInput struct {
 // marker-qualified committed snapshot. It never materializes, opens authored
 // sources, or invokes analytical qualification gates.
 func RecoverNativePhysicalBuild(ctx context.Context, input NativePhysicalRecoveryInput) (result NativePhysicalBuildEvidence, resultErr error) {
-	ctx = contextOrBackground(ctx)
 	normalized, canonicalMarker, canonicalRoot, err := validateNativePhysicalRecoveryInput(input)
 	if err != nil {
 		return NativePhysicalBuildEvidence{}, err

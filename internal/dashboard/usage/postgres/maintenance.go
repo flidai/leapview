@@ -36,7 +36,7 @@ func (m *Maintenance) deleteBefore(ctx context.Context, db MaintenanceDBTX, cuto
 	if batchSize < 1 || batchSize > maxRetentionBatch {
 		return 0, fmt.Errorf("dashboard usage retention batch size must be between 1 and %d", maxRetentionBatch)
 	}
-	return usagedb.New(db).DeleteBefore(ctxOrBackground(ctx), usagedb.DeleteBeforeParams{
+	return usagedb.New(db).DeleteBefore(ctx, usagedb.DeleteBeforeParams{
 		CutoffDate: cutoff.UTC(), BatchSize: int32(batchSize),
 	})
 }

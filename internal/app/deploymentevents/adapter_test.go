@@ -32,7 +32,7 @@ func TestAppendDeliveryEventFailsClosed(t *testing.T) {
 	if _, err := adapter.AppendDeliveryEvent(context.Background(), nil, deploymentmodule.NativeDeliveryEventInput{}); !errors.Is(err, deploymentpostgres.ErrInvalid) {
 		t.Fatalf("nil adapter error = %v, want deployment.ErrInvalid", err)
 	}
-	if _, err := New().AppendDeliveryEvent(context.Background(), nil, deploymentmodule.NativeDeliveryEventInput{}); !errors.Is(err, deploymentpostgres.ErrInvalid) {
+	if _, err := NewWithRepository(eventspostgres.New()).AppendDeliveryEvent(context.Background(), nil, deploymentmodule.NativeDeliveryEventInput{}); !errors.Is(err, deploymentpostgres.ErrInvalid) {
 		t.Fatalf("nil transaction error = %v, want deployment.ErrInvalid", err)
 	}
 	valid := deploymentmodule.NativeDeliveryEventInput{EventID: "01900000-0000-7000-8000-000000000101", CorrelationID: "01900000-0000-7000-8000-000000000102"}
@@ -48,7 +48,7 @@ func TestAppendDeliveryEventFailsClosed(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			input := valid
 			mutate(&input)
-			if _, err := New().AppendDeliveryEvent(context.Background(), nil, input); !errors.Is(err, deploymentpostgres.ErrInvalid) {
+			if _, err := NewWithRepository(eventspostgres.New()).AppendDeliveryEvent(context.Background(), nil, input); !errors.Is(err, deploymentpostgres.ErrInvalid) {
 				t.Fatalf("invalid identity error = %v, want deployment.ErrInvalid", err)
 			}
 		})
@@ -66,7 +66,7 @@ func TestAppendDeliveryEventUsesCallerTransactionAndReplay(t *testing.T) {
 	if _, err := db.Exec(t.Context(), eventspostgres.SchemaSQL()); err != nil {
 		t.Fatal(err)
 	}
-	adapter := New()
+	adapter := NewWithRepository(eventspostgres.New())
 	input := deploymentmodule.NativeDeliveryEventInput{
 		EventID: "01900000-0000-7000-8000-000000000101", ScopeID: "target",
 		AggregateType: "delivery_publication", AggregateID: "publication-1",

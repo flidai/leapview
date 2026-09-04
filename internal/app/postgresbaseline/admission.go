@@ -34,6 +34,7 @@ func VerifyControlRuntimeAdmission(ctx context.Context, reader AdmissionReader) 
 	}
 	return verifyPrivileges(ctx, reader, []privilegeProbe{
 		{kind: "schema", object: "recovery", privilege: "USAGE", want: true},
+		{kind: "schema", object: "public", privilege: "USAGE", want: true},
 		{kind: "table", object: "public.goose_db_version", privilege: "SELECT", want: true},
 		{kind: "table", object: "public.goose_db_version", privilege: "UPDATE", want: false},
 		{kind: "table", object: "recovery.recovery_set", privilege: "SELECT", want: true},
@@ -63,6 +64,7 @@ func VerifyControlMaintenanceAdmission(ctx context.Context, reader AdmissionRead
 func VerifyControlReadonlyAdmission(ctx context.Context, reader AdmissionReader) error {
 	return verifyPrivileges(ctx, reader, []privilegeProbe{
 		{kind: "schema", object: "platform", privilege: "USAGE", want: true},
+		{kind: "schema", object: "public", privilege: "USAGE", want: true},
 		{kind: "table", object: "public.goose_db_version", privilege: "SELECT", want: true},
 		{kind: "table", object: "public.goose_db_version", privilege: "INSERT", want: false},
 		{kind: "table", object: "recovery.recovery_set", privilege: "SELECT", want: true},

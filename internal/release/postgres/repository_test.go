@@ -12,6 +12,7 @@ import (
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	postgresmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -28,6 +29,9 @@ func testDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(p.Close)
+	if err := postgresmigrations.ApplyRiver(t.Context(), p); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := p.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +55,9 @@ func testEffectsDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(p.Close)
+	if err := postgresmigrations.ApplyRiver(t.Context(), p); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := p.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -131,10 +138,10 @@ func (testEventAppender) AppendEvent(ctx context.Context, tx Tx, input EventInpu
 	return Event{EventID: stored.EventID, ScopeID: stored.ScopeID, AggregateType: stored.AggregateType, AggregateID: stored.AggregateID, AggregateVersion: stored.AggregateVersion, EventType: stored.EventType, SchemaVersion: stored.SchemaVersion, OccurredAt: stored.OccurredAt, CorrelationID: stored.CorrelationID, Payload: stored.Payload}, nil
 }
 
-type testWorkflowAppender struct{}
+type testWorkflowAppender struct{ repository *jobspostgres.Repository }
 
-func (testWorkflowAppender) RecordWorkflow(ctx context.Context, tx Tx, intent jobs.WorkflowIntent) error {
-	return jobspostgres.NewRepository(tx).RecordWorkflow(ctx, tx, intent)
+func (a testWorkflowAppender) RecordWorkflow(ctx context.Context, tx Tx, intent jobs.WorkflowIntent) error {
+	return a.repository.RecordWorkflow(ctx, tx, intent)
 }
 
 func TestReleasePostgresLifecycleAndIdempotentReplay(t *testing.T) {
@@ -315,7 +322,7 @@ func TestReleasePostgresTransactionCommitsAndRollsBackWorkflowAuditEventTogether
 	id := identity(t, "generation_workflow_atomic")
 	prov := provenance(t, id)
 	in := release.CreateInput{ID: "release_workflow_atomic", ServingIdentity: id, ProjectDigest: prov.Artifact.ProjectDigest, ArtifactDigest: prov.Artifact.ContentDigest, RequestDigest: digest("6"), IdempotencyKey: "request_workflow_atomic", CreatedBy: "principal_1", Provenance: &prov}
-	base := NewWithOptions(p, Options{Audit: testAuditAppender{}, Events: testEventAppender{}, Workflow: testWorkflowAppender{}})
+	base := NewWithOptions(p, Options{Audit: testAuditAppender{}, Events: testEventAppender{}, Workflow: testWorkflowAppender{repository: jobspostgres.NewRepository(p)}})
 	created, err := base.Create(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -361,7 +368,7 @@ func TestReleasePostgresTransactionCommitsAndRollsBackWorkflowAuditEventTogether
 	if count != 0 {
 		t.Fatalf("rolled back workflow rows = %d, want zero", count)
 	}
-	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM jobs.job WHERE id=$1`, jobID).Scan(&count); err != nil {
+	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM jobs.job_history WHERE id=$1`, jobID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
@@ -403,7 +410,7 @@ func TestReleasePostgresTransactionCommitsAndRollsBackWorkflowAuditEventTogether
 	if count != 1 {
 		t.Fatalf("committed workflow rows = %d, want one", count)
 	}
-	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM jobs.job WHERE id=$1`, jobID).Scan(&count); err != nil {
+	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM jobs.job_history WHERE id=$1`, jobID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
@@ -426,7 +433,7 @@ func TestWithTxPreservesTransactionalSideEffectAuthorities(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
-	base := NewWithOptions(p, Options{Audit: testAuditAppender{}, Events: testEventAppender{}, Workflow: testWorkflowAppender{}})
+	base := NewWithOptions(p, Options{Audit: testAuditAppender{}, Events: testEventAppender{}, Workflow: testWorkflowAppender{repository: jobspostgres.NewRepository(p)}})
 	bound := base.WithTx(tx)
 	if !bound.AuditCapable() || !bound.EventCapable() || !bound.WorkflowCapable() {
 		t.Fatalf("transaction-bound repository dropped side-effect authorities: audit=%t events=%t workflow=%t", bound.AuditCapable(), bound.EventCapable(), bound.WorkflowCapable())

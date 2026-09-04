@@ -120,9 +120,6 @@ func (a *NativeBuildContractAuthority) Resolve(ctx context.Context, request Nati
 	if err := validateNativeBuildContractRequest(request); err != nil {
 		return NativeBuildContract{}, err
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	poolID := physicalpool.PoolID(request.PhysicalPoolID)
 	admission, err := a.physicalPool.LoadAdmissionContractByCompatibilityDigest(ctx, poolID, request.CompatibilityDigest)

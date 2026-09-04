@@ -88,7 +88,6 @@ func (r *Repository) RetentionInventory(ctx context.Context, targetID, environme
 	if err != nil {
 		return RetentionInventory{}, err
 	}
-	ctx = contextOrBackground(ctx)
 	// A repository built over a caller-owned transaction must observe that
 	// transaction's snapshot. Standalone pools use a short repeatable-read,
 	// read-only transaction so root and lease rows cannot straddle a cutover.

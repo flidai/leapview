@@ -33,11 +33,7 @@ type MaintenanceDBTX interface {
 	DBTX
 }
 
-type Tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
+type Tx = pgx.Tx
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -53,9 +49,6 @@ func SchemaSQL() string { return schemaSQL }
 func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return errors.New("cursor signing schema transaction is nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	// sqlc-exception:schema-ddl. schema.sql owns the capability DDL, guards,
 	// view, and grants; migration callers retain transaction ownership.
@@ -96,23 +89,17 @@ func (r *Repository) Configure(ctx context.Context) error {
 	if r == nil || isNilDB(r.db) {
 		return errors.New("cursor signing repository is nil")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	b, ok := r.db.(beginner)
 	if !ok {
 		return errors.New("cursor signing configuration requires a transaction-capable PostgreSQL DB")
 	}
-	tx, err := b.Begin(ctx)
-	if err != nil {
+	var ring keyRing
+	err := pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		var err error
+		ring, err = r.configureTx(ctx, tx)
 		return err
-	}
-	ring, err := r.configureTx(ctx, tx)
+	})
 	if err != nil {
-		_ = tx.Rollback(ctx)
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	// Install only after commit. A failed transaction must never publish a
@@ -141,28 +128,22 @@ func (r *Repository) Rotate(ctx context.Context) (string, error) {
 	if r == nil || isNilDB(r.db) {
 		return "", errors.New("cursor signing repository is nil")
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	b, ok := r.db.(beginner)
+	if !ok {
+		return "", errors.New("cursor signing rotation requires a transaction-capable PostgreSQL DB")
 	}
-	if b, ok := r.db.(beginner); ok {
-		tx, err := b.Begin(ctx)
-		if err != nil {
-			return "", err
-		}
-		id, err := r.rotateTx(ctx, tx)
-		if err != nil {
-			_ = tx.Rollback(ctx)
-			return "", err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return "", err
-		}
-		if err := r.Configure(ctx); err != nil {
-			return "", err
-		}
-		return id, nil
+	var id string
+	if err := pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		var err error
+		id, err = r.rotateTx(ctx, tx)
+		return err
+	}); err != nil {
+		return "", err
 	}
-	return "", errors.New("cursor signing rotation requires a transaction-capable PostgreSQL DB")
+	if err := r.Configure(ctx); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func (r *Repository) configureTx(ctx context.Context, tx Tx) (keyRing, error) {
@@ -232,9 +213,6 @@ func (m *Maintenance) PruneExpiredTx(ctx context.Context, tx Tx, limit int) (int
 	if m == nil || tx == nil || limit < 1 || limit > 1000 {
 		return 0, errors.New("cursor signing prune limit must be between 1 and 1000")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	return cursordb.New(tx).PruneExpiredCursorSigningKeys(ctx, int32(limit))
 }
 
@@ -247,22 +225,11 @@ func (m *Maintenance) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	if m == nil || isNilDB(m.db) {
 		return errors.New("cursor signing maintenance repository is nil")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	b, ok := m.db.(beginner)
 	if !ok {
 		return errors.New("cursor signing maintenance requires a transaction-capable PostgreSQL DB")
 	}
-	tx, err := b.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback(ctx)
-		return err
-	}
-	return tx.Commit(ctx)
+	return pgx.BeginFunc(ctx, b, fn)
 }
 
 func (r *Repository) rotateTx(ctx context.Context, tx Tx) (string, error) {

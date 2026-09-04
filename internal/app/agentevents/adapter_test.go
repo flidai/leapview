@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
-	"github.com/flidai/leapview/internal/platform/events/postgres"
+	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,7 +18,7 @@ func TestAppendDomainEventFailsClosedWithoutAdapterOrIdentity(t *testing.T) {
 		AggregateID: "conversation-1", EventType: "agent.conversation.created",
 		SchemaVersion: 1, CorrelationID: "01900000-0000-7000-8000-000000000002", Payload: []byte(`{}`),
 	}
-	if _, err := New().AppendDomainEvent(context.Background(), nil, input); err == nil {
+	if _, err := NewWithRepository(eventspostgres.New()).AppendDomainEvent(context.Background(), nil, input); err == nil {
 		t.Fatal("invalid source event identity unexpectedly accepted")
 	}
 	var adapter *Adapter
@@ -36,10 +36,10 @@ func TestAppendDomainEventUsesCallerTransactionAndValidatesReplay(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
-	if _, err := db.Exec(t.Context(), postgres.SchemaSQL()); err != nil {
+	if _, err := db.Exec(t.Context(), eventspostgres.SchemaSQL()); err != nil {
 		t.Fatal(err)
 	}
-	adapter := New()
+	adapter := NewWithRepository(eventspostgres.New())
 	input := agentpostgres.DomainEventInput{
 		EventID: "01900000-0000-7000-8000-000000000011", ScopeID: "scope",
 		AggregateType: "agent_conversation", AggregateID: "conversation-1",

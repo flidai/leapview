@@ -266,14 +266,14 @@ func (a *ApprovalAuthority) Request(ctx context.Context, input ApprovalRequestIn
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	request, err := a.RequestTx(ctx, tx, input)
 	if err != nil {
 		return ApprovalRequest{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return ApprovalRequest{}, err
 	}
 	committed = true
@@ -284,7 +284,6 @@ func (a *ApprovalAuthority) RequestTx(ctx context.Context, tx Tx, input Approval
 	if a == nil || a.repository == nil || tx == nil {
 		return ApprovalRequest{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	now, err := databaseNow(ctx, tx)
 	if err != nil {
 		return ApprovalRequest{}, err
@@ -375,14 +374,14 @@ func (a *ApprovalAuthority) decide(ctx context.Context, input ApprovalDecisionIn
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	request, err := a.DecideTx(ctx, tx, input, action)
 	if err != nil {
 		return ApprovalRequest{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return ApprovalRequest{}, err
 	}
 	committed = true
@@ -393,7 +392,6 @@ func (a *ApprovalAuthority) DecideTx(ctx context.Context, tx Tx, input ApprovalD
 	if a == nil || a.repository == nil || tx == nil {
 		return ApprovalRequest{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	requestID, err := uuidID(input.RequestID, "approval request id", false)
 	if err != nil {
 		return ApprovalRequest{}, err
@@ -512,14 +510,14 @@ func (a *ApprovalAuthority) Effective(ctx context.Context, requestID string) (Ap
 	if err != nil {
 		return ApprovalRequest{}, err
 	}
-	return effectiveApproval(contextOrBackground(ctx), db, requestID)
+	return effectiveApproval(ctx, db, requestID)
 }
 
 func (a *ApprovalAuthority) EffectiveTx(ctx context.Context, tx Tx, requestID string) (ApprovalRequest, error) {
 	if tx == nil {
 		return ApprovalRequest{}, ErrInvalid
 	}
-	return effectiveApproval(contextOrBackground(ctx), tx, requestID)
+	return effectiveApproval(ctx, tx, requestID)
 }
 
 func effectiveApproval(ctx context.Context, db DBTX, requestID string) (ApprovalRequest, error) {
@@ -561,7 +559,7 @@ func (a *ApprovalAuthority) RequestByID(ctx context.Context, requestID string) (
 	if err != nil {
 		return ApprovalRequest{}, err
 	}
-	return loadApprovalRequest(contextOrBackground(ctx), db, id)
+	return loadApprovalRequest(ctx, db, id)
 }
 
 func normalizeApprovalRequest(input ApprovalRequestInput) (ApprovalRequestInput, error) {

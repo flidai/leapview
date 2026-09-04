@@ -126,6 +126,8 @@ func (w *duckLakeRetentionWorker) Start(ctx context.Context) error {
 	if w == nil || w.pass == nil || w.acquire == nil {
 		return nil
 	}
+	// Worker startup is a lifecycle boundary: normalize the parent context
+	// before deriving the cancellation scope used by the goroutine and ticker.
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -160,6 +162,8 @@ func (w *duckLakeRetentionWorker) Stop(ctx context.Context) error {
 	if w == nil {
 		return nil
 	}
+	// Worker shutdown is a lifecycle boundary: a nil caller context still needs
+	// a bounded wait context while cancellation drains the maintenance goroutine.
 	if ctx == nil {
 		ctx = context.Background()
 	}

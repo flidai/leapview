@@ -182,11 +182,8 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if _, err := r.CreateRetentionRoot(ctx, DeliveryRetentionRoot{RootID: activeRootID, TargetID: "target_sales_prod", CandidateID: ids["candidate"], GenerationID: ids["generation"], SnapshotSealID: "", RootKind: "generation", State: "live"}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("incomplete retention root identity = %v", err)
 	}
-	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_candidate(candidate_id,target_id,plan_id,snapshot_seal_id,status,candidate_revision,artifact_digest,qualification_digest,qualified_at) VALUES('0198f2c0-7c7a-7f00-8a11-000000000010','target_sales_prod',$1::uuid,$2::uuid,'qualified',2,$3,$4,clock_timestamp())`, ids["plan"], ids["seal"], testDigest('e'), testDigest('3')); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_publication(publication_id,target_id,generation_id,candidate_id,snapshot_seal_id,expected_target_revision,actor_id,state,request_digest) VALUES('0198f2c0-7c7a-7f00-8a11-000000000013','target_sales_prod',$1::uuid,'0198f2c0-7c7a-7f00-8a11-000000000010',$2::uuid,2,'operator','pending',$3)`, ids["generation"], ids["seal"], testDigest('8')); err == nil {
-		t.Fatal("publication accepted mismatched generation candidate")
+	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_candidate(candidate_id,target_id,plan_id,snapshot_seal_id,status,candidate_revision,artifact_digest,qualification_digest,qualified_at) VALUES('0198f2c0-7c7a-7f00-8a11-000000000010','target_sales_prod',$1::uuid,$2::uuid,'qualified',2,$3,$4,clock_timestamp())`, ids["plan"], ids["seal"], testDigest('e'), testDigest('3')); err == nil {
+		t.Fatal("candidate accepted a snapshot seal owned by another candidate")
 	}
 	if _, err := p.Exec(ctx, `ALTER TABLE event.event_log DISABLE TRIGGER event_log_immutable`); err != nil {
 		t.Fatal(err)

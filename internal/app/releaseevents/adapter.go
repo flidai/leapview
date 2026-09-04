@@ -23,8 +23,6 @@ var _ releasepostgres.EventAppender = (*Adapter)(nil)
 
 // New returns an adapter backed by the platform's durable PostgreSQL event
 // log.
-func New() *Adapter { return NewWithRepository(eventspostgres.New()) }
-
 // NewWithRepository binds the adapter to the exact platform event authority
 // allocated by application composition.
 func NewWithRepository(events *eventspostgres.Repository) *Adapter {

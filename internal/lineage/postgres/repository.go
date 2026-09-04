@@ -57,13 +57,9 @@ var (
 	ErrTraversalLimit = errors.New("lineage traversal limit is invalid")
 )
 
-// Tx is the native pgx transaction surface required by persistence. pgx.Tx
-// and pgxpool.Tx satisfy it; no database/sql adapter is used.
-type Tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
+// Tx is the complete native transaction contract so mutation methods cannot
+// accept a pool and silently execute related statements on different sessions.
+type Tx = pgx.Tx
 
 // DB is the read surface used by Load and Traverse.
 type DB interface {
@@ -184,9 +180,6 @@ func SchemaSQL() string { return schemaSQL }
 func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	// sqlc-exception: schema-ddl. Capability-owned schema DDL is applied as a
 	// single caller-owned migration transaction.
@@ -544,9 +537,6 @@ func Persist(ctx context.Context, tx Tx, p Projection) error {
 	if tx == nil {
 		return ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	var err error
 	p, err = canonicalProjection(p)
 	if err != nil {
@@ -632,9 +622,6 @@ func PersistBinding(ctx context.Context, tx Tx, b Binding) error {
 	if tx == nil || !validScope(b.DeliveryID) || !validScope(b.GenerationID) || !validDigest(b.GraphDigest) {
 		return ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	q := lineagedb.New(tx)
 	if b.ProjectID == "" {
 		projectID, err := q.GetGraphProjectID(ctx, b.GraphDigest)
@@ -682,7 +669,6 @@ func PublishRevision(ctx context.Context, tx Tx, in RevisionInput) (Revision, er
 	if tx == nil || !validScope(in.ProjectID) || !validScope(in.ScopeID) {
 		return Revision{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	projection := in.Projection
 	if projection.ProjectID == "" && len(projection.Nodes) == 0 && len(projection.Edges) == 0 {
 		projection = in.Graph
@@ -749,7 +735,7 @@ func CurrentRevision(ctx context.Context, db DB, projectID, scopeID string) (Rev
 		return Revision{}, ErrInvalid
 	}
 	q := lineagedb.New(db)
-	row, err := q.GetCurrentRevision(contextOrBackground(ctx), lineagedb.GetCurrentRevisionParams{ProjectID: projectID, ScopeID: scopeID})
+	row, err := q.GetCurrentRevision(ctx, lineagedb.GetCurrentRevisionParams{ProjectID: projectID, ScopeID: scopeID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Revision{}, ErrNotFound
 	}
@@ -772,7 +758,7 @@ func LoadRevision(ctx context.Context, db DB, projectID, scopeID string, revisio
 		return Revision{}, ErrInvalid
 	}
 	q := lineagedb.New(db)
-	row, err := q.GetRevision(contextOrBackground(ctx), lineagedb.GetRevisionParams{ProjectID: projectID, ScopeID: scopeID, RevisionID: revisionID})
+	row, err := q.GetRevision(ctx, lineagedb.GetRevisionParams{ProjectID: projectID, ScopeID: scopeID, RevisionID: revisionID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Revision{}, ErrNotFound
 	}
@@ -787,13 +773,6 @@ func (r *Repository) LoadRevision(ctx context.Context, projectID, scopeID string
 		return Revision{}, ErrInvalid
 	}
 	return LoadRevision(ctx, r.db, projectID, scopeID, revisionID)
-}
-
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 func revisionFromRow(row lineagedb.LineageRevision) (Revision, error) {
@@ -835,9 +814,6 @@ func verifyStoredProjection(ctx context.Context, db DB, want Projection) error {
 func Load(ctx context.Context, db DB, digest string) (Projection, error) {
 	if db == nil || !validDigest(digest) {
 		return Projection{}, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	return loadDigest(ctx, db, digest)
 }
@@ -914,9 +890,6 @@ func LoadBound(ctx context.Context, db DB, deliveryID, generationID string) (Pro
 	if db == nil || !validScope(deliveryID) || !validScope(generationID) {
 		return Projection{}, ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	q := lineagedb.New(db)
 	binding, err := q.GetBinding(ctx, lineagedb.GetBindingParams{DeliveryID: deliveryID, GenerationID: generationID})
 	if err != nil {
@@ -979,9 +952,6 @@ func Traverse(ctx context.Context, db DB, in TraversalInput) ([]TraversalNode, e
 	}
 	if _, err := projectgraph.NewResourceID(in.RootID); err != nil {
 		return nil, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if in.Direction != DirectionUpstream && in.Direction != DirectionDownstream {
 		return nil, ErrInvalid

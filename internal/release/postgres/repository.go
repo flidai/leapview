@@ -37,11 +37,7 @@ type DBTX interface {
 // Tx is intentionally strict: it can only be satisfied by a caller-owned
 // PostgreSQL transaction, never a pool or connection. Methods never commit or
 // roll back this value.
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -155,17 +151,13 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// sqlc-exception: schema-ddl. Capability-owned schema, guards and triggers
 	// are applied by the baseline through a caller-owned migration transaction.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
 
-func New(db DBTX) *Repository           { return &Repository{db: db} }
-func NewRepository(db DBTX) *Repository { return New(db) }
+func New(db DBTX) *Repository { return &Repository{db: db} }
 func NewWithOptions(db DBTX, options Options) *Repository {
 	return &Repository{db: db, audit: options.Audit, events: options.Events, workflow: options.Workflow}
 }
@@ -202,13 +194,6 @@ func (r *Repository) WithTx(tx Tx) *Repository {
 	return &Repository{db: tx, audit: r.audit, events: r.events, workflow: r.workflow}
 }
 
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
-}
-
 func (r *Repository) Create(ctx context.Context, input release.CreateInput) (release.Release, error) {
 	if r == nil || r.db == nil {
 		return release.Release{}, ErrInvalid
@@ -217,19 +202,13 @@ func (r *Repository) Create(ctx context.Context, input release.CreateInput) (rel
 	if !ok {
 		return release.Release{}, errors.New("release PostgreSQL database does not support transactions")
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
-	if err != nil {
-		return release.Release{}, err
-	}
-	defer tx.Rollback(contextOrBackground(ctx))
-	row, err := r.CreateTx(ctx, tx, input)
-	if err != nil {
-		return release.Release{}, err
-	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
-		return release.Release{}, err
-	}
-	return row, nil
+	var row release.Release
+	err := pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		var err error
+		row, err = r.CreateTx(ctx, tx, input)
+		return err
+	})
+	return row, err
 }
 
 func (r *Repository) CreateTx(ctx context.Context, tx Tx, input release.CreateInput) (release.Release, error) {
@@ -246,7 +225,7 @@ func (r *Repository) CreateTx(ctx context.Context, tx Tx, input release.CreateIn
 		return release.Release{}, ErrInvalid
 	}
 	q := releasedb.New(tx)
-	inserted, err := q.InsertRelease(contextOrBackground(ctx), releasedb.InsertReleaseParams{
+	inserted, err := q.InsertRelease(ctx, releasedb.InsertReleaseParams{
 		ReleaseID: input.ID, ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
 		GenerationID: identity.GenerationID, ProjectDigest: input.ProjectDigest, ArtifactDigest: input.ArtifactDigest,
 		RequestDigest: input.RequestDigest, IdempotencyKey: input.IdempotencyKey, Provenance: encoded, CreatedBy: input.CreatedBy,
@@ -254,7 +233,7 @@ func (r *Repository) CreateTx(ctx context.Context, tx Tx, input release.CreateIn
 	if err != nil {
 		return release.Release{}, mapError(err)
 	}
-	row, err := q.GetReleaseByIdempotency(contextOrBackground(ctx), releasedb.GetReleaseByIdempotencyParams{ProjectID: identity.ProjectID.String(), IdempotencyKey: input.IdempotencyKey})
+	row, err := q.GetReleaseByIdempotency(ctx, releasedb.GetReleaseByIdempotencyParams{ProjectID: identity.ProjectID.String(), IdempotencyKey: input.IdempotencyKey})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if inserted == 0 {
 			return release.Release{}, ErrConflict
@@ -275,7 +254,7 @@ func (r *Repository) CreateTx(ctx context.Context, tx Tx, input release.CreateIn
 	// replays validate immutable pins and do not append side effects again.
 	if inserted == 1 {
 		for _, pin := range connections {
-			if err := q.InsertReleaseConnection(contextOrBackground(ctx), releasedb.InsertReleaseConnectionParams{ReleaseID: input.ID, ConnectionID: pin.ConnectionID, RevisionID: pin.RevisionID}); err != nil {
+			if err := q.InsertReleaseConnection(ctx, releasedb.InsertReleaseConnectionParams{ReleaseID: input.ID, ConnectionID: pin.ConnectionID, RevisionID: pin.RevisionID}); err != nil {
 				return release.Release{}, mapError(err)
 			}
 		}
@@ -327,7 +306,7 @@ func (r *Repository) Get(ctx context.Context, projectID projectgraph.ResourceID,
 }
 
 func (r *Repository) getTx(ctx context.Context, db DBTX, projectID projectgraph.ResourceID, releaseID string) (release.Release, error) {
-	row, err := releasedb.New(db).GetRelease(contextOrBackground(ctx), releasedb.GetReleaseParams{ProjectID: projectID.String(), ReleaseID: releaseID})
+	row, err := releasedb.New(db).GetRelease(ctx, releasedb.GetReleaseParams{ProjectID: projectID.String(), ReleaseID: releaseID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return release.Release{}, ErrNotFound
 	}
@@ -353,7 +332,7 @@ func (r *Repository) loadRow(ctx context.Context, db DBTX, row releasedb.GetRele
 		}
 		out.Provenance = &p
 	}
-	pins, err := releasedb.New(db).ListReleaseConnections(contextOrBackground(ctx), row.ReleaseID)
+	pins, err := releasedb.New(db).ListReleaseConnections(ctx, row.ReleaseID)
 	if err != nil {
 		return release.Release{}, err
 	}
@@ -375,7 +354,7 @@ func (r *Repository) List(ctx context.Context, projectID projectgraph.ResourceID
 	if r == nil || r.db == nil || projectID.Validate() != nil {
 		return nil, ErrInvalid
 	}
-	rows, err := releasedb.New(r.db).ListReleases(contextOrBackground(ctx), projectID.String())
+	rows, err := releasedb.New(r.db).ListReleases(ctx, projectID.String())
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +371,7 @@ func (r *Repository) List(ctx context.Context, projectID projectgraph.ResourceID
 
 func (r *Repository) compareConnections(ctx context.Context, db DBTX, releaseID string, want []release.ConnectionPin) error {
 	want = normalizeConnections(want)
-	rows, err := releasedb.New(db).ListReleaseConnections(contextOrBackground(ctx), releaseID)
+	rows, err := releasedb.New(db).ListReleaseConnections(ctx, releaseID)
 	if err != nil {
 		return err
 	}
@@ -432,18 +411,9 @@ func (r *Repository) RecordArtifact(ctx context.Context, artifact release.Artifa
 	if !ok {
 		return errors.New("release PostgreSQL database does not support transactions")
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(contextOrBackground(ctx))
-	if err := r.RecordArtifactTx(ctx, tx, artifact); err != nil {
-		return err
-	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
-		return err
-	}
-	return nil
+	return pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		return r.RecordArtifactTx(ctx, tx, artifact)
+	})
 }
 
 func (r *Repository) RecordArtifactTx(ctx context.Context, tx Tx, artifact release.Artifact) error {
@@ -451,7 +421,7 @@ func (r *Repository) RecordArtifactTx(ctx context.Context, tx Tx, artifact relea
 		return ErrInvalid
 	}
 	actual := artifact.ActualDigest
-	tag, err := releasedb.New(tx).RecordArtifact(contextOrBackground(ctx), releasedb.RecordArtifactParams{ArtifactActualDigest: &actual, ArtifactSizeBytes: artifact.SizeBytes, ReleaseID: artifact.ReleaseID, ProjectID: artifact.ServingIdentity.ProjectID.String(), Environment: artifact.ServingIdentity.Environment, GenerationID: artifact.ServingIdentity.GenerationID, ArtifactDigest: artifact.ExpectedDigest})
+	tag, err := releasedb.New(tx).RecordArtifact(ctx, releasedb.RecordArtifactParams{ArtifactActualDigest: &actual, ArtifactSizeBytes: artifact.SizeBytes, ReleaseID: artifact.ReleaseID, ProjectID: artifact.ServingIdentity.ProjectID.String(), Environment: artifact.ServingIdentity.Environment, GenerationID: artifact.ServingIdentity.GenerationID, ArtifactDigest: artifact.ExpectedDigest})
 	if err != nil {
 		return err
 	}
@@ -480,19 +450,13 @@ func (r *Repository) BeginFinalization(ctx context.Context, projectID, releaseID
 	if !ok {
 		return release.Release{}, errors.New("release PostgreSQL database does not support transactions")
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
-	if err != nil {
-		return release.Release{}, err
-	}
-	defer tx.Rollback(contextOrBackground(ctx))
-	row, err := r.BeginFinalizationTx(ctx, tx, projectID, releaseID, workflow)
-	if err != nil {
-		return release.Release{}, err
-	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
-		return release.Release{}, err
-	}
-	return row, nil
+	var row release.Release
+	err := pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		var err error
+		row, err = r.BeginFinalizationTx(ctx, tx, projectID, releaseID, workflow)
+		return err
+	})
+	return row, err
 }
 
 func (r *Repository) BeginFinalizationTx(ctx context.Context, tx Tx, projectID, releaseID string, workflow publicjobs.WorkflowIntent) (release.Release, error) {
@@ -500,7 +464,7 @@ func (r *Repository) BeginFinalizationTx(ctx context.Context, tx Tx, projectID, 
 	if err != nil || releaseID == "" || releaseID != strings.TrimSpace(releaseID) {
 		return release.Release{}, ErrInvalid
 	}
-	_, err = releasedb.New(tx).GetReleaseForUpdate(contextOrBackground(ctx), releasedb.GetReleaseForUpdateParams{ProjectID: projectID, ReleaseID: releaseID})
+	_, err = releasedb.New(tx).GetReleaseForUpdate(ctx, releasedb.GetReleaseForUpdateParams{ProjectID: projectID, ReleaseID: releaseID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return release.Release{}, ErrNotFound
 	}
@@ -518,7 +482,7 @@ func (r *Repository) BeginFinalizationTx(ctx context.Context, tx Tx, projectID, 
 		return release.Release{}, errors.New("release workflow appender is required")
 	}
 	if workflow.Event.Key != "" || workflow.Job.ID != "" {
-		if err := r.workflow.RecordWorkflow(contextOrBackground(ctx), tx, workflow); err != nil {
+		if err := r.workflow.RecordWorkflow(ctx, tx, workflow); err != nil {
 			return release.Release{}, err
 		}
 	}
@@ -527,7 +491,7 @@ func (r *Repository) BeginFinalizationTx(ctx context.Context, tx Tx, projectID, 
 		if current.ArtifactUploadedAt == "" || current.ActualDigest != current.ArtifactDigest {
 			return release.Release{}, release.ErrIncomplete
 		}
-		tag, updateErr := releasedb.New(tx).MarkValidating(contextOrBackground(ctx), releasedb.MarkValidatingParams{ReleaseID: releaseID, ProjectID: projectID})
+		tag, updateErr := releasedb.New(tx).MarkValidating(ctx, releasedb.MarkValidatingParams{ReleaseID: releaseID, ProjectID: projectID})
 		if updateErr != nil {
 			return release.Release{}, updateErr
 		}
@@ -536,7 +500,7 @@ func (r *Repository) BeginFinalizationTx(ctx context.Context, tx Tx, projectID, 
 		}
 		transitioned = true
 	}
-	_, err = releasedb.New(tx).GetRelease(contextOrBackground(ctx), releasedb.GetReleaseParams{ProjectID: projectID, ReleaseID: releaseID})
+	_, err = releasedb.New(tx).GetRelease(ctx, releasedb.GetReleaseParams{ProjectID: projectID, ReleaseID: releaseID})
 	if err != nil {
 		return release.Release{}, err
 	}
@@ -561,19 +525,13 @@ func (r *Repository) CompleteFinalization(ctx context.Context, projectID, releas
 	if !ok {
 		return release.Release{}, errors.New("release PostgreSQL database does not support transactions")
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
-	if err != nil {
-		return release.Release{}, err
-	}
-	defer tx.Rollback(contextOrBackground(ctx))
-	row, err := r.CompleteFinalizationTx(ctx, tx, projectID, releaseID, actualDigest)
-	if err != nil {
-		return release.Release{}, err
-	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
-		return release.Release{}, err
-	}
-	return row, nil
+	var row release.Release
+	err := pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		var err error
+		row, err = r.CompleteFinalizationTx(ctx, tx, projectID, releaseID, actualDigest)
+		return err
+	})
+	return row, err
 }
 
 func (r *Repository) CompleteFinalizationTx(ctx context.Context, tx Tx, projectID, releaseID, actualDigest string) (release.Release, error) {
@@ -597,7 +555,7 @@ func (r *Repository) CompleteFinalizationTx(ctx context.Context, tx Tx, projectI
 	if actualDigest != current.ArtifactDigest || current.ArtifactUploadedAt == "" {
 		return release.Release{}, ErrConflict
 	}
-	tag, err := releasedb.New(tx).MarkReady(contextOrBackground(ctx), releasedb.MarkReadyParams{ReleaseID: releaseID, ProjectID: projectID})
+	tag, err := releasedb.New(tx).MarkReady(ctx, releasedb.MarkReadyParams{ReleaseID: releaseID, ProjectID: projectID})
 	if err != nil {
 		return release.Release{}, err
 	}
@@ -659,19 +617,13 @@ func (r *Repository) FailFinalization(ctx context.Context, projectID, releaseID 
 	if !ok {
 		return release.Release{}, errors.New("release PostgreSQL database does not support transactions")
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
-	if err != nil {
-		return release.Release{}, err
-	}
-	defer tx.Rollback(contextOrBackground(ctx))
-	row, err := r.FailFinalizationTx(ctx, tx, projectID, releaseID, cause)
-	if err != nil {
-		return release.Release{}, err
-	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
-		return release.Release{}, err
-	}
-	return row, nil
+	var row release.Release
+	err := pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		var err error
+		row, err = r.FailFinalizationTx(ctx, tx, projectID, releaseID, cause)
+		return err
+	})
+	return row, err
 }
 
 func (r *Repository) FailFinalizationTx(ctx context.Context, tx Tx, projectID, releaseID string, cause error) (release.Release, error) {
@@ -696,7 +648,7 @@ func (r *Repository) FailFinalizationTx(ctx context.Context, tx Tx, projectID, r
 	if len(message) > 4096 {
 		message = message[:4096]
 	}
-	tag, err := releasedb.New(tx).MarkFailed(contextOrBackground(ctx), releasedb.MarkFailedParams{Error: message, ReleaseID: releaseID, ProjectID: projectID})
+	tag, err := releasedb.New(tx).MarkFailed(ctx, releasedb.MarkFailedParams{Error: message, ReleaseID: releaseID, ProjectID: projectID})
 	if err != nil {
 		return release.Release{}, err
 	}
@@ -719,7 +671,7 @@ func (r *Repository) recordAuditAndEvent(ctx context.Context, tx Tx, row release
 		if r.audit == nil {
 			return errors.New("release audit appender is required")
 		}
-		if _, err := r.audit.RecordAuditEvent(contextOrBackground(ctx), tx, intent); err != nil {
+		if _, err := r.audit.RecordAuditEvent(ctx, tx, intent); err != nil {
 			return err
 		}
 	}
@@ -730,7 +682,7 @@ func (r *Repository) recordAuditAndEvent(ctx context.Context, tx Tx, row release
 	if err != nil {
 		return err
 	}
-	event, err := r.events.AppendEvent(contextOrBackground(ctx), tx, EventInput{ScopeID: row.ServingIdentity.ProjectID.String(), AggregateType: "release", AggregateID: row.ID, EventType: eventType, SchemaVersion: 1, Payload: payload})
+	event, err := r.events.AppendEvent(ctx, tx, EventInput{ScopeID: row.ServingIdentity.ProjectID.String(), AggregateType: "release", AggregateID: row.ID, EventType: eventType, SchemaVersion: 1, Payload: payload})
 	if err != nil {
 		return err
 	}
@@ -761,19 +713,13 @@ func (r *Repository) RetainCandidateProvenance(ctx context.Context, projectID pr
 	if !ok {
 		return release.Provenance{}, errors.New("release PostgreSQL database does not support transactions")
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
-	if err != nil {
-		return release.Provenance{}, err
-	}
-	defer tx.Rollback(contextOrBackground(ctx))
-	out, err := r.retainCandidateProvenanceTx(ctx, tx, projectID, p)
-	if err != nil {
-		return release.Provenance{}, err
-	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
-		return release.Provenance{}, err
-	}
-	return out, nil
+	var out release.Provenance
+	err := pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		var err error
+		out, err = r.retainCandidateProvenanceTx(ctx, tx, projectID, p)
+		return err
+	})
+	return out, err
 }
 
 func (r *Repository) RetainCandidateProvenanceTx(ctx context.Context, tx Tx, projectID projectgraph.ResourceID, p release.Provenance) (release.Provenance, error) {
@@ -790,7 +736,7 @@ func (r *Repository) retainCandidateProvenanceTx(ctx context.Context, tx Tx, pro
 	if err != nil || len(encoded) > 65536 {
 		return release.Provenance{}, ErrInvalid
 	}
-	if err := releasedb.New(tx).InsertCandidateProvenance(contextOrBackground(ctx), releasedb.InsertCandidateProvenanceParams{ProjectID: projectID.String(), CandidateID: p.Candidate.ID, CandidateRevision: p.Candidate.Revision, ProvenanceDigest: p.Digest, Provenance: encoded}); err != nil {
+	if err := releasedb.New(tx).InsertCandidateProvenance(ctx, releasedb.InsertCandidateProvenanceParams{ProjectID: projectID.String(), CandidateID: p.Candidate.ID, CandidateRevision: p.Candidate.Revision, ProvenanceDigest: p.Digest, Provenance: encoded}); err != nil {
 		return release.Provenance{}, err
 	}
 	stored, err := r.CandidateProvenanceTx(ctx, tx, projectID, p.Candidate.ID, p.Candidate.Revision)
@@ -813,7 +759,7 @@ func (r *Repository) CandidateProvenanceTx(ctx context.Context, db DBTX, project
 	if projectID.Validate() != nil || candidateID == "" || candidateID != strings.TrimSpace(candidateID) || revision < 1 {
 		return release.Provenance{}, ErrInvalid
 	}
-	row, err := releasedb.New(db).GetCandidateProvenance(contextOrBackground(ctx), releasedb.GetCandidateProvenanceParams{ProjectID: projectID.String(), CandidateID: candidateID, CandidateRevision: revision})
+	row, err := releasedb.New(db).GetCandidateProvenance(ctx, releasedb.GetCandidateProvenanceParams{ProjectID: projectID.String(), CandidateID: candidateID, CandidateRevision: revision})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return release.Provenance{}, ErrNotFound
 	}
@@ -831,9 +777,9 @@ func (r *Repository) ProvenanceForServingState(ctx context.Context, identity pro
 	if r == nil || r.db == nil || identity.Validate() != nil {
 		return release.Provenance{}, ErrInvalid
 	}
-	raw, err := releasedb.New(r.db).GetReadyReleaseProvenanceByGeneration(contextOrBackground(ctx), releasedb.GetReadyReleaseProvenanceByGenerationParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID})
+	raw, err := releasedb.New(r.db).GetReadyReleaseProvenanceByGeneration(ctx, releasedb.GetReadyReleaseProvenanceByGenerationParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		rows, candidateErr := releasedb.New(r.db).ListCandidateProvenanceByGeneration(contextOrBackground(ctx), releasedb.ListCandidateProvenanceByGenerationParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID})
+		rows, candidateErr := releasedb.New(r.db).ListCandidateProvenanceByGeneration(ctx, releasedb.ListCandidateProvenanceByGenerationParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID})
 		if candidateErr != nil {
 			return release.Provenance{}, candidateErr
 		}
@@ -862,15 +808,9 @@ func (r *Repository) LinkDeployment(ctx context.Context, projectID, deploymentID
 	if !ok {
 		return errors.New("release PostgreSQL database does not support transactions")
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(contextOrBackground(ctx))
-	if err := r.LinkDeploymentTx(ctx, tx, projectID, deploymentID, releaseID, rollbackOf); err != nil {
-		return err
-	}
-	return tx.Commit(contextOrBackground(ctx))
+	return pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		return r.LinkDeploymentTx(ctx, tx, projectID, deploymentID, releaseID, rollbackOf)
+	})
 }
 func (r *Repository) LinkDeploymentTx(ctx context.Context, tx Tx, projectID, deploymentID, releaseID, rollbackOf string) error {
 	if tx == nil || !canonicalID(projectID) || !canonicalID(deploymentID) || !canonicalID(releaseID) || rollbackOf != strings.TrimSpace(rollbackOf) {
@@ -892,10 +832,10 @@ func (r *Repository) LinkDeploymentTx(ctx context.Context, tx Tx, projectID, dep
 			return ErrConflict
 		}
 	}
-	if err := releasedb.New(tx).InsertDeploymentLinkage(contextOrBackground(ctx), releasedb.InsertDeploymentLinkageParams{DeploymentID: deploymentID, ProjectID: projectID, ReleaseID: releaseID, RollbackOf: rollbackOf}); err != nil {
+	if err := releasedb.New(tx).InsertDeploymentLinkage(ctx, releasedb.InsertDeploymentLinkageParams{DeploymentID: deploymentID, ProjectID: projectID, ReleaseID: releaseID, RollbackOf: rollbackOf}); err != nil {
 		return mapError(err)
 	}
-	stored, err := releasedb.New(tx).GetDeploymentLinkageByID(contextOrBackground(ctx), deploymentID)
+	stored, err := releasedb.New(tx).GetDeploymentLinkageByID(ctx, deploymentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -912,7 +852,7 @@ func (r *Repository) DeploymentRelease(ctx context.Context, projectID, deploymen
 	if r == nil || r.db == nil || !canonicalID(projectID) || !canonicalID(deploymentID) {
 		return "", "", ErrInvalid
 	}
-	row, err := releasedb.New(r.db).GetDeploymentLinkage(contextOrBackground(ctx), releasedb.GetDeploymentLinkageParams{ProjectID: projectID, DeploymentID: deploymentID})
+	row, err := releasedb.New(r.db).GetDeploymentLinkage(ctx, releasedb.GetDeploymentLinkageParams{ProjectID: projectID, DeploymentID: deploymentID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", ErrNotFound
 	}
@@ -922,13 +862,13 @@ func (r *Repository) ListDeploymentIDs(ctx context.Context, projectID string) ([
 	if r == nil || r.db == nil || !canonicalID(projectID) {
 		return nil, ErrInvalid
 	}
-	return releasedb.New(r.db).ListDeploymentIDs(contextOrBackground(ctx), projectID)
+	return releasedb.New(r.db).ListDeploymentIDs(ctx, projectID)
 }
 func (r *Repository) PriorDeploymentRelease(ctx context.Context, projectID, deploymentID string) (string, error) {
 	if r == nil || r.db == nil || !canonicalID(projectID) || !canonicalID(deploymentID) {
 		return "", ErrInvalid
 	}
-	row, err := releasedb.New(r.db).GetPriorDeploymentRelease(contextOrBackground(ctx), releasedb.GetPriorDeploymentReleaseParams{ProjectID: projectID, DeploymentID: deploymentID})
+	row, err := releasedb.New(r.db).GetPriorDeploymentRelease(ctx, releasedb.GetPriorDeploymentReleaseParams{ProjectID: projectID, DeploymentID: deploymentID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}

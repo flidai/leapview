@@ -12,6 +12,8 @@ import (
 // then proves the durable catalog format before runtime grants or control
 // compatibility can advance.
 func (e *SQLCatalogExecutor) Migrate(ctx context.Context, options CatalogMigrationOptions) error {
+	// Migration is a lifecycle boundary: one normalized context must cover the
+	// attach, owner checks, migration statements, and privilege handoff.
 	if ctx == nil {
 		ctx = context.Background()
 	}

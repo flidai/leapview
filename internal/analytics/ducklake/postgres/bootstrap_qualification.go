@@ -42,9 +42,6 @@ func QualifyCatalogBootstrap(ctx context.Context, tx pgx.Tx, in CatalogBootstrap
 	if err != nil {
 		return CatalogRuntimeCompatibility{}, fmt.Errorf("%w: bootstrap completion evidence", ErrMigrationEvidenceRequired)
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	current, err := LoadCatalogRuntimeCompatibility(ctx, tx, in.PhysicalPoolID)
 	if err != nil {
 		return CatalogRuntimeCompatibility{}, err

@@ -294,6 +294,17 @@ BEGIN
 END;
 $$;
 
+-- Keep the SQL-side digest check byte-for-byte compatible with Go's
+-- encoding/json output. PostgreSQL jsonb compares object structure (which is
+-- useful for rejecting reordered/unknown evidence keys), but its text form
+-- reorders keys and inserts spaces. Build the envelope in the Go struct field
+-- order from individually encoded scalar values so a maintenance-role SQL
+-- insert cannot mint an arbitrary result digest.
+CREATE OR REPLACE FUNCTION recovery.canonical_json_string(value text)
+RETURNS text LANGUAGE sql IMMUTABLE STRICT SET search_path = pg_catalog, recovery AS $$
+    SELECT replace(replace(replace(replace(replace(to_json(value)::text, '<', E'\\u003c'), '>', E'\\u003e'), '&', E'\\u0026'), U&'\2028', E'\\u2028'), U&'\2029', E'\\u2029')
+$$;
+
 -- Validation results are capability evidence, not an arbitrary JSON side
 -- channel.  Reconstruct the exact v1 envelope from the immutable frontier
 -- and its append-only child rows before accepting a direct SQL INSERT.  The
@@ -305,6 +316,8 @@ RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, recovery AS $$
 DECLARE
     frontier recovery.recovery_set;
     expected_evidence jsonb;
+    expected_evidence_json text;
+    expected_digest text;
 BEGIN
     SELECT selected.*
       INTO frontier
@@ -319,37 +332,39 @@ BEGIN
        OR (SELECT count(*) FROM recovery.recovery_object_root WHERE set_id = frontier.set_id) <> frontier.expected_object_roots THEN
         RAISE EXCEPTION 'validation result requires complete recovery frontier evidence';
     END IF;
-    expected_evidence := jsonb_build_object(
-        'schema_version', 1,
-        'set_id', frontier.set_id::text,
-        'attempt_id', NEW.attempt_id::text,
-        'frontier_digest', frontier.frontier_digest,
-        'cluster_points', COALESCE((
-            SELECT jsonb_agg(jsonb_build_object(
-                'database_role', point.database_role,
-                'cluster_identity', point.cluster_identity,
-                'database_identity', point.database_identity,
-                'recovery_identity', point.recovery_identity
-            ) ORDER BY point.database_role)
+    expected_evidence_json :=
+        '{"schema_version":1,"set_id":' || recovery.canonical_json_string(frontier.set_id::text) ||
+        ',"attempt_id":' || recovery.canonical_json_string(NEW.attempt_id::text) ||
+        ',"frontier_digest":' || recovery.canonical_json_string(frontier.frontier_digest) ||
+        ',"cluster_points":' || COALESCE((
+            SELECT '[' || string_agg(
+                '{"database_role":' || recovery.canonical_json_string(point.database_role) ||
+                ',"cluster_identity":' || recovery.canonical_json_string(point.cluster_identity) ||
+                ',"database_identity":' || recovery.canonical_json_string(point.database_identity) ||
+                ',"recovery_identity":' || recovery.canonical_json_string(point.recovery_identity) || '}',
+                ',' ORDER BY point.database_role
+            ) || ']'
               FROM recovery.recovery_cluster_point AS point
              WHERE point.set_id = frontier.set_id
-        ), '[]'::jsonb),
-        'object_roots', COALESCE((
-            SELECT jsonb_agg(jsonb_build_object(
-                'kind', root.root_kind,
-                'uri', root.root_uri,
-                'version_id', root.version_id,
-                'digest', root.digest,
-                'provider_recovery_frontier', root.provider_recovery_frontier
-            ) ORDER BY root.root_kind, root.root_uri, root.version_id)
+        ), '[]') ||
+        ',"object_roots":' || COALESCE((
+            SELECT '[' || string_agg(
+                '{"kind":' || recovery.canonical_json_string(root.root_kind) ||
+                ',"uri":' || recovery.canonical_json_string(root.root_uri) ||
+                ',"version_id":' || recovery.canonical_json_string(root.version_id) ||
+                ',"digest":' || recovery.canonical_json_string(root.digest) ||
+                ',"provider_recovery_frontier":' || recovery.canonical_json_string(root.provider_recovery_frontier) || '}',
+                ',' ORDER BY root.root_kind, root.root_uri, root.version_id
+            ) || ']'
               FROM recovery.recovery_object_root AS root
              WHERE root.set_id = frontier.set_id
-        ), '[]'::jsonb),
-        'relation_namespace', frontier.relation_namespace,
-        'relation_manifest_digest', frontier.relation_manifest_digest,
-        'closure_digest', frontier.closure_digest
-    );
-    IF NEW.evidence IS DISTINCT FROM expected_evidence THEN
+        ), '[]') ||
+        ',"relation_namespace":' || recovery.canonical_json_string(frontier.relation_namespace) ||
+        ',"relation_manifest_digest":' || recovery.canonical_json_string(frontier.relation_manifest_digest) ||
+        ',"closure_digest":' || recovery.canonical_json_string(frontier.closure_digest) || '}';
+    expected_evidence := expected_evidence_json::jsonb;
+    expected_digest := 'sha256:' || encode(pg_catalog.sha256(convert_to(expected_evidence_json, 'UTF8')), 'hex');
+    IF NEW.evidence IS DISTINCT FROM expected_evidence OR NEW.result_digest IS DISTINCT FROM expected_digest THEN
         RAISE EXCEPTION 'validation result evidence does not match exact recovery frontier';
     END IF;
     RETURN NEW;
@@ -382,6 +397,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_migrator') THEN
         GRANT USAGE ON SCHEMA recovery TO leapview_control_migrator;
         GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA recovery TO leapview_control_migrator;
+        GRANT EXECUTE ON FUNCTION recovery.canonical_json_string(text) TO leapview_control_migrator;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA recovery TO leapview_control_runtime;
@@ -392,6 +408,7 @@ BEGIN
         GRANT USAGE ON SCHEMA recovery TO leapview_control_maintenance;
         GRANT SELECT, INSERT, UPDATE ON recovery.recovery_set, recovery.validation_attempt TO leapview_control_maintenance;
         GRANT SELECT, INSERT ON recovery.recovery_cluster_point, recovery.recovery_object_root, recovery.validation_result TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION recovery.canonical_json_string(text) TO leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
         GRANT USAGE ON SCHEMA recovery TO leapview_control_backup;

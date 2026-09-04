@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	"github.com/flidai/leapview/internal/app/postgresducklake"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
+	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 )
 
 const (
@@ -99,12 +100,6 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 		pools.Close()
 		return nil, fmt.Errorf("open PostgreSQL DuckLake runtime pool: %w", err)
 	}
-	ducklakeDatabase, err := postgresDatabaseName(ctx, ducklake)
-	if err != nil {
-		ducklake.Close()
-		pools.Close()
-		return nil, fmt.Errorf("identify PostgreSQL DuckLake runtime database: %w", err)
-	}
 	// The runtime URL is a credential selector, not the catalog identity
 	// authority. Fail closed unless it lands on the dedicated DuckLake
 	// database, and re-check both login and session roles through the existing
@@ -117,6 +112,7 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 		pools.Close()
 		return nil, fmt.Errorf("identify PostgreSQL DuckLake runtime credentials: %w", err)
 	}
+	ducklakeDatabase := ducklakeIdentity.Database
 	if err := validatePostgresDuckLakeRuntimeIdentity(ducklakeDatabase, ducklakeIdentity, ducklakeConfig.RuntimeRole); err != nil {
 		ducklake.Close()
 		pools.Close()
@@ -133,13 +129,6 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 		pools.Close()
 		return nil, fmt.Errorf("open PostgreSQL DuckLake maintenance pool: %w", err)
 	}
-	ducklakeMaintenanceDatabase, err := postgresDatabaseName(ctx, ducklakeMaintenance)
-	if err != nil {
-		ducklakeMaintenance.Close()
-		ducklake.Close()
-		pools.Close()
-		return nil, fmt.Errorf("identify PostgreSQL DuckLake maintenance database: %w", err)
-	}
 	maintenanceIdentity, err := postgresducklake.ReadDatabaseIdentity(ctx, ducklakeMaintenance)
 	if err != nil {
 		ducklakeMaintenance.Close()
@@ -147,6 +136,7 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 		pools.Close()
 		return nil, fmt.Errorf("identify PostgreSQL DuckLake maintenance credentials: %w", err)
 	}
+	ducklakeMaintenanceDatabase := maintenanceIdentity.Database
 	maintenanceConfig := cfg.PostgresDuckLakeMaintenanceConfig()
 	if err := validatePostgresDuckLakeMaintenanceIdentity(ducklakeMaintenanceDatabase, maintenanceIdentity, maintenanceConfig.RuntimeRole); err != nil {
 		ducklakeMaintenance.Close()
@@ -226,6 +216,9 @@ func applyPostgresControlPlaneMigrations(ctx context.Context, migrator *platform
 		return fmt.Errorf("open PostgreSQL Goose migration adapter: %w", err)
 	}
 	defer db.Close()
+	if err := platformmigrations.ApplyRiver(ctx, migrator.NativePool()); err != nil {
+		return fmt.Errorf("apply PostgreSQL River schema: %w", err)
+	}
 	if err := postgresbaseline.Apply(ctx, db); err != nil {
 		return err
 	}
@@ -252,6 +245,9 @@ func (l *postgresControlPlaneLifecycle) Start(ctx context.Context) error {
 	defer runtimeDB.Close()
 	if err := postgresbaseline.Verify(ctx, runtimeDB); err != nil {
 		return fmt.Errorf("verify PostgreSQL control schema revision: %w", err)
+	}
+	if err := platformmigrations.VerifyRiver(ctx, l.pools.Runtime.NativePool()); err != nil {
+		return fmt.Errorf("verify PostgreSQL River schema: %w", err)
 	}
 	if err := postgresbaseline.VerifyControlRuntimeAdmission(ctx, l.pools.Runtime); err != nil {
 		return fmt.Errorf("verify PostgreSQL control runtime admission: %w", err)

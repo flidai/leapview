@@ -116,11 +116,11 @@ func newNativeRefreshFixture(t *testing.T) nativeRefreshFixture {
 		t.Fatal(err)
 	}
 	scope := refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}
-	candidates, err := jobsRepo.ListExecutableJobs(t.Context(), scope, 1)
+	candidates, err := listRiverRefreshJobs(jobsRepo, t.Context(), scope, 1)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("list executable jobs = %#v, %v", candidates, err)
 	}
-	claimed, ok, err := jobsRepo.ClaimExecutableJob(t.Context(), candidates[0], "worker-native-finalizer", time.Minute)
+	claimed, ok, err := claimRiverRefreshTest(t.Context(), jobsRepo, candidates[0], "worker-native-finalizer", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim = %v, %v", ok, err)
 	}

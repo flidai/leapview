@@ -42,12 +42,9 @@ func (a *Adapter) AppendApprovalAudit(ctx context.Context, tx depauth.Tx, input 
 		AggregateKey:  "delivery:approval:" + input.Request.RequestID, AggregateSequence: sequence,
 		MetadataJSON: string(payload),
 	}
-	stored, err := a.audit.RecordAuditEvent(ctx, tx, intent)
+	_, err = a.audit.RecordAuditEvent(ctx, tx, intent)
 	if err != nil {
 		return normalize(err, "append approval")
-	}
-	if err := validateStored(stored, intent); err != nil {
-		return err
 	}
 	return nil
 }

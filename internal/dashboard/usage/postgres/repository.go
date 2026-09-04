@@ -29,11 +29,7 @@ type MaintenanceDBTX interface {
 	DBTX
 }
 
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 // Maintenance owns bounded viewer-day retention. Repository remains limited
 // to recording and reading usage on the serving path.
@@ -54,7 +50,7 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrUnavailable
 	}
-	_, err := tx.Exec(ctxOrBackground(ctx), schemaSQL) // sqlc-exception: schema-ddl
+	_, err := tx.Exec(ctx, schemaSQL) // sqlc-exception: schema-ddl
 	return err
 }
 
@@ -77,7 +73,7 @@ func (r *Repository) Ping(ctx context.Context) error {
 	if r == nil || r.db == nil {
 		return ErrUnavailable
 	}
-	_, err := db.New(r.db).Ping(ctxOrBackground(ctx))
+	_, err := db.New(r.db).Ping(ctx)
 	return err
 }
 
@@ -89,7 +85,7 @@ func (r *Repository) RecordView(ctx context.Context, view usage.View) error {
 		return ErrUnavailable
 	}
 	viewedAt := view.ViewedAt.UTC()
-	if err := db.New(r.db).UpsertViewDay(ctxOrBackground(ctx), db.UpsertViewDayParams{ProjectID: strings.TrimSpace(view.ProjectID.String()), DashboardID: strings.TrimSpace(view.DashboardID.String()), PrincipalID: strings.TrimSpace(view.PrincipalID), ViewedOn: viewedAt, PageID: strings.TrimSpace(view.PageID), ViewedAt: viewedAt}); err != nil {
+	if err := db.New(r.db).UpsertViewDay(ctx, db.UpsertViewDayParams{ProjectID: strings.TrimSpace(view.ProjectID.String()), DashboardID: strings.TrimSpace(view.DashboardID.String()), PrincipalID: strings.TrimSpace(view.PrincipalID), ViewedOn: viewedAt, PageID: strings.TrimSpace(view.PageID), ViewedAt: viewedAt}); err != nil {
 		return err
 	}
 	return nil
@@ -99,7 +95,7 @@ func (r *Repository) ListSummaries(ctx context.Context, cutoff time.Time) ([]usa
 	if r == nil || r.db == nil {
 		return nil, ErrUnavailable
 	}
-	rows, err := db.New(r.db).ListSummaries(ctxOrBackground(ctx), cutoff.UTC())
+	rows, err := db.New(r.db).ListSummaries(ctx, cutoff.UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -117,13 +113,6 @@ func (r *Repository) ListSummaries(ctx context.Context, cutoff time.Time) ([]usa
 		out = append(out, usage.Summary{Key: usage.Key{ProjectID: projectID, DashboardID: dashboardID}, ViewerCount: row.ViewerCount, ViewerDays: row.ViewerDays, LastViewedAt: lastViewedAt})
 	}
 	return out, nil
-}
-
-func ctxOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 var _ usage.Recorder = (*Repository)(nil)

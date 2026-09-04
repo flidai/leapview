@@ -279,7 +279,6 @@ type assemblyConfig struct {
 	PublicURL               string
 	DesktopDiscovery        desktopdiscovery.Config
 	RefreshPipelineClock    refreshmodule.Clock
-	EnableRefreshDispatcher bool
 	RecoveryLifecycle       *refreshmodule.RecoveryLifecycle
 	RecoveryInterval        time.Duration
 	RuntimeHost             *runtimehostmodule.Module
@@ -429,8 +428,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			ManagedDataResolver: options.ManagedDataResolver, AgentConfig: options.AgentConfig,
 			Auth: options.Auth, Reloader: options.Reloader, Workload: options.Workload,
 			DeploymentConfig: options.DeploymentConfig, RefreshPipelineClock: options.RefreshPipelineClock,
-			EnableRefreshDispatcher: options.EnableRefreshDispatcher,
-			RecoveryLifecycle:       options.RecoveryLifecycle, RecoveryInterval: options.RecoveryInterval,
+			RecoveryLifecycle: options.RecoveryLifecycle, RecoveryInterval: options.RecoveryInterval,
 			QueryAudit: options.QueryAudit,
 		},
 		runtimeAssemblyInputs{

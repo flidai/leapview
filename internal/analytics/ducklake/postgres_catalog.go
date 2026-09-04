@@ -109,6 +109,9 @@ type PostgresCatalogConfig struct {
 
 // Validate checks names, mode invariants, and required storage identity.
 func (c PostgresCatalogConfig) Validate() error {
+	if strings.ContainsAny(c.DataPath, "\x00\r\n") {
+		return errors.New("DATA_PATH contains a control character")
+	}
 	if strings.TrimSpace(c.PhysicalPoolID) != "" && strings.TrimSpace(c.PhysicalPoolID) != c.PhysicalPoolID {
 		return errors.New("physical pool id is not normalized")
 	}
@@ -214,6 +217,13 @@ func (c PostgresCatalogConfig) AttachSQL() (string, error) {
 	if err := c.Validate(); err != nil {
 		return "", err
 	}
+	if strings.TrimSpace(c.DataPath) != "" {
+		canonical, err := CanonicalDataPath(c.DataPath)
+		if err != nil {
+			return "", err
+		}
+		c.DataPath = canonical
+	}
 	if c.Mode == PostgresCatalogMigrate {
 		return "", errors.New("PostgresCatalogMigrate requires the fenced MigrationStatements operation")
 	}
@@ -296,9 +306,6 @@ func SetCommitMarker(ctx context.Context, tx *sql.Tx, marker CommitMarker) error
 	if tx == nil {
 		return errors.New("DuckLake commit transaction is nil")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	canonical, err := marker.CanonicalJSON()
 	if err != nil {
 		return err
@@ -371,9 +378,6 @@ func (f PhysicalMarkerResolverFactoryFunc) Open(ctx context.Context) (PhysicalMa
 func ResolveCommittedSnapshot(ctx context.Context, queryer SnapshotLookup, marker CommitMarker) (int64, error) {
 	if queryer == nil {
 		return 0, errors.New("DuckLake snapshot lookup is nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	canonical, err := marker.CanonicalJSON()
 	if err != nil {

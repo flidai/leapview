@@ -33,9 +33,6 @@ func (m *Maintenance) deleteExpiredBatch(ctx context.Context, db MaintenanceDBTX
 	if batchSize < 1 || batchSize > maxExpiredBatch {
 		return 0, fmt.Errorf("dashboard session expiry batch size must be between 1 and %d", maxExpiredBatch)
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	now := time.Now
 	if m.clock != nil {
 		now = m.clock

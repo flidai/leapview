@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	refreshdb "github.com/flidai/leapview/internal/refresh/postgres/internal/db"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/pkg/strictjson"
@@ -170,10 +171,6 @@ func nativeDBConfigured(db DBTX) bool {
 	}
 }
 
-// NewRepository is an explicit constructor alias used by composition roots
-// that name capability repositories uniformly.
-func NewRepository(db DBTX) *Repository { return New(db) }
-
 // WithTx returns a repository bound to a caller-owned transaction. Methods
 // ending in Tx never commit or roll back that transaction.
 func (r *Repository) WithTx(tx Tx) *Repository { return New(tx) }
@@ -185,13 +182,6 @@ func (r *Repository) requireDB() error {
 	return nil
 }
 
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
-}
-
 func (r *Repository) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	if err := r.requireDB(); err != nil {
 		return err
@@ -200,15 +190,15 @@ func (r *Repository) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	if !ok {
 		return errors.New("refresh repository requires a transaction-capable pgx DB")
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
+	tx, err := b.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	if err = fn(tx); err != nil {
-		_ = tx.Rollback(contextOrBackground(ctx))
+		_ = tx.Rollback(ctx)
 		return err
 	}
-	return tx.Commit(contextOrBackground(ctx))
+	return tx.Commit(ctx)
 }
 
 // InTx executes a bounded authority workflow in one transaction. If the
@@ -231,13 +221,8 @@ func canonicalID(label, value string, max int) error {
 	return nil
 }
 func digest(label, value string) error {
-	if len(value) != 71 || !strings.HasPrefix(value, "sha256:") {
-		return fmt.Errorf("%s must be canonical sha256", label)
-	}
-	for _, c := range value[7:] {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			return fmt.Errorf("%s must be canonical sha256", label)
-		}
+	if err := platformdigest.ValidateSHA256Identity(value); err != nil {
+		return fmt.Errorf("%s must be canonical sha256: %w", label, err)
 	}
 	return nil
 }
@@ -408,7 +393,6 @@ func validateRun(in RunInput) error {
 // creates a new one. Timestamps and revision boundaries are assigned by the
 // database clock.
 func (r *Repository) PutScheduleTx(ctx context.Context, tx Tx, in ScheduleInput) (Schedule, error) {
-	ctx = contextOrBackground(ctx)
 	if tx == nil {
 		return Schedule{}, ErrInvalid
 	}
@@ -483,7 +467,7 @@ func (r *Repository) Schedule(ctx context.Context, revisionID string) (Schedule,
 	if err := canonicalID("schedule revision id", revisionID, 256); err != nil {
 		return Schedule{}, err
 	}
-	return r.scheduleByRevision(contextOrBackground(ctx), r.db, revisionID)
+	return r.scheduleByRevision(ctx, r.db, revisionID)
 }
 
 // NextRun returns the earliest active schedule cursor for a pipeline in a
@@ -499,7 +483,7 @@ func (r *Repository) NextRun(ctx context.Context, scope Scope, pipelineID string
 	if err := canonicalID("pipeline id", pipelineID, 255); err != nil {
 		return time.Time{}, false, err
 	}
-	next, err := refreshdb.New(r.db).GetNextScheduleRun(contextOrBackground(ctx), refreshdb.GetNextScheduleRunParams{ProjectID: scope.ProjectID, Environment: scope.Environment, PipelineID: pipelineID, GenerationID: scope.GenerationID})
+	next, err := refreshdb.New(r.db).GetNextScheduleRun(ctx, refreshdb.GetNextScheduleRunParams{ProjectID: scope.ProjectID, Environment: scope.Environment, PipelineID: pipelineID, GenerationID: scope.GenerationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return time.Time{}, false, nil
 	}
@@ -563,7 +547,7 @@ func (r *Repository) createRunTreeTx(ctx context.Context, tx Tx, root RunInput, 
 		}
 	}
 	if hook != nil {
-		jobID, hookErr := hook(contextOrBackground(ctx), tx, out)
+		jobID, hookErr := hook(ctx, tx, out)
 		if hookErr != nil {
 			return Run{}, nil, hookErr
 		}
@@ -588,7 +572,7 @@ func (r *Repository) createRunTreeTx(ctx context.Context, tx Tx, root RunInput, 
 		}
 		outChildren = append(outChildren, created)
 	}
-	out, err = r.runByID(contextOrBackground(ctx), tx, out.RunID)
+	out, err = r.runByID(ctx, tx, out.RunID)
 	if err != nil {
 		return Run{}, nil, err
 	}
@@ -602,7 +586,7 @@ func (r *Repository) attachClaimedOccurrenceTx(ctx context.Context, tx Tx, occur
 	if root.OccurrenceID != occurrenceID || root.ProjectID == "" || root.Environment == "" || root.GenerationID == "" || root.PipelineID == "" || root.NominalTime.IsZero() {
 		return ErrConflict
 	}
-	tag, err := refreshdb.New(tx).QueueClaimedOccurrence(contextOrBackground(ctx), refreshdb.QueueClaimedOccurrenceParams{RunID: stringPtr(runID), OccurrenceID: occurrenceID, ProjectID: root.ProjectID, Environment: root.Environment, GenerationID: root.GenerationID, PipelineID: root.PipelineID, NominalTime: root.NominalTime, LeaseOwner: owner, FenceGeneration: fence})
+	tag, err := refreshdb.New(tx).QueueClaimedOccurrence(ctx, refreshdb.QueueClaimedOccurrenceParams{RunID: stringPtr(runID), OccurrenceID: occurrenceID, ProjectID: root.ProjectID, Environment: root.Environment, GenerationID: root.GenerationID, PipelineID: root.PipelineID, NominalTime: root.NominalTime, LeaseOwner: owner, FenceGeneration: fence})
 	if err != nil {
 		return err
 	}
@@ -623,7 +607,7 @@ func (r *Repository) transitionRunOccurrenceTx(ctx context.Context, tx Tx, runID
 	if status != "running" && status != "succeeded" && status != "failed" && status != "cancelled" && status != "superseded" {
 		return ErrInvalid
 	}
-	occurrenceID, err := refreshdb.New(tx).GetRunOccurrence(contextOrBackground(ctx), runID)
+	occurrenceID, err := refreshdb.New(tx).GetRunOccurrence(ctx, runID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
@@ -641,7 +625,7 @@ func (r *Repository) transitionRunOccurrenceTx(ctx context.Context, tx Tx, runID
 		}
 		ev = bounded
 	}
-	tag, err := refreshdb.New(tx).TransitionOccurrence(contextOrBackground(ctx), refreshdb.TransitionOccurrenceParams{Status: status, Outcome: ev, OccurrenceID: occurrenceID, RunID: stringPtr(runID)})
+	tag, err := refreshdb.New(tx).TransitionOccurrence(ctx, refreshdb.TransitionOccurrenceParams{Status: status, Outcome: ev, OccurrenceID: occurrenceID, RunID: stringPtr(runID)})
 	if err != nil {
 		return err
 	}
@@ -657,7 +641,7 @@ func (r *Repository) transitionRunOccurrenceTx(ctx context.Context, tx Tx, runID
 func (r *Repository) ReconcileOccurrenceTerminalTx(ctx context.Context, tx Tx, runID, status string, outcome json.RawMessage) error {
 	if err := r.transitionRunOccurrenceTx(ctx, tx, runID, status, outcome); err != nil {
 		if errors.Is(err, ErrStaleFence) {
-			if current, scanErr := refreshdb.New(tx).GetOccurrenceStatus(contextOrBackground(ctx), runID); scanErr == nil {
+			if current, scanErr := refreshdb.New(tx).GetOccurrenceStatus(ctx, runID); scanErr == nil {
 				if current == status {
 					return nil
 				}
@@ -694,7 +678,7 @@ func (r *Repository) ReconcileScopeTx(ctx context.Context, tx Tx, scope Scope, g
 		ids = append(ids, in.ScheduleID)
 		pipelines = append(pipelines, in.PipelineID)
 	}
-	_, err := refreshdb.New(tx).CloseOmittedSchedules(contextOrBackground(ctx), refreshdb.CloseOmittedSchedulesParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: generation, Pipelines: pipelines, ScheduleIds: ids})
+	_, err := refreshdb.New(tx).CloseOmittedSchedules(ctx, refreshdb.CloseOmittedSchedulesParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: generation, Pipelines: pipelines, ScheduleIds: ids})
 	return err
 }
 
@@ -735,7 +719,7 @@ func (r *Repository) ReconcileSchedulesTx(ctx context.Context, tx Tx, values []S
 			ids = append(ids, in.ScheduleID)
 			pipelines = append(pipelines, in.PipelineID)
 		}
-		if _, err := refreshdb.New(tx).CloseOmittedSchedules(contextOrBackground(ctx), refreshdb.CloseOmittedSchedulesParams{ProjectID: project, Environment: environment, GenerationID: generation, Pipelines: pipelines, ScheduleIds: ids}); err != nil {
+		if _, err := refreshdb.New(tx).CloseOmittedSchedules(ctx, refreshdb.CloseOmittedSchedulesParams{ProjectID: project, Environment: environment, GenerationID: generation, Pipelines: pipelines, ScheduleIds: ids}); err != nil {
 			return err
 		}
 	}
@@ -770,7 +754,6 @@ func (r *Repository) claimDueTx(ctx context.Context, tx Tx, scope Scope, now tim
 	if lease <= 0 || lease > MaxLease || limit < 1 || limit > MaxPageSize {
 		return nil, errors.New("claim lease or limit is outside bound")
 	}
-	ctx = contextOrBackground(ctx)
 	dbNow, err := refreshdb.New(tx).DatabaseClock(ctx)
 	if err != nil {
 		return nil, err
@@ -962,7 +945,7 @@ func (r *Repository) Occurrence(ctx context.Context, id string) (Occurrence, err
 	if err := r.requireDB(); err != nil {
 		return Occurrence{}, err
 	}
-	return occurrenceByID(contextOrBackground(ctx), r.db, id)
+	return occurrenceByID(ctx, r.db, id)
 }
 func (r *Repository) GetOccurrence(ctx context.Context, id string) (Occurrence, error) {
 	return r.Occurrence(ctx, id)
@@ -984,7 +967,7 @@ func (r *Repository) ReleaseOccurrenceTx(ctx context.Context, tx Tx, o Occurrenc
 	if o.OccurrenceID == "" || o.LeaseOwner == "" || o.FenceGeneration <= 0 {
 		return ErrInvalid
 	}
-	tag, err := refreshdb.New(tx).ReleaseOccurrenceClaim(contextOrBackground(ctx), refreshdb.ReleaseOccurrenceClaimParams{OccurrenceID: o.OccurrenceID, LeaseOwner: o.LeaseOwner, FenceGeneration: o.FenceGeneration})
+	tag, err := refreshdb.New(tx).ReleaseOccurrenceClaim(ctx, refreshdb.ReleaseOccurrenceClaimParams{OccurrenceID: o.OccurrenceID, LeaseOwner: o.LeaseOwner, FenceGeneration: o.FenceGeneration})
 	if err != nil {
 		return err
 	}
@@ -993,7 +976,7 @@ func (r *Repository) ReleaseOccurrenceTx(ctx context.Context, tx Tx, o Occurrenc
 	}
 	// Requeue every schedule revision that contributed evidence so the next
 	// dispatcher tick retries this nominal instant before later catch-up work.
-	if _, err := refreshdb.New(tx).RequeueScheduleRevision(contextOrBackground(ctx), refreshdb.RequeueScheduleRevisionParams{NextRunAt: o.NominalTime, ProjectID: o.ProjectID, Environment: o.Environment, PipelineID: o.PipelineID, OccurrenceID: o.OccurrenceID}); err != nil {
+	if _, err := refreshdb.New(tx).RequeueScheduleRevision(ctx, refreshdb.RequeueScheduleRevisionParams{NextRunAt: o.NominalTime, ProjectID: o.ProjectID, Environment: o.Environment, PipelineID: o.PipelineID, OccurrenceID: o.OccurrenceID}); err != nil {
 		return err
 	}
 	return nil
@@ -1011,7 +994,6 @@ func (r *Repository) CreateRunTx(ctx context.Context, tx Tx, in RunInput) (Run, 
 // trees and invokes the callback with their linked job ids before inserting
 // the replacement, keeping both capabilities atomic without cross-schema SQL.
 func (r *Repository) CreateRunTxWithSupersedeHook(ctx context.Context, tx Tx, in RunInput, supersedeHook func(context.Context, Tx, []string) error) (Run, error) {
-	ctx = contextOrBackground(ctx)
 	if tx == nil {
 		return Run{}, ErrInvalid
 	}
@@ -1092,7 +1074,7 @@ func (r *Repository) CreateRunTxWithSupersedeHook(ctx context.Context, tx Tx, in
 			return Run{}, e
 		}
 		if supersedeHook != nil {
-			if err := supersedeHook(contextOrBackground(ctx), tx, supersededJobIDs); err != nil {
+			if err := supersedeHook(ctx, tx, supersededJobIDs); err != nil {
 				return Run{}, err
 			}
 		}
@@ -1158,7 +1140,7 @@ func (r *Repository) CreateRunWithSupersedeHook(ctx context.Context, in RunInput
 			return err
 		}
 		if hook != nil {
-			jobID, hookErr := hook(contextOrBackground(ctx), tx, out)
+			jobID, hookErr := hook(ctx, tx, out)
 			if hookErr != nil {
 				return hookErr
 			}
@@ -1166,7 +1148,7 @@ func (r *Repository) CreateRunWithSupersedeHook(ctx context.Context, in RunInput
 				if err := r.AttachJobTx(ctx, tx, out.RunID, jobID); err != nil {
 					return err
 				}
-				out, err = r.runByID(contextOrBackground(ctx), tx, out.RunID)
+				out, err = r.runByID(ctx, tx, out.RunID)
 				if err != nil {
 					return err
 				}
@@ -1190,7 +1172,7 @@ func (r *Repository) AttachJobTx(ctx context.Context, tx Tx, runID, jobID string
 	if err := canonicalID("job id", jobID, 256); err != nil {
 		return err
 	}
-	existing, err := refreshdb.New(tx).GetRunJobForUpdate(contextOrBackground(ctx), runID)
+	existing, err := refreshdb.New(tx).GetRunJobForUpdate(ctx, runID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
@@ -1204,7 +1186,7 @@ func (r *Repository) AttachJobTx(ctx context.Context, tx Tx, runID, jobID string
 	if existing != "" {
 		return ErrConflict
 	}
-	tag, err := refreshdb.New(tx).AttachRunJob(contextOrBackground(ctx), refreshdb.AttachRunJobParams{JobID: stringPtr(jobID), RunID: runID})
+	tag, err := refreshdb.New(tx).AttachRunJob(ctx, refreshdb.AttachRunJobParams{JobID: stringPtr(jobID), RunID: runID})
 	if err != nil {
 		return err
 	}
@@ -1231,7 +1213,7 @@ func (r *Repository) GetRun(ctx context.Context, scope Scope, id string) (Run, e
 	if err := validateScope(scope.ProjectID, scope.Environment); err != nil {
 		return Run{}, err
 	}
-	out, err := r.runByID(contextOrBackground(ctx), r.db, id)
+	out, err := r.runByID(ctx, r.db, id)
 	if err != nil {
 		return Run{}, err
 	}
@@ -1253,7 +1235,7 @@ func (r *Repository) LookupRun(ctx context.Context, id string) (Run, error) {
 	if err := r.requireDB(); err != nil {
 		return Run{}, err
 	}
-	return r.runByID(contextOrBackground(ctx), r.db, id)
+	return r.runByID(ctx, r.db, id)
 }
 
 // GetRunTx reads a run through a caller-owned transaction while retaining the
@@ -1265,7 +1247,7 @@ func (r *Repository) GetRunTx(ctx context.Context, tx Tx, scope Scope, id string
 	if err := validateScope(scope.ProjectID, scope.Environment); err != nil {
 		return Run{}, err
 	}
-	out, err := r.runByID(contextOrBackground(ctx), tx, id)
+	out, err := r.runByID(ctx, tx, id)
 	if err != nil {
 		return Run{}, err
 	}
@@ -1282,7 +1264,7 @@ func (r *Repository) LookupRunTx(ctx context.Context, tx Tx, id string) (Run, er
 	if tx == nil || id == "" {
 		return Run{}, ErrInvalid
 	}
-	return r.runByID(contextOrBackground(ctx), tx, id)
+	return r.runByID(ctx, tx, id)
 }
 
 func (r *Repository) ListRuns(ctx context.Context, scope Scope, limit int, after string) ([]Run, error) {
@@ -1298,13 +1280,13 @@ func (r *Repository) ListRuns(ctx context.Context, scope Scope, limit int, after
 	if err := validateGeneration(scope.GenerationID); err != nil {
 		return nil, err
 	}
-	ids, err := refreshdb.New(r.db).ListRunsPage(contextOrBackground(ctx), refreshdb.ListRunsPageParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID, After: after, PageLimit: int32(limit)})
+	ids, err := refreshdb.New(r.db).ListRunsPage(ctx, refreshdb.ListRunsPageParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID, After: after, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
 	var out []Run
 	for _, id := range ids {
-		v, e := r.runByID(contextOrBackground(ctx), r.db, id)
+		v, e := r.runByID(ctx, r.db, id)
 		if e != nil {
 			return nil, e
 		}
@@ -1344,13 +1326,13 @@ func (r *Repository) ListRunsFiltered(ctx context.Context, scope Scope, targetTy
 			return nil, err
 		}
 	}
-	ids, err := refreshdb.New(r.db).ListRunsFilteredPage(contextOrBackground(ctx), refreshdb.ListRunsFilteredPageParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID, TargetType: targetType, TargetID: targetID, SemanticModelID: semanticModelID, Successful: successful, After: after, PageLimit: int32(limit)})
+	ids, err := refreshdb.New(r.db).ListRunsFilteredPage(ctx, refreshdb.ListRunsFilteredPageParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID, TargetType: targetType, TargetID: targetID, SemanticModelID: semanticModelID, Successful: successful, After: after, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Run, 0, limit)
 	for _, id := range ids {
-		v, err := r.runByID(contextOrBackground(ctx), r.db, id)
+		v, err := r.runByID(ctx, r.db, id)
 		if err != nil {
 			return nil, err
 		}
@@ -1366,7 +1348,7 @@ func (r *Repository) ListChildRuns(ctx context.Context, scope Scope, parentRunID
 	if limit < 1 || limit > MaxPageSize {
 		return nil, ErrInvalid
 	}
-	ids, err := refreshdb.New(r.db).ListChildRuns(contextOrBackground(ctx), refreshdb.ListChildRunsParams{ProjectID: scope.ProjectID, Environment: scope.Environment, ParentRunID: stringPtr(parentRunID), PageLimit: int32(limit)})
+	ids, err := refreshdb.New(r.db).ListChildRuns(ctx, refreshdb.ListChildRunsParams{ProjectID: scope.ProjectID, Environment: scope.Environment, ParentRunID: stringPtr(parentRunID), PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
@@ -1400,13 +1382,13 @@ func (r *Repository) SupersedeRunTreeTx(ctx context.Context, tx Tx, runID, owner
 	if tx == nil || runID == "" || owner == "" || fence <= 0 {
 		return nil, ErrInvalid
 	}
-	if _, err := refreshdb.New(tx).GetLiveRunForUpdate(contextOrBackground(ctx), refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence}); err != nil {
+	if _, err := refreshdb.New(tx).GetLiveRunForUpdate(ctx, refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrStaleFence
 		}
 		return nil, err
 	}
-	rows, err := refreshdb.New(tx).ListRunTreeJobs(contextOrBackground(ctx), runID)
+	rows, err := refreshdb.New(tx).ListRunTreeJobs(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -1418,10 +1400,10 @@ func (r *Repository) SupersedeRunTreeTx(ctx context.Context, tx Tx, runID, owner
 	}
 	// Attempt evidence must close while each run still carries its live owner
 	// and fence; the run guard then permits the terminal supersession.
-	if _, err := refreshdb.New(tx).FailSupersededTreeAttempts(contextOrBackground(ctx), refreshdb.FailSupersededTreeAttemptsParams{Message: message, RunID: runID}); err != nil {
+	if _, err := refreshdb.New(tx).FailSupersededTreeAttempts(ctx, refreshdb.FailSupersededTreeAttemptsParams{Message: message, RunID: runID}); err != nil {
 		return nil, err
 	}
-	if _, err := refreshdb.New(tx).SupersedeRunTree(contextOrBackground(ctx), refreshdb.SupersedeRunTreeParams{Message: message, RunID: runID}); err != nil {
+	if _, err := refreshdb.New(tx).SupersedeRunTree(ctx, refreshdb.SupersedeRunTreeParams{Message: message, RunID: runID}); err != nil {
 		return nil, err
 	}
 	if err := r.transitionRunOccurrenceTx(ctx, tx, runID, "superseded", json.RawMessage(`{"code":"REFRESH_SUPERSEDED"}`)); err != nil {
@@ -1455,7 +1437,7 @@ func (r *Repository) FailRunTreeTx(ctx context.Context, tx Tx, runID, owner stri
 		return err
 	}
 	{
-		if _, err := refreshdb.New(tx).GetLiveRunForUpdate(contextOrBackground(ctx), refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence}); err != nil {
+		if _, err := refreshdb.New(tx).GetLiveRunForUpdate(ctx, refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrStaleFence
 			}
@@ -1464,10 +1446,10 @@ func (r *Repository) FailRunTreeTx(ctx context.Context, tx Tx, runID, owner stri
 		if err := r.FailAttemptTx(ctx, tx, runID, owner, fence, message, ev); err != nil {
 			return err
 		}
-		if _, err := refreshdb.New(tx).FailChildAttempts(contextOrBackground(ctx), refreshdb.FailChildAttemptsParams{Evidence: ev, Error: message, RunID: runID}); err != nil {
+		if _, err := refreshdb.New(tx).FailChildAttempts(ctx, refreshdb.FailChildAttemptsParams{Evidence: ev, Error: message, RunID: runID}); err != nil {
 			return err
 		}
-		if _, err := refreshdb.New(tx).FailChildRuns(contextOrBackground(ctx), refreshdb.FailChildRunsParams{RunID: runID, Error: message}); err != nil {
+		if _, err := refreshdb.New(tx).FailChildRuns(ctx, refreshdb.FailChildRunsParams{RunID: runID, Error: message}); err != nil {
 			return err
 		}
 		return nil
@@ -1486,7 +1468,7 @@ func (r *Repository) CompleteRunTreeTx(ctx context.Context, tx Tx, runID, owner 
 	if err != nil {
 		return err
 	}
-	if _, err := refreshdb.New(tx).GetLiveRunForUpdate(contextOrBackground(ctx), refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence}); err != nil {
+	if _, err := refreshdb.New(tx).GetLiveRunForUpdate(ctx, refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrStaleFence
 		}
@@ -1495,10 +1477,10 @@ func (r *Repository) CompleteRunTreeTx(ctx context.Context, tx Tx, runID, owner 
 	if err := r.CompleteAttemptTx(ctx, tx, runID, owner, fence, ev); err != nil {
 		return err
 	}
-	if _, err := refreshdb.New(tx).CompleteChildAttempts(contextOrBackground(ctx), refreshdb.CompleteChildAttemptsParams{Evidence: ev, RunID: runID}); err != nil {
+	if _, err := refreshdb.New(tx).CompleteChildAttempts(ctx, refreshdb.CompleteChildAttemptsParams{Evidence: ev, RunID: runID}); err != nil {
 		return err
 	}
-	if _, err := refreshdb.New(tx).CompleteChildRuns(contextOrBackground(ctx), runID); err != nil {
+	if _, err := refreshdb.New(tx).CompleteChildRuns(ctx, runID); err != nil {
 		return err
 	}
 	return nil
@@ -1512,7 +1494,7 @@ func (r *Repository) QuarantineQueuedRunTx(ctx context.Context, tx Tx, runID, jo
 		return false, ErrInvalid
 	}
 	const message = "refresh job payload rejected"
-	poison, err := refreshdb.New(tx).GetRunPoisonState(contextOrBackground(ctx), runID)
+	poison, err := refreshdb.New(tx).GetRunPoisonState(ctx, runID)
 	var status, existingJob string
 	status, existingJob = poison.Status, poison.JobID
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1526,7 +1508,7 @@ func (r *Repository) QuarantineQueuedRunTx(ctx context.Context, tx Tx, runID, jo
 	// A terminal replay is valid only when every row in the run tree carries
 	// the exact poison message. Looking at the root alone would bless a partial
 	// or tampered child tree after a crash.
-	counts, err := refreshdb.New(tx).GetRunTreePoisonCounts(contextOrBackground(ctx), refreshdb.GetRunTreePoisonCountsParams{RunID: runID, Error: message})
+	counts, err := refreshdb.New(tx).GetRunTreePoisonCounts(ctx, refreshdb.GetRunTreePoisonCountsParams{RunID: runID, Error: message})
 	if err != nil {
 		return false, err
 	}
@@ -1549,7 +1531,7 @@ func (r *Repository) QuarantineQueuedRunTx(ctx context.Context, tx Tx, runID, jo
 	if queued != total {
 		return false, ErrConflict
 	}
-	tag, err := refreshdb.New(tx).FailQueuedTree(contextOrBackground(ctx), refreshdb.FailQueuedTreeParams{Error: message, RunID: runID})
+	tag, err := refreshdb.New(tx).FailQueuedTree(ctx, refreshdb.FailQueuedTreeParams{Error: message, RunID: runID})
 	if err != nil {
 		return false, err
 	}
@@ -1573,7 +1555,7 @@ func (r *Repository) FailQueuedRunTreeTx(ctx context.Context, tx Tx, runID, mess
 	if strings.TrimSpace(message) == "" || len(message) > 256 {
 		return ErrInvalid
 	}
-	tag, err := refreshdb.New(tx).FailQueuedTree(contextOrBackground(ctx), refreshdb.FailQueuedTreeParams{Error: message, RunID: runID})
+	tag, err := refreshdb.New(tx).FailQueuedTree(ctx, refreshdb.FailQueuedTreeParams{Error: message, RunID: runID})
 	if err != nil {
 		return err
 	}
@@ -1598,10 +1580,10 @@ func (r *Repository) FailRunTerminalEvidenceTx(ctx context.Context, tx Tx, runID
 	if err != nil {
 		return err
 	}
-	if _, err := refreshdb.New(tx).FailTerminalTreeAttempts(contextOrBackground(ctx), refreshdb.FailTerminalTreeAttemptsParams{Error: message, Evidence: ev, RunID: runID}); err != nil {
+	if _, err := refreshdb.New(tx).FailTerminalTreeAttempts(ctx, refreshdb.FailTerminalTreeAttemptsParams{Error: message, Evidence: ev, RunID: runID}); err != nil {
 		return err
 	}
-	_, err = refreshdb.New(tx).FailTerminalTreeRuns(contextOrBackground(ctx), refreshdb.FailTerminalTreeRunsParams{Error: message, RunID: runID})
+	_, err = refreshdb.New(tx).FailTerminalTreeRuns(ctx, refreshdb.FailTerminalTreeRunsParams{Error: message, RunID: runID})
 	if err != nil {
 		return err
 	}
@@ -1620,7 +1602,7 @@ func (r *Repository) CheckInvocationAdmission(ctx context.Context, scope Scope, 
 	if err := canonicalID("pipeline id", pipelineID, 255); err != nil {
 		return err
 	}
-	trigger, err := refreshdb.New(r.db).GetActiveInvocationTrigger(contextOrBackground(ctx), refreshdb.GetActiveInvocationTriggerParams{ProjectID: scope.ProjectID, Environment: scope.Environment, TargetID: pipelineID})
+	trigger, err := refreshdb.New(r.db).GetActiveInvocationTrigger(ctx, refreshdb.GetActiveInvocationTriggerParams{ProjectID: scope.ProjectID, Environment: scope.Environment, TargetID: pipelineID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -1650,14 +1632,14 @@ func (r *Repository) PrepareRun(ctx context.Context, runID, owner string, fence 
 	if err := canonicalID("owner id", owner, 256); err != nil || fence <= 0 {
 		return Run{}, ErrInvalid
 	}
-	tag, err := refreshdb.New(r.db).PrepareRun(contextOrBackground(ctx), refreshdb.PrepareRunParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
+	tag, err := refreshdb.New(r.db).PrepareRun(ctx, refreshdb.PrepareRunParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
 	if err != nil {
 		return Run{}, err
 	}
 	if tag != 1 {
 		return Run{}, ErrStaleFence
 	}
-	return r.runByID(contextOrBackground(ctx), r.db, runID)
+	return r.runByID(ctx, r.db, runID)
 }
 
 // RunMayPublish reports whether the exact owner/fence still leases a run in
@@ -1669,7 +1651,7 @@ func (r *Repository) RunMayPublish(ctx context.Context, runID, owner string, fen
 	if runID == "" || owner == "" || fence <= 0 {
 		return false, ErrInvalid
 	}
-	ok, err := refreshdb.New(r.db).RunLeaseExists(contextOrBackground(ctx), refreshdb.RunLeaseExistsParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
+	ok, err := refreshdb.New(r.db).RunLeaseExists(ctx, refreshdb.RunLeaseExistsParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
 	return ok, err
 }
 
@@ -1684,7 +1666,7 @@ func (r *Repository) RunMayPublishTx(ctx context.Context, tx Tx, runID, owner st
 	if runID == "" || owner == "" || fence <= 0 {
 		return false, ErrInvalid
 	}
-	_, err := refreshdb.New(tx).GetLiveRunForUpdate(contextOrBackground(ctx), refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
+	_, err := refreshdb.New(tx).GetLiveRunForUpdate(ctx, refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -1708,7 +1690,7 @@ func (r *Repository) CancelRun(ctx context.Context, scope Scope, runID string) (
 	}
 	var out Run
 	err := r.InTx(ctx, func(tx Tx) error {
-		tag, err := refreshdb.New(tx).CancelQueuedRun(contextOrBackground(ctx), refreshdb.CancelQueuedRunParams{RunID: runID, ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID})
+		tag, err := refreshdb.New(tx).CancelQueuedRun(ctx, refreshdb.CancelQueuedRunParams{RunID: runID, ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID})
 		if err != nil {
 			return err
 		}
@@ -1719,7 +1701,7 @@ func (r *Repository) CancelRun(ctx context.Context, scope Scope, runID string) (
 			return err
 		}
 		var readErr error
-		out, readErr = r.runByID(contextOrBackground(ctx), tx, runID)
+		out, readErr = r.runByID(ctx, tx, runID)
 		return readErr
 	})
 	return out, err
@@ -1744,7 +1726,7 @@ func (r *Repository) FailQueuedRunWithHook(ctx context.Context, scope Scope, run
 	}
 	var out Run
 	err := r.InTx(ctx, func(tx Tx) error {
-		tag, err := refreshdb.New(tx).FailQueuedRun(contextOrBackground(ctx), refreshdb.FailQueuedRunParams{Error: message, RunID: runID, ProjectID: scope.ProjectID, Environment: scope.Environment})
+		tag, err := refreshdb.New(tx).FailQueuedRun(ctx, refreshdb.FailQueuedRunParams{Error: message, RunID: runID, ProjectID: scope.ProjectID, Environment: scope.Environment})
 		if err != nil {
 			return err
 		}
@@ -1755,11 +1737,11 @@ func (r *Repository) FailQueuedRunWithHook(ctx context.Context, scope Scope, run
 			return err
 		}
 		if hook != nil {
-			if err := hook(contextOrBackground(ctx), tx); err != nil {
+			if err := hook(ctx, tx); err != nil {
 				return err
 			}
 		}
-		out, err = r.runByID(contextOrBackground(ctx), tx, runID)
+		out, err = r.runByID(ctx, tx, runID)
 		return err
 	})
 	return out, err
@@ -1792,7 +1774,7 @@ func (r *Repository) CancelRunWithAuditTx(ctx context.Context, tx Tx, scope Scop
 	if err := validateGeneration(scope.GenerationID); err != nil || runID == "" || runID != strings.TrimSpace(runID) {
 		return Run{}, ErrInvalid
 	}
-	tag, err := refreshdb.New(tx).CancelQueuedRun(contextOrBackground(ctx), refreshdb.CancelQueuedRunParams{RunID: runID, ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID})
+	tag, err := refreshdb.New(tx).CancelQueuedRun(ctx, refreshdb.CancelQueuedRunParams{RunID: runID, ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID})
 	if err != nil {
 		return Run{}, err
 	}
@@ -1803,18 +1785,17 @@ func (r *Repository) CancelRunWithAuditTx(ctx context.Context, tx Tx, scope Scop
 		return Run{}, err
 	}
 	if audit != nil {
-		if err := audit(contextOrBackground(ctx), tx); err != nil {
+		if err := audit(ctx, tx); err != nil {
 			return Run{}, err
 		}
 	}
-	return r.runByID(contextOrBackground(ctx), tx, runID)
+	return r.runByID(ctx, tx, runID)
 }
 
 // ClaimAttemptTx is the refresh-side evidence boundary. Worker claim
 // admission itself belongs to jobs.Repository; this method links the exact
 // jobs lease owner and generation to a run attempt in the same transaction.
 func (r *Repository) ClaimAttemptTx(ctx context.Context, tx Tx, runID, owner string, fence int64, lease time.Duration) (Attempt, error) {
-	ctx = contextOrBackground(ctx)
 	if tx == nil {
 		return Attempt{}, ErrInvalid
 	}
@@ -1870,14 +1851,14 @@ func (r *Repository) HeartbeatAttemptTx(ctx context.Context, tx Tx, runID, owner
 	if lease <= 0 || lease > MaxLease {
 		return ErrInvalid
 	}
-	tag, err := refreshdb.New(tx).HeartbeatRunLease(contextOrBackground(ctx), refreshdb.HeartbeatRunLeaseParams{Lease: lease, RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
+	tag, err := refreshdb.New(tx).HeartbeatRunLease(ctx, refreshdb.HeartbeatRunLeaseParams{Lease: lease, RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
 	if err != nil {
 		return err
 	}
 	if tag != 1 {
 		return ErrStaleFence
 	}
-	tag, err = refreshdb.New(tx).HeartbeatAttemptLease(contextOrBackground(ctx), refreshdb.HeartbeatAttemptLeaseParams{Lease: lease, RunID: runID, OwnerID: owner, FenceGeneration: fence})
+	tag, err = refreshdb.New(tx).HeartbeatAttemptLease(ctx, refreshdb.HeartbeatAttemptLeaseParams{Lease: lease, RunID: runID, OwnerID: owner, FenceGeneration: fence})
 	if err != nil {
 		return err
 	}
@@ -1906,14 +1887,14 @@ func (r *Repository) finishAttemptTx(ctx context.Context, tx Tx, runID, owner st
 	if status == "indeterminate" {
 		runStatus = "failed"
 	}
-	tag, err := refreshdb.New(tx).FinishAttempt(contextOrBackground(ctx), refreshdb.FinishAttemptParams{Status: state, Evidence: ev, Error: message, RunID: runID, OwnerID: owner, FenceGeneration: fence})
+	tag, err := refreshdb.New(tx).FinishAttempt(ctx, refreshdb.FinishAttemptParams{Status: state, Evidence: ev, Error: message, RunID: runID, OwnerID: owner, FenceGeneration: fence})
 	if err != nil {
 		return err
 	}
 	if tag != 1 {
 		return ErrStaleFence
 	}
-	tag, err = refreshdb.New(tx).FinishRun(contextOrBackground(ctx), refreshdb.FinishRunParams{Status: runStatus, Error: message, RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
+	tag, err = refreshdb.New(tx).FinishRun(ctx, refreshdb.FinishRunParams{Status: runStatus, Error: message, RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
 	if err != nil {
 		return err
 	}
@@ -1939,7 +1920,6 @@ func (r *Repository) FailAttempt(ctx context.Context, runID, owner string, fence
 }
 
 func (r *Repository) LinkPublicationTx(ctx context.Context, tx Tx, in PublicationInput) (Publication, error) {
-	ctx = contextOrBackground(ctx)
 	if tx == nil {
 		return Publication{}, ErrInvalid
 	}
@@ -2104,7 +2084,12 @@ func (r *Repository) CommitPublicationTx(ctx context.Context, tx Tx, publication
 	if bytes.Equal(ev, []byte(`{}`)) {
 		return errors.New("publication commit evidence is required")
 	}
-	p, err := publicationByID(contextOrBackground(ctx), tx, publicationID)
+	if _, err := refreshdb.New(tx).GetPublicationForUpdate(ctx, publicationID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	p, err := publicationByID(ctx, tx, publicationID)
 	if err != nil {
 		return err
 	}
@@ -2117,7 +2102,7 @@ func (r *Repository) CommitPublicationTx(ctx context.Context, tx Tx, publication
 	if p.State != "pending" {
 		return ErrStaleFence
 	}
-	tag, err := refreshdb.New(tx).CommitPublication(contextOrBackground(ctx), refreshdb.CommitPublicationParams{SnapshotID: int64Ptr(snapshotID), Evidence: ev, PublicationID: publicationID, RunID: runID, OwnerID: owner, FenceGeneration: fence, PhysicalPoolID: physicalPoolID, CatalogID: catalogID})
+	tag, err := refreshdb.New(tx).CommitPublication(ctx, refreshdb.CommitPublicationParams{SnapshotID: int64Ptr(snapshotID), Evidence: ev, PublicationID: publicationID, RunID: runID, OwnerID: owner, FenceGeneration: fence, PhysicalPoolID: physicalPoolID, CatalogID: catalogID})
 	if err != nil {
 		return err
 	}
@@ -2135,7 +2120,7 @@ func (r *Repository) Publication(ctx context.Context, id string) (Publication, e
 	if err := r.requireDB(); err != nil {
 		return Publication{}, err
 	}
-	return publicationByID(contextOrBackground(ctx), r.db, id)
+	return publicationByID(ctx, r.db, id)
 }
 func (r *Repository) GetPublication(ctx context.Context, id string) (Publication, error) {
 	return r.Publication(ctx, id)
@@ -2145,7 +2130,7 @@ func (r *Repository) PublicationTx(ctx context.Context, tx Tx, id string) (Publi
 	if tx == nil {
 		return Publication{}, ErrInvalid
 	}
-	return publicationByID(contextOrBackground(ctx), tx, id)
+	return publicationByID(ctx, tx, id)
 }
 
 // PublicationLinkMarkerTx reports whether any publication link already
@@ -2156,7 +2141,7 @@ func (r *Repository) PublicationLinkMarkerTx(ctx context.Context, tx Tx, runID, 
 	if tx == nil || runID == "" || resultGenerationID == "" {
 		return false, ErrInvalid
 	}
-	count, err := refreshdb.New(tx).PublicationLinkMarker(contextOrBackground(ctx), refreshdb.PublicationLinkMarkerParams{RunID: runID, ResultGenerationID: resultGenerationID})
+	count, err := refreshdb.New(tx).PublicationLinkMarker(ctx, refreshdb.PublicationLinkMarkerParams{RunID: runID, ResultGenerationID: resultGenerationID})
 	return count > 0, err
 }
 
@@ -2166,7 +2151,7 @@ func (r *Repository) RunTreeSucceededTx(ctx context.Context, tx Tx, runID string
 	if tx == nil || runID == "" {
 		return false, ErrInvalid
 	}
-	ok, err := refreshdb.New(tx).RunTreeSucceeded(contextOrBackground(ctx), runID)
+	ok, err := refreshdb.New(tx).RunTreeSucceeded(ctx, runID)
 	if ok == nil {
 		return false, err
 	}
@@ -2174,7 +2159,6 @@ func (r *Repository) RunTreeSucceededTx(ctx context.Context, tx Tx, runID string
 }
 
 func (r *Repository) RecordRecoveryTx(ctx context.Context, tx Tx, in RecoveryInput) (RecoveryState, error) {
-	ctx = contextOrBackground(ctx)
 	if tx == nil {
 		return RecoveryState{}, ErrInvalid
 	}
@@ -2272,7 +2256,7 @@ func (r *Repository) Recovery(ctx context.Context, runID string) (RecoveryState,
 	if err := canonicalID("run id", runID, 256); err != nil {
 		return RecoveryState{}, err
 	}
-	return recoveryByRun(contextOrBackground(ctx), r.db, runID)
+	return recoveryByRun(ctx, r.db, runID)
 }
 
 func (r *Repository) GetRecovery(ctx context.Context, runID string) (RecoveryState, error) {
@@ -2298,7 +2282,7 @@ func (r *Repository) SaveDataVersionTx(ctx context.Context, tx Tx, v DataVersion
 			return err
 		}
 	}
-	publicationExists, err := refreshdb.New(tx).PublicationExistsForDataVersion(contextOrBackground(ctx), refreshdb.PublicationExistsForDataVersionParams{RunID: v.RunID, ResultGenerationID: v.GenerationID, PhysicalPoolID: v.PhysicalPoolID, CatalogID: v.CatalogID, SnapshotID: v.SnapshotID, Source: v.Source, FenceGeneration: v.LeaseRevision, OwnerID: v.LeaseOwner, ProjectID: v.ProjectID, Environment: v.Environment, SemanticModelID: v.SemanticModelID})
+	publicationExists, err := refreshdb.New(tx).PublicationExistsForDataVersion(ctx, refreshdb.PublicationExistsForDataVersionParams{RunID: v.RunID, ResultGenerationID: v.GenerationID, PhysicalPoolID: v.PhysicalPoolID, CatalogID: v.CatalogID, SnapshotID: v.SnapshotID, Source: v.Source, FenceGeneration: v.LeaseRevision, OwnerID: v.LeaseOwner, ProjectID: v.ProjectID, Environment: v.Environment, SemanticModelID: v.SemanticModelID})
 	if err != nil {
 		return err
 	}
@@ -2309,7 +2293,7 @@ func (r *Repository) SaveDataVersionTx(ctx context.Context, tx Tx, v DataVersion
 		return ErrInvalid
 	}
 	if v.Source == "refresh" && v.LeaseRevision > 0 {
-		runOK, err := refreshdb.New(tx).RefreshPublicationValid(contextOrBackground(ctx), refreshdb.RefreshPublicationValidParams{RunID: v.RunID, ProjectID: v.ProjectID, Environment: v.Environment, ResultGenerationID: v.GenerationID, FenceGeneration: v.LeaseRevision, OwnerID: v.LeaseOwner})
+		runOK, err := refreshdb.New(tx).RefreshPublicationValid(ctx, refreshdb.RefreshPublicationValidParams{RunID: v.RunID, ProjectID: v.ProjectID, Environment: v.Environment, ResultGenerationID: v.GenerationID, FenceGeneration: v.LeaseRevision, OwnerID: v.LeaseOwner})
 		if err != nil {
 			return err
 		}
@@ -2317,7 +2301,7 @@ func (r *Repository) SaveDataVersionTx(ctx context.Context, tx Tx, v DataVersion
 			return ErrConflict
 		}
 	}
-	oldRow, err := refreshdb.New(tx).GetDataVersionForUpdate(contextOrBackground(ctx), refreshdb.GetDataVersionForUpdateParams{ProjectID: v.ProjectID, Environment: v.Environment, SemanticModelID: v.SemanticModelID, GenerationID: v.GenerationID})
+	oldRow, err := refreshdb.New(tx).GetDataVersionForUpdate(ctx, refreshdb.GetDataVersionForUpdateParams{ProjectID: v.ProjectID, Environment: v.Environment, SemanticModelID: v.SemanticModelID, GenerationID: v.GenerationID})
 	old := dataVersionFromUpdate(oldRow)
 	if err == nil {
 		if v.LeaseRevision < old.LeaseRevision {
@@ -2332,7 +2316,7 @@ func (r *Repository) SaveDataVersionTx(ctx context.Context, tx Tx, v DataVersion
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	_, err = refreshdb.New(tx).UpsertDataVersion(contextOrBackground(ctx), refreshdb.UpsertDataVersionParams{ProjectID: v.ProjectID, Environment: v.Environment, SemanticModelID: v.SemanticModelID, GenerationID: v.GenerationID, SnapshotID: v.SnapshotID, Source: v.Source, PhysicalPoolID: v.PhysicalPoolID, CatalogID: v.CatalogID, PipelineID: v.PipelineID, RunID: v.RunID, TargetRevision: v.TargetRevision, LeaseOwner: v.LeaseOwner, LeaseRevision: v.LeaseRevision})
+	_, err = refreshdb.New(tx).UpsertDataVersion(ctx, refreshdb.UpsertDataVersionParams{ProjectID: v.ProjectID, Environment: v.Environment, SemanticModelID: v.SemanticModelID, GenerationID: v.GenerationID, SnapshotID: v.SnapshotID, Source: v.Source, PhysicalPoolID: v.PhysicalPoolID, CatalogID: v.CatalogID, PipelineID: v.PipelineID, RunID: v.RunID, TargetRevision: v.TargetRevision, LeaseOwner: v.LeaseOwner, LeaseRevision: v.LeaseRevision})
 	return err
 }
 func (r *Repository) SaveDataVersion(ctx context.Context, v DataVersion) error {
@@ -2356,7 +2340,7 @@ func (r *Repository) dataVersion(ctx context.Context, tx DBTX, projectID, enviro
 	if tx == nil {
 		return DataVersion{}, false, ErrInvalid
 	}
-	row, err := refreshdb.New(tx).GetDataVersion(contextOrBackground(ctx), refreshdb.GetDataVersionParams{ProjectID: projectID, Environment: environment, SemanticModelID: semanticModelID, GenerationID: generationID})
+	row, err := refreshdb.New(tx).GetDataVersion(ctx, refreshdb.GetDataVersionParams{ProjectID: projectID, Environment: environment, SemanticModelID: semanticModelID, GenerationID: generationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DataVersion{}, false, nil
 	}
@@ -2374,7 +2358,7 @@ func (r *Repository) Maintenance(ctx context.Context, limit int) (int64, error) 
 	if limit < 1 || limit > 1000 {
 		return 0, ErrInvalid
 	}
-	n, err := refreshdb.New(r.db).RunMaintenance(contextOrBackground(ctx), int32(limit))
+	n, err := refreshdb.New(r.db).RunMaintenance(ctx, int32(limit))
 	return n, err
 }
 
@@ -2396,7 +2380,7 @@ func (r *Repository) RecoveryRunsTx(ctx context.Context, tx Tx, environment stri
 	if tx == nil || strings.TrimSpace(environment) == "" || limit < 1 || limit > MaxPageSize || (afterID != "" && afterCreated.IsZero()) {
 		return nil, ErrInvalid
 	}
-	rows, err := refreshdb.New(tx).ListRecoveryRuns(contextOrBackground(ctx), refreshdb.ListRecoveryRunsParams{Environment: environment, AfterCreated: nullableTime(afterCreated), AfterID: afterID, PageLimit: int32(limit)})
+	rows, err := refreshdb.New(tx).ListRecoveryRuns(ctx, refreshdb.ListRecoveryRunsParams{Environment: environment, AfterCreated: nullableTime(afterCreated), AfterID: afterID, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
@@ -2414,7 +2398,7 @@ func (r *Repository) Attempts(ctx context.Context, runID string, limit int) ([]A
 	if limit < 1 || limit > MaxPageSize {
 		return nil, ErrInvalid
 	}
-	rows, err := refreshdb.New(r.db).ListAttempts(contextOrBackground(ctx), refreshdb.ListAttemptsParams{RunID: runID, PageLimit: int32(limit)})
+	rows, err := refreshdb.New(r.db).ListAttempts(ctx, refreshdb.ListAttemptsParams{RunID: runID, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
@@ -2439,13 +2423,13 @@ func (r *Repository) ListOccurrences(ctx context.Context, scope Scope, limit int
 	if limit < 1 || limit > MaxPageSize {
 		return nil, ErrInvalid
 	}
-	rows, err := refreshdb.New(r.db).ListOccurrences(contextOrBackground(ctx), refreshdb.ListOccurrencesParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID, PageLimit: int32(limit)})
+	rows, err := refreshdb.New(r.db).ListOccurrences(ctx, refreshdb.ListOccurrencesParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
 	var out []Occurrence
 	for _, id := range rows {
-		o, e := occurrenceByID(contextOrBackground(ctx), r.db, id)
+		o, e := occurrenceByID(ctx, r.db, id)
 		if e != nil {
 			return nil, e
 		}

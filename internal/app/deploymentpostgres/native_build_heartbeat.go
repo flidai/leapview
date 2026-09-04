@@ -64,7 +64,7 @@ type nativeBuildHeartbeatGuard struct {
 }
 
 func newNativeBuildHeartbeatGuard(parent context.Context, heartbeat NativeBuildHeartbeatRunner, interval time.Duration, input NativeBuildHeartbeatInput, buildStop context.CancelFunc) *nativeBuildHeartbeatGuard {
-	ctx, cancel := context.WithCancel(contextOrBackground(parent))
+	ctx, cancel := context.WithCancel(parent)
 	guard := &nativeBuildHeartbeatGuard{heartbeat: heartbeat, interval: interval, ctx: ctx, cancel: cancel, buildStop: buildStop, done: make(chan struct{}), input: input}
 	go guard.run()
 	return guard
@@ -142,7 +142,6 @@ func (h *NativeBuildHeartbeat) Renew(ctx context.Context, input NativeBuildHeart
 	if h == nil || h.delivery == nil || h.operation == nil {
 		return NativeBuildHeartbeatResult{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
-	ctx = contextOrBackground(ctx)
 	tx, err := h.delivery.Begin(ctx)
 	if err != nil {
 		return NativeBuildHeartbeatResult{}, err
@@ -172,7 +171,6 @@ func (h *NativeBuildHeartbeat) RenewTx(ctx context.Context, tx deploymentnative.
 	if h == nil || h.delivery == nil || h.operation == nil || tx == nil {
 		return NativeBuildHeartbeatResult{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
-	ctx = contextOrBackground(ctx)
 	if err := validateNativeBuildHeartbeatInput(input); err != nil {
 		return NativeBuildHeartbeatResult{}, err
 	}

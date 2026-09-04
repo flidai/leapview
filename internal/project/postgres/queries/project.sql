@@ -58,9 +58,11 @@ SELECT state = 'open' AND expires_at > clock_timestamp() AS active
 FROM project.source_sync_plan
 WHERE plan_id = $1;
 
--- name: InsertSourceSyncPlanEntry :exec
+-- name: InsertSourceSyncPlanEntries :exec
 INSERT INTO project.source_sync_plan_entry(plan_id, path, digest, size_bytes, ordinal)
-VALUES ($1,$2,$3,$4,$5)
+SELECT sqlc.arg(plan_id)::uuid, entry.path, entry.digest, entry.size_bytes, entry.ordinal
+FROM jsonb_to_recordset(sqlc.arg(entries)::jsonb)
+    AS entry(path text, digest text, size_bytes bigint, ordinal integer)
 ON CONFLICT (plan_id, path) DO NOTHING;
 
 -- name: ListSourceSyncPlanEntries :many
@@ -123,6 +125,16 @@ SELECT project_id, storage_security_domain, digest, size_bytes, object_key,
 FROM project.source_blob
 WHERE project_id = $1 AND storage_security_domain = $2 AND digest = $3;
 
+-- name: InvalidSourceSnapshotBlobs :many
+SELECT requested.path::text AS path, requested.digest::text AS digest
+FROM jsonb_to_recordset(sqlc.arg(entries)::jsonb)
+    AS requested(path text, digest text, size_bytes bigint)
+LEFT JOIN project.source_blob b
+  ON b.project_id = sqlc.arg(project_id) AND b.storage_security_domain = sqlc.arg(storage_security_domain)
+ AND b.digest = requested.digest
+WHERE b.digest IS NULL OR b.size_bytes <> requested.size_bytes
+ORDER BY requested.path;
+
 -- name: InsertSourceSnapshot :one
 INSERT INTO project.source_snapshot
     (snapshot_id, project_id, storage_security_domain, source_digest,
@@ -148,10 +160,12 @@ FROM project.source_snapshot
 WHERE project_id = $1 AND storage_security_domain = $2 AND source_digest = $3
   AND state = 'sealed';
 
--- name: InsertSourceSnapshotEntry :exec
+-- name: InsertSourceSnapshotEntries :exec
 INSERT INTO project.source_snapshot_entry
     (snapshot_id, project_id, storage_security_domain, path, digest, size_bytes, ordinal)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+SELECT sqlc.arg(snapshot_id)::uuid,sqlc.arg(project_id),sqlc.arg(storage_security_domain),entry.path,entry.digest,entry.size_bytes,entry.ordinal
+FROM jsonb_to_recordset(sqlc.arg(entries)::jsonb)
+    AS entry(path text, digest text, size_bytes bigint, ordinal integer)
 ON CONFLICT (snapshot_id, path) DO NOTHING;
 
 -- name: ListSourceSnapshotEntries :many

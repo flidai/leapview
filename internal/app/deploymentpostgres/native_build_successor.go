@@ -71,7 +71,6 @@ func AdmitNativeBuildSuccessor(
 	if input.Physical == nil || !input.Physical.Configured() {
 		return NativeBuildSuccessorAdmissionResult{}, fmt.Errorf("%w: successor physical admission guard is unavailable", deploymentmodule.ErrDeliveryInputUnavailable)
 	}
-	ctx = contextOrBackground(ctx)
 	if err := validateNativeBuildSuccessorPredecessor(input); err != nil {
 		return NativeBuildSuccessorAdmissionResult{}, err
 	}

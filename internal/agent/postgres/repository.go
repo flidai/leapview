@@ -116,7 +116,6 @@ var _ agent.RunCancellationWorkflow = (*Repository)(nil)
 var _ agent.RunLeaseVerifier = (*Repository)(nil)
 
 func NewRepository(db DBTX) *Repository { return &Repository{db: db} }
-func New(db DBTX) *Repository           { return NewRepository(db) }
 
 func NewWithOptions(db DBTX, options Options) (*Repository, error) {
 	if db == nil {

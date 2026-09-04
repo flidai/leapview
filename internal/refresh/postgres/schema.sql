@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS refresh.run (
     matching_schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
     materialization_scope jsonb NOT NULL DEFAULT '[]'::jsonb,
     principal_id text NOT NULL DEFAULT '',
-    job_id text REFERENCES jobs.job(id) ON DELETE RESTRICT,
+    job_id text REFERENCES jobs.job_history(id) ON DELETE RESTRICT,
     status text NOT NULL DEFAULT 'queued',
     attempt_count bigint NOT NULL DEFAULT 0,
     fence_generation bigint NOT NULL DEFAULT 0,
@@ -203,7 +203,7 @@ BEGIN
     IF current_parent IS NULL THEN
         SELECT kind,workload_class,resource_kind,resource_id,partition_key,principal_id,status
           INTO job_kind,job_workload,job_resource_kind,job_resource_id,job_partition,job_principal,job_status
-          FROM jobs.job WHERE id=current_job;
+          FROM jobs.job_history WHERE id=current_job;
         IF job_kind IS DISTINCT FROM 'refresh_pipeline' OR job_workload IS DISTINCT FROM 'background' OR job_resource_kind IS DISTINCT FROM 'refresh_run' OR job_resource_id IS DISTINCT FROM NEW.run_id OR job_partition IS DISTINCT FROM ('refresh:'||NEW.project_id||':'||NEW.environment) OR job_principal IS DISTINCT FROM NEW.principal_id OR job_status IS DISTINCT FROM 'queued' THEN
             RAISE EXCEPTION 'root refresh job does not match canonical queue identity';
         END IF;

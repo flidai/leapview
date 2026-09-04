@@ -193,6 +193,34 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	if _, err := repo.AuthoringCredentialByAccessTokenHash(t.Context(), hashHex("access-extended-next"), time.Unix(1, 0)); err != nil {
 		t.Fatalf("resolve rotated credential with stale caller time: %v", err)
 	}
+	replay := access.AuthoringCredentialRotation{
+		RefreshTokenHash: refreshHash, CredentialID: "ac_extended_replay",
+		AccessTokenHash: hashHex("access-extended-replay"), RefreshTokenHashNew: hashHex("refresh-extended-replay"),
+		AccessExpiresAt: now.Add(45 * time.Minute), RefreshExpiresAt: now.Add(3 * time.Hour),
+	}
+	if _, err := repo.RotateAuthoringCredential(t.Context(), replay); !errors.Is(err, access.ErrAuthoringRefreshReplay) {
+		t.Fatalf("old refresh replay error = %v", err)
+	}
+	var revoked bool
+	var replayAudits int
+	if err := db.admin.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL FROM access.authoring_session WHERE id='as_extended'`).Scan(&revoked); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.admin.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE action='authoring.refresh.replay' AND resource_id='as_extended'`).Scan(&replayAudits); err != nil {
+		t.Fatal(err)
+	}
+	if !revoked || replayAudits != 1 {
+		t.Fatalf("replay containment revoked=%t audit_count=%d", revoked, replayAudits)
+	}
+	if _, err := repo.RotateAuthoringCredential(t.Context(), replay); !errors.Is(err, access.ErrAuthoringRefreshReplay) {
+		t.Fatalf("contained refresh replay error = %v", err)
+	}
+	if err := db.admin.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE action='authoring.refresh.replay' AND resource_id='as_extended'`).Scan(&replayAudits); err != nil {
+		t.Fatal(err)
+	}
+	if replayAudits != 1 {
+		t.Fatalf("idempotent replay audit count=%d, want 1", replayAudits)
+	}
 	if _, err := db.admin.Exec(t.Context(), `UPDATE access.device_authorization SET consumed_at=NULL WHERE id='da_extended'`); err == nil {
 		t.Fatal("device consumption rewind accepted")
 	}

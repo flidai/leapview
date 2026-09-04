@@ -39,7 +39,6 @@ func NewPostgresJobsAdapter(jobsRepository *jobspostgres.Repository, refreshRepo
 // queue implementation as the canonical PostgreSQL authority. Test wrappers
 // that embed PostgresJobsAdapter retain the marker and provenance methods.
 type postgresQueueAuthority interface {
-	PostgresQueueRecovery
 	Configured() bool
 	MatchesRefreshRepository(*refreshpostgres.Repository) bool
 	postgresQueueAuthorityMarker()
@@ -87,7 +86,19 @@ func sameNativeDB(left, right any) bool {
 	}
 }
 
-var _ PostgresQueue = (*PostgresJobsAdapter)(nil)
+func isNilPostgresCapability(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
+
 var _ PostgresQueueWriter = (*PostgresJobsAdapter)(nil)
 var _ PostgresQueueLifecycle = (*PostgresJobsAdapter)(nil)
 
@@ -160,241 +171,65 @@ func (a *PostgresJobsAdapter) AppendRefreshQueuedEventTx(ctx context.Context, tx
 	return err
 }
 
-func (a *PostgresJobsAdapter) ListExecutableJobs(ctx context.Context, scope refreshrun.ReadScope, limit int) ([]refreshrun.JobRecord, error) {
+// ClaimRiverJob binds River's exact attempt to the refresh capability state.
+// River has already selected and locked the operational row; this method only
+// establishes the refresh-owned attempt and validates the durable payload in
+// the caller-visible product history.
+func (a *PostgresJobsAdapter) ClaimRiverJob(ctx context.Context, job jobs.Job, lease time.Duration) (refreshrun.JobRecord, error) {
 	if a == nil || a.Jobs == nil || a.Refresh == nil {
-		return nil, errors.New("canonical PostgreSQL jobs and refresh repositories are required")
+		return refreshrun.JobRecord{}, errors.New("canonical PostgreSQL jobs and refresh repositories are required")
 	}
-	if err := scope.Validate(); err != nil {
-		return nil, err
+	if job.ResourceKind != refreshJobResourceKind || job.ResourceID == "" || job.Attempts < 1 {
+		return refreshrun.JobRecord{}, errors.New("River refresh job identity is invalid")
 	}
-	if limit < 1 || limit > refreshpostgres.MaxPageSize {
-		return nil, errors.New("refresh job page limit is outside bound")
-	}
-	out := make([]refreshrun.JobRecord, 0, limit)
-	afterCreated, afterID := time.Time{}, ""
-	for len(out) < limit {
-		candidates, err := a.Jobs.CandidatesByResourceKindAfter(ctx, jobpolicy.WorkloadClassBackground, refreshJobResourceKind, refreshpostgres.MaxPageSize, afterCreated, afterID)
-		if err != nil {
-			return nil, err
-		}
-		if len(candidates) == 0 {
-			break
-		}
-		for _, candidate := range candidates {
-			if len(out) == limit {
-				break
-			}
-			run, err := a.Refresh.LookupRun(ctx, candidate.ResourceID)
-			if err != nil {
-				if errors.Is(err, refreshpostgres.ErrNotFound) {
-					continue
-				}
-				return nil, err
-			}
-			if run.ProjectID != scope.ProjectID.String() || run.Environment != scope.Environment || run.JobID != candidate.ID {
-				continue
-			}
-			mapped, err := a.jobRecord(run, candidate)
-			if err != nil {
-				if poisonErr := a.quarantineQueuedPayload(ctx, candidate, run, err); poisonErr != nil {
-					return nil, poisonErr
-				}
-				continue
-			}
-			out = append(out, mapped)
-		}
-		if len(candidates) < refreshpostgres.MaxPageSize {
-			break
-		}
-		last := candidates[len(candidates)-1]
-		var cursorErr error
-		afterCreated, cursorErr = parseJobTimestamp(last.CreatedAt)
-		if cursorErr != nil {
-			return nil, fmt.Errorf("refresh job candidate cursor is invalid: %w", cursorErr)
-		}
-		afterID = last.ID
-	}
-	return out, nil
-}
-
-func (a *PostgresJobsAdapter) ClaimExecutableJob(ctx context.Context, candidate refreshrun.JobRecord, owner string, lease time.Duration) (refreshrun.JobRecord, bool, error) {
-	if a == nil || a.Jobs == nil || a.Refresh == nil {
-		return refreshrun.JobRecord{}, false, errors.New("canonical PostgreSQL jobs and refresh repositories are required")
-	}
-	if err := candidate.Validate(); err != nil {
-		return refreshrun.JobRecord{}, false, err
+	owner := strings.TrimSpace(job.LeaseOwner)
+	if owner == "" {
+		owner = "river"
 	}
 	var mapped refreshrun.JobRecord
-	claimed := false
-	terminalized := false
+	var terminalErr error
 	err := a.Refresh.InTx(ctx, func(tx refreshpostgres.Tx) error {
-		job, ok, err := a.Jobs.ClaimByIDTx(ctx, tx, candidate.ID, jobpolicy.WorkloadClassBackground, owner, lease)
+		run, err := a.Refresh.LookupRunTx(ctx, tx, job.ResourceID)
 		if err != nil {
 			return err
 		}
-		if !ok {
-			return errClaimUnavailable
+		if run.JobID != job.ID {
+			return errors.New("River refresh job does not match its run")
 		}
-		claimed = true
-		run, err := a.Refresh.GetRunTx(ctx, tx, refreshpostgres.Scope{ProjectID: candidate.Identity.ProjectID.String(), Environment: candidate.Identity.Environment}, candidate.RunID)
-		if err != nil {
-			if !errors.Is(err, refreshpostgres.ErrNotFound) {
-				return err
-			}
-			// The job is already claimed in this transaction. There is no linked
-			// refresh attempt to fence, so fail the exact job before rollback.
-			if failErr := a.Jobs.FailTx(ctx, tx, job.ID, jobs.Fence{Owner: job.LeaseOwner, Generation: job.LeaseGeneration}, []byte(`{"code":"REFRESH_RUN_MISSING"}`)); failErr != nil {
-				return failErr
-			}
-			terminalized = true
-			return nil
-		}
-		if run.JobID != job.ID || run.ProjectID != candidate.Identity.ProjectID.String() || run.Environment != candidate.Identity.Environment {
-			if failErr := a.Jobs.FailTx(ctx, tx, job.ID, jobs.Fence{Owner: job.LeaseOwner, Generation: job.LeaseGeneration}, []byte(`{"code":"REFRESH_JOB_IDENTITY_MISMATCH"}`)); failErr != nil {
-				return failErr
-			}
-			if failErr := a.Refresh.FailRunTerminalEvidenceTx(ctx, tx, run.RunID, "refresh job identity rejected", []byte(`{"code":"REFRESH_JOB_IDENTITY_MISMATCH"}`)); failErr != nil {
-				return failErr
-			}
-			terminalized = true
-			return nil
-		}
-		if _, err := a.Refresh.ClaimAttemptTx(ctx, tx, run.RunID, job.LeaseOwner, job.LeaseGeneration, lease); err != nil {
+		if _, err := a.Refresh.ClaimAttemptTx(ctx, tx, run.RunID, owner, int64(job.Attempts), lease); err != nil {
 			return err
 		}
-		run, err = a.Refresh.GetRunTx(ctx, tx, refreshpostgres.Scope{ProjectID: candidate.Identity.ProjectID.String(), Environment: candidate.Identity.Environment}, candidate.RunID)
+		run, err = a.Refresh.LookupRunTx(ctx, tx, job.ResourceID)
 		if err != nil {
 			return err
 		}
+		job.LeaseOwner = owner
+		job.LeaseGeneration = int64(job.Attempts)
 		mapped, err = a.jobRecord(run, job)
-		if err != nil {
-			// Decoder errors may contain payload-controlled text (or implementation
-			// details). Close both authorities with a bounded stable code.
-			problem := []byte(`{"code":"REFRESH_POISON_PAYLOAD"}`)
-			if failErr := a.Refresh.FailRunTreeTx(ctx, tx, run.RunID, job.LeaseOwner, job.LeaseGeneration, "refresh job payload rejected", problem); failErr != nil {
-				return failErr
-			}
-			return a.Jobs.FailTx(ctx, tx, job.ID, jobs.Fence{Owner: job.LeaseOwner, Generation: job.LeaseGeneration}, problem)
+		if err == nil {
+			return nil
 		}
+		// Payload decoding happens only after River has selected the exact job.
+		// Close the refresh tree, product history, and River row in this one
+		// transaction; never reintroduce a separate poison-queue scanner.
+		problem := []byte(`{"code":"REFRESH_POISON_PAYLOAD"}`)
+		if failErr := a.Refresh.FailRunTreeTx(ctx, tx, run.RunID, owner, int64(job.Attempts), "refresh job payload rejected", problem); failErr != nil {
+			return failErr
+		}
+		if failErr := a.Jobs.FailTx(ctx, tx, job.ID, jobs.Fence{Owner: owner, Generation: int64(job.Attempts)}, problem); failErr != nil {
+			return failErr
+		}
+		terminalErr = errors.New("refresh job payload rejected")
 		return nil
 	})
-	if errors.Is(err, errClaimUnavailable) {
-		return refreshrun.JobRecord{}, false, nil
+	if err == nil && terminalErr != nil {
+		err = terminalErr
 	}
-	if err != nil {
-		return refreshrun.JobRecord{}, false, err
-	}
-	if terminalized {
-		return refreshrun.JobRecord{}, false, nil
-	}
-	return mapped, claimed, nil
+	return mapped, err
 }
 
-var errClaimUnavailable = errors.New("refresh job claim unavailable")
-
-func (a *PostgresJobsAdapter) quarantineQueuedPayload(ctx context.Context, candidate jobs.Job, run refreshpostgres.Run, cause error) error {
-	if a == nil || a.Jobs == nil || a.Refresh == nil {
-		return errors.New("canonical PostgreSQL jobs and refresh repositories are required")
-	}
-	if run.JobID != candidate.ID {
-		return errors.New("poison refresh job no longer matches its run")
-	}
-	_ = cause // decoder details are intentionally not persisted or reflected to callers
-	problem := []byte(`{"code":"REFRESH_POISON_PAYLOAD"}`)
-	return a.Refresh.InTx(ctx, func(tx refreshpostgres.Tx) error {
-		runChanged, err := a.Refresh.QuarantineQueuedRunTx(ctx, tx, run.RunID, candidate.ID)
-		if err != nil {
-			return err
-		}
-		jobChanged, err := a.Jobs.QuarantineQueuedTx(ctx, tx, candidate.ID, problem)
-		if err != nil {
-			return err
-		}
-		if !runChanged && !jobChanged {
-			return nil // another worker owns or already terminalized this item
-		}
-		if runChanged != jobChanged {
-			return errors.New("poison refresh run and job terminalization diverged")
-		}
-		return nil
-	})
-}
-
-func (a *PostgresJobsAdapter) RenewJobLease(ctx context.Context, job refreshrun.JobRecord, lease time.Duration) error {
-	if a == nil || a.Jobs == nil || a.Refresh == nil {
-		return errors.New("canonical PostgreSQL jobs and refresh repositories are required")
-	}
-	if err := job.Validate(); err != nil {
-		return err
-	}
-	return a.Refresh.InTx(ctx, func(tx refreshpostgres.Tx) error {
-		fence := jobs.Fence{Owner: job.LeaseOwner, Generation: job.LeaseRevision}
-		if err := a.Jobs.RenewTx(ctx, tx, job.ID, fence, lease); err != nil {
-			return err
-		}
-		return a.Refresh.HeartbeatAttemptTx(ctx, tx, job.RunID, job.LeaseOwner, job.LeaseRevision, lease)
-	})
-}
-
-func (a *PostgresJobsAdapter) JobQueueStats(ctx context.Context, scope refreshrun.ReadScope) (refreshrun.JobQueueStats, error) {
-	if a == nil || a.Jobs == nil || a.Refresh == nil {
-		return refreshrun.JobQueueStats{}, errors.New("canonical PostgreSQL jobs and refresh repositories are required")
-	}
-	if err := scope.Validate(); err != nil {
-		return refreshrun.JobQueueStats{}, err
-	}
-	var stats refreshrun.JobQueueStats
-	afterCreated, afterID := time.Time{}, ""
-	for {
-		candidates, err := a.Jobs.CandidatesByResourceKindAfter(ctx, jobpolicy.WorkloadClassBackground, refreshJobResourceKind, refreshpostgres.MaxPageSize, afterCreated, afterID)
-		if err != nil {
-			return refreshrun.JobQueueStats{}, err
-		}
-		if len(candidates) == 0 {
-			break
-		}
-		for _, candidate := range candidates {
-			run, runErr := a.Refresh.LookupRun(ctx, candidate.ResourceID)
-			if runErr != nil {
-				if errors.Is(runErr, refreshpostgres.ErrNotFound) {
-					continue
-				}
-				return refreshrun.JobQueueStats{}, runErr
-			}
-			if run.ProjectID != scope.ProjectID.String() || run.Environment != scope.Environment || run.JobID != candidate.ID {
-				continue
-			}
-			switch candidate.Status {
-			case jobs.StatusQueued:
-				stats.QueuedJobs++
-			case jobs.StatusRunning:
-				stats.RunningJobs++
-				expiry, parseErr := parseJobTimestamp(candidate.LeaseExpiresAt)
-				if parseErr != nil {
-					return refreshrun.JobQueueStats{}, fmt.Errorf("refresh job lease timestamp is invalid: %w", parseErr)
-				}
-				if !expiry.After(time.Now().UTC()) {
-					stats.StaleLeasedJobs++
-				}
-			}
-		}
-		if len(candidates) < refreshpostgres.MaxPageSize {
-			break
-		}
-		last := candidates[len(candidates)-1]
-		var cursorErr error
-		afterCreated, cursorErr = parseJobTimestamp(last.CreatedAt)
-		if cursorErr != nil {
-			return refreshrun.JobQueueStats{}, fmt.Errorf("refresh job stats cursor is invalid: %w", cursorErr)
-		}
-		afterID = last.ID
-	}
-	return stats, nil
-}
-
-// PostgresQueueLifecycle is kept separate from PostgresQueue so read/claim
-// adapters remain useful to diagnostics, while production workers can require
-// atomic terminal transitions with refresh.attempt.
+// PostgresQueueLifecycle owns the product-history transitions composed with
+// refresh capability transactions. River alone owns operational claiming.
 type PostgresQueueLifecycle interface {
 	CompleteJobTx(context.Context, refreshpostgres.Tx, refreshrun.JobRecord) error
 	FailJobTx(context.Context, refreshpostgres.Tx, refreshrun.JobRecord, string) error
@@ -403,25 +238,20 @@ type PostgresQueueLifecycle interface {
 	SupersedeJobsTx(context.Context, refreshpostgres.Tx, []string) error
 }
 
-// PostgresQueueRecovery extends lifecycle transitions with the read/repair
-// operations required by startup reconciliation. Keeping these optional on a
-// separate interface avoids widening ordinary worker test doubles.
-type PostgresQueueRecovery interface {
-	PostgresQueueLifecycle
+// PostgresJobHistory exposes the exact product row needed to validate a
+// capability-owned publication transaction.
+type PostgresJobHistory interface {
 	GetJobTx(context.Context, refreshpostgres.Tx, string) (jobs.Job, error)
-	LatestAttemptTx(context.Context, refreshpostgres.Tx, string, int64, int64) (jobspostgres.Attempt, bool, error)
-	ActiveRefreshJobsTx(context.Context, refreshpostgres.Tx, time.Time, string, int) ([]jobs.Job, error)
-	ReconcileTerminalTx(context.Context, refreshpostgres.Tx, string, jobs.Status) error
 }
 
 // PostgresJobsAuthority is the complete canonical jobs surface required by
 // refresh persistence. A single value supplies reads, enqueue, lifecycle, and
-// recovery so callers cannot accidentally split authorities.
+// history so callers cannot accidentally split authorities.
 type PostgresJobsAuthority interface {
-	PostgresQueue
 	PostgresQueueWriter
 	PostgresQueueLifecycle
-	PostgresQueueRecovery
+	PostgresJobHistory
+	ClaimRiverJob(context.Context, jobs.Job, time.Duration) (refreshrun.JobRecord, error)
 }
 
 func (a *PostgresJobsAdapter) CompleteJobTx(ctx context.Context, tx refreshpostgres.Tx, job refreshrun.JobRecord) error {
@@ -469,27 +299,6 @@ func (a *PostgresJobsAdapter) GetJobTx(ctx context.Context, tx refreshpostgres.T
 		return jobs.Job{}, errors.New("canonical PostgreSQL jobs repository is required")
 	}
 	return a.Jobs.GetTx(ctx, tx, id)
-}
-
-func (a *PostgresJobsAdapter) LatestAttemptTx(ctx context.Context, tx refreshpostgres.Tx, id string, attemptNumber, fencingGeneration int64) (jobspostgres.Attempt, bool, error) {
-	if a == nil || a.Jobs == nil {
-		return jobspostgres.Attempt{}, false, errors.New("canonical PostgreSQL jobs repository is required")
-	}
-	return a.Jobs.LatestAttemptTx(ctx, tx, id, attemptNumber, fencingGeneration)
-}
-
-func (a *PostgresJobsAdapter) ActiveRefreshJobsTx(ctx context.Context, tx refreshpostgres.Tx, afterCreated time.Time, afterID string, limit int) ([]jobs.Job, error) {
-	if a == nil || a.Jobs == nil {
-		return nil, errors.New("canonical PostgreSQL jobs repository is required")
-	}
-	return a.Jobs.ActiveRefreshJobsTx(ctx, tx, afterCreated, afterID, limit)
-}
-
-func (a *PostgresJobsAdapter) ReconcileTerminalTx(ctx context.Context, tx refreshpostgres.Tx, id string, desired jobs.Status) error {
-	if a == nil || a.Jobs == nil {
-		return errors.New("canonical PostgreSQL jobs repository is required")
-	}
-	return a.Jobs.ReconcileTerminalTx(ctx, tx, id, desired)
 }
 
 func (a *PostgresJobsAdapter) jobRecord(run refreshpostgres.Run, job jobs.Job) (refreshrun.JobRecord, error) {

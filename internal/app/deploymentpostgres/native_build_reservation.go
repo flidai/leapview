@@ -54,7 +54,6 @@ func ReserveNativeBuildOperation(ctx context.Context, repository *deploymentnati
 	if nativeBuildOperationAuthorityIsNil(operations) {
 		return NativeBuildOperationReservationResult{}, fmt.Errorf("%w: native build operation authority is required", deploymentmodule.ErrDeliveryInputUnavailable)
 	}
-	ctx = contextOrBackground(ctx)
 	operationInput, err := normalizeNativeBuildReservationInput(input)
 	if err != nil {
 		return NativeBuildOperationReservationResult{}, err

@@ -247,6 +247,9 @@ func validateAdmittedExtension(requested string, admitted AdmittedExtension) err
 		return fmt.Errorf("extension %s admission digest is not canonical sha256: %w", requested, err)
 	}
 	base := filepath.Base(admitted.Path)
+	if strings.ContainsAny(admitted.Path, "\x00\r\n") {
+		return fmt.Errorf("extension %s admission path contains a control character", requested)
+	}
 	stem := strings.TrimSuffix(base, ".duckdb_extension")
 	expectedStem := extensiondomain.ArtifactFilenameStem(requested)
 	if !filepath.IsAbs(admitted.Path) || filepath.Clean(admitted.Path) != admitted.Path || !strings.HasSuffix(base, ".duckdb_extension") || stem != expectedStem && !strings.HasPrefix(stem, expectedStem+"-") {

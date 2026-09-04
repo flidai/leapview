@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
-
-var artifactDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // ErrOccurrenceSkipped reports a terminal policy decision that has already
 // been persisted by the trigger implementation. The scheduler must not
@@ -97,8 +95,8 @@ func ValidateScope(identity projectgraph.ServingIdentity) error {
 // ValidateArtifactDigest accepts only the canonical public artifact digest;
 // callers must not trim or normalize an authored value before validating it.
 func ValidateArtifactDigest(value string) error {
-	if !artifactDigestPattern.MatchString(value) {
-		return errors.New("artifact digest must be canonical sha256")
+	if err := platformdigest.ValidateSHA256Identity(value); err != nil {
+		return fmt.Errorf("artifact digest must be canonical sha256: %w", err)
 	}
 	return nil
 }

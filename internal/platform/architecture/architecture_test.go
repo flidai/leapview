@@ -4259,8 +4259,8 @@ func TestStorageArchitectureSpecDocumentsProcessOwnedDuckDB(t *testing.T) {
 	}
 	text := string(spec)
 	for _, want := range []string{
-		"Production deployments use one PostgreSQL control plane",
-		"one process-owned DuckDB `DatabaseInstance`",
+		"Production and development serving use one PostgreSQL control plane",
+		"process-owned DuckDB `DatabaseInstance`",
 		"leapview.db               # local/evaluation SQLite control-plane fixture",
 		"ducklake/catalog.duckdb   # local DuckDB-backed DuckLake metadata catalog",
 		"Every physical relation in a serving plan",

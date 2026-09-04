@@ -10,7 +10,6 @@ import (
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Persistence is the deployment module's native authority bundle.  It is
@@ -79,15 +78,9 @@ type NativeDeliveryWorkflowRecorder interface {
 	RecordWorkflow(context.Context, deploymentpostgres.Tx, jobs.WorkflowIntent) error
 }
 
-// NativeOperationTx is the only operation-capability surface that crosses
-// the module boundary. It is intentionally structural: the application
-// adapter may back it with any transactional operation store without exposing
-// that store's DTOs or package to deployment.
-type NativeOperationTx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
+// NativeOperationTx is the caller-owned native transaction crossing the
+// module boundary. A pool or connection cannot accidentally satisfy it.
+type NativeOperationTx = pgx.Tx
 
 type NativeOperationStatus string
 

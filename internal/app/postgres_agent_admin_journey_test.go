@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,7 +13,6 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/agent"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
-	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -211,31 +209,6 @@ func TestPostgresAgentAdminJourney(t *testing.T) {
 	}
 	if err := fixture.JobsModule.Stop(ctx); err != nil {
 		t.Fatalf("stop PostgreSQL agent worker before direct fence assertions: %v", err)
-	}
-
-	// Exercise the queue's persisted reclaim and exact fence: an expired
-	// first claim is rejected after a second worker claims the same row.
-	fenceJob, err := fixture.Graph.Jobs.Enqueue(ctx, jobs.EnqueueInput{
-		ID: "journey-fence-job", Kind: "agent.run", WorkloadClass: jobplatform.WorkloadClassBackground,
-		PrincipalID: owner.ID, GroupIDs: []string{}, PartitionKey: "agent:project:journey", ResourceKind: "agent_run", ResourceID: "journey-fence-run", Payload: []byte(`{}`), EstimatedMemoryBytes: 1,
-	})
-	if err != nil {
-		t.Fatalf("enqueue PostgreSQL fence job: %v", err)
-	}
-	firstClaim, ok, err := fixture.Graph.Jobs.ClaimByID(ctx, fenceJob.ID, jobplatform.WorkloadClassBackground, "journey-worker-a", 20*time.Millisecond)
-	if err != nil || !ok {
-		t.Fatalf("first PostgreSQL fence claim=%#v ok=%v err=%v", firstClaim, ok, err)
-	}
-	time.Sleep(40 * time.Millisecond)
-	secondClaim, ok, err := fixture.Graph.Jobs.ClaimByID(ctx, fenceJob.ID, jobplatform.WorkloadClassBackground, "journey-worker-b", time.Minute)
-	if err != nil || !ok || secondClaim.LeaseGeneration <= firstClaim.LeaseGeneration {
-		t.Fatalf("reclaimed PostgreSQL fence claim=%#v ok=%v err=%v", secondClaim, ok, err)
-	}
-	if err := fixture.Graph.Jobs.Complete(ctx, firstClaim.ID, firstClaim.Fence()); !errors.Is(err, jobs.ErrConflict) {
-		t.Fatalf("stale PostgreSQL fence completion error=%v, want jobs.ErrConflict", err)
-	}
-	if err := fixture.Graph.Jobs.Complete(ctx, secondClaim.ID, secondClaim.Fence()); err != nil {
-		t.Fatalf("complete reclaimed PostgreSQL fence job: %v", err)
 	}
 
 	// Platform administration is durable and independent of any serving or

@@ -20,8 +20,6 @@ type Adapter struct {
 
 var _ authoringpostgres.EventPort = (*Adapter)(nil)
 
-func New() *Adapter { return NewWithRepository(eventspostgres.New()) }
-
 func NewWithRepository(events *eventspostgres.Repository) *Adapter {
 	return &Adapter{events: events}
 }
@@ -32,8 +30,8 @@ func (a *Adapter) Matches(events *eventspostgres.Repository) bool {
 	return a != nil && a.events != nil && a.events == events
 }
 
-// AppendEvent appends through the exact caller-owned transaction and validates
-// every immutable event field before returning to the authoring repository.
+// AppendEvent appends through the exact caller-owned transaction. The platform
+// event authority validates the complete immutable projection before return.
 func (a *Adapter) AppendEvent(ctx context.Context, tx authoringpostgres.Tx, input authoringpostgres.EventInput) (authoringpostgres.Event, error) {
 	if a == nil || a.events == nil {
 		return authoringpostgres.Event{}, errors.New("dashboard authoring event adapter is not configured")
@@ -58,12 +56,6 @@ func (a *Adapter) AppendEvent(ctx context.Context, tx authoringpostgres.Tx, inpu
 			return authoringpostgres.Event{}, fmt.Errorf("%w: dashboard authoring event identity differs", authoring.ErrConflict)
 		}
 		return authoringpostgres.Event{}, err
-	}
-	if stored.EventID != input.EventID || stored.ScopeID != input.ProjectID ||
-		stored.AggregateType != "dashboard_authoring" || stored.AggregateID != input.DashboardID ||
-		stored.EventType != input.Type || stored.SchemaVersion != 1 ||
-		stored.CorrelationID != correlationID || stored.AggregateVersion <= 0 {
-		return authoringpostgres.Event{}, fmt.Errorf("%w: dashboard authoring event identity differs", authoring.ErrConflict)
 	}
 	return authoringpostgres.Event{EventID: stored.EventID, ProjectID: stored.ScopeID, DashboardID: stored.AggregateID, ActorID: input.ActorID, CorrelationID: stored.CorrelationID, Revision: input.Revision, Type: stored.EventType, AggregateVersion: stored.AggregateVersion, Payload: append([]byte(nil), stored.Payload...)}, nil
 }

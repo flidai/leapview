@@ -23,14 +23,10 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-// Tx is the caller-owned native transaction surface. Requiring commit and
-// rollback keeps pools/connections out of *Tx methods and preserves one atomic
-// boundary across refresh and jobs mutations.
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+// Tx is the caller-owned native transaction surface. Pools and connections
+// intentionally do not satisfy it, preserving one atomic boundary across
+// refresh, delivery, events, audits, and jobs mutations.
+type Tx = pgx.Tx
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -55,9 +51,6 @@ func SchemaSQL() string { return schemaSQL }
 func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return errors.New("refresh schema transaction is required")
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err

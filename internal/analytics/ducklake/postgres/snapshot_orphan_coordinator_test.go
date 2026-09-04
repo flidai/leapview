@@ -94,6 +94,23 @@ func orphanCoordinatorForTest(t *testing.T, suffix string) (*Repository, Retenti
 	return r, fence, request
 }
 
+func TestSnapshotOrphanCoordinatorRejectsAboveMaximumPageBudget(t *testing.T) {
+	coordinator := &SnapshotOrphanCoordinator{
+		Control:  &Repository{},
+		MaxPages: MaxSnapshotOrphanScanPages + 1,
+		OpenScannerFor: func(context.Context, SnapshotOrphanMaintenanceRequest) (SnapshotCatalogPageScanner, error) {
+			return nil, nil
+		},
+	}
+	_, _, _, _, _, _, err := coordinator.normalize(SnapshotOrphanMaintenanceRequest{
+		ScanID: "0198f2c0-7c7a-7f00-8a11-000000000099", PhysicalPoolID: "pool",
+		CatalogID: "catalog", OwnerID: "owner", LeaseExpiresAt: time.Now().Add(time.Minute),
+	})
+	if !errors.Is(err, ErrSnapshotOrphanScanBounds) {
+		t.Fatalf("normalize error = %v, want %v", err, ErrSnapshotOrphanScanBounds)
+	}
+}
+
 func TestPostgres18SnapshotOrphanCoordinatorBoundsAndExactNativeExpiry(t *testing.T) {
 	r, fence, request := orphanCoordinatorForTest(t, "coordinator_bounds")
 	request.GracePeriod = 500 * time.Millisecond

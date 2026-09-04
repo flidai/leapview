@@ -65,6 +65,23 @@ leapview="$temporary_directory/leapview"
 
 cd "$repo_root"
 go build -o "$leapview" ./cmd/leapview
+
+# This workflow publishes content only; runtime rollout is owned by the demo
+# platform. Bind every publication to the already-running immutable runtime's
+# authenticated compatibility identity before sending project data.
+runtime_capabilities="$("$leapview" api call getCapabilities \
+  --target "$demo_target" \
+  --token "$publisher_token")"
+runtime_revision="$(jq -er '.buildRevision | strings | select(test("^[0-9a-f]{40}$"))' <<<"$runtime_capabilities")"
+jq -e '
+  .apiVersion == "v1" and
+  .deliveryMode == "native-postgres" and
+  .buildDirty == false and
+  .buildDevelopment == false
+' <<<"$runtime_capabilities" >/dev/null || {
+  echo "demo runtime does not satisfy the content-publication compatibility contract" >&2
+  exit 1
+}
 go run ./internal/app/tools/configgen
 go run ./internal/app/tools/bootstrapolist --shared-cache --out "$data_link"
 data_path="$(cd -P "$data_link" && pwd)"
@@ -207,4 +224,4 @@ jq -e --arg project "$project_id" --arg candidate "$candidate_id" --arg generati
   .projectId == $project and .candidateId == $candidate and .generationId == $generation
 ' <<<"$publication_status_json" >/dev/null
 curl --fail --silent --show-error --max-time 15 "$demo_target/readyz" >/dev/null
-printf 'published the canonical project showcase to %s\n' "$demo_target"
+printf 'published source %s to compatible runtime %s at %s\n' "$source_revision" "$runtime_revision" "$demo_target"

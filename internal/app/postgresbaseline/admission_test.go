@@ -46,6 +46,7 @@ func TestServingAdmissionsAcceptReviewedPrivileges(t *testing.T) {
 			},
 			allowed: map[string]bool{
 				"schema:recovery:USAGE":                true,
+				"schema:public:USAGE":                  true,
 				"table:public.goose_db_version:SELECT": true,
 				"table:recovery.recovery_set:SELECT":   true,
 				"function:managed_data.publish_binding_set(text,text,text,text,bigint,jsonb):EXECUTE": true,
@@ -70,6 +71,7 @@ func TestServingAdmissionsAcceptReviewedPrivileges(t *testing.T) {
 			},
 			allowed: map[string]bool{
 				"schema:platform:USAGE":                true,
+				"schema:public:USAGE":                  true,
 				"table:public.goose_db_version:SELECT": true,
 				"table:recovery.recovery_set:SELECT":   true,
 			},
@@ -99,6 +101,7 @@ func TestServingAdmissionsRejectExtensionAndPrivilegeDrift(t *testing.T) {
 		extension: platformpostgres.Extension{Name: "pgcrypto", Schema: "managed_data"},
 		allowed: map[string]bool{
 			"schema:recovery:USAGE":                true,
+			"schema:public:USAGE":                  true,
 			"table:public.goose_db_version:SELECT": true,
 			"table:recovery.recovery_set:SELECT":   true,
 			"function:managed_data.publish_binding_set(text,text,text,text,bigint,jsonb):EXECUTE": true,
@@ -110,6 +113,7 @@ func TestServingAdmissionsRejectExtensionAndPrivilegeDrift(t *testing.T) {
 	}{
 		{name: "extension schema", mutate: func(f *admissionReaderFake) { f.extension.Schema = "public" }},
 		{name: "missing positive privilege", mutate: func(f *admissionReaderFake) { delete(f.allowed, "schema:recovery:USAGE") }},
+		{name: "missing public schema usage", mutate: func(f *admissionReaderFake) { delete(f.allowed, "schema:public:USAGE") }},
 		{name: "forbidden privilege", mutate: func(f *admissionReaderFake) { f.allowed["table:public.goose_db_version:UPDATE"] = true }},
 		{name: "runtime recovery-root function grant", mutate: func(f *admissionReaderFake) {
 			f.allowed["function:delivery.create_recovery_retention_root(uuid,text,uuid,uuid,timestamptz,jsonb):EXECUTE"] = true

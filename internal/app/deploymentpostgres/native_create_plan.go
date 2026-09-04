@@ -194,7 +194,6 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	if c == nil || c.repository == nil || c.sources == nil || c.artifacts == nil || c.events == nil || c.eventReader == nil || c.audit == nil || c.auditReader == nil || c.operations == nil || c.operationLookup == nil {
 		return deploymentmodule.NativeDeliveryPlan{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
-	ctx = contextOrBackground(ctx)
 	if err := validateNativeCreatePlanRequest(request); err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err
 	}
@@ -554,7 +553,6 @@ func (c *NativeCreatePlanCoordinator) CompleteNativePlanCommand(ctx context.Cont
 	if plan.ID == uuid.Nil || plan.Status != string(deploymentgen.DeliveryPlanStatusPlanned) || plan.PlanDigest == "" || plan.ProjectID.Validate() != nil || plan.ActorID == "" || plan.SourceOwnerID == "" || plan.IdempotencyKey == "" || platformdigest.ValidateSHA256Identity(plan.RequestDigest) != nil || plan.EventID == uuid.Nil || plan.AuditID == uuid.Nil {
 		return fmt.Errorf("%w: native plan completion evidence is incomplete", deployment.ErrDeliveryConflict)
 	}
-	ctx = contextOrBackground(ctx)
 	tx, err := c.repository.Begin(ctx)
 	if err != nil {
 		return err

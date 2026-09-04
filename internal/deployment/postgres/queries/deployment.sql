@@ -180,7 +180,7 @@ COALESCE((SELECT s.attempt_id::text FROM delivery.delivery_snapshot_seal s WHERE
 COALESCE(c.snapshot_seal_id::text,'')::text AS snapshot_seal_id,c.status,c.candidate_revision,c.artifact_digest,COALESCE(c.qualification_digest,'')::text AS qualification_digest,c.created_at,c.qualified_at,c.retired_at
 FROM delivery.delivery_candidate c WHERE c.candidate_id=sqlc.arg(candidate_id)::uuid;
 
--- name: QualifyCandidate :exec
+-- name: QualifyCandidate :execrows
 UPDATE delivery.delivery_candidate SET status='qualified',snapshot_seal_id=sqlc.arg(snapshot_seal_id)::uuid,qualification_digest=sqlc.arg(qualification_digest),qualified_at=clock_timestamp()
 WHERE candidate_id=sqlc.arg(candidate_id)::uuid AND status IN ('building','ready');
 
@@ -311,6 +311,18 @@ ON CONFLICT(target_id) DO UPDATE SET generation_id=EXCLUDED.generation_id,public
 -- name: CommitPublication :one
 UPDATE delivery.delivery_publication SET state='committed',result_target_revision=sqlc.arg(result_revision),committed_at=clock_timestamp()
 WHERE publication_id=sqlc.arg(publication_id)::uuid AND state='pending' RETURNING true;
+
+-- name: CommitActivationTransition :one
+-- Runtime has no direct UPDATE privilege on the serving pointer, target
+-- revision, or publication outcome. The capability function rechecks the
+-- exact publication/generation/CAS tuple before applying all three writes.
+SELECT delivery.commit_activation_transition(
+    sqlc.arg(publication_id)::uuid,
+    sqlc.arg(target_id),
+    sqlc.arg(generation_id)::uuid,
+    sqlc.arg(expected_target_revision),
+    sqlc.arg(result_target_revision)
+) AS committed;
 
 -- name: GetRetentionRootIdentity :one
 -- The narrow SECURITY DEFINER capability owns the row lock because serving

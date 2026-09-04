@@ -511,7 +511,7 @@ type SourceAttestationReader interface {
 }
 
 func (s *NativeCandidateSourceSynchronizer) beginTx(ctx context.Context) (Tx, error) {
-	tx, err := s.begin(contextOrBackground(ctx))
+	tx, err := s.begin(ctx)
 	if err != nil {
 		return nil, err
 	}

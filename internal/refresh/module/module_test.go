@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -211,60 +210,6 @@ func TestDataVersionFallsBackToCanonicalPublicationAndPrefersRefresh(t *testing.
 	}
 }
 
-func TestStartRunsTerminalRecoveryBeforeDispatch(t *testing.T) {
-	var recovered atomic.Bool
-	dispatched := make(chan struct{}, 1)
-	m, err := Build(t.Context(), Config{Authorization: testAuthorization(), RecoveryEnvironment: "dev", RecoveryLifecycle: nil, Dispatcher: dispatcherFunc(func(context.Context) {
-		if !recovered.Load() {
-			t.Error("dispatcher ran before terminal recovery")
-		}
-		dispatched <- struct{}{}
-	})})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.terminalRecovery = terminalRecoveryFunc(func(_ context.Context, environment, message string) error {
-		if environment != "dev" || message != "refresh did not complete" {
-			t.Fatalf("unexpected recovery scope")
-		}
-		recovered.Store(true)
-		return nil
-	})
-	m.recoveryEnvironment = "dev"
-	if err := m.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-dispatched:
-	case <-time.After(time.Second):
-		t.Fatal("dispatcher did not run")
-	}
-	if err := m.Stop(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestDispatchCoalescesConcurrentRequests(t *testing.T) {
-	entered, release := make(chan struct{}), make(chan struct{})
-	var calls atomic.Int32
-	m, err := Build(t.Context(), Config{Authorization: testAuthorization(), Dispatcher: dispatcherFunc(func(context.Context) { calls.Add(1); close(entered); <-release })})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.Dispatch(t.Context())
-	<-entered
-	for range 8 {
-		m.Dispatch(t.Context())
-	}
-	close(release)
-	if err := m.Stop(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if calls.Load() != 1 {
-		t.Fatalf("dispatcher calls = %d", calls.Load())
-	}
-}
-
 func TestStartOwnsSchedulerLifecycle(t *testing.T) {
 	reconciled, dispatched := make(chan struct{}, 1), make(chan struct{}, 2)
 	m, err := Build(t.Context(), Config{Authorization: testAuthorization(), ReconcileSchedules: func(context.Context) error { reconciled <- struct{}{}; return nil }, Scheduler: schedulerFunc(func(context.Context) error { dispatched <- struct{}{}; return nil }), ScheduleInterval: time.Millisecond})
@@ -287,46 +232,6 @@ func TestStartOwnsSchedulerLifecycle(t *testing.T) {
 	if err := m.Stop(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Stop(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestStartRedispatchesAfterLeaseWindow(t *testing.T) {
-	dispatched := make(chan struct{}, 2)
-	m, err := Build(t.Context(), Config{Authorization: testAuthorization(), Dispatcher: dispatcherFunc(func(context.Context) { dispatched <- struct{}{} }), LeaseTimeout: 10 * time.Millisecond})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		select {
-		case <-dispatched:
-		case <-time.After(time.Second):
-			t.Fatal("dispatcher did not run")
-		}
-	}
-	if err := m.Stop(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestStopHonorsCancellationWhileWorkerDrains(t *testing.T) {
-	entered, release := make(chan struct{}), make(chan struct{})
-	m, err := Build(t.Context(), Config{Authorization: testAuthorization(), Dispatcher: dispatcherFunc(func(context.Context) { close(entered); <-release })})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.Dispatch(t.Context())
-	<-entered
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if err := m.Stop(ctx); err == nil {
-		t.Fatal("expected cancelled stop error")
-	}
-	close(release)
 	if err := m.Stop(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -514,16 +419,6 @@ func (f artifactLoaderFunc) Load(ctx context.Context, a servingstate.Artifact) (
 	return f(ctx, a)
 }
 
-type dispatcherFunc func(context.Context)
-
-func (f dispatcherFunc) Run(ctx context.Context) { f(ctx) }
-
 type schedulerFunc func(context.Context) error
 
 func (f schedulerFunc) DispatchDue(ctx context.Context) error { return f(ctx) }
-
-type terminalRecoveryFunc func(context.Context, string, string) error
-
-func (f terminalRecoveryFunc) FailRunsForTerminalServingStates(ctx context.Context, env, message string) error {
-	return f(ctx, env, message)
-}

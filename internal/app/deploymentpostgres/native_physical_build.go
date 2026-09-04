@@ -336,7 +336,6 @@ type PhysicalBuildEvidence = NativePhysicalBuildEvidence
 // opened, it is always closed; a close failure is joined without replacing a
 // preceding operation error.
 func BuildNativePhysical(ctx context.Context, input NativePhysicalBuildInput, factory NativePhysicalBuildEnvironmentFactory) (evidence NativePhysicalBuildEvidence, err error) {
-	ctx = contextOrBackground(ctx)
 	normalized, canonicalMarker, canonicalRoot, err := validateNativePhysicalBuildInput(input)
 	if err != nil {
 		return NativePhysicalBuildEvidence{}, nativePhysicalBuildDeterministicFailure(NativePhysicalBuildPhaseValidation, err)

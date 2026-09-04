@@ -30,11 +30,7 @@ type DBTX interface {
 
 // Tx is a caller-owned pgx transaction. Methods accepting Tx never commit or
 // roll back it; the caller owns the complete transaction boundary.
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 // AuditRepository is the Access-owned direct audit append boundary. It is
 // deliberately transaction-shaped: implementations must append through the
@@ -79,9 +75,6 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return errors.New("connection-binding PostgreSQL transaction is nil")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// sqlc-exception: schema-ddl. The migration runner owns transaction
 	// boundaries while this capability owns its DDL and role policy.
 	_, err := tx.Exec(ctx, schemaSQL)
@@ -90,9 +83,6 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 
 // New constructs a repository over a pgx pool, connection, or transaction.
 func New(db DBTX) *Repository { return &Repository{db: db} }
-
-// NewRepository is an expressive constructor alias.
-func NewRepository(db DBTX) *Repository { return New(db) }
 
 // NewWithAudit constructs the production authority. The supplied database
 // must expose Begin and the Access audit repository is required so every
@@ -140,13 +130,6 @@ func (*Repository) PostgreSQLAuthority() {}
 // Configured reports whether the repository has a native database handle.
 func (r *Repository) Configured() bool { return r != nil && r.db != nil }
 
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
-}
-
 func invalidRepository() error {
 	return fmt.Errorf("%w: PostgreSQL connection-binding repository is unavailable", connectionbinding.ErrProviderUnavailable)
 }
@@ -157,7 +140,6 @@ func (r *Repository) Create(ctx context.Context, binding connectionbinding.Targe
 	if r == nil || r.db == nil {
 		return invalidRepository()
 	}
-	ctx = contextOrBackground(ctx)
 	if err := r.validateAuditContext(ctx); err != nil {
 		return err
 	}
@@ -186,17 +168,17 @@ func (r *Repository) CreateTx(ctx context.Context, tx Tx, binding connectionbind
 	if r == nil || r.db == nil || tx == nil {
 		return invalidRepository()
 	}
-	if err := r.validateAuditContext(contextOrBackground(ctx)); err != nil {
+	if err := r.validateAuditContext(ctx); err != nil {
 		return err
 	}
-	return r.createTx(contextOrBackground(ctx), tx, binding)
+	return r.createTx(ctx, tx, binding)
 }
 
 func (r *Repository) createTx(ctx context.Context, tx DBTX, binding connectionbinding.TargetBinding) error {
 	if r == nil || r.db == nil || tx == nil {
 		return invalidRepository()
 	}
-	if err := r.validateAuditTransaction(contextOrBackground(ctx), tx); err != nil {
+	if err := r.validateAuditTransaction(ctx, tx); err != nil {
 		return err
 	}
 	if binding.Revision != 1 {
@@ -209,14 +191,14 @@ func (r *Repository) createTx(ctx context.Context, tx DBTX, binding connectionbi
 	if err != nil {
 		return err
 	}
-	rows, err := bindingdb.New(tx).CreateTargetConnectionBinding(contextOrBackground(ctx), params)
+	rows, err := bindingdb.New(tx).CreateTargetConnectionBinding(ctx, params)
 	if err != nil {
 		return normalizeDatabaseError(err)
 	}
 	if rows != 1 {
 		return fmt.Errorf("%w: target connection scope or binding identity already exists", connectionbinding.ErrIncompatibleBinding)
 	}
-	return r.recordAuditIntent(contextOrBackground(ctx), tx)
+	return r.recordAuditIntent(ctx, tx)
 }
 
 func createParams(binding connectionbinding.TargetBinding) (bindingdb.CreateTargetConnectionBindingParams, error) {
@@ -241,7 +223,7 @@ func (r *Repository) Binding(ctx context.Context, scope connectionbinding.Bindin
 	if r == nil || r.db == nil {
 		return connectionbinding.TargetBinding{}, connectionbinding.ErrBindingNotFound
 	}
-	row, err := bindingdb.New(r.db).GetTargetConnectionBinding(contextOrBackground(ctx), bindingdb.GetTargetConnectionBindingParams{
+	row, err := bindingdb.New(r.db).GetTargetConnectionBinding(ctx, bindingdb.GetTargetConnectionBindingParams{
 		TargetID: targetID.String(), ProjectID: scope.ProjectID.String(), Environment: scope.Environment, ConnectionID: connectionID.String(),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -259,7 +241,7 @@ func (r *Repository) List(ctx context.Context, scope connectionbinding.BindingSc
 	if r == nil || r.db == nil {
 		return nil, connectionbinding.ErrBindingNotFound
 	}
-	rows, err := bindingdb.New(r.db).ListTargetConnectionBindings(contextOrBackground(ctx), bindingdb.ListTargetConnectionBindingsParams{
+	rows, err := bindingdb.New(r.db).ListTargetConnectionBindings(ctx, bindingdb.ListTargetConnectionBindingsParams{
 		TargetID: targetID.String(), ProjectID: scope.ProjectID.String(), Environment: scope.Environment,
 	})
 	if err != nil {
@@ -283,7 +265,6 @@ func (r *Repository) Save(ctx context.Context, binding connectionbinding.TargetB
 	if r == nil || r.db == nil {
 		return connectionbinding.TargetBinding{}, invalidRepository()
 	}
-	ctx = contextOrBackground(ctx)
 	if err := r.validateAuditContext(ctx); err != nil {
 		return connectionbinding.TargetBinding{}, err
 	}
@@ -314,17 +295,17 @@ func (r *Repository) SaveTx(ctx context.Context, tx Tx, binding connectionbindin
 	if r == nil || r.db == nil || tx == nil {
 		return connectionbinding.TargetBinding{}, invalidRepository()
 	}
-	if err := r.validateAuditContext(contextOrBackground(ctx)); err != nil {
+	if err := r.validateAuditContext(ctx); err != nil {
 		return connectionbinding.TargetBinding{}, err
 	}
-	return r.saveTx(contextOrBackground(ctx), tx, binding, expectedRevision)
+	return r.saveTx(ctx, tx, binding, expectedRevision)
 }
 
 func (r *Repository) saveTx(ctx context.Context, tx DBTX, binding connectionbinding.TargetBinding, expectedRevision int64) (connectionbinding.TargetBinding, error) {
 	if r == nil || r.db == nil || tx == nil {
 		return connectionbinding.TargetBinding{}, invalidRepository()
 	}
-	if err := r.validateAuditTransaction(contextOrBackground(ctx), tx); err != nil {
+	if err := r.validateAuditTransaction(ctx, tx); err != nil {
 		return connectionbinding.TargetBinding{}, err
 	}
 	if expectedRevision <= 0 || binding.Revision != expectedRevision+1 {
@@ -337,7 +318,7 @@ func (r *Repository) saveTx(ctx context.Context, tx DBTX, binding connectionbind
 	if err != nil {
 		return connectionbinding.TargetBinding{}, fmt.Errorf("encode non-secret endpoint: %w", err)
 	}
-	rows, err := bindingdb.New(tx).UpdateTargetConnectionBinding(contextOrBackground(ctx), bindingdb.UpdateTargetConnectionBindingParams{
+	rows, err := bindingdb.New(tx).UpdateTargetConnectionBinding(ctx, bindingdb.UpdateTargetConnectionBindingParams{
 		EndpointJson: endpoint, CredentialProjectID: binding.CredentialReference.ProjectID.String(),
 		CredentialEnvironment: binding.CredentialReference.Environment, CredentialSecretPath: binding.CredentialReference.SecretPath,
 		CredentialSecretKey: binding.CredentialReference.SecretKey, Enabled: binding.Enabled, ValidatedVersion: binding.ValidatedVersion,
@@ -352,7 +333,7 @@ func (r *Repository) saveTx(ctx context.Context, tx DBTX, binding connectionbind
 	if rows != 1 {
 		return connectionbinding.TargetBinding{}, connectionbinding.ErrIncompatibleBinding
 	}
-	if err := r.recordAuditIntent(contextOrBackground(ctx), tx); err != nil {
+	if err := r.recordAuditIntent(ctx, tx); err != nil {
 		return connectionbinding.TargetBinding{}, err
 	}
 	return binding, nil

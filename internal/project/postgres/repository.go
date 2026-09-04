@@ -87,9 +87,6 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// schema.sql is the capability-owned DDL, functions, triggers, and grants
 	// consumed by migration runners. It is intentionally kept as caller-owned
 	// schema execution rather than generated queries so migration transaction
@@ -125,7 +122,7 @@ func (r *Repository) Ensure(ctx context.Context, input EnsureInput) (Record, err
 	if r == nil || r.db == nil {
 		return Record{}, ErrInvalid
 	}
-	return ensure(contextOrBackground(ctx), r.db, input)
+	return ensure(ctx, r.db, input)
 }
 
 // EnsureTx is the caller-owned transaction form of Ensure.
@@ -133,7 +130,7 @@ func (r *Repository) EnsureTx(ctx context.Context, tx Tx, input EnsureInput) (Re
 	if tx == nil {
 		return Record{}, ErrInvalid
 	}
-	return ensure(contextOrBackground(ctx), tx, input)
+	return ensure(ctx, tx, input)
 }
 
 // EnsureIdentity implements project.IdentityRepository. It creates the
@@ -143,7 +140,7 @@ func (r *Repository) EnsureIdentity(ctx context.Context, id projectgraph.Resourc
 	if r == nil || r.db == nil {
 		return ErrInvalid
 	}
-	return ensureIdentity(contextOrBackground(ctx), r.db, id)
+	return ensureIdentity(ctx, r.db, id)
 }
 
 // EnsureIdentityTx is the transaction form of EnsureIdentity.
@@ -151,7 +148,7 @@ func (r *Repository) EnsureIdentityTx(ctx context.Context, tx Tx, id projectgrap
 	if tx == nil {
 		return ErrInvalid
 	}
-	return ensureIdentity(contextOrBackground(ctx), tx, id)
+	return ensureIdentity(ctx, tx, id)
 }
 
 // ByID loads one identity by canonical ID.
@@ -163,7 +160,7 @@ func (r *Repository) ByID(ctx context.Context, id projectgraph.ResourceID) (Reco
 	if err != nil {
 		return Record{}, err
 	}
-	return load(contextOrBackground(ctx), r.db, validated)
+	return load(ctx, r.db, validated)
 }
 
 // Get is an alias for ByID.
@@ -176,7 +173,7 @@ func (r *Repository) List(ctx context.Context) ([]Record, error) {
 	if r == nil || r.db == nil {
 		return nil, ErrInvalid
 	}
-	rows, err := projectdb.New(r.db).ListProjectIdentities(contextOrBackground(ctx))
+	rows, err := projectdb.New(r.db).ListProjectIdentities(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -279,13 +276,6 @@ func validateID(id projectgraph.ResourceID) (projectgraph.ResourceID, error) {
 		return "", fmt.Errorf("%w: project id: %v", ErrInvalid, err)
 	}
 	return validated, nil
-}
-
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 // Compile-time assertion that the PostgreSQL adapter satisfies the narrow

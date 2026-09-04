@@ -143,7 +143,7 @@ func (c *nativeCoordinator) Create(ctx context.Context, request apiadapter.Creat
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	operationInput := NativeOperationAcquireInput{Scope: c.targetID, OperationType: "deployment.create", IdempotencyKey: request.IdempotencyKey, RequestDigest: nativeOperationDigest("create", requestDigest, request.Actor, request.IdempotencyKey), OwnerID: request.Actor}
@@ -167,7 +167,7 @@ func (c *nativeCoordinator) Create(ctx context.Context, request apiadapter.Creat
 		if publication.TargetID != c.targetID || publication.GenerationID != generationID || publication.ActorID != request.Actor || publication.RequestDigest != requestDigest || publication.ExpectedBaseGenerationID != priorGenerationID {
 			return apiadapter.Deployment{}, fmt.Errorf("%w: create replay identity differs", deployment.ErrConflict)
 		}
-		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return apiadapter.Deployment{}, mapNativeError(err)
 		}
 		committed = true
@@ -214,7 +214,7 @@ func (c *nativeCoordinator) Create(ctx context.Context, request apiadapter.Creat
 	if err := c.operations.CompleteTx(ctx, tx, operation.Lease, outcome); err != nil {
 		return apiadapter.Deployment{}, mapNativeError(err)
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return apiadapter.Deployment{}, mapNativeError(err)
 	}
 	committed = true
@@ -265,7 +265,7 @@ func (c *nativeCoordinator) createNativePublication(ctx context.Context, project
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	operation, err := c.operations.AcquireTx(ctx, tx, NativeOperationAcquireInput{Scope: targetID, OperationType: operationType, IdempotencyKey: idempotencyKey, RequestDigest: requestDigest, OwnerID: actor})
@@ -310,7 +310,7 @@ func (c *nativeCoordinator) createNativePublication(ctx context.Context, project
 				return NativeDeliveryPublication{}, readErr
 			}
 		}
-		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return NativeDeliveryPublication{}, mapNativeError(err)
 		}
 		committed = true
@@ -413,7 +413,7 @@ func (c *nativeCoordinator) createNativePublication(ctx context.Context, project
 	if err := c.operations.CompleteTx(ctx, tx, operation.Lease, outcome); err != nil {
 		return NativeDeliveryPublication{}, mapNativeError(err)
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return NativeDeliveryPublication{}, mapNativeError(err)
 	}
 	committed = true
@@ -440,7 +440,7 @@ func (c *nativeCoordinator) completeNativePublicationCommand(ctx context.Context
 	if publication.ID == uuid.Nil || publication.OperationID != publication.ID || publication.EventID == uuid.Nil || publication.AuditID == uuid.Nil || publication.IdempotencyKey == "" || publication.RequestDigest == "" {
 		return fmt.Errorf("%w: native publication completion evidence is incomplete", deployment.ErrDeliveryInvalid)
 	}
-	operation, found, err := c.operationReader.Lookup(contextOrBackground(ctx), NativeOperationAcquireInput{Scope: publication.TargetID, OperationType: operationType, IdempotencyKey: publication.IdempotencyKey, RequestDigest: publication.RequestDigest, OwnerID: publication.ActorID})
+	operation, found, err := c.operationReader.Lookup(ctx, NativeOperationAcquireInput{Scope: publication.TargetID, OperationType: operationType, IdempotencyKey: publication.IdempotencyKey, RequestDigest: publication.RequestDigest, OwnerID: publication.ActorID})
 	if err != nil {
 		return mapNativeError(err)
 	}
@@ -451,14 +451,14 @@ func (c *nativeCoordinator) completeNativePublicationCommand(ctx context.Context
 	if err != nil || outcome.PublicationID != publication.ID.String() || outcome.EventID != publication.EventID.String() || outcome.AuditID != publication.AuditID.String() {
 		return fmt.Errorf("%w: native publication operation outcome differs", deployment.ErrDeliveryConflict)
 	}
-	tx, err := c.repository.Begin(contextOrBackground(ctx))
+	tx, err := c.repository.Begin(ctx)
 	if err != nil {
 		return mapNativeError(err)
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	payload, _ := json.Marshal(map[string]any{"publication_id": publication.ID.String(), "generation_id": publication.GenerationID.String(), "target_revision": publication.ExpectedTargetRevision})
@@ -476,7 +476,7 @@ func (c *nativeCoordinator) completeNativePublicationCommand(ctx context.Context
 		}
 		return err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return mapNativeError(err)
 	}
 	committed = true
@@ -571,7 +571,7 @@ func (c *nativeCoordinator) Activate(ctx context.Context, request apiadapter.Act
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	operationInput := NativeOperationAcquireInput{Scope: c.targetID, OperationType: "deployment.activate", IdempotencyKey: request.IdempotencyKey, RequestDigest: operationDigest, OwnerID: request.Actor}
@@ -612,7 +612,7 @@ func (c *nativeCoordinator) Activate(ctx context.Context, request apiadapter.Act
 		if err := c.retireNativeRollbackRootTx(ctx, tx, publication); err != nil {
 			return apiadapter.Deployment{}, err
 		}
-		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return apiadapter.Deployment{}, mapNativeError(err)
 		}
 		committed = true
@@ -641,7 +641,7 @@ func (c *nativeCoordinator) Activate(ctx context.Context, request apiadapter.Act
 		if err := c.operations.CompleteTx(ctx, tx, operation.Lease, outcome); err != nil {
 			return apiadapter.Deployment{}, mapNativeError(err)
 		}
-		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return apiadapter.Deployment{}, mapNativeError(err)
 		}
 		committed = true
@@ -670,7 +670,7 @@ func (c *nativeCoordinator) Activate(ctx context.Context, request apiadapter.Act
 	if err := c.operations.CompleteTx(ctx, tx, operation.Lease, outcome); err != nil {
 		return apiadapter.Deployment{}, mapNativeError(err)
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return apiadapter.Deployment{}, mapNativeError(err)
 	}
 	committed = true
@@ -726,7 +726,7 @@ func (c *nativeCoordinator) CancelRequest(ctx context.Context, request apiadapte
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	operationInput := NativeOperationAcquireInput{Scope: c.targetID, OperationType: "deployment.cancel", IdempotencyKey: request.IdempotencyKey, RequestDigest: operationDigest, OwnerID: request.Actor}
@@ -767,7 +767,7 @@ func (c *nativeCoordinator) CancelRequest(ctx context.Context, request apiadapte
 		if err := c.retireNativeRollbackRootTx(ctx, tx, publication); err != nil {
 			return apiadapter.Deployment{}, err
 		}
-		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return apiadapter.Deployment{}, mapNativeError(err)
 		}
 		committed = true
@@ -802,7 +802,7 @@ func (c *nativeCoordinator) CancelRequest(ctx context.Context, request apiadapte
 	if err := c.operations.CompleteTx(ctx, tx, operation.Lease, outcome); err != nil {
 		return apiadapter.Deployment{}, mapNativeError(err)
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return apiadapter.Deployment{}, mapNativeError(err)
 	}
 	committed = true
@@ -1042,13 +1042,6 @@ func mapNativeError(err error) error {
 		return fmt.Errorf("%w: %v", deployment.ErrConflict, err)
 	}
 	return err
-}
-
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 func sameJSON(left, right []byte) bool {

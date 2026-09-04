@@ -10,7 +10,6 @@ package ducklake
 
 import (
 	"context"
-	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
@@ -18,9 +17,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
+	"github.com/flidai/leapview/internal/analytics/duckdbsession"
 	"github.com/flidai/leapview/internal/extension"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 )
@@ -115,6 +114,9 @@ func (c PostgresCatalogMaintenanceSessionConfig) validate(requirePolicy bool) er
 	}
 	if strings.TrimSpace(c.TempDir) != "" && c.TempDir != strings.TrimSpace(c.TempDir) {
 		return fmt.Errorf("%w: temporary directory is not normalized", ErrPostgresCatalogMaintenanceSession)
+	}
+	if strings.ContainsAny(c.TempDir, "\x00\r\n") {
+		return fmt.Errorf("%w: temporary directory contains a control character", ErrPostgresCatalogMaintenanceSession)
 	}
 	parsed, err := parseMaintenanceURL(c.PostgresURL, role)
 	if err != nil {
@@ -216,10 +218,7 @@ func postgresSecretStatement(name string, parsed parsedMaintenanceURL) string {
 // its connector. Callers pass Conn() to NewPostgresCatalogMaintenance and
 // must Close this session after the operation completes.
 type PostgresCatalogMaintenanceSession struct {
-	db   *sql.DB
-	conn *sql.Conn
-	once sync.Once
-	err  error
+	pinned *duckdbsession.PinnedSession
 }
 
 // OpenPostgresCatalogMaintenanceSession opens and pins exactly one DuckDB
@@ -227,6 +226,8 @@ type PostgresCatalogMaintenanceSession struct {
 // attached in writable, non-migrating mode; no pool or second connection is
 // created.
 func OpenPostgresCatalogMaintenanceSession(ctx context.Context, c PostgresCatalogMaintenanceSessionConfig) (*PostgresCatalogMaintenanceSession, error) {
+	// Session opening is a lifecycle boundary: normalize before pinning the
+	// connection so admission and ATTACH share the captured cancellation scope.
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -256,11 +257,16 @@ func OpenPostgresCatalogMaintenanceSession(ctx context.Context, c PostgresCatalo
 	}
 	c.DataPath = canonicalDataPath
 	if strings.TrimSpace(c.TempDir) != "" {
+		tempDir, err := filepath.Abs(c.TempDir)
+		if err != nil {
+			return nil, fmt.Errorf("%w: canonical temporary directory", ErrPostgresCatalogMaintenanceSession)
+		}
+		c.TempDir = filepath.Clean(tempDir)
 		if err := securefs.EnsurePrivateDir(c.TempDir); err != nil {
 			return nil, fmt.Errorf("%w: prepare temporary directory", ErrPostgresCatalogMaintenanceSession)
 		}
 	}
-	allowedDirectories, err := maintenanceAllowedDirectories(c)
+	securityStatements, err := maintenanceSecurityStatements(c)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +313,7 @@ func OpenPostgresCatalogMaintenanceSession(ctx context.Context, c PostgresCatalo
 		// attached before external access is disabled. This preserves the
 		// connector's already-authorized I/O while preventing subsequent
 		// extension installation, autoloading, or ad hoc external access.
-		for _, statement := range []string{allowedDirectories, "SET enable_external_access = false", "SET lock_configuration = true"} {
+		for _, statement := range securityStatements {
 			if _, err := execer.ExecContext(initCtx, statement, nil); err != nil {
 				return fmt.Errorf("%w: lock DuckDB maintenance configuration", ErrPostgresCatalogMaintenanceSession)
 			}
@@ -317,78 +323,74 @@ func OpenPostgresCatalogMaintenanceSession(ctx context.Context, c PostgresCatalo
 	if err != nil {
 		return nil, fmt.Errorf("%w: create connector", ErrPostgresCatalogMaintenanceSession)
 	}
-	db := sql.OpenDB(connector)
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	conn, err := db.Conn(ctx)
+	pinned, err := duckdbsession.OpenPinned(ctx, connector)
 	if err != nil {
-		_ = db.Close()
 		return nil, fmt.Errorf("%w: initialize connection", ErrPostgresCatalogMaintenanceSession)
 	}
-	return &PostgresCatalogMaintenanceSession{db: db, conn: conn}, nil
+	return &PostgresCatalogMaintenanceSession{pinned: pinned}, nil
 }
 
 func maintenanceResourceStatements(c PostgresCatalogMaintenanceSessionConfig) []string {
-	statements := []string{
-		"SET allow_persistent_secrets = false",
-		"SET autoinstall_known_extensions = false",
-		"SET autoload_known_extensions = false",
-		fmt.Sprintf("SET memory_limit = '%dB'", c.MemoryMaxBytes),
-		fmt.Sprintf("SET max_temp_directory_size = '%dB'", c.TempMaxBytes),
-		fmt.Sprintf("SET threads = %d", c.MaxThreads),
-	}
-	if strings.TrimSpace(c.TempDir) != "" {
-		statements = append(statements, "SET temp_directory = '"+sqlLiteral(c.TempDir)+"'")
-	}
+	statements, _ := (duckdbsession.ResourcePolicy{
+		MemoryMaxBytes: c.MemoryMaxBytes,
+		TempMaxBytes:   c.TempMaxBytes,
+		MaxThreads:     c.MaxThreads,
+		TempDir:        c.TempDir,
+	}).BoundedStatements()
 	return statements
 }
 
 func maintenanceAllowedDirectories(c PostgresCatalogMaintenanceSessionConfig) (string, error) {
+	statements, err := maintenanceSecurityStatements(c)
+	if err != nil {
+		return "", err
+	}
+	if len(statements) == 0 {
+		return "", fmt.Errorf("%w: allowed directories policy is empty", ErrPostgresCatalogMaintenanceSession)
+	}
+	return statements[0], nil
+}
+
+func maintenanceSecurityStatements(c PostgresCatalogMaintenanceSessionConfig) ([]string, error) {
 	// DuckDB checks this allow-list whenever external access is disabled. The
 	// values are canonicalized and escaped before they reach SQL. Include the
 	// private temporary directory when configured so bounded spill files remain
 	// usable after lockdown.
 	dataPath, err := CanonicalDataPath(c.DataPath)
 	if err != nil {
-		return "", fmt.Errorf("%w: maintenance data path", ErrPostgresCatalogMaintenanceSession)
+		return nil, fmt.Errorf("%w: maintenance data path", ErrPostgresCatalogMaintenanceSession)
 	}
 	directories := []string{dataPath}
 	if strings.TrimSpace(c.TempDir) != "" {
 		tempDir, err := filepath.Abs(c.TempDir)
 		if err != nil {
-			return "", fmt.Errorf("%w: maintenance temporary directory", ErrPostgresCatalogMaintenanceSession)
+			return nil, fmt.Errorf("%w: maintenance temporary directory", ErrPostgresCatalogMaintenanceSession)
 		}
 		directories = append(directories, filepath.Clean(tempDir))
 	}
-	quoted := make([]string, len(directories))
-	for i, directory := range directories {
-		quoted[i] = "'" + sqlLiteral(directory) + "'"
+	statements, err := (duckdbsession.ResourcePolicy{
+		AllowedDirectories: directories, DisableExternalAccess: true, LockConfiguration: true,
+	}).SecurityStatements()
+	if err != nil {
+		return nil, fmt.Errorf("%w: allowed directories: %v", ErrPostgresCatalogMaintenanceSession, err)
 	}
-	return "SET allowed_directories = [" + strings.Join(quoted, ", ") + "]", nil
+	return statements, nil
 }
 
 // Conn returns the pinned connection as the narrow maintenance executor.
 func (s *PostgresCatalogMaintenanceSession) Conn() CatalogMaintenanceConnection {
-	if s == nil {
+	if s == nil || s.pinned == nil {
 		return nil
 	}
-	return s.conn
+	return s.pinned
 }
 
 // Close releases the pinned connection and connector. It is idempotent.
 func (s *PostgresCatalogMaintenanceSession) Close() error {
-	if s == nil {
+	if s == nil || s.pinned == nil {
 		return nil
 	}
-	s.once.Do(func() {
-		if s.conn != nil {
-			s.err = s.conn.Close()
-		}
-		if s.db != nil {
-			s.err = errors.Join(s.err, s.db.Close())
-		}
-	})
-	return s.err
+	return s.pinned.Close()
 }
 
 type parsedMaintenanceURL struct {

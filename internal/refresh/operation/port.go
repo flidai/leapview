@@ -10,16 +10,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Tx is the native PostgreSQL transaction surface required by the shared
 // operation authority. Capability callers retain transaction ownership.
-type Tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
+type Tx = pgx.Tx
 
 type Status string
 

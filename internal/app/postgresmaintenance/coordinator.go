@@ -345,6 +345,8 @@ func (c *Coordinator) Run(ctx context.Context, policy Policy) (Result, error) {
 	if c == nil {
 		return Result{}, errors.New("postgres retention coordinator is nil")
 	}
+	// Retention runs are process-owned lifecycle work and may be launched
+	// without an HTTP request context; normalize before invoking authorities.
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -444,6 +446,8 @@ func (r *PgxEventTxRunner) Run(ctx context.Context, fn func(eventspostgres.Tx) e
 	if fn == nil {
 		return errors.New("event transaction callback is required")
 	}
+	// Event-retention transaction execution is a lifecycle boundary: callers
+	// may run it from offline maintenance without an HTTP request context.
 	if ctx == nil {
 		ctx = context.Background()
 	}

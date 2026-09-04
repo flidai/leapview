@@ -3,7 +3,6 @@ package module
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -11,22 +10,6 @@ import (
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
-
-// TerminalRunRecovery is the module-facing recovery capability.  It carries
-// no database or engine-specific types.
-type TerminalRunRecovery interface {
-	FailRunsForTerminalServingStates(context.Context, string, string) error
-}
-
-func RecoverWithPersistence(ctx context.Context, recovery TerminalRunRecovery, environment string) error {
-	if recovery == nil {
-		return errors.New("refresh terminal recovery persistence is required")
-	}
-	if strings.TrimSpace(environment) == "" {
-		return errors.New("refresh terminal recovery environment is required")
-	}
-	return recovery.FailRunsForTerminalServingStates(ctx, environment, "refresh did not complete")
-}
 
 // Persistence is the refresh capability's storage bundle.  Domain services
 // consume the narrow repository contracts they own; no handler or service
@@ -46,8 +29,6 @@ type Persistence struct {
 	Schedules        refreshschedule.Repository
 	Publication      refreshrun.CanonicalPublicationUnitOfWork
 	Recovery         RecoveryRepository
-	TerminalRecovery TerminalRunRecovery
-
 	nativeRepository *refreshpostgres.Repository
 }
 
@@ -56,7 +37,7 @@ type Persistence struct {
 // cancellation contracts so a configured module never discovers a missing
 // operation through a runtime type assertion.
 type RunPersistence interface {
-	refreshrun.QueueRepository
+	refreshrun.WorkflowRepository
 	refreshrun.RunRepository
 	refreshrun.RunTreeRepository
 	refreshrun.LeaseFencedRunRepository
@@ -90,9 +71,6 @@ func (p Persistence) Validate() error {
 	if p.Publication == nil {
 		return errors.New("refresh publication persistence is required")
 	}
-	if p.TerminalRecovery == nil {
-		return errors.New("refresh terminal recovery persistence is required")
-	}
 	// Native PostgreSQL bundles prove identity through nativeRepository. Test
 	// adapters may still provide the narrow domain contracts directly; they do
 	// not participate in production admission, which checks isNative first.
@@ -105,12 +83,9 @@ func (p Persistence) Validate() error {
 	runs, runsOK := p.Runs.(*postgresRunPersistence)
 	schedules, schedulesOK := p.Schedules.(*postgresSchedulePersistence)
 	publication, publicationOK := p.Publication.(*postgresPublicationPersistence)
-	recovery, recoveryOK := p.TerminalRecovery.(*PostgresTerminalRecovery)
 	if !runsOK || runs == nil || runs.repository != p.nativeRepository ||
 		!schedulesOK || schedules == nil || schedules.repository != p.nativeRepository ||
-		!publicationOK || publication == nil || publication.repository != p.nativeRepository ||
-		!recoveryOK || recovery == nil || recovery.Refresh != p.nativeRepository ||
-		validatePostgresQueueAuthority(p.nativeRepository, recovery.Jobs) != nil {
+		!publicationOK || publication == nil || publication.repository != p.nativeRepository {
 		return errors.New("PostgreSQL refresh persistence surfaces do not match the configured native authority")
 	}
 	return nil
@@ -121,13 +96,6 @@ func (p Persistence) isNative() bool {
 }
 
 func (m *Module) readRuns() (RunPersistence, error) {
-	if m == nil || m.runs == nil {
-		return nil, errors.New("refresh run persistence is not configured")
-	}
-	return m.runs, nil
-}
-
-func (m *Module) cancelRuns() (RunPersistence, error) {
 	if m == nil || m.runs == nil {
 		return nil, errors.New("refresh run persistence is not configured")
 	}

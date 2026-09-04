@@ -4,11 +4,12 @@ import (
 	"context"
 	"testing"
 
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	appearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
 )
 
 func TestRecordAuditEventFailsClosedWithoutTransaction(t *testing.T) {
-	if err := New().RecordAuditEvent(context.Background(), nil, appearancepostgres.AuditInput{}); err == nil {
+	if err := NewWithRepository(accesspostgres.New()).RecordAuditEvent(context.Background(), nil, appearancepostgres.AuditInput{}); err == nil {
 		t.Fatal("audit adapter accepted nil transaction")
 	}
 	var adapter *Adapter

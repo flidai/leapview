@@ -1,7 +1,7 @@
 # ADR-0020 exception inventory. Keep entries exact; static SQL is never allowlisted.
 entries:
   - file: internal/platform/postgres/postgres.go
-    line: 251
+    line: 273
     function: Pool.Exec
     method: Exec
     fingerprint: sha256:4ec7c53222c8a758c722e2111541035ce700d5ae7bd0898c5f1b1a743e6450fd
@@ -9,7 +9,7 @@ entries:
     rationale: Connection-boundary forwarding accepts caller-provided SQL while retaining bounded pgx acquisition semantics.
     verification: Pool acquisition and release contracts are covered by internal/platform/postgres tests.
   - file: internal/platform/postgres/postgres.go
-    line: 266
+    line: 288
     function: Pool.Query
     method: Query
     fingerprint: sha256:4ec7c53222c8a758c722e2111541035ce700d5ae7bd0898c5f1b1a743e6450fd
@@ -17,7 +17,7 @@ entries:
     rationale: Connection-boundary forwarding accepts caller-provided SQL with a caller-owned result shape.
     verification: Pool acquisition and release contracts are covered by internal/platform/postgres tests.
   - file: internal/platform/postgres/postgres.go
-    line: 282
+    line: 304
     function: Pool.QueryRow
     method: QueryRow
     fingerprint: sha256:4ec7c53222c8a758c722e2111541035ce700d5ae7bd0898c5f1b1a743e6450fd

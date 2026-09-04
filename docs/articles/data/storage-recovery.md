@@ -9,12 +9,13 @@ source objects remain in their configured object stores.
 
 The `leapview_control` PostgreSQL database owns users, grants, projects,
 environments, deployments, jobs, event and audit records, lineage projections,
-cache coordination, leases, and active serving pointers. The separately owned
+leases, and active serving pointers. The separately owned
 `leapview_ducklake` database contains DuckLake metadata: analytical schemas,
 snapshots, changesets, statistics, and physical-file manifests. Parquet files,
-managed-data objects, immutable serving artifacts, and optional shared-cache
-objects hold the bytes described by those authorities. Runtime directories and
-L1/L2 query caches are disposable.
+managed-data objects, and immutable serving artifacts hold the bytes described
+by those authorities. Runtime directories and the process-memory L1 query cache
+are disposable. No L2 or L3 cache is admitted; a future L2 tier requires
+separate qualification evidence before deployment.
 
 A recoverable analytical state therefore requires the control-database
 recovery point and the matching DuckLake-database and object-store recovery

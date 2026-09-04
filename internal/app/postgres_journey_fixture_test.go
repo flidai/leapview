@@ -32,12 +32,14 @@ import (
 	dashboardpublicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
+	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -189,6 +191,14 @@ func applyPostgresJourneyBaseline(t *testing.T, database *postgrestest.Database,
 		t.Fatalf("open PostgreSQL journey baseline administrator: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	riverPool, err := pgxpool.New(t.Context(), database.URL(roles.migrator))
+	if err != nil {
+		t.Fatalf("open PostgreSQL journey River migrator: %v", err)
+	}
+	t.Cleanup(riverPool.Close)
+	if err := platformmigrations.ApplyRiver(t.Context(), riverPool); err != nil {
+		t.Fatalf("apply PostgreSQL journey River schema: %v", err)
+	}
 	if err := postgresbaseline.Apply(t.Context(), db); err != nil {
 		t.Fatalf("apply PostgreSQL journey baseline: %v", err)
 	}
@@ -258,7 +268,7 @@ func (f *PostgresJourneyFixture) assembleRoutes(t *testing.T, options PostgresJo
 		JobModule: f.JobsModule, AccessModule: f.AccessModule,
 		AgentPersistence: f.Graph.AgentPersistence,
 	}
-	workflow := workflowAssemblyInputs{Workload: f.Workload, AgentSettings: f.Graph.Settings}
+	workflow := workflowAssemblyInputs{Workload: f.Workload, AgentSettings: f.Graph.Bootstrap}
 	runtimeConfig := runtimeAssemblyInputs{
 		RuntimeHost: options.RuntimeHost, ProjectID: options.ProjectID,
 		ProjectIDResolver:       func(context.Context) (projectgraph.ResourceID, error) { return options.ProjectID, nil },
@@ -349,9 +359,6 @@ func (f *PostgresJourneyFixture) assembleNativeDashboard(t *testing.T, options P
 // Request creates a route request with an explicit host and no ambient auth.
 // Call WithPrincipal or WithAPICredential before dispatching protected routes.
 func (f *PostgresJourneyFixture) Request(ctx context.Context, method, path string, body io.Reader) *http.Request {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	request := httptest.NewRequestWithContext(ctx, method, path, body)
 	request.Host = "localhost"
 	return request
@@ -400,9 +407,6 @@ func (f *PostgresJourneyFixture) SeedNativePublicationTx(ctx context.Context, tx
 func (f *PostgresJourneyFixture) SeedNativePublication(ctx context.Context, input dashboardpublication.ReconcileInput) error {
 	if f == nil || f.Graph == nil || f.RuntimePool == nil || f.Graph.DashboardPublication == nil || f.AccessModule == nil {
 		return errors.New("PostgreSQL journey dashboard publication fixture is unavailable")
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	tx, err := f.RuntimePool.Begin(ctx)
 	if err != nil {

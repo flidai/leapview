@@ -101,12 +101,6 @@ func (r *Repository) DB() DBTX {
 	return r.db
 }
 
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
-}
 func requireDB(r *Repository) (DBTX, error) {
 	if r == nil || r.db == nil {
 		return nil, ErrInvalid
@@ -216,7 +210,7 @@ func (r *Repository) CreateCollection(ctx context.Context, in manageddata.Create
 		}
 	}
 	d := digestFor(in.ProjectID.String(), in.ConnectionID.String(), in.Name, in.Description, strings.TrimSpace(in.CreatedBy))
-	err = manageddb.New(db).InsertCollection(contextOrBackground(ctx), manageddb.InsertCollectionParams{CollectionID: id, ProjectID: in.ProjectID.String(), ConnectionID: in.ConnectionID.String(), Name: in.Name, Description: in.Description, CreatedBy: strings.TrimSpace(in.CreatedBy), RequestDigest: d})
+	err = manageddb.New(db).InsertCollection(ctx, manageddb.InsertCollectionParams{CollectionID: id, ProjectID: in.ProjectID.String(), ConnectionID: in.ConnectionID.String(), Name: in.Name, Description: in.Description, CreatedBy: strings.TrimSpace(in.CreatedBy), RequestDigest: d})
 	if err != nil {
 		return manageddata.Collection{}, err
 	}
@@ -225,7 +219,7 @@ func (r *Repository) CreateCollection(ctx context.Context, in manageddata.Create
 		return manageddata.Collection{}, err
 	}
 	var storedDigest string
-	if storedDigest, err = manageddb.New(db).GetCollectionRequestDigest(contextOrBackground(ctx), c.ID.String()); err != nil {
+	if storedDigest, err = manageddb.New(db).GetCollectionRequestDigest(ctx, c.ID.String()); err != nil {
 		return manageddata.Collection{}, err
 	}
 	if (suppliedID && c.ID.String() != id) || c.Name != in.Name || c.Description != in.Description || storedDigest != d {
@@ -242,7 +236,7 @@ func (r *Repository) CollectionByID(ctx context.Context, id projectgraph.Resourc
 	if !id.Valid() {
 		return manageddata.Collection{}, ErrInvalid
 	}
-	row, err := manageddb.New(db).GetCollectionByID(contextOrBackground(ctx), id.String())
+	row, err := manageddb.New(db).GetCollectionByID(ctx, id.String())
 	if err != nil {
 		return manageddata.Collection{}, scanNotFound(err)
 	}
@@ -256,7 +250,7 @@ func (r *Repository) CollectionByProjectConnection(ctx context.Context, projectI
 	if !projectID.Valid() || !connectionID.Valid() {
 		return manageddata.Collection{}, ErrInvalid
 	}
-	row, err := manageddb.New(db).GetCollectionByProjectConnection(contextOrBackground(ctx), manageddb.GetCollectionByProjectConnectionParams{ProjectID: projectID.String(), ConnectionID: connectionID.String()})
+	row, err := manageddb.New(db).GetCollectionByProjectConnection(ctx, manageddb.GetCollectionByProjectConnectionParams{ProjectID: projectID.String(), ConnectionID: connectionID.String()})
 	if err != nil {
 		return manageddata.Collection{}, scanNotFound(err)
 	}
@@ -268,7 +262,7 @@ func (r *Repository) ListCollections(ctx context.Context, includeArchived bool) 
 		return nil, err
 	}
 	if includeArchived {
-		rows, err := manageddb.New(db).ListCollections(contextOrBackground(ctx))
+		rows, err := manageddb.New(db).ListCollections(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -278,7 +272,7 @@ func (r *Repository) ListCollections(ctx context.Context, includeArchived bool) 
 		}
 		return out, nil
 	}
-	rows, err := manageddb.New(db).ListActiveCollections(contextOrBackground(ctx))
+	rows, err := manageddb.New(db).ListActiveCollections(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +290,7 @@ func (r *Repository) ArchiveCollection(ctx context.Context, id projectgraph.Reso
 	if !id.Valid() {
 		return ErrInvalid
 	}
-	tag, err := manageddb.New(db).ArchiveCollection(contextOrBackground(ctx), id.String())
+	tag, err := manageddb.New(db).ArchiveCollection(ctx, id.String())
 	if err != nil {
 		return err
 	}
@@ -362,11 +356,11 @@ func (r *Repository) CreateUploadSession(ctx context.Context, in manageddata.Cre
 	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
-	if err := r.audit.RecordAuditIntent(contextOrBackground(ctx), tx, *in.AuditIntent); err != nil {
+	if err := r.audit.RecordAuditIntent(ctx, tx, *in.AuditIntent); err != nil {
 		return manageddata.UploadSession{}, err
 	}
 	if owned {
-		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return manageddata.UploadSession{}, err
 		}
 	}
@@ -379,16 +373,16 @@ func (r *Repository) CreateUploadSession(ctx context.Context, in manageddata.Cre
 // roll back) atomically.
 func (r *Repository) createUploadSessionOn(ctx context.Context, db DBTX, in manageddata.CreateUploadSessionInput, id string, baseRevisionPtr *string, b []byte, count, size int64, requestDigest, manifestDigest string) (manageddata.UploadSession, error) {
 	queries := manageddb.New(db)
-	err := queries.InsertUploadSession(contextOrBackground(ctx), manageddb.InsertUploadSessionParams{UploadID: id, CollectionID: in.CollectionID.String(), BaseRevisionID: baseRevisionPtr, Manifest: b, ExpectedFileCount: count, ExpectedSizeBytes: size, StorageBackend: strings.TrimSpace(in.StorageBackend), StagingPrefix: in.StagingPrefix, CreatedBy: strings.TrimSpace(in.CreatedBy), ExpiresAt: pgtype.Timestamptz{Time: in.ExpiresAt.UTC(), Valid: true}, RequestDigest: requestDigest, ManifestDigest: manifestDigest})
+	err := queries.InsertUploadSession(ctx, manageddb.InsertUploadSessionParams{UploadID: id, CollectionID: in.CollectionID.String(), BaseRevisionID: baseRevisionPtr, Manifest: b, ExpectedFileCount: count, ExpectedSizeBytes: size, StorageBackend: strings.TrimSpace(in.StorageBackend), StagingPrefix: in.StagingPrefix, CreatedBy: strings.TrimSpace(in.CreatedBy), ExpiresAt: pgtype.Timestamptz{Time: in.ExpiresAt.UTC(), Valid: true}, RequestDigest: requestDigest, ManifestDigest: manifestDigest})
 	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
-	row, err := queries.GetUploadSessionByID(contextOrBackground(ctx), id)
+	row, err := queries.GetUploadSessionByID(ctx, id)
 	if err != nil {
 		return manageddata.UploadSession{}, scanNotFound(err)
 	}
 	s := uploadFromValues(row.UploadID, row.CollectionID, row.BaseRevisionID, row.RevisionID, row.Status, row.Manifest, row.StorageBackend, row.StagingPrefix, row.CreatedBy, row.ExpectedFileCount, row.ExpectedSizeBytes, row.UploadedFileCount, row.UploadedSizeBytes, row.CreatedAt, row.UpdatedAt, row.ExpiresAt, row.CompletedAt, row.Error)
-	storedDigest, err := queries.GetUploadRequestDigest(contextOrBackground(ctx), id)
+	storedDigest, err := queries.GetUploadRequestDigest(ctx, id)
 	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
@@ -407,7 +401,7 @@ func (r *Repository) UploadSessionByID(ctx context.Context, id manageddata.Uploa
 	if err := validID(id.String(), "upload id"); err != nil {
 		return manageddata.UploadSession{}, err
 	}
-	row, err := manageddb.New(db).GetUploadSessionByID(contextOrBackground(ctx), id.String())
+	row, err := manageddb.New(db).GetUploadSessionByID(ctx, id.String())
 	if err != nil {
 		return manageddata.UploadSession{}, scanNotFound(err)
 	}
@@ -421,7 +415,7 @@ func (r *Repository) ListUploadSessions(ctx context.Context, collectionID projec
 	if !collectionID.Valid() {
 		return nil, ErrInvalid
 	}
-	rows, err := manageddb.New(db).ListUploadSessionsByCollection(contextOrBackground(ctx), collectionID.String())
+	rows, err := manageddb.New(db).ListUploadSessionsByCollection(ctx, collectionID.String())
 	if err != nil {
 		return nil, err
 	}
@@ -439,7 +433,7 @@ func (r *Repository) ListUploadSessionsForCleanup(ctx context.Context, limit int
 	if err != nil {
 		return nil, err
 	}
-	rows, err := manageddb.New(db).ListUploadSessionsForCleanup(contextOrBackground(ctx), int32(limit))
+	rows, err := manageddb.New(db).ListUploadSessionsForCleanup(ctx, int32(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +449,7 @@ func (r *Repository) MarkUploadCleanupComplete(ctx context.Context, id managedda
 		return err
 	}
 	var marked bool
-	marked, err = manageddb.New(db).MarkUploadCleanup(contextOrBackground(ctx), id.String())
+	marked, err = manageddb.New(db).MarkUploadCleanup(ctx, id.String())
 	if err != nil {
 		return err
 	}
@@ -472,7 +466,7 @@ func (r *Repository) UpdateUploadProgress(ctx context.Context, id manageddata.Up
 	if err != nil {
 		return err
 	}
-	tag, err := manageddb.New(db).UpdateUploadProgress(contextOrBackground(ctx), manageddb.UpdateUploadProgressParams{UploadID: id.String(), UploadedFileCount: p.UploadedFileCount, UploadedSizeBytes: p.UploadedSizeBytes})
+	tag, err := manageddb.New(db).UpdateUploadProgress(ctx, manageddb.UpdateUploadProgressParams{UploadID: id.String(), UploadedFileCount: p.UploadedFileCount, UploadedSizeBytes: p.UploadedSizeBytes})
 	if err != nil {
 		return err
 	}
@@ -502,12 +496,12 @@ func (r *Repository) BeginUploadFinalizationTransition(ctx context.Context, id m
 		}()
 	}
 	queries := manageddb.New(tx)
-	tag, err := queries.BeginUploadFinalization(contextOrBackground(ctx), id.String())
+	tag, err := queries.BeginUploadFinalization(ctx, id.String())
 	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
 	if tag.RowsAffected() != 1 {
-		row, lookupErr := queries.GetUploadSessionByID(contextOrBackground(ctx), id.String())
+		row, lookupErr := queries.GetUploadSessionByID(ctx, id.String())
 		if lookupErr != nil {
 			return manageddata.UploadSession{}, scanNotFound(lookupErr)
 		}
@@ -515,16 +509,16 @@ func (r *Repository) BeginUploadFinalizationTransition(ctx context.Context, id m
 			return manageddata.UploadSession{}, ErrConflict
 		}
 	}
-	if err := r.recordTransition(contextOrBackground(ctx), tx, transition); err != nil {
+	if err := r.recordTransition(ctx, tx, transition); err != nil {
 		return manageddata.UploadSession{}, err
 	}
-	row, err := queries.GetUploadSessionByID(contextOrBackground(ctx), id.String())
+	row, err := queries.GetUploadSessionByID(ctx, id.String())
 	if err != nil {
 		return manageddata.UploadSession{}, scanNotFound(err)
 	}
 	result = uploadFromValues(row.UploadID, row.CollectionID, row.BaseRevisionID, row.RevisionID, row.Status, row.Manifest, row.StorageBackend, row.StagingPrefix, row.CreatedBy, row.ExpectedFileCount, row.ExpectedSizeBytes, row.UploadedFileCount, row.UploadedSizeBytes, row.CreatedAt, row.UpdatedAt, row.ExpiresAt, row.CompletedAt, row.Error)
 	if owned {
-		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return manageddata.UploadSession{}, err
 		}
 	}
@@ -538,7 +532,7 @@ func (r *Repository) FailUploadFinalization(ctx context.Context, id manageddata.
 	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
-	tag, err := manageddb.New(db).FailUploadFinalization(contextOrBackground(ctx), manageddb.FailUploadFinalizationParams{UploadID: id.String(), Error: msg})
+	tag, err := manageddb.New(db).FailUploadFinalization(ctx, manageddb.FailUploadFinalizationParams{UploadID: id.String(), Error: msg})
 	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
@@ -566,12 +560,12 @@ func (r *Repository) AbortUploadSessionTransition(ctx context.Context, id manage
 		}()
 	}
 	queries := manageddb.New(tx)
-	tag, err := queries.AbortUploadSession(contextOrBackground(ctx), id.String())
+	tag, err := queries.AbortUploadSession(ctx, id.String())
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() != 1 {
-		row, lookupErr := queries.GetUploadSessionByID(contextOrBackground(ctx), id.String())
+		row, lookupErr := queries.GetUploadSessionByID(ctx, id.String())
 		if lookupErr != nil {
 			return scanNotFound(lookupErr)
 		}
@@ -579,11 +573,11 @@ func (r *Repository) AbortUploadSessionTransition(ctx context.Context, id manage
 			return ErrConflict
 		}
 	}
-	if err := r.recordTransition(contextOrBackground(ctx), tx, transition); err != nil {
+	if err := r.recordTransition(ctx, tx, transition); err != nil {
 		return err
 	}
 	if owned {
-		returnErr = tx.Commit(contextOrBackground(ctx))
+		returnErr = tx.Commit(ctx)
 		return returnErr
 	}
 	return nil
@@ -625,7 +619,7 @@ func (r *Repository) beginTransition(ctx context.Context) (Tx, bool, error) {
 	if !ok {
 		return nil, false, fmt.Errorf("%w: PostgreSQL transition requires a transaction-capable database", ErrInvalid)
 	}
-	tx, err := b.Begin(contextOrBackground(ctx))
+	tx, err := b.Begin(ctx)
 	if err != nil {
 		return nil, false, err
 	}
@@ -636,7 +630,7 @@ func (r *Repository) abortUploadSession(ctx context.Context, id manageddata.Uplo
 	if err != nil {
 		return err
 	}
-	tag, err := manageddb.New(db).AbortUploadSession(contextOrBackground(ctx), id.String())
+	tag, err := manageddb.New(db).AbortUploadSession(ctx, id.String())
 	if err != nil {
 		return err
 	}
@@ -654,7 +648,7 @@ func (r *Repository) ExpireUploadSessions(ctx context.Context, now time.Time) (i
 	if !now.IsZero() {
 		cutoff = pgtype.Timestamptz{Time: now.UTC(), Valid: true}
 	}
-	tag, err := manageddb.New(db).ExpireUploadSessions(contextOrBackground(ctx), cutoff)
+	tag, err := manageddb.New(db).ExpireUploadSessions(ctx, cutoff)
 	if err != nil {
 		return 0, err
 	}
@@ -668,7 +662,7 @@ func (r *Repository) CompleteUpload(ctx context.Context, in manageddata.Complete
 	}
 	if b, ok := db.(beginner); ok {
 		if _, isTx := db.(pgx.Tx); !isTx {
-			tx, e := b.Begin(contextOrBackground(ctx))
+			tx, e := b.Begin(ctx)
 			if e != nil {
 				return manageddata.Revision{}, e
 			}
@@ -695,7 +689,7 @@ func completeUploadTx(ctx context.Context, db DBTX, in manageddata.CompleteUploa
 	if in.SessionID == "" {
 		return manageddata.Revision{}, ErrInvalid
 	}
-	row, err := manageddb.New(db).LockUploadSessionForCompletion(contextOrBackground(ctx), in.SessionID.String())
+	row, err := manageddb.New(db).LockUploadSessionForCompletion(ctx, in.SessionID.String())
 	if errors.Is(err, pgx.ErrNoRows) {
 		return manageddata.Revision{}, ErrNotFound
 	}
@@ -709,7 +703,7 @@ func completeUploadTx(ctx context.Context, db DBTX, in manageddata.CompleteUploa
 		if row.CompletionDigest != completionDigest(in) || in.RevisionID != "" && in.RevisionID.String() != row.RevisionID {
 			return manageddata.Revision{}, ErrConflict
 		}
-		r, e := manageddb.New(db).GetRevisionByID(contextOrBackground(ctx), row.RevisionID)
+		r, e := manageddb.New(db).GetRevisionByID(ctx, row.RevisionID)
 		if e != nil {
 			return manageddata.Revision{}, scanNotFound(e)
 		}
@@ -719,7 +713,7 @@ func completeUploadTx(ctx context.Context, db DBTX, in manageddata.CompleteUploa
 		return manageddata.Revision{}, ErrConflict
 	}
 	if row.Status == "open" {
-		tag, e := manageddb.New(db).BeginUploadFinalization(contextOrBackground(ctx), in.SessionID.String())
+		tag, e := manageddb.New(db).BeginUploadFinalization(ctx, in.SessionID.String())
 		if e != nil {
 			return manageddata.Revision{}, e
 		}
@@ -745,41 +739,41 @@ func completeUploadTx(ctx context.Context, db DBTX, in manageddata.CompleteUploa
 	if err := validID(revisionID, "revision id"); err != nil {
 		return manageddata.Revision{}, err
 	}
-	collection, err := manageddb.New(db).LockCollection(contextOrBackground(ctx), row.CollectionID)
+	collection, err := manageddb.New(db).LockCollection(ctx, row.CollectionID)
 	if err != nil {
 		return manageddata.Revision{}, err
 	}
-	sequence, err := manageddb.New(db).NextRevisionSequence(contextOrBackground(ctx), collection)
+	sequence, err := manageddb.New(db).NextRevisionSequence(ctx, collection)
 	if err != nil {
 		return manageddata.Revision{}, err
 	}
 	seq := int64(sequence)
-	err = manageddb.New(db).InsertRevisionFromUpload(contextOrBackground(ctx), manageddb.InsertRevisionFromUploadParams{RevisionID: revisionID, CollectionID: collection, Sequence: seq, Digest: digest, Manifest: []byte(row.Manifest), FileCount: row.ExpectedFileCount, SizeBytes: row.ExpectedSizeBytes, UploadID: in.SessionID.String()})
+	err = manageddb.New(db).InsertRevisionFromUpload(ctx, manageddb.InsertRevisionFromUploadParams{RevisionID: revisionID, CollectionID: collection, Sequence: seq, Digest: digest, Manifest: []byte(row.Manifest), FileCount: row.ExpectedFileCount, SizeBytes: row.ExpectedSizeBytes, UploadID: in.SessionID.String()})
 	if err != nil {
 		return manageddata.Revision{}, err
 	}
 	files := append([]manageddata.StoredFile(nil), in.Files...)
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	for _, f := range files {
-		if err = manageddb.New(db).InsertRevisionFile(contextOrBackground(ctx), manageddb.InsertRevisionFileParams{RevisionID: revisionID, LogicalPath: f.Path, SizeBytes: f.Size, Sha256: f.SHA256, StorageKey: f.StorageKey, MediaType: strings.TrimSpace(f.MediaType), Etag: strings.TrimSpace(f.ETag)}); err != nil {
+		if err = manageddb.New(db).InsertRevisionFile(ctx, manageddb.InsertRevisionFileParams{RevisionID: revisionID, LogicalPath: f.Path, SizeBytes: f.Size, Sha256: f.SHA256, StorageKey: f.StorageKey, MediaType: strings.TrimSpace(f.MediaType), Etag: strings.TrimSpace(f.ETag)}); err != nil {
 			return manageddata.Revision{}, err
 		}
 	}
-	readyTag, err := manageddb.New(db).MarkRevisionReady(contextOrBackground(ctx), revisionID)
+	readyTag, err := manageddb.New(db).MarkRevisionReady(ctx, revisionID)
 	if err != nil {
 		return manageddata.Revision{}, err
 	}
 	if readyTag.RowsAffected() != 1 {
 		return manageddata.Revision{}, ErrConflict
 	}
-	tag, err := manageddb.New(db).CompleteUploadSession(contextOrBackground(ctx), manageddb.CompleteUploadSessionParams{UploadID: in.SessionID.String(), RevisionID: &revisionID, CompletionDigest: completionDigest(in)})
+	tag, err := manageddb.New(db).CompleteUploadSession(ctx, manageddb.CompleteUploadSessionParams{UploadID: in.SessionID.String(), RevisionID: &revisionID, CompletionDigest: completionDigest(in)})
 	if err != nil {
 		return manageddata.Revision{}, err
 	}
 	if tag.RowsAffected() != 1 {
 		return manageddata.Revision{}, ErrConflict
 	}
-	r, err := manageddb.New(db).GetRevisionByID(contextOrBackground(ctx), revisionID)
+	r, err := manageddb.New(db).GetRevisionByID(ctx, revisionID)
 	if err != nil {
 		return manageddata.Revision{}, scanNotFound(err)
 	}
@@ -813,7 +807,7 @@ func (r *Repository) RevisionByID(ctx context.Context, id manageddata.RevisionID
 	if err := validID(id.String(), "revision id"); err != nil {
 		return manageddata.Revision{}, err
 	}
-	row, err := manageddb.New(db).GetRevisionByID(contextOrBackground(ctx), id.String())
+	row, err := manageddb.New(db).GetRevisionByID(ctx, id.String())
 	if err != nil {
 		return manageddata.Revision{}, scanNotFound(err)
 	}
@@ -824,7 +818,7 @@ func (r *Repository) ListRevisions(ctx context.Context, c projectgraph.ResourceI
 	if err != nil {
 		return nil, err
 	}
-	rows, err := manageddb.New(db).ListRevisionsByCollection(contextOrBackground(ctx), c.String())
+	rows, err := manageddb.New(db).ListRevisionsByCollection(ctx, c.String())
 	if err != nil {
 		return nil, err
 	}
@@ -840,7 +834,7 @@ func (r *Repository) UploadSessionIDByRevisionID(ctx context.Context, id managed
 		return "", err
 	}
 	revisionID := id.String()
-	upload, err := manageddb.New(db).GetUploadIDByRevision(contextOrBackground(ctx), &revisionID)
+	upload, err := manageddb.New(db).GetUploadIDByRevision(ctx, &revisionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -851,7 +845,7 @@ func (r *Repository) ListRevisionFiles(ctx context.Context, id manageddata.Revis
 	if err != nil {
 		return nil, err
 	}
-	rows, err := manageddb.New(db).ListRevisionFiles(contextOrBackground(ctx), id.String())
+	rows, err := manageddb.New(db).ListRevisionFiles(ctx, id.String())
 	if err != nil {
 		return nil, err
 	}
@@ -870,7 +864,7 @@ func (r *Repository) EnvironmentPointer(ctx context.Context, c projectgraph.Reso
 	if _, err := manageddata.NormalizeEnvironment(string(e)); err != nil {
 		return manageddata.EnvironmentPointer{}, err
 	}
-	row, err := manageddb.New(db).GetEnvironmentPointer(contextOrBackground(ctx), manageddb.GetEnvironmentPointerParams{CollectionID: c.String(), Environment: string(e)})
+	row, err := manageddb.New(db).GetEnvironmentPointer(ctx, manageddb.GetEnvironmentPointerParams{CollectionID: c.String(), Environment: string(e)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return manageddata.EnvironmentPointer{}, ErrNotFound
 	}
@@ -894,7 +888,7 @@ func (r *Repository) ActiveEnvironmentPointer(ctx context.Context, c projectgrap
 	if err != nil {
 		return manageddata.EnvironmentPointer{}, err
 	}
-	row, err := manageddb.New(db).GetActiveManagedDataServingPointer(contextOrBackground(ctx), manageddb.GetActiveManagedDataServingPointerParams{
+	row, err := manageddb.New(db).GetActiveManagedDataServingPointer(ctx, manageddb.GetActiveManagedDataServingPointerParams{
 		CollectionID: c.String(), Environment: string(normalized),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -919,11 +913,11 @@ func (r *Repository) InstallEnvironmentPointerTx(ctx context.Context, tx Tx, p m
 	if err := manageddata.ValidateRevisionID(p.RevisionDigest); err != nil {
 		return err
 	}
-	tag, err := manageddb.New(tx).UpsertEnvironmentPointer(contextOrBackground(ctx), manageddb.UpsertEnvironmentPointerParams{CollectionID: p.CollectionID.String(), Environment: string(p.Environment), RevisionID: p.RevisionID.String(), RevisionDigest: p.RevisionDigest, DeploymentID: p.DeploymentID, Generation: p.Generation, UpdatedBy: p.UpdatedBy})
+	tag, err := manageddb.New(tx).UpsertEnvironmentPointer(ctx, manageddb.UpsertEnvironmentPointerParams{CollectionID: p.CollectionID.String(), Environment: string(p.Environment), RevisionID: p.RevisionID.String(), RevisionDigest: p.RevisionDigest, DeploymentID: p.DeploymentID, Generation: p.Generation, UpdatedBy: p.UpdatedBy})
 	if err != nil || tag.RowsAffected() == 1 {
 		return err
 	}
-	row, err := manageddb.New(tx).GetEnvironmentPointer(contextOrBackground(ctx), manageddb.GetEnvironmentPointerParams{CollectionID: p.CollectionID.String(), Environment: string(p.Environment)})
+	row, err := manageddb.New(tx).GetEnvironmentPointer(ctx, manageddb.GetEnvironmentPointerParams{CollectionID: p.CollectionID.String(), Environment: string(p.Environment)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
 	}
@@ -976,7 +970,7 @@ func (r *Repository) InstallServingStateBindings(ctx context.Context, identity p
 		if !yes {
 			return ErrInvalid
 		}
-		tx, e := b.Begin(contextOrBackground(ctx))
+		tx, e := b.Begin(ctx)
 		if e != nil {
 			return e
 		}
@@ -1001,7 +995,7 @@ func installBindingsTx(ctx context.Context, tx Tx, identity projectgraph.Serving
 	if err != nil {
 		return err
 	}
-	err = manageddb.New(tx).PublishBindingSet(contextOrBackground(ctx), manageddb.PublishBindingSetParams{ProjectID: identity.ProjectID.String(), Environment: string(identity.Environment), GenerationID: identity.GenerationID, BindingDigest: digest, BindingCount: int64(len(b)), Bindings: payload})
+	err = manageddb.New(tx).PublishBindingSet(ctx, manageddb.PublishBindingSetParams{ProjectID: identity.ProjectID.String(), Environment: string(identity.Environment), GenerationID: identity.GenerationID, BindingDigest: digest, BindingCount: int64(len(b)), Bindings: payload})
 	if err != nil && strings.Contains(err.Error(), "binding set conflicts") {
 		return ErrConflict
 	}
@@ -1017,14 +1011,14 @@ func (r *Repository) ListServingStateBindings(ctx context.Context, identity proj
 	}
 	var markerDigest string
 	var markerCount int64
-	marker, err := manageddb.New(db).GetBindingSetMarker(contextOrBackground(ctx), manageddb.GetBindingSetMarkerParams{ProjectID: identity.ProjectID.String(), Environment: string(identity.Environment), GenerationID: identity.GenerationID})
+	marker, err := manageddb.New(db).GetBindingSetMarker(ctx, manageddb.GetBindingSetMarkerParams{ProjectID: identity.ProjectID.String(), Environment: string(identity.Environment), GenerationID: identity.GenerationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
 		return nil, err
 	}
 	markerDigest, markerCount = marker.BindingDigest, marker.BindingCount
-	rows, err := manageddb.New(db).ListBindings(contextOrBackground(ctx), manageddb.ListBindingsParams{ProjectID: identity.ProjectID.String(), Environment: string(identity.Environment), GenerationID: identity.GenerationID})
+	rows, err := manageddb.New(db).ListBindings(ctx, manageddb.ListBindingsParams{ProjectID: identity.ProjectID.String(), Environment: string(identity.Environment), GenerationID: identity.GenerationID})
 	if err != nil {
 		return nil, err
 	}
@@ -1054,7 +1048,7 @@ func (r *Repository) AcquireLease(ctx context.Context, key, owner string, durati
 	if err := canonicalText(key, 255); err != nil || canonicalText(owner, 255) != nil || duration < time.Microsecond || duration > maxLease {
 		return Lease{}, ErrInvalid
 	}
-	row, err := manageddb.New(db).AcquireLease(contextOrBackground(ctx), manageddb.AcquireLeaseParams{LeaseKey: key, OwnerID: owner, DurationMicros: duration.Microseconds()})
+	row, err := manageddb.New(db).AcquireLease(ctx, manageddb.AcquireLeaseParams{LeaseKey: key, OwnerID: owner, DurationMicros: duration.Microseconds()})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lease{}, ErrLeaseBusy
 	}
@@ -1071,7 +1065,7 @@ func (r *Repository) RenewLease(ctx context.Context, key, owner string, epoch in
 	if epoch < 1 || duration < time.Microsecond || duration > maxLease {
 		return Lease{}, ErrInvalid
 	}
-	row, err := manageddb.New(db).RenewLease(contextOrBackground(ctx), manageddb.RenewLeaseParams{LeaseKey: key, OwnerID: owner, FencingEpoch: epoch, DurationMicros: duration.Microseconds()})
+	row, err := manageddb.New(db).RenewLease(ctx, manageddb.RenewLeaseParams{LeaseKey: key, OwnerID: owner, FencingEpoch: epoch, DurationMicros: duration.Microseconds()})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lease{}, ErrStaleFence
 	}
@@ -1085,7 +1079,7 @@ func (r *Repository) ReleaseLease(ctx context.Context, key, owner string, epoch 
 	if err != nil {
 		return err
 	}
-	tag, err := manageddb.New(db).ReleaseLease(contextOrBackground(ctx), manageddb.ReleaseLeaseParams{LeaseKey: key, OwnerID: owner, FencingEpoch: epoch})
+	tag, err := manageddb.New(db).ReleaseLease(ctx, manageddb.ReleaseLeaseParams{LeaseKey: key, OwnerID: owner, FencingEpoch: epoch})
 	if err != nil {
 		return err
 	}

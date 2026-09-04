@@ -8,10 +8,12 @@ Governing decision: [ADR-0020](../0020-adopt-a-postgresql-centered-target-data-a
 
 River OSS owns operational job execution. LeapView owns product job identity,
 authorization, canonical request digests, audit and event records, product
-history, result evidence, and workload admission. There is one execution path:
-the custom PostgreSQL runner is removed after the `release.finalize`
-compatibility proof passes. Dual writes, shadow workers, and durable fallback
-queues are prohibited.
+history, result evidence, and workload admission. `jobs.job_history` is the
+product-owned history record; River's `public.river_*` rows are operational
+queue and worker state. The current tree has one execution path and no custom
+PostgreSQL runner. Production support remains gated on the `release.finalize`
+compatibility proof and its recorded evidence. Dual writes, shadow workers,
+and durable fallback queues are prohibited.
 
 River is not an event bus and does not own refresh occurrences, deployment
 approvals, release records, serving activation, DuckLake build evidence, or
@@ -60,10 +62,12 @@ The `release.finalize` proof must run against PostgreSQL 18 and demonstrate:
 6. conflicting request digest rejection;
 7. cancellation and workload-lease release;
 8. multi-worker execution without duplicate finalization;
-9. River operational-row cleanup while release history remains queryable; and
+9. River operational-row cleanup while `jobs.job_history` and release history
+   remain queryable; and
 10. absence of writes to the removed custom queue.
 
-A failed proof blocks cutover. A passing proof is followed by one clean
-repository-wide cutover of all admitted job kinds and deletion of the custom
-runner, schema, SQLite backend, lifecycle wiring, metrics, dependencies, and
-tests.
+A failed proof blocks production support. The current tree has one clean
+repository-wide River path for the admitted job kinds; the custom runner,
+queue schema, SQLite backend, and dual-run lifecycle are removed. The proof
+above remains the qualification evidence for retaining that production
+boundary, including River cleanup with `jobs.job_history` preserved.

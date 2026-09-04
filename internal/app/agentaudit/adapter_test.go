@@ -12,7 +12,7 @@ import (
 )
 
 func TestRecordAuditIntentFailsClosedWithoutTransaction(t *testing.T) {
-	if err := New().RecordAuditIntent(context.Background(), nil, access.AuditIntent{}); err == nil {
+	if err := NewWithRepository(accesspostgres.New()).RecordAuditIntent(context.Background(), nil, access.AuditIntent{}); err == nil {
 		t.Fatal("audit adapter accepted nil transaction")
 	}
 }
@@ -43,7 +43,7 @@ func TestRecordAuditIntentUsesCallerTransactionAndValidatesReplay(t *testing.T) 
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	adapter := New()
+	adapter := NewWithRepository(accesspostgres.New())
 	intent := access.AuditIntent{
 		EventID: "01900000-0000-7000-8000-000000000021", ScopeID: "scope",
 		Source: "agent", Operation: "agent.conversation.create", Action: "agent.conversation.created",

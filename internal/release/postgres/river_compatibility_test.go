@@ -247,12 +247,12 @@ func TestReleaseFinalizeFitsRiverTransactionalExecution(t *testing.T) {
 	if durable, err := repository.Get(ctx, committed.ServingIdentity.ProjectID, committed.ID); err != nil || durable.Status != release.StatusReady {
 		t.Fatalf("release history after River cleanup = %#v, %v", durable, err)
 	}
-	var customJobs int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM jobs.job`).Scan(&customJobs); err != nil {
+	var customQueueRemoved bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('jobs.job') IS NULL`).Scan(&customQueueRemoved); err != nil {
 		t.Fatal(err)
 	}
-	if customJobs != 0 {
-		t.Fatalf("River proof wrote %d rows to removed custom execution queue", customJobs)
+	if !customQueueRemoved {
+		t.Fatal("removed custom execution queue jobs.job still exists")
 	}
 }
 

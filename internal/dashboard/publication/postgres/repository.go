@@ -94,14 +94,8 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrUnavailable
 	}
-	_, err := tx.Exec(ctxOrBackground(ctx), schemaSQL) // sqlc-exception: schema-ddl
+	_, err := tx.Exec(ctx, schemaSQL) // sqlc-exception: schema-ddl
 	return err
-}
-func ctxOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 // publicationProjection is the typed shape shared by the full publication
@@ -334,11 +328,11 @@ func (r *Repository) mutate(
 	if !ok {
 		return publication.Publication{}, ErrUnavailable
 	}
-	tx, err := b.Begin(ctxOrBackground(ctx))
+	tx, err := b.Begin(ctx)
 	if err != nil {
 		return publication.Publication{}, err
 	}
-	defer tx.Rollback(ctxOrBackground(ctx))
+	defer tx.Rollback(ctx)
 	q := r.q.WithTx(tx)
 	stored, err := q.Get(ctx, publicationdb.GetParams{ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name)})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -402,7 +396,7 @@ func (r *Repository) mutate(
 		// identity while classifying it for the public 412 contract.
 		return publication.Publication{}, apigenfailure.Wrap("precondition", publication.ErrConflict)
 	}
-	if err := tx.Commit(ctxOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return publication.Publication{}, err
 	}
 	return r.Get(ctx, projectID, name)

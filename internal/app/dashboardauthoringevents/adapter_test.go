@@ -31,7 +31,7 @@ func TestNewWithRepositoryPreservesEventRepositoryIdentity(t *testing.T) {
 }
 
 func TestAppendEventRejectsInvalidIdentityBeforeStorage(t *testing.T) {
-	_, err := New().AppendEvent(context.Background(), &validationTx{}, authoringpostgres.EventInput{EventID: "not-a-uuid"})
+	_, err := NewWithRepository(eventspostgres.New()).AppendEvent(context.Background(), &validationTx{}, authoringpostgres.EventInput{EventID: "not-a-uuid"})
 	if !errors.Is(err, authoring.ErrConflict) {
 		t.Fatalf("invalid event id error = %v, want authoring conflict", err)
 	}
@@ -62,7 +62,7 @@ func TestAppendEventMapsCanonicalPlatformEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := authoringpostgres.EventInput{EventID: "01900000-0000-7000-8000-000000000011", ProjectID: "project:events", DashboardID: "dashboard:events", ActorID: "actor", CorrelationID: "01900000-0000-7000-8000-000000000012", Revision: 2, Type: "dashboard_authoring.draft_created", Payload: []byte(`{"revision":2}`)}
-	got, err := New().AppendEvent(t.Context(), tx, input)
+	got, err := NewWithRepository(eventspostgres.New()).AppendEvent(t.Context(), tx, input)
 	if err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)

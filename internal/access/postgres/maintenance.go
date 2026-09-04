@@ -124,9 +124,6 @@ func pruneAuthState(ctx context.Context, db DBTX, before time.Time, limit int) (
 	if limit < 1 || limit > maxOperationalRetentionBatch {
 		return AuthRetentionResult{}, errors.New("access retention batch limit must be between 1 and 1000")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	requested := before.UTC()
 	requestedDB := requested.Truncate(time.Microsecond)
 	row, err := accessdb.New(db).PruneAuthState(ctx, accessdb.PruneAuthStateParams{
@@ -177,9 +174,6 @@ func requestedTime(value pgtype.Timestamptz) time.Time {
 func pruneAuditEvents(ctx context.Context, db DBTX, class RetentionClass, before time.Time, limit int) (AuditRetentionResult, error) {
 	if isNilMaintenanceDB(db) {
 		return AuditRetentionResult{}, errors.New("audit retention PostgreSQL connection is nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	class = RetentionClass(strings.TrimSpace(string(class)))
 	if class != RetentionShort && class != RetentionStandard && class != RetentionSecurity {

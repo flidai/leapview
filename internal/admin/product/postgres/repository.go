@@ -24,11 +24,7 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 type Repository struct {
 	db    DBTX
@@ -49,7 +45,7 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrInvalid
 	}
-	_, err := tx.Exec(contextOrBackground(ctx), schemaSQL) // sqlc-exception: schema-ddl
+	_, err := tx.Exec(ctx, schemaSQL) // sqlc-exception: schema-ddl
 	return err
 }
 
@@ -83,7 +79,7 @@ func (r *Repository) Ping(ctx context.Context) error {
 	if r == nil || r.db == nil {
 		return ErrInvalid
 	}
-	_, err := productdb.New(r.db).Ping(contextOrBackground(ctx))
+	_, err := productdb.New(r.db).Ping(ctx)
 	return err
 }
 
@@ -103,7 +99,6 @@ func (r *Repository) Mutate(ctx context.Context, req product.MutationRequest) (p
 	if !ok {
 		return product.Identity{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	if req.ExpectedRevision <= 0 {
 		return product.Identity{}, product.ErrPrecondition
 	}
@@ -161,7 +156,7 @@ func (r *Repository) Get(ctx context.Context) (product.Identity, error) {
 	if r == nil || r.db == nil {
 		return product.Identity{}, ErrInvalid
 	}
-	return get(contextOrBackground(ctx), r.db)
+	return get(ctx, r.db)
 }
 
 func get(ctx context.Context, db DBTX) (product.Identity, error) {
@@ -194,10 +189,3 @@ func validLogo(logo product.Logo) bool {
 }
 
 func int32Ptr(value int32) *int32 { return &value }
-
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
-}

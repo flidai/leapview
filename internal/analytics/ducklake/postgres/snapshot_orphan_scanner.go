@@ -14,13 +14,15 @@ import (
 	"time"
 
 	dbgen "github.com/flidai/leapview/internal/analytics/ducklake/postgres/internal/db"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
 	MaxSnapshotOrphanScanPageSize  = 256
-	DefaultSnapshotOrphanScanPages = 1024
+	DefaultSnapshotOrphanScanPages = 64
+	MaxSnapshotOrphanScanPages     = 256
 	MaxSnapshotOrphanScanGrace     = 30 * 24 * time.Hour
 	MaxSnapshotOrphanPruneAge      = 30 * 24 * time.Hour
 )
@@ -174,7 +176,7 @@ func snapshotOrphanPageDigest(ctx context.Context, tx DBTX, evidence json.RawMes
 	if err != nil {
 		return "", err
 	}
-	if len(digest) != len("sha256:")+64 || !strings.HasPrefix(digest, "sha256:") {
+	if platformdigest.ValidateSHA256Identity(digest) != nil {
 		return "", fmt.Errorf("%w: invalid server page digest", ErrInvalid)
 	}
 	return digest, nil

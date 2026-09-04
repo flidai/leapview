@@ -1,6 +1,6 @@
--- Canonical event-log queries. The repository executes these statements
--- directly so event writes stay on the caller-owned transaction; no consumer,
--- delivery, claim, replay, or dead-letter query surface is exposed.
+-- Canonical event-log query leaves consumed by the repository's generated
+-- internal/db package. Every write runs on the caller-owned transaction; no
+-- consumer, delivery, claim, replay, or dead-letter query surface is exposed.
 
 -- name: LockEventIdentity :exec
 SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(event_id), 0));
@@ -23,6 +23,11 @@ SET next_version = next_version + 1, updated_at = clock_timestamp()
 WHERE scope_id = sqlc.arg(scope_id) AND aggregate_type = sqlc.arg(aggregate_type)
   AND aggregate_id = sqlc.arg(aggregate_id)
 RETURNING (next_version - 1)::bigint AS version;
+
+-- name: CompareEventPayload :one
+SELECT payload = sqlc.arg(payload)::jsonb AS payload_matches
+FROM event.event_log
+WHERE event_id = sqlc.arg(event_id)::uuid;
 
 -- name: InsertEvent :one
 INSERT INTO event.event_log

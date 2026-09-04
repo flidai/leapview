@@ -82,6 +82,8 @@ func (n *Native) Preview(ctx context.Context, policy Policy) (Result, error) {
 	if n == nil || nilAuthority(n.db) {
 		return Result{}, errors.New("PostgreSQL native maintenance is unavailable")
 	}
+	// Preview is an offline maintenance lifecycle boundary; permit callers to
+	// omit a request context before opening the outer transaction.
 	if ctx == nil {
 		ctx = context.Background()
 	}

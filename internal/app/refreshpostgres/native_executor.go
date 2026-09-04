@@ -78,9 +78,6 @@ func (e *PostgresNativeRefreshExecutor) Execute(ctx context.Context, job refresh
 	if e == nil || e.Mutations == nil || e.Reader == nil || e.TargetID == "" {
 		return refreshrun.CanonicalRefreshResult{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := validateNativeRefreshJob(job); err != nil {
 		return refreshrun.CanonicalRefreshResult{}, err
 	}

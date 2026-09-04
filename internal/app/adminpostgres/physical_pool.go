@@ -119,6 +119,8 @@ func writePhysicalPoolBootstrapResult(out io.Writer, result adminoffline.Physica
 }
 
 func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request adminoffline.PhysicalPoolBootstrapRequest) (result adminoffline.PhysicalPoolBootstrapResult, err error) {
+	// CLI/offline lifecycle entrypoints may be invoked without a request context;
+	// normalize before opening migration and catalog resources.
 	if ctx == nil {
 		ctx = context.Background()
 	}

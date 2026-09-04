@@ -8,7 +8,6 @@ package postgres
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -17,25 +16,21 @@ import (
 	"strings"
 	"time"
 
+	eventdb "github.com/flidai/leapview/internal/platform/events/postgres/internal/db"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// Tx is the deliberately small native pgx transaction surface used by this
-// capability. pgx.Tx and pgxpool.Tx both satisfy it; the repository never
-// opens, commits, or rolls back a transaction.
-type Tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
+// Tx is deliberately the complete native transaction contract. A pool must
+// never satisfy caller-owned mutation APIs by structural coincidence.
+type Tx = pgx.Tx
 
-// Repository is stateless. Pointer identity is used by application
-// composition to prove that adapters retain the canonical authority supplied
-// by the authority graph.
-type Repository struct{}
+// Repository is stateless. Its non-zero marker preserves pointer identity so
+// application composition can prove that adapters retain the canonical
+// authority supplied by the authority graph.
+type Repository struct{ identity byte }
 
 //go:embed schema.sql
 var schemaSQL string
@@ -83,7 +78,7 @@ func (e *EventConflictError) Error() string {
 }
 
 // New returns a stateless event repository.
-func New() *Repository { return &Repository{} }
+func New() *Repository { return &Repository{identity: 1} }
 
 // AppendEvent validates and appends one event in tx. Explicit identities are
 // idempotent: an exact retry returns the original immutable row, while a
@@ -121,10 +116,11 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 		return Event{}, errors.New("event id must not contain surrounding whitespace")
 	}
 	if eventID == "" {
-		eventID, err = uuidv7()
-		if err != nil {
-			return Event{}, fmt.Errorf("generate event id: %w", err)
+		generated, generateErr := uuid.NewV7()
+		if generateErr != nil {
+			return Event{}, fmt.Errorf("generate event id: %w", generateErr)
 		}
+		eventID = generated.String()
 	}
 	if err := validateUUIDv7("event id", eventID); err != nil {
 		return Event{}, err
@@ -141,7 +137,7 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 
 	// Serialize retries for one explicit identity before the lookup. This is
 	// also what prevents a racing retry from consuming an aggregate version.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, eventID); err != nil {
+	if err := eventdb.New(tx).LockEventIdentity(ctx, eventID); err != nil {
 		return Event{}, fmt.Errorf("lock event identity: %w", err)
 	}
 	existing, err := getEvent(ctx, tx, eventID)
@@ -164,8 +160,11 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 		if existing.CorrelationID != correlationID {
 			return Event{}, &EventConflictError{EventID: eventID, Field: "correlation_id"}
 		}
-		var payloadMatches bool
-		if err := tx.QueryRow(ctx, `SELECT payload = $2::jsonb FROM event.event_log WHERE event_id = $1::uuid`, eventID, payload).Scan(&payloadMatches); err != nil {
+		payloadMatches, err := eventdb.New(tx).CompareEventPayload(ctx, eventdb.CompareEventPayloadParams{
+			EventID: dbUUID(eventID),
+			Payload: payload,
+		})
+		if err != nil {
 			return Event{}, fmt.Errorf("compare existing event payload: %w", err)
 		}
 		if !payloadMatches {
@@ -179,38 +178,33 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 
 	// The explicit aggregate row is locked by UPDATE, so versions are never
 	// derived from MAX() and concurrent writers cannot create gaps or clashes.
-	if _, err := tx.Exec(ctx, `
-INSERT INTO event.event_aggregate (scope_id, aggregate_type, aggregate_id, next_version)
-VALUES ($1, $2, $3, 1)
-ON CONFLICT (scope_id, aggregate_type, aggregate_id) DO NOTHING`, scope, aggregateType, aggregateID); err != nil {
+	if err := eventdb.New(tx).EnsureEventAggregate(ctx, eventdb.EnsureEventAggregateParams{
+		ScopeID: scope, AggregateType: aggregateType, AggregateID: aggregateID,
+	}); err != nil {
 		return Event{}, fmt.Errorf("ensure event aggregate: %w", err)
 	}
-	var version int64
-	if err := tx.QueryRow(ctx, `
-UPDATE event.event_aggregate
-SET next_version = next_version + 1, updated_at = clock_timestamp()
-WHERE scope_id = $1 AND aggregate_type = $2 AND aggregate_id = $3
-RETURNING next_version - 1`, scope, aggregateType, aggregateID).Scan(&version); err != nil {
+	version, err := eventdb.New(tx).AllocateAggregateVersion(ctx, eventdb.AllocateAggregateVersionParams{
+		ScopeID: scope, AggregateType: aggregateType, AggregateID: aggregateID,
+	})
+	if err != nil {
 		return Event{}, fmt.Errorf("allocate aggregate version: %w", err)
 	}
-	var occurredAt time.Time
-	var storedPayload string
-	if err := tx.QueryRow(ctx, `
-INSERT INTO event.event_log
-    (event_id, scope_id, aggregate_type, aggregate_id, aggregate_version,
-     event_type, schema_version, occurred_at, correlation_id, payload)
-VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, clock_timestamp(), NULLIF($8, '')::uuid, $9::jsonb)
-RETURNING occurred_at, payload::text`, eventID, scope, aggregateType, aggregateID,
-		version, eventType, in.SchemaVersion, correlationID, payload).Scan(&occurredAt, &storedPayload); err != nil {
+	inserted, err := eventdb.New(tx).InsertEvent(ctx, eventdb.InsertEventParams{
+		EventID: dbUUID(eventID), ScopeID: scope, AggregateType: aggregateType,
+		AggregateID: aggregateID, AggregateVersion: version, EventType: eventType,
+		SchemaVersion: in.SchemaVersion, CorrelationID: dbUUID(correlationID), Payload: payload,
+	})
+	if err != nil {
 		return Event{}, fmt.Errorf("insert durable event: %w", err)
 	}
-	if occurredAt.IsZero() || storedPayload == "" {
-		return Event{}, errors.New("insert durable event returned invalid projection")
-	}
-	return Event{EventID: eventID, ScopeID: scope, AggregateType: aggregateType,
+	event := Event{EventID: eventID, ScopeID: scope, AggregateType: aggregateType,
 		AggregateID: aggregateID, AggregateVersion: version, EventType: eventType,
-		SchemaVersion: in.SchemaVersion, OccurredAt: occurredAt.UTC(),
-		CorrelationID: correlationID, Payload: json.RawMessage(storedPayload)}, nil
+		SchemaVersion: in.SchemaVersion, OccurredAt: inserted.OccurredAt.Time.UTC(),
+		CorrelationID: correlationID, Payload: json.RawMessage(inserted.Payload)}
+	if err := ValidateEventProjection(event); err != nil {
+		return Event{}, fmt.Errorf("insert durable event returned invalid projection: %w", err)
+	}
+	return event, nil
 }
 
 // GetEvent reads one durable event by identity.
@@ -229,27 +223,61 @@ func (r *Repository) GetEvent(ctx context.Context, tx Tx, eventID string) (Event
 }
 
 func getEvent(ctx context.Context, tx Tx, eventID string) (Event, error) {
-	var event Event
-	var occurredAt time.Time
-	var payload string
-	err := tx.QueryRow(ctx, `
-SELECT event_id::text, scope_id, aggregate_type, aggregate_id, aggregate_version,
-       event_type, schema_version, occurred_at,
-       COALESCE(correlation_id::text, ''), payload::text
-FROM event.event_log
-WHERE event_id = $1::uuid`, eventID).Scan(
-		&event.EventID, &event.ScopeID, &event.AggregateType, &event.AggregateID,
-		&event.AggregateVersion, &event.EventType, &event.SchemaVersion,
-		&occurredAt, &event.CorrelationID, &payload)
+	row, err := eventdb.New(tx).GetEventByID(ctx, dbUUID(eventID))
 	if err != nil {
 		return Event{}, err
 	}
-	if occurredAt.IsZero() || payload == "" {
-		return Event{}, errors.New("durable event has invalid projection")
+	event := Event{EventID: row.EventID, ScopeID: row.ScopeID,
+		AggregateType: row.AggregateType, AggregateID: row.AggregateID,
+		AggregateVersion: row.AggregateVersion, EventType: row.EventType,
+		SchemaVersion: row.SchemaVersion, OccurredAt: row.OccurredAt.Time.UTC(),
+		CorrelationID: row.CorrelationID, Payload: json.RawMessage(row.Payload)}
+	if err := ValidateEventProjection(event); err != nil {
+		return Event{}, fmt.Errorf("durable event has invalid projection: %w", err)
 	}
-	event.OccurredAt = occurredAt.UTC()
-	event.Payload = json.RawMessage(payload)
 	return event, nil
+}
+
+// ValidateEventProjection validates the complete immutable event projection
+// returned by the event authority. Keeping this at the platform boundary
+// prevents every capability adapter from implementing a subtly different
+// post-append/readback check.
+func ValidateEventProjection(event Event) error {
+	if err := validateUUIDv7("event id", event.EventID); err != nil {
+		return err
+	}
+	for label, value := range map[string]string{
+		"scope": event.ScopeID, "aggregate type": event.AggregateType,
+		"aggregate id": event.AggregateID, "event type": event.EventType,
+	} {
+		if _, err := boundedID(label, value, 255); err != nil {
+			return err
+		}
+	}
+	if event.AggregateVersion <= 0 {
+		return errors.New("aggregate version must be positive")
+	}
+	if event.SchemaVersion <= 0 {
+		return errors.New("event schema version must be positive")
+	}
+	if event.OccurredAt.IsZero() {
+		return errors.New("event occurred-at timestamp is required")
+	}
+	if event.CorrelationID != "" {
+		if event.CorrelationID != strings.TrimSpace(event.CorrelationID) {
+			return errors.New("correlation id must not contain surrounding whitespace")
+		}
+		if err := validateUUID("correlation id", event.CorrelationID); err != nil {
+			return err
+		}
+	}
+	if len(event.Payload) == 0 {
+		return errors.New("event payload is required")
+	}
+	if _, err := canonicalObject(event.Payload, 65536); err != nil {
+		return fmt.Errorf("event payload: %w", err)
+	}
+	return nil
 }
 
 // Prune executes the owner-controlled bounded retention function. The
@@ -261,19 +289,34 @@ func (r *Repository) Prune(ctx context.Context, tx Tx, before time.Time) (int64,
 	if before.IsZero() {
 		return 0, errors.New("prune cutoff is required")
 	}
-	var removed int64
-	if err := tx.QueryRow(ctx, `SELECT event.prune_event_log($1, $2)`, before.UTC(), int32(1000)).Scan(&removed); err != nil {
+	removed, err := eventdb.New(tx).PruneEventLog(ctx, eventdb.PruneEventLogParams{
+		Before: pgtype.Timestamptz{Time: before.UTC(), Valid: true}, Batch: 1000,
+	})
+	if err != nil {
 		return 0, fmt.Errorf("prune durable events: %w", err)
 	}
 	return removed, nil
 }
 
-func validateTxContext(ctx context.Context, tx Tx) error {
-	if tx == nil {
-		return errors.New("event PostgreSQL transaction is nil")
+func dbUUID(value string) pgtype.UUID {
+	if value == "" {
+		return pgtype.UUID{}
 	}
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: parsed, Valid: true}
+}
+
+func validateTxContext(ctx context.Context, tx Tx) error {
+	// Event append is a trust boundary: require both caller-owned transaction
+	// and request context before writing canonical durable evidence.
 	if ctx == nil {
 		return errors.New("event context is nil")
+	}
+	if tx == nil {
+		return errors.New("event PostgreSQL transaction is nil")
 	}
 	return nil
 }
@@ -363,27 +406,4 @@ func canonicalObject(raw json.RawMessage, maxBytes int64) (json.RawMessage, erro
 		return nil, fmt.Errorf("exceeds %d bytes after canonicalization", maxBytes)
 	}
 	return canonical, nil
-}
-
-// uuidv7 creates a sortable UUIDv7 without another runtime dependency.
-func uuidv7() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	ms := uint64(time.Now().UnixMilli())
-	b[0], b[1], b[2], b[3], b[4], b[5] = byte(ms>>40), byte(ms>>32), byte(ms>>24), byte(ms>>16), byte(ms>>8), byte(ms)
-	b[6] = (b[6] & 0x0f) | 0x70
-	b[8] = (b[8] & 0x3f) | 0x80
-	var out [36]byte
-	hex.Encode(out[0:8], b[0:4])
-	out[8] = '-'
-	hex.Encode(out[9:13], b[4:6])
-	out[13] = '-'
-	hex.Encode(out[14:18], b[6:8])
-	out[18] = '-'
-	hex.Encode(out[19:23], b[8:10])
-	out[23] = '-'
-	hex.Encode(out[24:36], b[10:16])
-	return string(out[:]), nil
 }

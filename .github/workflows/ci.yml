@@ -164,7 +164,10 @@ jobs:
       github.event.pull_request.stack == null ||
       github.event.pull_request.stack.position == github.event.pull_request.stack.size
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # The native qualification starts a pinned PostgreSQL 18 sidecar, runs
+    # the canonical init hook, and exercises a deliberate fail-closed case.
+    # Keep enough room for a cold image pull while bounding the required lane.
+    timeout-minutes: 30
     permissions:
       contents: read
 
@@ -184,6 +187,9 @@ jobs:
 
       - name: Check PostgreSQL topology isolation
         run: task postgres:test:check
+
+      - name: Run native PostgreSQL qualification contract
+        run: task test:qualification:native-postgres
 
       - name: Tear down PostgreSQL test topology
         if: always()

@@ -6,28 +6,19 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// invalidTx is sufficient for boundary tests: all valid calls reach SQL,
-// while malformed input must fail before touching the caller's transaction.
-type invalidTx struct{}
-
-func (invalidTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
-	panic("invalid input reached SQL")
-}
-func (invalidTx) Query(context.Context, string, ...any) (pgx.Rows, error) {
-	panic("invalid input reached SQL")
-}
-func (invalidTx) QueryRow(context.Context, string, ...any) pgx.Row {
-	panic("invalid input reached SQL")
-}
-
 func TestAppendEventValidatesCanonicalIdentityAndPayloadBeforeSQL(t *testing.T) {
+	db := eventTestDB(t)
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
 	tests := []struct {
 		name  string
 		input EventInput
@@ -39,7 +30,7 @@ func TestAppendEventValidatesCanonicalIdentityAndPayloadBeforeSQL(t *testing.T) 
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := New().AppendEvent(context.Background(), invalidTx{}, tt.input)
+			_, err := New().AppendEvent(context.Background(), tx, tt.input)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("AppendEvent() error = %v, want %q", err, tt.want)
 			}
@@ -52,7 +43,7 @@ func TestAppendEventRejectsNilCallerContextOrTransaction(t *testing.T) {
 	if _, err := New().AppendEvent(context.Background(), nil, input); err == nil {
 		t.Fatal("nil transaction unexpectedly accepted")
 	}
-	if _, err := New().AppendEvent(nil, invalidTx{}, input); err == nil || !strings.Contains(err.Error(), "event context is nil") {
+	if _, err := New().AppendEvent(nil, nil, input); err == nil || !strings.Contains(err.Error(), "event context is nil") {
 		t.Fatalf("nil context error = %v", err)
 	}
 }
@@ -88,6 +79,52 @@ func TestPostgreSQL18EventLogRejectsNonUUIDv7DirectInsert(t *testing.T) {
 		if _, err := db.Exec(t.Context(), insert, eventID, eventID); err == nil {
 			t.Fatalf("non-UUIDv7 event id %q was accepted", eventID)
 		}
+	}
+}
+
+func TestPostgreSQL18EventLogIsImmutableAndOwnsOccurredAt(t *testing.T) {
+	db := eventTestDB(t)
+	const eventID = "01900000-0000-7000-8000-000000000020"
+	suppliedOccurredAt := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before, occurredAt, after time.Time
+	if err := tx.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&before); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(t.Context(), `
+		INSERT INTO event.event_log
+		    (event_id, scope_id, aggregate_type, aggregate_id, aggregate_version,
+		     event_type, schema_version, occurred_at, payload)
+		VALUES ($1::uuid, 'scope', 'trigger', 'authority', 1,
+		        'trigger.test', 1, $2::timestamptz, '{}'::jsonb)
+		RETURNING occurred_at`, eventID, suppliedOccurredAt).Scan(&occurredAt); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&after); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if occurredAt.Before(before) || occurredAt.After(after) {
+		t.Fatalf("occurred_at = %s, want database clock between %s and %s", occurredAt, before, after)
+	}
+	if occurredAt.Equal(suppliedOccurredAt) {
+		t.Fatalf("supplied occurred_at %s was persisted unchanged", suppliedOccurredAt)
+	}
+
+	if _, err := db.Exec(t.Context(), `
+		UPDATE event.event_log
+		SET payload = '{"tampered":true}'::jsonb
+		WHERE event_id = $1::uuid`, eventID); err == nil || !strings.Contains(err.Error(), "durable event log is immutable") {
+		t.Fatalf("owner/admin event UPDATE error = %v, want immutable-trigger rejection", err)
 	}
 }
 

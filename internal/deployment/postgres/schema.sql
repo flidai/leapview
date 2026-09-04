@@ -223,7 +223,8 @@ BEGIN
     ) THEN
         ALTER TABLE delivery.delivery_candidate
             ADD CONSTRAINT delivery_candidate_snapshot_seal_fk
-            FOREIGN KEY (snapshot_seal_id) REFERENCES delivery.delivery_snapshot_seal(seal_id);
+            FOREIGN KEY (snapshot_seal_id, candidate_id)
+                REFERENCES delivery.delivery_snapshot_seal(seal_id, candidate_id);
     END IF;
 END;
 $$;
@@ -573,6 +574,9 @@ $$;
 CREATE OR REPLACE FUNCTION delivery.reject_target_identity_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_user = 'leapview_control_runtime' THEN
+        RAISE EXCEPTION 'delivery target mutation requires the activation capability';
+    END IF;
     IF TG_OP = 'DELETE' OR NEW.target_id <> OLD.target_id OR NEW.project_id <> OLD.project_id
        OR NEW.environment <> OLD.environment THEN
         RAISE EXCEPTION 'delivery target identity is immutable';
@@ -673,6 +677,12 @@ FOR EACH ROW EXECUTE FUNCTION delivery.reject_build_attempt_successor_mutation()
 CREATE OR REPLACE FUNCTION delivery.reject_publication_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_user = 'leapview_control_runtime'
+       AND (TG_OP = 'DELETE' OR NEW.state = 'committed'
+            OR NEW.result_target_revision IS DISTINCT FROM OLD.result_target_revision
+            OR NEW.committed_at IS DISTINCT FROM OLD.committed_at) THEN
+        RAISE EXCEPTION 'delivery publication commit requires the activation capability';
+    END IF;
     IF TG_OP = 'DELETE'
        OR NEW.publication_id <> OLD.publication_id
        OR NEW.target_id <> OLD.target_id
@@ -878,6 +888,147 @@ BEGIN
         RAISE EXCEPTION 'active pointer candidate identity differs';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+-- Runtime activation may not mutate serving selection directly. This
+-- role-aware trigger remains effective even if a deployment accidentally
+-- grants a broad table UPDATE privilege: SECURITY DEFINER activation runs
+-- with the owner as current_user, while forged runtime writes are rejected.
+CREATE OR REPLACE FUNCTION delivery.reject_runtime_active_pointer_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF current_user = 'leapview_control_runtime' THEN
+        RAISE EXCEPTION 'delivery active pointer mutation requires the activation capability';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+-- The guarded repository path calls this narrow SECURITY DEFINER transition
+-- after verifying lease, seal, approval, lineage, candidate, and retention-
+-- root evidence. It performs the three mutable serving writes as one
+-- database-owned transition and rechecks the immutable tuple, CAS revision,
+-- and expected predecessor. Retrying an advanced tuple is rejected; Activate
+-- handles a committed retry through its evidence replay path.
+CREATE OR REPLACE FUNCTION delivery.commit_activation_transition(
+    p_publication_id uuid,
+    p_target_id text,
+    p_generation_id uuid,
+    p_expected_target_revision bigint,
+    p_result_target_revision bigint
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, delivery
+AS $$
+DECLARE
+    publication_target text;
+    publication_generation uuid;
+    publication_base_generation uuid;
+    publication_expected_revision bigint;
+    publication_state text;
+    publication_candidate uuid;
+    publication_seal uuid;
+    target_revision bigint;
+    target_active_generation uuid;
+    generation_target text;
+    generation_candidate uuid;
+    generation_seal uuid;
+    candidate_target text;
+    candidate_status text;
+    candidate_seal uuid;
+    updated bigint;
+BEGIN
+    IF p_publication_id IS NULL OR p_target_id IS NULL OR p_target_id <> btrim(p_target_id)
+       OR btrim(p_target_id) = '' OR p_generation_id IS NULL
+       OR p_expected_target_revision IS NULL OR p_expected_target_revision <= 0
+       OR p_result_target_revision IS NULL
+       OR p_result_target_revision <> p_expected_target_revision + 1 THEN
+        RAISE EXCEPTION 'activation transition identity or revision is invalid';
+    END IF;
+
+    SELECT publication.target_id, publication.generation_id,
+           publication.expected_base_generation_id,
+           publication.expected_target_revision, publication.state,
+           publication.candidate_id, publication.snapshot_seal_id
+      INTO publication_target, publication_generation,
+           publication_base_generation, publication_expected_revision,
+           publication_state, publication_candidate, publication_seal
+      FROM delivery.delivery_publication AS publication
+     WHERE publication.publication_id = p_publication_id
+     FOR UPDATE;
+    IF NOT FOUND OR publication_target <> p_target_id
+       OR publication_generation <> p_generation_id
+       OR publication_expected_revision <> p_expected_target_revision
+       OR publication_state <> 'pending' THEN
+        RAISE EXCEPTION 'activation publication tuple is not pending or differs';
+    END IF;
+
+    SELECT target.target_revision,
+           (SELECT pointer.generation_id
+              FROM delivery.delivery_active_pointer AS pointer
+             WHERE pointer.target_id = target.target_id)
+      INTO target_revision, target_active_generation
+      FROM delivery.delivery_target AS target
+     WHERE target.target_id = p_target_id
+     FOR UPDATE;
+    IF NOT FOUND OR target_revision <> p_expected_target_revision
+       OR target_active_generation IS DISTINCT FROM publication_base_generation THEN
+        RAISE EXCEPTION 'activation target CAS or predecessor differs';
+    END IF;
+
+    SELECT generation.target_id, generation.candidate_id,
+           generation.snapshot_seal_id
+      INTO generation_target, generation_candidate, generation_seal
+      FROM delivery.delivery_generation AS generation
+     WHERE generation.generation_id = p_generation_id;
+    IF NOT FOUND OR generation_target <> p_target_id
+       OR generation_candidate <> publication_candidate
+       OR generation_seal <> publication_seal THEN
+        RAISE EXCEPTION 'activation generation tuple differs';
+    END IF;
+    SELECT candidate.target_id, candidate.status, candidate.snapshot_seal_id
+      INTO candidate_target, candidate_status, candidate_seal
+      FROM delivery.delivery_candidate AS candidate
+     WHERE candidate.candidate_id = publication_candidate;
+    IF NOT FOUND OR candidate_target <> p_target_id
+       OR candidate_seal <> publication_seal
+       OR candidate_status NOT IN ('qualified', 'ready', 'admitted') THEN
+        RAISE EXCEPTION 'activation candidate tuple is not qualified';
+    END IF;
+
+    UPDATE delivery.delivery_target AS target
+       SET target_revision = p_result_target_revision,
+           updated_at = clock_timestamp()
+     WHERE target.target_id = p_target_id
+       AND target.target_revision = p_expected_target_revision;
+    GET DIAGNOSTICS updated = ROW_COUNT;
+    IF updated <> 1 THEN
+        RAISE EXCEPTION 'activation target revision CAS lost';
+    END IF;
+
+    INSERT INTO delivery.delivery_active_pointer(target_id, generation_id, publication_id)
+    VALUES (p_target_id, p_generation_id, p_publication_id)
+    ON CONFLICT (target_id) DO UPDATE
+          SET generation_id = EXCLUDED.generation_id,
+              publication_id = EXCLUDED.publication_id,
+              changed_at = clock_timestamp();
+
+    UPDATE delivery.delivery_publication
+       SET state = 'committed',
+           result_target_revision = p_result_target_revision,
+           committed_at = clock_timestamp()
+     WHERE publication_id = p_publication_id AND state = 'pending';
+    GET DIAGNOSTICS updated = ROW_COUNT;
+    IF updated <> 1 THEN
+        RAISE EXCEPTION 'activation publication commit CAS lost';
+    END IF;
+    RETURN true;
 END;
 $$;
 
@@ -1344,6 +1495,9 @@ CREATE TRIGGER delivery_approval_revision_monotonic BEFORE UPDATE OR DELETE ON d
 DROP TRIGGER IF EXISTS delivery_active_pointer_consistency ON delivery.delivery_active_pointer;
 CREATE CONSTRAINT TRIGGER delivery_active_pointer_consistency AFTER INSERT OR UPDATE ON delivery.delivery_active_pointer
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION delivery.check_active_pointer_consistency();
+DROP TRIGGER IF EXISTS delivery_active_pointer_runtime_guard ON delivery.delivery_active_pointer;
+CREATE TRIGGER delivery_active_pointer_runtime_guard BEFORE INSERT OR UPDATE OR DELETE ON delivery.delivery_active_pointer
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_runtime_active_pointer_mutation();
 CREATE INDEX IF NOT EXISTS delivery_lease_active_idx ON delivery.delivery_lease(target_id, state, expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS delivery_lease_one_active_idx ON delivery.delivery_lease(target_id) WHERE state = 'active';
 CREATE INDEX IF NOT EXISTS delivery_generation_target_idx ON delivery.delivery_generation(target_id, generation_revision);
@@ -1373,11 +1527,13 @@ REVOKE ALL ON FUNCTION delivery.expire_retention_root(uuid, interval) FROM PUBLI
 REVOKE ALL ON FUNCTION delivery.maintain_retention_roots(text, text, interval, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.lock_retention_root(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) FROM PUBLIC;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT EXECUTE ON FUNCTION delivery.lock_retention_root(uuid) TO leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid) TO leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) TO leapview_control_runtime;
         -- Expiry is maintenance/drain-owned. Runtime activation may retire
         -- predecessors but cannot force their terminal expiry.
     END IF;

@@ -66,10 +66,6 @@ func (s *PostgresSnapshotCatalogPageScanner) ScanSnapshotPage(ctx context.Contex
 	if pageSize < 1 || pageSize > MaxSnapshotOrphanScanPageSize {
 		return SnapshotCatalogPage{}, ErrSnapshotOrphanScanBounds
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	// DuckLake's metadata schema is a validated, application-admitted
 	// identifier. It cannot be a PostgreSQL parameter, so quote it after the
 	// strict existing validation above. All values remain parameters.

@@ -220,7 +220,6 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 	if a == nil || a.delivery == nil || a.serving == nil || a.lineage == nil || !a.lineage.Configured() || a.physical == nil || !a.physical.Configured() || !configuredManagedDataBindingAdmission(a.managedData) || !configuredCandidateProvenanceAdmission(a.provenance) {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, err := normalizeInput(input)
 	if err != nil {
 		return GenerationAdmissionResult{}, err
@@ -281,7 +280,6 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	if tx == nil {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, err := normalizeInput(input)
 	if err != nil {
 		return GenerationAdmissionResult{}, err
@@ -963,11 +961,4 @@ func fromNativeGeneration(g deploymentnative.DeliveryGeneration) GenerationEvide
 
 func fromNativeBundle(b servingnative.Bundle) BundleEvidence {
 	return BundleEvidence{GenerationID: b.GenerationID, ProjectID: b.ProjectID, Environment: b.Environment, ArtifactID: b.ArtifactID, ArtifactDigest: b.ArtifactDigest, CompiledGraphDigest: b.CompiledGraphDigest, ArtifactFormat: b.ArtifactFormat, ArtifactLocator: b.ArtifactLocator, StorageSecurityDomain: b.StorageSecurityDomain, ArtifactContentType: b.ArtifactContentType, ArtifactMetadataDigest: b.ArtifactMetadataDigest, ManifestJSON: b.ManifestJSON, ProjectDigest: b.ProjectDigest, AccessPolicyJSON: b.AccessPolicyJSON, DashboardPublicationsJSON: b.DashboardPublicationsJSON, DashboardAppearancesJSON: b.DashboardAppearancesJSON, SizeBytes: b.SizeBytes, DuckLakeSnapshotID: b.DuckLakeSnapshotID, CreatedBy: b.CreatedBy, CreatedAt: b.CreatedAt}
-}
-
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }

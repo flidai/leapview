@@ -11,6 +11,7 @@ import (
 
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	postgresmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -32,6 +33,9 @@ func refreshTestDB(t *testing.T) (*postgrestest.Database, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	t.Cleanup(admin.Close)
+	if err := postgresmigrations.ApplyRiver(t.Context(), admin); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := admin.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +94,9 @@ func TestPostgresRefreshSchemaRollbackAndRoleBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(admin.Close)
+	if err := postgresmigrations.ApplyRiver(t.Context(), admin); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := admin.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -282,10 +289,13 @@ func TestPostgresRefreshRootJobPairingAndParentScopeGuards(t *testing.T) {
 		{name: "partition", job: jobs.EnqueueInput{ID: "pairing-wrong-partition", Kind: "refresh_pipeline", WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: base.PrincipalID, PartitionKey: "refresh:other:prod", ResourceKind: "refresh_run", ResourceID: "pairing-wrong-partition", EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}},
 		{name: "principal", job: jobs.EnqueueInput{ID: "pairing-wrong-principal", Kind: "refresh_pipeline", WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: "other-principal", PartitionKey: "refresh:" + base.ProjectID + ":" + base.Environment, ResourceKind: "refresh_run", ResourceID: "pairing-wrong-principal", EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}},
 	}
-	jobsRepo := jobspostgres.New(admin)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := jobsRepo.Enqueue(ctx, tc.job); err != nil {
+			if _, err := admin.Exec(ctx, `INSERT INTO jobs.job_history
+				(id,kind,workload_class,principal_id,group_ids,partition_key,resource_kind,resource_id,estimated_memory_bytes,payload,request_digest)
+				VALUES($1,$2,$3,$4,'[]'::jsonb,$5,$6,$7,$8,$9::jsonb,'sha256:'||repeat('a',64))`,
+				tc.job.ID, tc.job.Kind, tc.job.WorkloadClass, tc.job.PrincipalID, tc.job.PartitionKey,
+				tc.job.ResourceKind, tc.job.ResourceID, tc.job.EstimatedMemoryBytes, tc.job.Payload); err != nil {
 				t.Fatal(err)
 			}
 			input := base
@@ -340,9 +350,9 @@ func TestPostgresRefreshExactJobAttachmentReplayAfterQueueAdvance(t *testing.T) 
 	if _, err := r.CreateRun(ctx, input); err != nil {
 		t.Fatal(err)
 	}
-	claimed, ok, err := jobsRepo.ClaimByID(ctx, input.JobID, jobpolicy.WorkloadClassBackground, "advanced-replay-worker", time.Minute)
-	if err != nil || !ok {
-		t.Fatalf("advance canonical queue job: ok=%v err=%v", ok, err)
+	claimed, err := jobsRepo.MarkRunning(ctx, input.JobID, 1)
+	if err != nil {
+		t.Fatalf("advance canonical River job history: %v", err)
 	}
 	tx, err := admin.Begin(ctx)
 	if err != nil {
@@ -795,6 +805,52 @@ func TestPostgresRefreshConcurrentLinkReplayAfterCommit(t *testing.T) {
 	}
 	if got.publication.State != "committed" || got.publication.SnapshotID != 42 {
 		t.Fatalf("concurrent replay publication = %#v", got.publication)
+	}
+	if err := tx2.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresRefreshConcurrentCommitReplayLocksPublication(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	ctx := t.Context()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	seedRefreshJob(t, admin, "job-concurrent-commit", "concurrent-commit-run", "p", "prod", "principal")
+	if _, err := r.CreateRun(ctx, RunInput{RunID: "concurrent-commit-run", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-concurrent-commit"}); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := r.ClaimAttempt(ctx, "concurrent-commit-run", "worker", 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := PublicationInput{PublicationID: "concurrent-commit-publication", RunID: "concurrent-commit-run", BaseGenerationID: "g", ResultGenerationID: "result-g", ExpectedTargetRevision: 1, ResultTargetRevision: 2, PlanDigest: digest, ArtifactDigest: digest, PhysicalPoolID: "pool", CatalogID: "catalog", OwnerID: "worker", FenceGeneration: attempt.FenceGeneration, Evidence: []byte(`{"linked":true}`)}
+	if _, err := r.LinkPublication(ctx, input); err != nil {
+		t.Fatal(err)
+	}
+	tx1, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx1.Rollback(ctx)
+	if err := r.CommitPublicationTx(ctx, tx1, input.PublicationID, input.RunID, input.OwnerID, input.FenceGeneration, 42, []byte(`{"ok":true}`), input.PhysicalPoolID, input.CatalogID); err != nil {
+		t.Fatal(err)
+	}
+	tx2, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx2.Rollback(ctx)
+	result := make(chan error, 1)
+	go func() {
+		result <- r.CommitPublicationTx(ctx, tx2, input.PublicationID, input.RunID, input.OwnerID, input.FenceGeneration, 42, []byte(`{"ok":true}`), input.PhysicalPoolID, input.CatalogID)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	if err := tx1.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatalf("concurrent exact commit replay: %v", err)
 	}
 	if err := tx2.Commit(ctx); err != nil {
 		t.Fatal(err)

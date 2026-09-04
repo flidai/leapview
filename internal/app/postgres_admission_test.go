@@ -194,7 +194,7 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	if err := graph.Validate(); err != nil {
 		t.Fatalf("validate admitted native PostgreSQL authority graph: %v", err)
 	}
-	if graph.Bootstrap != graph.Settings || graph.Access.DB() != runtimePool || graph.DeploymentRepository.DB() != runtimePool || graph.DuckLakeControlLedger.DB() != runtimePool {
+	if graph.Access.DB() != runtimePool || graph.DeploymentRepository.DB() != runtimePool || graph.DuckLakeControlLedger.DB() != runtimePool {
 		t.Fatal("native authority graph split canonical runtime repository identity")
 	}
 	if graph.RefreshJobs == nil || graph.RefreshJobs.Jobs != graph.Jobs || graph.RefreshJobs.Refresh != graph.Refresh {

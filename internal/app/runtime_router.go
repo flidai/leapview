@@ -212,7 +212,6 @@ type workflowInputs struct {
 	canonicalCompletionCoordinator refreshrun.CanonicalCompletionCoordinator
 	canonicalResultReconciler      refreshrun.CanonicalResultReconciler
 	publishedVersion               refreshmodule.PublishedDataVersionResolver
-	enableRefreshDispatcher        bool
 	recoveryLifecycle              *refreshmodule.RecoveryLifecycle
 	recoveryInterval               time.Duration
 	agent                          *agentmodule.Service
@@ -324,7 +323,6 @@ type workflowAssemblyInputs struct {
 	CanonicalCompletionCoordinator refreshrun.CanonicalCompletionCoordinator
 	CanonicalResultReconciler      refreshrun.CanonicalResultReconciler
 	PublishedVersion               refreshmodule.PublishedDataVersionResolver
-	EnableRefreshDispatcher        bool
 	RecoveryLifecycle              *refreshmodule.RecoveryLifecycle
 	RecoveryInterval               time.Duration
 	QueryAudit                     *analyticsmodule.QueryAuditSurface
@@ -668,7 +666,6 @@ func buildApplicationSurfaces(
 	moduleWorkflow.canonicalCompletionCoordinator = workflow.CanonicalCompletionCoordinator
 	moduleWorkflow.canonicalResultReconciler = workflow.CanonicalResultReconciler
 	moduleWorkflow.publishedVersion = workflow.PublishedVersion
-	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
 	moduleWorkflow.recoveryLifecycle = workflow.RecoveryLifecycle
 	moduleWorkflow.recoveryInterval = workflow.RecoveryInterval
 	moduleWorkflow.servingArtifacts = workflow.ServingArtifacts
@@ -895,6 +892,9 @@ func buildApplicationSurfaces(
 		}
 		if routes.agentModule != nil {
 			handlers = append(handlers, routes.agentModule.JobHandlers(platform.asyncJobs)...)
+		}
+		if routes.refreshModule != nil {
+			handlers = append(handlers, routes.refreshModule.JobHandlers()...)
 		}
 		if err := platform.jobModule.RegisterHandlers(handlers); err != nil {
 			return fail(fmt.Errorf("register async job handlers: %w", err))

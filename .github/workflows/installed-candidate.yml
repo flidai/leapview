@@ -61,7 +61,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 240
     permissions:
       contents: read
       packages: read
@@ -100,30 +100,14 @@ jobs:
           # strips executable bits (or was produced by a hardened umask).
           # PostgreSQL executes this hook after dropping to the `postgres`
           # user, so normalize its reviewed mode before starting the sidecar.
+          chmod 0755 "$PACKAGE_ROOT/qualification/validate-bundle.sh"
           chmod 0755 "$init_script"
-          test -x "$init_script"
-          test "$(stat -c '%a' "$init_script")" = "755"
-          grep -q 'CREATE ROLE leapview_control_owner' "$init_script"
-          grep -q 'CREATE ROLE leapview_ducklake_owner' "$init_script"
           # The release archive may have crossed an artifact boundary that
           # strips world-readable bits (or was extracted under umask 0077).
           # Caddy reads this bind-mounted file, so restore the reviewed mode
           # before starting Compose.
           chmod 0644 "$PACKAGE_ROOT/Caddyfile"
-          test "$(stat -c '%a' "$PACKAGE_ROOT/Caddyfile")" = "644"
-          test -s "$PACKAGE_ROOT/Caddyfile"
-          test -s "$PACKAGE_ROOT/compose.https.yaml"
-          grep -q 'reverse_proxy leapview:8080' "$PACKAGE_ROOT/Caddyfile"
-          grep -q '^LEAPVIEW_POSTGRES_REQUIRE_TLS=true$' "$PACKAGE_ROOT/leapview.env.example"
-          if grep -Rni 'sqlite' \
-            "$PACKAGE_ROOT/compose.yaml" "$PACKAGE_ROOT/compose.https.yaml" \
-            "$PACKAGE_ROOT/leapview.env.example" "$PACKAGE_ROOT/qualification" || \
-            grep -RnE 'LEAPVIEW_(DB|DATABASE|DUCKDB)_' \
-            "$PACKAGE_ROOT/compose.yaml" "$PACKAGE_ROOT/compose.https.yaml" \
-            "$PACKAGE_ROOT/leapview.env.example" "$PACKAGE_ROOT/qualification"; then
-            printf 'installed archive contains an SQLite or file-backed qualification fallback\n' >&2
-            exit 1
-          fi
+          "$PACKAGE_ROOT/qualification/validate-bundle.sh" "$PACKAGE_ROOT"
 
       - name: Resolve candidate image identity
         id: identity

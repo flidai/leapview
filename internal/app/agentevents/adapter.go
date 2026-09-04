@@ -23,8 +23,6 @@ var _ agentpostgres.DomainEventAppender = (*Adapter)(nil)
 
 // New returns an adapter backed by the platform's durable PostgreSQL event
 // log.
-func New() *Adapter { return NewWithRepository(eventspostgres.New()) }
-
 // NewWithRepository is useful to composition tests and keeps the event
 // authority explicit without exposing its concrete projection to Agent.
 func NewWithRepository(events *eventspostgres.Repository) *Adapter {

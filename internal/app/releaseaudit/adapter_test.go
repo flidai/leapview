@@ -20,7 +20,7 @@ func TestNewWithRepositoryPreservesAccessAuditIdentity(t *testing.T) {
 }
 
 func TestRecordAuditEventFailsClosedWithoutTransaction(t *testing.T) {
-	if _, err := New().RecordAuditEvent(context.Background(), nil, access.AuditIntent{}); err == nil {
+	if _, err := NewWithRepository(accesspostgres.New()).RecordAuditEvent(context.Background(), nil, access.AuditIntent{}); err == nil {
 		t.Fatal("audit adapter accepted nil transaction")
 	}
 }

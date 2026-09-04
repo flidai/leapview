@@ -125,6 +125,28 @@ CREATE TABLE IF NOT EXISTS managed_data.upload_session (
 CREATE INDEX IF NOT EXISTS upload_session_cleanup_idx ON managed_data.upload_session(status, cleanup_completed_at, updated_at, upload_id);
 CREATE INDEX IF NOT EXISTS upload_session_expiry_idx ON managed_data.upload_session(status, expires_at);
 
+-- Reachability is versioned by a tiny monotonic epoch.  The epoch lets the
+-- maintenance transaction prove that the manifest set observed before the
+-- physical inventory walk is still current without rereading every JSONB
+-- manifest while SHARE locks are held.
+CREATE TABLE IF NOT EXISTS managed_data.reachability_epoch (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    epoch bigint NOT NULL DEFAULT 1 CHECK (epoch > 0)
+);
+INSERT INTO managed_data.reachability_epoch(singleton, epoch)
+VALUES (true, 1)
+ON CONFLICT (singleton) DO NOTHING;
+
+-- The source cursor filters each relation by its retaining status and stable
+-- identifier.  Partial indexes keep long-lived revision/upload history out of
+-- the maintenance plan and make each page bounded by the requested LIMIT.
+CREATE INDEX IF NOT EXISTS revision_reachability_idx
+    ON managed_data.revision (revision_id)
+    WHERE status = 'ready';
+CREATE INDEX IF NOT EXISTS upload_session_reachability_idx
+    ON managed_data.upload_session (status, upload_id)
+    WHERE status IN ('open', 'committing');
+
 CREATE OR REPLACE FUNCTION managed_data.guard_upload_insert() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, managed_data
@@ -552,6 +574,44 @@ END $$;
 DROP TRIGGER IF EXISTS revision_insert_guard ON managed_data.revision;
 CREATE TRIGGER revision_insert_guard BEFORE INSERT ON managed_data.revision FOR EACH ROW EXECUTE FUNCTION managed_data.guard_revision_insert();
 
+-- Keep the reachability epoch authoritative inside the database.  The
+-- SECURITY DEFINER function is required because runtime roles may transition
+-- uploads/revisions but must not be able to forge the epoch relation itself.
+CREATE OR REPLACE FUNCTION managed_data.bump_reachability_epoch() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, managed_data
+AS $$
+DECLARE current_epoch bigint;
+BEGIN
+  SELECT epoch INTO current_epoch
+    FROM managed_data.reachability_epoch
+   WHERE singleton = true
+   FOR UPDATE;
+  IF NOT FOUND OR current_epoch IS NULL THEN
+    RAISE EXCEPTION 'managed-data reachability epoch is missing';
+  END IF;
+  IF current_epoch = 9223372036854775807 THEN
+    RAISE EXCEPTION 'managed-data reachability epoch exhausted';
+  END IF;
+  UPDATE managed_data.reachability_epoch SET epoch = current_epoch + 1 WHERE singleton = true;
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS revision_reachability_epoch ON managed_data.revision;
+CREATE TRIGGER revision_reachability_epoch
+AFTER INSERT OR UPDATE OF status, manifest, digest, file_count, size_bytes
+ON managed_data.revision FOR EACH ROW
+EXECUTE FUNCTION managed_data.bump_reachability_epoch();
+
+DROP TRIGGER IF EXISTS upload_reachability_epoch ON managed_data.upload_session;
+CREATE TRIGGER upload_reachability_epoch
+AFTER INSERT OR UPDATE OF status, manifest, expected_file_count, expected_size_bytes,
+    revision_id
+ON managed_data.upload_session FOR EACH ROW
+EXECUTE FUNCTION managed_data.bump_reachability_epoch();
+
 CREATE OR REPLACE FUNCTION managed_data.guard_revision_file() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, managed_data
@@ -811,13 +871,14 @@ BEGIN
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON managed_data.revision TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON managed_data.lease, managed_data.retention_root TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON managed_data.reconciliation_evidence TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT ON managed_data.reachability_epoch TO leapview_control_runtime';
         EXECUTE 'GRANT USAGE ON ALL SEQUENCES IN SCHEMA managed_data TO leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION managed_data.publish_binding_set(text,text,text,text,bigint,jsonb) TO leapview_control_runtime';
       ELSIF r = 'leapview_control_maintenance' THEN
         EXECUTE 'GRANT EXECUTE ON FUNCTION managed_data.mark_upload_cleanup(text) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION managed_data.prune_upload_sessions(timestamptz, integer) TO leapview_control_maintenance';
       ELSIF r = 'leapview_control_readonly' THEN
-        EXECUTE 'GRANT SELECT ON managed_data.collection, managed_data.revision, managed_data.revision_file, managed_data.upload_session, managed_data.binding_set, managed_data.binding, managed_data.retention_root, managed_data.reconciliation_evidence TO leapview_control_readonly';
+        EXECUTE 'GRANT SELECT ON managed_data.collection, managed_data.revision, managed_data.revision_file, managed_data.upload_session, managed_data.binding_set, managed_data.binding, managed_data.retention_root, managed_data.reconciliation_evidence, managed_data.reachability_epoch TO leapview_control_readonly';
       ELSE
         EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA managed_data TO leapview_control_backup';
       END IF;

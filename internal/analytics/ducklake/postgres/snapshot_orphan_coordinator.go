@@ -163,7 +163,7 @@ func (c *SnapshotOrphanCoordinator) normalize(in SnapshotOrphanMaintenanceReques
 	if maxItems == 0 {
 		maxItems = defaultSnapshotOrphanMaxItems
 	}
-	if pageSize < 1 || pageSize > MaxSnapshotOrphanScanPageSize || maxPages < 1 || maxItems < 1 {
+	if pageSize < 1 || pageSize > MaxSnapshotOrphanScanPageSize || maxPages < 1 || maxPages > MaxSnapshotOrphanScanPages || maxItems < 1 {
 		return SnapshotOrphanMaintenanceRequest{}, 0, 0, 0, 0, 0, ErrSnapshotOrphanScanBounds
 	}
 	pruneAge := c.PruneAge
@@ -209,6 +209,8 @@ func (c *SnapshotOrphanCoordinator) renewFenceBeforeNative(ctx context.Context, 
 // invoked immediately before the native expiry call and again before each
 // durable completion batch. A nil seam uses the repository's own check.
 func (c *SnapshotOrphanCoordinator) Run(ctx context.Context, in SnapshotOrphanMaintenanceRequest, poolFence *RetentionMaintenanceFence, session RetentionCatalogSession, beforeNative func(context.Context, *RetentionMaintenanceFence) error) (SnapshotOrphanMaintenanceResult, error) {
+	// Orphan reconciliation is a lifecycle boundary: normalize once across
+	// bounded catalog scans, native expiry, and durable ledger completion.
 	if ctx == nil {
 		ctx = context.Background()
 	}

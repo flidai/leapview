@@ -7,7 +7,6 @@ package ducklake
 // distinction is important.
 
 import (
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -17,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 )
 
 const CompatibilityEvidenceVersion = 1
@@ -69,7 +69,7 @@ func validateConformanceCheckSet(checks []physicalpool.EvidenceCheck) error {
 		if !check.Passed {
 			return fmt.Errorf("shared physical-pool evidence check %q did not pass", check.ID)
 		}
-		if !validObservationDigest(check.ObservationDigest) {
+		if platformdigest.ValidateSHA256Identity(check.ObservationDigest) != nil {
 			return fmt.Errorf("shared physical-pool evidence check %q has invalid observation digest", check.ID)
 		}
 		delete(want, check.ID)
@@ -78,14 +78,6 @@ func validateConformanceCheckSet(checks []physicalpool.EvidenceCheck) error {
 		return fmt.Errorf("shared physical-pool evidence is missing checks")
 	}
 	return nil
-}
-
-func validObservationDigest(value string) bool {
-	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	_, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
-	return err == nil
 }
 
 // ValidateDataPathBinding binds DuckLake's DATA_PATH to the admitted pool's
@@ -112,6 +104,9 @@ func (c *PoolContract) ValidateDataPathBinding(dataPath string) error {
 }
 
 func canonicalDataPath(value string) (string, error) {
+	if strings.ContainsAny(value, "\x00\r\n") {
+		return "", fmt.Errorf("DuckLake DATA_PATH contains a control character")
+	}
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", fmt.Errorf("DuckLake DATA_PATH is required for a shared physical pool")
@@ -123,6 +118,9 @@ func canonicalDataPath(value string) (string, error) {
 		}
 		parsed.Scheme = strings.ToLower(parsed.Scheme)
 		parsed.Host = strings.ToLower(parsed.Host)
+		if strings.ContainsAny(parsed.Path, "\x00\r\n") {
+			return "", fmt.Errorf("DuckLake DATA_PATH URL contains a control character")
+		}
 		if parsed.Scheme == "file" {
 			if parsed.Host != "" || parsed.Path == "" {
 				return "", fmt.Errorf("DuckLake DATA_PATH file URL is invalid")

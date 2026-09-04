@@ -96,12 +96,8 @@ func TestPostgresAuthorityGraphValidateRejectsNilAndPartialGraphs(t *testing.T) 
 	}
 
 	partial.Bootstrap = &platformbootstrappostgres.Repository{}
-	if err := partial.Validate(); err == nil || !strings.Contains(err.Error(), "platform settings authority") {
-		t.Fatalf("bootstrap-only graph error = %v, want settings rejection", err)
-	}
-	partial.Settings = partial.Bootstrap
 	if err := partial.Validate(); err == nil || !strings.Contains(err.Error(), "operation authority") {
-		t.Fatalf("bootstrap/settings graph error = %v, want operation rejection", err)
+		t.Fatalf("bootstrap-only graph error = %v, want operation rejection", err)
 	}
 }
 

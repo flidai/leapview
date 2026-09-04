@@ -20,6 +20,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/catalogartifact"
 	"github.com/flidai/leapview/internal/deployment"
 	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
@@ -39,11 +40,7 @@ type DBTX interface {
 
 // Tx is the caller-owned native transaction surface. Pools and connections
 // intentionally do not satisfy it, preventing accidental split-brain writes.
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -398,14 +395,14 @@ func (r *Repository) RequireGenerationRootTx(ctx context.Context, tx Tx, targetI
 	if err != nil {
 		return err
 	}
-	found, err := depdb.New(tx).FindRetainedGenerationRoot(contextOrBackground(ctx), depdb.FindRetainedGenerationRootParams{TargetID: target, GenerationID: dbUUID(generation)})
+	found, err := depdb.New(tx).FindRetainedGenerationRoot(ctx, depdb.FindRetainedGenerationRootParams{TargetID: target, GenerationID: dbUUID(generation)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%w: rollback generation retention root is unavailable", ErrConflict)
 	}
 	if err != nil {
 		return err
 	}
-	root, err := depdb.New(tx).GetRetentionRootIdentity(contextOrBackground(ctx), dbUUID(found.RootID))
+	root, err := depdb.New(tx).GetRetentionRootIdentity(ctx, dbUUID(found.RootID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%w: rollback generation retention root is unavailable", ErrConflict)
 	}
@@ -446,7 +443,7 @@ func (r *Repository) RequireRollbackRootTx(ctx context.Context, tx Tx, rootID, t
 	if err != nil {
 		return err
 	}
-	row, err := depdb.New(tx).GetRetentionRootIdentity(contextOrBackground(ctx), dbUUID(root))
+	row, err := depdb.New(tx).GetRetentionRootIdentity(ctx, dbUUID(root))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%w: rollback publication retention root is unavailable", ErrConflict)
 	}
@@ -457,7 +454,7 @@ func (r *Repository) RequireRollbackRootTx(ctx context.Context, tx Tx, rootID, t
 		return fmt.Errorf("%w: rollback publication retention root is unavailable", ErrConflict)
 	}
 	if row.ExpiresAt.Valid {
-		now, clockErr := databaseNow(contextOrBackground(ctx), tx)
+		now, clockErr := databaseNow(ctx, tx)
 		if clockErr != nil {
 			return clockErr
 		}
@@ -579,9 +576,6 @@ func SchemaSQL() string { return schemaSQL }
 func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	// sqlc-exception: schema-ddl. Capability-owned schema DDL is applied as a
 	// single caller-owned migration transaction.
@@ -719,7 +713,7 @@ func (r *Repository) DatabaseNowTx(ctx context.Context, tx Tx) (time.Time, error
 	if tx == nil {
 		return time.Time{}, ErrInvalid
 	}
-	return databaseNow(contextOrBackground(ctx), tx)
+	return databaseNow(ctx, tx)
 }
 
 // DatabaseNow returns the authoritative PostgreSQL clock for callers that
@@ -730,7 +724,7 @@ func (r *Repository) DatabaseNow(ctx context.Context) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	return databaseNow(contextOrBackground(ctx), db)
+	return databaseNow(ctx, db)
 }
 
 func requireDB(r *Repository) (DBTX, error) {
@@ -751,13 +745,6 @@ func nativeDBConfigured(db DBTX) bool {
 	default:
 		return true
 	}
-}
-
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 func uuidID(value, label string, generate bool) (string, error) {
@@ -787,13 +774,8 @@ func textID(value, label string) (string, error) {
 }
 
 func digest(value, label string) (string, error) {
-	if len(value) != 71 || !strings.HasPrefix(value, "sha256:") {
-		return "", fmt.Errorf("%w: %s must be sha256 digest", ErrInvalid, label)
-	}
-	for _, c := range value[7:] {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			return "", fmt.Errorf("%w: %s must be lowercase sha256 digest", ErrInvalid, label)
-		}
+	if err := platformdigest.ValidateSHA256Identity(value); err != nil {
+		return "", fmt.Errorf("%w: %s must be sha256 digest: %w", ErrInvalid, label, err)
 	}
 	return value, nil
 }
@@ -995,7 +977,7 @@ func (r *Repository) begin(ctx context.Context) (pgx.Tx, error) {
 	if !ok {
 		return nil, errors.New("delivery repository requires transaction-capable PostgreSQL DB")
 	}
-	return b.Begin(contextOrBackground(ctx))
+	return b.Begin(ctx)
 }
 
 // CreateTarget creates (or exactly replays) one project/environment target.
@@ -1004,7 +986,7 @@ func (r *Repository) CreateTarget(ctx context.Context, in TargetInput) (Delivery
 	if err != nil {
 		return DeliveryTarget{}, err
 	}
-	return createTarget(contextOrBackground(ctx), db, in)
+	return createTarget(ctx, db, in)
 }
 
 // CreateTargetTx creates (or exactly replays) one project/environment target
@@ -1015,7 +997,7 @@ func (r *Repository) CreateTargetTx(ctx context.Context, tx Tx, in TargetInput) 
 	if tx == nil {
 		return DeliveryTarget{}, ErrInvalid
 	}
-	return createTarget(contextOrBackground(ctx), tx, in)
+	return createTarget(ctx, tx, in)
 }
 
 func createTarget(ctx context.Context, db DBTX, in TargetInput) (DeliveryTarget, error) {
@@ -1060,7 +1042,7 @@ func (r *Repository) Target(ctx context.Context, id string) (DeliveryTarget, err
 	if err != nil {
 		return DeliveryTarget{}, err
 	}
-	return loadTarget(contextOrBackground(ctx), db, id)
+	return loadTarget(ctx, db, id)
 }
 func (r *Repository) LoadTarget(ctx context.Context, id string) (DeliveryTarget, error) {
 	return r.Target(ctx, id)
@@ -1096,7 +1078,7 @@ func (r *Repository) ActiveGeneration(ctx context.Context, targetID string) (Del
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
-	activeID, err := depdb.New(db).GetActiveGeneration(contextOrBackground(ctx), targetID)
+	activeID, err := depdb.New(db).GetActiveGeneration(ctx, targetID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return DeliveryGeneration{}, ErrNotFound
@@ -1110,7 +1092,7 @@ func (r *Repository) ActiveGeneration(ctx context.Context, targetID string) (Del
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
-	generation, err := loadGeneration(contextOrBackground(ctx), db, activeID, GenerationInput{})
+	generation, err := loadGeneration(ctx, db, activeID, GenerationInput{})
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
@@ -1143,7 +1125,7 @@ func (r *Repository) CreatePlan(ctx context.Context, in PlanInput) (DeliveryPlan
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	return createPlan(contextOrBackground(ctx), db, in)
+	return createPlan(ctx, db, in)
 }
 
 // CreatePlanTx persists (or exactly replays) immutable compiler and
@@ -1154,7 +1136,7 @@ func (r *Repository) CreatePlanTx(ctx context.Context, tx Tx, in PlanInput) (Del
 	if tx == nil {
 		return DeliveryPlan{}, ErrInvalid
 	}
-	return createPlan(contextOrBackground(ctx), tx, in)
+	return createPlan(ctx, tx, in)
 }
 
 // CreatePlanAllocatedTx atomically admits a plan using the next revision
@@ -1165,21 +1147,21 @@ func (r *Repository) CreatePlanAllocatedTx(ctx context.Context, tx Tx, in PlanIn
 	if tx == nil {
 		return DeliveryPlan{}, ErrInvalid
 	}
-	return createPlanAllocated(contextOrBackground(ctx), tx, in)
+	return createPlanAllocated(ctx, tx, in)
 }
 
 // CreatePlanAllocated owns a short transaction around CreatePlanAllocatedTx.
 func (r *Repository) CreatePlanAllocated(ctx context.Context, in PlanInput) (DeliveryPlan, error) {
-	tx, err := r.begin(contextOrBackground(ctx))
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	defer tx.Rollback(contextOrBackground(ctx))
+	defer tx.Rollback(ctx)
 	out, err := r.CreatePlanAllocatedTx(ctx, tx, in)
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return DeliveryPlan{}, err
 	}
 	return out, nil
@@ -1193,7 +1175,6 @@ func (r *Repository) CreateTargetAndPlanTx(ctx context.Context, tx Tx, target Ta
 	if tx == nil {
 		return DeliveryTarget{}, DeliveryPlan{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	createdTarget, err := createTarget(ctx, tx, target)
 	if err != nil {
 		return DeliveryTarget{}, DeliveryPlan{}, err
@@ -1215,7 +1196,6 @@ func (r *Repository) CreateTargetAndPlanAllocatedTx(ctx context.Context, tx Tx, 
 	if tx == nil {
 		return DeliveryTarget{}, DeliveryPlan{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	createdTarget, err := createTarget(ctx, tx, target)
 	if err != nil {
 		return DeliveryTarget{}, DeliveryPlan{}, err
@@ -1413,7 +1393,7 @@ func (r *Repository) Plan(ctx context.Context, id string) (DeliveryPlan, error) 
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	row, err := depdb.New(db).GetPlan(contextOrBackground(ctx), dbUUID(id))
+	row, err := depdb.New(db).GetPlan(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPlan{}, ErrNotFound
 	}
@@ -1424,7 +1404,7 @@ func (r *Repository) Plan(ctx context.Context, id string) (DeliveryPlan, error) 
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	if err := validatePlanTargetScope(contextOrBackground(ctx), db, p); err != nil {
+	if err := validatePlanTargetScope(ctx, db, p); err != nil {
 		return DeliveryPlan{}, err
 	}
 	return p, nil
@@ -1441,7 +1421,7 @@ func (r *Repository) PlanTx(ctx context.Context, tx Tx, id string) (DeliveryPlan
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	row, err := depdb.New(tx).GetPlan(contextOrBackground(ctx), dbUUID(id))
+	row, err := depdb.New(tx).GetPlan(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPlan{}, ErrNotFound
 	}
@@ -1452,7 +1432,7 @@ func (r *Repository) PlanTx(ctx context.Context, tx Tx, id string) (DeliveryPlan
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	if err := validatePlanTargetScope(contextOrBackground(ctx), tx, p); err != nil {
+	if err := validatePlanTargetScope(ctx, tx, p); err != nil {
 		return DeliveryPlan{}, err
 	}
 	return p, nil
@@ -1467,7 +1447,7 @@ func (r *Repository) BeginBuildAttempt(ctx context.Context, in BuildAttemptInput
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
-	return beginBuildAttempt(contextOrBackground(ctx), db, in)
+	return beginBuildAttempt(ctx, db, in)
 }
 
 // BeginBuildAttemptTx records (or exactly replays) a build attempt through a
@@ -1478,7 +1458,7 @@ func (r *Repository) BeginBuildAttemptTx(ctx context.Context, tx Tx, in BuildAtt
 	if tx == nil {
 		return DeliveryBuildAttempt{}, ErrInvalid
 	}
-	return beginBuildAttempt(contextOrBackground(ctx), tx, in)
+	return beginBuildAttempt(ctx, tx, in)
 }
 
 // AdmitSuccessorBuildAttemptTx fences an indeterminate predecessor and
@@ -1497,7 +1477,6 @@ func (r *Repository) AdmitSuccessorBuildAttemptTx(ctx context.Context, tx Tx, in
 	if tx == nil {
 		return BuildAttemptSuccessorResult{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	predecessorID, err := uuidID(in.PredecessorAttemptID, "predecessor attempt id", false)
 	if err != nil {
 		return BuildAttemptSuccessorResult{}, err
@@ -1631,7 +1610,7 @@ func (r *Repository) BuildAttemptSuccessorTx(ctx context.Context, tx Tx, predece
 	if err != nil {
 		return BuildAttemptSuccessorLink{}, err
 	}
-	row, err := depdb.New(tx).GetBuildAttemptSuccessor(contextOrBackground(ctx), dbUUID(id))
+	row, err := depdb.New(tx).GetBuildAttemptSuccessor(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BuildAttemptSuccessorLink{}, ErrNotFound
 	}
@@ -1657,7 +1636,6 @@ func (r *Repository) AcquireLeaseAndBeginBuildAttemptTx(
 	if tx == nil {
 		return DeliveryLease{}, DeliveryBuildAttempt{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	if attemptInput.OwnerID != leaseInput.OwnerID {
 		return DeliveryLease{}, DeliveryBuildAttempt{}, fmt.Errorf("%w: lease and build attempt owners differ", ErrConflict)
 	}
@@ -1775,7 +1753,7 @@ func (r *Repository) BuildAttempt(ctx context.Context, id string) (DeliveryBuild
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
-	return loadAttempt(contextOrBackground(ctx), db, id)
+	return loadAttempt(ctx, db, id)
 }
 
 // BuildAttemptTx reads immutable delivery build-attempt evidence through a
@@ -1788,7 +1766,7 @@ func (r *Repository) BuildAttemptTx(ctx context.Context, tx Tx, id string) (Deli
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
-	return loadAttempt(contextOrBackground(ctx), tx, id)
+	return loadAttempt(ctx, tx, id)
 }
 func (r *Repository) LoadBuildAttempt(ctx context.Context, id string) (DeliveryBuildAttempt, error) {
 	return r.BuildAttempt(ctx, id)
@@ -1798,21 +1776,21 @@ func (r *Repository) LoadBuildAttempt(ctx context.Context, id string) (DeliveryB
 // attempt. It owns a short transaction so the lock, lease check, insert, and
 // replay read share one atomic boundary.
 func (r *Repository) BindBuildArtifact(ctx context.Context, in BuildArtifactBindingInput) (BuildArtifactBinding, error) {
-	tx, err := r.begin(contextOrBackground(ctx))
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return BuildArtifactBinding{}, err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	out, err := r.BindBuildArtifactTx(ctx, tx, in)
 	if err != nil {
 		return BuildArtifactBinding{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return BuildArtifactBinding{}, err
 	}
 	committed = true
@@ -1826,7 +1804,7 @@ func (r *Repository) BindBuildArtifactTx(ctx context.Context, tx Tx, in BuildArt
 	if tx == nil {
 		return BuildArtifactBinding{}, ErrInvalid
 	}
-	return bindBuildArtifact(contextOrBackground(ctx), tx, in)
+	return bindBuildArtifact(ctx, tx, in)
 }
 
 // BindRecoveredBuildArtifactTx records (or exactly replays) a recovered
@@ -1838,7 +1816,7 @@ func (r *Repository) BindRecoveredBuildArtifactTx(ctx context.Context, tx Tx, in
 	if tx == nil {
 		return BuildArtifactBinding{}, ErrInvalid
 	}
-	return bindRecoveredBuildArtifact(contextOrBackground(ctx), tx, in)
+	return bindRecoveredBuildArtifact(ctx, tx, in)
 }
 
 func canonicalBuildArtifactBindingInput(in BuildArtifactBindingInput) (attempt, artifactID, artifactDigest, servingState, owner string, fence int64, err error) {
@@ -2048,7 +2026,7 @@ func (r *Repository) BuildArtifactBinding(ctx context.Context, attemptID string)
 	if err != nil {
 		return BuildArtifactBinding{}, err
 	}
-	return loadBuildArtifactBinding(contextOrBackground(ctx), db, attemptID)
+	return loadBuildArtifactBinding(ctx, db, attemptID)
 }
 
 func (r *Repository) BuildArtifactBindingTx(ctx context.Context, tx Tx, attemptID string) (BuildArtifactBinding, error) {
@@ -2059,7 +2037,7 @@ func (r *Repository) BuildArtifactBindingTx(ctx context.Context, tx Tx, attemptI
 	if err != nil {
 		return BuildArtifactBinding{}, err
 	}
-	return loadBuildArtifactBinding(contextOrBackground(ctx), tx, attemptID)
+	return loadBuildArtifactBinding(ctx, tx, attemptID)
 }
 
 func (r *Repository) LoadBuildArtifactBinding(ctx context.Context, attemptID string) (BuildArtifactBinding, error) {
@@ -2071,7 +2049,7 @@ func (r *Repository) CommitBuildAttempt(ctx context.Context, in CommitAttemptInp
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
-	return r.transitionAttempt(contextOrBackground(ctx), in, AttemptCommitted)
+	return r.transitionAttempt(ctx, in, AttemptCommitted)
 }
 
 // CommitBuildAttemptTx commits a build attempt through a caller-owned
@@ -2081,7 +2059,7 @@ func (r *Repository) CommitBuildAttemptTx(ctx context.Context, tx Tx, in CommitA
 	if tx == nil {
 		return DeliveryBuildAttempt{}, ErrInvalid
 	}
-	return transitionAttemptTx(contextOrBackground(ctx), tx, in, AttemptCommitted)
+	return transitionAttemptTx(ctx, tx, in, AttemptCommitted)
 }
 
 func (r *Repository) AbortBuildAttempt(ctx context.Context, in TerminateAttemptInput) (DeliveryBuildAttempt, error) {
@@ -2089,7 +2067,7 @@ func (r *Repository) AbortBuildAttempt(ctx context.Context, in TerminateAttemptI
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
-	return r.transitionAttempt(contextOrBackground(ctx), CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptAborted)
+	return r.transitionAttempt(ctx, CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptAborted)
 }
 
 // AbortBuildAttemptTx aborts a build attempt through a caller-owned
@@ -2098,7 +2076,7 @@ func (r *Repository) AbortBuildAttemptTx(ctx context.Context, tx Tx, in Terminat
 	if tx == nil {
 		return DeliveryBuildAttempt{}, ErrInvalid
 	}
-	return transitionAttemptTx(contextOrBackground(ctx), tx, CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptAborted)
+	return transitionAttemptTx(ctx, tx, CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptAborted)
 }
 
 func (r *Repository) MarkAttemptIndeterminate(ctx context.Context, in TerminateAttemptInput) (DeliveryBuildAttempt, error) {
@@ -2106,7 +2084,7 @@ func (r *Repository) MarkAttemptIndeterminate(ctx context.Context, in TerminateA
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
-	return r.transitionAttempt(contextOrBackground(ctx), CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptIndeterminate)
+	return r.transitionAttempt(ctx, CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptIndeterminate)
 }
 
 // MarkAttemptIndeterminateTx marks a build attempt indeterminate through a
@@ -2115,7 +2093,7 @@ func (r *Repository) MarkAttemptIndeterminateTx(ctx context.Context, tx Tx, in T
 	if tx == nil {
 		return DeliveryBuildAttempt{}, ErrInvalid
 	}
-	return transitionAttemptTx(contextOrBackground(ctx), tx, CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptIndeterminate)
+	return transitionAttemptTx(ctx, tx, CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptIndeterminate)
 }
 
 // ReconcileBuildAttempt applies an explicit exact-marker or positive
@@ -2125,21 +2103,21 @@ func (r *Repository) ReconcileBuildAttempt(ctx context.Context, in ReconcileBuil
 	if _, err := requireDB(r); err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
-	tx, err := r.begin(contextOrBackground(ctx))
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	attempt, err := r.ReconcileBuildAttemptTx(ctx, tx, in)
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
 	committed = true
@@ -2152,7 +2130,7 @@ func (r *Repository) ReconcileBuildAttemptTx(ctx context.Context, tx Tx, in Reco
 	if r == nil || tx == nil || !r.Configured() {
 		return DeliveryBuildAttempt{}, ErrInvalid
 	}
-	return reconcileBuildAttemptTx(contextOrBackground(ctx), tx, in)
+	return reconcileBuildAttemptTx(ctx, tx, in)
 }
 
 func reconcileBuildAttemptTx(ctx context.Context, db DBTX, in ReconcileBuildAttemptInput) (DeliveryBuildAttempt, error) {
@@ -2320,7 +2298,6 @@ func (r *Repository) RenewBuildAttemptLeaseTx(ctx context.Context, tx Tx, attemp
 	if tx == nil {
 		return DeliveryBuildAttempt{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	id, err := uuidID(attemptID, "attempt id", false)
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
@@ -2528,7 +2505,7 @@ func (r *Repository) CreateSnapshotSeal(ctx context.Context, in SnapshotSealInpu
 	if err != nil {
 		return SnapshotSeal{}, err
 	}
-	return createSeal(contextOrBackground(ctx), db, in)
+	return createSeal(ctx, db, in)
 }
 
 // CreateSnapshotSealTx creates (or exactly replays) a snapshot seal through a
@@ -2538,7 +2515,7 @@ func (r *Repository) CreateSnapshotSealTx(ctx context.Context, tx Tx, in Snapsho
 	if tx == nil {
 		return SnapshotSeal{}, ErrInvalid
 	}
-	return createSeal(contextOrBackground(ctx), tx, in)
+	return createSeal(ctx, tx, in)
 }
 
 func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSeal, error) {
@@ -2686,7 +2663,7 @@ func (r *Repository) SnapshotSeal(ctx context.Context, id string) (SnapshotSeal,
 	if err != nil {
 		return SnapshotSeal{}, err
 	}
-	return loadSeal(contextOrBackground(ctx), db, id)
+	return loadSeal(ctx, db, id)
 }
 
 // SnapshotSealTx is the transaction-aware immutable seal projection.
@@ -2698,7 +2675,7 @@ func (r *Repository) SnapshotSealTx(ctx context.Context, tx Tx, id string) (Snap
 	if err != nil {
 		return SnapshotSeal{}, err
 	}
-	return loadSeal(contextOrBackground(ctx), tx, id)
+	return loadSeal(ctx, tx, id)
 }
 func (r *Repository) LoadSnapshotSeal(ctx context.Context, id string) (SnapshotSeal, error) {
 	return r.SnapshotSeal(ctx, id)
@@ -2709,7 +2686,7 @@ func (r *Repository) CreatePublication(ctx context.Context, in PublicationInput)
 	if err != nil {
 		return DeliveryPublication{}, err
 	}
-	return createPublication(contextOrBackground(ctx), db, in)
+	return createPublication(ctx, db, in)
 }
 
 // CreatePublicationTx records a pending publication through a caller-owned
@@ -2718,7 +2695,7 @@ func (r *Repository) CreatePublicationTx(ctx context.Context, tx Tx, in Publicat
 	if tx == nil {
 		return DeliveryPublication{}, ErrInvalid
 	}
-	return createPublication(contextOrBackground(ctx), tx, in)
+	return createPublication(ctx, tx, in)
 }
 
 func createPublication(ctx context.Context, db DBTX, in PublicationInput) (DeliveryPublication, error) {
@@ -2838,7 +2815,7 @@ func (r *Repository) Publication(ctx context.Context, id string) (DeliveryPublic
 	if err != nil {
 		return DeliveryPublication{}, err
 	}
-	return loadPublication(contextOrBackground(ctx), db, id)
+	return loadPublication(ctx, db, id)
 }
 
 // PublicationTx reads immutable publication evidence through a caller-owned
@@ -2851,7 +2828,7 @@ func (r *Repository) PublicationTx(ctx context.Context, tx Tx, id string) (Deliv
 	if err != nil {
 		return DeliveryPublication{}, err
 	}
-	return loadPublication(contextOrBackground(ctx), tx, id)
+	return loadPublication(ctx, tx, id)
 }
 
 // CommittedPublicationTx returns the committed deployment publication for a
@@ -2866,13 +2843,13 @@ func (r *Repository) CommittedPublicationTx(ctx context.Context, tx Tx, generati
 	if err != nil {
 		return DeliveryPublication{}, err
 	}
-	id, err := depdb.New(tx).FindCommittedPublication(contextOrBackground(ctx), dbUUID(generation))
+	id, err := depdb.New(tx).FindCommittedPublication(ctx, dbUUID(generation))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPublication{}, ErrNotFound
 	} else if err != nil {
 		return DeliveryPublication{}, err
 	}
-	return loadPublication(contextOrBackground(ctx), tx, id)
+	return loadPublication(ctx, tx, id)
 }
 
 // HistoricalCommittedPublicationTx returns the immutable committed delivery
@@ -2888,13 +2865,13 @@ func (r *Repository) HistoricalCommittedPublicationTx(ctx context.Context, tx Tx
 	if err != nil {
 		return DeliveryPublication{}, err
 	}
-	id, err := depdb.New(tx).FindHistoricalCommittedPublication(contextOrBackground(ctx), dbUUID(generation))
+	id, err := depdb.New(tx).FindHistoricalCommittedPublication(ctx, dbUUID(generation))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPublication{}, ErrNotFound
 	} else if err != nil {
 		return DeliveryPublication{}, err
 	}
-	return loadPublication(contextOrBackground(ctx), tx, id)
+	return loadPublication(ctx, tx, id)
 }
 
 func (r *Repository) LoadPublication(ctx context.Context, id string) (DeliveryPublication, error) {
@@ -2915,14 +2892,14 @@ func (r *Repository) CancelPublication(ctx context.Context, id string) (Delivery
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
-	p, err := r.CancelPublicationTx(contextOrBackground(ctx), tx, id)
+	p, err := r.CancelPublicationTx(ctx, tx, id)
 	if err != nil {
 		return DeliveryPublication{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return DeliveryPublication{}, err
 	}
 	committed = true
@@ -2976,14 +2953,14 @@ func (r *Repository) AcquireLease(ctx context.Context, in LeaseInput) (DeliveryL
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
-	l, err := acquireLease(contextOrBackground(ctx), tx, in)
+	l, err := acquireLease(ctx, tx, in)
 	if err != nil {
 		return DeliveryLease{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return DeliveryLease{}, err
 	}
 	committed = true
@@ -2997,7 +2974,7 @@ func (r *Repository) AcquireLeaseTx(ctx context.Context, tx Tx, in LeaseInput) (
 	if tx == nil {
 		return DeliveryLease{}, ErrInvalid
 	}
-	return acquireLease(contextOrBackground(ctx), tx, in)
+	return acquireLease(ctx, tx, in)
 }
 func acquireLease(ctx context.Context, db DBTX, in LeaseInput) (DeliveryLease, error) {
 	id, err := uuidID(in.LeaseID, "lease id", true)
@@ -3099,7 +3076,7 @@ func (r *Repository) Lease(ctx context.Context, id string) (DeliveryLease, error
 	if err != nil {
 		return DeliveryLease{}, err
 	}
-	return loadLeaseSimple(contextOrBackground(ctx), db, id)
+	return loadLeaseSimple(ctx, db, id)
 }
 
 // LeaseTx reads one target lease through a caller-owned transaction. It is
@@ -3113,7 +3090,7 @@ func (r *Repository) LeaseTx(ctx context.Context, tx Tx, id string) (DeliveryLea
 	if err != nil {
 		return DeliveryLease{}, err
 	}
-	return loadLeaseSimple(contextOrBackground(ctx), tx, id)
+	return loadLeaseSimple(ctx, tx, id)
 }
 
 // LockLeaseTx acquires the same lease-row lock used by build completion and
@@ -3128,7 +3105,6 @@ func (r *Repository) LockLeaseTx(ctx context.Context, tx Tx, id string) (Deliver
 	if err != nil {
 		return DeliveryLease{}, err
 	}
-	ctx = contextOrBackground(ctx)
 	if _, err := depdb.New(tx).LockLease(ctx, dbUUID(id)); errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryLease{}, ErrNotFound
 	} else if err != nil {
@@ -3157,7 +3133,7 @@ func (r *Repository) ReleaseLease(ctx context.Context, f LeaseFence) error {
 	if err != nil {
 		return err
 	}
-	return releaseLease(contextOrBackground(ctx), db, f)
+	return releaseLease(ctx, db, f)
 }
 
 // ReleaseLeaseTx releases a lease through a caller-owned PostgreSQL
@@ -3167,7 +3143,7 @@ func (r *Repository) ReleaseLeaseTx(ctx context.Context, tx Tx, f LeaseFence) er
 	if tx == nil {
 		return ErrInvalid
 	}
-	return releaseLease(contextOrBackground(ctx), tx, f)
+	return releaseLease(ctx, tx, f)
 }
 
 // ReleaseLeaseAfterAttemptTerminationTx closes the exact target lease after
@@ -3192,7 +3168,6 @@ func (r *Repository) ReleaseLeaseAfterAttemptTerminationTx(ctx context.Context, 
 	if err != nil || f.FencingEpoch <= 0 {
 		return ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	updated, err := depdb.New(tx).ReleaseLeaseAfterAttemptTermination(ctx, depdb.ReleaseLeaseAfterAttemptTerminationParams{LeaseID: dbUUID(id), TargetID: target, OwnerID: owner, FencingEpoch: f.FencingEpoch})
 	if errors.Is(err, pgx.ErrNoRows) {
 		updated, err = false, nil
@@ -3269,7 +3244,6 @@ func (r *Repository) CompleteBuildTx(
 	if tx == nil {
 		return CompleteBuildResult{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 
 	// Validate the key cross-authority identity before the first state
 	// transition.
@@ -3313,7 +3287,6 @@ func (r *Repository) CompleteBuild(
 	qualificationDigest string,
 	fence LeaseFence,
 ) (CompleteBuildResult, error) {
-	ctx = contextOrBackground(ctx)
 	tx, err := r.begin(ctx)
 	if err != nil {
 		return CompleteBuildResult{}, err
@@ -3479,7 +3452,7 @@ func (r *Repository) RenewLease(ctx context.Context, f LeaseFence, expiresAt tim
 	if err != nil {
 		return err
 	}
-	now, err := databaseNow(contextOrBackground(ctx), db)
+	now, err := databaseNow(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -3487,7 +3460,7 @@ func (r *Repository) RenewLease(ctx context.Context, f LeaseFence, expiresAt tim
 	if !exp.After(now) || exp.After(now.Add(maxLease)) {
 		return ErrInvalid
 	}
-	updated, err := depdb.New(db).RenewLease(contextOrBackground(ctx), depdb.RenewLeaseParams{LeaseID: dbUUID(id), TargetID: target, OwnerID: owner, FencingEpoch: f.FencingEpoch, ExpiresAt: pgTime(exp)})
+	updated, err := depdb.New(db).RenewLease(ctx, depdb.RenewLeaseParams{LeaseID: dbUUID(id), TargetID: target, OwnerID: owner, FencingEpoch: f.FencingEpoch, ExpiresAt: pgTime(exp)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		updated, err = false, nil
 	}
@@ -3497,7 +3470,7 @@ func (r *Repository) RenewLease(ctx context.Context, f LeaseFence, expiresAt tim
 	if updated {
 		return nil
 	}
-	l, e := loadLeaseSimple(contextOrBackground(ctx), db, id)
+	l, e := loadLeaseSimple(ctx, db, id)
 	if e != nil {
 		return e
 	}
@@ -3515,7 +3488,6 @@ func (r *Repository) RenewLeaseTx(ctx context.Context, tx Tx, f LeaseFence, expi
 	if tx == nil {
 		return ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	id, err := uuidID(f.LeaseID, "lease id", false)
 	if err != nil {
 		return err
@@ -3581,7 +3553,7 @@ func (r *Repository) Activate(ctx context.Context, in ActivationInput) (Activati
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	if in.LeaseID != "" {
@@ -3599,12 +3571,12 @@ func (r *Repository) Activate(ctx context.Context, in ActivationInput) (Activati
 			return ActivationResult{}, err
 		}
 	}
-	result, err := r.ActivateTx(contextOrBackground(ctx), tx, in)
+	result, err := r.ActivateTx(ctx, tx, in)
 	if err != nil {
-		_ = tx.Rollback(contextOrBackground(ctx))
+		_ = tx.Rollback(ctx)
 		return ActivationResult{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return ActivationResult{}, err
 	}
 	committed = true
@@ -3634,7 +3606,6 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 	if tx == nil {
 		return ActivationResult{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	pid, err := uuidID(in.PublicationID, "publication id", false)
 	if err != nil {
 		return ActivationResult{}, err
@@ -3854,19 +3825,12 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 		predecessor = found
 	}
 	newRev := currentRev + 1
-	targetUpdated, err := depdb.New(tx).UpdateTargetRevision(ctx, depdb.UpdateTargetRevisionParams{TargetID: target, NewRevision: newRev, ExpectedRevision: currentRev})
-	if errors.Is(err, pgx.ErrNoRows) {
-		targetUpdated, err = false, nil
-	}
+	transitioned, err := commitActivationTransition(ctx, tx, p.PublicationID, target, p.GenerationID, currentRev, newRev)
 	if err != nil {
 		return ActivationResult{}, err
 	}
-	if !targetUpdated {
+	if !transitioned {
 		return ActivationResult{}, ErrCASConflict
-	}
-	err = depdb.New(tx).UpsertActivePointer(ctx, depdb.UpsertActivePointerParams{TargetID: target, GenerationID: dbUUID(p.GenerationID), PublicationID: dbUUID(p.PublicationID)})
-	if err != nil {
-		return ActivationResult{}, err
 	}
 	// Candidate roots protect qualified preview/build output until activation
 	// transfers reachability to a generation root. Retire that temporary root
@@ -3884,16 +3848,6 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 		if retired.RootID != predecessor.RootID || retired.TargetID != target || retired.GenerationID != currentGeneration || retired.RootKind != "generation" || retired.State != "retiring" {
 			return ActivationResult{}, fmt.Errorf("%w: predecessor retention root identity differs", ErrConflict)
 		}
-	}
-	publicationUpdated, err := depdb.New(tx).CommitPublication(ctx, depdb.CommitPublicationParams{PublicationID: dbUUID(p.PublicationID), ResultRevision: pgInt8(&newRev)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		publicationUpdated, err = false, nil
-	}
-	if err != nil {
-		return ActivationResult{}, err
-	}
-	if !publicationUpdated {
-		return ActivationResult{}, ErrConflict
 	}
 	p.ResultTargetRevision = newRev
 	if err = ensureActivationRoot(ctx, tx, p, target); err != nil {
@@ -3918,6 +3872,24 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 	return ActivationResult{Publication: p, Pointer: pointer, Event: event, Audit: audit}, nil
 }
 
+// commitActivationTransition is the sole serving-state mutation path. The
+// database capability revalidates the publication, generation, candidate,
+// predecessor pointer and target revision while holding the relevant row
+// locks, then commits the target revision, active pointer and publication
+// outcome atomically under SECURITY DEFINER ownership.
+func commitActivationTransition(ctx context.Context, tx Tx, publicationID, targetID, generationID string, expectedRevision, resultRevision int64) (bool, error) {
+	if tx == nil || publicationID == "" || targetID == "" || generationID == "" {
+		return false, ErrInvalid
+	}
+	return depdb.New(tx).CommitActivationTransition(ctx, depdb.CommitActivationTransitionParams{
+		PublicationID:          dbUUID(publicationID),
+		TargetID:               targetID,
+		GenerationID:           dbUUID(generationID),
+		ExpectedTargetRevision: expectedRevision,
+		ResultTargetRevision:   resultRevision,
+	})
+}
+
 func (r *Repository) verifyActivationLineage(ctx context.Context, tx Tx, targetID, projectID, generationID string) error {
 	if r == nil || r.lineage == nil {
 		return fmt.Errorf("%w: activation lineage verifier is required", ErrInvalid)
@@ -3925,7 +3897,7 @@ func (r *Repository) verifyActivationLineage(ctx context.Context, tx Tx, targetI
 	if targetID == "" || projectID == "" || generationID == "" {
 		return fmt.Errorf("%w: activation lineage identity is incomplete", ErrConflict)
 	}
-	if err := r.lineage.VerifyActivationLineage(contextOrBackground(ctx), tx, ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: generationID}); err != nil {
+	if err := r.lineage.VerifyActivationLineage(ctx, tx, ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: generationID}); err != nil {
 		// Integrity or identity failures mean this generation is not eligible
 		// for activation. Operational failures (for example cancellation or a
 		// database outage) must remain retryable rather than being flattened
@@ -4093,7 +4065,7 @@ func (r *Repository) CreateRetentionRoot(ctx context.Context, root DeliveryReten
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
-	return createRetentionRoot(contextOrBackground(ctx), db, root)
+	return createRetentionRoot(ctx, db, root)
 }
 
 // CreateRetentionRootTx records an immutable live retention root through a
@@ -4103,7 +4075,7 @@ func (r *Repository) CreateRetentionRootTx(ctx context.Context, tx Tx, root Deli
 	if tx == nil {
 		return DeliveryRetentionRoot{}, ErrInvalid
 	}
-	return createRetentionRoot(contextOrBackground(ctx), tx, root)
+	return createRetentionRoot(ctx, tx, root)
 }
 
 func createRetentionRoot(ctx context.Context, db DBTX, root DeliveryRetentionRoot) (DeliveryRetentionRoot, error) {
@@ -4159,18 +4131,18 @@ func createRetentionRoot(ctx context.Context, db DBTX, root DeliveryRetentionRoo
 		// Recovery roots are maintenance-owned. Their table intentionally grants
 		// only SELECT to the maintenance role, so creation crosses the narrow
 		// SECURITY DEFINER capability function rather than broadening INSERT.
-		accepted, callErr := depdb.New(db).CreateRecoveryRetentionRoot(contextOrBackground(ctx), depdb.CreateRecoveryRetentionRootParams{RootID: dbUUID(id), TargetID: target, GenerationID: dbUUID(root.GenerationID), SnapshotSealID: dbUUID(root.SnapshotSealID), ExpiresAt: nullablePgTime(root.ExpiresAt), Evidence: evidence})
+		accepted, callErr := depdb.New(db).CreateRecoveryRetentionRoot(ctx, depdb.CreateRecoveryRetentionRootParams{RootID: dbUUID(id), TargetID: target, GenerationID: dbUUID(root.GenerationID), SnapshotSealID: dbUUID(root.SnapshotSealID), ExpiresAt: nullablePgTime(root.ExpiresAt), Evidence: evidence})
 		err = callErr
 		if err == nil && !accepted {
 			err = ErrConflict
 		}
 	} else {
-		err = depdb.New(db).InsertRetentionRoot(contextOrBackground(ctx), depdb.InsertRetentionRootParams{RootID: dbUUID(id), TargetID: target, CandidateID: dbUUID(root.CandidateID), GenerationID: dbUUID(root.GenerationID), SnapshotSealID: dbUUID(root.SnapshotSealID), RootKind: root.RootKind, State: root.State, ExpiresAt: nullablePgTime(root.ExpiresAt), Evidence: evidence})
+		err = depdb.New(db).InsertRetentionRoot(ctx, depdb.InsertRetentionRootParams{RootID: dbUUID(id), TargetID: target, CandidateID: dbUUID(root.CandidateID), GenerationID: dbUUID(root.GenerationID), SnapshotSealID: dbUUID(root.SnapshotSealID), RootKind: root.RootKind, State: root.State, ExpiresAt: nullablePgTime(root.ExpiresAt), Evidence: evidence})
 	}
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
-	persisted, err := loadRetentionRoot(contextOrBackground(ctx), db, id)
+	persisted, err := loadRetentionRoot(ctx, db, id)
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
@@ -4203,7 +4175,6 @@ func (r *Repository) RetireRetentionRootTx(ctx context.Context, tx Tx, rootID st
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
-	ctx = contextOrBackground(ctx)
 	locked, err := depdb.New(tx).GetRetentionRootIdentity(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryRetentionRoot{}, ErrNotFound
@@ -4250,7 +4221,6 @@ func (r *Repository) ExpireRetentionRootTx(ctx context.Context, tx Tx, rootID st
 	if len(grace) == 1 {
 		interval.Microseconds = grace[0].Microseconds()
 	}
-	ctx = contextOrBackground(ctx)
 	locked, err := depdb.New(tx).GetRetentionRootIdentity(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryRetentionRoot{}, ErrNotFound
@@ -4287,14 +4257,14 @@ func (r *Repository) RetireRetentionRoot(ctx context.Context, rootID string) (De
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	root, err := r.RetireRetentionRootTx(ctx, tx, rootID)
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
 	committed = true
@@ -4310,14 +4280,14 @@ func (r *Repository) ExpireRetentionRoot(ctx context.Context, rootID string, gra
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(contextOrBackground(ctx))
+			_ = tx.Rollback(ctx)
 		}
 	}()
 	root, err := r.ExpireRetentionRootTx(ctx, tx, rootID, grace...)
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
 	committed = true
@@ -4338,9 +4308,6 @@ func (m *Maintenance) Drain(ctx context.Context, physicalPoolID, catalogID strin
 	catalog, err := textID(catalogID, "catalog id")
 	if err != nil {
 		return RetentionDrainResult{}, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	row, err := depdb.New(m.db).MaintainRetentionRoots(ctx, depdb.MaintainRetentionRootsParams{
 		PhysicalPoolID: physicalPool,

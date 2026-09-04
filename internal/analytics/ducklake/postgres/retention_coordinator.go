@@ -28,7 +28,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const maxRetentionMaintenanceLease = 24 * time.Hour
+const (
+	maxRetentionMaintenanceLease     = 24 * time.Hour
+	MaxRetentionMaintenanceSnapshots = 256
+)
 
 var (
 	ErrRetentionMaintenanceBusy       = errors.New("DuckLake retention maintenance authority is busy")
@@ -392,7 +395,7 @@ func prepareRetentionSnapshots(ctx context.Context, db DBTX, operation Retention
 		}
 		var queryErr error
 		if operation.DryRun {
-			candidates, listErr := querygen(tx).ListRetentionDryRunSnapshots(ctx, dbgen.ListRetentionDryRunSnapshotsParams{PhysicalPoolID: operation.PhysicalPoolID, CatalogID: operation.CatalogID})
+			candidates, listErr := querygen(tx).ListRetentionDryRunSnapshots(ctx, dbgen.ListRetentionDryRunSnapshotsParams{PhysicalPoolID: operation.PhysicalPoolID, CatalogID: operation.CatalogID, ClaimLimit: MaxRetentionMaintenanceSnapshots})
 			queryErr = listErr
 			for _, candidate := range candidates {
 				rows = append(rows, struct {
@@ -403,7 +406,7 @@ func prepareRetentionSnapshots(ctx context.Context, db DBTX, operation Retention
 		} else {
 			claimed, claimErr := querygen(tx).ClaimRetentionSnapshots(ctx, dbgen.ClaimRetentionSnapshotsParams{
 				MaintenanceID: upgradeUUID(operation.MaintenanceID), OwnerID: operation.OwnerID, FencingEpoch: operation.FencingEpoch,
-				PhysicalPoolID: operation.PhysicalPoolID, CatalogID: operation.CatalogID,
+				PhysicalPoolID: operation.PhysicalPoolID, CatalogID: operation.CatalogID, ClaimLimit: MaxRetentionMaintenanceSnapshots,
 			})
 			queryErr = claimErr
 			for _, candidate := range claimed {
@@ -417,12 +420,20 @@ func prepareRetentionSnapshots(ctx context.Context, db DBTX, operation Retention
 			return nil, queryErr
 		}
 		out := make([]SnapshotRef, 0, len(rows))
+		snapshotIDs := make([]int64, 0, len(rows))
 		for _, row := range rows {
 			ref := SnapshotRef{PhysicalPoolID: operation.PhysicalPoolID, CatalogID: operation.CatalogID, SnapshotID: row.SnapshotID}
-			if _, err := ensureRetentionMaintenanceSnapshot(ctx, tx, operation.MaintenanceID, ref); err != nil {
+			out = append(out, ref)
+			snapshotIDs = append(snapshotIDs, row.SnapshotID)
+		}
+		if len(snapshotIDs) > 0 {
+			if err := querygen(tx).InsertRetentionMaintenanceSnapshots(ctx, dbgen.InsertRetentionMaintenanceSnapshotsParams{
+				MaintenanceID: upgradeUUID(operation.MaintenanceID), PhysicalPoolID: operation.PhysicalPoolID,
+				CatalogID: operation.CatalogID, SnapshotIds: snapshotIDs, OwnerID: operation.OwnerID,
+				FencingEpoch: operation.FencingEpoch,
+			}); err != nil {
 				return nil, err
 			}
-			out = append(out, ref)
 		}
 		digest := retentionSnapshotSetDigest(out)
 		operation.SnapshotSetDigest = digest
@@ -689,6 +700,14 @@ type RetentionCoordinator struct {
 	Control        *Repository
 	OpenSessionFor RetentionCatalogSessionFactoryFor
 	Orphans        *SnapshotOrphanCoordinator
+	listSnapshots  func(context.Context, string) ([]RetentionMaintenanceSnapshot, error)
+}
+
+func (c *RetentionCoordinator) listMaintenanceSnapshots(ctx context.Context, maintenanceID string) ([]RetentionMaintenanceSnapshot, error) {
+	if c.listSnapshots != nil {
+		return c.listSnapshots(ctx, maintenanceID)
+	}
+	return c.Control.ListRetentionMaintenanceSnapshots(ctx, maintenanceID)
 }
 
 func nilRetentionSession(session RetentionCatalogSession) bool {
@@ -720,10 +739,203 @@ func maintenanceEvidence(in RetentionMaintenanceRequest, phase string, extra map
 	return encoded
 }
 
+// retentionMaintenanceSnapshotState joins the immutable operation child with
+// its mutable retention authority in one read. Run uses this shape at each
+// control phase so a maintenance operation never issues a retention-row read
+// per child.
+type retentionMaintenanceSnapshotState struct {
+	Item      RetentionMaintenanceSnapshot
+	Retention SnapshotRetention
+}
+
+const listRetentionMaintenanceSnapshotStatesSQL = `
+SELECT r.physical_pool_id,r.catalog_id,r.snapshot_id,r.state,
+       r.protected_until,r.retired_at,r.expired_at,r.cleanup_owner_id,
+       r.cleanup_fencing_epoch,r.cleanup_lease_expires_at,r.quarantined_at,
+       r.cleanup_completed_at,r.quarantine_evidence,r.cleanup_evidence,
+       r.evidence,r.created_at
+  FROM ducklake.retention_maintenance_snapshot s
+  JOIN ducklake.snapshot_retention r
+    ON r.physical_pool_id=s.physical_pool_id
+   AND r.catalog_id=s.catalog_id
+   AND r.snapshot_id=s.snapshot_id
+ WHERE s.maintenance_id=$1::uuid
+ ORDER BY r.physical_pool_id,r.catalog_id,r.snapshot_id`
+
+func loadRetentionMaintenanceSnapshotStates(ctx context.Context, db DBTX, maintenanceID string, items []RetentionMaintenanceSnapshot) (map[int64]retentionMaintenanceSnapshotState, error) {
+	if db == nil || !validUUID(maintenanceID) {
+		return nil, ErrInvalid
+	}
+	// sqlc-exception: analyzer-incompatible -- the joined projection is a
+	// build-time sqlc query in queries/ducklake.sql; this source keeps the
+	// checked-in package usable before build-only generated output is prepared.
+	rows, err := db.Query(ctx, listRetentionMaintenanceSnapshotStatesSQL, upgradeUUID(maintenanceID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	states := make(map[int64]retentionMaintenanceSnapshotState, len(items))
+	for rows.Next() {
+		var (
+			retention                                                                             SnapshotRetention
+			cleanupOwner                                                                          *string
+			protectedUntil, retiredAt, expiredAt, cleanupLease, quarantinedAt, cleanupCompletedAt pgtype.Timestamptz
+			quarantineEvidence, cleanupEvidence, evidence                                         []byte
+			createdAt                                                                             pgtype.Timestamptz
+		)
+		if err := rows.Scan(
+			&retention.PhysicalPoolID, &retention.CatalogID, &retention.SnapshotID,
+			&retention.State, &protectedUntil, &retiredAt, &expiredAt, &cleanupOwner,
+			&retention.CleanupFencingEpoch, &cleanupLease, &quarantinedAt,
+			&cleanupCompletedAt, &quarantineEvidence, &cleanupEvidence, &evidence,
+			&createdAt,
+		); err != nil {
+			return nil, err
+		}
+		if cleanupOwner != nil {
+			retention.CleanupOwnerID = *cleanupOwner
+		}
+		retention.ProtectedUntil, retention.RetiredAt, retention.ExpiredAt = tsTime(protectedUntil), tsTime(retiredAt), tsTime(expiredAt)
+		retention.CleanupLeaseExpiresAt, retention.QuarantinedAt, retention.CleanupCompletedAt = tsTime(cleanupLease), tsTime(quarantinedAt), tsTime(cleanupCompletedAt)
+		retention.QuarantineEvidence = append(json.RawMessage(nil), quarantineEvidence...)
+		retention.CleanupEvidence = append(json.RawMessage(nil), cleanupEvidence...)
+		retention.Evidence = append(json.RawMessage(nil), evidence...)
+		retention.CreatedAt = tsTime(createdAt)
+		var item RetentionMaintenanceSnapshot
+		for _, candidate := range items {
+			if candidate.PhysicalPoolID == retention.PhysicalPoolID && candidate.CatalogID == retention.CatalogID && candidate.SnapshotID == retention.SnapshotID {
+				item = candidate
+				break
+			}
+		}
+		states[retention.SnapshotID] = retentionMaintenanceSnapshotState{Item: item, Retention: retention}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if _, ok := states[item.SnapshotID]; !ok {
+			return nil, ErrNotFound
+		}
+	}
+	return states, nil
+}
+
+type retentionEvidenceBatchItem struct {
+	SnapshotID int64           `json:"snapshot_id"`
+	Evidence   json.RawMessage `json:"evidence"`
+}
+
+type retentionProjectionBatchItem struct {
+	SnapshotID         int64           `json:"snapshot_id"`
+	Phase              string          `json:"phase"`
+	ExpiryEvidence     json.RawMessage `json:"expiry_evidence,omitempty"`
+	QuarantineEvidence json.RawMessage `json:"quarantine_evidence,omitempty"`
+	CleanupEvidence    json.RawMessage `json:"cleanup_evidence,omitempty"`
+}
+
+func marshalRetentionBatch(items any) ([]byte, error) {
+	payload, err := json.Marshal(items)
+	if err != nil {
+		return nil, fmt.Errorf("%w: retention batch evidence", ErrInvalid)
+	}
+	return payload, nil
+}
+
+const expireRetentionSnapshotsBatchSQL = `
+SELECT ducklake.expire_snapshots_under_maintenance_fence(
+  $1::bigint[],$2::timestamptz,$3::jsonb,$4,$5,$6::uuid,$7,$8)`
+
+func (c *RetentionCoordinator) expireRetentionSnapshotsBatch(ctx context.Context, ids []int64, batch []retentionEvidenceBatchItem, maintenanceID string, fence RetentionMaintenanceFence, expiredAt time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := CheckRetentionMaintenanceFence(ctx, c.Control.db, fence); err != nil {
+		return err
+	}
+	payload, err := marshalRetentionBatch(batch)
+	if err != nil {
+		return err
+	}
+	var at any
+	if !expiredAt.IsZero() {
+		at = expiredAt.UTC()
+	}
+	// sqlc-exception: analyzer-incompatible -- SECURITY DEFINER batch wrapper
+	// is represented in queries/ducklake.sql and runs before generated output.
+	_, err = c.Control.db.Exec(ctx, expireRetentionSnapshotsBatchSQL, ids, at, payload, fence.PhysicalPoolID, fence.CatalogID, upgradeUUID(maintenanceID), fence.OwnerID, fence.FencingEpoch)
+	return err
+}
+
+const reconcileRetentionSnapshotsBatchSQL = `
+SELECT ducklake.reconcile_retention_maintenance_snapshots(
+  $1::jsonb,$2::uuid,$3,$4,$5,$6)`
+
+func (c *RetentionCoordinator) reconcileRetentionSnapshotsBatch(ctx context.Context, batch []retentionProjectionBatchItem, maintenanceID string, fence RetentionMaintenanceFence) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	if err := CheckRetentionMaintenanceFence(ctx, c.Control.db, fence); err != nil {
+		return err
+	}
+	payload, err := marshalRetentionBatch(batch)
+	if err != nil {
+		return err
+	}
+	// sqlc-exception: analyzer-incompatible -- SECURITY DEFINER batch wrapper
+	// is represented in queries/ducklake.sql and runs before generated output.
+	_, err = c.Control.db.Exec(ctx, reconcileRetentionSnapshotsBatchSQL, payload, upgradeUUID(maintenanceID), fence.PhysicalPoolID, fence.CatalogID, fence.OwnerID, fence.FencingEpoch)
+	return err
+}
+
+const quarantineRetentionSnapshotsBatchSQL = `
+SELECT ducklake.quarantine_snapshots_under_maintenance_fence(
+  $1::bigint[],$2::jsonb,$3::timestamptz,$4::timestamptz,$5,$6,$7::uuid,$8,$9)`
+
+func (c *RetentionCoordinator) quarantineRetentionSnapshotsBatch(ctx context.Context, ids []int64, batch []retentionEvidenceBatchItem, maintenanceID string, fence RetentionMaintenanceFence) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := CheckRetentionMaintenanceFence(ctx, c.Control.db, fence); err != nil {
+		return err
+	}
+	payload, err := marshalRetentionBatch(batch)
+	if err != nil {
+		return err
+	}
+	// sqlc-exception: analyzer-incompatible -- SECURITY DEFINER batch wrapper
+	// is represented in queries/ducklake.sql and runs before generated output.
+	_, err = c.Control.db.Exec(ctx, quarantineRetentionSnapshotsBatchSQL, ids, payload, fence.LeaseExpiresAt, nil, fence.PhysicalPoolID, fence.CatalogID, upgradeUUID(maintenanceID), fence.OwnerID, fence.FencingEpoch)
+	return err
+}
+
+const completeRetentionSnapshotsBatchSQL = `
+SELECT ducklake.complete_snapshots_cleanup_under_maintenance_fence(
+  $1::bigint[],$2::jsonb,$3::timestamptz,$4::timestamptz,$5,$6,$7::uuid,$8,$9)`
+
+func (c *RetentionCoordinator) completeRetentionSnapshotsBatch(ctx context.Context, ids []int64, batch []retentionEvidenceBatchItem, maintenanceID string, fence RetentionMaintenanceFence) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := CheckRetentionMaintenanceFence(ctx, c.Control.db, fence); err != nil {
+		return err
+	}
+	payload, err := marshalRetentionBatch(batch)
+	if err != nil {
+		return err
+	}
+	// sqlc-exception: analyzer-incompatible -- SECURITY DEFINER batch wrapper
+	// is represented in queries/ducklake.sql and runs before generated output.
+	_, err = c.Control.db.Exec(ctx, completeRetentionSnapshotsBatchSQL, ids, payload, fence.LeaseExpiresAt, nil, fence.PhysicalPoolID, fence.CatalogID, upgradeUUID(maintenanceID), fence.OwnerID, fence.FencingEpoch)
+	return err
+}
+
 // Run executes the resumable catalog-wide sequence.  Control mutations are
 // persisted around every native phase; a successor can replay the same
 // operation ID and skip completed child phases after a crash.
 func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceRequest) (result RetentionMaintenanceResult, runErr error) {
+	// Retention execution is a lifecycle boundary: normalize once so fencing,
+	// native expiry, ledger updates, and bounded cleanup share one context.
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -766,10 +978,10 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 		orphanScanEnabled = true
 	}
 	if operation.State == "completed" {
-		result.Snapshots, _ = c.Control.ListRetentionMaintenanceSnapshots(ctx, in.MaintenanceID)
-		return result, nil
+		result.Snapshots, err = c.listMaintenanceSnapshots(ctx, in.MaintenanceID)
+		return result, err
 	}
-	items, err := c.Control.ListRetentionMaintenanceSnapshots(ctx, in.MaintenanceID)
+	items, err := c.listMaintenanceSnapshots(ctx, in.MaintenanceID)
 	if err != nil {
 		return result, err
 	}
@@ -802,14 +1014,19 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 		evidence json.RawMessage
 	}
 	if operation.Phase == "expiry" {
+		states, stateErr := loadRetentionMaintenanceSnapshotStates(ctx, c.Control.db, in.MaintenanceID, items)
+		if stateErr != nil {
+			return result, stateErr
+		}
 		for _, item := range items {
 			if item.Phase != "eligible" {
 				continue
 			}
-			retention, loadErr := c.Control.LoadSnapshotRetention(ctx, SnapshotRef{PhysicalPoolID: item.PhysicalPoolID, CatalogID: item.CatalogID, SnapshotID: item.SnapshotID})
-			if loadErr != nil {
-				return result, loadErr
+			state, ok := states[item.SnapshotID]
+			if !ok {
+				return result, ErrNotFound
 			}
+			retention := state.Retention
 			if retention.State == RetentionRetiring || retention.State == RetentionExpiring {
 				retiring = append(retiring, item.SnapshotID)
 			} else if retention.State == RetentionExpired {
@@ -836,13 +1053,13 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 				return result, err
 			}
 		}
-		for _, snapshotID := range retiring {
-			ref := SnapshotRef{PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, SnapshotID: snapshotID}
-			evidence := maintenanceEvidence(in, "expiry", map[string]any{"snapshot_id": snapshotID, "dry_run": in.DryRun})
-			if !in.DryRun {
-				if err := c.Control.ExpireSnapshotUnderMaintenanceFence(ctx, ref, evidence, time.Time{}, in.MaintenanceID, fence); err != nil {
-					return result, err
-				}
+		if !in.DryRun {
+			batch := make([]retentionEvidenceBatchItem, 0, len(retiring))
+			for _, snapshotID := range retiring {
+				batch = append(batch, retentionEvidenceBatchItem{SnapshotID: snapshotID, Evidence: maintenanceEvidence(in, "expiry", map[string]any{"snapshot_id": snapshotID, "dry_run": in.DryRun})})
+			}
+			if err := c.expireRetentionSnapshotsBatch(ctx, retiring, batch, in.MaintenanceID, fence, time.Time{}); err != nil {
+				return result, err
 			}
 		}
 	}
@@ -850,19 +1067,23 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 	// before its child evidence. Reconcile that durable mismatch without
 	// re-issuing a native expiry statement.
 	if !in.DryRun {
+		ids := make([]int64, 0, len(alreadyExpired))
+		batch := make([]retentionEvidenceBatchItem, 0, len(alreadyExpired))
 		for _, item := range alreadyExpired {
 			if len(item.evidence) == 0 {
 				return result, fmt.Errorf("%w: expired snapshot evidence missing", ErrConflict)
 			}
-			if err := c.Control.ExpireSnapshotUnderMaintenanceFence(ctx, item.ref, item.evidence, time.Time{}, in.MaintenanceID, fence); err != nil {
-				return result, err
-			}
+			ids = append(ids, item.ref.SnapshotID)
+			batch = append(batch, retentionEvidenceBatchItem{SnapshotID: item.ref.SnapshotID, Evidence: item.evidence})
+		}
+		if err := c.expireRetentionSnapshotsBatch(ctx, ids, batch, in.MaintenanceID, fence, time.Time{}); err != nil {
+			return result, err
 		}
 	}
 	// Re-read child phases after the native expiry and control updates. A
 	// crash/replay may have advanced some rows while the initial enumeration is
 	// still in memory; quarantine must act on the durable phase evidence.
-	items, err = c.Control.ListRetentionMaintenanceSnapshots(ctx, in.MaintenanceID)
+	items, err = c.listMaintenanceSnapshots(ctx, in.MaintenanceID)
 	if err != nil {
 		return result, err
 	}
@@ -872,17 +1093,45 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 	// worker committed quarantine before its operation child update) before the
 	// cleanup claim and physical phases inspect the child state.
 	if !in.DryRun {
+		states, stateErr := loadRetentionMaintenanceSnapshotStates(ctx, c.Control.db, in.MaintenanceID, items)
+		if stateErr != nil {
+			return result, stateErr
+		}
+		projections := make([]retentionProjectionBatchItem, 0, len(items))
 		for _, item := range items {
-			ref := SnapshotRef{PhysicalPoolID: item.PhysicalPoolID, CatalogID: item.CatalogID, SnapshotID: item.SnapshotID}
-			retention, loadErr := c.Control.LoadSnapshotRetention(ctx, ref)
-			if loadErr != nil {
-				return result, loadErr
+			state, ok := states[item.SnapshotID]
+			if !ok {
+				return result, ErrNotFound
 			}
-			if err := c.reconcileAdvancedRetentionEvidence(ctx, item, retention, in, fence.FencingEpoch); err != nil {
-				return result, err
+			retention := state.Retention
+			phase := item.Phase
+			expiry, quarantine, cleanup := item.ExpiryEvidence, item.QuarantineEvidence, item.CleanupEvidence
+			if phase == "eligible" && retention.State != RetentionRetiring && retention.State != RetentionExpiring && retention.State != RetentionLive {
+				if len(retention.Evidence) == 0 {
+					return result, fmt.Errorf("%w: advanced retention row has no expiry evidence", ErrConflict)
+				}
+				phase, expiry = "expired", retention.Evidence
+			}
+			if (retention.State == RetentionQuarantined || retention.State == RetentionCleanupComplete) && phase == "expired" {
+				if len(retention.QuarantineEvidence) == 0 {
+					return result, fmt.Errorf("%w: quarantined retention row has no quarantine evidence", ErrConflict)
+				}
+				phase, quarantine = "quarantined", retention.QuarantineEvidence
+			}
+			if retention.State == RetentionCleanupComplete && phase == "quarantined" {
+				if len(retention.CleanupEvidence) == 0 {
+					return result, fmt.Errorf("%w: cleanup-complete retention row has no cleanup evidence", ErrConflict)
+				}
+				phase, cleanup = "cleanup-complete", retention.CleanupEvidence
+			}
+			if phase != item.Phase || !bytes.Equal(expiry, item.ExpiryEvidence) || !bytes.Equal(quarantine, item.QuarantineEvidence) || !bytes.Equal(cleanup, item.CleanupEvidence) {
+				projections = append(projections, retentionProjectionBatchItem{SnapshotID: item.SnapshotID, Phase: phase, ExpiryEvidence: expiry, QuarantineEvidence: quarantine, CleanupEvidence: cleanup})
 			}
 		}
-		items, err = c.Control.ListRetentionMaintenanceSnapshots(ctx, in.MaintenanceID)
+		if err := c.reconcileRetentionSnapshotsBatch(ctx, projections, in.MaintenanceID, fence); err != nil {
+			return result, err
+		}
+		items, err = c.listMaintenanceSnapshots(ctx, in.MaintenanceID)
 		if err != nil {
 			return result, err
 		}
@@ -891,16 +1140,22 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 	// Quarantine is the fail-closed handoff: no physical file phase runs until
 	// every exact expired snapshot has a persisted per-snapshot cleanup claim.
 	if !in.DryRun {
+		states, stateErr := loadRetentionMaintenanceSnapshotStates(ctx, c.Control.db, in.MaintenanceID, items)
+		if stateErr != nil {
+			return result, stateErr
+		}
+		ids := make([]int64, 0, len(items))
+		batch := make([]retentionEvidenceBatchItem, 0, len(items))
 		for i := range items {
 			item := items[i]
 			if item.Phase == "cleanup-complete" || item.Phase == "quarantined" {
 				continue
 			}
-			ref := SnapshotRef{PhysicalPoolID: item.PhysicalPoolID, CatalogID: item.CatalogID, SnapshotID: item.SnapshotID}
-			retention, loadErr := c.Control.LoadSnapshotRetention(ctx, ref)
-			if loadErr != nil {
-				return result, loadErr
+			state, ok := states[item.SnapshotID]
+			if !ok {
+				return result, ErrNotFound
 			}
+			retention := state.Retention
 			if retention.State != RetentionExpired && retention.State != RetentionQuarantined {
 				continue
 			}
@@ -908,15 +1163,11 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 			if retention.State == RetentionQuarantined && len(retention.QuarantineEvidence) != 0 {
 				quarantineEvidence = retention.QuarantineEvidence
 			}
-			cleanupFence, claimErr := c.Control.ClaimSnapshotCleanupUnderMaintenanceFence(ctx, ref, in.OwnerID, fence.LeaseExpiresAt, in.MaintenanceID, fence)
-			if claimErr != nil {
-				return result, claimErr
-			}
-			if retention.State == RetentionExpired {
-				if err := c.Control.QuarantineSnapshotUnderMaintenanceFence(ctx, ref, quarantineEvidence, cleanupFence, in.MaintenanceID, fence); err != nil {
-					return result, err
-				}
-			}
+			ids = append(ids, item.SnapshotID)
+			batch = append(batch, retentionEvidenceBatchItem{SnapshotID: item.SnapshotID, Evidence: quarantineEvidence})
+		}
+		if err := c.quarantineRetentionSnapshotsBatch(ctx, ids, batch, in.MaintenanceID, fence); err != nil {
+			return result, err
 		}
 	}
 	// Snapshot-orphan reconciliation is deliberately completed while the
@@ -934,7 +1185,7 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 			return result, err
 		}
 	}
-	items, err = c.Control.ListRetentionMaintenanceSnapshots(ctx, in.MaintenanceID)
+	items, err = c.listMaintenanceSnapshots(ctx, in.MaintenanceID)
 	if err != nil {
 		return result, err
 	}
@@ -967,36 +1218,33 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 	}
 
 	if !in.DryRun {
+		states, stateErr := loadRetentionMaintenanceSnapshotStates(ctx, c.Control.db, in.MaintenanceID, items)
+		if stateErr != nil {
+			return result, stateErr
+		}
+		ids := make([]int64, 0, len(items))
+		batch := make([]retentionEvidenceBatchItem, 0, len(items))
 		for _, item := range items {
 			if item.Phase == "cleanup-complete" {
 				continue
 			}
-			ref := SnapshotRef{PhysicalPoolID: item.PhysicalPoolID, CatalogID: item.CatalogID, SnapshotID: item.SnapshotID}
-			retention, loadErr := c.Control.LoadSnapshotRetention(ctx, ref)
-			if loadErr != nil {
-				return result, loadErr
+			state, ok := states[item.SnapshotID]
+			if !ok {
+				return result, ErrNotFound
 			}
+			retention := state.Retention
 			if retention.State != RetentionQuarantined && retention.State != RetentionExpired && retention.State != RetentionCleanupComplete {
 				continue
-			}
-			cleanupFence := CleanupFence{OwnerID: in.OwnerID, FencingEpoch: retention.CleanupFencingEpoch, LeaseExpiresAt: retention.CleanupLeaseExpiresAt}
-			if retention.State != RetentionCleanupComplete {
-				var claimErr error
-				cleanupFence, claimErr = c.Control.ClaimSnapshotCleanupUnderMaintenanceFence(ctx, ref, in.OwnerID, fence.LeaseExpiresAt, in.MaintenanceID, fence)
-				if claimErr != nil {
-					return result, claimErr
-				}
-			}
-			if cleanupFence.FencingEpoch <= 0 || cleanupFence.OwnerID != in.OwnerID {
-				return result, ErrRetentionMaintenanceFenceStale
 			}
 			cleanupEvidence := maintenanceEvidence(in, "cleanup-complete", map[string]any{"snapshot_id": item.SnapshotID, "file_grace": in.FileGrace.String()})
 			if retention.State == RetentionCleanupComplete && len(retention.CleanupEvidence) != 0 {
 				cleanupEvidence = retention.CleanupEvidence
 			}
-			if err := c.Control.CompleteSnapshotCleanupUnderMaintenanceFence(ctx, ref, cleanupEvidence, cleanupFence, in.MaintenanceID, fence); err != nil {
-				return result, err
-			}
+			ids = append(ids, item.SnapshotID)
+			batch = append(batch, retentionEvidenceBatchItem{SnapshotID: item.SnapshotID, Evidence: cleanupEvidence})
+		}
+		if err := c.completeRetentionSnapshotsBatch(ctx, ids, batch, in.MaintenanceID, fence); err != nil {
+			return result, err
 		}
 	}
 	completedAt, err := databaseClock(ctx, c.Control.db)
@@ -1010,8 +1258,8 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 	}
 	result.Maintenance = operation
 	result.Fence = fence
-	result.Snapshots, _ = c.Control.ListRetentionMaintenanceSnapshots(ctx, in.MaintenanceID)
-	return result, nil
+	result.Snapshots, err = c.listMaintenanceSnapshots(ctx, in.MaintenanceID)
+	return result, err
 }
 
 func retentionSnapshotSetDigest(refs []SnapshotRef) string {

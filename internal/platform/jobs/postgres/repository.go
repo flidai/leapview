@@ -1,8 +1,5 @@
-// Package postgres implements the durable jobs capability on PostgreSQL.
-//
-// The adapter intentionally accepts pgx's native DBTX shape. It does not
-// expose a database/sql compatibility layer; callers that need a transaction
-// pass the pgx transaction directly to RecordWorkflow.
+// Package postgres stores LeapView-owned asynchronous operation history and
+// product events. River owns the operational queue and worker state.
 package postgres
 
 import (
@@ -16,1121 +13,772 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
-	"unicode"
 
-	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	jobdb "github.com/flidai/leapview/internal/platform/jobs/postgres/internal/db"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertype"
 )
 
-// DBTX is implemented by pgx.Conn, pgx.Tx, pgxpool.Pool and pgxpool.Conn.
-// Keeping this interface local lets capability tests use a real pgx pool or a
-// narrow recording implementation without introducing a backend abstraction.
+const (
+	MaxAttempts     = 3
+	maxEventPage    = 200
+	maxPayloadBytes = 1 << 20
+)
+
 type DBTX interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-// MaintenanceDBTX is the native PostgreSQL surface for the separately
-// authenticated maintenance connection. It intentionally mirrors DBTX so a
-// pool or caller-owned transaction can invoke only the bounded maintenance
-// facade; runtime repositories never retain this capability.
-type MaintenanceDBTX interface {
-	DBTX
-}
+type MaintenanceDBTX interface{ DBTX }
 
-// Tx is the native transaction surface accepted by caller-owned workflow
-// methods. Requiring commit/rollback prevents a pool or connection from being
-// passed accidentally and silently splitting an atomic workflow.
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
+type nativePoolProvider interface{ NativePool() *pgxpool.Pool }
 
-type Repository struct{ db DBTX }
+// ExecutionArgs is the stable LeapView identity carried by River. River IDs
+// never escape as public operation IDs.
+type ExecutionArgs struct {
+	ProductJobID  string `json:"product_job_id" river:"unique"`
+	RequestDigest string `json:"request_digest" river:"unique"`
+}
 
-// Maintenance owns destructive job retention. Keeping this capability out of
-// Repository prevents serving-role code from accidentally invoking the prune
-// leaf; PostgreSQL role grants remain the enforcement boundary.
+type AgentRunArgs ExecutionArgs
+
+func (AgentRunArgs) Kind() string { return "agent.run" }
+
+type UploadFinalizeArgs ExecutionArgs
+
+func (UploadFinalizeArgs) Kind() string { return "upload.finalize" }
+
+type ReleaseFinalizeArgs ExecutionArgs
+
+func (ReleaseFinalizeArgs) Kind() string { return "release.finalize" }
+
+type DeploymentActivateArgs ExecutionArgs
+
+func (DeploymentActivateArgs) Kind() string { return "deployment.activate" }
+
+type ApprovalActivateArgs ExecutionArgs
+
+func (ApprovalActivateArgs) Kind() string { return "delivery.approval.activate" }
+
+type RefreshPipelineArgs ExecutionArgs
+
+func (RefreshPipelineArgs) Kind() string { return "refresh_pipeline" }
+
+var admittedKinds = map[string]struct{}{
+	"agent.run": {}, "upload.finalize": {}, "release.finalize": {},
+	"deployment.activate": {}, "delivery.approval.activate": {},
+	"refresh_pipeline": {},
+}
+
+type Repository struct {
+	db     DBTX
+	mu     sync.RWMutex
+	client *river.Client[pgx.Tx]
+}
+
 type Maintenance struct{ db MaintenanceDBTX }
 
-func queries(db DBTX) *jobdb.Queries { return jobdb.New(db) }
+type riverCompletion struct {
+	done atomic.Bool
+	// riverJobID, owner, generation, and leaseExpiresAt are an ephemeral
+	// execution fence for the exact River row locked by the worker. Product
+	// history deliberately does not persist River lease columns; Get/GetTx
+	// project these values only while this context is in scope.
+	riverJobID     int64
+	owner          string
+	generation     int64
+	leaseExpiresAt time.Time
+	complete       func(context.Context, pgx.Tx) error
+}
+type riverCompletionKey struct{}
 
-// Attempt is the immutable identity and terminal evidence for one canonical
-// job claim.  It is intentionally read through the jobs authority so callers
-// cannot infer completion from the parent job row alone.
-type Attempt struct {
-	JobID                            string
-	AttemptNumber, FencingGeneration int64
-	Owner, Outcome                   string
-	FinishedAt                       *time.Time
-	ErrorJSON                        []byte
+// ContextWithRiverExecution binds the exact River execution fence to a
+// capability-owned context. The owner and timeout are supplied by the job
+// module so product handlers can verify the active attempt without persisting
+// executor-specific lease columns in product history.
+func ContextWithRiverExecution[T river.JobArgs](ctx context.Context, job *river.Job[T], owner string, leaseTimeout time.Duration) context.Context {
+	completion := &riverCompletion{}
+	if job != nil {
+		completion.riverJobID = job.ID
+		completion.generation = int64(job.Attempt)
+		completion.owner = strings.TrimSpace(owner)
+		if completion.owner == "" && len(job.AttemptedBy) > 0 {
+			completion.owner = strings.TrimSpace(job.AttemptedBy[len(job.AttemptedBy)-1])
+		}
+		if leaseTimeout <= 0 {
+			leaseTimeout = river.JobTimeoutDefault
+		}
+		completion.leaseExpiresAt = time.Now().UTC().Add(leaseTimeout)
+	}
+	completion.complete = func(completeCtx context.Context, tx pgx.Tx) error {
+		if job == nil {
+			return errors.New("River completion requires a locked job")
+		}
+		if _, err := river.JobCompleteTx[*riverpgxv5.Driver](completeCtx, tx, job); err != nil {
+			return err
+		}
+		completion.done.Store(true)
+		return nil
+	}
+	return context.WithValue(ctx, riverCompletionKey{}, completion)
+}
+
+func completionFromContext(ctx context.Context) *riverCompletion {
+	completion, _ := ctx.Value(riverCompletionKey{}).(*riverCompletion)
+	return completion
+}
+
+func RiverCompletionDone(ctx context.Context) bool {
+	completion := completionFromContext(ctx)
+	return completion != nil && completion.done.Load()
 }
 
 var _ jobs.Repository = (*Repository)(nil)
 
-// DB exposes the configured native PostgreSQL handle to composition-owned
-// adapters for authority provenance checks. Mutations must still use the
-// caller-owned transaction passed to the Tx methods.
+func queries(db DBTX) *jobdb.Queries { return jobdb.New(db) }
+
+func NewRepository(db DBTX) *Repository              { return &Repository{db: db} }
+func New(db DBTX) *Repository                        { return NewRepository(db) }
+func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
 func (r *Repository) DB() DBTX {
 	if r == nil {
 		return nil
 	}
 	return r.db
 }
-
-// Configured reports whether the repository has a native PostgreSQL query
-// authority. Interface values can contain a typed nil pointer, so a plain
-// interface comparison is not sufficient for admission.
 func (r *Repository) Configured() bool { return r != nil && nativeDBConfigured(r.db) }
 
 func nativeDBConfigured(db DBTX) bool {
 	if db == nil {
 		return false
 	}
-	value := reflect.ValueOf(db)
-	switch value.Kind() {
+	v := reflect.ValueOf(db)
+	switch v.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return !value.IsNil()
+		return !v.IsNil()
 	default:
 		return true
 	}
 }
 
-// MaxAttempts is the bounded retry ceiling for jobs created through this
-// adapter. EnqueueInput predates retry policy, so one explicit default is
-// persisted rather than permitting unbounded lease reclaim.
-const MaxAttempts int64 = 3
-
-// MaxRetryDelay bounds persisted backoff so malformed workers cannot hide a
-// job indefinitely in the queue.
-const MaxRetryDelay = 24 * time.Hour
-
-// MaxLeaseDuration keeps abandoned claims observable and prevents a malformed
-// worker from reserving work for an effectively unbounded interval.
-const MaxLeaseDuration = 24 * time.Hour
-
-func NewRepository(db DBTX) *Repository { return &Repository{db: db} }
-
-// New is a concise constructor alias for callers that keep one repository per
-// capability package.
-func New(db DBTX) *Repository { return NewRepository(db) }
-
-// NewMaintenance constructs the bounded job-retention facade.
-func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
-
-// ApplySchema applies the capability-owned DDL on a caller-owned transaction.
-// It is useful for clean conformance databases and deliberately performs no
-// implicit commit.
 func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
-		return fmt.Errorf("schema transaction is required")
+		return errors.New("schema transaction is required")
 	}
-	_, err := tx.Exec(ctx, schemaSQL) // sqlc-exception: schema-ddl. Capability-owned DDL runs on the caller-owned migration transaction.
+	_, err := tx.Exec(ctx, schemaSQL) // sqlc-exception: schema-ddl
 	return err
 }
 
-func (r *Repository) Enqueue(ctx context.Context, input jobs.EnqueueInput) (jobs.Job, error) {
+// NativePool returns the one admitted pool needed by River's pgx driver.
+func (r *Repository) NativePool() (*pgxpool.Pool, error) {
 	if r == nil || r.db == nil {
-		return jobs.Job{}, fmt.Errorf("postgres jobs database is required")
+		return nil, errors.New("PostgreSQL jobs repository is not configured")
 	}
-	if b, ok := r.db.(beginner); ok {
-		if _, alreadyTx := r.db.(pgx.Tx); !alreadyTx {
-			tx, err := b.Begin(ctx)
-			if err != nil {
-				return jobs.Job{}, err
-			}
-			job, err := r.enqueueTx(ctx, tx, input)
-			if err != nil {
-				_ = tx.Rollback(ctx)
-				return jobs.Job{}, err
-			}
-			if err := tx.Commit(ctx); err != nil {
-				return jobs.Job{}, err
-			}
-			return job, nil
-		}
+	if pool, ok := r.db.(*pgxpool.Pool); ok && pool != nil {
+		return pool, nil
 	}
-	return r.enqueueTx(ctx, r.db, input)
+	if provider, ok := r.db.(nativePoolProvider); ok && provider.NativePool() != nil {
+		return provider.NativePool(), nil
+	}
+	return nil, errors.New("PostgreSQL jobs repository does not expose an admitted pgx pool")
 }
 
-// EnqueueTx writes one job to a caller-owned transaction.  The transaction is
-// deliberately not committed or rolled back by this method, allowing a
-// producer to commit its state mutation and durable work atomically.
+func (r *Repository) ConfigureRiver(client *river.Client[pgx.Tx]) error {
+	if r == nil || client == nil {
+		return errors.New("River client is required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.client != nil && r.client != client {
+		return errors.New("River client is already configured")
+	}
+	r.client = client
+	return nil
+}
+
+func (r *Repository) riverClient() (*river.Client[pgx.Tx], error) {
+	if r == nil {
+		return nil, jobs.ErrStoreRequired
+	}
+	r.mu.RLock()
+	client := r.client
+	r.mu.RUnlock()
+	if client != nil {
+		return client, nil
+	}
+	pool, err := r.NativePool()
+	if err != nil {
+		return nil, err
+	}
+	insertClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
+	if err != nil {
+		return nil, fmt.Errorf("configure River insertion: %w", err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.client == nil {
+		r.client = insertClient
+	}
+	return r.client, nil
+}
+
+func validateInput(input jobs.EnqueueInput) ([]string, []byte, string, error) {
+	groups, err := jobs.CanonicalActor(input.PrincipalID, input.GroupIDs)
+	if err != nil {
+		return nil, nil, "", errors.New("invalid async job actor")
+	}
+	if input.ID == "" || input.Kind == "" || input.PartitionKey == "" || input.ResourceKind == "" || input.ResourceID == "" || input.EstimatedMemoryBytes <= 0 || len(input.Payload) == 0 || len(input.Payload) > maxPayloadBytes {
+		return nil, nil, "", errors.New("invalid async job")
+	}
+	if _, ok := admittedKinds[input.Kind]; !ok {
+		return nil, nil, "", errors.Join(jobs.ErrUnknownKind, errors.New(input.Kind))
+	}
+	if input.WorkloadClass != "control" && input.WorkloadClass != "background" {
+		return nil, nil, "", errors.New("invalid async job workload class")
+	}
+	canonical, err := canonicalJSON(input.Payload)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("invalid async job payload: %w", err)
+	}
+	if len(canonical) == 0 || (canonical[0] != '{' && canonical[0] != '[') {
+		return nil, nil, "", errors.New("async job payload must be an object or array")
+	}
+	h := sha256.New()
+	for _, value := range []string{input.ID, input.Kind, input.WorkloadClass, input.PrincipalID, strings.Join(groups, "\x00"), input.PartitionKey, input.ResourceKind, input.ResourceID, fmt.Sprintf("%d", input.EstimatedMemoryBytes), string(canonical)} {
+		h.Write([]byte(value))
+		h.Write([]byte{0})
+	}
+	return groups, canonical, "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func riverArgs(kind string, common ExecutionArgs) (river.JobArgs, error) {
+	switch kind {
+	case "agent.run":
+		return AgentRunArgs(common), nil
+	case "upload.finalize":
+		return UploadFinalizeArgs(common), nil
+	case "release.finalize":
+		return ReleaseFinalizeArgs(common), nil
+	case "deployment.activate":
+		return DeploymentActivateArgs(common), nil
+	case "delivery.approval.activate":
+		return ApprovalActivateArgs(common), nil
+	case "refresh_pipeline":
+		return RefreshPipelineArgs(common), nil
+	default:
+		return nil, errors.Join(jobs.ErrUnknownKind, errors.New(kind))
+	}
+}
+
+func (r *Repository) Enqueue(ctx context.Context, input jobs.EnqueueInput) (jobs.Job, error) {
+	begin, ok := r.db.(beginner)
+	if r == nil || !ok {
+		return jobs.Job{}, errors.New("PostgreSQL jobs transaction authority is required")
+	}
+	tx, err := begin.Begin(ctx)
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	result, err := r.EnqueueTx(ctx, tx, input)
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return jobs.Job{}, err
+	}
+	return result, nil
+}
+
 func (r *Repository) EnqueueTx(ctx context.Context, tx Tx, input jobs.EnqueueInput) (jobs.Job, error) {
 	if tx == nil {
-		return jobs.Job{}, fmt.Errorf("enqueue transaction is required")
+		return jobs.Job{}, errors.New("enqueue transaction is required")
 	}
-	return r.enqueueTx(ctx, tx, input)
-}
-
-func (r *Repository) enqueueTx(ctx context.Context, db DBTX, input jobs.EnqueueInput) (jobs.Job, error) {
-	groups, actorErr := jobs.CanonicalActor(input.PrincipalID, input.GroupIDs)
-	if !validInput(input, actorErr) {
-		return jobs.Job{}, fmt.Errorf("invalid async job")
-	}
-	canonicalPayload, err := canonicalJSON(input.Payload, 1<<20)
-	if err != nil {
-		return jobs.Job{}, fmt.Errorf("invalid async job payload: %w", err)
-	}
-	input.Payload = canonicalPayload
-	input.GroupIDs = groups
-	digest := jobDigest(input, groups)
-	q := queries(db)
-	err = q.InsertJob(ctx, jobdb.InsertJobParams{ID: input.ID, Kind: input.Kind, WorkloadClass: input.WorkloadClass, PrincipalID: input.PrincipalID,
-		GroupIds: groups, PartitionKey: input.PartitionKey, ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
-		EstimatedMemoryBytes: input.EstimatedMemoryBytes, Payload: input.Payload, RequestDigest: digest})
+	groups, canonicalPayload, digest, err := validateInput(input)
 	if err != nil {
 		return jobs.Job{}, err
 	}
-	var storedDigest string
-	storedDigest, err = q.GetRequestDigest(ctx, input.ID)
+	groupsJSON, _ := json.Marshal(groups)
+	inserted, err := queries(tx).InsertJobHistory(ctx, jobdb.InsertJobHistoryParams{
+		ID: input.ID, Kind: input.Kind, WorkloadClass: input.WorkloadClass,
+		PrincipalID: input.PrincipalID, GroupIds: groupsJSON,
+		PartitionKey: input.PartitionKey, ResourceKind: input.ResourceKind,
+		ResourceID: input.ResourceID, EstimatedMemoryBytes: input.EstimatedMemoryBytes,
+		Payload: canonicalPayload, RequestDigest: digest,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return jobs.Job{}, jobs.ErrNotFound
+		err = nil
 	}
 	if err != nil {
 		return jobs.Job{}, err
 	}
-	if storedDigest != digest {
-		return jobs.Job{}, jobs.ErrConflict
+	if !inserted {
+		current, err := r.get(ctx, tx, input.ID)
+		if err != nil {
+			return jobs.Job{}, err
+		}
+		storedDigest, err := queries(tx).GetJobRequestDigest(ctx, input.ID)
+		if err != nil {
+			return jobs.Job{}, err
+		}
+		if storedDigest != digest {
+			return jobs.Job{}, jobs.ErrConflict
+		}
+		return current, nil
 	}
-	row, err := q.GetJob(ctx, input.ID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return jobs.Job{}, jobs.ErrNotFound
-	}
+	client, err := r.riverClient()
 	if err != nil {
 		return jobs.Job{}, err
 	}
-	return fromGetJob(row)
-}
-
-func validInput(input jobs.EnqueueInput, actorErr error) bool {
-	return canonicalLiteral(input.ID, 256) && canonicalLiteral(input.Kind, 128) &&
-		(input.WorkloadClass == jobpolicy.WorkloadClassBackground || input.WorkloadClass == jobpolicy.WorkloadClassControl) &&
-		canonicalLiteral(input.PartitionKey, 512) && canonicalLiteral(input.ResourceKind, 128) && canonicalLiteral(input.ResourceID, 256) &&
-		input.EstimatedMemoryBytes > 0 && len(input.Payload) <= 1<<20 && json.Valid(input.Payload) && actorErr == nil
-}
-
-func jobDigest(input jobs.EnqueueInput, groups []string) string {
-	groupJSON, _ := json.Marshal(groups)
-	// The field separators and decimal memory representation make the request
-	// identity unambiguous; payload bytes have already been canonicalized.
-	sum := sha256.Sum256([]byte(input.Kind + "\x00" + input.WorkloadClass + "\x00" + input.PrincipalID + "\x00" + string(groupJSON) + "\x00" + input.PartitionKey + "\x00" + input.ResourceKind + "\x00" + input.ResourceID + "\x00" + fmt.Sprint(input.EstimatedMemoryBytes) + "\x00" + string(input.Payload)))
-	return "sha256:" + hex.EncodeToString(sum[:])
+	args, err := riverArgs(input.Kind, ExecutionArgs{ProductJobID: input.ID, RequestDigest: digest})
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	pgxTx, err := nativeTransaction(tx)
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	insert, err := client.InsertTx(ctx, pgxTx, args, &river.InsertOpts{Queue: input.WorkloadClass, MaxAttempts: MaxAttempts, UniqueOpts: river.UniqueOpts{ByArgs: true}})
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	if insert == nil || insert.Job == nil {
+		return jobs.Job{}, errors.New("River did not return an inserted job")
+	}
+	riverJobID := insert.Job.ID
+	if _, err := queries(tx).UpdateRiverJobID(ctx, jobdb.UpdateRiverJobIDParams{ID: input.ID, RiverJobID: &riverJobID}); err != nil {
+		return jobs.Job{}, err
+	}
+	return r.get(ctx, tx, input.ID)
 }
 
 func (r *Repository) Get(ctx context.Context, id string) (jobs.Job, error) {
-	if !canonicalLiteral(id, 256) {
-		return jobs.Job{}, fmt.Errorf("invalid async job id")
-	}
-	row, err := queries(r.db).GetJob(ctx, id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return jobs.Job{}, jobs.ErrNotFound
-	}
-	if err != nil {
-		return jobs.Job{}, err
-	}
-	return fromGetJob(row)
+	return r.get(ctx, r.db, id)
 }
-
-// GetTx reads a job through a caller-owned transaction so startup
-// reconciliation can compare the canonical job row with its refresh link
-// without opening a second snapshot.
 func (r *Repository) GetTx(ctx context.Context, tx Tx, id string) (jobs.Job, error) {
-	if tx == nil || !canonicalLiteral(id, 256) {
-		return jobs.Job{}, fmt.Errorf("job transaction and id are required")
+	if tx == nil {
+		return jobs.Job{}, errors.New("job transaction is required")
 	}
-	row, err := queries(tx).GetJob(ctx, id)
+	return r.get(ctx, tx, id)
+}
+
+func (r *Repository) get(ctx context.Context, db DBTX, id string) (jobs.Job, error) {
+	if db == nil || strings.TrimSpace(id) == "" {
+		return jobs.Job{}, errors.New("job database and id are required")
+	}
+	row, err := queries(db).GetJob(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return jobs.Job{}, jobs.ErrNotFound
 	}
 	if err != nil {
 		return jobs.Job{}, err
 	}
-	return fromGetJob(row)
-}
-
-// LatestAttemptTx reads the exact attempt identified by the job's persisted
-// attempt count and lease generation.  A missing row is reported separately
-// so replay/recovery callers can distinguish an incomplete authority state
-// from an ordinary not-found error.
-func (r *Repository) LatestAttemptTx(ctx context.Context, tx Tx, id string, attemptNumber, fencingGeneration int64) (Attempt, bool, error) {
-	if tx == nil || !canonicalLiteral(id, 256) || attemptNumber < 1 || fencingGeneration < 1 {
-		return Attempt{}, false, fmt.Errorf("attempt transaction, job id and positive fence are required")
+	var result jobs.Job
+	if err := json.Unmarshal([]byte(row.GroupIds), &result.GroupIDs); err != nil {
+		return jobs.Job{}, err
 	}
-	row, err := queries(tx).GetAttempt(ctx, jobdb.GetAttemptParams{JobID: id, AttemptNumber: attemptNumber, FencingGeneration: fencingGeneration})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Attempt{}, false, nil
+	result.ID = row.ID
+	result.Kind = row.Kind
+	result.WorkloadClass = row.WorkloadClass
+	result.PrincipalID = row.PrincipalID
+	result.PartitionKey = row.PartitionKey
+	result.ResourceKind = row.ResourceKind
+	result.ResourceID = row.ResourceID
+	result.EstimatedMemoryBytes = row.EstimatedMemoryBytes
+	result.Payload = []byte(row.Payload)
+	result.RequestDigest = row.RequestDigest
+	result.Status = jobs.Status(row.Status)
+	result.Attempts = int(row.AttemptCount)
+	result.CreatedAt = row.CreatedAt.UTC().Format(time.RFC3339Nano)
+	if row.StartedAt.Valid {
+		result.StartedAt = row.StartedAt.Time.UTC().Format(time.RFC3339Nano)
 	}
-	if err != nil {
-		return Attempt{}, false, err
+	if row.FinishedAt.Valid {
+		result.FinishedAt = row.FinishedAt.Time.UTC().Format(time.RFC3339Nano)
 	}
-	return Attempt{JobID: row.JobID, AttemptNumber: row.AttemptNumber, FencingGeneration: row.FencingGeneration, Owner: row.Owner, Outcome: row.Outcome, FinishedAt: nullableTime(row.FinishedAt), ErrorJSON: append([]byte(nil), row.Error...)}, true, nil
-}
-
-// ActiveRefreshJobsTx returns only queued/running refresh jobs for startup
-// reconciliation. The resource-kind/status index bounds this projection to
-// live work; terminal history is never scanned.
-func (r *Repository) ActiveRefreshJobsTx(ctx context.Context, tx Tx, afterCreated time.Time, afterID string, limit int) ([]jobs.Job, error) {
-	if tx == nil || limit < 1 || limit > 200 || (afterID != "" && !canonicalLiteral(afterID, 256)) {
-		return nil, fmt.Errorf("active refresh job projection is invalid")
+	if row.Error != "null" {
+		result.ErrorJSON = row.Error
 	}
-	rows, err := queries(tx).GetActiveRefreshJobs(ctx, jobdb.GetActiveRefreshJobsParams{ResourceKind: "refresh_run", AfterCreated: pgtype.Timestamptz{Time: nullableRecoveryTime(afterCreated), Valid: true}, AfterID: afterID, PageLimit: int32(limit)})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]jobs.Job, 0, limit)
-	for _, row := range rows {
-		job, scanErr := fromActiveRefreshJob(row)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		out = append(out, job)
-	}
-	return out, nil
-}
-
-func nullableRecoveryTime(value time.Time) time.Time {
-	if value.IsZero() {
-		return time.Unix(0, 0).UTC()
-	}
-	return value.UTC()
-}
-
-func (r *Repository) Candidates(ctx context.Context, workloadClass string, limit int) ([]jobs.Job, error) {
-	if !validClass(workloadClass) || limit < 1 || limit > 200 {
-		return nil, fmt.Errorf("workload class and candidate limit are required")
-	}
-	rows, err := queries(r.db).ListCandidates(ctx, jobdb.ListCandidatesParams{WorkloadClass: workloadClass, PageLimit: int32(limit)})
-	if err != nil {
-		return nil, err
-	}
-	result := make([]jobs.Job, 0, limit)
-	for _, row := range rows {
-		job, scanErr := fromCandidateJob(row)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		result = append(result, job)
+	// River's claim fence is executor state, not product history. Project it
+	// only when this context carries the exact locked River row for the job;
+	// ordinary reads therefore never expose a synthetic lease.
+	if completion := completionFromContext(ctx); completion != nil && completion.riverJobID > 0 && row.RiverJobID != nil && *row.RiverJobID == completion.riverJobID && result.Status == jobs.StatusRunning && completion.generation > 0 && completion.owner != "" && !completion.leaseExpiresAt.IsZero() {
+		result.LeaseOwner = completion.owner
+		result.LeaseGeneration = completion.generation
+		result.LeaseExpiresAt = completion.leaseExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	return result, nil
 }
 
-// CandidatesByResourceKind is the bounded fairness projection for one
-// capability's queue. It prevents unrelated platform jobs from consuming the
-// candidate page and starving refresh work before the caller can inspect its
-// scope/resource identity.
-func (r *Repository) CandidatesByResourceKind(ctx context.Context, workloadClass, resourceKind string, limit int) ([]jobs.Job, error) {
-	return r.CandidatesByResourceKindAfter(ctx, workloadClass, resourceKind, limit, time.Time{}, "")
-}
-
-// CandidatesByResourceKindAfter returns one keyset page of canonical
-// candidates. Callers that apply a second capability-owned scope filter can
-// advance through every page without allowing another project to starve the
-// bounded result.
-func (r *Repository) CandidatesByResourceKindAfter(ctx context.Context, workloadClass, resourceKind string, limit int, afterCreated time.Time, afterID string) ([]jobs.Job, error) {
-	if !validClass(workloadClass) || !canonicalLiteral(resourceKind, 128) || limit < 1 || limit > 200 {
-		return nil, fmt.Errorf("workload class, resource kind and candidate limit are required")
-	}
-	if !afterCreated.IsZero() && !canonicalLiteral(afterID, 256) {
-		return nil, fmt.Errorf("candidate cursor id is required")
-	}
-	var cursor pgtype.Timestamptz
-	if !afterCreated.IsZero() {
-		cursor = pgtype.Timestamptz{Time: afterCreated.UTC(), Valid: true}
-	}
-	var cursorID *string
-	if afterID != "" {
-		cursorID = &afterID
-	}
-	rows, err := queries(r.db).ListCandidatesByResourceKind(ctx, jobdb.ListCandidatesByResourceKindParams{WorkloadClass: workloadClass, ResourceKind: resourceKind, AfterCreated: cursor, AfterID: cursorID, PageLimit: int32(limit)})
-	if err != nil {
-		return nil, err
-	}
-	result := make([]jobs.Job, 0, limit)
-	for _, row := range rows {
-		job, scanErr := fromCandidateResourceJob(row)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		result = append(result, job)
-	}
-	return result, nil
-}
-
-// ClaimByID uses one locking selection and one UPDATE ... RETURNING. SKIP
-// LOCKED makes concurrent workers fail closed instead of waiting behind a
-// lease owner that is still processing another claim.
-func (r *Repository) ClaimByID(ctx context.Context, id, workloadClass, owner string, lease time.Duration) (jobs.Job, bool, error) {
-	if !canonicalLiteral(id, 256) || !validClass(workloadClass) || !canonicalLiteral(owner, 256) || lease < time.Microsecond || lease > MaxLeaseDuration {
-		return jobs.Job{}, false, fmt.Errorf("job id, workload class, worker owner, and positive lease are required")
-	}
-	return r.claimByID(ctx, r.db, id, workloadClass, owner, lease)
-}
-
-// ClaimByIDTx applies the same fenced claim through a caller-owned
-// transaction. Refresh workers use this to claim the platform job and create
-// the linked refresh attempt atomically; if either side loses its fence the
-// entire claim rolls back and remains retryable.
-func (r *Repository) ClaimByIDTx(ctx context.Context, tx Tx, id, workloadClass, owner string, lease time.Duration) (jobs.Job, bool, error) {
-	if tx == nil {
-		return jobs.Job{}, false, fmt.Errorf("job claim transaction is required")
-	}
-	if !canonicalLiteral(id, 256) || !validClass(workloadClass) || !canonicalLiteral(owner, 256) || lease < time.Microsecond || lease > MaxLeaseDuration {
-		return jobs.Job{}, false, fmt.Errorf("job id, workload class, worker owner, and positive lease are required")
-	}
-	return r.claimByID(ctx, tx, id, workloadClass, owner, lease)
-}
-
-func (r *Repository) claimByID(ctx context.Context, db DBTX, id, workloadClass, owner string, lease time.Duration) (jobs.Job, bool, error) {
-	row, err := queries(db).ClaimByID(ctx, jobdb.ClaimByIDParams{ID: id, WorkloadClass: workloadClass, Owner: owner, LeaseMicroseconds: lease.Microseconds()})
+func (r *Repository) RiverJobIDTx(ctx context.Context, tx Tx, id string) (int64, error) {
+	riverID, err := queries(tx).GetRiverJobID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return jobs.Job{}, false, nil
-	}
-	if err != nil {
-		return jobs.Job{}, false, err
-	}
-	job, err := fromClaimedJob(row)
-	return job, err == nil, err
-}
-
-func (r *Repository) Renew(ctx context.Context, id string, fence jobs.Fence, lease time.Duration) error {
-	if !validFence(id, fence) || lease < time.Microsecond || lease > MaxLeaseDuration {
-		return fmt.Errorf("invalid async job fence")
-	}
-	return r.renewTx(ctx, r.db, id, fence, lease)
-}
-
-// RenewTx renews a job lease through a caller-owned transaction so the
-// linked refresh attempt fence can be heartbeated atomically.
-func (r *Repository) RenewTx(ctx context.Context, tx Tx, id string, fence jobs.Fence, lease time.Duration) error {
-	if tx == nil || !validFence(id, fence) || lease < time.Microsecond || lease > MaxLeaseDuration {
-		return fmt.Errorf("invalid async job fence")
-	}
-	return r.renewTx(ctx, tx, id, fence, lease)
-}
-
-func (r *Repository) renewTx(ctx context.Context, db DBTX, id string, fence jobs.Fence, lease time.Duration) error {
-	count, err := queries(db).Renew(ctx, jobdb.RenewParams{ID: id, Owner: fence.Owner, LeaseMicroseconds: lease.Microseconds(), Generation: fence.Generation})
-	return requireChanged(count, err)
-}
-
-func (r *Repository) Complete(ctx context.Context, id string, fence jobs.Fence) error {
-	return r.terminal(ctx, id, fence, "succeeded", nil)
-}
-
-// CompleteTx applies a successful terminal transition through a caller-owned
-// transaction.  Producers that also mutate another capability can therefore
-// commit the job outcome and that capability's state atomically.
-func (r *Repository) CompleteTx(ctx context.Context, tx Tx, id string, fence jobs.Fence) error {
-	if tx == nil {
-		return fmt.Errorf("job completion transaction is required")
-	}
-	return terminalTx(ctx, tx, id, fence, "succeeded", nil)
-}
-
-func (r *Repository) Fail(ctx context.Context, id string, fence jobs.Fence, problem []byte) error {
-	canonical, err := canonicalJSON(problem, 65536)
-	if err != nil {
-		return fmt.Errorf("invalid async job failure JSON")
-	}
-	return r.terminal(ctx, id, fence, "failed", canonical)
-}
-
-// FailTx is the transaction-aware counterpart to Fail.
-func (r *Repository) FailTx(ctx context.Context, tx Tx, id string, fence jobs.Fence, problem []byte) error {
-	if tx == nil {
-		return fmt.Errorf("job failure transaction is required")
-	}
-	canonical, err := canonicalJSON(problem, 65536)
-	if err != nil {
-		return fmt.Errorf("invalid async job failure JSON")
-	}
-	return terminalTx(ctx, tx, id, fence, "failed", canonical)
-}
-
-func (r *Repository) terminal(ctx context.Context, id string, fence jobs.Fence, outcome string, problem []byte) error {
-	if !validFence(id, fence) {
-		return fmt.Errorf("invalid async job fence")
-	}
-	errorJSON := []byte(`{}`)
-	if problem != nil {
-		errorJSON = problem
-	}
-	return terminalTx(ctx, r.db, id, fence, outcome, errorJSON)
-}
-
-func terminalTx(ctx context.Context, db DBTX, id string, fence jobs.Fence, outcome string, problem []byte) error {
-	if !validFence(id, fence) {
-		return fmt.Errorf("invalid async job fence")
-	}
-	errorJSON := []byte(`{}`)
-	if problem != nil {
-		errorJSON = problem
-	}
-	count, err := queries(db).Terminal(ctx, jobdb.TerminalParams{ID: id, Owner: fence.Owner, Outcome: outcome, Generation: fence.Generation, Error: errorJSON})
-	return requireChanged(count, err)
-}
-
-// Retry requeues a claimed job with an explicitly persisted backoff. It is an
-// extension of the public repository contract used by retrying workers; the
-// existing Fail method remains terminal for callers that do not opt in.
-func (r *Repository) Retry(ctx context.Context, id string, fence jobs.Fence, delay time.Duration, problem []byte) error {
-	canonical, err := canonicalJSON(problem, 65536)
-	if !validFence(id, fence) || delay < 0 || delay > MaxRetryDelay || err != nil {
-		return fmt.Errorf("invalid async job retry")
-	}
-	count, err := queries(r.db).Retry(ctx, jobdb.RetryParams{ID: id, Owner: fence.Owner, Generation: fence.Generation, DelayMicroseconds: delay.Microseconds(), Error: canonical})
-	return requireChanged(count, err)
-}
-
-func (r *Repository) Cancel(ctx context.Context, id string) error {
-	if r == nil || r.db == nil || !canonicalLiteral(id, 256) {
-		return fmt.Errorf("invalid async job id")
-	}
-	// A standalone cancellation must own one transaction because a queued
-	// retry has two authoritative rows: the job projection and its latest
-	// retrying attempt.  Locking and closing both rows together prevents a
-	// replay from leaving a permanently retrying attempt behind.
-	if b, ok := r.db.(beginner); ok {
-		if _, alreadyTx := r.db.(pgx.Tx); !alreadyTx {
-			tx, err := b.Begin(ctx)
-			if err != nil {
-				return err
-			}
-			if err := r.cancelTx(ctx, tx, id); err != nil {
-				_ = tx.Rollback(ctx)
-				return err
-			}
-			return tx.Commit(ctx)
-		}
-	}
-	return r.cancelTx(ctx, r.db, id)
-}
-
-// CancelTx cancels a queued job through a caller-owned transaction. It is
-// used when a refresh run and its pending platform job must become terminal
-// together (for example, a user cancellation with audit intent).
-func (r *Repository) CancelTx(ctx context.Context, tx Tx, id string) error {
-	if tx == nil || !canonicalLiteral(id, 256) {
-		return fmt.Errorf("job cancellation transaction and id are required")
-	}
-	return r.cancelTx(ctx, tx, id)
-}
-
-// cancelTx closes a queued job and, when it has been retried, its exact
-// latest retrying attempt.  The caller owns the transaction and therefore
-// controls whether this state transition commits with a domain mutation.
-func (r *Repository) cancelTx(ctx context.Context, tx DBTX, id string) error {
-	q := queries(tx)
-	jobRow, err := q.LockJobForCancel(ctx, id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return jobs.ErrConflict
+		return 0, jobs.ErrNotFound
 	} else if err != nil {
-		return err
+		return 0, err
 	}
-	status, attemptCount, leaseGeneration := jobRow.Status, jobRow.AttemptCount, jobRow.LeaseGeneration
-	if status != string(jobs.StatusQueued) {
-		return jobs.ErrConflict
+	if riverID == nil || *riverID <= 0 {
+		return 0, errors.New("product job has no River identity")
 	}
-
-	if attemptCount > 0 {
-		attemptRow, err := q.LockAttemptForCancel(ctx, jobdb.LockAttemptForCancelParams{JobID: id, AttemptNumber: attemptCount, FencingGeneration: leaseGeneration})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return jobs.ErrConflict
-		} else if err != nil {
-			return err
-		} else if attemptRow.Outcome != "retrying" || !attemptRow.FinishedAt.Valid || !attemptRow.RetryAt.Valid {
-			return jobs.ErrConflict
-		}
-		result, err := q.CancelAttempt(ctx, jobdb.CancelAttemptParams{JobID: id, AttemptNumber: attemptCount, FencingGeneration: leaseGeneration})
-		if err != nil {
-			return err
-		}
-		if err := requireChanged(result.RowsAffected(), nil); err != nil {
-			return err
-		}
-	}
-	result, err := q.CancelJob(ctx, id)
-	return requireChanged(result.RowsAffected(), err)
+	return *riverID, nil
 }
 
-// ReconcileTerminalTx closes a job to the exact terminal outcome established
-// by the authoritative refresh run. Existing terminal rows and their latest
-// attempts must already agree; a contradiction is surfaced as ErrConflict
-// rather than silently rewritten during startup recovery.
-func (r *Repository) ReconcileTerminalTx(ctx context.Context, tx Tx, id string, desired jobs.Status) error {
-	if tx == nil || !canonicalLiteral(id, 256) || (desired != jobs.StatusSucceeded && desired != jobs.StatusFailed && desired != jobs.StatusCancelled) {
-		return fmt.Errorf("job reconciliation transaction, id and terminal status are required")
+func (r *Repository) MarkRunning(ctx context.Context, id string, attempt int) (jobs.Job, error) {
+	if attempt < 1 {
+		return jobs.Job{}, errors.New("River attempt must be positive")
 	}
-	q := queries(tx)
-	jobRow, err := q.LockJobReconcile(ctx, id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return jobs.ErrNotFound
-	} else if err != nil {
-		return err
+	changed, err := queries(r.db).MarkJobRunning(ctx, jobdb.MarkJobRunningParams{ID: id, Attempt: int32(attempt)})
+	if err != nil {
+		return jobs.Job{}, err
 	}
-	current := jobs.Status(jobRow.Status)
-	attemptCount, leaseGeneration, leaseOwner, jobError := jobRow.AttemptCount, jobRow.LeaseGeneration, jobRow.LeaseOwner, jobRow.Error
-	row, attemptErr := q.LatestAttemptForReconcile(ctx, id)
-	attempt := Attempt{JobID: row.JobID, AttemptNumber: row.AttemptNumber, FencingGeneration: row.FencingGeneration, Owner: row.Owner, Outcome: row.Outcome, FinishedAt: nullableTime(row.FinishedAt), ErrorJSON: row.Error}
-	var retryAt *time.Time
-	if row.RetryAt.Valid {
-		t := row.RetryAt.Time
-		retryAt = &t
+	current, err := r.Get(ctx, id)
+	if err != nil {
+		return jobs.Job{}, err
 	}
-	if attemptErr != nil && !errors.Is(attemptErr, pgx.ErrNoRows) {
-		return attemptErr
+	if changed == 0 || current.Status != jobs.StatusRunning || current.Attempts < attempt {
+		return jobs.Job{}, jobs.ErrConflict
 	}
-	foundAttempt := attemptErr == nil
-	if attemptCount > 0 && (!foundAttempt || attempt.AttemptNumber != attemptCount || attempt.FencingGeneration != leaseGeneration) {
-		return jobs.ErrConflict
+	return current, nil
+}
+
+func (r *Repository) setTerminalTx(ctx context.Context, tx Tx, id string, fence jobs.Fence, status jobs.Status, problem []byte) error {
+	if status != jobs.StatusSucceeded && status != jobs.StatusFailed && status != jobs.StatusCancelled {
+		return errors.New("terminal product job status is required")
 	}
-	if foundAttempt && attempt.AttemptNumber > attemptCount {
-		return jobs.ErrConflict
+	if fence.Generation < 0 {
+		return errors.New("terminal product job fence is invalid")
 	}
-	if current == jobs.StatusSucceeded || current == jobs.StatusFailed || current == jobs.StatusCancelled {
-		if current != desired {
-			return jobs.ErrConflict
-		}
-		if desired == jobs.StatusSucceeded && !jsonEquivalent(jobError, []byte(`{}`)) {
-			return jobs.ErrConflict
-		}
-		if attemptCount > 0 {
-			if !foundAttempt || attempt.Outcome != string(desired) || attempt.FinishedAt == nil || retryAt != nil || !jsonEquivalent(attempt.ErrorJSON, jobError) {
-				return jobs.ErrConflict
-			}
-		}
-		return nil
+	if status == jobs.StatusFailed && !json.Valid(problem) {
+		return errors.New("failure evidence must be valid JSON")
 	}
-	if current != jobs.StatusQueued && current != jobs.StatusRunning {
-		return jobs.ErrConflict
+	var changed int64
+	var err error
+	if status == jobs.StatusFailed {
+		changed, err = queries(tx).SetJobTerminalWithError(ctx, jobdb.SetJobTerminalWithErrorParams{
+			ID: id, Status: string(status), Problem: problem, FenceGeneration: fence.Generation,
+		})
+	} else {
+		changed, err = queries(tx).SetJobTerminal(ctx, jobdb.SetJobTerminalParams{
+			ID: id, Status: string(status), FenceGeneration: fence.Generation,
+		})
 	}
-	terminalError := []byte(`{"code":"REFRESH_RUN_TERMINAL"}`)
-	if desired == jobs.StatusSucceeded {
-		// Successful reconciliation is a clean completion, not a recovery
-		// failure.  Keep the canonical empty error object expected by the jobs
-		// authority's terminal invariant.
-		terminalError = []byte(`{}`)
-	}
-	if current == jobs.StatusQueued {
-		if attemptCount > 0 && (attempt.Outcome != "retrying" || attempt.FinishedAt == nil || retryAt == nil || !jsonEquivalent(attempt.ErrorJSON, jobError)) {
-			return jobs.ErrConflict
-		}
-		// A run may be durably failed or cancelled before its queued job is
-		// claimed; a successful run, however, must always have an execution
-		// attempt that proves completion.
-		if attemptCount == 0 && desired == jobs.StatusSucceeded {
-			return jobs.ErrConflict
-		}
-		if attemptCount > 0 {
-			result, err := q.CloseRetryingAttempt(ctx, jobdb.CloseRetryingAttemptParams{JobID: id, Outcome: string(desired), Error: terminalError, AttemptNumber: attemptCount, FencingGeneration: leaseGeneration})
-			if err != nil {
-				return err
-			}
-			if err := requireChanged(result.RowsAffected(), nil); err != nil {
-				return err
-			}
-		}
-	}
-	if current == jobs.StatusRunning {
-		if !foundAttempt {
-			return jobs.ErrConflict
-		}
-		if attempt.Outcome != "running" && attempt.Outcome != string(desired) {
-			return jobs.ErrConflict
-		}
-		if attempt.Outcome == "running" {
-			if attempt.Owner != leaseOwner || attempt.FinishedAt != nil || retryAt != nil {
-				return jobs.ErrConflict
-			}
-			result, err := q.CloseRunningAttempt(ctx, jobdb.CloseRunningAttemptParams{JobID: id, Outcome: string(desired), Error: terminalError, AttemptNumber: attemptCount, FencingGeneration: leaseGeneration})
-			if err != nil {
-				return err
-			}
-			if err := requireChanged(result.RowsAffected(), nil); err != nil {
-				return err
-			}
-		} else {
-			// A pre-terminalized attempt while the job still says running can
-			// only be replayed when both rows already carry the exact recovery
-			// evidence this reconciliation would write.  Otherwise accepting the
-			// row would hide an owner/fence/error split across the authorities.
-			if attempt.Owner != leaseOwner || attempt.FinishedAt == nil || retryAt != nil || !jsonEquivalent(attempt.ErrorJSON, terminalError) || !jsonEquivalent(jobError, terminalError) {
-				return jobs.ErrConflict
-			}
-		}
-	}
-	result, err := q.ReconcileJob(ctx, jobdb.ReconcileJobParams{ID: id, Status: string(desired), Error: terminalError})
 	if err != nil {
 		return err
 	}
-	return requireChanged(result.RowsAffected(), nil)
-}
-
-// QuarantineQueuedTx closes one malformed queued job with durable poison
-// evidence. A concurrent claimant wins the row lock and returns false so the
-// caller can rely on that worker's fenced failure path instead.
-func (r *Repository) QuarantineQueuedTx(ctx context.Context, tx Tx, id string, problem []byte) (bool, error) {
-	if tx == nil || !canonicalLiteral(id, 256) {
-		return false, fmt.Errorf("invalid async poison job")
-	}
-	canonical, err := canonicalJSON(problem, 65536)
-	if err != nil {
-		return false, fmt.Errorf("invalid async poison evidence")
-	}
-	q := queries(tx)
-	jobRow, err := q.LockJobQuarantine(ctx, id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	} else if err != nil {
-		return false, err
-	}
-	status, attemptCount, leaseGeneration, existing := jobRow.Status, jobRow.AttemptCount, jobRow.LeaseGeneration, jobRow.Error
-	if status != string(jobs.StatusQueued) {
-		// Terminal replay is valid only for the exact canonical poison
-		// evidence. Checking only the code would bless a tampered problem
-		// payload and hide drift between the queue and refresh authorities.
-		return status == string(jobs.StatusCancelled) && jsonEquivalent(existing, canonical), nil
-	}
-	if attemptCount > 0 {
-		attemptRow, err := q.LockRetryingAttempt(ctx, jobdb.LockRetryingAttemptParams{JobID: id, AttemptNumber: attemptCount, FencingGeneration: leaseGeneration})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, jobs.ErrConflict
-		} else if err != nil {
-			return false, err
-		} else if attemptRow.Outcome != "retrying" || !attemptRow.FinishedAt.Valid || !attemptRow.RetryAt.Valid {
-			return false, jobs.ErrConflict
+	if changed == 0 {
+		current, e := r.get(ctx, tx, id)
+		if e != nil {
+			return e
 		}
-		result, err := q.QuarantineAttempt(ctx, jobdb.QuarantineAttemptParams{JobID: id, AttemptNumber: attemptCount, FencingGeneration: leaseGeneration, Error: canonical})
-		if err != nil {
-			return false, err
-		}
-		if err := requireChanged(result.RowsAffected(), nil); err != nil {
-			return false, err
-		}
-	}
-	result, err := q.QuarantineJob(ctx, jobdb.QuarantineJobParams{ID: id, Error: canonical})
-	if err != nil {
-		return false, err
-	}
-	if err := requireChanged(result.RowsAffected(), nil); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func (r *Repository) CancelClaimed(ctx context.Context, id string, fence jobs.Fence) error {
-	if !validFence(id, fence) {
-		return fmt.Errorf("invalid async job fence")
-	}
-	if b, ok := r.db.(beginner); ok {
-		if _, alreadyTx := r.db.(pgx.Tx); !alreadyTx {
-			tx, err := b.Begin(ctx)
-			if err != nil {
-				return err
-			}
-			if err := r.cancelClaimed(ctx, tx, id, fence); err != nil {
-				_ = tx.Rollback(ctx)
-				return err
-			}
-			return tx.Commit(ctx)
-		}
-	}
-	return r.cancelClaimed(ctx, r.db, id, fence)
-}
-
-// CancelClaimedTx terminalizes a running job and its current attempt through
-// a caller-owned transaction. Refresh supersession uses this to close the
-// canonical job atomically with its refresh run tree.
-func (r *Repository) CancelClaimedTx(ctx context.Context, tx Tx, id string, fence jobs.Fence) error {
-	if tx == nil || !validFence(id, fence) {
-		return fmt.Errorf("invalid async job fence")
-	}
-	return r.cancelClaimed(ctx, tx, id, fence)
-}
-
-func (r *Repository) cancelClaimed(ctx context.Context, tx DBTX, id string, fence jobs.Fence) error {
-	count, err := queries(tx).CancelClaimed(ctx, jobdb.CancelClaimedParams{ID: id, Owner: fence.Owner, Generation: fence.Generation})
-	return requireChanged(count, err)
-}
-
-// SupersedeTx terminalizes queued and running jobs selected by a refresh
-// authority. The jobs capability owns the state-machine SQL; callers provide
-// already-authorized job identities and this method performs no cross-schema
-// joins.
-func (r *Repository) SupersedeTx(ctx context.Context, tx Tx, ids []string) error {
-	if tx == nil || len(ids) == 0 {
-		return nil
-	}
-	ordered := append([]string(nil), ids...)
-	sort.Strings(ordered)
-	for i := 1; i < len(ordered); i++ {
-		if ordered[i] == ordered[i-1] {
-			return jobs.ErrConflict
-		}
-	}
-	for _, id := range ordered {
-		if !canonicalLiteral(id, 256) {
-			return fmt.Errorf("invalid async job id")
-		}
-	}
-	for _, id := range ordered {
-		q := queries(tx)
-		jobRow, err := q.LockJobSupersede(ctx, id)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return jobs.ErrConflict
-		} else if err != nil {
-			return err
-		}
-		status, attemptCount, leaseGeneration, leaseOwner := jobs.Status(jobRow.Status), jobRow.AttemptCount, jobRow.LeaseGeneration, jobRow.LeaseOwner
-		if status != jobs.StatusQueued && status != jobs.StatusRunning {
-			return jobs.ErrConflict
-		}
-		if attemptCount > 0 {
-			attemptRow, attemptErr := q.LockAttemptSupersede(ctx, jobdb.LockAttemptSupersedeParams{JobID: id, AttemptNumber: attemptCount, FencingGeneration: leaseGeneration})
-			if errors.Is(attemptErr, pgx.ErrNoRows) {
-				return jobs.ErrConflict
-			}
-			if attemptErr != nil {
-				return attemptErr
-			}
-			if status == jobs.StatusRunning && (attemptRow.Outcome != "running" || attemptRow.Owner != leaseOwner || attemptRow.FinishedAt.Valid || attemptRow.RetryAt.Valid) {
-				return jobs.ErrConflict
-			}
-			if status == jobs.StatusQueued && (attemptRow.Outcome != "retrying" || !attemptRow.FinishedAt.Valid || !attemptRow.RetryAt.Valid) {
-				return jobs.ErrConflict
-			}
-			if attemptRow.Outcome == "running" || attemptRow.Outcome == "retrying" {
-				result, updateErr := q.SupersedeAttempt(ctx, jobdb.SupersedeAttemptParams{JobID: id, AttemptNumber: attemptCount, FencingGeneration: leaseGeneration})
-				if updateErr != nil {
-					return updateErr
-				}
-				if result.RowsAffected() != 1 {
-					return jobs.ErrConflict
-				}
-			}
-		}
-		result, err := q.SupersedeJob(ctx, id)
-		if err != nil {
-			return err
-		}
-		if result.RowsAffected() != 1 {
+		if current.Status != status || (fence.Generation > 0 && current.Attempts != int(fence.Generation)) {
 			return jobs.ErrConflict
 		}
 	}
 	return nil
 }
 
-func (r *Repository) AppendEvent(ctx context.Context, resourceKind, resourceID, eventType string, data []byte) (jobs.Event, error) {
-	return r.appendEvent(ctx, r.db, resourceKind, resourceID, eventType, data, "")
-}
-
-// AppendEventTx appends an event inside a caller-owned transaction.  This is
-// the event-only counterpart to RecordWorkflow for domain transitions that do
-// not schedule a follow-up job.
-func (r *Repository) AppendEventTx(ctx context.Context, tx Tx, resourceKind, resourceID, eventType string, data []byte) (jobs.Event, error) {
-	if tx == nil {
-		return jobs.Event{}, fmt.Errorf("event transaction is required")
-	}
-	return r.appendEvent(ctx, tx, resourceKind, resourceID, eventType, data, "")
-}
-
-func (r *Repository) ListEvents(ctx context.Context, resourceKind, resourceID string, after int64, limit int) ([]jobs.Event, error) {
-	if !canonicalLiteral(resourceKind, 128) || !canonicalLiteral(resourceID, 256) || after < 0 || limit < 1 || limit > 200 {
-		return nil, fmt.Errorf("event limit must be between 1 and 200")
-	}
-	rows, err := queries(r.db).ListEvents(ctx, jobdb.ListEventsParams{ResourceKind: resourceKind, ResourceID: resourceID, AfterID: after, PageLimit: int32(limit)})
-	if err != nil {
-		return nil, err
-	}
-	result := make([]jobs.Event, 0, limit)
-	for _, row := range rows {
-		event, scanErr := fromDBEvent(row)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		result = append(result, event)
-	}
-	return result, nil
-}
-
-// Observe returns bounded queue-health rows without exposing payloads. The
-// view is intentionally queryable by readonly roles for stuck/expired,
-// retrying and dead-letter operational dashboards.
-type Observation struct {
-	ID, Kind, WorkloadClass, PrincipalID, Status, Health string
-	Attempts, MaxAttempts, RetryCount, ExpiredCount      int64
-	LeaseOwner, LeaseExpiresAt, AvailableAt, LastRetryAt string
-}
-
-func (r *Repository) Observe(ctx context.Context, workloadClass string, limit int) ([]Observation, error) {
-	if !validClass(workloadClass) || limit < 1 || limit > 200 {
-		return nil, fmt.Errorf("workload class and observation limit are required")
-	}
-	rows, err := queries(r.db).Observe(ctx, jobdb.ObserveParams{WorkloadClass: workloadClass, PageLimit: int32(limit)})
-	if err != nil {
-		return nil, err
-	}
-	result := make([]Observation, 0, limit)
-	for _, row := range rows {
-		var o Observation
-		o.ID, o.Kind, o.WorkloadClass, o.PrincipalID, o.Status, o.Health = row.ID, row.Kind, row.WorkloadClass, row.PrincipalID, row.Status, row.Health
-		o.Attempts, o.MaxAttempts, o.LeaseOwner, o.RetryCount, o.ExpiredCount = row.AttemptCount, row.MaxAttempts, row.LeaseOwner, row.RetryCount, row.ExpiredCount
-		o.LeaseExpiresAt, o.AvailableAt, o.LastRetryAt = formatPgTimestamp(row.LeaseExpiresAt), formatPgTimestamp(row.AvailableAt), formatPgTimestamp(row.LastRetryAt)
-		result = append(result, o)
-	}
-	return result, nil
-}
-
-// RecordWorkflow atomically appends the keyed event and optional follow-up
-// job using the caller's pgx transaction. The transaction remains owned by
-// the capability making the domain transition.
-func (r *Repository) RecordWorkflow(ctx context.Context, tx Tx, intent jobs.WorkflowIntent) error {
-	if tx == nil {
-		return fmt.Errorf("workflow transaction is required")
-	}
-	event := intent.Event
-	if !canonicalLiteral(event.Key, 256) || !canonicalLiteral(event.ResourceKind, 128) || !canonicalLiteral(event.ResourceID, 256) || !canonicalLiteral(event.EventType, 128) || len(event.Data) > 1<<20 || !json.Valid(event.Data) {
-		return fmt.Errorf("invalid workflow event")
-	}
-	if _, err := r.appendEvent(ctx, tx, event.ResourceKind, event.ResourceID, event.EventType, event.Data, event.Key); err != nil {
+func (r *Repository) CompleteTx(ctx context.Context, tx Tx, id string, fence jobs.Fence) error {
+	if err := r.setTerminalTx(ctx, tx, id, fence, jobs.StatusSucceeded, nil); err != nil {
 		return err
 	}
-	if intent.Job.ID == "" {
-		return nil
+	if completion := completionFromContext(ctx); completion != nil && !completion.done.Load() {
+		pgxTx, ok := tx.(pgx.Tx)
+		if !ok {
+			return errors.New("River completion requires a native pgx transaction")
+		}
+		if err := completion.complete(ctx, pgxTx); err != nil {
+			return err
+		}
 	}
-	_, err := r.enqueueTx(ctx, tx, intent.Job)
+	return nil
+}
+func (r *Repository) FailTx(ctx context.Context, tx Tx, id string, fence jobs.Fence, problem []byte) error {
+	if err := r.setTerminalTx(ctx, tx, id, fence, jobs.StatusFailed, problem); err != nil {
+		return err
+	}
+	client, err := r.riverClient()
+	if err != nil {
+		return err
+	}
+	riverID, err := r.RiverJobIDTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	pgxTx, nativeErr := nativeTransaction(tx)
+	if nativeErr != nil {
+		return nativeErr
+	}
+	_, err = client.JobCancelTx(ctx, pgxTx, riverID)
+	if errors.Is(err, rivertype.ErrNotFound) {
+		err = nil
+	}
+	if err == nil {
+		if completion := completionFromContext(ctx); completion != nil {
+			completion.done.Store(true)
+		}
+	}
+	return err
+}
+func (r *Repository) Complete(ctx context.Context, id string, f jobs.Fence) error {
+	return r.inTx(ctx, func(tx Tx) error { return r.CompleteTx(ctx, tx, id, f) })
+}
+func (r *Repository) Fail(ctx context.Context, id string, f jobs.Fence, p []byte) error {
+	return r.inTx(ctx, func(tx Tx) error { return r.FailTx(ctx, tx, id, f, p) })
+}
+
+func (r *Repository) RequeueAfterFailure(ctx context.Context, id string, attempt int, problem []byte) error {
+	if !json.Valid(problem) {
+		return errors.New("retry evidence must be valid JSON")
+	}
+	_, err := queries(r.db).RequeueJobAfterFailure(ctx, jobdb.RequeueJobAfterFailureParams{ID: id, Attempt: int32(attempt), Problem: problem})
 	return err
 }
 
-// CommitWorkflow is the standalone transaction convenience for callers that
-// own a pgxpool.Pool or pgx.Conn.
-func (r *Repository) CommitWorkflow(ctx context.Context, intent jobs.WorkflowIntent) error {
+func (r *Repository) Cancel(ctx context.Context, id string) error {
+	return r.inTx(ctx, func(tx Tx) error { return r.CancelTx(ctx, tx, id) })
+}
+func (r *Repository) CancelTx(ctx context.Context, tx Tx, id string) error {
+	client, err := r.riverClient()
+	if err != nil {
+		return err
+	}
+	riverID, err := r.RiverJobIDTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	current, err := r.get(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if current.Status != jobs.StatusQueued && current.Status != jobs.StatusRunning {
+		return jobs.ErrConflict
+	}
+	pgxTx, nativeErr := nativeTransaction(tx)
+	if nativeErr != nil {
+		return nativeErr
+	}
+	if _, err := client.JobCancelTx(ctx, pgxTx, riverID); err != nil && !errors.Is(err, rivertype.ErrNotFound) {
+		return err
+	}
+	if err := r.setTerminalTx(ctx, tx, id, jobs.Fence{}, jobs.StatusCancelled, nil); err != nil {
+		return err
+	}
+	if completion := completionFromContext(ctx); completion != nil {
+		completion.done.Store(true)
+	}
+	return nil
+}
+func (r *Repository) CancelClaimed(ctx context.Context, id string, f jobs.Fence) error {
+	return r.Cancel(ctx, id)
+}
+func (r *Repository) CancelClaimedTx(ctx context.Context, tx Tx, id string, _ jobs.Fence) error {
+	return r.CancelTx(ctx, tx, id)
+}
+func (r *Repository) SupersedeTx(ctx context.Context, tx Tx, ids []string) error {
+	for _, id := range ids {
+		if err := r.CancelTx(ctx, tx, id); err != nil && !errors.Is(err, jobs.ErrConflict) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Repository) inTx(ctx context.Context, fn func(Tx) error) error {
 	b, ok := r.db.(beginner)
 	if !ok {
-		return fmt.Errorf("postgres jobs database does not support transactions")
+		return errors.New("PostgreSQL jobs transaction authority is required")
 	}
 	tx, err := b.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
-	if err := r.RecordWorkflow(ctx, tx, intent); err != nil {
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	if err := fn(tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-func (r *Repository) appendEvent(ctx context.Context, db DBTX, kind, id, eventType string, data []byte, key string) (jobs.Event, error) {
-	if !canonicalLiteral(kind, 128) || !canonicalLiteral(id, 256) || !canonicalLiteral(eventType, 128) || len(data) > 1<<20 || !json.Valid(data) || len(key) > 256 || (key != "" && !canonicalLiteral(key, 256)) {
-		return jobs.Event{}, fmt.Errorf("invalid async event")
-	}
-	canonicalData, err := canonicalJSON(data, 1<<20)
-	if err != nil {
-		return jobs.Event{}, fmt.Errorf("invalid async event data: %w", err)
-	}
-	// A standalone append owns a short transaction so sequence allocation and
-	// event insertion cannot be split across implicit autocommit statements.
-	if b, ok := db.(beginner); ok {
-		if _, alreadyTx := db.(pgx.Tx); !alreadyTx {
-			tx, beginErr := b.Begin(ctx)
-			if beginErr != nil {
-				return jobs.Event{}, beginErr
-			}
-			event, appendErr := r.appendEvent(ctx, tx, kind, id, eventType, canonicalData, key)
-			if appendErr != nil {
-				_ = tx.Rollback(ctx)
-				return jobs.Event{}, appendErr
-			}
-			if commitErr := tx.Commit(ctx); commitErr != nil {
-				return jobs.Event{}, commitErr
-			}
-			return event, nil
-		}
-	}
-
-	// Lock the per-resource sequence row before checking a keyed replay. This
-	// serializes keyed and ordinary events alike without advisory locks and
-	// guarantees contiguous IDs even when two replays race.
-	q := queries(db)
-	if err := q.EnsureEventSequence(ctx, jobdb.EnsureEventSequenceParams{ResourceKind: kind, ResourceID: id}); err != nil {
-		return jobs.Event{}, err
-	}
-	if _, err = q.LockEventSequence(ctx, jobdb.LockEventSequenceParams{ResourceKind: kind, ResourceID: id}); err != nil {
-		return jobs.Event{}, err
-	}
-	if key != "" {
-		var existing jobs.Event
-		row, lookupErr := q.GetEventByKey(ctx, jobdb.GetEventByKeyParams{ResourceKind: kind, ResourceID: id, EventKey: key})
-		if lookupErr == nil {
-			existing = jobs.Event{ID: row.EventID, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID, EventType: row.EventType, Data: row.Data, CreatedAt: formatPgTimestamp(row.CreatedAt)}
-			if existing.EventType != eventType || !jsonEquivalent(existing.Data, canonicalData) {
-				return jobs.Event{}, jobs.ErrConflict
-			}
-			existing.Data = append([]byte(nil), existing.Data...)
-			return existing, nil
-		}
-		if !errors.Is(lookupErr, pgx.ErrNoRows) {
-			return jobs.Event{}, lookupErr
-		}
-	}
-	var event jobs.Event
-	event.ID, err = q.NextEventID(ctx, jobdb.NextEventIDParams{ResourceKind: kind, ResourceID: id})
-	if err != nil {
-		return jobs.Event{}, err
-	}
-	row, err := q.InsertEvent(ctx, jobdb.InsertEventParams{ResourceKind: kind, ResourceID: id, EventID: event.ID, EventType: eventType, EventKey: key, Data: canonicalData})
-	if err != nil {
-		return jobs.Event{}, err
-	}
-	event.ID, event.ResourceKind, event.ResourceID, event.EventType = row.EventID, row.ResourceKind, row.ResourceID, row.EventType
-	event.Data = append([]byte(nil), row.Data...)
-	event.CreatedAt = formatPgTimestamp(row.CreatedAt)
-	return event, nil
+func (r *Repository) AppendEvent(ctx context.Context, kind, id, event string, data []byte) (jobs.Event, error) {
+	var out jobs.Event
+	err := r.inTx(ctx, func(tx Tx) error { var e error; out, e = r.AppendEventTx(ctx, tx, kind, id, event, data); return e })
+	return out, err
 }
-
-func jsonEquivalent(left, right []byte) bool {
-	leftCanonical, leftErr := canonicalJSON(left, 1<<20)
-	rightCanonical, rightErr := canonicalJSON(right, 1<<20)
-	if leftErr != nil || rightErr != nil {
-		return false
+func (r *Repository) AppendEventTx(ctx context.Context, tx Tx, kind, id, event string, data []byte) (jobs.Event, error) {
+	canonical, err := canonicalJSON(data)
+	if err != nil {
+		return jobs.Event{}, err
 	}
-	return bytes.Equal(leftCanonical, rightCanonical)
+	keySum := sha256.Sum256(append([]byte(event+"\x00"), canonical...))
+	return r.appendEventTx(ctx, tx, jobs.EventInput{Key: "sha256:" + hex.EncodeToString(keySum[:]), ResourceKind: kind, ResourceID: id, EventType: event, Data: canonical})
 }
-
-// canonicalJSON validates exactly one bounded JSON value, rejects duplicate
-// object keys, and emits a stable representation for request identity and
-// replay comparisons. json.Number preserves authored integer/decimal spelling
-// instead of silently converting large values through float64.
-func canonicalJSON(value []byte, maxBytes int) ([]byte, error) {
-	if len(value) == 0 || len(value) > maxBytes {
-		return nil, fmt.Errorf("JSON payload exceeds %d bytes", maxBytes)
+func (r *Repository) appendEventTx(ctx context.Context, tx Tx, input jobs.EventInput) (jobs.Event, error) {
+	if input.Key == "" || input.ResourceKind == "" || input.ResourceID == "" || input.EventType == "" || !json.Valid(input.Data) {
+		return jobs.Event{}, errors.New("invalid async event")
 	}
-	var validated json.RawMessage
-	if err := strictjson.DecodeWithOptions(value, &validated, strictjson.Options{
-		MaxBytes: int64(maxBytes), MaxDepth: 100, DuplicateKeys: strictjson.CaseSensitiveKeys, AllowUnknownFields: true,
+	canonical, err := canonicalJSON(input.Data)
+	if err != nil {
+		return jobs.Event{}, err
+	}
+	if err := queries(tx).EnsureEventSequence(ctx, jobdb.EnsureEventSequenceParams{
+		ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
 	}); err != nil {
-		return nil, err
+		return jobs.Event{}, err
 	}
-	var decoded any
-	dec := json.NewDecoder(bytes.NewReader(value))
-	dec.UseNumber()
-	if err := dec.Decode(&decoded); err != nil {
-		return nil, err
+	if _, err := queries(tx).LockEventSequence(ctx, jobdb.LockEventSequenceParams{
+		ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
+	}); err != nil {
+		return jobs.Event{}, err
 	}
-	canonical, err := json.Marshal(decoded)
-	if err != nil {
-		return nil, err
-	}
-	if len(canonical) > maxBytes {
-		return nil, fmt.Errorf("canonical JSON payload exceeds %d bytes", maxBytes)
-	}
-	return canonical, nil
-}
-
-func mapJob(id, kind, workloadClass, principalID string, groups []string, partitionKey, resourceKind, resourceID string, estimatedMemory int64, payload []byte, status string, attempts int64, leaseOwner string, leaseExpires, created, started, finished pgtype.Timestamptz, generation int64, errorJSON []byte) (jobs.Job, error) {
-	job := jobs.Job{ID: id, Kind: kind, WorkloadClass: workloadClass, PrincipalID: principalID, PartitionKey: partitionKey, ResourceKind: resourceKind, ResourceID: resourceID, EstimatedMemoryBytes: estimatedMemory, LeaseOwner: leaseOwner, LeaseGeneration: generation, Status: jobs.Status(status), Attempts: int(attempts), Payload: append([]byte(nil), payload...), ErrorJSON: string(errorJSON)}
-	canonicalGroups, err := jobs.CanonicalGroups(groups)
-	if err != nil || !equalStrings(groups, canonicalGroups) {
-		return jobs.Job{}, fmt.Errorf("invalid persisted async job groups")
-	}
-	job.GroupIDs = canonicalGroups
-	job.LeaseExpiresAt, job.CreatedAt, job.StartedAt, job.FinishedAt = formatPgTimestamp(leaseExpires), formatPgTimestamp(created), formatPgTimestamp(started), formatPgTimestamp(finished)
-	return job, nil
-}
-
-func fromGetJob(r jobdb.GetJobRow) (jobs.Job, error) {
-	return mapJob(r.ID, r.Kind, r.WorkloadClass, r.PrincipalID, r.GroupIds, r.PartitionKey, r.ResourceKind, r.ResourceID, r.EstimatedMemoryBytes, r.Payload, r.Status, r.AttemptCount, r.LeaseOwner, r.LeaseExpiresAt, r.CreatedAt, r.StartedAt, r.FinishedAt, r.LeaseGeneration, r.Error)
-}
-func fromActiveRefreshJob(r jobdb.GetActiveRefreshJobsRow) (jobs.Job, error) {
-	return mapJob(r.ID, r.Kind, r.WorkloadClass, r.PrincipalID, r.GroupIds, r.PartitionKey, r.ResourceKind, r.ResourceID, r.EstimatedMemoryBytes, r.Payload, r.Status, r.AttemptCount, r.LeaseOwner, r.LeaseExpiresAt, r.CreatedAt, r.StartedAt, r.FinishedAt, r.LeaseGeneration, r.Error)
-}
-func fromCandidateJob(r jobdb.ListCandidatesRow) (jobs.Job, error) {
-	return mapJob(r.ID, r.Kind, r.WorkloadClass, r.PrincipalID, r.GroupIds, r.PartitionKey, r.ResourceKind, r.ResourceID, r.EstimatedMemoryBytes, r.Payload, r.Status, r.AttemptCount, r.LeaseOwner, r.LeaseExpiresAt, r.CreatedAt, r.StartedAt, r.FinishedAt, r.LeaseGeneration, r.Error)
-}
-func fromCandidateResourceJob(r jobdb.ListCandidatesByResourceKindRow) (jobs.Job, error) {
-	return mapJob(r.ID, r.Kind, r.WorkloadClass, r.PrincipalID, r.GroupIds, r.PartitionKey, r.ResourceKind, r.ResourceID, r.EstimatedMemoryBytes, r.Payload, r.Status, r.AttemptCount, r.LeaseOwner, r.LeaseExpiresAt, r.CreatedAt, r.StartedAt, r.FinishedAt, r.LeaseGeneration, r.Error)
-}
-func fromClaimedJob(r jobdb.ClaimByIDRow) (jobs.Job, error) {
-	return mapJob(r.ID, r.Kind, r.WorkloadClass, r.PrincipalID, r.GroupIds, r.PartitionKey, r.ResourceKind, r.ResourceID, r.EstimatedMemoryBytes, r.Payload, r.Status, r.AttemptCount, r.LeaseOwner, r.LeaseExpiresAt, r.CreatedAt, r.StartedAt, r.FinishedAt, r.LeaseGeneration, r.Error)
-}
-
-func fromDBEvent(r jobdb.ListEventsRow) (jobs.Event, error) {
-	return jobs.Event{ID: r.EventID, ResourceKind: r.ResourceKind, ResourceID: r.ResourceID, EventType: r.EventType, Data: append([]byte(nil), r.Data...), CreatedAt: formatPgTimestamp(r.CreatedAt)}, nil
-}
-func fromInsertedEvent(r jobdb.InsertEventRow) jobs.Event {
-	return jobs.Event{ID: r.EventID, ResourceKind: r.ResourceKind, ResourceID: r.ResourceID, EventType: r.EventType, Data: append([]byte(nil), r.Data...), CreatedAt: formatPgTimestamp(r.CreatedAt)}
-}
-
-func nullableTime(value pgtype.Timestamptz) *time.Time {
-	if !value.Valid {
-		return nil
-	}
-	t := value.Time
-	return &t
-}
-
-func formatPgTimestamp(value pgtype.Timestamptz) string {
-	if !value.Valid {
-		return ""
-	}
-	return formatTimestamp(value.Time)
-}
-
-func validFence(id string, fence jobs.Fence) bool {
-	return canonicalLiteral(id, 256) && canonicalLiteral(fence.Owner, 256) && fence.Generation > 0
-}
-func validClass(class string) bool {
-	return class == jobpolicy.WorkloadClassBackground || class == jobpolicy.WorkloadClassControl
-}
-func canonicalLiteral(value string, max int) bool {
-	return value != "" && value == strings.TrimSpace(value) && len(value) <= max && strings.IndexFunc(value, unicode.IsControl) < 0
-}
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
+	existing, err := queries(tx).GetEventByKey(ctx, jobdb.GetEventByKeyParams{
+		ResourceKind: input.ResourceKind, ResourceID: input.ResourceID, EventKey: input.Key,
+	})
+	if err == nil {
+		persisted, canonicalErr := canonicalJSON([]byte(existing.Data))
+		if canonicalErr != nil {
+			return jobs.Event{}, canonicalErr
 		}
+		if existing.EventType != input.EventType || !bytes.Equal(persisted, canonical) {
+			return jobs.Event{}, jobs.ErrConflict
+		}
+		return jobs.Event{
+			ID: existing.EventID, ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
+			EventType: existing.EventType, Data: canonical,
+			CreatedAt: existing.CreatedAt.UTC().Format(time.RFC3339Nano),
+		}, nil
 	}
-	return true
-}
-func formatTimestamp(value time.Time) string {
-	if value.IsZero() {
-		return ""
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return jobs.Event{}, err
 	}
-	// Preserve the database timestamp's full precision.  Cursor consumers use
-	// (created_at,id) keyset ordering; second-level formatting can repeat a
-	// cursor when a page contains rows created in the same second and cause an
-	// unbounded pagination loop.
-	return value.UTC().Format(time.RFC3339Nano)
-}
-func formatOptionalTimestamp(value *time.Time) string {
-	if value == nil {
-		return ""
-	}
-	return formatTimestamp(*value)
-}
-func requireChanged(changed int64, err error) error {
+	next, err := queries(tx).NextEventID(ctx, jobdb.NextEventIDParams{
+		ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
+	})
 	if err != nil {
+		return jobs.Event{}, err
+	}
+	row, err := queries(tx).InsertEvent(ctx, jobdb.InsertEventParams{
+		ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
+		EventID: next, EventType: input.EventType, EventKey: input.Key, Data: canonical,
+	})
+	if err != nil {
+		return jobs.Event{}, jobs.ErrConflict
+	}
+	return jobs.Event{ID: row.EventID, ResourceKind: input.ResourceKind, ResourceID: input.ResourceID, EventType: input.EventType, Data: canonical, CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339Nano)}, nil
+}
+func (r *Repository) ListEvents(ctx context.Context, kind, id string, after int64, limit int) ([]jobs.Event, error) {
+	if limit < 1 || limit > maxEventPage {
+		return nil, errors.New("event page limit is outside bound")
+	}
+	rows, err := queries(r.db).ListEvents(ctx, jobdb.ListEventsParams{
+		ResourceKind: kind, ResourceID: id, AfterID: after, PageLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]jobs.Event, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, jobs.Event{
+			ID: row.EventID, ResourceKind: kind, ResourceID: id, EventType: row.EventType,
+			Data: []byte(row.Data), CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return out, nil
+}
+
+func (r *Repository) RecordWorkflow(ctx context.Context, tx Tx, intent jobs.WorkflowIntent) error {
+	if tx == nil {
+		return errors.New("workflow transaction is required")
+	}
+	if _, err := r.appendEventTx(ctx, tx, intent.Event); err != nil {
 		return err
 	}
-	if changed != 1 {
-		return jobs.ErrConflict
+	if intent.Job.ID != "" {
+		_, err := r.EnqueueTx(ctx, tx, intent.Job)
+		return err
 	}
 	return nil
+}
+func (r *Repository) CommitWorkflow(ctx context.Context, intent jobs.WorkflowIntent) error {
+	return r.inTx(ctx, func(tx Tx) error { return r.RecordWorkflow(ctx, tx, intent) })
+}
+
+// AcquirePartition serializes a partition across nodes and rejects a later
+// product job while an earlier live row remains. River still owns the row
+// claim; this is only LeapView's product admission/fairness adapter.
+func (r *Repository) AcquirePartition(ctx context.Context, job jobs.Job) (func(), bool, error) {
+	pool, err := r.NativePool()
+	if err != nil {
+		return nil, false, err
+	}
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	release := func() {
+		_ = queries(conn).ReleasePartitionAdvisoryLock(context.Background(), job.PartitionKey)
+		conn.Release()
+	}
+	locked, err := queries(conn).TryPartitionAdvisoryLock(ctx, job.PartitionKey)
+	if err != nil || !locked {
+		conn.Release()
+		return nil, false, err
+	}
+	head, err := queries(conn).PartitionIsHead(ctx, jobdb.PartitionIsHeadParams{
+		PartitionKey: job.PartitionKey, ID: job.ID,
+	})
+	if err != nil {
+		release()
+		return nil, false, err
+	}
+	if !head {
+		release()
+		return nil, false, nil
+	}
+	return release, true, nil
+}
+
+func canonicalGroups(groups []string) []string {
+	out := append([]string(nil), groups...)
+	sort.Strings(out)
+	return out
+}
+
+func canonicalJSON(raw []byte) ([]byte, error) {
+	var value any
+	if err := strictjson.DecodeWithOptions(raw, &value, strictjson.Options{MaxBytes: maxPayloadBytes, AllowUnknownFields: true, DuplicateKeys: strictjson.CaseSensitiveKeys}); err != nil {
+		return nil, err
+	}
+	// Decode a second time with UseNumber so canonicalization never rounds
+	// integers through float64 (which would collapse distinct request/event
+	// digests such as 9007199254740992 and 9007199254740993).
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return json.Marshal(value)
+}
+
+func nativeTransaction(tx Tx) (pgx.Tx, error) {
+	pgxTx, ok := tx.(pgx.Tx)
+	if !ok || pgxTx == nil {
+		return nil, errors.New("River requires a native pgx transaction")
+	}
+	return pgxTx, nil
 }

@@ -102,6 +102,9 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"build",
 		"publish",
 		"getDeliveryCandidateStatus",
+		"getCapabilities",
+		"native-postgres",
+		"buildRevision",
 		"requestDeliveryPublicationApproval",
 		"approveDeliveryPublicationApproval",
 		"getDeliveryPublicationApproval",
@@ -123,6 +126,7 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"leapviewctl upgrade",
 		"stricthostkeychecking",
 		"ssh-keygen",
+		"ssh-host-key.sha256",
 		"--token dev",
 		"demo_publisher_token",
 		"demo_release_token",
@@ -138,6 +142,9 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 	require.NotEqual(t, -1, configGeneration, "demo deployment must generate ignored config sources")
 	require.NotEqual(t, -1, olistBootstrap, "demo deployment must bootstrap Olist")
 	require.Less(t, configGeneration, olistBootstrap, "config generation must precede Olist compilation")
+	if _, err := os.Stat(filepath.Join(root, "deploy", "demo", "ssh-host-key.sha256")); !os.IsNotExist(err) {
+		t.Fatalf("stale demo SSH identity remains tracked: %v", err)
+	}
 }
 
 func TestDemoHumanCredentialsStayOutOfDeploymentAutomation(t *testing.T) {

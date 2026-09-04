@@ -100,6 +100,18 @@ SELECT ducklake.quarantine_snapshot_under_maintenance_fence(sqlc.arg(quarantine_
 -- name: CompleteSnapshotCleanupUnderMaintenanceFence :execresult
 SELECT ducklake.complete_snapshot_cleanup_under_maintenance_fence(sqlc.arg(cleanup_evidence)::jsonb,sqlc.arg(cleanup_completed_at),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),sqlc.arg(cleanup_owner_id),sqlc.arg(cleanup_fencing_epoch),sqlc.arg(maintenance_id),sqlc.arg(maintenance_owner_id),sqlc.arg(maintenance_fencing_epoch));
 
+-- name: ExpireSnapshotsUnderMaintenanceFence :exec
+SELECT ducklake.expire_snapshots_under_maintenance_fence(sqlc.arg(snapshot_ids)::bigint[],sqlc.arg(expired_at),sqlc.arg(items)::jsonb,sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(maintenance_id),sqlc.arg(maintenance_owner_id),sqlc.arg(maintenance_fencing_epoch));
+
+-- name: ReconcileRetentionMaintenanceSnapshots :exec
+SELECT ducklake.reconcile_retention_maintenance_snapshots(sqlc.arg(items)::jsonb,sqlc.arg(maintenance_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch));
+
+-- name: QuarantineSnapshotsUnderMaintenanceFence :exec
+SELECT ducklake.quarantine_snapshots_under_maintenance_fence(sqlc.arg(snapshot_ids)::bigint[],sqlc.arg(items)::jsonb,sqlc.arg(cleanup_lease_expires_at),sqlc.arg(quarantined_at),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(maintenance_id),sqlc.arg(maintenance_owner_id),sqlc.arg(maintenance_fencing_epoch));
+
+-- name: CompleteSnapshotsCleanupUnderMaintenanceFence :exec
+SELECT ducklake.complete_snapshots_cleanup_under_maintenance_fence(sqlc.arg(snapshot_ids)::bigint[],sqlc.arg(items)::jsonb,sqlc.arg(cleanup_lease_expires_at),sqlc.arg(cleanup_completed_at),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(maintenance_id),sqlc.arg(maintenance_owner_id),sqlc.arg(maintenance_fencing_epoch));
+
 -- name: ListSnapshotOrphanCleanupEligible :many
 SELECT orphan_id::text,physical_pool_id,catalog_id,snapshot_id,state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence,discovered_at,cleanup_not_before,resolved_at
 FROM ducklake.snapshot_orphan
@@ -173,6 +185,7 @@ WHERE r.physical_pool_id=sqlc.arg(physical_pool_id)
          AND seal.ducklake_snapshot_id=r.snapshot_id
          AND lease.released_at IS NULL)
 ORDER BY r.snapshot_id
+LIMIT sqlc.arg(claim_limit)
 FOR UPDATE OF r;
 
 -- Freeze the exact expiry set under the active maintenance fence. A claimed
@@ -181,7 +194,7 @@ FOR UPDATE OF r;
 -- children and their set digest.
 -- name: ClaimRetentionSnapshots :many
 SELECT snapshot_id::bigint AS snapshot_id
-FROM unnest(ducklake.claim_retention_snapshots(sqlc.arg(maintenance_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch))) AS snapshot_id;
+FROM unnest(ducklake.claim_retention_snapshots(sqlc.arg(maintenance_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch),sqlc.arg(claim_limit))) AS snapshot_id;
 
 -- name: AcquirePoolMaintenanceFence :one
 SELECT (f).physical_pool_id::text AS physical_pool_id,(f).catalog_id::text AS catalog_id,(f).owner_id::text AS owner_id,(f).fencing_epoch::bigint AS fencing_epoch,(f).lease_expires_at::timestamptz AS lease_expires_at
@@ -210,6 +223,9 @@ SELECT ducklake.update_retention_maintenance(sqlc.arg(maintenance_id),sqlc.arg(p
 
 -- name: InsertRetentionMaintenanceSnapshot :exec
 SELECT ducklake.insert_retention_maintenance_snapshot(sqlc.arg(maintenance_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch));
+
+-- name: InsertRetentionMaintenanceSnapshots :exec
+SELECT ducklake.insert_retention_maintenance_snapshots(sqlc.arg(maintenance_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_ids)::bigint[],sqlc.arg(owner_id),sqlc.arg(fencing_epoch));
 
 -- name: GetRetentionMaintenanceSnapshot :one
 SELECT maintenance_id::text,physical_pool_id,catalog_id,snapshot_id,phase,expiry_evidence,quarantine_evidence,cleanup_evidence,created_at,updated_at

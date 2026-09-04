@@ -3,12 +3,15 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
@@ -16,9 +19,9 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
 	"github.com/flidai/leapview/internal/platform"
-	jobssqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 // testMCPResource is a bounded profile-only resource verifier. It exercises
@@ -99,7 +102,38 @@ func testAccessRepository(store *platform.Store) access.Repository {
 }
 
 func testAgentRepository(store *platform.Store) agent.Repository {
-	return agentsqlite.NewRepositoryWithEvents(store.SQLDB(), jobssqlite.NewRepository(store.SQLDB()))
+	return agentsqlite.NewRepositoryWithEvents(store.SQLDB(), &testJobEvents{})
+}
+
+type testJobEvents struct {
+	mu   sync.Mutex
+	rows []jobs.Event
+}
+
+func (*testJobEvents) Enqueue(context.Context, jobs.EnqueueInput) (jobs.Job, error) {
+	return jobs.Job{}, errors.New("test queue execution is unavailable")
+}
+func (*testJobEvents) Get(context.Context, string) (jobs.Job, error) {
+	return jobs.Job{}, jobs.ErrNotFound
+}
+func (*testJobEvents) Cancel(context.Context, string) error { return jobs.ErrNotFound }
+func (r *testJobEvents) AppendEvent(_ context.Context, kind, id, event string, data []byte) (jobs.Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	row := jobs.Event{ID: int64(len(r.rows) + 1), ResourceKind: kind, ResourceID: id, EventType: event, Data: append([]byte(nil), data...), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	r.rows = append(r.rows, row)
+	return row, nil
+}
+func (r *testJobEvents) ListEvents(_ context.Context, kind, id string, after int64, limit int) ([]jobs.Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]jobs.Event, 0, limit)
+	for _, row := range r.rows {
+		if row.ResourceKind == kind && row.ResourceID == id && row.ID > after && len(out) < limit {
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 // testPrincipal creates a project-scoped identity. Role assignment belongs to

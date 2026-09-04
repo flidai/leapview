@@ -9,6 +9,13 @@ test('UI framework QA gives the managed dev task its full readiness budget', asy
   expect(source).toContain("LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts)")
 })
 
+test('UI framework QA waits for asynchronous publication activation', async () => {
+  const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
+
+  expect(source).toContain('await waitForProjectReady(started)')
+  expect(source).toContain("new URL('/explore', baseURL)")
+})
+
 test('development startup reuses the bounded CI fixture supply', async () => {
   const source = await readFile('scripts/dev-server.sh', 'utf8')
 

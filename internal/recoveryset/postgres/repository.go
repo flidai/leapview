@@ -24,11 +24,7 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -50,9 +46,6 @@ func SchemaSQL() string { return schemaSQL }
 func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return recoveryset.ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	// sqlc-exception: schema-ddl. Capability-owned schema, triggers and ACLs.
 	_, err := tx.Exec(ctx, schemaSQL)

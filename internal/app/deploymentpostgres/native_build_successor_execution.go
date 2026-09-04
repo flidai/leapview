@@ -336,7 +336,7 @@ func (c *NativeBuildCoordinator) settleNativeBuildSuccessorFailure(ctx context.C
 	if err != nil {
 		return errors.Join(buildErr, err)
 	}
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(contextOrBackground(ctx)), nativeBuildSettlementTimeout)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nativeBuildSettlementTimeout)
 	defer cancel()
 	tx, err := c.repository.Begin(cleanupCtx)
 	if err != nil {

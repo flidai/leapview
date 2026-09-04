@@ -4,16 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"errors"
 	"fmt"
 	"maps"
-	"strconv"
 	"strings"
 	"sync"
 
 	duckdbdriver "github.com/duckdb/duckdb-go/v2"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	"github.com/flidai/leapview/internal/analytics/connectors"
+	"github.com/flidai/leapview/internal/analytics/duckdbsession"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 )
@@ -33,15 +32,11 @@ func NewIsolatedTargetRuntimeOpener() TargetRuntimeSessionOpener {
 		if err != nil {
 			return nil, err
 		}
-		database := sql.OpenDB(connector)
-		database.SetMaxOpenConns(1)
-		database.SetMaxIdleConns(1)
-		connection, err := database.Conn(ctx)
+		session, err := duckdbsession.OpenPinned(ctx, connector)
 		if err != nil {
-			_ = database.Close()
 			return nil, err
 		}
-		return &isolatedTargetRuntimeSession{connection: connection, database: database}, nil
+		return session, nil
 	}
 }
 
@@ -141,13 +136,13 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 			_ = session.Close()
 		}
 	}()
-	statements := []string{
-		"SET allow_persistent_secrets = false",
-		"SET autoinstall_known_extensions = false",
-		"SET autoload_known_extensions = false",
-		"SET memory_limit = '" + strconv.FormatInt(factory.limits.MemoryMaxBytes, 10) + "B'",
-		"SET max_temp_directory_size = '" + strconv.FormatInt(factory.limits.TempMaxBytes, 10) + "B'",
-		"SET threads = " + strconv.Itoa(factory.limits.MaxThreads),
+	statements, err := (duckdbsession.ResourcePolicy{
+		MemoryMaxBytes: factory.limits.MemoryMaxBytes,
+		TempMaxBytes:   factory.limits.TempMaxBytes,
+		MaxThreads:     factory.limits.MaxThreads,
+	}).BoundedStatements()
+	if err != nil {
+		return nil, fmt.Errorf("build bounded DuckDB target runtime policy: %w", err)
 	}
 	for _, extension := range spec.RequiredExtensions {
 		if factory.extensionAdmission == nil {
@@ -164,7 +159,11 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	}
 	statements = append(statements, secret)
 	statements = append(statements, activationStatements...)
-	statements = append(statements, "SET lock_configuration = true")
+	security, err := (duckdbsession.ResourcePolicy{LockConfiguration: true}).SecurityStatements()
+	if err != nil {
+		return nil, fmt.Errorf("build target runtime security policy: %w", err)
+	}
+	statements = append(statements, security...)
 	for _, statement := range statements {
 		if _, err := session.ExecContext(ctx, statement); err != nil {
 			return nil, err
@@ -243,43 +242,6 @@ type targetRuntimePool struct {
 }
 
 var _ analyticsruntime.ConnectionResolver = (*targetRuntimePool)(nil)
-
-type isolatedTargetRuntimeSession struct {
-	connection *sql.Conn
-	database   *sql.DB
-	once       sync.Once
-	err        error
-}
-
-func (session *isolatedTargetRuntimeSession) ExecContext(
-	ctx context.Context,
-	statement string,
-	args ...any,
-) (sql.Result, error) {
-	if session == nil || session.connection == nil {
-		return nil, connectionbinding.ErrProviderUnavailable
-	}
-	return session.connection.ExecContext(ctx, statement, args...)
-}
-
-func (session *isolatedTargetRuntimeSession) Close() error {
-	if session == nil {
-		return nil
-	}
-	session.once.Do(func() {
-		var errs []error
-		if session.connection != nil {
-			errs = append(errs, session.connection.Close())
-			session.connection = nil
-		}
-		if session.database != nil {
-			errs = append(errs, session.database.Close())
-			session.database = nil
-		}
-		session.err = errors.Join(errs...)
-	})
-	return session.err
-}
 
 func (pool *targetRuntimePool) HealthCheck(ctx context.Context) error {
 	if pool == nil {

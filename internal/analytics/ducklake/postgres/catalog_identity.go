@@ -29,9 +29,6 @@ func BootstrapCatalog(ctx context.Context, tx DBTX, identity CatalogIdentity, co
 	if tx == nil || validateCatalog(identity) != nil || compatibility.validate() != nil {
 		return CatalogIdentity{}, CatalogRuntimeCompatibility{}, ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	catalog, err := RegisterCatalog(ctx, tx, identity)
 	if err != nil {
 		return CatalogIdentity{}, CatalogRuntimeCompatibility{}, err
@@ -87,9 +84,6 @@ func DeriveCatalogIdentity(physicalPoolID, catalogDatabase string) (CatalogIdent
 func ReadCatalogRegistrationEvidence(ctx context.Context, db DBTX, metadataSchema string) (CatalogRegistrationEvidence, error) {
 	if db == nil || !validSchema(metadataSchema) {
 		return CatalogRegistrationEvidence{}, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	databaseIdentity, err := ReadDatabaseIdentity(ctx, db)
 	if err != nil {

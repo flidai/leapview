@@ -69,16 +69,10 @@ import (
 // construction and authority validation can be tested in isolation.
 type PostgresAuthorityGraph struct {
 	Bootstrap *platformbootstrappostgres.Repository
-	// Settings is an explicit alias for the platform bootstrap/settings
-	// authority. Keeping it named makes the settings dependency visible to
-	// future composition without introducing a second repository or pool.
-	Settings *platformbootstrappostgres.Repository
 
-	Operation            *operationpostgres.Repository
-	OperationMaintenance *operationpostgres.Maintenance
-	Jobs                 *jobspostgres.Repository
-	JobsMaintenance      *jobspostgres.Maintenance
-	Events               *eventspostgres.Repository
+	Operation *operationpostgres.Repository
+	Jobs      *jobspostgres.Repository
+	Events    *eventspostgres.Repository
 
 	Project      *projectpostgres.Repository
 	Access       *accesspostgres.Repository
@@ -86,14 +80,12 @@ type PostgresAuthorityGraph struct {
 	Product      *adminproductpostgres.Repository
 	ProductAudit *productaudit.Adapter
 
-	Idempotency              *idempotencypostgres.Store
-	CursorSigning            *cursorsigningpostgres.Repository
-	CursorSigningMaintenance *cursorsigningpostgres.Maintenance
+	Idempotency   *idempotencypostgres.Store
+	CursorSigning *cursorsigningpostgres.Repository
 
 	ConnectionBinding      *connectionbindingpostgres.Repository
 	ConnectionBindingAudit *connectionbindingaudit.Adapter
 	QueryAudit             *queryauditpostgres.Repository
-	QueryAuditMaintenance  *queryauditpostgres.Maintenance
 	Lineage                *lineagepostgres.Repository
 
 	// PhysicalPool is the control-database identity/admission authority for a
@@ -128,7 +120,6 @@ type PostgresAuthorityGraph struct {
 	DeploymentPersistence  *module.Persistence
 	ApprovalAuthorizer     *deploymentcomposition.AccessApprovalAuthorizer
 	AgentRepository        *agentpostgres.Repository
-	AgentMaintenance       *agentpostgres.Maintenance
 	AgentPersistence       *agentmodule.Persistence
 	ManagedDataRepository  *manageddatapostgres.Repository
 	ManagedDataMaintenance *manageddatapostgres.Maintenance
@@ -139,29 +130,24 @@ type PostgresAuthorityGraph struct {
 	// audit and event adapters below deliberately retain the graph's canonical
 	// Access and platform-event repository identities, while authoring's fence
 	// retains the graph's deployment repository and process-bound target.
-	DashboardSession            *dashboardsessionpostgres.Store
-	DashboardSessionMaintenance *dashboardsessionpostgres.Maintenance
-	DashboardUsage              *dashboardusagepostgres.Repository
-	DashboardUsageMaintenance   *dashboardusagepostgres.Maintenance
-	DashboardAppearance         *dashboardappearancepostgres.Repository
-	DashboardAppearanceAudit    *dashboardappearanceaudit.Adapter
-	DashboardAppearanceEvents   *dashboardappearanceevents.Adapter
-	DashboardAuthoring          *dashboardauthoringpostgres.Repository
-	DashboardAuthoringAudit     *dashboardauthoringaudit.Adapter
-	DashboardAuthoringEvents    *dashboardauthoringevents.Adapter
-	DashboardGenerationFence    *dashboardgenerationfence.Fence
-	DashboardTargetID           string
-	DashboardPublication        *dashboardpublicationpostgres.Repository
-	DashboardPublicationAudit   *dashboardpublicationaudit.Adapter
-	DashboardPublicationEvents  *dashboardpublicationevents.Adapter
-	DashboardStreams            *dashboardpublicationpostgres.StreamRegistry
-	DashboardStreamsMaintenance *dashboardpublicationpostgres.Maintenance
-	DashboardBroker             *dashboardpublicationpostgres.Broker
-	DashboardPersistence        *dashboardmodule.NativePersistence
+	DashboardSession           *dashboardsessionpostgres.Store
+	DashboardUsage             *dashboardusagepostgres.Repository
+	DashboardAppearance        *dashboardappearancepostgres.Repository
+	DashboardAppearanceAudit   *dashboardappearanceaudit.Adapter
+	DashboardAppearanceEvents  *dashboardappearanceevents.Adapter
+	DashboardAuthoring         *dashboardauthoringpostgres.Repository
+	DashboardAuthoringAudit    *dashboardauthoringaudit.Adapter
+	DashboardAuthoringEvents   *dashboardauthoringevents.Adapter
+	DashboardGenerationFence   *dashboardgenerationfence.Fence
+	DashboardTargetID          string
+	DashboardPublication       *dashboardpublicationpostgres.Repository
+	DashboardPublicationAudit  *dashboardpublicationaudit.Adapter
+	DashboardPublicationEvents *dashboardpublicationevents.Adapter
+	DashboardStreams           *dashboardpublicationpostgres.StreamRegistry
+	DashboardBroker            *dashboardpublicationpostgres.Broker
+	DashboardPersistence       *dashboardmodule.NativePersistence
 
-	AccessAuditMaintenance     *accesspostgres.Maintenance
-	AccessAuthStateMaintenance *accesspostgres.Maintenance
-	Retention                  *postgresmaintenance.Coordinator
+	Retention *postgresmaintenance.Coordinator
 	// controlRuntime is retained only for composition identity checks. Pool
 	// lifecycle remains owned by postgresControlPlaneLifecycle.
 	controlRuntime *platformpostgres.Pool
@@ -381,25 +367,25 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 	}
 
 	graph := &PostgresAuthorityGraph{
-		Bootstrap: bootstrap, Settings: bootstrap,
-		Operation: operations, OperationMaintenance: operationMaintenance, Jobs: jobs, JobsMaintenance: jobsMaintenance, Events: events,
+		Bootstrap: bootstrap,
+		Operation: operations, Jobs: jobs, Events: events,
 		Project: project, Access: accessRepository, AccessAudit: audit, Product: product, ProductAudit: productAudit,
-		Idempotency:   idempotencypostgres.NewStoreFromRepository(operations),
-		CursorSigning: cursorsigningpostgres.NewRepository(runtime), CursorSigningMaintenance: cursorSigningMaintenance,
-		ConnectionBinding: binding, ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), QueryAuditMaintenance: queryAuditMaintenance, Lineage: lineageRepository,
+		Idempotency:       idempotencypostgres.NewStoreFromRepository(operations),
+		CursorSigning:     cursorsigningpostgres.NewRepository(runtime),
+		ConnectionBinding: binding, ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), Lineage: lineageRepository,
 		PhysicalPool: physicalPool, DuckLakeControlLedger: duckLakeControlLedger, ServingState: servingState, Refresh: refresh,
 		RefreshJobs: refreshJobs, RefreshCancelAudit: refreshCancelAudit,
 		Release: releaseRepository, ReleaseAudit: releaseAudit, ReleaseEvents: releaseEvents, ReleaseCatalog: releaseCatalog,
 		DeploymentRepository: deploymentRepository, DeploymentPersistence: &deploymentPersistence, ApprovalAuthorizer: approvalAuthorizer,
-		AgentRepository: agentRepository, AgentMaintenance: agentMaintenance, AgentPersistence: &agentPersistence,
+		AgentRepository: agentRepository, AgentPersistence: &agentPersistence,
 		ManagedDataRepository: managedDataRepository, ManagedDataMaintenance: managedDataMaintenance, ManagedDataAudit: managedDataAudit, ManagedDataPersistence: &managedDataPersistence,
-		DashboardSession: dashboardSession, DashboardSessionMaintenance: dashboardSessionMaintenance, DashboardUsage: dashboardUsage, DashboardUsageMaintenance: dashboardUsageMaintenance,
+		DashboardSession: dashboardSession, DashboardUsage: dashboardUsage,
 		DashboardAppearance: dashboardAppearance, DashboardAppearanceAudit: dashboardAppearanceAudit, DashboardAppearanceEvents: dashboardAppearanceEvents,
 		DashboardAuthoring: dashboardAuthoring, DashboardAuthoringAudit: dashboardAuthoringAudit, DashboardAuthoringEvents: dashboardAuthoringEvents,
 		DashboardGenerationFence: dashboardFence, DashboardTargetID: options.TargetID,
 		DashboardPublication: dashboardPublication, DashboardPublicationAudit: dashboardPublicationAudit, DashboardPublicationEvents: dashboardPublicationEvents,
-		DashboardStreams: dashboardStreams, DashboardStreamsMaintenance: dashboardStreamsMaintenance, DashboardBroker: dashboardBroker, DashboardPersistence: dashboardPersistence,
-		AccessAuditMaintenance: accessAuditMaintenance, AccessAuthStateMaintenance: accessAuthStateMaintenance, Retention: retention,
+		DashboardStreams: dashboardStreams, DashboardBroker: dashboardBroker, DashboardPersistence: dashboardPersistence,
+		Retention:      retention,
 		controlRuntime: runtime,
 	}
 	if err := graph.Validate(); err != nil {
@@ -472,27 +458,27 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		name  string
 		value any
 	}{
-		{"platform bootstrap authority", g.Bootstrap}, {"platform settings authority", g.Settings},
-		{"operation authority", g.Operation}, {"operation maintenance authority", g.OperationMaintenance},
-		{"jobs authority", g.Jobs}, {"jobs maintenance authority", g.JobsMaintenance}, {"event authority", g.Events}, {"project authority", g.Project},
+		{"platform bootstrap authority", g.Bootstrap},
+		{"operation authority", g.Operation},
+		{"jobs authority", g.Jobs}, {"event authority", g.Events}, {"project authority", g.Project},
 		{"access authority", g.Access}, {"access audit authority", g.AccessAudit}, {"product authority", g.Product}, {"product audit authority", g.ProductAudit},
-		{"idempotency authority", g.Idempotency}, {"cursor-signing authority", g.CursorSigning}, {"cursor-signing maintenance authority", g.CursorSigningMaintenance},
-		{"connection-binding authority", g.ConnectionBinding}, {"connection-binding audit authority", g.ConnectionBindingAudit}, {"query-audit authority", g.QueryAudit}, {"query-audit maintenance authority", g.QueryAuditMaintenance}, {"lineage authority", g.Lineage},
+		{"idempotency authority", g.Idempotency}, {"cursor-signing authority", g.CursorSigning},
+		{"connection-binding authority", g.ConnectionBinding}, {"connection-binding audit authority", g.ConnectionBindingAudit}, {"query-audit authority", g.QueryAudit}, {"lineage authority", g.Lineage},
 		{"physical-pool authority", g.PhysicalPool}, {"DuckLake control ledger authority", g.DuckLakeControlLedger}, {"serving-state authority", g.ServingState},
 		{"refresh authority", g.Refresh}, {"refresh jobs authority", g.RefreshJobs}, {"refresh cancellation audit authority", g.RefreshCancelAudit},
 		{"release authority", g.Release}, {"release audit authority", g.ReleaseAudit}, {"release event authority", g.ReleaseEvents}, {"release catalog authority", g.ReleaseCatalog},
 		{"deployment repository", g.DeploymentRepository}, {"deployment persistence", g.DeploymentPersistence}, {"deployment approval authorizer", g.ApprovalAuthorizer},
-		{"agent repository", g.AgentRepository}, {"agent maintenance authority", g.AgentMaintenance}, {"agent persistence", g.AgentPersistence},
+		{"agent repository", g.AgentRepository}, {"agent persistence", g.AgentPersistence},
 		{"managed-data repository", g.ManagedDataRepository}, {"managed-data maintenance authority", g.ManagedDataMaintenance}, {"managed-data audit authority", g.ManagedDataAudit}, {"managed-data persistence", g.ManagedDataPersistence},
-		{"dashboard session authority", g.DashboardSession}, {"dashboard session maintenance authority", g.DashboardSessionMaintenance}, {"dashboard usage authority", g.DashboardUsage}, {"dashboard usage maintenance authority", g.DashboardUsageMaintenance},
+		{"dashboard session authority", g.DashboardSession}, {"dashboard usage authority", g.DashboardUsage},
 		{"dashboard appearance authority", g.DashboardAppearance}, {"dashboard appearance audit authority", g.DashboardAppearanceAudit},
 		{"dashboard appearance event authority", g.DashboardAppearanceEvents},
 		{"dashboard authoring authority", g.DashboardAuthoring}, {"dashboard authoring audit authority", g.DashboardAuthoringAudit},
 		{"dashboard authoring event authority", g.DashboardAuthoringEvents}, {"dashboard generation fence", g.DashboardGenerationFence},
 		{"dashboard publication authority", g.DashboardPublication}, {"dashboard publication audit authority", g.DashboardPublicationAudit},
-		{"dashboard publication event authority", g.DashboardPublicationEvents}, {"dashboard streams authority", g.DashboardStreams}, {"dashboard streams maintenance authority", g.DashboardStreamsMaintenance},
+		{"dashboard publication event authority", g.DashboardPublicationEvents}, {"dashboard streams authority", g.DashboardStreams},
 		{"dashboard broker authority", g.DashboardBroker}, {"dashboard persistence", g.DashboardPersistence},
-		{"access-audit maintenance authority", g.AccessAuditMaintenance}, {"access-auth-state maintenance authority", g.AccessAuthStateMaintenance}, {"retention coordinator", g.Retention},
+		{"retention coordinator", g.Retention},
 	}
 	for _, item := range required {
 		if isNilAuthority(item.value) {
@@ -507,9 +493,6 @@ func (g *PostgresAuthorityGraph) Validate() error {
 	}
 	if strings.TrimSpace(g.DashboardTargetID) == "" || g.DashboardTargetID != strings.TrimSpace(g.DashboardTargetID) {
 		return errors.New("PostgreSQL authority graph dashboard target id is not configured")
-	}
-	if g.Bootstrap != g.Settings {
-		return errors.New("PostgreSQL authority graph platform bootstrap and settings authorities must share identity")
 	}
 	if g.Access.DB() == nil {
 		return errors.New("PostgreSQL authority graph access authority is not configured")

@@ -4477,6 +4477,25 @@ CREATE TABLE IF NOT EXISTS managed_data.upload_session (
 CREATE INDEX IF NOT EXISTS upload_session_cleanup_idx ON managed_data.upload_session(status, cleanup_completed_at, updated_at, upload_id);
 CREATE INDEX IF NOT EXISTS upload_session_expiry_idx ON managed_data.upload_session(status, expires_at);
 
+-- Reachability is versioned by a tiny monotonic epoch. The epoch lets the
+-- maintenance transaction prove that the manifest set observed before the
+-- physical inventory walk is still current without rereading every JSONB
+-- manifest while SHARE locks are held.
+CREATE TABLE IF NOT EXISTS managed_data.reachability_epoch (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    epoch bigint NOT NULL DEFAULT 1 CHECK (epoch > 0)
+);
+INSERT INTO managed_data.reachability_epoch(singleton, epoch)
+VALUES (true, 1)
+ON CONFLICT (singleton) DO NOTHING;
+
+CREATE INDEX IF NOT EXISTS revision_reachability_idx
+    ON managed_data.revision (revision_id)
+    WHERE status = 'ready';
+CREATE INDEX IF NOT EXISTS upload_session_reachability_idx
+    ON managed_data.upload_session (status, upload_id)
+    WHERE status IN ('open', 'committing');
+
 CREATE OR REPLACE FUNCTION managed_data.guard_upload_insert() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, managed_data
@@ -4928,6 +4947,46 @@ END $$;
 DROP TRIGGER IF EXISTS revision_insert_guard ON managed_data.revision;
 CREATE TRIGGER revision_insert_guard BEFORE INSERT ON managed_data.revision FOR EACH ROW EXECUTE FUNCTION managed_data.guard_revision_insert();
 
+-- Keep the reachability epoch authoritative inside the database. The
+-- SECURITY DEFINER function is required because runtime roles may transition
+-- uploads/revisions but must not be able to forge the epoch relation itself.
+CREATE OR REPLACE FUNCTION managed_data.bump_reachability_epoch() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, managed_data
+-- +goose StatementBegin
+AS $$
+DECLARE current_epoch bigint;
+BEGIN
+  SELECT epoch INTO current_epoch
+    FROM managed_data.reachability_epoch
+   WHERE singleton = true
+   FOR UPDATE;
+  IF NOT FOUND OR current_epoch IS NULL THEN
+    RAISE EXCEPTION 'managed-data reachability epoch is missing';
+  END IF;
+  IF current_epoch = 9223372036854775807 THEN
+    RAISE EXCEPTION 'managed-data reachability epoch exhausted';
+  END IF;
+  UPDATE managed_data.reachability_epoch SET epoch = current_epoch + 1 WHERE singleton = true;
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END $$;
+-- +goose StatementEnd
+
+DROP TRIGGER IF EXISTS revision_reachability_epoch ON managed_data.revision;
+CREATE TRIGGER revision_reachability_epoch
+AFTER INSERT OR UPDATE OF status, manifest, digest, file_count, size_bytes
+ON managed_data.revision FOR EACH ROW
+EXECUTE FUNCTION managed_data.bump_reachability_epoch();
+
+DROP TRIGGER IF EXISTS upload_reachability_epoch ON managed_data.upload_session;
+CREATE TRIGGER upload_reachability_epoch
+AFTER INSERT OR UPDATE OF status, manifest, expected_file_count, expected_size_bytes,
+    revision_id
+ON managed_data.upload_session FOR EACH ROW
+EXECUTE FUNCTION managed_data.bump_reachability_epoch();
+
 CREATE OR REPLACE FUNCTION managed_data.guard_revision_file() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, managed_data
@@ -5210,13 +5269,14 @@ BEGIN
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON managed_data.revision TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON managed_data.lease, managed_data.retention_root TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON managed_data.reconciliation_evidence TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT ON managed_data.reachability_epoch TO leapview_control_runtime';
         EXECUTE 'GRANT USAGE ON ALL SEQUENCES IN SCHEMA managed_data TO leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION managed_data.publish_binding_set(text,text,text,text,bigint,jsonb) TO leapview_control_runtime';
       ELSIF r = 'leapview_control_maintenance' THEN
         EXECUTE 'GRANT EXECUTE ON FUNCTION managed_data.mark_upload_cleanup(text) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION managed_data.prune_upload_sessions(timestamptz, integer) TO leapview_control_maintenance';
       ELSIF r = 'leapview_control_readonly' THEN
-        EXECUTE 'GRANT SELECT ON managed_data.collection, managed_data.revision, managed_data.revision_file, managed_data.upload_session, managed_data.binding_set, managed_data.binding, managed_data.retention_root, managed_data.reconciliation_evidence TO leapview_control_readonly';
+        EXECUTE 'GRANT SELECT ON managed_data.collection, managed_data.revision, managed_data.revision_file, managed_data.upload_session, managed_data.binding_set, managed_data.binding, managed_data.retention_root, managed_data.reconciliation_evidence, managed_data.reachability_epoch TO leapview_control_readonly';
       ELSE
         EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA managed_data TO leapview_control_backup';
       END IF;
@@ -5635,7 +5695,8 @@ BEGIN
     ) THEN
         ALTER TABLE delivery.delivery_candidate
             ADD CONSTRAINT delivery_candidate_snapshot_seal_fk
-            FOREIGN KEY (snapshot_seal_id) REFERENCES delivery.delivery_snapshot_seal(seal_id);
+            FOREIGN KEY (snapshot_seal_id, candidate_id)
+                REFERENCES delivery.delivery_snapshot_seal(seal_id, candidate_id);
     END IF;
 END;
 $$;
@@ -5993,6 +6054,9 @@ CREATE OR REPLACE FUNCTION delivery.reject_target_identity_mutation()
 -- +goose StatementBegin
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_user = 'leapview_control_runtime' THEN
+        RAISE EXCEPTION 'delivery target mutation requires the activation capability';
+    END IF;
     IF TG_OP = 'DELETE' OR NEW.target_id <> OLD.target_id OR NEW.project_id <> OLD.project_id
        OR NEW.environment <> OLD.environment THEN
         RAISE EXCEPTION 'delivery target identity is immutable';
@@ -6105,6 +6169,12 @@ CREATE OR REPLACE FUNCTION delivery.reject_publication_mutation()
 -- +goose StatementBegin
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_user = 'leapview_control_runtime'
+       AND (TG_OP = 'DELETE' OR NEW.state = 'committed'
+            OR NEW.result_target_revision IS DISTINCT FROM OLD.result_target_revision
+            OR NEW.committed_at IS DISTINCT FROM OLD.committed_at) THEN
+        RAISE EXCEPTION 'delivery publication commit requires the activation capability';
+    END IF;
     IF TG_OP = 'DELETE'
        OR NEW.publication_id <> OLD.publication_id
        OR NEW.target_id <> OLD.target_id
@@ -6326,6 +6396,152 @@ BEGIN
         RAISE EXCEPTION 'active pointer candidate identity differs';
     END IF;
     RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+-- Runtime activation may not mutate serving selection directly. This
+-- role-aware trigger remains effective even if a deployment accidentally
+-- grants a broad table UPDATE privilege: SECURITY DEFINER activation runs
+-- with the owner as current_user, while forged runtime writes are rejected.
+CREATE OR REPLACE FUNCTION delivery.reject_runtime_active_pointer_mutation()
+RETURNS trigger LANGUAGE plpgsql
+-- +goose StatementBegin
+AS $$
+BEGIN
+    IF current_user = 'leapview_control_runtime' THEN
+        RAISE EXCEPTION 'delivery active pointer mutation requires the activation capability';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+-- The guarded repository path calls this narrow SECURITY DEFINER transition
+-- after verifying lease, seal, approval, lineage, candidate, and retention-
+-- root evidence. It performs the three mutable serving writes as one
+-- database-owned transition and rechecks the immutable tuple, CAS revision,
+-- and expected predecessor. Retrying an advanced tuple is rejected; Activate
+-- handles a committed retry through its evidence replay path.
+CREATE OR REPLACE FUNCTION delivery.commit_activation_transition(
+    p_publication_id uuid,
+    p_target_id text,
+    p_generation_id uuid,
+    p_expected_target_revision bigint,
+    p_result_target_revision bigint
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, delivery
+-- +goose StatementBegin
+AS $$
+DECLARE
+    publication_target text;
+    publication_generation uuid;
+    publication_base_generation uuid;
+    publication_expected_revision bigint;
+    publication_state text;
+    publication_candidate uuid;
+    publication_seal uuid;
+    target_revision bigint;
+    target_active_generation uuid;
+    generation_target text;
+    generation_candidate uuid;
+    generation_seal uuid;
+    candidate_target text;
+    candidate_status text;
+    candidate_seal uuid;
+    updated bigint;
+BEGIN
+    IF p_publication_id IS NULL OR p_target_id IS NULL OR p_target_id <> btrim(p_target_id)
+       OR btrim(p_target_id) = '' OR p_generation_id IS NULL
+       OR p_expected_target_revision IS NULL OR p_expected_target_revision <= 0
+       OR p_result_target_revision IS NULL
+       OR p_result_target_revision <> p_expected_target_revision + 1 THEN
+        RAISE EXCEPTION 'activation transition identity or revision is invalid';
+    END IF;
+
+    SELECT publication.target_id, publication.generation_id,
+           publication.expected_base_generation_id,
+           publication.expected_target_revision, publication.state,
+           publication.candidate_id, publication.snapshot_seal_id
+      INTO publication_target, publication_generation,
+           publication_base_generation, publication_expected_revision,
+           publication_state, publication_candidate, publication_seal
+      FROM delivery.delivery_publication AS publication
+     WHERE publication.publication_id = p_publication_id
+     FOR UPDATE;
+    IF NOT FOUND OR publication_target <> p_target_id
+       OR publication_generation <> p_generation_id
+       OR publication_expected_revision <> p_expected_target_revision
+       OR publication_state <> 'pending' THEN
+        RAISE EXCEPTION 'activation publication tuple is not pending or differs';
+    END IF;
+
+    SELECT target.target_revision,
+           (SELECT pointer.generation_id
+              FROM delivery.delivery_active_pointer AS pointer
+             WHERE pointer.target_id = target.target_id)
+      INTO target_revision, target_active_generation
+      FROM delivery.delivery_target AS target
+     WHERE target.target_id = p_target_id
+     FOR UPDATE;
+    IF NOT FOUND OR target_revision <> p_expected_target_revision
+       OR target_active_generation IS DISTINCT FROM publication_base_generation THEN
+        RAISE EXCEPTION 'activation target CAS or predecessor differs';
+    END IF;
+
+    SELECT generation.target_id, generation.candidate_id,
+           generation.snapshot_seal_id
+      INTO generation_target, generation_candidate, generation_seal
+      FROM delivery.delivery_generation AS generation
+     WHERE generation.generation_id = p_generation_id;
+    IF NOT FOUND OR generation_target <> p_target_id
+       OR generation_candidate <> publication_candidate
+       OR generation_seal <> publication_seal THEN
+        RAISE EXCEPTION 'activation generation tuple differs';
+    END IF;
+    SELECT candidate.target_id, candidate.status, candidate.snapshot_seal_id
+      INTO candidate_target, candidate_status, candidate_seal
+      FROM delivery.delivery_candidate AS candidate
+     WHERE candidate.candidate_id = publication_candidate;
+    IF NOT FOUND OR candidate_target <> p_target_id
+       OR candidate_seal <> publication_seal
+       OR candidate_status NOT IN ('qualified', 'ready', 'admitted') THEN
+        RAISE EXCEPTION 'activation candidate tuple is not qualified';
+    END IF;
+
+    UPDATE delivery.delivery_target AS target
+       SET target_revision = p_result_target_revision,
+           updated_at = clock_timestamp()
+     WHERE target.target_id = p_target_id
+       AND target.target_revision = p_expected_target_revision;
+    GET DIAGNOSTICS updated = ROW_COUNT;
+    IF updated <> 1 THEN
+        RAISE EXCEPTION 'activation target revision CAS lost';
+    END IF;
+
+    INSERT INTO delivery.delivery_active_pointer(target_id, generation_id, publication_id)
+    VALUES (p_target_id, p_generation_id, p_publication_id)
+    ON CONFLICT (target_id) DO UPDATE
+          SET generation_id = EXCLUDED.generation_id,
+              publication_id = EXCLUDED.publication_id,
+              changed_at = clock_timestamp();
+
+    UPDATE delivery.delivery_publication
+       SET state = 'committed',
+           result_target_revision = p_result_target_revision,
+           committed_at = clock_timestamp()
+     WHERE publication_id = p_publication_id AND state = 'pending';
+    GET DIAGNOSTICS updated = ROW_COUNT;
+    IF updated <> 1 THEN
+        RAISE EXCEPTION 'activation publication commit CAS lost';
+    END IF;
+    RETURN true;
 END;
 $$;
 -- +goose StatementEnd
@@ -6805,6 +7021,9 @@ CREATE TRIGGER delivery_approval_revision_monotonic BEFORE UPDATE OR DELETE ON d
 DROP TRIGGER IF EXISTS delivery_active_pointer_consistency ON delivery.delivery_active_pointer;
 CREATE CONSTRAINT TRIGGER delivery_active_pointer_consistency AFTER INSERT OR UPDATE ON delivery.delivery_active_pointer
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION delivery.check_active_pointer_consistency();
+DROP TRIGGER IF EXISTS delivery_active_pointer_runtime_guard ON delivery.delivery_active_pointer;
+CREATE TRIGGER delivery_active_pointer_runtime_guard BEFORE INSERT OR UPDATE OR DELETE ON delivery.delivery_active_pointer
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_runtime_active_pointer_mutation();
 CREATE INDEX IF NOT EXISTS delivery_lease_active_idx ON delivery.delivery_lease(target_id, state, expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS delivery_lease_one_active_idx ON delivery.delivery_lease(target_id) WHERE state = 'active';
 CREATE INDEX IF NOT EXISTS delivery_generation_target_idx ON delivery.delivery_generation(target_id, generation_revision);
@@ -6834,12 +7053,14 @@ REVOKE ALL ON FUNCTION delivery.expire_retention_root(uuid, interval) FROM PUBLI
 REVOKE ALL ON FUNCTION delivery.maintain_retention_roots(text, text, interval, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.lock_retention_root(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) FROM PUBLIC;
 -- +goose StatementBegin
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT EXECUTE ON FUNCTION delivery.lock_retention_root(uuid) TO leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid) TO leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) TO leapview_control_runtime;
         -- Expiry is maintenance/drain-owned. Runtime activation may retire
         -- predecessors but cannot force their terminal expiry.
     END IF;
@@ -9029,6 +9250,52 @@ END;
 $$;
 -- +goose StatementEnd
 
+CREATE OR REPLACE FUNCTION ducklake.insert_retention_maintenance_snapshots(
+    p_maintenance_id uuid, p_physical_pool_id text, p_catalog_id text,
+    p_snapshot_ids bigint[], p_owner_id text, p_fencing_epoch bigint
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+-- +goose StatementBegin
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_operation record; v_matches integer; v_count integer;
+BEGIN
+    v_count := COALESCE(cardinality(p_snapshot_ids), 0);
+    IF v_count < 1 OR v_count > 256
+       OR (SELECT count(DISTINCT ids.snapshot_id) FROM unnest(p_snapshot_ids) AS ids(snapshot_id)) <> v_count
+       OR EXISTS (SELECT 1 FROM unnest(p_snapshot_ids) AS ids(snapshot_id) WHERE ids.snapshot_id <= 0) THEN
+        RAISE EXCEPTION 'invalid retention snapshot batch';
+    END IF;
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_owner_id AND f.fencing_epoch=p_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_operation FROM ducklake.retention_maintenance m
+     WHERE m.maintenance_id=p_maintenance_id FOR SHARE;
+    IF NOT FOUND OR v_operation.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+       OR v_operation.catalog_id IS DISTINCT FROM p_catalog_id
+       OR v_operation.owner_id IS DISTINCT FROM p_owner_id
+       OR v_operation.fencing_epoch IS DISTINCT FROM p_fencing_epoch
+       OR v_operation.state <> 'running' OR v_operation.snapshot_set_digest <> '' THEN
+        RAISE EXCEPTION 'maintenance fence stale';
+    END IF;
+    SELECT count(*) INTO v_matches
+      FROM unnest(p_snapshot_ids) AS ids(snapshot_id)
+      JOIN ducklake.snapshot_retention r
+        ON r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id
+       AND r.snapshot_id=ids.snapshot_id
+     WHERE (v_operation.dry_run AND r.state IN ('retiring','expired') AND r.retention_claim_id IS NULL)
+        OR (NOT v_operation.dry_run AND r.retention_claim_id=p_maintenance_id AND r.state IN ('expiring','expired'));
+    IF v_matches <> v_count THEN RAISE EXCEPTION 'retention snapshot claim mismatch'; END IF;
+    INSERT INTO ducklake.retention_maintenance_snapshot
+      (maintenance_id,physical_pool_id,catalog_id,snapshot_id,phase)
+    SELECT p_maintenance_id,p_physical_pool_id,p_catalog_id,ids.snapshot_id,'eligible'
+      FROM unnest(p_snapshot_ids) AS ids(snapshot_id)
+    ON CONFLICT (maintenance_id,physical_pool_id,catalog_id,snapshot_id) DO NOTHING;
+END;
+$$;
+-- +goose StatementEnd
+
 CREATE OR REPLACE FUNCTION ducklake.update_retention_maintenance_snapshot(
     p_maintenance_id uuid, p_physical_pool_id text, p_catalog_id text,
     p_snapshot_id bigint, p_owner_id text, p_fencing_epoch bigint,
@@ -9091,7 +9358,7 @@ $$;
 
 CREATE OR REPLACE FUNCTION ducklake.claim_retention_snapshots(
     p_maintenance_id uuid, p_physical_pool_id text, p_catalog_id text,
-    p_owner_id text, p_fencing_epoch bigint
+    p_owner_id text, p_fencing_epoch bigint, p_limit integer
 ) RETURNS bigint[]
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, ducklake
@@ -9099,6 +9366,7 @@ SET search_path = pg_catalog, ducklake
 AS $$
 DECLARE v_now timestamptz := clock_timestamp(); v_operation record; v_ids bigint[];
 BEGIN
+    IF p_limit < 1 OR p_limit > 256 THEN RAISE EXCEPTION 'invalid retention claim limit'; END IF;
     PERFORM 1 FROM ducklake.pool_maintenance_fence f
      WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
        AND f.owner_id=p_owner_id AND f.fencing_epoch=p_fencing_epoch
@@ -9113,30 +9381,39 @@ BEGIN
        OR v_operation.state <> 'running' OR v_operation.snapshot_set_digest <> '' THEN
         RAISE EXCEPTION 'maintenance fence stale';
     END IF;
-    WITH changed AS (
+    WITH candidates AS (
+        SELECT r.snapshot_id
+          FROM ducklake.snapshot_retention AS r
+         WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id
+           AND r.state IN ('retiring','expired') AND r.retention_claim_id IS NULL
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM delivery.delivery_retention_root root
+                 JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = root.snapshot_seal_id
+                WHERE seal.physical_pool_id=r.physical_pool_id
+                  AND seal.catalog_id=r.catalog_id
+                  AND seal.ducklake_snapshot_id=r.snapshot_id
+                  AND root.state IN ('live','retiring'))
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM serving_state.reader_lease lease
+                 JOIN delivery.delivery_generation g ON g.generation_id = lease.generation_id
+                 JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = g.snapshot_seal_id
+                WHERE seal.physical_pool_id=r.physical_pool_id
+                  AND seal.catalog_id=r.catalog_id
+                  AND seal.ducklake_snapshot_id=r.snapshot_id
+                  AND lease.released_at IS NULL)
+         ORDER BY r.snapshot_id
+         LIMIT p_limit
+         FOR UPDATE OF r
+    ), changed AS (
         UPDATE ducklake.snapshot_retention AS r
        SET state=CASE WHEN r.state='retiring' THEN 'expiring' ELSE r.state END,
            retention_claim_id=p_maintenance_id,retention_claim_owner_id=p_owner_id,
            retention_claim_fencing_epoch=p_fencing_epoch,retention_claimed_at=v_now
+      FROM candidates
      WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id
-       AND r.state IN ('retiring','expired') AND r.retention_claim_id IS NULL
-       AND NOT EXISTS (
-           SELECT 1
-             FROM delivery.delivery_retention_root root
-             JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = root.snapshot_seal_id
-            WHERE seal.physical_pool_id=r.physical_pool_id
-              AND seal.catalog_id=r.catalog_id
-              AND seal.ducklake_snapshot_id=r.snapshot_id
-              AND root.state IN ('live','retiring'))
-       AND NOT EXISTS (
-           SELECT 1
-             FROM serving_state.reader_lease lease
-             JOIN delivery.delivery_generation g ON g.generation_id = lease.generation_id
-             JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = g.snapshot_seal_id
-            WHERE seal.physical_pool_id=r.physical_pool_id
-              AND seal.catalog_id=r.catalog_id
-              AND seal.ducklake_snapshot_id=r.snapshot_id
-              AND lease.released_at IS NULL)
+       AND r.snapshot_id=candidates.snapshot_id
         RETURNING r.snapshot_id
     )
     SELECT COALESCE(array_agg(snapshot_id ORDER BY snapshot_id),'{}'::bigint[]) INTO v_ids FROM changed;
@@ -9691,6 +9968,514 @@ AS $$
 $$;
 -- +goose StatementEnd
 
+-- RetentionCoordinator submits one bounded batch per control phase.  These
+-- wrappers deliberately invoke the existing fenced lifecycle capabilities in
+-- one SQL statement: every child still receives the same row locks, fence,
+-- operation identity, monotonicity, and evidence checks, while the client no
+-- longer performs a network round trip for each child.  A failure rolls back
+-- the whole statement, so a successor can replay the exact frozen set.
+CREATE OR REPLACE FUNCTION ducklake.expire_snapshots_under_maintenance_fence(
+    p_snapshot_ids bigint[], p_expired_at timestamptz, p_items jsonb,
+    p_physical_pool_id text, p_catalog_id text, p_maintenance_id uuid,
+    p_maintenance_owner_id text, p_maintenance_fencing_epoch bigint
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+-- +goose StatementBegin
+AS $$
+DECLARE v_item jsonb; v_id bigint; v_evidence jsonb; v_count integer;
+BEGIN
+    v_count := COALESCE(cardinality(p_snapshot_ids), 0);
+    IF v_count < 1 OR v_count > 256 OR (SELECT count(DISTINCT id) FROM unnest(p_snapshot_ids) AS u(id)) <> v_count
+       OR jsonb_typeof(COALESCE(p_items, 'null'::jsonb)) <> 'array'
+       OR jsonb_array_length(p_items) <> v_count THEN
+        RAISE EXCEPTION 'invalid retention expiry batch';
+    END IF;
+    FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
+        IF jsonb_typeof(v_item) <> 'object' OR (v_item->>'snapshot_id') IS NULL
+           OR (v_item->'evidence') IS NULL OR jsonb_typeof(v_item->'evidence') <> 'object' THEN
+            RAISE EXCEPTION 'invalid retention expiry evidence';
+        END IF;
+        v_id := (v_item->>'snapshot_id')::bigint;
+        IF NOT (v_id = ANY(p_snapshot_ids)) THEN
+            RAISE EXCEPTION 'retention expiry snapshot is outside the frozen set';
+        END IF;
+        v_evidence := v_item->'evidence';
+        PERFORM ducklake.expire_snapshot_under_maintenance_fence(
+            p_expired_at, v_evidence, p_physical_pool_id, p_catalog_id, v_id,
+            p_maintenance_id, p_maintenance_owner_id, p_maintenance_fencing_epoch);
+    END LOOP;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE OR REPLACE FUNCTION ducklake.reconcile_retention_maintenance_snapshots(
+    p_items jsonb, p_maintenance_id uuid, p_physical_pool_id text,
+    p_catalog_id text, p_owner_id text, p_fencing_epoch bigint
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+-- +goose StatementBegin
+AS $$
+DECLARE v_item jsonb; v_id bigint; v_phase text;
+        v_old_phase text; v_expiry jsonb; v_quarantine jsonb; v_cleanup jsonb;
+BEGIN
+    IF jsonb_typeof(COALESCE(p_items, 'null'::jsonb)) <> 'array' OR jsonb_array_length(p_items) > 256 THEN
+        RAISE EXCEPTION 'invalid retention reconciliation batch';
+    END IF;
+    FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
+        IF jsonb_typeof(v_item) <> 'object' OR (v_item->>'snapshot_id') IS NULL
+           OR (v_item->>'phase') IS NULL THEN
+            RAISE EXCEPTION 'invalid retention reconciliation item';
+        END IF;
+        v_id := (v_item->>'snapshot_id')::bigint;
+        v_phase := v_item->>'phase';
+        v_expiry := CASE WHEN v_item ? 'expiry_evidence' AND jsonb_typeof(v_item->'expiry_evidence') <> 'null' THEN v_item->'expiry_evidence' ELSE NULL END;
+        v_quarantine := CASE WHEN v_item ? 'quarantine_evidence' AND jsonb_typeof(v_item->'quarantine_evidence') <> 'null' THEN v_item->'quarantine_evidence' ELSE NULL END;
+        v_cleanup := CASE WHEN v_item ? 'cleanup_evidence' AND jsonb_typeof(v_item->'cleanup_evidence') <> 'null' THEN v_item->'cleanup_evidence' ELSE NULL END;
+        SELECT s.phase INTO v_old_phase
+          FROM ducklake.retention_maintenance_snapshot s
+         WHERE s.maintenance_id=p_maintenance_id AND s.physical_pool_id=p_physical_pool_id
+           AND s.catalog_id=p_catalog_id AND s.snapshot_id=v_id FOR UPDATE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'retention maintenance snapshot not found'; END IF;
+        -- The immutable trigger intentionally permits only one lifecycle edge
+        -- from eligible (eligible→expired→quarantined). Replay may still
+        -- collapse those edges into this single network round trip.
+        IF v_old_phase = 'eligible' AND v_phase IN ('quarantined','cleanup-complete') THEN
+            PERFORM ducklake.update_retention_maintenance_snapshot(
+                p_maintenance_id, p_physical_pool_id, p_catalog_id, v_id,
+                p_owner_id, p_fencing_epoch, 'expired', v_expiry, NULL, NULL);
+            v_old_phase := 'expired';
+        END IF;
+        IF v_old_phase IN ('eligible','expired') AND v_phase = 'cleanup-complete' THEN
+            IF v_old_phase = 'eligible' THEN
+                PERFORM ducklake.update_retention_maintenance_snapshot(
+                    p_maintenance_id, p_physical_pool_id, p_catalog_id, v_id,
+                    p_owner_id, p_fencing_epoch, 'expired', v_expiry, NULL, NULL);
+            END IF;
+            PERFORM ducklake.update_retention_maintenance_snapshot(
+                p_maintenance_id, p_physical_pool_id, p_catalog_id, v_id,
+                p_owner_id, p_fencing_epoch, 'quarantined', v_expiry, v_quarantine, NULL);
+            v_old_phase := 'quarantined';
+        ELSIF v_old_phase = 'eligible' AND v_phase = 'quarantined' THEN
+            PERFORM ducklake.update_retention_maintenance_snapshot(
+                p_maintenance_id, p_physical_pool_id, p_catalog_id, v_id,
+                p_owner_id, p_fencing_epoch, 'expired', v_expiry, NULL, NULL);
+            v_old_phase := 'expired';
+            PERFORM ducklake.update_retention_maintenance_snapshot(
+                p_maintenance_id, p_physical_pool_id, p_catalog_id, v_id,
+                p_owner_id, p_fencing_epoch, 'quarantined', v_expiry, v_quarantine, NULL);
+            v_old_phase := 'quarantined';
+        END IF;
+        IF v_old_phase <> v_phase THEN
+            PERFORM ducklake.update_retention_maintenance_snapshot(
+                p_maintenance_id, p_physical_pool_id, p_catalog_id, v_id,
+                p_owner_id, p_fencing_epoch, v_phase, v_expiry, v_quarantine, v_cleanup);
+        END IF;
+    END LOOP;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE OR REPLACE FUNCTION ducklake.quarantine_snapshots_under_maintenance_fence(
+    p_snapshot_ids bigint[], p_items jsonb, p_cleanup_lease_expires_at timestamptz,
+    p_quarantined_at timestamptz,
+    p_physical_pool_id text, p_catalog_id text, p_maintenance_id uuid,
+    p_maintenance_owner_id text, p_maintenance_fencing_epoch bigint
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+-- +goose StatementBegin
+AS $$
+DECLARE v_item jsonb; v_id bigint; v_evidence jsonb; v_cleanup_epoch bigint; v_count integer;
+BEGIN
+    v_count := COALESCE(cardinality(p_snapshot_ids), 0);
+    IF v_count < 1 OR v_count > 256 OR (SELECT count(DISTINCT id) FROM unnest(p_snapshot_ids) AS u(id)) <> v_count
+       OR jsonb_typeof(COALESCE(p_items, 'null'::jsonb)) <> 'array'
+       OR jsonb_array_length(p_items) <> v_count THEN
+        RAISE EXCEPTION 'invalid retention quarantine batch';
+    END IF;
+    FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
+        IF jsonb_typeof(v_item) <> 'object' OR (v_item->>'snapshot_id') IS NULL
+           OR (v_item->'evidence') IS NULL OR jsonb_typeof(v_item->'evidence') <> 'object' THEN
+            RAISE EXCEPTION 'invalid retention quarantine evidence';
+        END IF;
+        v_id := (v_item->>'snapshot_id')::bigint;
+        IF NOT (v_id = ANY(p_snapshot_ids)) THEN
+            RAISE EXCEPTION 'retention quarantine snapshot is outside the frozen set';
+        END IF;
+        v_evidence := v_item->'evidence';
+        v_cleanup_epoch := ducklake.claim_snapshot_cleanup_under_maintenance_fence(
+            p_physical_pool_id, p_catalog_id, v_id, p_maintenance_owner_id,
+            p_cleanup_lease_expires_at, p_maintenance_id, p_maintenance_owner_id,
+            p_maintenance_fencing_epoch);
+        PERFORM ducklake.quarantine_snapshot_under_maintenance_fence(
+            v_evidence, p_quarantined_at, p_physical_pool_id, p_catalog_id, v_id,
+            p_maintenance_owner_id, v_cleanup_epoch, p_maintenance_id,
+            p_maintenance_owner_id, p_maintenance_fencing_epoch);
+    END LOOP;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE OR REPLACE FUNCTION ducklake.complete_snapshots_cleanup_under_maintenance_fence(
+    p_snapshot_ids bigint[], p_items jsonb, p_cleanup_lease_expires_at timestamptz,
+    p_cleanup_completed_at timestamptz,
+    p_physical_pool_id text, p_catalog_id text, p_maintenance_id uuid,
+    p_maintenance_owner_id text, p_maintenance_fencing_epoch bigint
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+-- +goose StatementBegin
+AS $$
+DECLARE v_item jsonb; v_id bigint; v_evidence jsonb; v_cleanup_epoch bigint;
+        v_state text; v_owner text; v_count integer;
+BEGIN
+    v_count := COALESCE(cardinality(p_snapshot_ids), 0);
+    IF v_count < 1 OR v_count > 256 OR (SELECT count(DISTINCT id) FROM unnest(p_snapshot_ids) AS u(id)) <> v_count
+       OR jsonb_typeof(COALESCE(p_items, 'null'::jsonb)) <> 'array'
+       OR jsonb_array_length(p_items) <> v_count THEN
+        RAISE EXCEPTION 'invalid retention cleanup batch';
+    END IF;
+    FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
+        IF jsonb_typeof(v_item) <> 'object' OR (v_item->>'snapshot_id') IS NULL
+           OR (v_item->'evidence') IS NULL OR jsonb_typeof(v_item->'evidence') <> 'object' THEN
+            RAISE EXCEPTION 'invalid retention cleanup evidence';
+        END IF;
+        v_id := (v_item->>'snapshot_id')::bigint;
+        IF NOT (v_id = ANY(p_snapshot_ids)) THEN
+            RAISE EXCEPTION 'retention cleanup snapshot is outside the frozen set';
+        END IF;
+        v_evidence := v_item->'evidence';
+        SELECT r.state, r.cleanup_owner_id, r.cleanup_fencing_epoch
+          INTO v_state, v_owner, v_cleanup_epoch
+          FROM ducklake.snapshot_retention r
+         WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id
+           AND r.snapshot_id=v_id FOR UPDATE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'snapshot retention not found'; END IF;
+        IF v_state <> 'cleanup-complete' THEN
+            v_cleanup_epoch := ducklake.claim_snapshot_cleanup_under_maintenance_fence(
+                p_physical_pool_id, p_catalog_id, v_id, p_maintenance_owner_id,
+                p_cleanup_lease_expires_at, p_maintenance_id, p_maintenance_owner_id,
+                p_maintenance_fencing_epoch);
+        ELSIF v_owner IS DISTINCT FROM p_maintenance_owner_id OR v_cleanup_epoch <= 0 THEN
+            RAISE EXCEPTION 'maintenance fence stale';
+        END IF;
+        PERFORM ducklake.complete_snapshot_cleanup_under_maintenance_fence(
+            v_evidence, p_cleanup_completed_at, p_physical_pool_id, p_catalog_id, v_id,
+            p_maintenance_owner_id, v_cleanup_epoch, p_maintenance_id,
+            p_maintenance_owner_id, p_maintenance_fencing_epoch);
+    END LOOP;
+END;
+$$;
+-- +goose StatementEnd
+
+DROP FUNCTION IF EXISTS ducklake.register_catalog_runtime_compatibility(text,text,text,text,text,text,text);
+CREATE OR REPLACE FUNCTION ducklake.register_catalog_runtime_compatibility(
+    p_physical_pool_id text, p_catalog_id text, p_duckdb_runtime text,
+    p_ducklake_extension text, p_catalog_format text,
+    p_compatibility_digest text, p_catalog_schema_version text,
+    p_owner_id text, p_pool_fencing_epoch bigint, p_global_fencing_epoch bigint
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+-- +goose StatementBegin
+AS $$
+DECLARE v_exists boolean; v_now timestamptz := clock_timestamp(); v_existing record;
+BEGIN
+    PERFORM 1 FROM ducklake.migration_fence
+     WHERE scope='global' AND physical_pool_id='' AND owner_id=p_owner_id
+       AND fencing_epoch=p_global_fencing_epoch AND lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'migration fence expired'; END IF;
+    PERFORM 1 FROM ducklake.migration_fence
+     WHERE scope='pool' AND physical_pool_id=p_physical_pool_id AND owner_id=p_owner_id
+       AND fencing_epoch=p_pool_fencing_epoch AND lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'migration fence expired'; END IF;
+    SELECT EXISTS (SELECT 1 FROM ducklake.catalog_runtime_compatibility WHERE physical_pool_id=p_physical_pool_id) INTO v_exists;
+    IF v_exists THEN
+        SELECT * INTO v_existing FROM ducklake.catalog_runtime_compatibility WHERE physical_pool_id=p_physical_pool_id;
+        IF v_existing.catalog_id IS DISTINCT FROM p_catalog_id
+           OR v_existing.duckdb_runtime IS DISTINCT FROM p_duckdb_runtime
+           OR v_existing.ducklake_extension IS DISTINCT FROM p_ducklake_extension
+           OR v_existing.catalog_format IS DISTINCT FROM p_catalog_format
+           OR v_existing.compatibility_digest IS DISTINCT FROM p_compatibility_digest
+           OR v_existing.catalog_schema_version IS DISTINCT FROM p_catalog_schema_version THEN
+            RAISE EXCEPTION 'runtime compatibility mismatch';
+        END IF;
+        RETURN;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM ducklake.catalog_identity
+         WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id
+    ) THEN
+        RAISE EXCEPTION 'runtime compatibility mismatch';
+    END IF;
+    INSERT INTO ducklake.catalog_runtime_compatibility
+      (physical_pool_id,catalog_id,duckdb_runtime,ducklake_extension,catalog_format,
+       compatibility_digest,catalog_schema_version,updated_at)
+    VALUES (p_physical_pool_id,p_catalog_id,p_duckdb_runtime,p_ducklake_extension,
+            p_catalog_format,p_compatibility_digest,p_catalog_schema_version,clock_timestamp());
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE OR REPLACE FUNCTION ducklake.begin_catalog_migration(
+    p_migration_id uuid, p_physical_pool_id text, p_catalog_id text,
+    p_owner_id text, p_pool_fencing_epoch bigint, p_global_fencing_epoch bigint,
+    p_current_duckdb_runtime text, p_current_ducklake_extension text,
+    p_current_catalog_format text, p_current_compatibility_digest text,
+    p_current_catalog_schema_version text, p_target_duckdb_runtime text,
+    p_target_ducklake_extension text, p_target_catalog_format text,
+    p_target_compatibility_digest text, p_target_catalog_schema_version text,
+    p_begin_evidence jsonb
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+-- +goose StatementBegin
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_catalog record; v_existing record;
+BEGIN
+    PERFORM 1 FROM ducklake.migration_fence
+     WHERE scope='global' AND physical_pool_id='' AND owner_id=p_owner_id
+       AND fencing_epoch=p_global_fencing_epoch AND lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'migration fence expired'; END IF;
+    PERFORM 1 FROM ducklake.migration_fence
+     WHERE scope='pool' AND physical_pool_id=p_physical_pool_id AND owner_id=p_owner_id
+       AND fencing_epoch=p_pool_fencing_epoch AND lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'migration fence expired'; END IF;
+    IF jsonb_typeof(p_begin_evidence) <> 'object' OR p_begin_evidence = '{}'::jsonb
+       OR NOT ((p_begin_evidence->>'drain_verified')='true' OR (p_begin_evidence->>'drained')='true' OR (p_begin_evidence->>'readers_drained')='true')
+       OR NOT ((p_begin_evidence->>'backup_verified')='true' OR (p_begin_evidence->>'backup_verification')='true' OR (p_begin_evidence->>'backup')='true') THEN
+        RAISE EXCEPTION 'migration evidence required';
+    END IF;
+    SELECT * INTO v_existing FROM ducklake.catalog_migration WHERE migration_id=p_migration_id FOR UPDATE;
+    IF FOUND THEN
+        IF v_existing.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+           OR v_existing.catalog_id IS DISTINCT FROM p_catalog_id
+           OR v_existing.owner_id IS DISTINCT FROM p_owner_id
+           OR v_existing.fencing_epoch IS DISTINCT FROM p_pool_fencing_epoch
+           OR v_existing.global_fencing_epoch IS DISTINCT FROM p_global_fencing_epoch
+           OR v_existing.current_duckdb_runtime IS DISTINCT FROM p_current_duckdb_runtime
+           OR v_existing.current_ducklake_extension IS DISTINCT FROM p_current_ducklake_extension
+           OR v_existing.current_catalog_format IS DISTINCT FROM p_current_catalog_format
+           OR v_existing.current_compatibility_digest IS DISTINCT FROM p_current_compatibility_digest
+           OR v_existing.current_catalog_schema_version IS DISTINCT FROM p_current_catalog_schema_version
+           OR v_existing.target_duckdb_runtime IS DISTINCT FROM p_target_duckdb_runtime
+           OR v_existing.target_ducklake_extension IS DISTINCT FROM p_target_ducklake_extension
+           OR v_existing.target_catalog_format IS DISTINCT FROM p_target_catalog_format
+           OR v_existing.target_compatibility_digest IS DISTINCT FROM p_target_compatibility_digest
+           OR v_existing.target_catalog_schema_version IS DISTINCT FROM p_target_catalog_schema_version
+           OR v_existing.state IS DISTINCT FROM 'running'
+           OR v_existing.begin_evidence IS DISTINCT FROM p_begin_evidence THEN
+            RAISE EXCEPTION 'migration conflict';
+        END IF;
+        RETURN;
+    END IF;
+    SELECT * INTO v_catalog FROM ducklake.catalog_runtime_compatibility
+     WHERE physical_pool_id=p_physical_pool_id FOR SHARE;
+    IF NOT FOUND OR v_catalog.catalog_id <> p_catalog_id
+       OR v_catalog.duckdb_runtime <> p_current_duckdb_runtime
+       OR v_catalog.ducklake_extension <> p_current_ducklake_extension
+       OR v_catalog.catalog_format <> p_current_catalog_format
+       OR v_catalog.compatibility_digest <> p_current_compatibility_digest
+       OR v_catalog.catalog_schema_version <> p_current_catalog_schema_version THEN
+        RAISE EXCEPTION 'runtime compatibility mismatch';
+    END IF;
+    INSERT INTO ducklake.catalog_migration
+      (migration_id,physical_pool_id,catalog_id,owner_id,fencing_epoch,global_fencing_epoch,
+       current_duckdb_runtime,current_ducklake_extension,current_catalog_format,
+       current_compatibility_digest,current_catalog_schema_version,target_duckdb_runtime,
+       target_ducklake_extension,target_catalog_format,target_compatibility_digest,
+       target_catalog_schema_version,state,started_at,begin_evidence)
+    VALUES (p_migration_id,p_physical_pool_id,p_catalog_id,p_owner_id,p_pool_fencing_epoch,
+            p_global_fencing_epoch,p_current_duckdb_runtime,p_current_ducklake_extension,
+            p_current_catalog_format,p_current_compatibility_digest,p_current_catalog_schema_version,
+            p_target_duckdb_runtime,p_target_ducklake_extension,p_target_catalog_format,
+            p_target_compatibility_digest,p_target_catalog_schema_version,'running',v_now,p_begin_evidence)
+    ON CONFLICT (migration_id) DO NOTHING;
+    SELECT * INTO v_existing FROM ducklake.catalog_migration WHERE migration_id=p_migration_id;
+    IF NOT FOUND OR v_existing.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+       OR v_existing.catalog_id IS DISTINCT FROM p_catalog_id OR v_existing.owner_id IS DISTINCT FROM p_owner_id
+       OR v_existing.fencing_epoch IS DISTINCT FROM p_pool_fencing_epoch OR v_existing.global_fencing_epoch IS DISTINCT FROM p_global_fencing_epoch
+       OR v_existing.current_duckdb_runtime IS DISTINCT FROM p_current_duckdb_runtime OR v_existing.current_ducklake_extension IS DISTINCT FROM p_current_ducklake_extension
+       OR v_existing.current_catalog_format IS DISTINCT FROM p_current_catalog_format OR v_existing.current_compatibility_digest IS DISTINCT FROM p_current_compatibility_digest
+       OR v_existing.current_catalog_schema_version IS DISTINCT FROM p_current_catalog_schema_version OR v_existing.target_duckdb_runtime IS DISTINCT FROM p_target_duckdb_runtime
+       OR v_existing.target_ducklake_extension IS DISTINCT FROM p_target_ducklake_extension OR v_existing.target_catalog_format IS DISTINCT FROM p_target_catalog_format
+       OR v_existing.target_compatibility_digest IS DISTINCT FROM p_target_compatibility_digest OR v_existing.target_catalog_schema_version IS DISTINCT FROM p_target_catalog_schema_version
+       OR v_existing.state IS DISTINCT FROM 'running' OR v_existing.begin_evidence IS DISTINCT FROM p_begin_evidence THEN
+        RAISE EXCEPTION 'migration conflict';
+    END IF;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE OR REPLACE FUNCTION ducklake.complete_catalog_migration(
+    p_migration_id uuid, p_owner_id text, p_pool_fencing_epoch bigint,
+    p_global_fencing_epoch bigint, p_completion_evidence jsonb
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+-- +goose StatementBegin
+AS $$
+DECLARE m record; v_now timestamptz := clock_timestamp(); v_terminal timestamptz; v_missing bigint; v_rows bigint;
+BEGIN
+    PERFORM 1 FROM ducklake.migration_fence WHERE scope='global' AND physical_pool_id=''
+      AND owner_id=p_owner_id AND fencing_epoch=p_global_fencing_epoch AND lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'migration fence expired'; END IF;
+    PERFORM 1 FROM ducklake.migration_fence WHERE scope='pool' AND physical_pool_id=(SELECT physical_pool_id FROM ducklake.catalog_migration WHERE migration_id=p_migration_id)
+      AND owner_id=p_owner_id AND fencing_epoch=p_pool_fencing_epoch AND lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'migration fence expired'; END IF;
+    SELECT * INTO m FROM ducklake.catalog_migration WHERE migration_id=p_migration_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'catalog migration not found'; END IF;
+    IF m.state='completed' THEN
+        IF m.completion_evidence = p_completion_evidence THEN RETURN; END IF;
+        RAISE EXCEPTION 'migration conflict';
+    END IF;
+    IF m.state <> 'running' THEN RAISE EXCEPTION 'catalog migration terminal'; END IF;
+    IF m.owner_id <> p_owner_id OR m.fencing_epoch <> p_pool_fencing_epoch OR m.global_fencing_epoch <> p_global_fencing_epoch THEN
+        RAISE EXCEPTION 'migration fence stale';
+    END IF;
+    -- Serialize the retained-snapshot boundary with commit attempts. Writers
+    -- that started before completion become part of this migration epoch;
+    -- writers admitted after the transaction commits receive a later
+    -- created_at and rely on their native qualification evidence instead.
+    LOCK TABLE ducklake.snapshot_retention IN SHARE MODE;
+    v_terminal := clock_timestamp();
+    SELECT count(*) INTO v_missing FROM ducklake.snapshot_retention r
+     WHERE r.physical_pool_id=m.physical_pool_id AND r.catalog_id=m.catalog_id AND r.state IN ('live','retiring')
+       AND NOT EXISTS (SELECT 1 FROM ducklake.snapshot_requalification q WHERE q.physical_pool_id=r.physical_pool_id AND q.catalog_id=r.catalog_id AND q.snapshot_id=r.snapshot_id AND q.migration_id=p_migration_id AND q.status='qualified' AND q.duckdb_runtime=m.target_duckdb_runtime AND q.ducklake_extension=m.target_ducklake_extension AND q.catalog_format=m.target_catalog_format AND q.compatibility_digest=m.target_compatibility_digest AND q.catalog_schema_version=m.target_catalog_schema_version);
+    IF v_missing <> 0 THEN RAISE EXCEPTION 'snapshot qualification missing'; END IF;
+    UPDATE ducklake.catalog_runtime_compatibility
+       SET duckdb_runtime=m.target_duckdb_runtime,ducklake_extension=m.target_ducklake_extension,
+           catalog_format=m.target_catalog_format,compatibility_digest=m.target_compatibility_digest,
+           catalog_schema_version=m.target_catalog_schema_version,current_migration_id=p_migration_id,
+           updated_at=v_terminal
+     WHERE physical_pool_id=m.physical_pool_id AND catalog_id=m.catalog_id
+       AND duckdb_runtime=m.current_duckdb_runtime AND ducklake_extension=m.current_ducklake_extension
+       AND catalog_format=m.current_catalog_format AND compatibility_digest=m.current_compatibility_digest
+       AND catalog_schema_version=m.current_catalog_schema_version;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    IF v_rows <> 1 THEN RAISE EXCEPTION 'runtime compatibility mismatch'; END IF;
+    UPDATE ducklake.catalog_migration
+       SET state='completed',terminal_at=v_terminal,completion_evidence=p_completion_evidence
+     WHERE migration_id=p_migration_id AND state='running' AND owner_id=p_owner_id
+       AND fencing_epoch=p_pool_fencing_epoch AND global_fencing_epoch=p_global_fencing_epoch;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    IF v_rows <> 1 THEN RAISE EXCEPTION 'migration fence stale'; END IF;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE OR REPLACE FUNCTION ducklake.fail_catalog_migration(
+    p_migration_id uuid, p_owner_id text, p_pool_fencing_epoch bigint,
+    p_global_fencing_epoch bigint, p_failure_evidence jsonb,
+    p_recovery_decision text, p_decision_evidence jsonb
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+-- +goose StatementBegin
+AS $$
+DECLARE m record; v_now timestamptz := clock_timestamp(); v_rows bigint;
+BEGIN
+    PERFORM 1 FROM ducklake.migration_fence WHERE scope='global' AND physical_pool_id=''
+      AND owner_id=p_owner_id AND fencing_epoch=p_global_fencing_epoch AND lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'migration fence expired'; END IF;
+    PERFORM 1 FROM ducklake.migration_fence WHERE scope='pool' AND physical_pool_id=(SELECT physical_pool_id FROM ducklake.catalog_migration WHERE migration_id=p_migration_id)
+      AND owner_id=p_owner_id AND fencing_epoch=p_pool_fencing_epoch AND lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'migration fence expired'; END IF;
+    SELECT * INTO m FROM ducklake.catalog_migration WHERE migration_id=p_migration_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'catalog migration not found'; END IF;
+    IF m.state='failed' THEN
+        IF m.failure_evidence = p_failure_evidence AND m.recovery_decision = p_recovery_decision AND m.decision_evidence = p_decision_evidence THEN RETURN; END IF;
+        RAISE EXCEPTION 'migration conflict';
+    END IF;
+    IF m.state <> 'running' THEN RAISE EXCEPTION 'catalog migration terminal'; END IF;
+    UPDATE ducklake.catalog_migration
+       SET state='failed',terminal_at=v_now,failure_evidence=p_failure_evidence,
+           recovery_decision=p_recovery_decision,decision_evidence=p_decision_evidence
+     WHERE migration_id=p_migration_id AND state='running';
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    IF v_rows <> 1 THEN RAISE EXCEPTION 'migration fence stale'; END IF;
+END;
+$$;
+-- +goose StatementEnd
+
+-- Requalification must retain its composite foreign-key protection without
+-- granting the migrator role REFERENCES/UPDATE on retention rows. This
+-- narrowly scoped definer function performs validation and insertion as the
+-- schema owner; runtime roles do not receive EXECUTE.
+DROP FUNCTION IF EXISTS ducklake.record_snapshot_requalification(uuid,text,text,bigint,uuid,text,text,text,text,text,text,jsonb,timestamptz);
+DROP FUNCTION IF EXISTS ducklake.lock_snapshot_retention(text,text,bigint);
+CREATE OR REPLACE FUNCTION ducklake.record_snapshot_requalification(
+    p_qualification_id uuid,
+    p_physical_pool_id text,
+    p_catalog_id text,
+    p_snapshot_id bigint,
+    p_migration_id uuid,
+    p_duckdb_runtime text,
+    p_ducklake_extension text,
+    p_catalog_format text,
+    p_compatibility_digest text,
+    p_catalog_schema_version text,
+    p_status text,
+    p_evidence jsonb,
+    p_qualified_at timestamptz,
+    p_owner_id text,
+    p_pool_fencing_epoch bigint,
+    p_global_fencing_epoch bigint
+) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+-- +goose StatementBegin
+AS $$
+DECLARE
+    v_now timestamptz := clock_timestamp();
+    v_migration record;
+    v_state text;
+    v_existing record;
+BEGIN
+    PERFORM 1 FROM ducklake.migration_fence WHERE scope='global' AND physical_pool_id=''
+      AND owner_id=p_owner_id AND fencing_epoch=p_global_fencing_epoch AND lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'migration fence expired'; END IF;
+    PERFORM 1 FROM ducklake.migration_fence WHERE scope='pool' AND physical_pool_id=p_physical_pool_id
+      AND owner_id=p_owner_id AND fencing_epoch=p_pool_fencing_epoch AND lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'migration fence expired'; END IF;
+    SELECT q.* INTO v_existing FROM ducklake.snapshot_requalification q
+     WHERE q.qualification_id=p_qualification_id FOR UPDATE;
+    IF FOUND THEN
+        IF v_existing.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+           OR v_existing.catalog_id IS DISTINCT FROM p_catalog_id
+           OR v_existing.snapshot_id IS DISTINCT FROM p_snapshot_id
+           OR v_existing.migration_id IS DISTINCT FROM p_migration_id
+           OR v_existing.duckdb_runtime IS DISTINCT FROM p_duckdb_runtime
+           OR v_existing.ducklake_extension IS DISTINCT FROM p_ducklake_extension
+           OR v_existing.catalog_format IS DISTINCT FROM p_catalog_format
+           OR v_existing.compatibility_digest IS DISTINCT FROM p_compatibility_digest
+           OR v_existing.catalog_schema_version IS DISTINCT FROM p_catalog_schema_version
+           OR v_existing.status IS DISTINCT FROM p_status
+           OR v_existing.evidence IS DISTINCT FROM p_evidence THEN
+            RAISE EXCEPTION 'qualification conflict';
+        END IF;
+        RETURN;
+    END IF;
+    SELECT * INTO v_migration FROM ducklake.catalog_migration WHERE migration_id=p_migration_id FOR SHARE;
+    IF NOT FOUND OR v_migration.physical_pool_id <> p_physical_pool_id OR v_migration.catalog_id <> p_catalog_id
+       OR v_migration.owner_id <> p_owner_id OR v_migration.fencing_epoch <> p_pool_fencing_epoch
+       OR v_migration.global_fencing_epoch <> p_global_fencing_epoch OR v_migration.state <> 'running'
+       OR v_migration.target_duckdb_runtime <> p_duckdb_runtime OR v_migration.target_ducklake_extension <> p_ducklake_extension
+       OR v_migration.target_catalog_format <> p_catalog_format OR v_migration.target_compatibility_digest <> p_compatibility_digest
+       OR v_migration.target_catalog_schema_version <> p_catalog_schema_version THEN
+        RAISE EXCEPTION 'qualification conflict';
+    END IF;
+    SELECT state INTO v_state FROM ducklake.snapshot_retention
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id
+       AND state IN ('live','retiring') FOR SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'snapshot not found'; END IF;
+    INSERT INTO ducklake.snapshot_requalification
+      (qualification_id,physical_pool_id,catalog_id,snapshot_id,migration_id,
+       duckdb_runtime,ducklake_extension,catalog_format,compatibility_digest,
+       catalog_schema_version,status,evidence,qualified_at)
+    VALUES
+      (p_qualification_id,p_physical_pool_id,p_catalog_id,p_snapshot_id,p_migration_id,
+       p_duckdb_runtime,p_ducklake_extension,p_catalog_format,p_compatibility_digest,
+       p_catalog_schema_version,p_status,p_evidence,v_now);
+END;
+$$;
+-- +goose StatementEnd
+
+
 -- Begin a bounded scanner under the exact catalog-wide maintenance fence.
 -- The control role receives EXECUTE only; all scan state and cursor evidence
 -- remain in the immutable ledger tables below.
@@ -10206,7 +10991,8 @@ BEGIN
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.begin_retention_maintenance(uuid,text,text,text,bigint,boolean,bigint,text,jsonb) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.update_retention_maintenance(uuid,text,text,text,bigint,text,text,boolean,bigint,text,jsonb,timestamptz) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.insert_retention_maintenance_snapshot(uuid,text,text,bigint,text,bigint) TO leapview_control_maintenance';
-        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.claim_retention_snapshots(uuid,text,text,text,bigint) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.insert_retention_maintenance_snapshots(uuid,text,text,bigint[],text,bigint) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.claim_retention_snapshots(uuid,text,text,text,bigint,integer) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.expire_snapshot_under_maintenance_fence(timestamptz,jsonb,text,text,bigint,uuid,text,bigint) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.claim_snapshot_cleanup_under_maintenance_fence(text,text,bigint,text,timestamptz,uuid,text,bigint) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.quarantine_snapshot_under_maintenance_fence(jsonb,timestamptz,text,text,bigint,text,bigint,uuid,text,bigint) TO leapview_control_maintenance';
@@ -10226,220 +11012,119 @@ $$;
 -- +goose StatementEnd
 
 -- capability source: internal/platform/jobs/postgres/schema.sql
-
--- Durable jobs capability schema. The control-plane baseline creates the
--- schema; CREATE SCHEMA keeps this capability migration independently
--- applicable to a clean PostgreSQL database used by conformance tests.
+-- LeapView-owned product history for asynchronous operations.
+-- River owns operational queueing, claims, retries, leases, scheduling, and
+-- worker lifecycle in its public.river_* tables. These rows remain after
+-- River cleanup so public IDs, authorization, evidence, and event history do
+-- not depend on the executor's retention policy.
 CREATE SCHEMA IF NOT EXISTS jobs;
 
-CREATE TABLE IF NOT EXISTS jobs.job (
-    id                      text PRIMARY KEY,
-    kind                    text NOT NULL,
-    workload_class          text NOT NULL CHECK (workload_class IN ('background', 'control')),
-    principal_id            text NOT NULL CHECK (principal_id = btrim(principal_id) AND length(principal_id) BETWEEN 1 AND 256),
-    group_ids               text[] NOT NULL DEFAULT '{}'::text[],
-    partition_key           text NOT NULL CHECK (partition_key = btrim(partition_key) AND length(partition_key) BETWEEN 1 AND 512),
-    resource_kind           text NOT NULL,
-    resource_id             text NOT NULL,
-    estimated_memory_bytes  bigint NOT NULL CHECK (estimated_memory_bytes > 0),
-    payload                 jsonb NOT NULL CHECK (octet_length(payload::text) <= 1048576),
-    request_digest          text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
-    status                  text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
-    attempt_count           bigint NOT NULL DEFAULT 0 CHECK (attempt_count >= 0 AND attempt_count <= max_attempts),
-    max_attempts            bigint NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 100),
-    lease_owner             text NOT NULL DEFAULT '',
-    lease_expires_at        timestamptz,
-    lease_generation        bigint NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
-    available_at            timestamptz NOT NULL DEFAULT clock_timestamp(),
-    error                   jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (octet_length(error::text) <= 65536),
-    created_at              timestamptz NOT NULL DEFAULT clock_timestamp(),
-    started_at              timestamptz,
-    finished_at             timestamptz,
-    CHECK (id = btrim(id) AND length(id) BETWEEN 1 AND 256),
-    CHECK (kind = btrim(kind) AND length(kind) BETWEEN 1 AND 128),
-    CHECK (resource_kind = btrim(resource_kind) AND length(resource_kind) BETWEEN 1 AND 128),
-    CHECK (resource_id = btrim(resource_id) AND length(resource_id) BETWEEN 1 AND 256),
-    CHECK (array_position(group_ids, NULL) IS NULL),
-    CHECK (cardinality(group_ids) <= 256),
-    CHECK ((status = 'running' AND lease_owner <> '' AND lease_expires_at IS NOT NULL)
-        OR (status <> 'running' AND lease_owner = '' AND lease_expires_at IS NULL)),
-    CHECK ((status IN ('succeeded', 'failed', 'cancelled')) = (finished_at IS NOT NULL))
+CREATE TABLE IF NOT EXISTS jobs.job_history (
+    id                     text PRIMARY KEY,
+    kind                   text NOT NULL,
+    workload_class         text NOT NULL CHECK (workload_class IN ('control', 'background')),
+    principal_id           text NOT NULL,
+    group_ids              jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(group_ids) = 'array'),
+    partition_key          text NOT NULL,
+    resource_kind          text NOT NULL,
+    resource_id            text NOT NULL,
+    estimated_memory_bytes bigint NOT NULL CHECK (estimated_memory_bytes > 0),
+    payload                jsonb NOT NULL CHECK (jsonb_typeof(payload) IN ('object', 'array')),
+    request_digest         text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    river_job_id           bigint UNIQUE,
+    status                 text NOT NULL DEFAULT 'queued'
+                           CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
+    attempt_count          integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    created_at             timestamptz NOT NULL DEFAULT clock_timestamp(),
+    started_at             timestamptz,
+    finished_at            timestamptz,
+    error                  jsonb,
+    CHECK (id = btrim(id) AND octet_length(id) BETWEEN 1 AND 255),
+    CHECK (kind = btrim(kind) AND octet_length(kind) BETWEEN 1 AND 255),
+    CHECK (principal_id = btrim(principal_id) AND octet_length(principal_id) BETWEEN 1 AND 256),
+    CHECK (partition_key = btrim(partition_key) AND octet_length(partition_key) BETWEEN 1 AND 512),
+    CHECK (resource_kind = btrim(resource_kind) AND octet_length(resource_kind) BETWEEN 1 AND 255),
+    CHECK (resource_id = btrim(resource_id) AND octet_length(resource_id) BETWEEN 1 AND 255),
+    CHECK ((status IN ('queued', 'running') AND finished_at IS NULL) OR
+           (status IN ('succeeded', 'failed', 'cancelled') AND finished_at IS NOT NULL)),
+    CHECK ((status = 'failed' AND error IS NOT NULL) OR status <> 'failed')
 );
 
-CREATE INDEX IF NOT EXISTS job_claim_idx
-    ON jobs.job (workload_class, status, available_at, created_at, id);
-CREATE INDEX IF NOT EXISTS job_principal_order_idx
-    ON jobs.job (workload_class, partition_key, principal_id, created_at, id);
-CREATE INDEX IF NOT EXISTS job_refresh_recovery_idx
-    ON jobs.job (resource_kind, status, created_at, id)
-    WHERE resource_kind = 'refresh_run' AND status IN ('queued','running');
+CREATE INDEX IF NOT EXISTS job_history_active_partition_idx
+    ON jobs.job_history (partition_key, created_at, id)
+    WHERE status IN ('queued', 'running');
+CREATE INDEX IF NOT EXISTS job_history_resource_idx
+    ON jobs.job_history (resource_kind, resource_id, created_at, id);
+CREATE INDEX IF NOT EXISTS job_history_terminal_idx
+    ON jobs.job_history (finished_at, id)
+    WHERE status IN ('succeeded', 'failed', 'cancelled');
 
-CREATE OR REPLACE FUNCTION jobs.guard_job_insert()
+CREATE OR REPLACE FUNCTION jobs.guard_job_history_update()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, jobs
 -- +goose StatementBegin
 AS $$
-DECLARE
-    now_ts timestamptz := clock_timestamp();
 BEGIN
-    -- Runtime may enqueue only a fresh queued request.  All lifecycle,
-    -- attempt, lease and terminal evidence is established by Claim/terminal
-    -- transitions, never supplied by an INSERT caller.
-    IF NEW.status <> 'queued'
-       OR NEW.attempt_count <> 0
-       OR NEW.max_attempts <> 3
-       OR NEW.lease_generation <> 0
-       OR NEW.lease_owner <> ''
-       OR NEW.lease_expires_at IS NOT NULL
-       OR NEW.started_at IS NOT NULL
-       OR NEW.finished_at IS NOT NULL
-       OR NEW.error IS DISTINCT FROM '{}'::jsonb THEN
-        RAISE EXCEPTION 'job inserts must begin as empty queued records';
+    IF ROW(OLD.id, OLD.kind, OLD.workload_class, OLD.principal_id, OLD.group_ids,
+           OLD.partition_key, OLD.resource_kind, OLD.resource_id,
+           OLD.estimated_memory_bytes, OLD.payload, OLD.request_digest,
+           OLD.created_at)
+       IS DISTINCT FROM
+       ROW(NEW.id, NEW.kind, NEW.workload_class, NEW.principal_id, NEW.group_ids,
+           NEW.partition_key, NEW.resource_kind, NEW.resource_id,
+           NEW.estimated_memory_bytes, NEW.payload, NEW.request_digest,
+           NEW.created_at) THEN
+        RAISE EXCEPTION 'product job identity is immutable';
     END IF;
-    NEW.created_at := now_ts;
-    NEW.available_at := now_ts;
+    IF OLD.river_job_id IS NOT NULL AND NEW.river_job_id IS DISTINCT FROM OLD.river_job_id THEN
+        RAISE EXCEPTION 'bound River job identity is immutable';
+    END IF;
+    IF NEW.attempt_count < OLD.attempt_count THEN
+        RAISE EXCEPTION 'product job attempt count cannot decrease';
+    END IF;
+    IF OLD.status IN ('succeeded', 'failed', 'cancelled') AND NEW IS DISTINCT FROM OLD THEN
+        RAISE EXCEPTION 'terminal product job history is immutable';
+    END IF;
+    IF OLD.status = 'queued' AND NEW.status NOT IN ('queued', 'running', 'failed', 'cancelled') THEN
+        RAISE EXCEPTION 'invalid queued product job transition';
+    END IF;
+    IF OLD.status = 'running' AND NEW.status NOT IN ('queued', 'running', 'succeeded', 'failed', 'cancelled') THEN
+        RAISE EXCEPTION 'invalid running product job transition';
+    END IF;
     RETURN NEW;
 END;
 $$;
 -- +goose StatementEnd
 
-DROP TRIGGER IF EXISTS job_insert_guard ON jobs.job;
-CREATE TRIGGER job_insert_guard
-    BEFORE INSERT ON jobs.job
-    FOR EACH ROW EXECUTE FUNCTION jobs.guard_job_insert();
-
--- One durable row per claim. The row captures both the attempt number and
--- fencing generation; heartbeat and terminal transitions close its outcome.
-CREATE TABLE IF NOT EXISTS jobs.attempt (
-    job_id             text NOT NULL REFERENCES jobs.job(id) ON DELETE CASCADE,
-    attempt_number     bigint NOT NULL CHECK (attempt_number > 0),
-    fencing_generation bigint NOT NULL CHECK (fencing_generation > 0),
-    owner              text NOT NULL CHECK (owner = btrim(owner) AND length(owner) BETWEEN 1 AND 256),
-    leased_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
-    lease_expires_at   timestamptz NOT NULL,
-    started_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
-    finished_at        timestamptz,
-    outcome            text NOT NULL DEFAULT 'running' CHECK (outcome IN ('running', 'succeeded', 'failed', 'cancelled', 'expired', 'retrying')),
-    retry_at           timestamptz,
-    error              jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (octet_length(error::text) <= 65536),
-    PRIMARY KEY (job_id, attempt_number),
-    UNIQUE (job_id, fencing_generation),
-    CHECK ((outcome = 'running') = (finished_at IS NULL)),
-    CHECK ((outcome = 'retrying') = (retry_at IS NOT NULL))
-);
-
-CREATE INDEX IF NOT EXISTS attempt_retry_idx ON jobs.attempt (retry_at) WHERE outcome = 'retrying';
-
-CREATE OR REPLACE FUNCTION jobs.guard_attempt_insert()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = pg_catalog, jobs
--- +goose StatementBegin
-AS $$
-DECLARE
-    now_ts timestamptz := clock_timestamp();
-BEGIN
-    IF NEW.outcome <> 'running'
-	   OR NEW.finished_at IS NOT NULL
-	   OR NEW.retry_at IS NOT NULL
-	   OR NEW.owner = ''
-	   OR NEW.error IS DISTINCT FROM '{}'::jsonb
-	   OR NEW.lease_expires_at <= now_ts
-	   OR NEW.lease_expires_at > now_ts + interval '24 hours' THEN
-        RAISE EXCEPTION 'attempt inserts must begin as active leased claims';
-    END IF;
-    -- Timestamps are evidence of the database transaction, not caller input.
-    NEW.leased_at := now_ts;
-    NEW.started_at := now_ts;
-    RETURN NEW;
-END;
-$$;
--- +goose StatementEnd
-
-DROP TRIGGER IF EXISTS attempt_insert_guard ON jobs.attempt;
-CREATE TRIGGER attempt_insert_guard
-    BEFORE INSERT ON jobs.attempt
-    FOR EACH ROW EXECUTE FUNCTION jobs.guard_attempt_insert();
+DROP TRIGGER IF EXISTS job_history_lifecycle_guard ON jobs.job_history;
+CREATE TRIGGER job_history_lifecycle_guard
+    BEFORE UPDATE ON jobs.job_history
+    FOR EACH ROW EXECUTE FUNCTION jobs.guard_job_history_update();
 
 CREATE TABLE IF NOT EXISTS jobs.event_sequence (
     resource_kind text NOT NULL,
     resource_id   text NOT NULL,
-    next_event_id bigint NOT NULL CHECK (next_event_id > 0),
+    next_event_id bigint NOT NULL DEFAULT 1 CHECK (next_event_id > 0),
     PRIMARY KEY (resource_kind, resource_id)
 );
-
-CREATE OR REPLACE FUNCTION jobs.guard_event_sequence()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = pg_catalog, jobs
--- +goose StatementBegin
-AS $$
-BEGIN
-    IF TG_OP = 'INSERT' THEN
-        IF NEW.next_event_id <> 1 THEN
-            RAISE EXCEPTION 'event sequence must begin at one';
-        END IF;
-    ELSIF NEW.resource_kind IS DISTINCT FROM OLD.resource_kind
-       OR NEW.resource_id IS DISTINCT FROM OLD.resource_id
-       OR NEW.next_event_id <> OLD.next_event_id + 1 THEN
-        RAISE EXCEPTION 'event sequence must advance exactly once';
-    END IF;
-    RETURN NEW;
-END;
-$$;
--- +goose StatementEnd
-
-DROP TRIGGER IF EXISTS event_sequence_guard ON jobs.event_sequence;
-CREATE TRIGGER event_sequence_guard
-    BEFORE INSERT OR UPDATE ON jobs.event_sequence
-    FOR EACH ROW EXECUTE FUNCTION jobs.guard_event_sequence();
 
 CREATE TABLE IF NOT EXISTS jobs.event (
     resource_kind text NOT NULL,
     resource_id   text NOT NULL,
     event_id      bigint NOT NULL CHECK (event_id > 0),
     event_type    text NOT NULL,
-    event_key     text NOT NULL DEFAULT '',
-    data          jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (octet_length(data::text) <= 1048576),
+    event_key     text NOT NULL,
+    data          jsonb NOT NULL,
     created_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (resource_kind, resource_id, event_id),
-	CHECK (resource_kind = btrim(resource_kind) AND length(resource_kind) BETWEEN 1 AND 128),
-	CHECK (resource_id = btrim(resource_id) AND length(resource_id) BETWEEN 1 AND 256),
-	CHECK (event_type = btrim(event_type) AND length(event_type) BETWEEN 1 AND 128),
-	CHECK (jsonb_typeof(data) = 'object'),
-    CHECK (event_key = '' OR (event_key = btrim(event_key) AND length(event_key) <= 256))
+    UNIQUE (resource_kind, resource_id, event_key),
+    CHECK (resource_kind = btrim(resource_kind) AND octet_length(resource_kind) BETWEEN 1 AND 255),
+    CHECK (resource_id = btrim(resource_id) AND octet_length(resource_id) BETWEEN 1 AND 255),
+    CHECK (event_type = btrim(event_type) AND octet_length(event_type) BETWEEN 1 AND 255),
+    CHECK (event_key = btrim(event_key) AND octet_length(event_key) BETWEEN 1 AND 512),
+    CHECK (jsonb_typeof(data) = 'object')
 );
-
--- Empty event keys are intentionally reusable; a partial index gives workflow
--- keys idempotency without imposing uniqueness on ordinary append-only events.
-CREATE UNIQUE INDEX IF NOT EXISTS event_resource_key_idx
-    ON jobs.event (resource_kind, resource_id, event_key)
-    WHERE event_key <> '';
-
-CREATE OR REPLACE FUNCTION jobs.guard_event_insert()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = pg_catalog, jobs
--- +goose StatementBegin
-AS $$
-BEGIN
-    IF NEW.event_id <= 0 OR NEW.resource_kind <> btrim(NEW.resource_kind)
-       OR NEW.resource_id <> btrim(NEW.resource_id)
-       OR NEW.event_type <> btrim(NEW.event_type)
-       OR NEW.event_key <> btrim(NEW.event_key) THEN
-        RAISE EXCEPTION 'event insert identity is not canonical';
-    END IF;
-    NEW.created_at := clock_timestamp();
-    RETURN NEW;
-END;
-$$;
--- +goose StatementEnd
-
-DROP TRIGGER IF EXISTS event_insert_guard ON jobs.event;
-CREATE TRIGGER event_insert_guard
-    BEFORE INSERT ON jobs.event
-    FOR EACH ROW EXECUTE FUNCTION jobs.guard_event_insert();
 
 CREATE OR REPLACE FUNCTION jobs.reject_event_mutation()
 RETURNS trigger
@@ -10458,261 +11143,6 @@ CREATE TRIGGER event_append_only
     BEFORE UPDATE OR DELETE ON jobs.event
     FOR EACH ROW EXECUTE FUNCTION jobs.reject_event_mutation();
 
--- Durable job state is changed through the repository state machine.  The
--- trigger is defense in depth for a role that accidentally receives a wider
--- UPDATE grant: request identity, attempts, fences and terminal evidence may
--- not be rewritten or a terminal row reopened.  Lease takeover and retry are
--- the only transitions that may advance a running row.
-CREATE OR REPLACE FUNCTION jobs.guard_job_update()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = pg_catalog, jobs
--- +goose StatementBegin
-AS $$
-BEGIN
-    IF NEW.id IS DISTINCT FROM OLD.id
-       OR NEW.kind IS DISTINCT FROM OLD.kind
-       OR NEW.workload_class IS DISTINCT FROM OLD.workload_class
-       OR NEW.principal_id IS DISTINCT FROM OLD.principal_id
-       OR NEW.group_ids IS DISTINCT FROM OLD.group_ids
-       OR NEW.partition_key IS DISTINCT FROM OLD.partition_key
-       OR NEW.resource_kind IS DISTINCT FROM OLD.resource_kind
-       OR NEW.resource_id IS DISTINCT FROM OLD.resource_id
-       OR NEW.estimated_memory_bytes IS DISTINCT FROM OLD.estimated_memory_bytes
-       OR NEW.payload IS DISTINCT FROM OLD.payload
-       OR NEW.request_digest IS DISTINCT FROM OLD.request_digest
-       OR NEW.max_attempts IS DISTINCT FROM OLD.max_attempts
-       OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
-        RAISE EXCEPTION 'job request identity is immutable';
-    END IF;
-
-    IF OLD.status IN ('succeeded', 'failed', 'cancelled') THEN
-        IF NEW IS DISTINCT FROM OLD THEN
-            RAISE EXCEPTION 'terminal job is immutable';
-        END IF;
-    ELSIF OLD.status = 'queued' THEN
-		IF NEW.status NOT IN ('queued', 'running', 'succeeded', 'failed', 'cancelled') THEN
-            RAISE EXCEPTION 'invalid queued job transition';
-        END IF;
-        IF NEW.status = 'queued' AND NEW IS DISTINCT FROM OLD THEN
-            RAISE EXCEPTION 'queued job updates must be no-ops';
-        END IF;
-        IF NEW.status = 'running' AND (NEW.attempt_count <> OLD.attempt_count + 1 OR NEW.lease_generation <> OLD.lease_generation + 1) THEN
-            RAISE EXCEPTION 'claim must advance attempt and fence exactly once';
-        END IF;
-        IF NEW.status = 'running' AND (
-            NEW.available_at IS DISTINCT FROM OLD.available_at OR
-            NEW.finished_at IS DISTINCT FROM OLD.finished_at OR
-            NEW.error IS DISTINCT FROM OLD.error OR
-			NEW.started_at IS NULL OR
-			NEW.lease_owner = '' OR NEW.lease_expires_at IS NULL OR
-			NEW.lease_expires_at <= clock_timestamp() OR
-			NEW.lease_expires_at > clock_timestamp() + interval '24 hours') THEN
-            RAISE EXCEPTION 'claim changed fields outside the lease transition';
-        END IF;
-        IF NEW.status = 'running' THEN
-            NEW.started_at := COALESCE(OLD.started_at, clock_timestamp());
-        END IF;
-		IF NEW.status = 'cancelled' AND (
-            NEW.available_at IS DISTINCT FROM OLD.available_at OR
-            NEW.started_at IS DISTINCT FROM OLD.started_at OR
-            COALESCE(NEW.error->>'code','') NOT IN ('JOB_CANCELLED','REFRESH_POISON_PAYLOAD','REFRESH_RUN_TERMINAL','REFRESH_SUPERSEDED') OR
-            NEW.attempt_count IS DISTINCT FROM OLD.attempt_count OR
-            NEW.lease_generation IS DISTINCT FROM OLD.lease_generation OR
-            NEW.finished_at IS NULL) THEN
-            RAISE EXCEPTION 'queued cancellation changed immutable job fields';
-        END IF;
-		IF NEW.status IN ('succeeded','failed') AND (
-			NEW.available_at IS DISTINCT FROM OLD.available_at OR
-			NEW.started_at IS DISTINCT FROM OLD.started_at OR
-			NEW.attempt_count IS DISTINCT FROM OLD.attempt_count OR
-			NEW.lease_generation IS DISTINCT FROM OLD.lease_generation OR
-			NEW.finished_at IS NULL OR
-			NEW.lease_owner <> '' OR NEW.lease_expires_at IS NOT NULL) THEN
-			RAISE EXCEPTION 'queued terminal transition changed immutable job fields';
-		END IF;
-		IF NEW.status = 'succeeded' AND (NEW.error IS DISTINCT FROM '{}'::jsonb OR NEW.attempt_count = 0) THEN
-			RAISE EXCEPTION 'queued success requires empty error evidence';
-		END IF;
-		IF NEW.status = 'failed' AND COALESCE(NEW.error->>'code','') <> 'REFRESH_RUN_TERMINAL' THEN
-			RAISE EXCEPTION 'queued failure requires stable terminal evidence';
-		END IF;
-        IF NEW.status = 'queued' AND (NEW.lease_owner <> '' OR NEW.lease_expires_at IS NOT NULL) THEN
-            RAISE EXCEPTION 'queued job cannot retain a lease';
-        END IF;
-    ELSIF OLD.status = 'running' THEN
-        IF NEW.status NOT IN ('running', 'queued', 'succeeded', 'failed', 'cancelled') THEN
-            RAISE EXCEPTION 'invalid running job transition';
-        END IF;
-        IF NEW.status = 'running' THEN
-            IF NEW.lease_owner = '' OR NEW.lease_expires_at IS NULL THEN
-                RAISE EXCEPTION 'running job requires an active lease';
-            END IF;
-            IF NEW.lease_owner = OLD.lease_owner THEN
-                IF NEW.lease_generation = OLD.lease_generation AND NEW.attempt_count = OLD.attempt_count THEN
-                    IF NEW.status IS DISTINCT FROM OLD.status
-                       OR NEW.available_at IS DISTINCT FROM OLD.available_at
-                       OR NEW.started_at IS DISTINCT FROM OLD.started_at
-                       OR NEW.finished_at IS DISTINCT FROM OLD.finished_at
-                       OR NEW.error IS DISTINCT FROM OLD.error THEN
-                        RAISE EXCEPTION 'heartbeat changed fields outside the lease';
-                    END IF;
-                    IF NEW.lease_expires_at < OLD.lease_expires_at OR NEW.lease_expires_at <= clock_timestamp() THEN
-                        RAISE EXCEPTION 'heartbeat cannot shorten a live lease';
-                    END IF;
-                    NULL; -- heartbeat renewal
-                ELSIF NEW.lease_generation <> OLD.lease_generation + 1 OR NEW.attempt_count <> OLD.attempt_count + 1 OR OLD.lease_expires_at > clock_timestamp() THEN
-                    RAISE EXCEPTION 'takeover must advance attempt and fence after expiry';
-                END IF;
-            ELSIF NEW.lease_generation <> OLD.lease_generation + 1 OR NEW.attempt_count <> OLD.attempt_count + 1 OR OLD.lease_expires_at > clock_timestamp() THEN
-                    RAISE EXCEPTION 'heartbeat cannot change attempt or fence';
-            END IF;
-			IF NEW.available_at IS DISTINCT FROM OLD.available_at OR NEW.finished_at IS DISTINCT FROM OLD.finished_at OR NEW.error IS DISTINCT FROM OLD.error OR NEW.started_at IS DISTINCT FROM OLD.started_at OR NEW.lease_expires_at <= clock_timestamp() OR NEW.lease_expires_at > clock_timestamp() + interval '24 hours' THEN
-                RAISE EXCEPTION 'takeover changed fields outside the lease';
-            END IF;
-        ELSIF NEW.status = 'queued' THEN
-            IF NEW.attempt_count <> OLD.attempt_count OR NEW.lease_generation <> OLD.lease_generation THEN
-                RAISE EXCEPTION 'retry cannot change attempt or fence';
-            END IF;
-			IF NEW.started_at IS DISTINCT FROM OLD.started_at OR NEW.finished_at IS DISTINCT FROM OLD.finished_at OR NEW.lease_owner <> '' OR NEW.lease_expires_at IS NOT NULL THEN
-				RAISE EXCEPTION 'retry changed fields outside the retry transition';
-			END IF;
-			IF NEW.available_at > clock_timestamp() + interval '24 hours' THEN
-				RAISE EXCEPTION 'retry availability exceeds the bounded delay';
-			END IF;
-        ELSIF NEW.attempt_count <> OLD.attempt_count OR NEW.lease_generation <> OLD.lease_generation THEN
-            RAISE EXCEPTION 'terminal transition cannot change attempt or fence';
-        ELSIF NEW.available_at IS DISTINCT FROM OLD.available_at OR NEW.started_at IS DISTINCT FROM OLD.started_at THEN
-            RAISE EXCEPTION 'terminal transition changed immutable job fields';
-        ELSIF NEW.lease_owner <> '' OR NEW.lease_expires_at IS NOT NULL THEN
-            RAISE EXCEPTION 'non-running job cannot retain a lease';
-        END IF;
-    END IF;
-    IF NEW.status IN ('succeeded', 'failed', 'cancelled') AND OLD.status NOT IN ('succeeded', 'failed', 'cancelled') THEN
-        NEW.finished_at := clock_timestamp();
-    END IF;
-    RETURN NEW;
-END;
-$$;
--- +goose StatementEnd
-
-DROP TRIGGER IF EXISTS job_lifecycle_guard ON jobs.job;
-CREATE TRIGGER job_lifecycle_guard
-    BEFORE UPDATE ON jobs.job
-    FOR EACH ROW EXECUTE FUNCTION jobs.guard_job_update();
-
-CREATE OR REPLACE FUNCTION jobs.guard_attempt_update()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = pg_catalog, jobs
--- +goose StatementBegin
-AS $$
-BEGIN
-    IF NEW.job_id IS DISTINCT FROM OLD.job_id
-       OR NEW.attempt_number IS DISTINCT FROM OLD.attempt_number
-       OR NEW.fencing_generation IS DISTINCT FROM OLD.fencing_generation
-       OR NEW.owner IS DISTINCT FROM OLD.owner
-       OR NEW.leased_at IS DISTINCT FROM OLD.leased_at
-       OR NEW.started_at IS DISTINCT FROM OLD.started_at THEN
-        RAISE EXCEPTION 'attempt identity is immutable';
-    END IF;
-    IF OLD.outcome NOT IN ('running','retrying') AND NEW IS DISTINCT FROM OLD THEN
-        RAISE EXCEPTION 'terminal attempt is immutable';
-    END IF;
-    IF OLD.outcome = 'retrying' THEN
-        -- Retry evidence is already finished.  It may only be closed by a
-        -- terminal recovery/cancellation path; it can never be revived or
-        -- rewritten in place.
-        IF NEW.outcome NOT IN ('succeeded','failed','cancelled') THEN
-            RAISE EXCEPTION 'retrying attempt is terminally recoverable only';
-        END IF;
-        IF NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at OR NEW.retry_at IS NOT NULL THEN
-            RAISE EXCEPTION 'retrying attempt changed immutable lease fields';
-        END IF;
-        IF NEW.outcome = 'succeeded' AND NEW.error IS DISTINCT FROM '{}'::jsonb THEN
-            RAISE EXCEPTION 'retrying success requires empty error evidence';
-        END IF;
-        IF NEW.outcome IN ('failed','cancelled') AND COALESCE(NEW.error->>'code','') NOT IN ('JOB_CANCELLED','REFRESH_POISON_PAYLOAD','REFRESH_RUN_TERMINAL','REFRESH_SUPERSEDED') THEN
-            RAISE EXCEPTION 'retrying terminal transition requires stable evidence';
-        END IF;
-        NEW.finished_at := clock_timestamp();
-        NEW.retry_at := NULL;
-        RETURN NEW;
-    END IF;
-    IF NEW.outcome NOT IN ('running', 'succeeded', 'failed', 'cancelled', 'expired', 'retrying') THEN
-        RAISE EXCEPTION 'invalid attempt transition';
-    END IF;
-    IF OLD.outcome = 'running' AND NEW.outcome = 'running' THEN
-        IF NEW.finished_at IS DISTINCT FROM OLD.finished_at OR NEW.retry_at IS DISTINCT FROM OLD.retry_at OR NEW.error IS DISTINCT FROM OLD.error THEN
-            RAISE EXCEPTION 'heartbeat changed fields outside the lease';
-        END IF;
-        IF NEW.lease_expires_at < OLD.lease_expires_at THEN
-            RAISE EXCEPTION 'heartbeat cannot shorten an attempt lease';
-        END IF;
-        RETURN NEW;
-    END IF;
-    IF OLD.outcome = 'running' AND NEW.outcome = 'retrying' THEN
-        IF NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at OR NEW.finished_at IS NULL OR NEW.retry_at IS NULL THEN
-            RAISE EXCEPTION 'retry transition changed fields outside retry evidence';
-        END IF;
-        RETURN NEW;
-    END IF;
-    IF OLD.outcome = 'running' AND NEW.outcome <> 'running' THEN
-        IF NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
-            RAISE EXCEPTION 'terminal transition changed immutable lease fields';
-        END IF;
-        NEW.finished_at := clock_timestamp();
-        NEW.retry_at := NULL;
-    END IF;
-    RETURN NEW;
-END;
-$$;
--- +goose StatementEnd
-
-DROP TRIGGER IF EXISTS attempt_lifecycle_guard ON jobs.attempt;
-CREATE TRIGGER attempt_lifecycle_guard
-    BEFORE UPDATE ON jobs.attempt
-    FOR EACH ROW EXECUTE FUNCTION jobs.guard_attempt_update();
-
--- A bounded operational view keeps queue health observable without copying
--- payloads.  Consumers can distinguish work that is queued, currently leased,
--- expired and retrying/dead-lettered while retaining the immutable job row.
-CREATE OR REPLACE VIEW jobs.job_observability AS
-SELECT
-    j.id,
-    j.kind,
-    j.workload_class,
-    j.principal_id,
-    j.status,
-    j.attempt_count,
-    j.max_attempts,
-    j.lease_owner,
-    j.lease_expires_at,
-    j.available_at,
-    CASE
-        WHEN j.status = 'running' AND j.lease_expires_at <= clock_timestamp() THEN 'expired'
-        WHEN j.status = 'running' AND j.started_at <= clock_timestamp() - interval '1 hour' THEN 'stuck'
-        WHEN j.status = 'running' THEN 'running'
-        WHEN j.status = 'queued' AND j.attempt_count > 0 THEN 'retrying'
-        WHEN j.status = 'failed' AND j.attempt_count >= j.max_attempts THEN 'dead_letter'
-        ELSE j.status
-    END AS health,
-    COALESCE(a.retry_count, 0)::bigint AS retry_count,
-    COALESCE(a.expired_count, 0)::bigint AS expired_count,
-    a.last_retry_at
-FROM jobs.job j
-LEFT JOIN LATERAL (
-    SELECT count(*) FILTER (WHERE outcome = 'retrying') AS retry_count,
-           count(*) FILTER (WHERE outcome = 'expired') AS expired_count,
-           max(retry_at) FILTER (WHERE outcome = 'retrying') AS last_retry_at
-    FROM jobs.attempt
-    WHERE job_id = j.id
-) a ON true;
-
--- Only terminal rows older than the caller's cutoff are eligible.  The
--- function locks and deletes one bounded batch, and is the sole delete surface
--- granted only to the dedicated maintenance role. Attempts are removed by
--- the FK cascade; ordinary workers cannot erase queue history.
 CREATE OR REPLACE FUNCTION jobs.prune(p_before timestamptz, p_batch_limit integer)
 RETURNS bigint
 LANGUAGE plpgsql
@@ -10721,55 +11151,39 @@ SET search_path = pg_catalog, jobs
 -- +goose StatementBegin
 AS $$
 DECLARE
-    v_cutoff timestamptz;
-    v_removed bigint;
+    removed bigint;
 BEGIN
-    IF p_before IS NULL OR p_batch_limit IS NULL OR p_batch_limit < 1 OR p_batch_limit > 1000 THEN
-        RAISE EXCEPTION 'job prune cutoff and batch limit are required (1..1000)';
+    IF p_before IS NULL OR p_batch_limit < 1 OR p_batch_limit > 1000 THEN
+        RAISE EXCEPTION 'invalid jobs prune arguments';
     END IF;
-    v_cutoff := LEAST(p_before, clock_timestamp());
     WITH doomed AS (
         SELECT id
-        FROM jobs.job
-        WHERE status IN ('succeeded', 'failed', 'cancelled')
-          AND finished_at IS NOT NULL
-          AND finished_at <= v_cutoff
-        ORDER BY finished_at, id
-        FOR UPDATE SKIP LOCKED
-        LIMIT p_batch_limit
+          FROM jobs.job_history
+         WHERE status IN ('succeeded', 'failed', 'cancelled')
+           AND finished_at <= p_before
+         ORDER BY finished_at, id
+         LIMIT p_batch_limit
+         FOR UPDATE SKIP LOCKED
     )
-    DELETE FROM jobs.job j
-    USING doomed d
-    WHERE j.id = d.id;
-    GET DIAGNOSTICS v_removed = ROW_COUNT;
-    RETURN v_removed;
+    DELETE FROM jobs.job_history h USING doomed d WHERE h.id = d.id;
+    GET DIAGNOSTICS removed = ROW_COUNT;
+    RETURN removed;
 END;
 $$;
 -- +goose StatementEnd
 
--- No object in this capability is ambiently callable.  The conditional role
--- grants let the isolated schema run before the deployment role bundle exists;
--- the control-plane migration reapplies the same grants after role creation.
 REVOKE ALL ON SCHEMA jobs FROM PUBLIC;
 REVOKE ALL ON ALL TABLES IN SCHEMA jobs FROM PUBLIC;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA jobs FROM PUBLIC;
+REVOKE ALL ON FUNCTION jobs.guard_job_history_update(), jobs.reject_event_mutation(),
+    jobs.prune(timestamptz, integer) FROM PUBLIC;
+
 -- +goose StatementBegin
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_owner') THEN
-        GRANT ALL ON ALL TABLES IN SCHEMA jobs TO leapview_control_owner;
-        GRANT ALL ON ALL FUNCTIONS IN SCHEMA jobs TO leapview_control_owner;
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_migrator') THEN
-        GRANT ALL ON ALL TABLES IN SCHEMA jobs TO leapview_control_migrator;
-        GRANT ALL ON ALL FUNCTIONS IN SCHEMA jobs TO leapview_control_migrator;
-    END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA jobs TO leapview_control_runtime;
-        GRANT SELECT, INSERT, UPDATE ON jobs.job, jobs.attempt, jobs.event_sequence, jobs.event TO leapview_control_runtime;
-        GRANT SELECT ON jobs.job_observability TO leapview_control_runtime;
-        REVOKE EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) FROM leapview_control_runtime;
-        REVOKE DELETE ON jobs.job, jobs.attempt, jobs.event_sequence, jobs.event FROM leapview_control_runtime;
+        GRANT SELECT, INSERT, UPDATE ON jobs.job_history, jobs.event_sequence, jobs.event TO leapview_control_runtime;
+        REVOKE DELETE ON jobs.job_history, jobs.event_sequence, jobs.event FROM leapview_control_runtime;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
         GRANT USAGE ON SCHEMA jobs TO leapview_control_maintenance;
@@ -10777,16 +11191,16 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA jobs TO leapview_control_readonly;
-        REVOKE SELECT ON jobs.job, jobs.attempt, jobs.event_sequence, jobs.event FROM leapview_control_readonly;
-        GRANT SELECT ON jobs.job_observability TO leapview_control_readonly;
+        GRANT SELECT ON jobs.job_history TO leapview_control_readonly;
+        REVOKE SELECT ON jobs.event_sequence, jobs.event FROM leapview_control_readonly;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
+        GRANT USAGE ON SCHEMA jobs TO leapview_control_backup;
+        GRANT SELECT ON jobs.job_history, jobs.event_sequence, jobs.event TO leapview_control_backup;
     END IF;
 END
 $$;
 -- +goose StatementEnd
-
-COMMENT ON VIEW jobs.job_observability IS
-    'Bounded queue health projection: running, expired, retrying and dead-letter evidence';
-
 -- capability source: internal/agent/postgres/schema.sql
 -- Clean-slate PostgreSQL agent persistence. Agent state is deliberately
 -- separate from the platform jobs authority: jobs and workflow events are
@@ -11403,7 +11817,7 @@ CREATE TABLE IF NOT EXISTS refresh.run (
     matching_schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
     materialization_scope jsonb NOT NULL DEFAULT '[]'::jsonb,
     principal_id text NOT NULL DEFAULT '',
-    job_id text REFERENCES jobs.job(id) ON DELETE RESTRICT,
+    job_id text REFERENCES jobs.job_history(id) ON DELETE RESTRICT,
     status text NOT NULL DEFAULT 'queued',
     attempt_count bigint NOT NULL DEFAULT 0,
     fence_generation bigint NOT NULL DEFAULT 0,
@@ -11482,7 +11896,7 @@ BEGIN
     IF current_parent IS NULL THEN
         SELECT kind,workload_class,resource_kind,resource_id,partition_key,principal_id,status
           INTO job_kind,job_workload,job_resource_kind,job_resource_id,job_partition,job_principal,job_status
-          FROM jobs.job WHERE id=current_job;
+          FROM jobs.job_history WHERE id=current_job;
         IF job_kind IS DISTINCT FROM 'refresh_pipeline' OR job_workload IS DISTINCT FROM 'background' OR job_resource_kind IS DISTINCT FROM 'refresh_run' OR job_resource_id IS DISTINCT FROM NEW.run_id OR job_partition IS DISTINCT FROM ('refresh:'||NEW.project_id||':'||NEW.environment) OR job_principal IS DISTINCT FROM NEW.principal_id OR job_status IS DISTINCT FROM 'queued' THEN
             RAISE EXCEPTION 'root refresh job does not match canonical queue identity';
         END IF;
@@ -12343,6 +12757,19 @@ END;
 $$;
 -- +goose StatementEnd
 
+-- Keep the SQL-side digest check byte-for-byte compatible with Go's
+-- encoding/json output. PostgreSQL jsonb compares object structure (which is
+-- useful for rejecting reordered/unknown evidence keys), but its text form
+-- reorders keys and inserts spaces. Build the envelope in the Go struct field
+-- order from individually encoded scalar values so a maintenance-role SQL
+-- insert cannot mint an arbitrary result digest.
+CREATE OR REPLACE FUNCTION recovery.canonical_json_string(value text)
+-- +goose StatementBegin
+RETURNS text LANGUAGE sql IMMUTABLE STRICT SET search_path = pg_catalog, recovery AS $$
+    SELECT replace(replace(replace(replace(replace(to_json(value)::text, '<', E'\\u003c'), '>', E'\\u003e'), '&', E'\\u0026'), U&'\2028', E'\\u2028'), U&'\2029', E'\\u2029')
+$$;
+-- +goose StatementEnd
+
 -- Validation results are capability evidence, not an arbitrary JSON side
 -- channel.  Reconstruct the exact v1 envelope from the immutable frontier
 -- and its append-only child rows before accepting a direct SQL INSERT.  The
@@ -12355,6 +12782,8 @@ RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, recovery AS $$
 DECLARE
     frontier recovery.recovery_set;
     expected_evidence jsonb;
+    expected_evidence_json text;
+    expected_digest text;
 BEGIN
     SELECT selected.*
       INTO frontier
@@ -12369,37 +12798,39 @@ BEGIN
        OR (SELECT count(*) FROM recovery.recovery_object_root WHERE set_id = frontier.set_id) <> frontier.expected_object_roots THEN
         RAISE EXCEPTION 'validation result requires complete recovery frontier evidence';
     END IF;
-    expected_evidence := jsonb_build_object(
-        'schema_version', 1,
-        'set_id', frontier.set_id::text,
-        'attempt_id', NEW.attempt_id::text,
-        'frontier_digest', frontier.frontier_digest,
-        'cluster_points', COALESCE((
-            SELECT jsonb_agg(jsonb_build_object(
-                'database_role', point.database_role,
-                'cluster_identity', point.cluster_identity,
-                'database_identity', point.database_identity,
-                'recovery_identity', point.recovery_identity
-            ) ORDER BY point.database_role)
+    expected_evidence_json :=
+        '{"schema_version":1,"set_id":' || recovery.canonical_json_string(frontier.set_id::text) ||
+        ',"attempt_id":' || recovery.canonical_json_string(NEW.attempt_id::text) ||
+        ',"frontier_digest":' || recovery.canonical_json_string(frontier.frontier_digest) ||
+        ',"cluster_points":' || COALESCE((
+            SELECT '[' || string_agg(
+                '{"database_role":' || recovery.canonical_json_string(point.database_role) ||
+                ',"cluster_identity":' || recovery.canonical_json_string(point.cluster_identity) ||
+                ',"database_identity":' || recovery.canonical_json_string(point.database_identity) ||
+                ',"recovery_identity":' || recovery.canonical_json_string(point.recovery_identity) || '}',
+                ',' ORDER BY point.database_role
+            ) || ']'
               FROM recovery.recovery_cluster_point AS point
              WHERE point.set_id = frontier.set_id
-        ), '[]'::jsonb),
-        'object_roots', COALESCE((
-            SELECT jsonb_agg(jsonb_build_object(
-                'kind', root.root_kind,
-                'uri', root.root_uri,
-                'version_id', root.version_id,
-                'digest', root.digest,
-                'provider_recovery_frontier', root.provider_recovery_frontier
-            ) ORDER BY root.root_kind, root.root_uri, root.version_id)
+        ), '[]') ||
+        ',"object_roots":' || COALESCE((
+            SELECT '[' || string_agg(
+                '{"kind":' || recovery.canonical_json_string(root.root_kind) ||
+                ',"uri":' || recovery.canonical_json_string(root.root_uri) ||
+                ',"version_id":' || recovery.canonical_json_string(root.version_id) ||
+                ',"digest":' || recovery.canonical_json_string(root.digest) ||
+                ',"provider_recovery_frontier":' || recovery.canonical_json_string(root.provider_recovery_frontier) || '}',
+                ',' ORDER BY root.root_kind, root.root_uri, root.version_id
+            ) || ']'
               FROM recovery.recovery_object_root AS root
              WHERE root.set_id = frontier.set_id
-        ), '[]'::jsonb),
-        'relation_namespace', frontier.relation_namespace,
-        'relation_manifest_digest', frontier.relation_manifest_digest,
-        'closure_digest', frontier.closure_digest
-    );
-    IF NEW.evidence IS DISTINCT FROM expected_evidence THEN
+        ), '[]') ||
+        ',"relation_namespace":' || recovery.canonical_json_string(frontier.relation_namespace) ||
+        ',"relation_manifest_digest":' || recovery.canonical_json_string(frontier.relation_manifest_digest) ||
+        ',"closure_digest":' || recovery.canonical_json_string(frontier.closure_digest) || '}';
+    expected_evidence := expected_evidence_json::jsonb;
+    expected_digest := 'sha256:' || encode(pg_catalog.sha256(convert_to(expected_evidence_json, 'UTF8')), 'hex');
+    IF NEW.evidence IS DISTINCT FROM expected_evidence OR NEW.result_digest IS DISTINCT FROM expected_digest THEN
         RAISE EXCEPTION 'validation result evidence does not match exact recovery frontier';
     END IF;
     RETURN NEW;
@@ -12434,6 +12865,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_migrator') THEN
         GRANT USAGE ON SCHEMA recovery TO leapview_control_migrator;
         GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA recovery TO leapview_control_migrator;
+        GRANT EXECUTE ON FUNCTION recovery.canonical_json_string(text) TO leapview_control_migrator;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA recovery TO leapview_control_runtime;
@@ -12444,6 +12876,7 @@ BEGIN
         GRANT USAGE ON SCHEMA recovery TO leapview_control_maintenance;
         GRANT SELECT, INSERT, UPDATE ON recovery.recovery_set, recovery.validation_attempt TO leapview_control_maintenance;
         GRANT SELECT, INSERT ON recovery.recovery_cluster_point, recovery.recovery_object_root, recovery.validation_result TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION recovery.canonical_json_string(text) TO leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
         GRANT USAGE ON SCHEMA recovery TO leapview_control_backup;

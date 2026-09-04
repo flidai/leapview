@@ -49,9 +49,6 @@ func (a *nativeManagedDataBindingAdmission) AdmitServingStateBindingsTx(ctx cont
 	if !ok || pgxTx == nil {
 		return fmt.Errorf("%w: native managed-data binding admission requires a PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	revisions, err := normalizeNativeManagedDataPins(pins)
 	if err != nil {
 		return err

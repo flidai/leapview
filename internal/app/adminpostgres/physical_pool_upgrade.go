@@ -112,6 +112,8 @@ func writeCatalogUpgradeResult(out io.Writer, result admincli.CatalogUpgradeResu
 }
 
 func upgradeNativePhysicalPoolCatalog(ctx context.Context, cfg config.Config, request admincli.CatalogUpgradeRequest) (admincli.CatalogUpgradeResult, error) {
+	// Catalog upgrades are CLI lifecycle work; normalize the optional command
+	// context before opening migration resources.
 	if ctx == nil {
 		ctx = context.Background()
 	}

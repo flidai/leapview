@@ -27,8 +27,6 @@ var _ deploymentmodule.NativeDeliveryEventAppender = (*Adapter)(nil)
 // New returns an adapter backed by a fresh platform event authority. It is
 // retained for low-level tests; production composition should bind the exact
 // application-owned repository with NewWithRepository.
-func New() *Adapter { return NewWithRepository(eventspostgres.New()) }
-
 // NewWithRepository keeps the event authority explicit for production
 // composition and conformance tests.
 func NewWithRepository(events *eventspostgres.Repository) *Adapter {
@@ -45,8 +43,9 @@ func (a *Adapter) Matches(events *eventspostgres.Repository) bool {
 }
 
 // AppendDeliveryEvent appends through the exact transaction supplied by the
-// deployment authority and validates the complete immutable projection before
-// returning. It never begins, commits, or rolls back tx.
+// deployment authority. The platform event authority validates the complete
+// immutable projection before return. It never begins, commits, or rolls back
+// tx.
 func (a *Adapter) AppendDeliveryEvent(ctx context.Context, tx deploymentpostgres.Tx, input deploymentmodule.NativeDeliveryEventInput) (deploymentpostgres.Event, error) {
 	if a == nil || a.events == nil {
 		return deploymentpostgres.Event{}, fmt.Errorf("%w: delivery event adapter is not configured", deploymentpostgres.ErrInvalid)
@@ -71,12 +70,6 @@ func (a *Adapter) AppendDeliveryEvent(ctx context.Context, tx deploymentpostgres
 			return deploymentpostgres.Event{}, fmt.Errorf("%w: delivery event identity differs", deploymentpostgres.ErrConflict)
 		}
 		return deploymentpostgres.Event{}, err
-	}
-	if stored.EventID != input.EventID || stored.ScopeID != input.ScopeID ||
-		stored.AggregateType != input.AggregateType || stored.AggregateID != input.AggregateID ||
-		stored.EventType != input.EventType || stored.SchemaVersion != input.SchemaVersion ||
-		stored.CorrelationID != input.CorrelationID || stored.AggregateVersion <= 0 {
-		return deploymentpostgres.Event{}, fmt.Errorf("%w: delivery event identity differs", deploymentpostgres.ErrConflict)
 	}
 	return deploymentpostgres.Event{
 		EventID: stored.EventID, ScopeID: stored.ScopeID, AggregateType: stored.AggregateType,

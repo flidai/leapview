@@ -22,6 +22,7 @@ import (
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
+	postgresmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -128,6 +129,9 @@ func modulePostgresTestDB(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("create concrete run: %v", err)
 	}
 	t.Cleanup(admin.Close)
+	if err := postgresmigrations.ApplyRiver(t.Context(), admin); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := admin.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +163,113 @@ func createTreeRoot(t *testing.T, runs refreshrun.RunTreeRepository, input refre
 	return root
 }
 
+// claimRiverRefreshTest models the state handed to the refresh adapter after
+// River has selected a row. It deliberately does not exercise a second queue
+// claimant; River owns that behavior in production and in the jobs-module
+// PostgreSQL conformance suite.
+func claimRiverRefreshTest(ctx context.Context, adapter *PostgresJobsAdapter, candidate refreshrun.JobRecord, owner string, lease time.Duration) (refreshrun.JobRecord, bool, error) {
+	history, err := adapter.Jobs.MarkRunning(ctx, candidate.ID, candidate.AttemptCount+1)
+	if err != nil {
+		return refreshrun.JobRecord{}, false, err
+	}
+	history.LeaseOwner = owner
+	history.LeaseGeneration = int64(history.Attempts)
+	claimed, err := adapter.ClaimRiverJob(ctx, history, lease)
+	return claimed, err == nil, err
+}
+
+// listRiverRefreshJobs is test-only setup for selecting a pending product
+// history row before simulating River's locked delivery. Production exposes
+// no list/claim loop outside River.
+func listRiverRefreshJobs(source any, ctx context.Context, scope refreshrun.ReadScope, limit int) ([]refreshrun.JobRecord, error) {
+	var adapter *PostgresJobsAdapter
+	switch value := source.(type) {
+	case *PostgresJobsAdapter:
+		adapter = value
+	case *postgresRunPersistence:
+		switch jobsAuthority := value.jobs.(type) {
+		case *PostgresJobsAdapter:
+			adapter = jobsAuthority
+		case failingSupersedeQueue:
+			adapter = jobsAuthority.PostgresJobsAdapter
+		case failingCancelClaimQueue:
+			adapter = jobsAuthority.PostgresJobsAdapter
+		}
+	case failingSupersedeQueue:
+		adapter = value.PostgresJobsAdapter
+	case failingCancelClaimQueue:
+		adapter = value.PostgresJobsAdapter
+	case RunPersistence:
+		persistence, _ := value.(*postgresRunPersistence)
+		if persistence != nil {
+			switch jobsAuthority := persistence.jobs.(type) {
+			case *PostgresJobsAdapter:
+				adapter = jobsAuthority
+			case failingSupersedeQueue:
+				adapter = jobsAuthority.PostgresJobsAdapter
+			case failingCancelClaimQueue:
+				adapter = jobsAuthority.PostgresJobsAdapter
+			}
+		}
+	}
+	if adapter == nil || adapter.Jobs == nil || adapter.Refresh == nil {
+		return nil, errors.New("test River refresh authority is unavailable")
+	}
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	result := make([]refreshrun.JobRecord, 0, limit)
+	afterCreated, afterID := time.Time{}, ""
+	for len(result) < limit {
+		rows, err := adapter.Jobs.DB().Query(ctx, `SELECT id,created_at FROM jobs.job_history WHERE workload_class=$1 AND resource_kind=$2 AND status='queued' AND ($3::timestamptz='epoch'::timestamptz OR (created_at,id)>($3,$4)) ORDER BY created_at,id LIMIT $5`, jobpolicy.WorkloadClassBackground, refreshJobResourceKind, afterCreated, afterID, refreshpostgres.MaxPageSize)
+		if err != nil {
+			return nil, err
+		}
+		page := 0
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id, &afterCreated); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			afterID = id
+			page++
+			candidate, err := adapter.Jobs.Get(ctx, id)
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
+			run, err := adapter.Refresh.LookupRun(ctx, candidate.ResourceID)
+			if errors.Is(err, refreshpostgres.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if run.ProjectID != scope.ProjectID.String() || run.Environment != scope.Environment || run.JobID != candidate.ID {
+				continue
+			}
+			mapped, err := adapter.jobRecord(run, candidate)
+			if err == nil {
+				result = append(result, mapped)
+			}
+			if len(result) == limit {
+				break
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if page < refreshpostgres.MaxPageSize {
+			break
+		}
+	}
+	return result, nil
+}
+
 func createTreeRootE(ctx context.Context, runs refreshrun.RunTreeRepository, input refreshrun.RunInput, occurrence *refreshschedule.Occurrence) (refreshrun.RunRecord, error) {
 	root, _, err := runs.CreateRunTree(ctx, refreshrun.RunTreeInput{Root: input, Occurrence: occurrence})
 	return root, err
@@ -173,6 +284,9 @@ func concreteModulePostgresDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(admin.Close)
+	if err := postgresmigrations.ApplyRiver(t.Context(), admin); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := admin.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -423,11 +537,11 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	candidates, err := listRiverRefreshJobs(persistence.Runs, t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("candidates=%#v err=%v", candidates, err)
 	}
-	claimed, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), candidates[0], "worker-concrete", time.Minute)
+	claimed, ok, err := claimRiverRefreshTest(t.Context(), queue, candidates[0], "worker-concrete", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim ok=%v err=%v", ok, err)
 	}
@@ -786,7 +900,7 @@ func assertKeyedRefreshAdmissionCounts(t *testing.T, db *pgxpool.Pool, jobsRepo 
 	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM refresh.run WHERE project_id=$1 AND environment='prod'`, projectID).Scan(&runs); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM jobs.job WHERE resource_kind='refresh_run' AND resource_id=$1`, runID).Scan(&jobs); err != nil {
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM jobs.job_history WHERE resource_kind='refresh_run' AND resource_id=$1`, runID).Scan(&jobs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE resource_id=$1 AND operation='create_refresh_run'`, projectID).Scan(&audits); err != nil {
@@ -868,7 +982,7 @@ func TestPostgresRefreshCandidatesPaginatePastOtherScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(t.Context(), `INSERT INTO jobs.job(id,kind,workload_class,principal_id,group_ids,partition_key,resource_kind,resource_id,estimated_memory_bytes,payload,request_digest) SELECT 'other-scope-job-'||to_char(i,'FM000'), 'refresh_pipeline', 'background', 'principal-other-'||to_char(i,'FM000'), '{}'::text[], 'refresh:other:prod', 'refresh_run', 'other-scope-run-'||to_char(i,'FM000'), 1, '{}'::jsonb, 'sha256:'||repeat('a',64) FROM generate_series(0,$1) AS s(i)`, refreshpostgres.MaxPageSize+24); err != nil {
+	if _, err := db.Exec(t.Context(), `INSERT INTO jobs.job_history(id,kind,workload_class,principal_id,group_ids,partition_key,resource_kind,resource_id,estimated_memory_bytes,payload,request_digest) SELECT 'other-scope-job-'||to_char(i,'FM000'), 'refresh_pipeline', 'background', 'principal-other-'||to_char(i,'FM000'), '[]'::jsonb, 'refresh:other:prod', 'refresh_run', 'other-scope-run-'||to_char(i,'FM000'), 1, '{}'::jsonb, 'sha256:'||repeat('a',64) FROM generate_series(0,$1) AS s(i)`, refreshpostgres.MaxPageSize+24); err != nil {
 		t.Fatal(err)
 	}
 	identity := projectgraph.ServingIdentity{ProjectID: "project_scope_target", Environment: "prod", GenerationID: "generation_scope_target"}
@@ -877,7 +991,7 @@ func TestPostgresRefreshCandidatesPaginatePastOtherScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	candidates, err := listRiverRefreshJobs(persistence.Runs, t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -910,7 +1024,7 @@ func TestPostgresRefreshCandidatesPreservePrincipalFIFOAcrossScopePages(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	targetCandidates, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: newIdentity.ProjectID, Environment: newIdentity.Environment}, 1)
+	targetCandidates, err := listRiverRefreshJobs(persistence.Runs, t.Context(), refreshrun.ReadScope{ProjectID: newIdentity.ProjectID, Environment: newIdentity.Environment}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -939,21 +1053,20 @@ func TestPostgresPoisonPayloadTerminalizesRunAndJobAndUnblocksLaterJob(t *testin
 	if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{RunID: "poison-child", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, ParentRunID: "poison-run", PipelineID: plan.PipelineID, SemanticModelID: plan.SemanticModelID, TargetType: refreshrun.TargetModel, TargetID: "model_poison", TriggerType: refreshrun.TriggerDependency, InvocationSource: refreshrun.TriggerDependency, PlanDigest: plan.Digest, ArtifactDigest: plan.ArtifactDigest, PrincipalID: "principal-poison"}); err != nil {
 		t.Fatal(err)
 	}
-	first, err := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 8)
+	history, err := jobsRepo.MarkRunning(t.Context(), "poison-job", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first) != 0 {
-		t.Fatalf("poison candidate returned as executable: %#v", first)
-	}
-	if replay, replayErr := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 8); replayErr != nil || len(replay) != 0 {
-		t.Fatalf("poison quarantine replay candidates=%#v err=%v", replay, replayErr)
+	history.LeaseOwner = "river-poison"
+	history.LeaseGeneration = 1
+	if _, err := queue.ClaimRiverJob(t.Context(), history, time.Minute); err == nil {
+		t.Fatal("River poison delivery unexpectedly succeeded")
 	}
 	poisonJob, err := jobsRepo.Get(t.Context(), "poison-job")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if poisonJob.Status != jobs.StatusCancelled || !strings.Contains(string(poisonJob.ErrorJSON), "REFRESH_POISON_PAYLOAD") {
+	if poisonJob.Status != jobs.StatusFailed || !strings.Contains(string(poisonJob.ErrorJSON), "REFRESH_POISON_PAYLOAD") {
 		t.Fatalf("poison job=%#v, want terminal poison evidence", poisonJob)
 	}
 	poisonRun, err := refreshRepo.LookupRun(t.Context(), "poison-run")
@@ -988,7 +1101,7 @@ func TestPostgresPoisonPayloadTerminalizesRunAndJobAndUnblocksLaterJob(t *testin
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	laterCandidates, err := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 8)
+	laterCandidates, err := listRiverRefreshJobs(queue, t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 8)
 	if err != nil || len(laterCandidates) != 1 || laterCandidates[0].ID != "refresh-job-valid-after-poison" {
 		t.Fatalf("later candidates=%#v err=%v", laterCandidates, err)
 	}
@@ -1028,298 +1141,6 @@ func TestPostgresPoisonReplayRejectsPartialOrTamperedRunTree(t *testing.T) {
 		t.Fatalf("tampered poison tree replay=%v err=%v, want conflict", replayed, err)
 	}
 	_ = tx.Rollback(t.Context())
-}
-
-func TestPostgresStartupRecoveryReconcilesPairsWithoutKillingLiveWork(t *testing.T) {
-	db := modulePostgresTestDB(t)
-	refreshRepo := refreshpostgres.New(db)
-	jobsRepo := jobspostgres.New(db)
-	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-recovery", "catalog-recovery"), SchedulerOwner: "scheduler-recovery", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery", catalogID: "catalog-recovery"}, CancelAuditWriter: integrationAuditWriter{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	create := func(project, id string) refreshrun.RunRecord {
-		t.Helper()
-		identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(project), Environment: "prod", GenerationID: "generation-" + project}
-		plan := integrationPlan(t, identity, "daily")
-		plan.PipelineID = "pipeline_" + id
-		plan.ID = "plan_" + id
-		plan.ExecutionDigest, plan.ProvenanceDigest, plan.GovernanceDigest, plan.EvidenceDigest, plan.Digest = "", "", "", "", ""
-		plan, err = deployment.NewPipelinePlan(plan)
-		if err != nil {
-			t.Fatal(err)
-		}
-		run, createErr := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{RunID: id, Identity: identity, SemanticModelID: projectgraph.ResourceID(plan.SemanticModelID), PipelineID: projectgraph.ResourceID(plan.PipelineID), PipelinePlan: &plan, InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal:" + id, EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(plan.PipelineID), TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}, nil)
-		if createErr != nil {
-			t.Fatal(createErr)
-		}
-		return run
-	}
-	queued := create("recovery-queued", "recovery-queued-run")
-	live := create("recovery-live", "recovery-live-run")
-	prepared := create("recovery-prepared", "recovery-prepared-run")
-	expired := create("recovery-expired", "recovery-expired-run")
-	terminalJob := create("recovery-terminal-job", "recovery-terminal-job-run")
-	terminalRun := create("recovery-terminal-run", "recovery-terminal-run-run")
-	missing := create("recovery-missing", "recovery-missing-run")
-	claim := func(run refreshrun.RunRecord, owner string, lease time.Duration) refreshrun.JobRecord {
-		t.Helper()
-		candidates, listErr := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: run.Identity.ProjectID, Environment: run.Identity.Environment}, 1)
-		if listErr != nil || len(candidates) != 1 {
-			t.Fatalf("recovery candidates=%#v err=%v", candidates, listErr)
-		}
-		job, ok, claimErr := queue.ClaimExecutableJob(t.Context(), candidates[0], owner, lease)
-		if claimErr != nil || !ok {
-			t.Fatalf("claim ok=%v err=%v", ok, claimErr)
-		}
-		return job
-	}
-	liveJob := claim(live, "node-a", time.Minute)
-	preparedJob := claim(prepared, "node-a-prepared", time.Minute)
-	if _, err := persistence.Runs.MarkRunPrepared(t.Context(), preparedJob); err != nil {
-		t.Fatal(err)
-	}
-	expiredJob := claim(expired, "node-a-expired", 10*time.Millisecond)
-	time.Sleep(30 * time.Millisecond)
-	terminalJobRecord := claim(terminalJob, "node-a-terminal", time.Minute)
-	if err := jobsRepo.Fail(t.Context(), terminalJobRecord.ID, jobs.Fence{Owner: terminalJobRecord.LeaseOwner, Generation: terminalJobRecord.LeaseRevision}, []byte(`{"code":"REFRESH_FAILED"}`)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(t.Context(), `UPDATE refresh.run SET status='failed',error='already terminal',finished_at=clock_timestamp() WHERE run_id=$1`, terminalRun.ID); err != nil {
-		t.Fatal(err)
-	}
-	// The FK intentionally prevents manufacturing a missing canonical job.
-	// Model the recoverable skew instead: the queue job is terminal while its
-	// linked refresh run is still queued.
-	missingCandidates, listErr := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: missing.Identity.ProjectID, Environment: missing.Identity.Environment}, 1)
-	if listErr != nil || len(missingCandidates) != 1 {
-		t.Fatalf("missing skew candidates=%#v err=%v", missingCandidates, listErr)
-	}
-	missingJob, ok, claimErr := jobsRepo.ClaimByID(t.Context(), missingCandidates[0].ID, jobpolicy.WorkloadClassBackground, "node-a-missing", time.Minute)
-	if claimErr != nil || !ok {
-		t.Fatalf("claim missing skew job ok=%v err=%v", ok, claimErr)
-	}
-	if err := jobsRepo.Fail(t.Context(), missingJob.ID, jobs.Fence{Owner: missingJob.LeaseOwner, Generation: missingJob.LeaseGeneration}, []byte(`{"code":"REFRESH_FAILED"}`)); err != nil {
-		t.Fatal(err)
-	}
-	recovery, ok := persistence.TerminalRecovery.(*PostgresTerminalRecovery)
-	if !ok {
-		t.Fatal("postgres terminal recovery adapter missing")
-	}
-	if err := recovery.FailRunsForTerminalServingStates(t.Context(), "prod", "refresh startup reconciliation"); err != nil {
-		t.Fatal(err)
-	}
-	assertRun := func(id string, want string) {
-		t.Helper()
-		got, getErr := refreshRepo.LookupRun(t.Context(), id)
-		if getErr != nil || got.Status != want {
-			t.Fatalf("run %s=%#v err=%v, want %s", id, got, getErr, want)
-		}
-	}
-	assertRun(queued.ID, refreshrun.RunStatusQueued)
-	assertRun(live.ID, refreshrun.RunStatusRunning)
-	assertRun(prepared.ID, refreshrun.RunStatusPrepared)
-	assertRun(expired.ID, refreshrun.RunStatusRunning)
-	assertRun(terminalJob.ID, refreshrun.RunStatusFailed)
-	assertRun(terminalRun.ID, refreshrun.RunStatusFailed)
-	assertRun(missing.ID, refreshrun.RunStatusFailed)
-	if got, err := jobsRepo.Get(t.Context(), liveJob.ID); err != nil || got.Status != jobs.StatusRunning || got.LeaseOwner != liveJob.LeaseOwner {
-		t.Fatalf("live job was not preserved: %#v err=%v", got, err)
-	}
-	if got, err := jobsRepo.Get(t.Context(), preparedJob.ID); err != nil || got.Status != jobs.StatusRunning || got.LeaseOwner != preparedJob.LeaseOwner {
-		t.Fatalf("prepared pair was not preserved: %#v err=%v", got, err)
-	}
-	if got, err := jobsRepo.Get(t.Context(), expiredJob.ID); err != nil || got.Status != jobs.StatusRunning || got.LeaseOwner != expiredJob.LeaseOwner {
-		t.Fatalf("expired exact-fence pair was not preserved: %#v err=%v", got, err)
-	}
-	terminalRunStored, err := refreshRepo.LookupRun(t.Context(), terminalRun.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := jobsRepo.Get(t.Context(), terminalRunStored.JobID); err != nil || got.Status != jobs.StatusFailed {
-		t.Fatalf("terminal run job was not reconciled: %#v err=%v", got, err)
-	}
-}
-
-func TestPostgresStartupRecoveryRejectsAmbiguousPairAndRollsBack(t *testing.T) {
-	db := modulePostgresTestDB(t)
-	refreshRepo := refreshpostgres.New(db)
-	jobsRepo := jobspostgres.New(db)
-	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-recovery-ambiguous", "catalog-recovery-ambiguous"), SchedulerOwner: "scheduler-recovery-ambiguous", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery-ambiguous", catalogID: "catalog-recovery-ambiguous"}, CancelAuditWriter: integrationAuditWriter{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	create := func(id string) refreshrun.RunRecord {
-		identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID("recovery-ambiguous-" + id), Environment: "prod", GenerationID: "generation-recovery-" + id}
-		plan := integrationPlan(t, identity, "daily")
-		run, createErr := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{RunID: id, Identity: identity, SemanticModelID: projectgraph.ResourceID(plan.SemanticModelID), PipelineID: projectgraph.ResourceID(plan.PipelineID), PipelinePlan: &plan, InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal:" + id, EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(plan.PipelineID), TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}, nil)
-		if createErr != nil {
-			t.Fatal(createErr)
-		}
-		return run
-	}
-	missing := create("recovery-ambiguous-missing")
-	ambiguousRun := create("recovery-ambiguous-running")
-	missingCandidates, err := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: missing.Identity.ProjectID, Environment: missing.Identity.Environment}, 1)
-	if err != nil || len(missingCandidates) != 1 {
-		t.Fatalf("missing skew candidates=%#v err=%v", missingCandidates, err)
-	}
-	missingJob, ok, err := jobsRepo.ClaimByID(t.Context(), missingCandidates[0].ID, jobpolicy.WorkloadClassBackground, "node-missing", time.Minute)
-	if err != nil || !ok {
-		t.Fatalf("claim missing skew job ok=%v err=%v", ok, err)
-	}
-	if err := jobsRepo.Fail(t.Context(), missingJob.ID, jobs.Fence{Owner: missingJob.LeaseOwner, Generation: missingJob.LeaseGeneration}, []byte(`{"code":"REFRESH_FAILED"}`)); err != nil {
-		t.Fatal(err)
-	}
-	ambiguousIdentity := ambiguousRun.Identity
-	candidates, err := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: ambiguousIdentity.ProjectID, Environment: ambiguousIdentity.Environment}, 1)
-	if err != nil || len(candidates) != 1 {
-		t.Fatalf("ambiguous candidates=%#v err=%v", candidates, err)
-	}
-	if _, ok, err := jobsRepo.ClaimByID(t.Context(), candidates[0].ID, jobpolicy.WorkloadClassBackground, "node-b", time.Minute); err != nil || !ok {
-		t.Fatalf("claim ambiguous job ok=%v err=%v", ok, err)
-	}
-	recovery, ok := persistence.TerminalRecovery.(*PostgresTerminalRecovery)
-	if !ok {
-		t.Fatal("postgres terminal recovery adapter missing")
-	}
-	if err := recovery.FailRunsForTerminalServingStates(t.Context(), "prod", "refresh startup reconciliation"); err == nil {
-		t.Fatal("ambiguous queued/running pair unexpectedly reconciled")
-	}
-	if got, err := refreshRepo.LookupRun(t.Context(), missing.ID); err != nil || got.Status != refreshrun.RunStatusQueued {
-		t.Fatalf("earlier missing-job repair was not rolled back: %#v err=%v", got, err)
-	}
-}
-
-func TestPostgresStartupRecoveryPagesActiveRunsAndRollsBackLaterAmbiguity(t *testing.T) {
-	db := modulePostgresTestDB(t)
-	refreshRepo := refreshpostgres.New(db)
-	jobsRepo := jobspostgres.New(db)
-	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-recovery-pages", "catalog-recovery-pages"), SchedulerOwner: "scheduler-recovery-pages", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery-pages", catalogID: "catalog-recovery-pages"}, CancelAuditWriter: integrationAuditWriter{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	const rows = 201
-	if _, err := db.Exec(t.Context(), `INSERT INTO jobs.job (id,kind,workload_class,principal_id,group_ids,partition_key,resource_kind,resource_id,estimated_memory_bytes,payload,request_digest)
-SELECT 'page-job-'||lpad(i::text,3,'0'),'refresh_pipeline','background','page-principal-'||lpad(i::text,3,'0'),'{}'::text[],'refresh:project_page:prod','refresh_run','page-run-'||lpad(i::text,3,'0'),1,'{}'::jsonb,'sha256:'||repeat('a',64)
-FROM generate_series(1,$1) AS s(i)`, rows); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(t.Context(), `INSERT INTO refresh.run (run_id,project_id,environment,generation_id,pipeline_id,semantic_model_id,target_type,target_id,trigger_type,invocation_source,plan_digest,artifact_digest,principal_id,job_id)
-SELECT 'page-run-'||lpad(i::text,3,'0'),'project_page','prod','generation-page','pipeline_page_'||lpad(i::text,3,'0'),'semantic_page','refresh_pipeline','pipeline_page_'||lpad(i::text,3,'0'),'manual','manual','sha256:'||repeat('b',64),'sha256:'||repeat('c',64),'page-principal-'||lpad(i::text,3,'0'),'page-job-'||lpad(i::text,3,'0')
-FROM generate_series(1,$1) AS s(i)`, rows); err != nil {
-		t.Fatal(err)
-	}
-	pageOne, ok, err := jobsRepo.ClaimByID(t.Context(), "page-job-001", jobpolicy.WorkloadClassBackground, "node-a", time.Minute)
-	if err != nil || !ok {
-		t.Fatalf("claim first-page skew job ok=%v err=%v", ok, err)
-	}
-	if err := jobsRepo.Fail(t.Context(), pageOne.ID, jobs.Fence{Owner: pageOne.LeaseOwner, Generation: pageOne.LeaseGeneration}, []byte(`{"code":"REFRESH_FAILED"}`)); err != nil {
-		t.Fatal(err)
-	}
-	claimed, ok, err := jobsRepo.ClaimByID(t.Context(), "page-job-201", jobpolicy.WorkloadClassBackground, "node-b", time.Minute)
-	if err != nil || !ok {
-		t.Fatalf("claim later-page ambiguity ok=%v err=%v", ok, err)
-	}
-	recovery, ok := persistence.TerminalRecovery.(*PostgresTerminalRecovery)
-	if !ok {
-		t.Fatal("postgres terminal recovery adapter missing")
-	}
-	if err := recovery.FailRunsForTerminalServingStates(t.Context(), "prod", "attacker-controlled detail"); err == nil {
-		t.Fatal("later-page ambiguous pair unexpectedly reconciled")
-	}
-	var status string
-	if err := db.QueryRow(t.Context(), `SELECT status FROM refresh.run WHERE run_id='page-run-001'`).Scan(&status); err != nil {
-		t.Fatal(err)
-	}
-	if status != refreshrun.RunStatusQueued {
-		t.Fatalf("earlier-page repair committed despite later ambiguity: %s", status)
-	}
-	if got, err := jobsRepo.Get(t.Context(), claimed.ID); err != nil || got.Status != jobs.StatusRunning {
-		t.Fatalf("later-page ambiguous job changed unexpectedly: %#v err=%v", got, err)
-	}
-}
-
-func TestPostgresLinkedLeaseRenewalRollsBackOnStaleRefreshFence(t *testing.T) {
-	db := modulePostgresTestDB(t)
-	refreshRepo := refreshpostgres.New(db)
-	jobsRepo := jobspostgres.New(db)
-	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	identity := projectgraph.ServingIdentity{ProjectID: "project_lease", Environment: "prod", GenerationID: "generation_lease"}
-	plan := integrationPlan(t, identity, "daily")
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-lease", "catalog-lease"), SchedulerOwner: "scheduler-lease",
-		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-lease", catalogID: "catalog-lease"}, CancelAuditWriter: integrationAuditWriter{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	created, err := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{
-		RunID: "stale-linked-renewal", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan,
-		InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid",
-		PrincipalID: "principal:lease", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`,
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stored, err := refreshRepo.LookupRun(t.Context(), created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stored.JobID == "" {
-		t.Fatal("created run has no canonical job")
-	}
-	scope := refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}
-	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), scope, 1)
-	if err != nil || len(candidates) != 1 {
-		t.Fatalf("initial candidates=%#v err=%v", candidates, err)
-	}
-	first, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), candidates[0], "worker-one", 20*time.Millisecond)
-	if err != nil || !ok {
-		t.Fatalf("first claim ok=%v err=%v", ok, err)
-	}
-	if _, err := persistence.Runs.MarkRunPrepared(t.Context(), first); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(100 * time.Millisecond)
-	reclaimedCandidates, err := persistence.Runs.ListExecutableJobs(t.Context(), scope, 1)
-	if err != nil || len(reclaimedCandidates) != 1 {
-		t.Fatalf("reclaim candidates=%#v err=%v", reclaimedCandidates, err)
-	}
-	second, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), reclaimedCandidates[0], "worker-two", time.Minute)
-	if err != nil || !ok {
-		t.Fatalf("second claim ok=%v err=%v", ok, err)
-	}
-	if second.LeaseRevision <= first.LeaseRevision {
-		t.Fatalf("lease revision did not advance: first=%d second=%d", first.LeaseRevision, second.LeaseRevision)
-	}
-	var leaseBeforeRenewal time.Time
-	if err := db.QueryRow(t.Context(), `SELECT lease_expires_at FROM jobs.job WHERE id=$1`, stored.JobID).Scan(&leaseBeforeRenewal); err != nil {
-		t.Fatal(err)
-	}
-	if err := persistence.Runs.RenewJobLease(t.Context(), first, 5*time.Minute); !errors.Is(err, jobs.ErrConflict) {
-		t.Fatalf("stale linked renewal error=%v, want %v", err, jobs.ErrConflict)
-	}
-	var jobOwner string
-	var jobFence int64
-	var jobExpiry time.Time
-	if err := db.QueryRow(t.Context(), `SELECT lease_owner,lease_generation,lease_expires_at FROM jobs.job WHERE id=$1`, stored.JobID).Scan(&jobOwner, &jobFence, &jobExpiry); err != nil {
-		t.Fatal(err)
-	}
-	if jobOwner != second.LeaseOwner || jobFence != second.LeaseRevision || !jobExpiry.Equal(leaseBeforeRenewal) {
-		t.Fatalf("job renewal was not rolled back: owner=%q fence=%d expiry=%s before=%s", jobOwner, jobFence, jobExpiry, leaseBeforeRenewal)
-	}
-	var runOwner string
-	var runFence int64
-	if err := db.QueryRow(t.Context(), `SELECT lease_owner,fence_generation FROM refresh.run WHERE run_id=$1`, created.ID).Scan(&runOwner, &runFence); err != nil {
-		t.Fatal(err)
-	}
-	if runOwner != second.LeaseOwner || runFence != second.LeaseRevision {
-		t.Fatalf("refresh run lease changed across stale renewal: owner=%q fence=%d", runOwner, runFence)
-	}
 }
 
 func TestPostgresRunTreeAdmissionRollsBackEveryAuthorityOnChildConflict(t *testing.T) {
@@ -1464,11 +1285,11 @@ func TestPostgresRunTreeSuccessTerminalizesChildOccurrenceAndJob(t *testing.T) {
 	if len(children) != 1 || children[0].ParentRunID != root.ID || children[0].Status != refreshrun.RunStatusQueued {
 		t.Fatalf("admitted tree root=%#v children=%#v", root, children)
 	}
-	jobs, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	jobs, err := listRiverRefreshJobs(persistence.Runs, t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
 	if err != nil || len(jobs) != 1 {
 		t.Fatalf("tree executable jobs=%#v err=%v", jobs, err)
 	}
-	claimedJob, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), jobs[0], "worker-tree-success", time.Minute)
+	claimedJob, ok, err := claimRiverRefreshTest(t.Context(), queue, jobs[0], "worker-tree-success", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("tree job claim ok=%v err=%v", ok, err)
 	}
@@ -1663,11 +1484,11 @@ func TestPostgresScheduledClaimCreatesRunAndJobAtomically(t *testing.T) {
 	if occurrenceStatus != "queued" || occurrenceRun != created.ID {
 		t.Fatalf("occurrence status=%q run=%q", occurrenceStatus, occurrenceRun)
 	}
-	jobs, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	jobs, err := listRiverRefreshJobs(persistence.Runs, t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
 	if err != nil || len(jobs) != 1 {
 		t.Fatalf("scheduled executable jobs=%#v err=%v", jobs, err)
 	}
-	claimedJob, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), jobs[0], "worker-scheduled", time.Minute)
+	claimedJob, ok, err := claimRiverRefreshTest(t.Context(), queue, jobs[0], "worker-scheduled", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("scheduled claim ok=%v err=%v", ok, err)
 	}
@@ -1806,11 +1627,11 @@ func TestPostgresWorkerSupersedeTerminalizesRefreshTreeAndJobAtomically(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	candidates, err := listRiverRefreshJobs(persistence.Runs, t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("candidates=%#v err=%v", candidates, err)
 	}
-	claimed, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), candidates[0], "worker-supersede", time.Minute)
+	claimed, ok, err := claimRiverRefreshTest(t.Context(), queue, candidates[0], "worker-supersede", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim ok=%v err=%v", ok, err)
 	}
@@ -1856,11 +1677,11 @@ func TestPostgresWorkerSupersedeRollbackKeepsRefreshAndJobLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	candidates, err := listRiverRefreshJobs(persistence.Runs, t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("candidates=%#v err=%v", candidates, err)
 	}
-	claimed, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), candidates[0], "worker-rollback", time.Minute)
+	claimed, ok, err := claimRiverRefreshTest(t.Context(), baseQueue, candidates[0], "worker-rollback", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim ok=%v err=%v", ok, err)
 	}
@@ -1922,11 +1743,11 @@ func TestPostgresPrepareVerifiedPublicationDataVersionAndSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope := refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}
-	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), scope, 1)
+	candidates, err := listRiverRefreshJobs(persistence.Runs, t.Context(), scope, 1)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("candidates=%#v err=%v", candidates, err)
 	}
-	claimed, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), candidates[0], "worker-publish", time.Minute)
+	claimed, ok, err := claimRiverRefreshTest(t.Context(), queue, candidates[0], "worker-publish", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim ok=%v err=%v", ok, err)
 	}
@@ -2122,11 +1943,11 @@ func TestPostgresAdvancedQueueReplayPreservesFencedRunAndJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidates, err := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	candidates, err := listRiverRefreshJobs(queue, t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("advanced replay candidates=%#v err=%v", candidates, err)
 	}
-	claimed, ok, err := queue.ClaimExecutableJob(t.Context(), candidates[0], "advanced-replay-worker", time.Minute)
+	claimed, ok, err := claimRiverRefreshTest(t.Context(), queue, candidates[0], "advanced-replay-worker", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("advanced replay claim ok=%v err=%v", ok, err)
 	}

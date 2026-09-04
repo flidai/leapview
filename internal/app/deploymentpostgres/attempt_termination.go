@@ -107,7 +107,6 @@ func (a *attemptTerminator) ReconcileAttempt(ctx context.Context, input AttemptR
 	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() {
 		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt reconciliation authorities are not configured", deploymentnative.ErrInvalid)
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, err := normalizeAttemptReconciliationInput(input)
 	if err != nil {
 		return AttemptTerminationResult{}, err
@@ -143,7 +142,6 @@ func (a *attemptTerminator) ReconcileAttemptTx(ctx context.Context, tx deploymen
 	if tx == nil {
 		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt reconciliation requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, err := normalizeAttemptReconciliationInput(input)
 	if err != nil {
 		return AttemptTerminationResult{}, err
@@ -280,7 +278,6 @@ func (a *attemptTerminator) terminateAttempt(ctx context.Context, input AttemptT
 	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() {
 		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt termination authorities are not configured", deploymentnative.ErrInvalid)
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, _, err := normalizeAttemptTerminationInput(input)
 	if err != nil {
 		return AttemptTerminationResult{}, err
@@ -317,7 +314,6 @@ func (a *attemptTerminator) terminateAttemptTx(ctx context.Context, tx deploymen
 	if tx == nil {
 		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt termination requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, canonical, err := normalizeAttemptTerminationInput(input)
 	if err != nil {
 		return AttemptTerminationResult{}, err

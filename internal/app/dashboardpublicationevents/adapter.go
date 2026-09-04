@@ -20,8 +20,6 @@ type Adapter struct {
 
 var _ publicationpostgres.EventPort = (*Adapter)(nil)
 
-func New() *Adapter { return NewWithRepository(eventspostgres.New()) }
-
 func NewWithRepository(events *eventspostgres.Repository) *Adapter {
 	return &Adapter{events: events}
 }
@@ -32,8 +30,8 @@ func (a *Adapter) Matches(events *eventspostgres.Repository) bool {
 	return a != nil && a.events != nil && a.events == events
 }
 
-// AppendEvent appends through the exact caller-owned transaction and validates
-// the complete immutable event projection before returning.
+// AppendEvent appends through the exact caller-owned transaction. The platform
+// event authority validates the complete immutable projection before return.
 func (a *Adapter) AppendEvent(ctx context.Context, tx publicationpostgres.Tx, input publicationpostgres.EventInput) (publicationpostgres.Event, error) {
 	if a == nil || a.events == nil {
 		return publicationpostgres.Event{}, errors.New("dashboard publication event adapter is not configured")
@@ -62,12 +60,6 @@ func (a *Adapter) AppendEvent(ctx context.Context, tx publicationpostgres.Tx, in
 			return publicationpostgres.Event{}, fmt.Errorf("%w: dashboard publication event identity differs", publication.ErrConflict)
 		}
 		return publicationpostgres.Event{}, err
-	}
-	if stored.EventID != input.EventID || stored.ScopeID != input.ProjectID ||
-		stored.AggregateType != "dashboard_publication" || stored.AggregateID != input.PublicationID ||
-		stored.EventType != input.Type || stored.SchemaVersion != 1 ||
-		stored.CorrelationID != input.CorrelationID || stored.AggregateVersion <= 0 {
-		return publicationpostgres.Event{}, fmt.Errorf("%w: dashboard publication event identity differs", publication.ErrConflict)
 	}
 	return publicationpostgres.Event{EventID: stored.EventID, ProjectID: stored.ScopeID, PublicationID: stored.AggregateID, ActorID: input.ActorID, CorrelationID: stored.CorrelationID, Type: stored.EventType, ServingStateID: input.ServingStateID, Revision: input.Revision, AggregateVersion: stored.AggregateVersion, Payload: append([]byte(nil), stored.Payload...)}, nil
 }

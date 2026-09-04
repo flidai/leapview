@@ -104,7 +104,7 @@ func TestConfigValidateRequiresURLAndRole(t *testing.T) {
 }
 
 func TestOpenControlPlaneRequiresMaintenanceBeforeOpeningPools(t *testing.T) {
-	_, err := OpenControlPlane(context.Background(), ControlPlaneConfig{})
+	_, err := OpenServingControlPlane(context.Background(), ControlPlaneConfig{})
 	if err == nil || !strings.Contains(err.Error(), "maintenance URL is required") {
 		t.Fatalf("missing maintenance pool error = %v", err)
 	}
@@ -129,7 +129,7 @@ func TestOpenControlPlaneRequiresReadWriteSingleConnectionMaintenance(t *testing
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := OpenControlPlane(context.Background(), ControlPlaneConfig{Maintenance: test.cfg})
+			_, err := OpenServingControlPlane(context.Background(), ControlPlaneConfig{Maintenance: test.cfg})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("maintenance policy error = %v, want %q", err, test.want)
 			}

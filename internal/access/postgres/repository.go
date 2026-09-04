@@ -28,11 +28,7 @@ var schemaSQL string
 // boundaries. Commit and Rollback are part of the shape so a pool cannot be
 // mistaken for a transaction by capability adapters; the methods are never
 // called by these adapters, preserving ownership with the source capability.
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 // DBTX is the native pgx surface accepted by access methods. It is deliberately
 // small so a pool, connection, or caller-owned transaction can be supplied.
@@ -104,9 +100,6 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return errors.New("access PostgreSQL transaction is nil")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
@@ -158,6 +151,8 @@ func (r *AuditRepository) RecordAuditEvent(ctx context.Context, tx Tx, intent ac
 	if tx == nil {
 		return Event{}, errors.New("audit PostgreSQL transaction is nil")
 	}
+	// Audit append is a trust boundary: reject a missing context instead of
+	// allowing an unaudited write to proceed without cancellation/deadline.
 	if ctx == nil {
 		return Event{}, errors.New("audit context is nil")
 	}
@@ -243,9 +238,6 @@ func (r *AuditRepository) GetAuditEvent(ctx context.Context, db DBTX, auditID st
 	if db == nil {
 		return Event{}, errors.New("audit PostgreSQL connection is nil")
 	}
-	if ctx == nil {
-		return Event{}, errors.New("audit context is nil")
-	}
 	canonicalID, err := canonicalUUID("audit event id", auditID)
 	if err != nil {
 		return Event{}, err
@@ -270,9 +262,6 @@ func (r *AuditRepository) GetAuditEvent(ctx context.Context, db DBTX, auditID st
 func (r *AuditRepository) ListAuditEvents(ctx context.Context, db DBTX, limit int) ([]Event, error) {
 	if db == nil {
 		return nil, errors.New("audit PostgreSQL connection is nil")
-	}
-	if ctx == nil {
-		return nil, errors.New("audit context is nil")
 	}
 	if limit <= 0 {
 		limit = 100

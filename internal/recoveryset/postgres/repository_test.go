@@ -164,6 +164,13 @@ func TestValidationEvidenceIsExactRepeatableAndFenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Structural equality alone is not enough: a maintenance-role SQL caller
+	// must not mint a terminal attempt with a digest unrelated to the exact
+	// canonical evidence. The trigger rejects this before the Go repository's
+	// digest check or publication path can be reached.
+	if _, err := db.Exec(t.Context(), `INSERT INTO recovery.validation_result(attempt_id,result_digest,evidence,recorded_at) VALUES ($1::uuid,$2,$3::jsonb,clock_timestamp())`, attempt.AttemptID, "sha256:"+strings.Repeat("8", 64), result.Evidence); err == nil {
+		t.Fatal("validation result accepted an arbitrary canonical-looking digest")
+	}
 	terminal.ResultDigest = result.ResultDigest
 	if err := r.RecordValidationResult(t.Context(), result); err != nil {
 		t.Fatal(err)
@@ -253,6 +260,39 @@ func TestValidationResultRejectsIncompleteFrontierEvidence(t *testing.T) {
 	}
 	if _, err := db.Exec(t.Context(), `INSERT INTO recovery.validation_result(attempt_id,result_digest,evidence,recorded_at) VALUES ($1::uuid,$2,$3::jsonb,clock_timestamp())`, attemptID, result.ResultDigest, result.Evidence); err == nil {
 		t.Fatal("validation result accepted with incomplete frontier children")
+	}
+}
+
+func TestValidationResultSQLDigestMatchesGoJSONEscaping(t *testing.T) {
+	db := recoverySetDB(t)
+	set := recoverySetFixture(t)
+	// encoding/json escapes HTML-sensitive characters and U+2028/U+2029. Keep
+	// these values in otherwise-valid frontier fields so the SQL trigger's
+	// canonical serializer is exercised against the same bytes as Go.
+	set.ClusterPoints[0].ClusterIdentity = "cluster-<>&\u2028middle\u2029x"
+	set.Serving.RelationNamespace = "candidate-<>&\u2028middle\u2029x"
+	created, err := New(db).Create(t.Context(), set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attemptID := "018f3f83-7c7a-7f00-8a11-000000000130"
+	started := time.Now().UTC().Truncate(time.Microsecond)
+	if _, err := New(db).BeginValidation(t.Context(), recoveryset.ValidationAttempt{
+		AttemptID: attemptID, SetID: created.ID, OwnerID: "validator", FenceEpoch: created.FenceEpoch,
+		AuditIdentity: created.AuditIdentity, Status: recoveryset.ValidationRunning, StartedAt: started,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := recoveryset.NewValidationEvidenceEnvelope(created, attemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := recoveryset.NewValidationResult(envelope, started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := New(db).RecordValidationResult(t.Context(), result); err != nil {
+		t.Fatalf("SQL canonical digest rejected Go evidence: %v", err)
 	}
 }
 

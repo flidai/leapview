@@ -58,11 +58,23 @@ func (f fakeEventTransactions) Run(_ context.Context, fn func(eventspostgres.Tx)
 
 type fakeEventTx struct{}
 
+func (fakeEventTx) Begin(context.Context) (pgx.Tx, error) { return fakeEventTx{}, nil }
+func (fakeEventTx) Commit(context.Context) error          { return nil }
+func (fakeEventTx) Rollback(context.Context) error        { return nil }
+func (fakeEventTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, nil
+}
+func (fakeEventTx) SendBatch(context.Context, *pgx.Batch) pgx.BatchResults { return nil }
+func (fakeEventTx) LargeObjects() pgx.LargeObjects                         { return pgx.LargeObjects{} }
+func (fakeEventTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
+	return nil, nil
+}
 func (fakeEventTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
 	return pgconn.CommandTag{}, nil
 }
 func (fakeEventTx) Query(context.Context, string, ...any) (pgx.Rows, error) { return nil, nil }
 func (fakeEventTx) QueryRow(context.Context, string, ...any) pgx.Row        { return nil }
+func (fakeEventTx) Conn() *pgx.Conn                                         { return nil }
 
 type fakeDashboardSession struct{ calls *[]string }
 

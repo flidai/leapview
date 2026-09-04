@@ -19,8 +19,6 @@ type Adapter struct {
 
 var _ manageddatapostgres.AuditIntentRecorder = (*Adapter)(nil)
 
-func New() *Adapter { return &Adapter{audit: accesspostgres.New()} }
-
 // NewWithRepository binds the adapter to the exact Access audit authority
 // allocated by application composition.
 func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {

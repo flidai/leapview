@@ -631,7 +631,7 @@ func (e *Environment) EnsureExtension(ctx context.Context, name string) error {
 }
 
 func validateAdmittedExtension(admitted extension.AdmittedExtension, requested string) error {
-	if admitted.Name != requested || admitted.Path == "" || !filepath.IsAbs(admitted.Path) || filepath.Clean(admitted.Path) != admitted.Path || !strings.HasSuffix(filepath.Base(admitted.Path), ".duckdb_extension") {
+	if admitted.Name != requested || admitted.Path == "" || strings.ContainsAny(admitted.Path, "\x00\r\n") || !filepath.IsAbs(admitted.Path) || filepath.Clean(admitted.Path) != admitted.Path || !strings.HasSuffix(filepath.Base(admitted.Path), ".duckdb_extension") {
 		return fmt.Errorf("admitted extension %q has an invalid immutable path or name", requested)
 	}
 	if platformdigest.ValidateSHA256Identity(admitted.Digest) != nil {

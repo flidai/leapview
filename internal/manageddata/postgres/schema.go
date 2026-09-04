@@ -27,11 +27,7 @@ type MaintenanceDBTX interface {
 // mutation side-effect ports. Commit and rollback are included in the shape
 // so a pool or connection cannot be passed where one atomic boundary is
 // required; adapters never invoke either method themselves.
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 //go:embed schema.sql
 var schemaFiles embed.FS
@@ -49,9 +45,6 @@ func SchemaSQL() string { return schemaSQL }
 func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return errors.New("managed-data schema transaction is required")
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	// sqlc-exception:schema-ddl. schema.sql owns capability DDL, guards,
 	// functions, and grants; migration callers retain transaction ownership.

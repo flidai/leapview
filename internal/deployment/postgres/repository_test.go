@@ -176,6 +176,99 @@ func deliveryTestDB(t *testing.T) *pgxpool.Pool {
 	return p
 }
 
+func TestPostgresConcurrentDifferentCandidateQualificationsConflict(t *testing.T) {
+	p := deliveryTestDB(t)
+	r := New(p)
+	f := newCompleteBuildFixtureWithSuffix(t, r, "9")
+	if _, err := r.CommitBuildAttempt(t.Context(), f.Commit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateSnapshotSeal(t.Context(), f.Seal); err != nil {
+		t.Fatal(err)
+	}
+	secondAttemptID := "0198f2c0-7c7a-7f00-0000-000000009013"
+	secondSealID := "0198f2c0-7c7a-7f00-0000-000000009014"
+	secondOwner := "builder-qualification-race"
+	if _, err := r.BeginBuildAttempt(t.Context(), BuildAttemptInput{
+		AttemptID: secondAttemptID, PlanID: f.PlanID, CandidateID: f.CandidateID,
+		OwnerID: secondOwner, PhysicalPoolID: "pool-qualification-race", CatalogID: "catalog-qualification-race",
+		FencingEpoch: 1, RequestDigest: f.RequestDigest, PlanDigest: f.PlanDigest,
+		Namespace: "candidate/qualification-race", SessionIdentity: "session-qualification-race",
+		LeaseExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BindBuildArtifact(t.Context(), BuildArtifactBindingInput{
+		AttemptID: secondAttemptID, ServingArtifactID: "artifact-qualification-race",
+		ServingArtifactDigest: f.ArtifactDigest, ServingStateID: "generation-test",
+		OwnerID: secondOwner, FencingEpoch: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	secondCommit := CommitAttemptInput{AttemptID: secondAttemptID, OwnerID: secondOwner, FencingEpoch: 1, SnapshotID: 43, CommitMarker: testCommitMarker(secondAttemptID, "pool-qualification-race", f.RequestDigest, f.PlanDigest)}
+	if _, err := r.CommitBuildAttempt(t.Context(), secondCommit); err != nil {
+		t.Fatal(err)
+	}
+	secondSeal := f.Seal
+	secondSeal.SealID = secondSealID
+	secondSeal.AttemptID = secondAttemptID
+	secondSeal.PhysicalPoolID = "pool-qualification-race"
+	secondSeal.CatalogID = "catalog-qualification-race"
+	secondSeal.CatalogUUID = "0198f2c0-7c7a-7f00-0000-000000009016"
+	secondSeal.DuckLakeSnapshotID = 43
+	secondSeal.ObjectNamespace = "objects/qualification-race"
+	secondSeal.ObjectRoot = "objects/qualification-race/43"
+	secondSeal.RelationNamespace = "candidate/qualification-race"
+	secondSeal.ServingArtifactID = "artifact-qualification-race"
+	if _, err := r.CreateSnapshotSeal(t.Context(), secondSeal); err != nil {
+		t.Fatal(err)
+	}
+
+	digests := []string{testDigest('3'), testDigest('4')}
+	seals := []string{f.SealID, secondSealID}
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := range seals {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			_, err := r.QualifyCandidate(t.Context(), f.CandidateID, seals[index], digests[index])
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	var successes, conflicts int
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrConflict):
+			conflicts++
+		default:
+			t.Fatalf("qualification race error = %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("qualification race successes=%d conflicts=%d", successes, conflicts)
+	}
+	winner, err := r.Candidate(t.Context(), f.CandidateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.QualifyCandidate(t.Context(), winner.CandidateID, winner.SnapshotSealID, winner.QualificationDigest); err != nil {
+		t.Fatalf("exact qualification replay: %v", err)
+	}
+
+	otherCandidateID := "0198f2c0-7c7a-7f00-0000-000000009017"
+	if _, err := r.CreateCandidate(t.Context(), CandidateInput{CandidateID: otherCandidateID, TargetID: f.TargetID, PlanID: f.PlanID, CandidateRevision: 2, ArtifactDigest: f.ArtifactDigest}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE delivery.delivery_candidate SET snapshot_seal_id=$2::uuid,status='qualified',qualification_digest=$3,qualified_at=clock_timestamp() WHERE candidate_id=$1::uuid`, otherCandidateID, winner.SnapshotSealID, winner.QualificationDigest); err == nil {
+		t.Fatal("cross-candidate seal qualification unexpectedly succeeded")
+	}
+}
+
 func TestPostgresActiveGenerationReturnsNotFoundWithoutPointer(t *testing.T) {
 	r := New(deliveryTestDB(t))
 	if _, err := r.CreateTarget(t.Context(), TargetInput{TargetID: "target_without_active", ProjectID: "project_without_active", Environment: "prod"}); err != nil {
@@ -602,11 +695,19 @@ func TestPostgresLeaseCASRaceAndStaleFence(t *testing.T) {
 func TestPostgresEventVersionRetainsBigintWidth(t *testing.T) {
 	p := deliveryTestDB(t)
 	const scope = "target_event_version_width"
-	if _, err := p.Exec(t.Context(), `INSERT INTO event.event_aggregate(scope_id,aggregate_type,aggregate_id,next_version) VALUES($1,'delivery_target',$1,2147483648)`, scope); err != nil {
+	tx, err := p.Begin(t.Context())
+	if err != nil {
 		t.Fatal(err)
 	}
-	event, err := eventspostgres.New().AppendEvent(t.Context(), p, eventspostgres.EventInput{EventID: "0198f2c0-7c7a-7f00-8a11-000000000040", ScopeID: scope, AggregateType: "delivery_target", AggregateID: scope, EventType: "version_width", SchemaVersion: 1, Payload: []byte(`{}`)})
+	defer tx.Rollback(t.Context())
+	if _, err := tx.Exec(t.Context(), `INSERT INTO event.event_aggregate(scope_id,aggregate_type,aggregate_id,next_version) VALUES($1,'delivery_target',$1,2147483648)`, scope); err != nil {
+		t.Fatal(err)
+	}
+	event, err := eventspostgres.New().AppendEvent(t.Context(), tx, eventspostgres.EventInput{EventID: "0198f2c0-7c7a-7f00-8a11-000000000040", ScopeID: scope, AggregateType: "delivery_target", AggregateID: scope, EventType: "version_width", SchemaVersion: 1, Payload: []byte(`{}`)})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if event.AggregateVersion != 2147483648 {

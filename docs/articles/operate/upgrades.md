@@ -28,10 +28,11 @@ artifacts; follow the [PostgreSQL operations
 guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
 guide](/docs/guides/operate/backup-restore) for the complete procedure.
 
-The rehearsal should cover startup migration, authentication, active
-deployments, semantic queries, dashboard interactions, refresh execution, and
-the provider's image rollout or rollback procedure. Measure migration and
-restart duration to set the maintenance window.
+The rehearsal should cover the explicit Goose migration, read-only startup
+verification, authentication, active deployments, semantic queries, dashboard
+interactions, refresh execution, and the provider's image rollout or rollback
+procedure. Measure migration and restart duration to set the maintenance
+window; serving startup must never apply pending migrations implicitly.
 
 ## Prepare production
 
@@ -48,9 +49,11 @@ Use `leapview admin maintenance` or the deployment's maintenance mechanism only 
 
 For any supported topology, use the provider or container platform's
 immutable-image rollout with one controlled writer for persistent migrations,
-a bounded health wait, and an explicit decision point before old artifacts are
-removed. LeapView's Compose and host controllers do not perform image upgrades
-or paired state rollback.
+using the explicit River upstream schema migration and Goose v3.27.1 for the
+product baseline and forward migrations. Follow it with read-only Goose/River
+schema verification, a bounded health wait, and an explicit decision point
+before old artifacts are removed. LeapView's Compose and host controllers do
+not perform image upgrades or paired state rollback.
 
 Do not run two application versions against shared writable state unless the release explicitly declares mixed-version compatibility.
 
@@ -107,13 +110,13 @@ Check more than readiness:
 
 Keep the maintenance window open until these checks pass.
 
-### Plan-delivery pool admission migration
+### Plan-delivery pool admission
 
-Migrations 073–087 add the target-owned physical-pool contract, serving-state
-identity guards, rollback evidence, append-only delivery events, and durable GC
-actor attribution.
-They do not infer admission from configuration. After migration, a production
-target with no admitted pool remains administrable but reports a stable
+The clean-slate PostgreSQL target has one Goose baseline; legacy numbered
+SQLite migration references are not a production upgrade path. Physical-pool
+admission remains a separate, target-owned bootstrap and readiness contract.
+It does not infer admission from configuration. A production target with no
+admitted pool remains administrable but reports a stable
 `missing_physical_pool_admission` readiness diagnostic. Run the controlled
 native bootstrap in [Plan, build, and publish](plan-build-publish) with a
 fresh local or MinIO conformance artifact.

@@ -21,8 +21,6 @@ type Adapter struct {
 var _ connectionbindingpostgres.AuditRepository = (*Adapter)(nil)
 
 // New constructs the app-composition adapter for the Access-owned audit log.
-func New() *Adapter { return &Adapter{audit: accesspostgres.New()} }
-
 // NewWithRepository binds the adapter to the exact Access audit authority
 // allocated by application composition.
 func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {

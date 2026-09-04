@@ -93,14 +93,6 @@ func New(db DBTX, audit AuditPort, events EventPort, fence GenerationFence) (*Re
 	}
 	return &Repository{db: db, audit: audit, events: events, fence: fence, native: true}, nil
 }
-func NewRepository(db DBTX) *Repository { return &Repository{db: db} }
-
-// NewRepositoryWithAudit wires authoring mutations to Access' transaction-
-// scoped audit-intent port. The recorder participates in the source
-// transaction and never commits or rolls it back.
-func NewRepositoryWithAudit(db DBTX, audit AuditPort) *Repository {
-	return &Repository{db: db, audit: audit}
-}
 
 func (r *Repository) IsNative() bool { return r != nil && r.native }
 
@@ -115,14 +107,8 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return fmt.Errorf("dashboard authoring PostgreSQL transaction is nil")
 	}
-	_, err := tx.Exec(ctxOrBackground(ctx), schemaSQL) // sqlc-exception: schema-ddl
+	_, err := tx.Exec(ctx, schemaSQL) // sqlc-exception: schema-ddl
 	return err
-}
-func ctxOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 var _ authoring.Repository = (*Repository)(nil)
@@ -1069,7 +1055,7 @@ func (r *Repository) beginTx(ctx context.Context) (Tx, error) {
 	if !ok {
 		return nil, fmt.Errorf("dashboard authoring PostgreSQL handle does not support transactions")
 	}
-	return b.Begin(ctxOrBackground(ctx))
+	return b.Begin(ctx)
 }
 
 // recordAuditIntent completes the transport-built intent with identities that

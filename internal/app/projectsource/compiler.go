@@ -19,9 +19,6 @@ type Compiler struct{}
 var _ CompilerPort = Compiler{}
 
 func (Compiler) Compile(ctx context.Context, input CompileInput) (CompileOutput, error) {
-	if ctx == nil {
-		return CompileOutput{}, fmt.Errorf("compile context is required")
-	}
 	if err := ctx.Err(); err != nil {
 		return CompileOutput{}, err
 	}

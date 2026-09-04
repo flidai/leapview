@@ -44,11 +44,7 @@ type beginner interface {
 
 // Tx is the strict caller-owned PostgreSQL transaction surface. Pools satisfy
 // DBTX for standalone operations but intentionally cannot satisfy Tx.
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 var (
 	ErrInvalid  = errors.New("invalid query audit event")
@@ -84,9 +80,6 @@ func SchemaSQL() string { return schemaSQL }
 func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	// sqlc-exception: schema-ddl. schema.sql is the capability-owned DDL,
 	// triggers, and grants executed by migration runners.
@@ -199,9 +192,6 @@ func (r *Repository) RecordQueryEvent(ctx context.Context, input queryaudit.Even
 	if r == nil || r.db == nil {
 		return fmt.Errorf("%w: repository is unavailable", ErrInvalid)
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	normalized, eventID, retry, err := normalizeInput(input)
 	if err != nil {
 		return err
@@ -240,9 +230,6 @@ func (r *Repository) GetQueryEvent(ctx context.Context, id string) (queryaudit.E
 	if r == nil || r.db == nil {
 		return queryaudit.Event{}, fmt.Errorf("%w: repository is unavailable", ErrInvalid)
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	eventID, err := parseUUID(id)
 	if err != nil {
 		return queryaudit.Event{}, err
@@ -260,9 +247,6 @@ func (r *Repository) GetQueryEvent(ctx context.Context, id string) (queryaudit.E
 func (r *Repository) ListQueryEvents(ctx context.Context, filter queryaudit.Filter) ([]queryaudit.Event, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("%w: repository is unavailable", ErrInvalid)
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if err := filter.Validate(); err != nil {
 		return nil, err
@@ -359,9 +343,6 @@ func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, field, sea
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("%w: repository is unavailable", ErrInvalid)
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	field = strings.TrimSpace(field)
 	if _, ok := filterColumn(field); !ok {
 		return nil, fmt.Errorf("%w: unsupported query event filter option field %q", ErrInvalid, field)
@@ -438,9 +419,6 @@ func (m *Maintenance) Prune(ctx context.Context, before time.Time, limit int) (P
 	if limit < 1 || limit > MaxPruneBatch || before.IsZero() {
 		return result, ErrInvalid
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	b, ok := m.db.(beginner)
 	if !ok {
 		return result, errors.New("query audit maintenance requires a pgx transaction-capable DB")
@@ -470,9 +448,6 @@ func (m *Maintenance) PruneTx(ctx context.Context, tx Tx, before time.Time, limi
 	}
 	if limit < 1 || limit > MaxPruneBatch || before.IsZero() {
 		return PruneResult{}, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	before = before.UTC()
 	row, err := auditdb.New(tx).PruneQueryEvents(ctx, auditdb.PruneQueryEventsParams{

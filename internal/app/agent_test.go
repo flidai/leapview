@@ -155,14 +155,15 @@ func TestAgentAPISupportsConversationAndRunReads(t *testing.T) {
 	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer")
 	token := testAPIToken(t, ctx, store, principal.ID, "agent-test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
-	agentService := agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "fake-model"})
+	agentRepository := testAgentRepository(store)
+	agentService := agent.NewService(agentRepository, agent.Config{APIKey: "key", Model: "fake-model"})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService}))
 	scope := agent.Scope{PrincipalID: principal.ID}
 	conversation, err := agentService.CreateConversation(ctx, scope, "Original")
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
 	}
-	run, err := testAgentRepository(store).CreateRun(ctx, agent.RunInput{
+	run, err := agentRepository.CreateRun(ctx, agent.RunInput{
 		PrincipalID:    principal.ID,
 		ConversationID: conversation.ID,
 		RunID:          "run_test",
@@ -171,7 +172,7 @@ func TestAgentAPISupportsConversationAndRunReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	if _, err := testAgentRepository(store).AppendEvent(ctx, agent.EventInput{
+	if _, err := agentRepository.AppendEvent(ctx, agent.EventInput{
 		PrincipalID: principal.ID,
 		RunID:       run.ID,
 		Sequence:    1,
@@ -209,7 +210,7 @@ func TestAgentAPISupportsConversationAndRunReads(t *testing.T) {
 	if eventsRec.Code != http.StatusOK || !strings.Contains(eventsRec.Body.String(), `"event":"model_request"`) {
 		t.Fatalf("nested events status=%d body=%s", eventsRec.Code, eventsRec.Body.String())
 	}
-	if _, err := testAgentRepository(store).FinishRun(ctx, agent.RunFinish{
+	if _, err := agentRepository.FinishRun(ctx, agent.RunFinish{
 		PrincipalID: principal.ID, ConversationID: conversation.ID, RunID: run.ID, Status: agent.RunStatusCompleted,
 	}); err != nil {
 		t.Fatalf("finish run: %v", err)

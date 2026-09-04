@@ -377,9 +377,6 @@ func RecordSourceObservationCapture(ctx context.Context, db DBTX, in SourceObser
 	if err != nil {
 		return SourceObservationCapture{}, err
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// A repository handle owns the short control-plane transaction. A caller-
 	// owned transaction reaches recordSourceObservationCapture directly. In
 	// both cases the attempt row remains locked from the state check through
@@ -443,9 +440,6 @@ func (r *Repository) LoadSourceObservationCapture(ctx context.Context, attemptID
 func LoadSourceObservationCapture(ctx context.Context, db DBTX, attemptID string) (SourceObservationCapture, error) {
 	if db == nil || !validCanonicalSourceObservationUUID(attemptID) {
 		return SourceObservationCapture{}, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	row, err := querygen(db).GetSourceObservationCapture(ctx, pgUUID(attemptID))
 	if errors.Is(err, pgx.ErrNoRows) {

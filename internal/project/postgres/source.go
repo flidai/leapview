@@ -69,6 +69,29 @@ type SourceSyncPlanEntryInput struct {
 	Ordinal   int
 }
 
+type sourceEntryBatchRow struct {
+	Path      string `json:"path"`
+	Digest    string `json:"digest"`
+	SizeBytes int64  `json:"size_bytes"`
+	Ordinal   int    `json:"ordinal"`
+}
+
+func sourceEntryBatch(entries []SourceSyncPlanEntryInput) ([]byte, error) {
+	rows := make([]sourceEntryBatchRow, len(entries))
+	for i, entry := range entries {
+		rows[i] = sourceEntryBatchRow{Path: entry.Path, Digest: entry.Digest, SizeBytes: entry.SizeBytes, Ordinal: entry.Ordinal}
+	}
+	return json.Marshal(rows)
+}
+
+func snapshotEntryBatch(entries []SourceSnapshotEntryInput) ([]byte, error) {
+	rows := make([]sourceEntryBatchRow, len(entries))
+	for i, entry := range entries {
+		rows[i] = sourceEntryBatchRow{Path: entry.Path, Digest: entry.Digest, SizeBytes: entry.SizeBytes, Ordinal: entry.Ordinal}
+	}
+	return json.Marshal(rows)
+}
+
 // SourceTx is the strict caller-owned transaction boundary for source
 // admission and snapshot sealing. A pool cannot satisfy it accidentally.
 type SourceTx interface {
@@ -236,7 +259,7 @@ func (r *Repository) CreateSyncPlanTx(ctx context.Context, tx SourceTx, input Sy
 		return SyncPlan{}, err
 	}
 	q := projectdb.New(tx)
-	if err := q.InsertSourceSyncPlan(contextOrBackground(ctx), projectdb.InsertSourceSyncPlanParams{
+	if err := q.InsertSourceSyncPlan(ctx, projectdb.InsertSourceSyncPlanParams{
 		PlanID: dbUUID(normalized.PlanID), OperationID: dbUUID(normalized.OperationID), ProjectID: normalized.ProjectID,
 		StorageSecurityDomain: normalized.StorageSecurityDomain, OwnerID: normalized.OwnerID, CandidateKey: normalized.CandidateKey,
 		SourceDigest: normalized.SourceDigest, ProjectFile: normalized.ProjectFile, RequestDigest: normalized.RequestDigest,
@@ -244,7 +267,7 @@ func (r *Repository) CreateSyncPlanTx(ctx context.Context, tx SourceTx, input Sy
 	}); err != nil {
 		return SyncPlan{}, err
 	}
-	stored, err := q.GetSourceSyncPlan(contextOrBackground(ctx), dbUUID(normalized.PlanID))
+	stored, err := q.GetSourceSyncPlan(ctx, dbUUID(normalized.PlanID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SyncPlan{}, fmt.Errorf("%w: synchronization plan identity already exists", ErrSourceConflict)
 	}
@@ -254,7 +277,7 @@ func (r *Repository) CreateSyncPlanTx(ctx context.Context, tx SourceTx, input Sy
 	if !samePlanIdentity(stored, normalized) {
 		return SyncPlan{}, ErrSourceConflict
 	}
-	existingEntries, err := q.ListSourceSyncPlanEntries(contextOrBackground(ctx), dbUUID(normalized.PlanID))
+	existingEntries, err := q.ListSourceSyncPlanEntries(ctx, dbUUID(normalized.PlanID))
 	if err != nil {
 		return SyncPlan{}, err
 	}
@@ -267,22 +290,22 @@ func (r *Repository) CreateSyncPlanTx(ctx context.Context, tx SourceTx, input Sy
 		}
 	}
 	if len(existingEntries) == 0 {
-		for _, entry := range entries {
-			if err := q.InsertSourceSyncPlanEntry(contextOrBackground(ctx), projectdb.InsertSourceSyncPlanEntryParams{
-				PlanID: dbUUID(normalized.PlanID), Path: entry.Path, Digest: entry.Digest, SizeBytes: entry.SizeBytes, Ordinal: int32(entry.Ordinal),
-			}); err != nil {
-				return SyncPlan{}, err
-			}
+		batch, err := sourceEntryBatch(entries)
+		if err != nil {
+			return SyncPlan{}, err
+		}
+		if err := q.InsertSourceSyncPlanEntries(ctx, projectdb.InsertSourceSyncPlanEntriesParams{PlanID: dbUUID(normalized.PlanID), Entries: batch}); err != nil {
+			return SyncPlan{}, err
 		}
 	}
-	return loadPlan(contextOrBackground(ctx), tx, normalized.PlanID)
+	return loadPlan(ctx, tx, normalized.PlanID)
 }
 
 func (r *Repository) SyncPlanForUpdateTx(ctx context.Context, tx SourceTx, planID uuid.UUID) (SyncPlan, error) {
 	if tx == nil || planID == uuid.Nil {
 		return SyncPlan{}, ErrSourceInvalid
 	}
-	return loadPlanForUpdate(contextOrBackground(ctx), tx, planID)
+	return loadPlanForUpdate(ctx, tx, planID)
 }
 
 // ListMissingPlanSourceBlobDigestsTx locks an open caller-owned plan and
@@ -291,7 +314,6 @@ func (r *Repository) ListMissingPlanSourceBlobDigestsTx(ctx context.Context, tx 
 	if tx == nil {
 		return nil, ErrSourceInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	plan, err := loadPlanForUpdate(ctx, tx, planID)
 	if err != nil {
 		return nil, err
@@ -322,7 +344,6 @@ func (r *Repository) PlanSourceObjectRefsTx(ctx context.Context, tx SourceTx, pl
 	if tx == nil || planID == uuid.Nil {
 		return nil, ErrSourceInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	q := projectdb.New(tx)
 	plan, err := q.GetSourceSyncPlanForUpdate(ctx, dbUUID(planID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -391,7 +412,7 @@ func (r *Repository) ListMissingSourceBlobDigestsTx(ctx context.Context, tx Sour
 	if tx == nil {
 		return nil, ErrSourceInvalid
 	}
-	return listMissingSourceBlobDigests(contextOrBackground(ctx), tx, projectID, domain, digests)
+	return listMissingSourceBlobDigests(ctx, tx, projectID, domain, digests)
 }
 
 func listMissingSourceBlobDigests(ctx context.Context, db DBTX, projectID, domain string, digests []string) ([]string, error) {
@@ -434,7 +455,6 @@ func (r *Repository) InsertSourceBlobTx(ctx context.Context, tx SourceTx, input 
 	if err != nil {
 		return SourceBlob{}, err
 	}
-	ctx = contextOrBackground(ctx)
 	plan, err := loadPlanForUpdate(ctx, tx, n.PlanID)
 	if err != nil {
 		return SourceBlob{}, err
@@ -493,7 +513,7 @@ func (r *Repository) SourceBlob(ctx context.Context, projectID, storageSecurityD
 	if digest.ValidateSHA256Identity(blobDigest) != nil {
 		return SourceBlob{}, ErrSourceInvalid
 	}
-	row, err := projectdb.New(r.db).GetSourceBlob(contextOrBackground(ctx), projectdb.GetSourceBlobParams{
+	row, err := projectdb.New(r.db).GetSourceBlob(ctx, projectdb.GetSourceBlobParams{
 		ProjectID: projectID, StorageSecurityDomain: storageSecurityDomain, Digest: blobDigest,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -517,7 +537,6 @@ func (r *Repository) CommitSnapshotTx(ctx context.Context, tx SourceTx, input Co
 		}
 		return SourceSnapshot{}, err
 	}
-	ctx = contextOrBackground(ctx)
 	plan, err := loadPlanForUpdate(ctx, tx, n.PlanID)
 	if err != nil {
 		return SourceSnapshot{}, err
@@ -552,17 +571,16 @@ func (r *Repository) CommitSnapshotTx(ctx context.Context, tx SourceTx, input Co
 	if actual := sourceDigest(n.ProjectID, n.ProjectFile, entries); actual != n.SourceDigest {
 		return SourceSnapshot{}, fmt.Errorf("%w: source digest does not match canonical entries", ErrSourceInvalid)
 	}
-	for _, entry := range entries {
-		blob, err := projectdb.New(tx).GetSourceBlob(ctx, projectdb.GetSourceBlobParams{ProjectID: n.ProjectID, StorageSecurityDomain: n.StorageSecurityDomain, Digest: entry.Digest})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return SourceSnapshot{}, fmt.Errorf("%w: missing source blob %s", ErrSourceConflict, entry.Digest)
-		}
-		if err != nil {
-			return SourceSnapshot{}, err
-		}
-		if blob.SizeBytes != entry.SizeBytes {
-			return SourceSnapshot{}, fmt.Errorf("%w: source blob size differs for %s", ErrSourceConflict, entry.Path)
-		}
+	entryBatch, err := snapshotEntryBatch(entries)
+	if err != nil {
+		return SourceSnapshot{}, err
+	}
+	invalidBlobs, err := projectdb.New(tx).InvalidSourceSnapshotBlobs(ctx, projectdb.InvalidSourceSnapshotBlobsParams{Entries: entryBatch, ProjectID: n.ProjectID, StorageSecurityDomain: n.StorageSecurityDomain})
+	if err != nil {
+		return SourceSnapshot{}, err
+	}
+	if len(invalidBlobs) != 0 {
+		return SourceSnapshot{}, fmt.Errorf("%w: missing or size-mismatched source blob %s for %s", ErrSourceConflict, invalidBlobs[0].Digest, invalidBlobs[0].Path)
 	}
 	q := projectdb.New(tx)
 	row, insertErr := q.InsertSourceSnapshot(ctx, projectdb.InsertSourceSnapshotParams{SnapshotID: dbUUID(n.SnapshotID), ProjectID: n.ProjectID, StorageSecurityDomain: n.StorageSecurityDomain, SourceDigest: n.SourceDigest, ProjectFile: n.ProjectFile, ProjectDigest: n.ProjectDigest, ProjectArtifactObjectKey: n.ProjectArtifactObjectKey, ProjectArtifactDigest: n.ProjectArtifactDigest, ProjectArtifactSizeBytes: n.ProjectArtifactSizeBytes, ManifestObjectKey: n.ManifestObjectKey, ManifestObjectDigest: n.ManifestObjectDigest, ManifestObjectSizeBytes: n.ManifestObjectSizeBytes, CompilerVersion: n.CompilerVersion, SchemaVersion: n.SchemaVersion})
@@ -583,10 +601,8 @@ func (r *Repository) CommitSnapshotTx(ctx context.Context, tx SourceTx, input Co
 		snapshot = snapshotFromInsert(row)
 	}
 	if inserted {
-		for _, entry := range entries {
-			if err := q.InsertSourceSnapshotEntry(ctx, projectdb.InsertSourceSnapshotEntryParams{SnapshotID: dbUUID(snapshot.SnapshotID), ProjectID: n.ProjectID, StorageSecurityDomain: n.StorageSecurityDomain, Path: entry.Path, Digest: entry.Digest, SizeBytes: entry.SizeBytes, Ordinal: int32(entry.Ordinal)}); err != nil {
-				return SourceSnapshot{}, fmt.Errorf("insert source snapshot entry %q: %w", entry.Path, err)
-			}
+		if err := q.InsertSourceSnapshotEntries(ctx, projectdb.InsertSourceSnapshotEntriesParams{SnapshotID: dbUUID(snapshot.SnapshotID), ProjectID: n.ProjectID, StorageSecurityDomain: n.StorageSecurityDomain, Entries: entryBatch}); err != nil {
+			return SourceSnapshot{}, fmt.Errorf("insert source snapshot entries: %w", err)
 		}
 	}
 	if err := verifySnapshotEntries(ctx, tx, snapshot.SnapshotID, entries); err != nil {
@@ -627,7 +643,7 @@ func (r *Repository) Snapshot(ctx context.Context, projectID, domain, sourceDige
 	if digest.ValidateSHA256Identity(sourceDigest) != nil {
 		return SourceSnapshot{}, ErrSourceInvalid
 	}
-	row, err := projectdb.New(r.db).GetSourceSnapshot(contextOrBackground(ctx), projectdb.GetSourceSnapshotParams{ProjectID: projectID, StorageSecurityDomain: domain, SourceDigest: sourceDigest})
+	row, err := projectdb.New(r.db).GetSourceSnapshot(ctx, projectdb.GetSourceSnapshotParams{ProjectID: projectID, StorageSecurityDomain: domain, SourceDigest: sourceDigest})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SourceSnapshot{}, ErrSourceNotFound
 	}
@@ -641,7 +657,7 @@ func (r *Repository) SnapshotEntries(ctx context.Context, snapshotID uuid.UUID) 
 	if r == nil || r.db == nil || snapshotID == uuid.Nil {
 		return nil, ErrSourceInvalid
 	}
-	rows, err := projectdb.New(r.db).ListSourceSnapshotEntries(contextOrBackground(ctx), dbUUID(snapshotID))
+	rows, err := projectdb.New(r.db).ListSourceSnapshotEntries(ctx, dbUUID(snapshotID))
 	if err != nil {
 		return nil, err
 	}
@@ -666,7 +682,7 @@ func (r *Repository) SnapshotSourceObjectRefs(ctx context.Context, projectID, st
 	if digest.ValidateSHA256Identity(sourceDigest) != nil {
 		return nil, ErrSourceInvalid
 	}
-	rows, err := projectdb.New(r.db).ListSealedSourceSnapshotObjectRefs(contextOrBackground(ctx), projectdb.ListSealedSourceSnapshotObjectRefsParams{
+	rows, err := projectdb.New(r.db).ListSealedSourceSnapshotObjectRefs(ctx, projectdb.ListSealedSourceSnapshotObjectRefsParams{
 		ProjectID: projectID, StorageSecurityDomain: storageSecurityDomain, SourceDigest: sourceDigest,
 	})
 	if err != nil {
@@ -699,7 +715,7 @@ func (r *Repository) SnapshotAttestation(ctx context.Context, snapshotID uuid.UU
 	if r == nil || r.db == nil || snapshotID == uuid.Nil || digest.ValidateSHA256Identity(attestationDigest) != nil {
 		return SourceAttestation{}, ErrSourceInvalid
 	}
-	row, err := projectdb.New(r.db).GetSourceAttestation(contextOrBackground(ctx), projectdb.GetSourceAttestationParams{SnapshotID: dbUUID(snapshotID), AttestationDigest: attestationDigest})
+	row, err := projectdb.New(r.db).GetSourceAttestation(ctx, projectdb.GetSourceAttestationParams{SnapshotID: dbUUID(snapshotID), AttestationDigest: attestationDigest})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SourceAttestation{}, ErrSourceNotFound
 	}

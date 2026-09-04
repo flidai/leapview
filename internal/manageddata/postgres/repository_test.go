@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	managedmaintenance "github.com/flidai/leapview/internal/manageddata/maintenance"
+	manageddb "github.com/flidai/leapview/internal/manageddata/postgres/internal/db"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	jobspkg "github.com/flidai/leapview/pkg/jobs"
@@ -517,6 +519,166 @@ func TestPostgresReachabilityStableSnapshotFencesLifecycleWrite(t *testing.T) {
 	case <-entered:
 	default:
 		t.Fatal("stable snapshot callback did not run")
+	}
+}
+
+func TestPostgresReachabilityPagesLargeHistoryAndUsesRetainingIndexes(t *testing.T) {
+	p, _, _, _ := openManagedDataTestPool(t)
+	r := New(p)
+	if _, err := r.CreateCollection(t.Context(), manageddata.CreateCollectionInput{
+		ID: "collection_reachability_history", ProjectID: "project_reachability_history", ConnectionID: "connection_reachability_history", Name: "Reachability History",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const historyRows = int(reachabilityPageSize)*2 + 7
+	for index := 0; index < historyRows; index++ {
+		digest := fmt.Sprintf("%064x", index+1)
+		manifest := fmt.Sprintf(`{"files":[{"path":"data-%04d.parquet","size":1,"sha256":"%s"}]}`, index, digest)
+		if _, err := p.Exec(t.Context(), `INSERT INTO managed_data.upload_session
+            (upload_id,collection_id,manifest,expected_file_count,expected_size_bytes,storage_backend,staging_prefix,expires_at,request_digest,manifest_digest)
+            VALUES ($1,'collection_reachability_history',$2::jsonb,1,1,'s3',$3,clock_timestamp()+interval '1 hour',$4,$5)`,
+			fmt.Sprintf("upload_reachability_history_%04d", index), manifest,
+			fmt.Sprintf("staging/reachability-history/%04d", index), "request-"+digest, "sha256:"+digest); err != nil {
+			t.Fatalf("insert history row %d: %v", index, err)
+		}
+	}
+	source, err := NewReachabilitySource(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := source.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.SHA256s) != historyRows {
+		t.Fatalf("large-history digest count = %d, want %d", len(snapshot.SHA256s), historyRows)
+	}
+	if snapshot.Generation == 0 {
+		t.Fatal("large-history reachability epoch is zero")
+	}
+	queries := manageddb.New(p)
+	afterType, afterID, pages := "", "", 0
+	for {
+		rows, err := queries.ListManagedDataReachabilitySourcesPage(t.Context(), manageddb.ListManagedDataReachabilitySourcesPageParams{
+			AfterSourceType: afterType, AfterSourceID: afterID, PageSize: reachabilityPageSize,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) > int(reachabilityPageSize) {
+			t.Fatalf("reachability page size = %d, want <= %d", len(rows), reachabilityPageSize)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		pages++
+		last := rows[len(rows)-1]
+		afterType, afterID = last.SourceType, last.SourceID
+		if len(rows) < int(reachabilityPageSize) {
+			break
+		}
+	}
+	if pages < 3 {
+		t.Fatalf("large-history source pages = %d, want at least 3", pages)
+	}
+
+	var indexNames []string
+	rows, err := p.Query(t.Context(), `SELECT indexname FROM pg_indexes
+        WHERE schemaname='managed_data' AND indexname IN ('revision_reachability_idx','upload_session_reachability_idx') ORDER BY indexname`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		indexNames = append(indexNames, name)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
+	if len(indexNames) != 2 {
+		t.Fatalf("reachability indexes = %v, want both partial indexes", indexNames)
+	}
+	planTx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer planTx.Rollback(t.Context())
+	if _, err := planTx.Exec(t.Context(), `SET LOCAL enable_seqscan=off; SET LOCAL enable_bitmapscan=off`); err != nil {
+		t.Fatal(err)
+	}
+	planRows, err := planTx.Query(t.Context(), `EXPLAIN (COSTS OFF)
+SELECT source_type, source_id, source_status, revision_digest, manifest, file_count, size_bytes
+FROM (
+  SELECT 'revision'::text AS source_type, r.revision_id AS source_id, r.status AS source_status,
+         r.digest AS revision_digest, r.manifest::text AS manifest, r.file_count, r.size_bytes
+    FROM managed_data.revision AS r
+   WHERE r.status='ready'
+     AND (''::text < 'revision' OR (''::text='revision' AND r.revision_id > ''::text))
+  UNION ALL
+  SELECT 'upload'::text AS source_type, u.upload_id AS source_id, u.status AS source_status,
+         ''::text AS revision_digest, u.manifest::text AS manifest,
+         u.expected_file_count AS file_count, u.expected_size_bytes AS size_bytes
+    FROM managed_data.upload_session AS u
+   WHERE u.status IN ('open','committing')
+     AND (''::text < 'upload' OR (''::text='upload' AND u.upload_id > ''::text))
+) AS sources
+ORDER BY source_type, source_id
+LIMIT 32`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan strings.Builder
+	for planRows.Next() {
+		var line string
+		if err := planRows.Scan(&line); err != nil {
+			planRows.Close()
+			t.Fatal(err)
+		}
+		plan.WriteString(line)
+		plan.WriteByte('\n')
+	}
+	if err := planRows.Err(); err != nil {
+		planRows.Close()
+		t.Fatal(err)
+	}
+	planRows.Close()
+	if !strings.Contains(plan.String(), "revision_reachability_idx") {
+		t.Fatalf("reachability revision page plan does not use retaining index:\n%s", plan.String())
+	}
+	// Once the cursor has crossed into upload sources, the upload partial index
+	// carries the status/id predicate and avoids revisiting revision history.
+	uploadPlanRows, err := planTx.Query(t.Context(), `EXPLAIN (COSTS OFF)
+SELECT u.upload_id
+  FROM managed_data.upload_session AS u
+ WHERE u.status IN ('open','committing') AND u.upload_id > 'upload_reachability_history_0000'
+ ORDER BY u.upload_id
+ LIMIT 32`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uploadPlan strings.Builder
+	for uploadPlanRows.Next() {
+		var line string
+		if err := uploadPlanRows.Scan(&line); err != nil {
+			uploadPlanRows.Close()
+			t.Fatal(err)
+		}
+		uploadPlan.WriteString(line)
+		uploadPlan.WriteByte('\n')
+	}
+	if err := uploadPlanRows.Err(); err != nil {
+		uploadPlanRows.Close()
+		t.Fatal(err)
+	}
+	uploadPlanRows.Close()
+	if !strings.Contains(uploadPlan.String(), "upload_session_reachability_idx") {
+		t.Fatalf("reachability upload page plan does not use retaining index:\n%s", uploadPlan.String())
 	}
 }
 

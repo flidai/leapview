@@ -282,7 +282,6 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if c == nil || c.repository == nil || nativeBuildAuthorityNil(c.sources) || nativeBuildAuthorityNil(c.artifacts) || nativeBuildAuthorityNil(c.artifactRecovery) || nativeBuildAuthorityNil(c.managedData) || nativeBuildAuthorityNil(c.contract) || nativeBuildAuthorityNil(c.operations) || nativeBuildAuthorityNil(c.heartbeat) || nativeBuildAuthorityNil(c.attemptAdmission) || nativeBuildAuthorityNil(c.attemptTermination) || nativeBuildAuthorityNil(c.generationAdmission) || nativeBuildAuthorityNil(c.physicalFactory) || nativeBuildAuthorityNil(c.observationWriter) || nativeBuildAuthorityNil(c.markerResolverFactory) || nativeBuildAuthorityNil(c.observationReader) || nativeBuildAuthorityNil(c.snapshotFactory) || nativeBuildAuthorityNil(c.qualificationFactory) || nativeBuildAuthorityNil(c.events) || nativeBuildAuthorityNil(c.audit) {
 		return deploymentmodule.NativeDeliveryBuild{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, err := normalizeNativeBuildRequest(request)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -627,7 +626,7 @@ func (c *NativeBuildCoordinator) settleNativeBuildPreflightFailure(ctx context.C
 	if err != nil {
 		return errors.Join(buildErr, err)
 	}
-	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(contextOrBackground(ctx)), nativeBuildSettlementTimeout)
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), nativeBuildSettlementTimeout)
 	defer cleanupCancel()
 	tx, err := c.repository.Begin(cleanupCtx)
 	if err != nil {
@@ -697,7 +696,7 @@ func (c *NativeBuildCoordinator) settleNativeBuildFailure(ctx context.Context, o
 	if err != nil {
 		return errors.Join(buildErr, err)
 	}
-	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(contextOrBackground(ctx)), nativeBuildSettlementTimeout)
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), nativeBuildSettlementTimeout)
 	defer cleanupCancel()
 	tx, err := c.repository.Begin(cleanupCtx)
 	if err != nil {

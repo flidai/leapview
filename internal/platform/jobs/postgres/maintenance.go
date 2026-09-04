@@ -6,7 +6,6 @@ import (
 	"time"
 
 	jobdb "github.com/flidai/leapview/internal/platform/jobs/postgres/internal/db"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const maxMaintenanceBatch = 1000
@@ -32,13 +31,11 @@ func (m *Maintenance) prune(ctx context.Context, db MaintenanceDBTX, before time
 	if before.IsZero() || limit < 1 || limit > maxMaintenanceBatch {
 		return 0, fmt.Errorf("job prune cutoff and limit must be between 1 and %d", maxMaintenanceBatch)
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	removed, err := queries(db).Prune(ctx, jobdb.PruneParams{Before: before.UTC(), BatchLimit: int32(limit)})
+	if err != nil {
+		return 0, err
 	}
-	return jobdb.New(db).Prune(ctx, jobdb.PruneParams{
-		Before:     pgtype.Timestamptz{Time: before.UTC(), Valid: true},
-		BatchLimit: int32(limit),
-	})
+	return removed, nil
 }
 
 func mDB(m *Maintenance) MaintenanceDBTX {

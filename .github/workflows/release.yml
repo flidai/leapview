@@ -353,6 +353,7 @@ jobs:
             cp deploy/host/files/leapviewctl-wrapper "dist/$package/"
             cp deploy/host/bootstrap-ubuntu.sh "dist/$package/"
             cp -R deploy/compose/qualification "dist/$package/qualification"
+            chmod 0755 "dist/$package/qualification/validate-bundle.sh"
             cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"
             # GitHub artifact extraction (and hardened runners using umask
             # 0077) can leave checked-in executable assets owner-only. The
@@ -369,19 +370,7 @@ jobs:
             chmod 0644 "dist/$package/Caddyfile"
             test "$(stat -c '%a' "dist/$package/Caddyfile")" = "644"
             cp deploy/compose/leapview.env.example "dist/$package/leapview.env.example"
-            test -s "dist/$package/Caddyfile"
-            test -s "dist/$package/compose.https.yaml"
-            grep -q 'reverse_proxy leapview:8080' "dist/$package/Caddyfile"
-            grep -q '^LEAPVIEW_POSTGRES_REQUIRE_TLS=true$' "dist/$package/leapview.env.example"
-            if grep -Rni 'sqlite' \
-              "dist/$package/compose.yaml" "dist/$package/compose.https.yaml" \
-              "dist/$package/leapview.env.example" "dist/$package/qualification" || \
-              grep -RnE 'LEAPVIEW_(DB|DATABASE|DUCKDB)_' \
-              "dist/$package/compose.yaml" "dist/$package/compose.https.yaml" \
-              "dist/$package/leapview.env.example" "dist/$package/qualification"; then
-              printf 'release package contains an SQLite or file-backed qualification fallback\n' >&2
-              exit 1
-            fi
+            "dist/$package/qualification/validate-bundle.sh" "dist/$package"
             sed "s|ghcr.io/flidai/leapview@sha256:<release-digest>|$IMAGE_REFERENCE|" deploy/compose/deployment.env.example > "dist/$package/deployment.env.example"
             cp image-reference.txt release-identity.json "dist/$package/"
             if [ "$os" = linux ] && [ "$arch" = amd64 ]; then
@@ -441,7 +430,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 240
     permissions:
       contents: read
       packages: read

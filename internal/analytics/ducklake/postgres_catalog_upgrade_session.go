@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
+	"github.com/flidai/leapview/internal/analytics/duckdbsession"
 	"github.com/flidai/leapview/internal/extension"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 )
@@ -48,6 +49,9 @@ type PostgresCatalogUpgradeSessionConfig struct {
 // Query fields of postgres.SQLCatalogExecutor.  Callers must Close the
 // session after the fenced operation; Close is idempotent.
 type PostgresCatalogUpgradeSession struct {
+	pinned *duckdbsession.PinnedSession
+	// db and conn remain construction-test compatibility fields. Production
+	// sessions are created through pinned, which owns both resources.
 	db   *sql.DB
 	conn *sql.Conn
 	once sync.Once
@@ -92,6 +96,8 @@ func (c PostgresCatalogUpgradeSessionConfig) Validate() error {
 // credential bootstrap, and every initializer statement therefore observe the
 // same cancellation/deadline boundary.
 func OpenPostgresCatalogUpgradeSession(ctx context.Context, c PostgresCatalogUpgradeSessionConfig) (*PostgresCatalogUpgradeSession, error) {
+	// Session opening is a lifecycle boundary: normalize before pinning the
+	// connection so every initializer shares the captured cancellation scope.
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -119,7 +125,7 @@ func OpenPostgresCatalogUpgradeSession(ctx context.Context, c PostgresCatalogUpg
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("%w: initialize connection: %w", ErrPostgresCatalogUpgradeSession, err)
 	}
-	allowedDirectories, err := upgradeAllowedDirectories(c)
+	securityStatements, err := upgradeSecurityStatements(c)
 	if err != nil {
 		return nil, err
 	}
@@ -161,38 +167,34 @@ func OpenPostgresCatalogUpgradeSession(ctx context.Context, c PostgresCatalogUpg
 		// Do not attach a catalog here. The coordinator's SQLCatalogExecutor
 		// performs the explicit migration ATTACH with AUTOMATIC_MIGRATION=true
 		// only after it has acquired and renewed the durable fences.
-		if _, err := execer.ExecContext(initCtx, allowedDirectories, nil); err != nil {
-			return fmt.Errorf("%w: restrict DuckDB external directories: %w", ErrPostgresCatalogUpgradeSession, err)
-		}
-		if _, err := execer.ExecContext(initCtx, "SET lock_configuration = true", nil); err != nil {
-			return fmt.Errorf("%w: lock DuckDB upgrade configuration: %w", ErrPostgresCatalogUpgradeSession, err)
+		for _, statement := range securityStatements {
+			if _, err := execer.ExecContext(initCtx, statement, nil); err != nil {
+				return fmt.Errorf("%w: lock DuckDB upgrade configuration: %w", ErrPostgresCatalogUpgradeSession, err)
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: create connector: %w", ErrPostgresCatalogUpgradeSession, err)
 	}
-	db := sql.OpenDB(connector)
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	conn, err := db.Conn(ctx)
+	pinned, err := duckdbsession.OpenPinned(ctx, connector)
 	if err != nil {
-		_ = db.Close()
 		return nil, fmt.Errorf("%w: initialize connection: %w", ErrPostgresCatalogUpgradeSession, err)
 	}
-	return &PostgresCatalogUpgradeSession{db: db, conn: conn}, nil
+	return &PostgresCatalogUpgradeSession{pinned: pinned}, nil
 }
 
 // upgradeResourceStatements returns the positive, bounded DuckDB limits used
 // by catalog migration.  The operation has no pool and never borrows a
 // runtime Environment connection.
 func upgradeResourceStatements(c PostgresCatalogUpgradeSessionConfig) []string {
-	statements := []string{
-		"SET allow_persistent_secrets = false",
-		"SET autoinstall_known_extensions = false",
-		"SET autoload_known_extensions = false",
-	}
-	return append(statements, upgradeResourceLimitStatements(c)...)
+	statements, _ := (duckdbsession.ResourcePolicy{
+		MemoryMaxBytes: c.MemoryMaxBytes,
+		TempMaxBytes:   c.TempMaxBytes,
+		MaxThreads:     c.MaxThreads,
+		TempDir:        c.TempDir,
+	}).BoundedStatements()
+	return statements
 }
 
 // upgradeResourceLimitStatements contains settings that remain writable by a
@@ -201,25 +203,61 @@ func upgradeResourceStatements(c PostgresCatalogUpgradeSessionConfig) []string {
 // its one-time security setup while ensuring final resource bounds cannot be
 // weakened.
 func upgradeResourceLimitStatements(c PostgresCatalogUpgradeSessionConfig) []string {
-	statements := []string{
-		fmt.Sprintf("SET memory_limit = '%dB'", c.MemoryMaxBytes),
-		fmt.Sprintf("SET max_temp_directory_size = '%dB'", c.TempMaxBytes),
-		fmt.Sprintf("SET threads = %d", c.MaxThreads),
+	statements, _ := (duckdbsession.ResourcePolicy{
+		MemoryMaxBytes: c.MemoryMaxBytes,
+		TempMaxBytes:   c.TempMaxBytes,
+		MaxThreads:     c.MaxThreads,
+		TempDir:        c.TempDir,
+	}).BoundedStatements()
+	if len(statements) >= 3 {
+		return statements[3:]
 	}
-	if strings.TrimSpace(c.TempDir) != "" {
-		statements = append(statements, "SET temp_directory = '"+sqlLiteral(c.TempDir)+"'")
-	}
-	return statements
+	return nil
 }
 
 func upgradeAllowedDirectories(c PostgresCatalogUpgradeSessionConfig) (string, error) {
-	// Keep the same canonicalization used by the dedicated physical
-	// maintenance session without importing or invoking its role validator.
-	allowed, err := maintenanceAllowedDirectories(PostgresCatalogMaintenanceSessionConfig{DataPath: c.DataPath, TempDir: c.TempDir})
+	directories, err := upgradeAllowedDirectoryValues(c)
+	if err != nil {
+		return "", err
+	}
+	statements, err := (duckdbsession.ResourcePolicy{AllowedDirectories: directories}).SecurityStatements()
 	if err != nil {
 		return "", fmt.Errorf("%w: canonical allowed directories: %w", ErrPostgresCatalogUpgradeSession, err)
 	}
-	return allowed, nil
+	if len(statements) != 1 {
+		return "", fmt.Errorf("%w: canonical allowed directories policy is empty", ErrPostgresCatalogUpgradeSession)
+	}
+	return statements[0], nil
+}
+
+func upgradeSecurityStatements(c PostgresCatalogUpgradeSessionConfig) ([]string, error) {
+	directories, err := upgradeAllowedDirectoryValues(c)
+	if err != nil {
+		return nil, err
+	}
+	// upgradeAllowedDirectories is built by the common policy builder. Keep
+	// migration attach external access enabled until the fenced coordinator has
+	// completed its explicit AUTOMATIC_MIGRATION=true attach/detach sequence.
+	return (duckdbsession.ResourcePolicy{AllowedDirectories: directories, LockConfiguration: true}).SecurityStatements()
+}
+
+func upgradeAllowedDirectoryValues(c PostgresCatalogUpgradeSessionConfig) ([]string, error) {
+	// Keep the same canonicalization used by the dedicated physical
+	// maintenance session without importing or invoking its role validator.
+	maintenance := PostgresCatalogMaintenanceSessionConfig{DataPath: c.DataPath, TempDir: c.TempDir}
+	dataPath, err := CanonicalDataPath(maintenance.DataPath)
+	if err != nil {
+		return nil, fmt.Errorf("%w: canonical DuckLake data path: %w", ErrPostgresCatalogUpgradeSession, err)
+	}
+	directories := []string{dataPath}
+	if strings.TrimSpace(maintenance.TempDir) != "" {
+		tempDir, err := filepath.Abs(maintenance.TempDir)
+		if err != nil {
+			return nil, fmt.Errorf("%w: canonical temporary directory: %w", ErrPostgresCatalogUpgradeSession, err)
+		}
+		directories = append(directories, filepath.Clean(tempDir))
+	}
+	return directories, nil
 }
 
 // Conn returns the session-owned *sql.Conn.  It is intentionally not a pool
@@ -227,6 +265,9 @@ func upgradeAllowedDirectories(c PostgresCatalogUpgradeSessionConfig) (string, e
 func (s *PostgresCatalogUpgradeSession) Conn() *sql.Conn {
 	if s == nil {
 		return nil
+	}
+	if s.pinned != nil {
+		return s.pinned.Conn()
 	}
 	return s.conn
 }
@@ -238,6 +279,10 @@ func (s *PostgresCatalogUpgradeSession) Close() error {
 		return nil
 	}
 	s.once.Do(func() {
+		if s.pinned != nil {
+			s.err = s.pinned.Close()
+			return
+		}
 		if s.conn != nil {
 			s.err = s.conn.Close()
 		}

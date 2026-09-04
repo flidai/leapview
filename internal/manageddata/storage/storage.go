@@ -58,7 +58,10 @@ type BlobMetadata struct {
 
 // BlobInventory exposes bounded administrative operations used by garbage
 // collection. Implementations must enumerate only canonical managed-data blobs
-// and make deletion idempotent.
+// in nondecreasing SHA256 order (adjacent duplicate metadata must match) and make
+// deletion idempotent. The ordering is part of the bounded GC contract: the
+// collector can reject duplicate metadata without retaining a history-sized
+// seen set.
 type BlobInventory interface {
 	WalkBlobs(ctx context.Context, visit func(BlobMetadata) error) error
 	DeleteBlobs(ctx context.Context, sha256s []string) error

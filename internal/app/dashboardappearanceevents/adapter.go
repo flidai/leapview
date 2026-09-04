@@ -20,8 +20,6 @@ type Adapter struct {
 
 var _ appearancepostgres.EventPort = (*Adapter)(nil)
 
-func New() *Adapter { return NewWithRepository(eventspostgres.New()) }
-
 func NewWithRepository(events *eventspostgres.Repository) *Adapter {
 	return &Adapter{events: events}
 }
@@ -32,8 +30,8 @@ func (a *Adapter) Matches(events *eventspostgres.Repository) bool {
 	return a != nil && a.events != nil && a.events == events
 }
 
-// AppendEvent appends through the exact caller-owned transaction and validates
-// the immutable event identity and canonical patch payload.
+// AppendEvent appends through the exact caller-owned transaction. The platform
+// event authority validates the complete immutable projection before return.
 func (a *Adapter) AppendEvent(ctx context.Context, tx appearancepostgres.Tx, input appearancepostgres.EventInput) (appearancepostgres.Event, error) {
 	if a == nil || a.events == nil {
 		return appearancepostgres.Event{}, errors.New("dashboard appearance event adapter is not configured")
@@ -63,11 +61,6 @@ func (a *Adapter) AppendEvent(ctx context.Context, tx appearancepostgres.Tx, inp
 			return appearancepostgres.Event{}, fmt.Errorf("%w: dashboard appearance event identity differs", appearancepostgres.ErrConflict)
 		}
 		return appearancepostgres.Event{}, err
-	}
-	if stored.EventID != input.EventID || stored.ScopeID != input.ProjectID ||
-		stored.AggregateType != aggregateType || stored.AggregateID != input.DashboardID ||
-		stored.EventType != eventType || stored.SchemaVersion != 1 || stored.AggregateVersion <= 0 {
-		return appearancepostgres.Event{}, fmt.Errorf("%w: dashboard appearance event identity differs", appearancepostgres.ErrConflict)
 	}
 	return appearancepostgres.Event{EventID: stored.EventID, ProjectID: stored.ScopeID, DashboardID: stored.AggregateID, ActorID: input.ActorID, Revision: input.Revision, Patch: input.Patch, AggregateVersion: stored.AggregateVersion}, nil
 }

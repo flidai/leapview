@@ -24,6 +24,53 @@ type RetryError struct {
 	Delay time.Duration
 }
 
+// AdmissionRequest carries the LeapView-owned resource and actor dimensions
+// applied around a River worker invocation.
+type AdmissionRequest struct {
+	Class                string
+	PrincipalID          string
+	GroupIDs             []string
+	EstimatedMemoryBytes int64
+	Operation            string
+}
+
+type AdmissionLease interface {
+	Context() context.Context
+	Release()
+}
+
+type Admitter interface {
+	Acquire(context.Context, AdmissionRequest) (AdmissionLease, error)
+}
+
+type AdmitterFunc func(context.Context, AdmissionRequest) (AdmissionLease, error)
+
+func (f AdmitterFunc) Acquire(ctx context.Context, request AdmissionRequest) (AdmissionLease, error) {
+	return f(ctx, request)
+}
+
+// Handler owns payload decoding and capability behavior for one admitted
+// River job kind.
+type Handler interface {
+	Kind() string
+	Handle(context.Context, Job) error
+}
+
+type HandlerFunc struct {
+	JobKind               string
+	Run                   func(context.Context, Job) error
+	ExecutionLeaseTimeout time.Duration
+}
+
+func (h HandlerFunc) Kind() string { return h.JobKind }
+func (h HandlerFunc) Handle(ctx context.Context, job Job) error {
+	if h.Run == nil {
+		return fmt.Errorf("job handler %q is not configured", h.JobKind)
+	}
+	return h.Run(ctx, job)
+}
+func (h HandlerFunc) LeaseTimeout() time.Duration { return h.ExecutionLeaseTimeout }
+
 func (e *RetryError) Error() string {
 	if e == nil || e.Err == nil {
 		return "async job retry requested"
@@ -78,6 +125,7 @@ type EnqueueInput struct {
 // Job is the durable representation returned by a Repository.
 type Job struct {
 	ID, Kind, WorkloadClass, PrincipalID, PartitionKey, ResourceKind, ResourceID string
+	RequestDigest                                                                string
 	GroupIDs                                                                     []string
 	EstimatedMemoryBytes                                                         int64
 	Payload                                                                      []byte
@@ -172,19 +220,13 @@ type EventAppender interface {
 	AppendEvent(context.Context, string, string, string, []byte) (Event, error)
 }
 
-// Repository is the durable boundary used by producers, workers, and event
-// consumers. Storage adapters implement it without exposing their database
-// handle to application composition.
+// Repository is LeapView's product-facing asynchronous-operation boundary.
+// River owns candidate selection, claims, retries, leases, and worker state;
+// those executor details are deliberately absent here.
 type Repository interface {
 	Enqueue(context.Context, EnqueueInput) (Job, error)
 	Get(context.Context, string) (Job, error)
-	Candidates(context.Context, string, int) ([]Job, error)
-	ClaimByID(context.Context, string, string, string, time.Duration) (Job, bool, error)
-	Renew(context.Context, string, Fence, time.Duration) error
-	Complete(context.Context, string, Fence) error
-	Fail(context.Context, string, Fence, []byte) error
 	Cancel(context.Context, string) error
-	CancelClaimed(context.Context, string, Fence) error
 	AppendEvent(context.Context, string, string, string, []byte) (Event, error)
 	ListEvents(context.Context, string, string, int64, int) ([]Event, error)
 }

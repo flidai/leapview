@@ -210,6 +210,17 @@ func (p *Pool) SQLDB() (*sql.DB, error) {
 	return stdlib.OpenDBFromPool(p.pool), nil
 }
 
+// NativePool exposes the admitted pgx pool only to infrastructure adapters
+// whose mature package integration requires pgx's concrete transaction type
+// (currently River). Product repositories continue to depend on Pool's
+// bounded methods and must not use this as a general escape hatch.
+func (p *Pool) NativePool() *pgxpool.Pool {
+	if p == nil {
+		return nil
+	}
+	return p.pool
+}
+
 // Extension is the installed PostgreSQL extension identity used by the
 // post-migration production admission gate.
 type Extension struct {
@@ -230,9 +241,6 @@ func (p *Pool) PoolConfig() Config {
 func (p *Pool) Acquire(ctx context.Context) (*pgxpool.Conn, error) {
 	if p == nil || p.pool == nil {
 		return nil, errors.New("postgres pool is nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if p.acquireTimeout <= 0 {
 		return p.pool.Acquire(ctx)

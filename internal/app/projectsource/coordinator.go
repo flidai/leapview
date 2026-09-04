@@ -182,7 +182,6 @@ func (c *Coordinator) Admit(ctx context.Context, input AdmissionInput) (Admissio
 	if c == nil || c.begin == nil || c.sources == nil || c.objects == nil || c.compiler == nil {
 		return AdmissionResult{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, files, err := normalizeInput(input, c.now())
 	if err != nil {
 		return AdmissionResult{}, err
@@ -609,10 +608,4 @@ func planEntries(plan projectpostgres.SyncPlan) []projectpostgres.SourceSnapshot
 		out[i] = projectpostgres.SourceSnapshotEntryInput{Path: e.Path, Digest: e.Digest, SizeBytes: e.SizeBytes, Ordinal: i}
 	}
 	return out
-}
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }

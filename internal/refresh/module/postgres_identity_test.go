@@ -37,13 +37,7 @@ func TestPostgresQueueAuthoritiesRejectNilAndMismatchedRefresh(t *testing.T) {
 	if queue.MatchesRefreshRepository(otherRefresh) {
 		t.Fatal("queue adapter accepted a mismatched refresh authority")
 	}
-	if _, err := NewPostgresTerminalRecovery(otherRefresh, queue); err == nil || !strings.Contains(err.Error(), "does not match refresh repository") {
-		t.Fatalf("mismatched queue recovery error = %v, want provenance rejection", err)
-	}
 	var nilQueue *PostgresJobsAdapter
-	if _, err := NewPostgresTerminalRecovery(refresh, nilQueue); err == nil || !strings.Contains(err.Error(), "jobs recovery authority is required") {
-		t.Fatalf("nil queue recovery error = %v, want nil-authority rejection", err)
-	}
 	if _, err := NewPostgresPersistence(refresh, PostgresPersistenceConfig{
 		SchedulerOwner: "scheduler", PublicationIdentityResolver: staticPublicationIdentityResolver("pool", "catalog"),
 		Jobs: nilQueue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool", catalogID: "catalog"}, CancelAuditWriter: integrationAuditWriter{},
@@ -84,7 +78,9 @@ func TestResolvePublicationIdentityRejectsUnadmittedIdentity(t *testing.T) {
 
 // fakeRefreshTx is only used to prove resolver validation is fail-closed; no
 // database method is reached because the resolver returns an invalid tuple.
-type fakeRefreshTx struct{}
+type fakeRefreshTx struct {
+	pgx.Tx
+}
 
 func (fakeRefreshTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
 	return pgconn.CommandTag{}, errors.New("unexpected fake transaction exec")

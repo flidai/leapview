@@ -19,7 +19,7 @@ func (r *Repository) CreateCandidate(ctx context.Context, in CandidateInput) (De
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
-	return createCandidate(contextOrBackground(ctx), db, in)
+	return createCandidate(ctx, db, in)
 }
 
 // CreateCandidateTx persists a candidate through a caller-owned control-plane
@@ -30,7 +30,7 @@ func (r *Repository) CreateCandidateTx(ctx context.Context, tx Tx, in CandidateI
 	if tx == nil {
 		return DeliveryCandidate{}, ErrInvalid
 	}
-	return createCandidate(contextOrBackground(ctx), tx, in)
+	return createCandidate(ctx, tx, in)
 }
 
 // CreateCandidateAllocatedTx admits a candidate with the next target-owned
@@ -40,7 +40,7 @@ func (r *Repository) CreateCandidateAllocatedTx(ctx context.Context, tx Tx, in C
 	if tx == nil {
 		return DeliveryCandidate{}, ErrInvalid
 	}
-	return createCandidateAllocated(contextOrBackground(ctx), tx, in)
+	return createCandidateAllocated(ctx, tx, in)
 }
 
 // RejectCandidateTx moves a non-terminal candidate to the explicit rejected
@@ -56,7 +56,6 @@ func (r *Repository) RejectCandidateTx(ctx context.Context, tx Tx, candidateID s
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
-	ctx = contextOrBackground(ctx)
 	candidate, err := loadCandidate(ctx, tx, id, CandidateInput{})
 	if err != nil {
 		return DeliveryCandidate{}, err
@@ -86,16 +85,16 @@ func (r *Repository) RejectCandidateTx(ctx context.Context, tx Tx, candidateID s
 
 // CreateCandidateAllocated owns a short transaction around the Tx API.
 func (r *Repository) CreateCandidateAllocated(ctx context.Context, in CandidateInput) (DeliveryCandidate, error) {
-	tx, err := r.begin(contextOrBackground(ctx))
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
-	defer tx.Rollback(contextOrBackground(ctx))
+	defer tx.Rollback(ctx)
 	out, err := r.CreateCandidateAllocatedTx(ctx, tx, in)
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return DeliveryCandidate{}, err
 	}
 	return out, nil
@@ -294,7 +293,7 @@ func (r *Repository) Candidate(ctx context.Context, id string) (DeliveryCandidat
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
-	return loadCandidate(contextOrBackground(ctx), db, id, CandidateInput{})
+	return loadCandidate(ctx, db, id, CandidateInput{})
 }
 
 // CandidateTx reads immutable candidate evidence through a caller-owned
@@ -307,7 +306,7 @@ func (r *Repository) CandidateTx(ctx context.Context, tx Tx, id string) (Deliver
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
-	return loadCandidate(contextOrBackground(ctx), tx, id, CandidateInput{})
+	return loadCandidate(ctx, tx, id, CandidateInput{})
 }
 func (r *Repository) LoadCandidate(ctx context.Context, id string) (DeliveryCandidate, error) {
 	return r.Candidate(ctx, id)
@@ -321,7 +320,7 @@ func (r *Repository) ResolveCandidateGeneration(ctx context.Context, candidateID
 	if err != nil {
 		return CandidateGenerationResolution{}, err
 	}
-	return resolveCandidateGeneration(contextOrBackground(ctx), db, candidateID)
+	return resolveCandidateGeneration(ctx, db, candidateID)
 }
 
 // ResolveCandidateGenerationTx is the transaction-preserving form used by
@@ -330,7 +329,7 @@ func (r *Repository) ResolveCandidateGenerationTx(ctx context.Context, tx Tx, ca
 	if tx == nil {
 		return CandidateGenerationResolution{}, ErrInvalid
 	}
-	return resolveCandidateGeneration(contextOrBackground(ctx), tx, candidateID)
+	return resolveCandidateGeneration(ctx, tx, candidateID)
 }
 
 func resolveCandidateGeneration(ctx context.Context, db DBTX, candidateID string) (CandidateGenerationResolution, error) {
@@ -362,6 +361,11 @@ func (r *Repository) QualifyCandidate(ctx context.Context, candidateID, sealID, 
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
+	return qualifyCandidate(ctx, db, candidateID, sealID, qualificationDigest)
+}
+
+func qualifyCandidate(ctx context.Context, db DBTX, candidateID, sealID, qualificationDigest string) (DeliveryCandidate, error) {
+	var err error
 	candidateID, err = uuidID(candidateID, "candidate id", false)
 	if err != nil {
 		return DeliveryCandidate{}, err
@@ -373,11 +377,11 @@ func (r *Repository) QualifyCandidate(ctx context.Context, candidateID, sealID, 
 	if _, err := digest(qualificationDigest, "qualification digest"); err != nil {
 		return DeliveryCandidate{}, err
 	}
-	c, err := loadCandidate(contextOrBackground(ctx), db, candidateID, CandidateInput{})
+	c, err := loadCandidate(ctx, db, candidateID, CandidateInput{})
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
-	s, err := loadSeal(contextOrBackground(ctx), db, sealID)
+	s, err := loadSeal(ctx, db, sealID)
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
@@ -393,11 +397,21 @@ func (r *Repository) QualifyCandidate(ctx context.Context, candidateID, sealID, 
 		}
 		return DeliveryCandidate{}, ErrConflict
 	}
-	err = depdb.New(db).QualifyCandidate(contextOrBackground(ctx), depdb.QualifyCandidateParams{CandidateID: dbUUID(candidateID), SnapshotSealID: dbUUID(sealID), QualificationDigest: pgText(&qualificationDigest)})
+	rows, err := depdb.New(db).QualifyCandidate(ctx, depdb.QualifyCandidateParams{CandidateID: dbUUID(candidateID), SnapshotSealID: dbUUID(sealID), QualificationDigest: pgText(&qualificationDigest)})
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
-	return loadCandidate(contextOrBackground(ctx), db, candidateID, CandidateInput{})
+	current, err := loadCandidate(ctx, db, candidateID, CandidateInput{})
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	if rows == 1 {
+		return current, nil
+	}
+	if current.Status == "qualified" && current.SnapshotSealID == sealID && current.QualificationDigest == qualificationDigest {
+		return current, nil
+	}
+	return DeliveryCandidate{}, ErrConflict
 }
 
 // QualifyCandidateTx is the transaction-aware qualification form. The
@@ -406,42 +420,7 @@ func (r *Repository) QualifyCandidateTx(ctx context.Context, tx Tx, candidateID,
 	if tx == nil {
 		return DeliveryCandidate{}, ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
-	candidateID, err := uuidID(candidateID, "candidate id", false)
-	if err != nil {
-		return DeliveryCandidate{}, err
-	}
-	sealID, err = uuidID(sealID, "seal id", false)
-	if err != nil {
-		return DeliveryCandidate{}, err
-	}
-	if _, err := digest(qualificationDigest, "qualification digest"); err != nil {
-		return DeliveryCandidate{}, err
-	}
-	c, err := loadCandidate(ctx, tx, candidateID, CandidateInput{})
-	if err != nil {
-		return DeliveryCandidate{}, err
-	}
-	s, err := loadSeal(ctx, tx, sealID)
-	if err != nil {
-		return DeliveryCandidate{}, err
-	}
-	if s.CandidateID != "" && s.CandidateID != candidateID {
-		return DeliveryCandidate{}, ErrConflict
-	}
-	if c.AttemptID != "" && c.AttemptID != s.AttemptID {
-		return DeliveryCandidate{}, ErrConflict
-	}
-	if c.Status != "building" && c.Status != "ready" {
-		if c.Status == "qualified" && c.SnapshotSealID == sealID && c.QualificationDigest == qualificationDigest {
-			return c, nil
-		}
-		return DeliveryCandidate{}, ErrConflict
-	}
-	if err = depdb.New(tx).QualifyCandidate(ctx, depdb.QualifyCandidateParams{CandidateID: dbUUID(candidateID), SnapshotSealID: dbUUID(sealID), QualificationDigest: pgText(&qualificationDigest)}); err != nil {
-		return DeliveryCandidate{}, err
-	}
-	return loadCandidate(ctx, tx, candidateID, CandidateInput{})
+	return qualifyCandidate(ctx, tx, candidateID, sealID, qualificationDigest)
 }
 
 // CreateGeneration binds the immutable seal and all compiler identities.
@@ -450,7 +429,7 @@ func (r *Repository) CreateGeneration(ctx context.Context, in GenerationInput) (
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
-	return createGeneration(contextOrBackground(ctx), db, in)
+	return createGeneration(ctx, db, in)
 }
 
 // CreateGenerationTx creates (or exactly replays) a serving generation
@@ -460,7 +439,7 @@ func (r *Repository) CreateGenerationTx(ctx context.Context, tx Tx, in Generatio
 	if tx == nil {
 		return DeliveryGeneration{}, ErrInvalid
 	}
-	return createGeneration(contextOrBackground(ctx), tx, in)
+	return createGeneration(ctx, tx, in)
 }
 
 // CreateGenerationAllocatedTx admits a serving generation using the next
@@ -470,21 +449,21 @@ func (r *Repository) CreateGenerationAllocatedTx(ctx context.Context, tx Tx, in 
 	if tx == nil {
 		return DeliveryGeneration{}, ErrInvalid
 	}
-	return createGenerationAllocated(contextOrBackground(ctx), tx, in)
+	return createGenerationAllocated(ctx, tx, in)
 }
 
 // CreateGenerationAllocated owns a short transaction around the Tx API.
 func (r *Repository) CreateGenerationAllocated(ctx context.Context, in GenerationInput) (DeliveryGeneration, error) {
-	tx, err := r.begin(contextOrBackground(ctx))
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
-	defer tx.Rollback(contextOrBackground(ctx))
+	defer tx.Rollback(ctx)
 	out, err := r.CreateGenerationAllocatedTx(ctx, tx, in)
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
-	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return DeliveryGeneration{}, err
 	}
 	return out, nil
@@ -718,7 +697,7 @@ func (r *Repository) Generation(ctx context.Context, id string) (DeliveryGenerat
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
-	return loadGeneration(contextOrBackground(ctx), db, id, GenerationInput{})
+	return loadGeneration(ctx, db, id, GenerationInput{})
 }
 
 // GenerationTx reads immutable serving-generation evidence through a
@@ -731,7 +710,7 @@ func (r *Repository) GenerationTx(ctx context.Context, tx Tx, id string) (Delive
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
-	return loadGeneration(contextOrBackground(ctx), tx, id, GenerationInput{})
+	return loadGeneration(ctx, tx, id, GenerationInput{})
 }
 
 // TargetTx reads the immutable project/environment identity for a delivery
@@ -744,7 +723,7 @@ func (r *Repository) TargetTx(ctx context.Context, tx Tx, id string) (DeliveryTa
 	if err != nil {
 		return DeliveryTarget{}, err
 	}
-	return loadTarget(contextOrBackground(ctx), tx, id)
+	return loadTarget(ctx, tx, id)
 }
 
 // TargetForShareTx reads and share-locks the immutable delivery target row.
@@ -759,7 +738,7 @@ func (r *Repository) TargetForShareTx(ctx context.Context, tx Tx, id string) (De
 		return DeliveryTarget{}, err
 	}
 	var target DeliveryTarget
-	row, err := depdb.New(tx).LockTargetForShare(contextOrBackground(ctx), id)
+	row, err := depdb.New(tx).LockTargetForShare(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryTarget{}, ErrNotFound
 	}

@@ -77,7 +77,6 @@ func (c *NativeBuildCoordinator) completeRecoveredNativeBuild(ctx context.Contex
 	if c == nil || c.repository == nil || !c.repository.Configured() || !c.repository.TransactionCapable() || nativeBuildAuthorityNil(c.generationAdmission) {
 		return deploymentmodule.NativeDeliveryBuild{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
-	ctx = contextOrBackground(ctx)
 	normalized, err := normalizeNativeBuildRecoveryFinalizationInput(input)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err

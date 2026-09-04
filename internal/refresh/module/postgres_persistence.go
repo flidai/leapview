@@ -39,16 +39,6 @@ type PostgresRefreshEventWriter interface {
 	AppendRefreshQueuedEventTx(context.Context, refreshpostgres.Tx, string, string, string) error
 }
 
-// PostgresQueue is the module-owned queue capability. It intentionally
-// repeats the queue surface instead of exposing another package's repository
-// type from this public adapter configuration.
-type PostgresQueue interface {
-	ListExecutableJobs(context.Context, refreshrun.ReadScope, int) ([]refreshrun.JobRecord, error)
-	ClaimExecutableJob(context.Context, refreshrun.JobRecord, string, time.Duration) (refreshrun.JobRecord, bool, error)
-	RenewJobLease(context.Context, refreshrun.JobRecord, time.Duration) error
-	JobQueueStats(context.Context, refreshrun.ReadScope) (refreshrun.JobQueueStats, error)
-}
-
 // PostgresCanonicalVerifier verifies the exact committed delivery evidence for
 // a canonical refresh while the refresh authority transaction is open.
 type PostgresCanonicalVerifier interface {
@@ -149,16 +139,11 @@ func NewPostgresPersistence(repository *refreshpostgres.Repository, config Postg
 		return Persistence{}, errors.New("PostgreSQL cancellation audit writer is required")
 	}
 	lifecycle := config.Jobs
-	recoveryQueue := config.Jobs
-	terminalRecovery, err := NewPostgresTerminalRecovery(repository, recoveryQueue)
-	if err != nil {
-		return Persistence{}, err
-	}
 	return Persistence{
 		Runs:             &postgresRunPersistence{repository: repository, jobs: config.Jobs, operations: config.Operations, cancelAuditWriter: config.CancelAuditWriter, createAuditWriter: config.CreateAuditWriter},
 		Schedules:        &postgresSchedulePersistence{repository: repository, schedulerOwner: config.SchedulerOwner, identityResolver: config.PublicationIdentityResolver},
-		Publication:      &postgresPublicationPersistence{repository: repository, identityResolver: config.PublicationIdentityResolver, canonicalVerifier: config.CanonicalVerifier, nativeFinalizer: config.NativeFinalizer, cancelAuditWriter: config.CancelAuditWriter, queueLifecycle: lifecycle, queueRecovery: recoveryQueue},
-		TerminalRecovery: terminalRecovery, nativeRepository: repository,
+		Publication:      &postgresPublicationPersistence{repository: repository, identityResolver: config.PublicationIdentityResolver, canonicalVerifier: config.CanonicalVerifier, nativeFinalizer: config.NativeFinalizer, cancelAuditWriter: config.CancelAuditWriter, queueLifecycle: lifecycle, jobHistory: config.Jobs},
+		nativeRepository: repository,
 	}, nil
 }
 
@@ -1185,34 +1170,6 @@ func (p *postgresRunPersistence) CheckScheduledInvocationAdmission(ctx context.C
 	return p.repository.CheckScheduledInvocationAdmission(ctx, refreshpostgres.Scope{ProjectID: occurrence.Identity.ProjectID.String(), Environment: occurrence.Identity.Environment}, occurrence.PipelineID.String())
 }
 
-func (p *postgresRunPersistence) ListExecutableJobs(ctx context.Context, scope refreshrun.ReadScope, limit int) ([]refreshrun.JobRecord, error) {
-	if p.jobs == nil {
-		return nil, errors.New("canonical platform jobs queue is not configured")
-	}
-	return p.jobs.ListExecutableJobs(ctx, scope, limit)
-}
-
-func (p *postgresRunPersistence) ClaimExecutableJob(ctx context.Context, candidate refreshrun.JobRecord, owner string, lease time.Duration) (refreshrun.JobRecord, bool, error) {
-	if p.jobs == nil {
-		return refreshrun.JobRecord{}, false, errors.New("canonical platform jobs queue is not configured")
-	}
-	return p.jobs.ClaimExecutableJob(ctx, candidate, owner, lease)
-}
-
-func (p *postgresRunPersistence) RenewJobLease(ctx context.Context, job refreshrun.JobRecord, lease time.Duration) error {
-	if p.jobs == nil {
-		return errors.New("canonical platform jobs queue is not configured")
-	}
-	return p.jobs.RenewJobLease(ctx, job, lease)
-}
-
-func (p *postgresRunPersistence) JobQueueStats(ctx context.Context, scope refreshrun.ReadScope) (refreshrun.JobQueueStats, error) {
-	if p.jobs == nil {
-		return refreshrun.JobQueueStats{}, errors.New("canonical platform jobs queue is not configured")
-	}
-	return p.jobs.JobQueueStats(ctx, scope)
-}
-
 // postgresPublicationPersistence is deliberately small: publication state,
 // data-version provenance, and terminal run completion are all delegated to
 // the PostgreSQL authority. The adapter never opens a database transaction or
@@ -1225,7 +1182,7 @@ type postgresPublicationPersistence struct {
 	nativeFinalizer   PostgresNativeRefreshFinalizer
 	cancelAuditWriter PostgresCancelAuditWriter
 	queueLifecycle    PostgresQueueLifecycle
-	queueRecovery     PostgresQueueRecovery
+	jobHistory        PostgresJobHistory
 }
 
 func (p *postgresPublicationPersistence) Publish(ctx context.Context, identity projectgraph.ServingIdentity, servingStateID servingstate.ID, version refreshschedule.DataVersion) error {
@@ -1385,20 +1342,11 @@ func (p *postgresPublicationPersistence) replayCanonicalCompletionTx(ctx context
 		if marker || foundVersion || treeSucceeded {
 			return false, refreshpostgres.ErrConflict
 		}
-		if p.queueRecovery != nil {
-			queuedJob, queueErr := p.queueRecovery.GetJobTx(ctx, tx, job.ID)
+		if p.jobHistory != nil {
+			queuedJob, queueErr := p.jobHistory.GetJobTx(ctx, tx, job.ID)
 			if queueErr == nil {
 				if queuedJob.Status == jobs.StatusSucceeded || queuedJob.Status == jobs.StatusFailed || queuedJob.Status == jobs.StatusCancelled {
 					return false, refreshpostgres.ErrConflict
-				}
-				if queuedJob.Attempts > 0 {
-					attempt, foundAttempt, attemptErr := p.queueRecovery.LatestAttemptTx(ctx, tx, queuedJob.ID, int64(queuedJob.Attempts), queuedJob.LeaseGeneration)
-					if attemptErr != nil {
-						return false, attemptErr
-					}
-					if !foundAttempt || attempt.Outcome != "running" {
-						return false, refreshpostgres.ErrConflict
-					}
 				}
 			} else if !errors.Is(queueErr, jobs.ErrNotFound) {
 				return false, queueErr
@@ -1426,10 +1374,10 @@ func (p *postgresPublicationPersistence) replayCanonicalCompletionTx(ctx context
 	if err != nil {
 		return false, err
 	}
-	if !treeSucceeded || p.queueRecovery == nil {
+	if !treeSucceeded || p.jobHistory == nil {
 		return false, refreshpostgres.ErrConflict
 	}
-	queuedJob, err := p.queueRecovery.GetJobTx(ctx, tx, job.ID)
+	queuedJob, err := p.jobHistory.GetJobTx(ctx, tx, job.ID)
 	if err != nil {
 		return false, err
 	}
@@ -1441,14 +1389,7 @@ func (p *postgresPublicationPersistence) replayCanonicalCompletionTx(ctx context
 	if payloadErr != nil {
 		return false, payloadErr
 	}
-	if queuedJob.ID != job.ID || queuedJob.Kind != job.Kind || queuedJob.WorkloadClass != jobpolicy.WorkloadClassBackground || queuedJob.PartitionKey != "refresh:"+job.Identity.ProjectID.String()+":"+job.Identity.Environment || queuedJob.PrincipalID != job.PrincipalID || !slices.Equal(queuedJob.GroupIDs, job.GroupIDs) || queuedJob.ResourceKind != refreshJobResourceKind || queuedJob.ResourceID != job.RunID || queuedJob.EstimatedMemoryBytes != job.EstimatedMemoryBytes || !jsonEquivalent(queuedJob.Payload, expectedPayload) || queuedJob.Attempts != job.AttemptCount || queuedJob.LeaseGeneration != job.LeaseRevision || queuedJob.Status != jobs.StatusSucceeded || queuedJob.FinishedAt == "" || queuedJob.LeaseOwner != "" || queuedJob.LeaseExpiresAt != "" || queuedJob.ErrorJSON != "{}" {
-		return false, refreshpostgres.ErrConflict
-	}
-	attempt, foundAttempt, err := p.queueRecovery.LatestAttemptTx(ctx, tx, queuedJob.ID, int64(job.AttemptCount), job.LeaseRevision)
-	if err != nil {
-		return false, err
-	}
-	if !foundAttempt || attempt.JobID != queuedJob.ID || attempt.AttemptNumber != int64(job.AttemptCount) || attempt.FencingGeneration != job.LeaseRevision || attempt.Owner != job.LeaseOwner || attempt.Outcome != string(jobs.StatusSucceeded) || attempt.FinishedAt == nil || string(attempt.ErrorJSON) != "{}" {
+	if queuedJob.ID != job.ID || queuedJob.Kind != job.Kind || queuedJob.WorkloadClass != jobpolicy.WorkloadClassBackground || queuedJob.PartitionKey != "refresh:"+job.Identity.ProjectID.String()+":"+job.Identity.Environment || queuedJob.PrincipalID != job.PrincipalID || !slices.Equal(queuedJob.GroupIDs, job.GroupIDs) || queuedJob.ResourceKind != refreshJobResourceKind || queuedJob.ResourceID != job.RunID || queuedJob.EstimatedMemoryBytes != job.EstimatedMemoryBytes || !jsonEquivalent(queuedJob.Payload, expectedPayload) || queuedJob.Attempts != job.AttemptCount || queuedJob.Status != jobs.StatusSucceeded || queuedJob.FinishedAt == "" || queuedJob.ErrorJSON != "" {
 		return false, refreshpostgres.ErrConflict
 	}
 	return true, nil

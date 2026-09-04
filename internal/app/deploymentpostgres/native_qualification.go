@@ -173,7 +173,6 @@ func (e NativeQualificationEvidence) Canonical() ([]byte, string, error) {
 // existing schema/source/analytical gates, and returns canonical evidence.
 // Open environments are always closed, including when a gate fails.
 func QualifyNativeSnapshot(ctx context.Context, request NativeQualificationRequest, factory NativeQualificationEnvironmentFactory) (result NativeQualificationEvidence, resultErr error) {
-	ctx = contextOrBackground(ctx)
 	if err := validateNativeQualificationRequest(request); err != nil {
 		return NativeQualificationEvidence{}, err
 	}

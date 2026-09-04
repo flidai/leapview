@@ -14,6 +14,7 @@ import (
 	"time"
 
 	dbgen "github.com/flidai/leapview/internal/analytics/ducklake/postgres/internal/db"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -33,9 +34,6 @@ func upgradeUUID(value string) pgtype.UUID {
 
 func inRepositoryTransaction[T any](ctx context.Context, db DBTX, fn func(DBTX) (T, error)) (T, error) {
 	var zero T
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	beginner, ok := db.(transactionBeginner)
 	if !ok {
 		return fn(db)
@@ -224,7 +222,7 @@ func (c RuntimeCompatibility) validate() error {
 	if err := c.RuntimeTuple.validate(); err != nil {
 		return err
 	}
-	if !validDigest(c.CompatibilityDigest) || !validSchemaVersion(c.CatalogSchemaVersion) {
+	if platformdigest.ValidateSHA256Identity(c.CompatibilityDigest) != nil || !validSchemaVersion(c.CatalogSchemaVersion) {
 		return ErrInvalid
 	}
 	return nil

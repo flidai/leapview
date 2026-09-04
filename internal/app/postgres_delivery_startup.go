@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	physicalpool "github.com/flidai/leapview/internal/analytics/physicalpool"
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	"github.com/flidai/leapview/internal/deployment"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/recoveryset"
 	"github.com/flidai/leapview/internal/servingstate"
@@ -260,7 +260,7 @@ func newPostgresDeliveryStartupCheck(config postgresDeliveryStartupCheckConfig) 
 // state repository. Native admission intentionally leaves Path empty; the
 // digest-derived Locator and its storage metadata are the serving authority.
 func postgresDeliveryStartupNativeArtifactComplete(artifact servingstate.Artifact) bool {
-	if artifact.Path != "" || !postgresDeliveryStartupCanonicalDigest(artifact.Digest) {
+	if artifact.Path != "" || platformdigest.ValidateSHA256Identity(artifact.Digest) != nil {
 		return false
 	}
 	wantID := "artifact-" + strings.TrimPrefix(artifact.Digest, "sha256:")
@@ -277,21 +277,10 @@ func postgresDeliveryStartupNativeArtifactComplete(artifact servingstate.Artifac
 	if artifact.StorageSecurityDomain == "" || !utf8.ValidString(artifact.StorageSecurityDomain) || artifact.StorageSecurityDomain != strings.TrimSpace(artifact.StorageSecurityDomain) || len(artifact.StorageSecurityDomain) > 512 || strings.IndexFunc(artifact.StorageSecurityDomain, unicode.IsControl) >= 0 {
 		return false
 	}
-	if artifact.ContentType != servingstate.ArtifactBundleContentType || !postgresDeliveryStartupCanonicalDigest(artifact.MetadataDigest) {
+	if artifact.ContentType != servingstate.ArtifactBundleContentType || platformdigest.ValidateSHA256Identity(artifact.MetadataDigest) != nil {
 		return false
 	}
 	return true
-}
-
-func postgresDeliveryStartupCanonicalDigest(value string) bool {
-	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	hexPart := value[len("sha256:"):]
-	if _, err := hex.DecodeString(hexPart); err != nil {
-		return false
-	}
-	return strings.ToLower(hexPart) == hexPart
 }
 
 func postgresDeliveryStartupSealComplete(seal appdeploymentpostgres.StartupSnapshotSeal, generation appdeploymentpostgres.StartupGeneration, artifact servingstate.Artifact, state servingstate.State) bool {

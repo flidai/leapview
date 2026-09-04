@@ -23,11 +23,8 @@ import (
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/internal/workload"
+	"github.com/flidai/leapview/pkg/jobs"
 )
-
-type Dispatcher interface {
-	Run(context.Context)
-}
 
 type Scheduler interface {
 	DispatchDue(context.Context) error
@@ -70,9 +67,7 @@ type Config struct {
 	Events              EventStore
 	AuditIntentRecorder access.AuditIntentRecorder
 	Clock               refreshschedule.Clock
-	EnableDispatcher    bool
 	EnableScheduler     bool
-	Dispatcher          Dispatcher
 	Scheduler           Scheduler
 	ReconcileSchedules  func(context.Context) error
 	ScheduleInterval    time.Duration
@@ -112,7 +107,6 @@ type Module struct {
 	schedules           refreshschedule.Repository
 	service             refreshrun.Service
 	refreshClock        refreshschedule.Clock
-	dispatcher          Dispatcher
 	scheduler           Scheduler
 	reconcileSchedules  func(context.Context) error
 	scheduleInterval    time.Duration
@@ -125,17 +119,15 @@ type Module struct {
 	publishedVersion    PublishedDataVersionResolver
 	recoveryLifecycle   *RecoveryLifecycle
 	recoveryInterval    time.Duration
-	terminalRecovery    TerminalRunRecovery
-	recoveryEnvironment string
+	runFinishedCallback func(context.Context, refreshrun.JobRecord)
 
-	mu          sync.Mutex
-	background  context.Context
-	cancel      context.CancelFunc
-	started     bool
-	stopping    bool
-	stopped     bool
-	dispatching bool
-	wg          sync.WaitGroup
+	mu         sync.Mutex
+	background context.Context
+	cancel     context.CancelFunc
+	started    bool
+	stopping   bool
+	stopped    bool
+	wg         sync.WaitGroup
 }
 
 func durableRefreshAudit(config Config) bool {
@@ -186,7 +178,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			RunnerConfigured: config.HTTP.RunnerConfigured,
 			ServingIdentity:  config.HTTP.ServingIdentity,
 		},
-		dispatcher: config.Dispatcher, scheduler: config.Scheduler,
+		scheduler:          config.Scheduler,
 		refreshClock:       config.Clock,
 		reconcileSchedules: config.ReconcileSchedules, scheduleInterval: interval,
 		leaseTimeout: leaseTimeout, logger: logger,
@@ -201,6 +193,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		publishedVersion:  config.PublishedVersion,
 		recoveryLifecycle: config.RecoveryLifecycle, recoveryInterval: recoveryInterval,
 	}
+	m.runFinishedCallback = m.runFinished(config.RunFinished)
 	m.handler.CurrentPrincipal = func(r *http.Request) (materializehttp.Principal, bool) {
 		if config.HTTP.CurrentPrincipal == nil {
 			return materializehttp.Principal{}, false
@@ -221,7 +214,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		m.handler.BuildAuditIntent = buildRefreshAuditIntent
 	}
 	if config.Persistence == nil {
-		if config.EnableDispatcher || config.EnableScheduler || config.Service.Runs != nil || config.RecoveryLifecycle != nil {
+		if config.EnableScheduler || config.Service.Runs != nil || config.RecoveryLifecycle != nil {
 			return nil, errors.New("refresh persistence is required")
 		}
 		return m, nil
@@ -247,20 +240,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	m.service.Runs = m.runs
 	m.service.Publication = persistence.Publication
-	m.terminalRecovery = persistence.TerminalRecovery
-	m.recoveryEnvironment = strings.TrimSpace(config.RecoveryEnvironment)
 	if config.RecoveryLifecycle != nil && persistence.Recovery != nil {
 		config.RecoveryLifecycle.Repository = persistence.Recovery
-	}
-	if m.dispatcher == nil && config.EnableDispatcher {
-		if config.ResolveIdentity == nil {
-			return nil, errors.New("refresh dispatcher identity resolver is required")
-		}
-		m.dispatcher = refreshrun.Dispatcher{
-			Runs: m.runs, Service: m.service, Admitter: config.Admission,
-			LeaseTimeout: config.LeaseTimeout, Logger: logger, ResolveIdentity: config.ResolveIdentity,
-			WorkloadStats: config.WorkloadStats, RunFinished: m.runFinished(config.RunFinished),
-		}
 	}
 	if m.scheduler == nil && config.EnableScheduler {
 		if config.ResolveIdentity == nil {
@@ -278,7 +259,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 					if result.Run.Status == refreshrun.RunStatusSkipped {
 						return refreshschedule.ErrOccurrenceSkipped
 					}
-					m.Dispatch(ctx)
 				}
 				return err
 			},
@@ -288,7 +268,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		m.reconcileSchedules = m.Reconcile
 	}
 	m.handler.Repository = func() (refreshrun.RunRepository, error) { return m.runs, nil }
-	m.handler.DispatchQueued = func() { m.Dispatch(context.Background()) }
 	m.handler.QueuePipeline = func(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID, idempotencyKey string) (refreshrun.RunRecord, error) {
 		pipelineIDValue, parseErr := projectgraph.NewResourceID(pipelineID)
 		if parseErr != nil {
@@ -315,6 +294,33 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return result.Run, err
 	}
 	return m, nil
+}
+
+// JobHandlers maps refresh pipeline execution into River. Dependency child
+// runs remain capability-owned rows completed by the pipeline transaction.
+func (m *Module) JobHandlers() []jobs.Handler {
+	if m == nil || m.runs == nil {
+		return nil
+	}
+	run := func(ctx context.Context, job jobs.Job) error {
+		persistence, ok := m.runs.(*postgresRunPersistence)
+		if !ok || persistence == nil || persistence.jobs == nil {
+			return errors.New("River refresh persistence is unavailable")
+		}
+		claimed, err := persistence.jobs.ClaimRiverJob(ctx, job, m.leaseTimeout)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if m.runFinishedCallback != nil {
+				m.runFinishedCallback(context.Background(), claimed)
+			}
+		}()
+		return m.service.ExecuteClaimedJob(ctx, claimed)
+	}
+	return []jobs.Handler{
+		jobs.HandlerFunc{JobKind: refreshrun.JobKindRefreshPipeline, Run: run},
+	}
 }
 
 func (m *Module) QueuePipelineRefresh(ctx context.Context, input refreshrun.QueuePipelineInput) (refreshrun.QueueAssetResult, error) {
@@ -401,7 +407,6 @@ func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity project
 	if err := m.verifyRunCreated(ctx, result.Run); err != nil {
 		return err
 	}
-	m.Dispatch(ctx)
 	return nil
 }
 
@@ -430,7 +435,7 @@ func (m *Module) CancelPipelineRefreshForUI(ctx context.Context, identity projec
 	if err != nil || !scope.Matches(prior.Identity) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.ParentRunID != "" || prior.PipelineID != pipeline || prior.TargetID != pipeline {
 		return errors.New("refresh run not found")
 	}
-	cancel, cancelErr := m.cancelRuns()
+	cancel, cancelErr := m.readRuns()
 	if cancelErr != nil {
 		return cancelErr
 	}
@@ -879,12 +884,6 @@ func (m *Module) Start(ctx context.Context) error {
 		m.mu.Unlock()
 		return nil
 	}
-	if m.terminalRecovery != nil {
-		if err := RecoverWithPersistence(ctx, m.terminalRecovery, m.recoveryEnvironment); err != nil {
-			m.mu.Unlock()
-			return fmt.Errorf("refresh startup recovery: %w", err)
-		}
-	}
 	m.background, m.cancel = context.WithCancel(ctx)
 	m.started = true
 	background := m.background
@@ -892,46 +891,12 @@ func (m *Module) Start(ctx context.Context) error {
 		m.wg.Add(1)
 		go m.runScheduler(background)
 	}
-	if m.dispatcher != nil {
-		m.wg.Add(1)
-		go m.runDispatcherRecovery(background)
-	}
 	if m.recoveryLifecycle != nil {
 		m.wg.Add(1)
 		go m.runRecoveryLifecycle(background)
 	}
 	m.mu.Unlock()
-	m.Dispatch(background)
 	return nil
-}
-
-func (m *Module) Dispatch(ctx context.Context) {
-	if m == nil || m.dispatcher == nil {
-		return
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	m.mu.Lock()
-	if m.stopping || m.stopped || m.dispatching {
-		m.mu.Unlock()
-		return
-	}
-	if m.background != nil {
-		ctx = m.background
-	}
-	m.dispatching = true
-	m.wg.Add(1)
-	m.mu.Unlock()
-	go func() {
-		defer func() {
-			m.mu.Lock()
-			m.dispatching = false
-			m.mu.Unlock()
-			m.wg.Done()
-		}()
-		m.dispatcher.Run(ctx)
-	}()
 }
 
 func (m *Module) runScheduler(ctx context.Context) {
@@ -955,20 +920,6 @@ func (m *Module) runScheduler(ctx context.Context) {
 			return
 		case <-ticker.C:
 			dispatch()
-		}
-	}
-}
-
-func (m *Module) runDispatcherRecovery(ctx context.Context) {
-	defer m.wg.Done()
-	ticker := time.NewTicker(m.leaseTimeout)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			m.Dispatch(ctx)
 		}
 	}
 }

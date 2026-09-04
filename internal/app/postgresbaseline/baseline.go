@@ -57,6 +57,7 @@ func VerifyProvider(ctx context.Context, provider SQLDBProvider) error {
 // payloads, and append-only evidence remains non-mutable at the role edge.
 const rolePolicySQL = `
 REVOKE ALL ON FUNCTION delivery.lock_retention_root(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) FROM PUBLIC;
 DO $$
 BEGIN
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
@@ -90,7 +91,16 @@ BEGIN
 			ON release.candidate_provenance TO leapview_control_runtime;
         GRANT INSERT (deployment_id, project_id, release_id, rollback_of)
             ON release.deployment_linkage TO leapview_control_runtime;
-        GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery, jobs TO leapview_control_runtime;
+		GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery TO leapview_control_runtime;
+		REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON delivery.delivery_target FROM leapview_control_runtime;
+		-- PostgreSQL row-locking clauses require UPDATE on at least one column.
+		-- The trigger rejects every direct runtime mutation of this row, while
+		-- the owner-only activation capability can still advance its revision.
+		GRANT UPDATE (updated_at) ON delivery.delivery_target TO leapview_control_runtime;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON delivery.delivery_active_pointer FROM leapview_control_runtime;
+		GRANT EXECUTE ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) TO leapview_control_runtime;
+		GRANT SELECT, INSERT, UPDATE ON jobs.job_history, jobs.event_sequence, jobs.event TO leapview_control_runtime;
+		REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER ON jobs.job_history, jobs.event_sequence, jobs.event FROM leapview_control_runtime;
 		-- Retention-root lifecycle is capability-owned. Runtime activation may
 		-- lock/read a root and retire a predecessor through definer functions,
 		-- but runtime must never perform direct lifecycle UPDATE/DELETE or force
@@ -168,8 +178,8 @@ BEGIN
 		GRANT SELECT ON ALL TABLES IN SCHEMA recovery TO leapview_control_readonly;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA agent TO leapview_control_readonly;
-        GRANT SELECT ON jobs.job_observability TO leapview_control_readonly;
-        REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON jobs.job, jobs.attempt, jobs.event_sequence, jobs.event FROM leapview_control_readonly;
+		GRANT SELECT ON jobs.job_history TO leapview_control_readonly;
+		REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON jobs.event_sequence, jobs.event FROM leapview_control_readonly;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, physical_pool FROM leapview_control_readonly;
         REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_readonly;
         REVOKE EXECUTE ON FUNCTION delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) FROM leapview_control_readonly;

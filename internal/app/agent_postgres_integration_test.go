@@ -11,6 +11,7 @@ import (
 	appagentpostgres "github.com/flidai/leapview/internal/app/agentpostgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	postgresmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/google/uuid"
@@ -25,6 +26,9 @@ func TestAgentPostgresPersistenceComposesOneTransactionalBoundary(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
+	if err := postgresmigrations.ApplyRiver(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := db.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +94,7 @@ func TestAgentPostgresPersistenceComposesOneTransactionalBoundary(t *testing.T) 
 	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM jobs.event WHERE resource_id = $1`, run.ID).Scan(&jobEvents); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM jobs.job WHERE id = 'job-composed'`).Scan(&jobsCount); err != nil {
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM jobs.job_history WHERE id = 'job-composed'`).Scan(&jobsCount); err != nil {
 		t.Fatal(err)
 	}
 	if agentEvents != 1 || domainEvents != 2 || audits != 1 || jobEvents != 1 || jobsCount != 1 {
@@ -162,7 +166,7 @@ func TestAgentPostgresPersistenceComposesOneTransactionalBoundary(t *testing.T) 
 		{`SELECT count(*) FROM agent.events WHERE run_id = $1`, []any{run2.ID}, 0},
 		{`SELECT count(*) FROM event.event_log WHERE aggregate_id = $1`, []any{run2.ID}, 1},
 		{`SELECT count(*) FROM jobs.event WHERE resource_id = $1`, []any{run2.ID}, 0},
-		{`SELECT count(*) FROM jobs.job WHERE id = 'job-rollback'`, nil, 0},
+		{`SELECT count(*) FROM jobs.job_history WHERE id = 'job-rollback'`, nil, 0},
 		{`SELECT count(*) FROM audit.audit_event WHERE audit_id = $1::uuid`, []any{intent.EventID}, 1},
 	}
 	for _, check := range rollbackChecks {
