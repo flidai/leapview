@@ -117,14 +117,18 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       xAxis: axis(envelope, spec.x, 'category', context), yAxis: axis(envelope, spec.y[0]!, 'category', context),
       visualMap: gradient
         ? {
-            min: gradient.minimum, max: gradient.maximum, calculable: false, orient: 'horizontal', left: 'center', bottom: 0,
+            type: 'continuous', dimension: value.field,
+            min: gradient.minimum, max: gradient.maximum, calculable: true, orient: 'horizontal', left: 'center', bottom: 0,
             inRange: { color: [seriesColor('', gradient.low.color, context), seriesColor('', gradient.high.color, context)] },
+            outOfRange: { opacity: 0 },
             text: [formatDisplayField(envelope, value, gradient.maximum, context), formatDisplayField(envelope, value, gradient.minimum, context)],
             textStyle: { color: context.colors.muted },
           }
         : fill ? undefined : {
-            min: extent.minimum, max: extent.maximum, calculable: false, orient: 'horizontal', left: 'center', bottom: 0,
+            type: 'continuous', dimension: value.field,
+            min: extent.minimum, max: extent.maximum, calculable: true, orient: 'horizontal', left: 'center', bottom: 0,
             inRange: { color: [colorWithAlpha(primary, 0.18), primary] },
+            outOfRange: { opacity: 0 },
             text: [formatDisplayField(envelope, value, extent.maximum, context), formatDisplayField(envelope, value, extent.minimum, context)],
             textStyle: { color: context.colors.muted },
           },
