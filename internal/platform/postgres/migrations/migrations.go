@@ -51,6 +51,9 @@ var contractPublicationIntegritySQL string
 //go:embed 009_platform_bootstrap_authority.sql
 var platformBootstrapAuthoritySQL string
 
+//go:embed 010_access_control_authority.sql
+var accessControlAuthoritySQL string
+
 // IdentityLedgerRevision introduces the PostgreSQL-only FAI-617 resource
 // identity ledger.
 const IdentityLedgerRevision int64 = 2
@@ -99,6 +102,13 @@ const ContractPublicationIntegrityMigrationID = "008_contract_publication_integr
 const PlatformBootstrapAuthorityRevision int64 = 9
 
 const PlatformBootstrapAuthorityMigrationID = "009_platform_bootstrap_authority"
+
+// AccessControlAuthorityRevision adds mutable live role assignments and
+// grants. Canonical roles and generation-scoped authorization snapshots remain
+// owned by their existing immutable authorities.
+const AccessControlAuthorityRevision int64 = 10
+
+const AccessControlAuthorityMigrationID = "010_access_control_authority"
 
 // BaselineSQL returns the exact authored baseline migration.  Callers should
 // execute it as a migration authority, inside a transaction where the driver
@@ -169,6 +179,13 @@ func PlatformBootstrapAuthorityChecksum() string {
 	return hex.EncodeToString(sum[:])
 }
 
+func AccessControlAuthoritySQL() string { return accessControlAuthoritySQL }
+
+func AccessControlAuthorityChecksum() string {
+	sum := sha256.Sum256([]byte(accessControlAuthoritySQL))
+	return hex.EncodeToString(sum[:])
+}
+
 // Tx is the transaction boundary required by Apply.  pgx.Tx and pgxpool.Tx
 // both satisfy it; keeping the boundary here avoids opening a second
 // connection or introducing repository policy into the schema package.
@@ -202,6 +219,7 @@ func ordered() []migration {
 		{AccessAuthorityCompatibilityRevision, AccessAuthorityCompatibilityMigrationID, accessAuthorityCompatibilitySQL, AccessAuthorityCompatibilityChecksum()},
 		{ContractPublicationIntegrityRevision, ContractPublicationIntegrityMigrationID, contractPublicationIntegritySQL, ContractPublicationIntegrityChecksum()},
 		{PlatformBootstrapAuthorityRevision, PlatformBootstrapAuthorityMigrationID, platformBootstrapAuthoritySQL, PlatformBootstrapAuthorityChecksum()},
+		{AccessControlAuthorityRevision, AccessControlAuthorityMigrationID, accessControlAuthoritySQL, AccessControlAuthorityChecksum()},
 	}
 }
 

@@ -263,6 +263,31 @@ func IntersectTokenCapabilities(token, effective []Capability) []Capability {
 	return result
 }
 
+// AttenuateEffectiveCapabilities applies request-held credential limits to a
+// capability set computed from one immutable serving snapshot. Credentials
+// can only remove authority. Keeping this operation in the access contract
+// lets callers reuse an already leased snapshot instead of acquiring a second
+// generation merely to perform attenuation.
+func AttenuateEffectiveCapabilities(activeProjectID graph.ResourceID, effective []Capability, credential APICredential) ([]Capability, error) {
+	capabilities := append([]Capability(nil), effective...)
+	if credential.Authoring != nil {
+		if err := activeProjectID.Validate(); err != nil {
+			return nil, fmt.Errorf("authoring credential active project: %w", err)
+		}
+		if credential.Authoring.Scope.ProjectID != activeProjectID {
+			return nil, ErrAuthoringScopeDenied
+		}
+		capabilities = IntersectTokenCapabilities(credential.Authoring.Scope.Capabilities, capabilities)
+	}
+	if credential.Token.ID != "" {
+		if credential.Token.Capabilities != nil && len(credential.Token.Capabilities) == 0 {
+			return nil, ErrForbidden
+		}
+		capabilities = IntersectTokenCapabilities(credential.Token.Capabilities, capabilities)
+	}
+	return capabilities, nil
+}
+
 // MarshalText rejects invalid capability values and supports the canonical
 // text representation in encoders using encoding.TextMarshaler.
 func (capability Capability) MarshalText() ([]byte, error) {

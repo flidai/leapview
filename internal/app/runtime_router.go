@@ -824,6 +824,7 @@ func buildApplicationSurfaces(
 			}
 			return snapshot.EffectiveCapabilities(subjects)
 		})
+		routes.accessModule.SetCurrentAuthorizationSnapshot(authorizationSnapshot)
 		routes.accessModule.SetCurrentProjectID(runtime.resolveProjectID)
 		if routes.managedDataModule != nil {
 			routes.managedDataModule.SetAuthorizeConnection(manageddatamodule.ConnectionAuthorizer(authorizeConnection))

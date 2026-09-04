@@ -93,7 +93,7 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 18 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() || recorder.sqls[14] != ContractPublicationIntegritySQL() || recorder.sqls[16] != PlatformBootstrapAuthoritySQL() {
+	if len(recorder.sqls) != 20 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() || recorder.sqls[14] != ContractPublicationIntegritySQL() || recorder.sqls[16] != PlatformBootstrapAuthoritySQL() || recorder.sqls[18] != AccessControlAuthoritySQL() {
 		t.Fatal("Apply() did not execute the authored migrations in order")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
@@ -106,7 +106,7 @@ func TestVerifyRequiresEveryExactRevision(t *testing.T) {
 	if err := Verify(context.Background(), valid); err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}
-	delete(valid.revisions, PlatformBootstrapAuthorityRevision)
+	delete(valid.revisions, AccessControlAuthorityRevision)
 	if err := Verify(context.Background(), valid); err == nil {
 		t.Fatal("Verify() accepted a missing current revision")
 	}
@@ -368,6 +368,45 @@ func TestPlatformBootstrapAuthorityMigrationIsAppendOnlyAndLeastPrivilege(t *tes
 	}
 }
 
+func TestAccessControlAuthorityMigrationIsMutableAndSnapshotIndependent(t *testing.T) {
+	sql := AccessControlAuthoritySQL()
+	for _, marker := range []string{
+		"access.control_state",
+		"access.control_role_binding",
+		"access.control_grant",
+		"revision",
+		"control_role_binding_identity_immutable",
+		"control_grant_identity_immutable",
+		"control_role_binding_state_advanced",
+		"control_grant_state_advanced",
+		"control_grant_reference_consistent",
+		"revision must increase by one",
+		"control grant requires its exact durable reference",
+		"control_role_binding_no_delete",
+		"control_grant_no_delete",
+		"project_id",
+		"subject_kind",
+		"revoked_at",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("access control migration missing %q", marker)
+		}
+	}
+	for _, forbidden := range []string{
+		"access.authorization_snapshot",
+		"access.authorization_role_binding",
+		"access.authorization_grant",
+		"access.authorization_data_policy",
+		"project.role_assignment",
+		"project.control_grant",
+		"access.platform_role_binding",
+	} {
+		if strings.Contains(sql, forbidden) {
+			t.Errorf("access control migration must not mutate or duplicate %q", forbidden)
+		}
+	}
+}
+
 func validRevisions() map[int64]recordingRow {
 	return map[int64]recordingRow{
 		BaselineRevision: {
@@ -396,6 +435,9 @@ func validRevisions() map[int64]recordingRow {
 		},
 		PlatformBootstrapAuthorityRevision: {
 			revision: PlatformBootstrapAuthorityRevision, migrationID: PlatformBootstrapAuthorityMigrationID, checksum: PlatformBootstrapAuthorityChecksum(),
+		},
+		AccessControlAuthorityRevision: {
+			revision: AccessControlAuthorityRevision, migrationID: AccessControlAuthorityMigrationID, checksum: AccessControlAuthorityChecksum(),
 		},
 	}
 }

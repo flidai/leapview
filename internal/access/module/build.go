@@ -61,8 +61,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if config.Persistence == nil && config.Database == nil {
 		auth := config.ExistingAuth
 		surface := surfaceConfig{
-			Persistence: config.Persistence,
-			Auth:        auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+			Persistence: config.Persistence, InstanceID: config.InstanceID,
+			Auth: auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 			CurrentProjectID: config.CurrentProjectID,
 			Presentation:     config.Presentation, Assets: config.Assets,
 		}
@@ -132,6 +132,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	surface := surfaceConfig{
 		Persistence:                  config.Persistence,
+		InstanceID:                   config.InstanceID,
+		Control:                      config.Persistence.Control,
 		Repository:                   func() (access.Repository, error) { return repository, nil },
 		Auth:                         auth,
 		CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,

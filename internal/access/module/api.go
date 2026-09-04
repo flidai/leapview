@@ -59,6 +59,22 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.ListPrincipalSessions(w, r)
 	case "revokePrincipalSession":
 		m.handler.RevokePrincipalSession(w, r)
+	case "listRoles":
+		m.handler.ListRoles(w, r)
+	case "listEffectiveCapabilities":
+		m.handler.ListEffectiveCapabilities(w, r)
+	case "checkAuthorizationBatch":
+		m.handler.CheckAuthorizationBatch(w, r)
+	case "listGrants":
+		m.handler.ListGrants(w, r)
+	case "createGrant":
+		m.handler.CreateGrant(w, r)
+	case "getGrant":
+		m.handler.GetGrant(w, r)
+	case "updateGrant":
+		m.handler.UpdateGrant(w, r)
+	case "deleteGrant":
+		m.handler.DeleteGrant(w, r)
 	case "listServicePrincipals":
 		m.handler.ListServicePrincipals(w, r)
 	case "createServicePrincipal":

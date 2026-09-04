@@ -8,9 +8,9 @@ import (
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 )
 
-// APIGenDispatcher contains only identity, credential, group, audit, avatar,
-// and authoring operations. Project authorization endpoints are owned by the
-// immutable serving-state authorization surface.
+// APIGenDispatcher adapts generated access operations to capability-owned
+// handlers. Authorization reads consume the active immutable projection;
+// mutations use the live instance control authority.
 type APIGenDispatcher struct{ handler Handler }
 
 // APIGenTransportErrorResponder adapts generated transport failures to the
@@ -98,6 +98,32 @@ func (d *APIGenDispatcher) ListPrincipalSessions(w stdhttp.ResponseWriter, r *st
 }
 func (d *APIGenDispatcher) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
 	d.handler.RevokePrincipalSession(w, r)
+}
+func (d *APIGenDispatcher) ListRoles(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListRolesParams) {
+	d.handler.ListRoles(w, r)
+}
+func (d *APIGenDispatcher) ListEffectiveCapabilities(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListEffectiveCapabilitiesParams) {
+	d.handler.ListEffectiveCapabilities(w, r)
+}
+func (d *APIGenDispatcher) CheckAuthorizationBatch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	d.handler.CheckAuthorizationBatch(w, r)
+}
+func (d *APIGenDispatcher) ListGrants(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListGrantsParams) {
+	d.handler.ListGrants(w, r)
+}
+func (d *APIGenDispatcher) CreateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request, headers accessgen.GenCreateGrantHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	d.handler.CreateGrant(w, r)
+}
+func (d *APIGenDispatcher) GetGrant(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
+	d.handler.GetGrant(w, r)
+}
+func (d *APIGenDispatcher) UpdateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenUpdateGrantHeaders) {
+	r.Header.Set("If-Match", headers.IfMatch)
+	d.handler.UpdateGrant(w, r)
+}
+func (d *APIGenDispatcher) DeleteGrant(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
+	d.handler.DeleteGrant(w, r)
 }
 func (d *APIGenDispatcher) ListServicePrincipals(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListServicePrincipalsParams) {
 	d.handler.ListServicePrincipals(w, r)

@@ -113,3 +113,70 @@ func TestFAI609NativeAdminKeepsPostgresAdaptersCapabilityOwned(t *testing.T) {
 		}
 	}
 }
+
+// TestFAI616LiveControlAuthorityBoundary protects the focused control-plane
+// cutover: production reuses the capability-owned PostgreSQL access
+// repository, local SQLite is not promoted to a competing authority, and
+// durable authored-resource references remain behind the access port rather
+// than a cross-capability identity-ledger import.
+func TestFAI616LiveControlAuthorityBoundary(t *testing.T) {
+	root := repoRoot(t)
+	required := map[string][]string{
+		"internal/access/control.go": {
+			"type ControlStore interface",
+			"InitializeControlState(context.Context, ControlStateSeed, graph.ProjectGraph)",
+			"ControlState(context.Context, string)",
+		},
+		"internal/access/module/persistence.go": {
+			"Control     access.ControlStore",
+			"p.Control = repository",
+			"PostgreSQL live access control authority is required",
+		},
+		"internal/access/postgres/control.go": {
+			"var _ access.ControlStore = (*Repository)(nil)",
+			"project.durable_resource_reference",
+			"lockControlInstance",
+		},
+		"internal/access/snapshot/control.go": {
+			"ControlSeedFromSnapshot",
+			"FromControlState",
+			"DataPolicy is intentionally",
+		},
+	}
+	for relative, fragments := range required {
+		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := string(body)
+		for _, fragment := range fragments {
+			if !strings.Contains(source, fragment) {
+				t.Errorf("%s is missing live-control authority evidence %q", relative, fragment)
+			}
+		}
+		for _, forbidden := range []string{
+			`internal/project/identityledger`,
+			`"crypto/sha256"`,
+			`"crypto/sha512"`,
+			"jsoncanonicalizer",
+		} {
+			if strings.Contains(source, forbidden) {
+				t.Errorf("%s introduces forbidden control-plane authority %q", relative, forbidden)
+			}
+		}
+	}
+
+	sqliteFiles, err := filepath.Glob(filepath.Join(root, "internal", "access", "sqlite", "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range sqliteFiles {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), "ControlStore") || strings.Contains(string(body), "InitializeControlState") {
+			t.Errorf("%s introduces a SQLite live-control authority", path)
+		}
+	}
+}

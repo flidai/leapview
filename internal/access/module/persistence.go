@@ -23,6 +23,7 @@ import (
 // for local development and tests.
 type Persistence struct {
 	Repository  access.Repository
+	Control     access.ControlStore
 	OAuth       *mcpoauth.Service
 	Avatar      avatar.Repository
 	Authoring   access.AuthoringAuthRepository
@@ -112,6 +113,9 @@ func (p Persistence) Validate() error {
 	if p.Publication == nil {
 		return errors.New("access dashboard publication activator is required")
 	}
+	if p.backend == backendPostgres && p.Control == nil {
+		return errors.New("PostgreSQL live access control authority is required")
+	}
 	return nil
 }
 
@@ -129,6 +133,7 @@ func NewPostgresPersistence(repository *accesspostgres.Repository, oauth *mcpoau
 		return Persistence{}, errors.New("PostgreSQL access persistence requires PostgreSQL-backed MCP OAuth state")
 	}
 	p := Persistence{Repository: repository, OAuth: oauth, backend: backendPostgres}
+	p.Control = repository
 	p.Snapshot, p.Publication = postgresActivationPorts{}, postgresActivationPorts{}
 	p.Authoring, _ = any(repository).(access.AuthoringAuthRepository)
 	p.Desktop, _ = any(repository).(access.DesktopSessionRepository)

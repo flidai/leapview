@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/access/desktopauth"
 	accesshttp "github.com/flidai/leapview/internal/access/http"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -30,9 +31,11 @@ type Module struct {
 	authoringAuth                *access.AuthoringAuthService
 	currentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
 	currentProjectID             func(context.Context) (projectgraph.ResourceID, error)
+	currentAuthorizationSnapshot func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
 	logger                       *slog.Logger
 	presentation                 webpage.Presentation
 	assets                       staticasset.Resolver
+	instanceID                   string
 }
 
 type surfaceConfig struct {
@@ -48,6 +51,8 @@ type surfaceConfig struct {
 	Avatar                       *avatar.Service
 	Presentation                 webpage.Presentation
 	Assets                       staticasset.Resolver
+	InstanceID                   string
+	Control                      access.ControlStore
 }
 
 func newSurface(config surfaceConfig) (*Module, error) {
@@ -96,11 +101,12 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		}
 		return session.ID, true
 	}
-	module := &Module{auth: config.Auth, persistence: config.Persistence, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
+	module := &Module{auth: config.Auth, persistence: config.Persistence, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger, instanceID: config.InstanceID,
 		authoringAuth:                config.AuthoringAuth,
 		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 		currentProjectID:             config.CurrentProjectID,
 		presentation:                 config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
+			InstanceID: config.InstanceID, Control: config.Control,
 			Repository: config.Repository, CurrentPrincipal: currentPrincipal,
 			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession,
 			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
@@ -109,6 +115,7 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		},
 	}
 	module.handler.RequestEffectiveCapabilities = module.RequestEffectiveCapabilities
+	module.handler.AuthorizationSubjects = module.AuthorizationSubjects
 	module.handler.PlatformAdmin = module.IsPlatformAdmin
 	module.handler.RequestPlatformAdmin = module.RequestPlatformAdmin
 	return module, nil
@@ -126,6 +133,18 @@ func (m *Module) SetCurrentEffectiveCapabilities(fn func(context.Context, string
 	}
 	m.currentEffectiveCapabilities = fn
 	m.handler.CurrentEffectiveCapabilities = fn
+}
+
+// SetCurrentAuthorizationSnapshot installs the active immutable authorization
+// projection used by instance-control reads. The live control authority is
+// projected into this representation at activation; HTTP handlers never read
+// generation tables directly.
+func (m *Module) SetCurrentAuthorizationSnapshot(fn func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)) {
+	if m == nil {
+		return
+	}
+	m.currentAuthorizationSnapshot = fn
+	m.handler.AuthorizationSnapshot = fn
 }
 
 // SetCurrentProjectID installs the immutable active project identity used to
@@ -355,26 +374,14 @@ func (m *Module) RequestEffectiveCapabilities(ctx context.Context, r *http.Reque
 	if !ok {
 		return capabilities, nil
 	}
+	activeProjectID := projectgraph.ResourceID("")
 	if credential.Authoring != nil {
-		activeProjectID, err := m.CurrentProjectID(ctx)
+		activeProjectID, err = m.CurrentProjectID(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("authoring credential active project: %w", err)
 		}
-		if err := activeProjectID.Validate(); err != nil {
-			return nil, fmt.Errorf("authoring credential active project: %w", err)
-		}
-		if credential.Authoring.Scope.ProjectID != activeProjectID {
-			return nil, access.ErrAuthoringScopeDenied
-		}
-		capabilities = access.IntersectTokenCapabilities(credential.Authoring.Scope.Capabilities, capabilities)
 	}
-	if credential.Token.ID != "" {
-		if credential.Token.Capabilities != nil && len(credential.Token.Capabilities) == 0 {
-			return nil, access.ErrForbidden
-		}
-		capabilities = access.IntersectTokenCapabilities(credential.Token.Capabilities, capabilities)
-	}
-	return capabilities, nil
+	return access.AttenuateEffectiveCapabilities(activeProjectID, capabilities, credential)
 }
 
 func (m *Module) CurrentCredentialEvidence(

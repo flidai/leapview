@@ -19,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/access/avatar"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 )
 
 var (
@@ -42,6 +43,8 @@ type SessionProvider func(*stdhttp.Request) (string, bool)
 type EffectiveCapabilitiesProvider func(context.Context, *stdhttp.Request, string) ([]access.Capability, error)
 type PlatformAdminProvider func(context.Context, string) (bool, error)
 type RequestPlatformAdminProvider func(context.Context, *stdhttp.Request, string) (bool, error)
+type AuthorizationSnapshotProvider func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+type AuthorizationSubjectsProvider func(context.Context, string) ([]access.SubjectRef, error)
 
 type AuthoringAuthentication interface {
 	InstanceID() string
@@ -57,12 +60,16 @@ type AuthoringAuthentication interface {
 }
 
 type Handler struct {
+	InstanceID                   string
+	Control                      access.ControlStore
 	Repository                   RepositoryProvider
 	CurrentPrincipal             PrincipalProvider
 	CurrentCredential            CredentialProvider
 	CurrentSession               SessionProvider
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
 	RequestEffectiveCapabilities EffectiveCapabilitiesProvider
+	AuthorizationSnapshot        AuthorizationSnapshotProvider
+	AuthorizationSubjects        AuthorizationSubjectsProvider
 	// PlatformAdmin evaluates the durable instance-wide role. It is retained as
 	// a narrow callback for non-module callers; RequestPlatformAdmin additionally
 	// applies request-credential attenuation.

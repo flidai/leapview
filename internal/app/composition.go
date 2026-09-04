@@ -1228,6 +1228,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		}
 		return snapshot.EffectiveCapabilities(subjects)
 	})
+	accessModule.SetCurrentAuthorizationSnapshot(authorizationSnapshot)
 	projectIDResolver := currentProjectID
 	accessModule.SetCurrentProjectID(projectIDResolver)
 	servingSnapshotResolver := func(ctx context.Context) (string, error) {
