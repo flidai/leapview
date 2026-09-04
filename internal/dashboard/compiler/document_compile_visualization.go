@@ -323,12 +323,24 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		}
 		if variant.ColorScale != nil {
 			if variant.Color == nil {
-				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter colorScale requires color")
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale requires presentation.color")
+			}
+			if variant.ColorScale.Kind != visualizationir.VisualizationPointColorScaleKindCategorical && variant.ColorScale.Kind != visualizationir.VisualizationPointColorScaleKindQuantitative {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale.kind %q is unsupported", variant.ColorScale.Kind)
+			}
+			if variant.ColorScale.Kind == visualizationir.VisualizationPointColorScaleKindCategorical && (variant.ColorScale.Minimum != nil || variant.ColorScale.Maximum != nil) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale minimum and maximum require a quantitative scale")
+			}
+			if variant.ColorScale.Minimum != nil && !finiteDashboardFloat(*variant.ColorScale.Minimum) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale.minimum must be finite")
+			}
+			if variant.ColorScale.Maximum != nil && !finiteDashboardFloat(*variant.ColorScale.Maximum) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale.maximum must be finite")
 			}
 			if variant.ColorScale.Minimum != nil && variant.ColorScale.Maximum != nil && *variant.ColorScale.Minimum >= *variant.ColorScale.Maximum {
-				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter colorScale minimum must be less than maximum")
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale.minimum must be less than maximum")
 			}
-			point.ColorScale = &visualizationir.PointVisualizationColorScale{Kind: variant.ColorScale.Kind, Minimum: variant.ColorScale.Minimum, Maximum: variant.ColorScale.Maximum, Scheme: variant.ColorScale.Scheme}
+			point.ColorScale = &visualizationir.PointVisualizationColorScale{Kind: variant.ColorScale.Kind, Minimum: variant.ColorScale.Minimum, Maximum: variant.ColorScale.Maximum}
 		}
 		if variant.SizeScale != nil {
 			if variant.Size == nil {
