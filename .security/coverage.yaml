@@ -126,6 +126,10 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/dbt-warehouse-boundary-reference.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
   - path: .github/workflows/demo-deploy.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
