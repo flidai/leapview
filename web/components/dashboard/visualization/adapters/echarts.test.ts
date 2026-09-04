@@ -910,7 +910,7 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   expect(funnel.series[0]).toMatchObject({ id: 'series:primary:funnel', type: 'funnel', funnelAlign: 'left', sort: 'ascending', orient: 'vertical', left: '6%', right: '44%' })
 
   const graph = echartsOption(networkFixture('graph'), defaultRendererContext) as any
-  expect(graph.series[0]).toMatchObject({ id: 'series:hierarchy:graph', type: 'graph', layout: 'circular', roam: true, left: '8%', right: '8%', top: '8%', bottom: '8%', symbolSize: 16, center: ['50%', '52%'], zoom: 0.76, label: { position: 'right', distance: 8, fontSize: 13 }, labelLayout: { moveOverlap: 'shiftY' }, itemStyle: { borderColor: defaultRendererContext.colors.surface, borderWidth: 2 }, emphasis: { focus: 'adjacency' } })
+  expect(graph.series[0]).toMatchObject({ id: 'series:hierarchy:graph', type: 'graph', layout: 'circular', roam: true, left: '8%', right: '8%', top: '8%', bottom: '8%', symbolSize: 16, center: ['50%', '52%'], zoom: 0.76, label: { position: 'right', distance: 8, fontSize: 13 }, labelLayout: { moveOverlap: 'shiftY' }, itemStyle: { borderColor: defaultRendererContext.colors.surface, borderWidth: 2 }, lineStyle: { curveness: 0.3 }, emphasis: { focus: 'adjacency' } })
   expect(graph.series[0]).not.toHaveProperty('force')
   expect(graph.series[0].links[0]).toMatchObject({ source: 'A', target: 'B', __lv_dataset: 'primary', __lv_row_index: 0 })
   const layeredGraphEnvelope = networkFixture('graph') as any
@@ -926,7 +926,7 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   sankeyEnvelope.dataState.datasets[0].rows = [['Same', 'Same', 4], ['', 'Target', 2], ['Source', 'Target', 0]]
   const sankey = echartsOption(sankeyEnvelope, defaultRendererContext) as any
   expect(sankey.series[0]).toMatchObject({ id: 'series:hierarchy:sankey', type: 'sankey', orient: 'horizontal', nodeGap: 18 })
-  expect(sankey.series[0].lineStyle).toMatchObject({ color: 'gradient', opacity: 0.45 })
+  expect(sankey.series[0].lineStyle).toMatchObject({ color: 'gradient', opacity: 0.45, curveness: 0.3 })
   expect(sankey.series[0]).toMatchObject({ left: '4%', right: '30%', top: '8%', bottom: '8%', label: { width: 96 } })
   expect(sankey.series[0].links).toEqual([{ source: 'source:Same', target: 'target:Same', sourceLabel: 'Same', targetLabel: 'Same', value: 4, __lv_dataset: 'primary', __lv_row_index: 0 }])
   expect(sankey.series[0].data).toEqual([{ name: 'source:Same', displayName: 'Same' }, { name: 'target:Same', displayName: 'Same' }])
@@ -950,6 +950,7 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
     expect(option.series[0].id).toBe(`series:hierarchy:${mark}`)
     expect(option.series[0].data[0].children[0].name).toBe('child')
     if (mark === 'sunburst') {
+      expect(option.series[0].nodeClick).toBe('rootToNode')
       expect(option.series[0].radius).toEqual(['10%', '92%'])
       expect(option.series[0].label).toMatchObject({
         position: 'inside',
@@ -965,6 +966,7 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
       })
       expect(option.series[0].labelLayout).toEqual({ hideOverlap: false })
     } else {
+      expect(option.series[0]).toMatchObject({ breadcrumb: { show: true }, leafDepth: 2 })
       expect(option.series[0].label).toMatchObject({ color: '#fff', textBorderColor: 'rgba(0, 0, 0, 0.55)', textBorderWidth: 2 })
       const darkOption = echartsOption(envelope, {
         ...defaultRendererContext,
@@ -978,6 +980,9 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
       })
     }
   }
+
+  const tree = echartsOption(hierarchyFixture('tree'), defaultRendererContext) as any
+  expect(tree.series[0]).toMatchObject({ orient: 'TB', layout: 'orthogonal', initialTreeDepth: 2, roam: true })
 })
 
 test('ECharts gives donuts legible renderer defaults without changing their categories', () => {

@@ -280,6 +280,9 @@ func ValidateCanonicalDashboardCompatibility(spec document.DashboardSpec) error 
 		} else if expected != presentationType {
 			return fmt.Errorf("visual %q type %q requires %s presentation, got %s", visualID, visual.Type, expected, presentationType)
 		}
+		if err := validateCanonicalPresentationApplicability(visual.Presentation, visual.Type); err != nil {
+			return fmt.Errorf("visual %q: %w", visualID, err)
+		}
 		if !canonicalQueryCompatible(visual.Type, queryType) {
 			return fmt.Errorf("visual %q type %q is incompatible with %s query", visualID, visual.Type, queryType)
 		}

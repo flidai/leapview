@@ -202,6 +202,21 @@ func TestValidateCanonicalDashboardCompatibilityRejectsMismatchedPresentationAnd
 	}
 }
 
+func TestValidateCanonicalDashboardCompatibilityRejectsInapplicablePresentationOption(t *testing.T) {
+	initialDepth := int32(0)
+	spec := document.DashboardSpec{Visuals: map[string]document.DashboardVisual{
+		"category_sunburst": {
+			Type:         document.DashboardVisualTypeSunburst,
+			Query:        document.DashboardQuery{Value: &document.AggregateDashboardQuery{Type: "aggregate"}},
+			Presentation: document.DashboardPresentation{Value: &document.HierarchyDashboardPresentation{Type: "hierarchy", InitialDepth: &initialDepth}},
+		},
+	}}
+	err := ValidateCanonicalDashboardCompatibility(spec)
+	if err == nil || !strings.Contains(err.Error(), `visual "category_sunburst": presentation.initialDepth is not supported for sunburst visuals`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestValidateCanonicalDashboardCompatibilityRejectsUnknownPageReference(t *testing.T) {
 	spec := document.DashboardSpec{Pages: []document.DashboardPage{{
 		ID:         "overview",
