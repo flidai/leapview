@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,94 @@ import (
 
 	"github.com/flidai/leapview/internal/app/securitypolicy"
 )
+
+func TestCommandMarksTimeoutAsLifecycleFailure(t *testing.T) {
+	r := &runner{timeout: 10 * time.Millisecond}
+	result := r.command(t.TempDir(), "sh", "-c", "sleep 1")
+	if !result.timedOut || !errors.Is(result.err, context.DeadlineExceeded) {
+		t.Fatalf("timeout result = %+v, want deadline lifecycle markers", result)
+	}
+}
+
+func TestScanGoRejectsLifecycleDiagnosticsAndIncompleteStreams(t *testing.T) {
+	contract := exceptionContract{Exceptions: []securitypolicy.Exception{{
+		Scanner: "govulncheck", Rule: "GO-2026-test", Resource: "example/module",
+	}}}
+	complete := []byte(`{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module"}],"severity":"low"}}`)
+	tests := map[string]commandResult{
+		"timeout with partial JSON": {stdout: []byte(`{"finding":`), status: 1, timedOut: true},
+		"canceled":                  {stdout: complete, status: 1, canceled: true},
+		"signaled":                  {stdout: complete, status: 1, signaled: true},
+		"stderr diagnostic":         {stdout: complete, stderr: []byte("network provider unavailable\n"), status: 1},
+		"unexpected command error":  {stdout: complete, status: 1, err: errors.New("provider transport failed")},
+		"partial JSON":              {stdout: []byte(`{"finding":`), status: 1},
+		"malformed status zero":     {stdout: []byte(`{"finding":`), status: 0},
+	}
+	for name, result := range tests {
+		t.Run(name, func(t *testing.T) {
+			var calls int
+			r := &runner{
+				stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{},
+				goCommand: func(string, ...string) commandResult { calls++; return result },
+			}
+			if err := r.scanGo("/fixture/go.mod", &contract); err == nil {
+				t.Fatal("unsafe govulncheck result was accepted")
+			}
+			if calls != 1 {
+				t.Fatalf("govulncheck was invoked %d times, want 1", calls)
+			}
+		})
+	}
+}
+
+const govulnConfigMessage = `{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","db":"https://vuln.go.dev","db_last_modified":"2026-09-04T00:00:00Z","scan_mode":"source"}}`
+const govulnSBOMMessage = `{"SBOM":{"go_version":"go1.25.0","modules":[{"path":"example/root"}],"roots":["example/root"]}}`
+const cleanGovulnStream = govulnConfigMessage + "\n" + govulnSBOMMessage
+
+func cleanGovulnCommandResult() commandResult {
+	return commandResult{stdout: []byte(cleanGovulnStream)}
+}
+
+func TestScanGoEvaluatesStatusZeroJSONFindings(t *testing.T) {
+	vulnerable := []byte(cleanGovulnStream + "\n" +
+		`{"osv":{"id":"GO-2026-test"}}` + "\n" +
+		`{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module"}]}}`)
+	tests := []struct {
+		name    string
+		result  commandResult
+		wantErr string
+	}{
+		{name: "clean", result: commandResult{stdout: []byte(cleanGovulnStream)}},
+		{name: "finding with documented json status", result: commandResult{stdout: vulnerable}, wantErr: "reported finding GO-2026-test in example/module"},
+		{name: "unknown nonzero status", result: commandResult{stdout: []byte(cleanGovulnStream), status: 2}, wantErr: "status 2"},
+		{name: "progress without config", result: commandResult{stdout: []byte(`{"progress":{"message":"checking"}}`)}, wantErr: "config must be the first message"},
+		{name: "empty envelope", result: commandResult{stdout: []byte(`{}`)}, wantErr: "exactly one field"},
+		{name: "config only", result: commandResult{stdout: []byte(govulnConfigMessage)}, wantErr: "source SBOM is missing"},
+		{name: "empty source sbom", result: commandResult{stdout: []byte(govulnConfigMessage + "\n" + `{"SBOM":{}}`)}, wantErr: "source SBOM is incomplete"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var gotArgs []string
+			r := &runner{
+				stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{},
+				goCommand: func(_ string, args ...string) commandResult {
+					gotArgs = append([]string(nil), args...)
+					return test.result
+				},
+			}
+			err := r.scanGo("/fixture/go.mod", nil)
+			if test.wantErr == "" && err != nil {
+				t.Fatalf("clean stream rejected: %v", err)
+			}
+			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+				t.Fatalf("scanGo error = %v, want %q", err, test.wantErr)
+			}
+			if !containsString(gotArgs, "-json") {
+				t.Fatalf("govulncheck args = %v, want JSON mode", gotArgs)
+			}
+		})
+	}
+}
 
 func TestDiscoverMaintainedFilesAndExclusions(t *testing.T) {
 	root := t.TempDir()
@@ -128,9 +218,20 @@ func TestTypedJSONParsersRejectMalformedFindings(t *testing.T) {
 			t.Errorf("bunFindingCounts(%s) accepted malformed JSON", data)
 		}
 	}
-	if got, ok := decodeGovulnFindings([]byte(`{"finding":{}} trailing`)); ok || got != nil {
-		t.Fatalf("malformed govulncheck stream was accepted: %#v, %v", got, ok)
+	for _, data := range []string{`{"finding":{}} trailing`, `null`, `[]`, `"diagnostic"`, `{}`, `{"progress":{}}`} {
+		if stream, err := parseGovulnStream([]byte(data)); err == nil {
+			t.Fatalf("malformed govulncheck stream was accepted: %s -> %#v", data, stream)
+		}
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDiagnosticsAreBoundedAndRedacted(t *testing.T) {

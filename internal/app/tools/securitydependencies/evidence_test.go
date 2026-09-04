@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,7 +28,7 @@ func TestDefaultRunEvaluatesCompleteEvidenceWithoutLaunchingJavaScript(t *testin
 	var stdout, stderr bytes.Buffer
 	r := &runner{
 		root: fixture.root, timeout: time.Second, stdout: &stdout, stderr: &stderr, now: func() time.Time { return evidenceTestNow },
-		goCommand: func(string, ...string) commandResult { goCalls++; return commandResult{} },
+		goCommand: func(string, ...string) commandResult { goCalls++; return cleanGovulnCommandResult() },
 		bunCommand: func(string, ...string) commandResult {
 			bunCalls++
 			return commandResult{err: errors.New("Bun must not run in default mode")}
@@ -45,12 +46,47 @@ func TestDefaultRunEvaluatesCompleteEvidenceWithoutLaunchingJavaScript(t *testin
 	}
 }
 
+func TestCheckedInEvidenceMustBeRegularAndTracked(t *testing.T) {
+	t.Run("symlink is rejected", func(t *testing.T) {
+		fixture := newJavaScriptEvidenceFixture(t)
+		fixture.writeEvidence(t, fixture.evidence(nil))
+		evidencePath := filepath.Join(fixture.root, javascriptEvidenceRelativePath)
+		outside := filepath.Join(t.TempDir(), "evidence.json")
+		if err := os.Rename(evidencePath, outside); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, evidencePath); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		r := &runner{root: fixture.root, now: func() time.Time { return evidenceTestNow }}
+		if err := r.evaluateCheckedInJavaScriptEvidence(fixture.buns, fixture.npms, nil); err == nil || !strings.Contains(err.Error(), "regular file") {
+			t.Fatalf("symlink evidence was accepted: %v", err)
+		}
+	})
+
+	t.Run("untracked file is rejected in checkout", func(t *testing.T) {
+		fixture := newJavaScriptEvidenceFixture(t)
+		fixture.writeEvidence(t, fixture.evidence(nil))
+		command := exec.Command("git", "init", "-q", fixture.root)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Skipf("git unavailable: %v (%s)", err, output)
+		}
+		r := &runner{
+			root: fixture.root, timeout: time.Second, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, now: func() time.Time { return evidenceTestNow },
+			goCommand: func(string, ...string) commandResult { return cleanGovulnCommandResult() },
+		}
+		if err := r.run(); err == nil || !strings.Contains(err.Error(), "must be tracked") {
+			t.Fatalf("untracked evidence was accepted: %v", err)
+		}
+	})
+}
+
 func TestCheckedInEvidenceRejectsCriticalAndAcceptsBelowThreshold(t *testing.T) {
 	fixture := newJavaScriptEvidenceFixture(t)
 	critical := fixture.evidence(&javascriptEvidenceFinding{Advisory: "GHSA-evidence-1", Dependency: "example-package", Severity: "critical"})
 	fixture.writeEvidence(t, critical)
 	var stdout, stderr bytes.Buffer
-	r := &runner{root: fixture.root, timeout: time.Second, stdout: &stdout, stderr: &stderr, now: func() time.Time { return evidenceTestNow }, goCommand: func(string, ...string) commandResult { return commandResult{} }}
+	r := &runner{root: fixture.root, timeout: time.Second, stdout: &stdout, stderr: &stderr, now: func() time.Time { return evidenceTestNow }, goCommand: func(string, ...string) commandResult { return cleanGovulnCommandResult() }}
 	if err := r.run(); err == nil || !strings.Contains(err.Error(), "GHSA-evidence-1") || !strings.Contains(err.Error(), "example-package") {
 		t.Fatalf("critical evidence was not rejected with identity: %v", err)
 	}
@@ -270,7 +306,7 @@ func TestRefreshAtomicPreservationOnMalformedScannerOutput(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	r := &runner{
 		root: fixture.root, timeout: time.Second, stdout: &stdout, stderr: &stderr, now: func() time.Time { return evidenceTestNow },
-		goCommand: func(string, ...string) commandResult { return commandResult{} },
+		goCommand: func(string, ...string) commandResult { return cleanGovulnCommandResult() },
 		bunCommand: func(_ string, args ...string) commandResult {
 			if len(args) == 1 && args[0] == "--version" {
 				return commandResult{stdout: []byte("1.2.3\n")}
@@ -333,6 +369,89 @@ func TestRefreshPreservesEvidenceOnOperationalAndPartialFailures(t *testing.T) {
 	}
 }
 
+func TestRefreshRejectsGenericBunAndNPMDiagnostics(t *testing.T) {
+	t.Run("bun network diagnostic", func(t *testing.T) {
+		fixture := newJavaScriptEvidenceFixture(t)
+		fixture.writeEvidence(t, fixture.evidence(nil))
+		before := fixture.readEvidenceBytes(t)
+		var auditCalls int
+		r := &runner{
+			root: fixture.root, timeout: time.Second, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, now: func() time.Time { return evidenceTestNow },
+			bunRetrySleep: func(time.Duration) {},
+			bunCommand: func(_ string, args ...string) commandResult {
+				if len(args) == 1 && args[0] == "--version" {
+					return commandResult{stdout: []byte("1.2.3\n")}
+				}
+				auditCalls++
+				return commandResult{stdout: []byte(`{"example-package":[{"id":"GHSA-network-1","severity":"low"}]}`), stderr: []byte("network request failed: temporary DNS error\n"), status: 1}
+			},
+		}
+		if err := r.runRefresh(); err == nil || !strings.Contains(err.Error(), "diagnostics on stderr") {
+			t.Fatalf("generic Bun diagnostic was accepted: %v", err)
+		}
+		if auditCalls != 1 {
+			t.Fatalf("generic Bun diagnostic was retried %d times, want 1", auditCalls)
+		}
+		if after := fixture.readEvidenceBytes(t); !bytes.Equal(after, before) {
+			t.Fatal("generic Bun diagnostic overwrote evidence")
+		}
+	})
+
+	t.Run("npm network diagnostic", func(t *testing.T) {
+		fixture := newJavaScriptEvidenceFixture(t)
+		fixture.writeEvidence(t, fixture.evidence(nil))
+		before := fixture.readEvidenceBytes(t)
+		r := &runner{
+			root: fixture.root, timeout: time.Second, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, now: func() time.Time { return evidenceTestNow },
+			bunCommand: func(_ string, args ...string) commandResult {
+				if len(args) == 1 && args[0] == "--version" {
+					return commandResult{stdout: []byte("1.2.3\n")}
+				}
+				return commandResult{stdout: []byte(`{}`)}
+			},
+			npmCommand: func(_ string, args ...string) commandResult {
+				if len(args) == 1 && args[0] == "--version" {
+					return commandResult{stdout: []byte("10.0.0\n")}
+				}
+				return commandResult{stdout: []byte(cleanNPMEvidenceJSON), stderr: []byte("network request failed: temporary registry outage\n"), status: 0}
+			},
+		}
+		if err := r.runRefresh(); err == nil || !strings.Contains(err.Error(), "diagnostics on stderr") {
+			t.Fatalf("generic npm diagnostic was accepted: %v", err)
+		}
+		if after := fixture.readEvidenceBytes(t); !bytes.Equal(after, before) {
+			t.Fatal("generic npm diagnostic overwrote evidence")
+		}
+	})
+}
+
+func TestRefreshBunCriticalTransportCannotBeAcceptedOrRetried(t *testing.T) {
+	fixture := newJavaScriptEvidenceFixture(t)
+	fixture.writeEvidence(t, fixture.evidence(nil))
+	before := fixture.readEvidenceBytes(t)
+	var auditCalls int
+	r := &runner{
+		root: fixture.root, timeout: time.Second, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, now: func() time.Time { return evidenceTestNow },
+		bunRetrySleep: func(time.Duration) {},
+		bunCommand: func(_ string, args ...string) commandResult {
+			if len(args) == 1 && args[0] == "--version" {
+				return commandResult{stdout: []byte("1.2.3\n")}
+			}
+			auditCalls++
+			return commandResult{stdout: []byte(`{"example-package":[{"id":"GHSA-critical-transport","severity":"critical"}]}`), stderr: []byte("Timeout: audit request failed\n"), status: 1}
+		},
+	}
+	if err := r.runRefresh(); err == nil {
+		t.Fatal("critical Bun transport result was accepted")
+	}
+	if auditCalls != 1 {
+		t.Fatalf("critical Bun transport result was retried %d times, want 1", auditCalls)
+	}
+	if after := fixture.readEvidenceBytes(t); !bytes.Equal(after, before) {
+		t.Fatal("critical Bun transport result overwrote evidence")
+	}
+}
+
 func TestRefreshRejectsLockfileMutationDuringScan(t *testing.T) {
 	fixture := newJavaScriptEvidenceFixture(t)
 	r := &runner{
@@ -360,7 +479,7 @@ func TestRefreshTransportRetryThenCriticalWritesEvidenceAndFails(t *testing.T) {
 	r := &runner{
 		root: fixture.root, timeout: time.Second, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, now: func() time.Time { return evidenceTestNow },
 		bunRetrySleep: func(delay time.Duration) { waits = append(waits, delay) },
-		goCommand:     func(string, ...string) commandResult { return commandResult{} },
+		goCommand:     func(string, ...string) commandResult { return cleanGovulnCommandResult() },
 		bunCommand: func(_ string, args ...string) commandResult {
 			if len(args) == 1 && args[0] == "--version" {
 				return commandResult{stdout: []byte("1.2.3\n")}
@@ -434,9 +553,8 @@ func TestNPMEvidenceRequiresCompleteMetadataAndNormalizesStringVia(t *testing.T)
 	if err != nil || len(findings) != 1 || findings[0].Advisory != "GHSA-string-1" || findings[0].Severity != "low" {
 		t.Fatalf("valid npm string via = %+v, %v", findings, err)
 	}
-	fallback, err := parseNPMEvidenceFindings([]byte(`{"metadata":{"dependencies":{"total":1},"vulnerabilities":{"info":0,"low":0,"moderate":1,"high":0,"critical":0,"total":1}},"vulnerabilities":{"example-package":{"severity":"moderate"}}}`))
-	if err != nil || len(fallback) != 1 || fallback[0].Advisory != "example-package" {
-		t.Fatalf("complete npm fallback = %+v, %v", fallback, err)
+	if _, err := parseNPMEvidenceFindings([]byte(`{"metadata":{"dependencies":{"total":1},"vulnerabilities":{"info":0,"low":0,"moderate":1,"high":0,"critical":0,"total":1}},"vulnerabilities":{"example-package":{"severity":"moderate"}}}`)); err == nil {
+		t.Fatal("npm vulnerability without via was accepted")
 	}
 	numeric, err := parseNPMEvidenceFindings([]byte(`{"metadata":{"dependencies":{"total":1},"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":1,"critical":0,"total":1}},"vulnerabilities":{"example-package":{"severity":"high","via":[{"source":1158521,"severity":"high"}]}}}`))
 	if err != nil || len(numeric) != 1 || numeric[0].Advisory != "1158521" {
@@ -451,6 +569,9 @@ func TestNPMEvidenceRequiresCompleteMetadataAndNormalizesStringVia(t *testing.T)
 		[]byte(`{"metadata":{"dependencies":{"total":0}},"vulnerabilities":{"pkg":{}}}`),
 		[]byte(`{"metadata":{"dependencies":{"total":0}},"vulnerabilities":{"pkg":{"severity":"critical","via":[null]}}}`),
 		[]byte(`{"metadata":{"dependencies":{"total":1},"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":1,"total":1}},"vulnerabilities":{}}`),
+		[]byte(`{"metadata":{"dependencies":{"total":1},"vulnerabilities":{"info":0,"low":0,"moderate":1,"high":0,"critical":0,"total":1}},"vulnerabilities":{"pkg":{"severity":"moderate","via":[" "]}}}`),
+		[]byte(`{"metadata":{"dependencies":{"total":1},"vulnerabilities":{"info":0,"low":0,"moderate":1,"high":0,"critical":0,"total":1}},"vulnerabilities":{"pkg":{"severity":"moderate","via":[{}]}}}`),
+		[]byte(`{"metadata":{"dependencies":{"total":1},"vulnerabilities":{"info":0,"low":0,"moderate":1,"high":0,"critical":0,"total":1}},"vulnerabilities":{"pkg":{"severity":"moderate","via":[{"source":" "}]}}}`),
 	} {
 		if _, err := parseNPMEvidenceFindings(malformed); err == nil {
 			t.Fatalf("accepted incomplete npm audit result: %s", malformed)

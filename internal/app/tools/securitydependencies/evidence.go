@@ -77,6 +77,9 @@ type npmVulnerabilityCounts struct {
 }
 
 func (r *runner) evaluateCheckedInJavaScriptEvidence(buns, npms []string, contract *exceptionContract) error {
+	if err := r.requireTrackedJavaScriptEvidence(); err != nil {
+		return err
+	}
 	path := filepath.Join(r.root, javascriptEvidenceRelativePath)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -404,10 +407,10 @@ func (r *runner) refreshBunGraph(spec javascriptEvidenceGraphSpec) (javascriptEv
 		if isBunLifecycleError(result) {
 			return javascriptEvidenceGraph{}, commandError("bun audit", dir, result)
 		}
-		if result.status != 0 && result.status != 1 {
-			return javascriptEvidenceGraph{}, statusError("bun audit", dir, result.status)
-		}
 		count, critical, parseErr = bunFindingCounts(result.stdout)
+	}
+	if len(bytes.TrimSpace(result.stderr)) != 0 {
+		return javascriptEvidenceGraph{}, scannerDiagnosticError("bun audit", dir, result)
 	}
 	if result.status != 0 && result.status != 1 {
 		return javascriptEvidenceGraph{}, statusError("bun audit", dir, result.status)
@@ -415,7 +418,7 @@ func (r *runner) refreshBunGraph(spec javascriptEvidenceGraphSpec) (javascriptEv
 	if parseErr != nil {
 		return javascriptEvidenceGraph{}, fmt.Errorf("bun audit %s output is malformed: %w", dir, parseErr)
 	}
-	if critical == 0 && isBunTransportFailure(result) {
+	if isBunTransportFailure(result) {
 		return javascriptEvidenceGraph{}, statusError("bun audit", dir, result.status)
 	}
 	if critical == 0 && result.status != 0 && count == 0 {
@@ -438,6 +441,9 @@ func (r *runner) refreshNPMGraph(spec javascriptEvidenceGraphSpec) (javascriptEv
 	if isBunLifecycleError(result) {
 		return javascriptEvidenceGraph{}, commandError("npm audit", dir, result)
 	}
+	if len(bytes.TrimSpace(result.stderr)) != 0 {
+		return javascriptEvidenceGraph{}, scannerDiagnosticError("npm audit", dir, result)
+	}
 	if result.status != 0 && result.status != 1 {
 		return javascriptEvidenceGraph{}, statusError("npm audit", dir, result.status)
 	}
@@ -456,6 +462,9 @@ func (r *runner) scannerVersion(name, dir string, command func(string, ...string
 	if isBunLifecycleError(result) {
 		return "", commandError(name+" --version", dir, result)
 	}
+	if len(bytes.TrimSpace(result.stderr)) != 0 {
+		return "", scannerDiagnosticError(name+" --version", dir, result)
+	}
 	if result.err != nil || result.status != 0 {
 		return "", commandError(name+" --version", dir, result)
 	}
@@ -464,6 +473,13 @@ func (r *runner) scannerVersion(name, dir string, command func(string, ...string
 		return "", fmt.Errorf("%s %s returned an unusable version identity", name, dir)
 	}
 	return version, nil
+}
+
+func scannerDiagnosticError(scanner, dir string, result commandResult) error {
+	if result.status != 0 {
+		return fmt.Errorf("%s %s emitted diagnostics on stderr (status %d)", scanner, dir, result.status)
+	}
+	return fmt.Errorf("%s %s emitted diagnostics on stderr", scanner, dir)
 }
 
 func (r *runner) makeEvidenceGraph(spec javascriptEvidenceGraphSpec, version string, findings []javascriptEvidenceFinding) (javascriptEvidenceGraph, error) {
@@ -599,11 +615,14 @@ func parseNPMEvidenceFindings(data []byte) ([]javascriptEvidenceFinding, error) 
 		if !usableBunSeverity(vulnerability.Severity) {
 			return nil, errors.New("npm finding severity is not usable")
 		}
+		if len(vulnerability.Via) == 0 {
+			return nil, errors.New("npm vulnerability via is required")
+		}
 		foundAdvisory := false
 		for _, rawVia := range vulnerability.Via {
 			var viaString string
 			if err := json.Unmarshal(rawVia, &viaString); err == nil {
-				if strings.TrimSpace(viaString) == "" {
+				if viaString == "" || strings.TrimSpace(viaString) != viaString {
 					return nil, errors.New("npm advisory identity is missing")
 				}
 				findings = append(findings, javascriptEvidenceFinding{Advisory: viaString, Dependency: dependency, Severity: strings.ToLower(vulnerability.Severity)})
@@ -618,8 +637,8 @@ func parseNPMEvidenceFindings(data []byte) ([]javascriptEvidenceFinding, error) 
 			if advisory == "" {
 				advisory = jsonScalar(via["id"])
 			}
-			if advisory == "" {
-				continue
+			if advisory == "" || strings.TrimSpace(advisory) != advisory {
+				return nil, errors.New("npm advisory identity is missing")
 			}
 			severity := jsonScalar(via["severity"])
 			if severity == "" {
@@ -635,10 +654,7 @@ func parseNPMEvidenceFindings(data []byte) ([]javascriptEvidenceFinding, error) 
 			foundAdvisory = true
 		}
 		if !foundAdvisory {
-			// npm can emit a complete vulnerability record without a usable
-			// advisory object. Preserve the dependency-level identity rather
-			// than treating that complete record as an empty clean response.
-			findings = append(findings, javascriptEvidenceFinding{Advisory: dependency, Dependency: dependency, Severity: strings.ToLower(vulnerability.Severity)})
+			return nil, errors.New("npm vulnerability via contains no advisory identity")
 		}
 	}
 	sortJavaScriptFindings(findings)

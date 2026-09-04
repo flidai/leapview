@@ -43,10 +43,13 @@ func matches(contract exceptionContract, finding findingIdentity) bool {
 }
 
 type commandResult struct {
-	stdout []byte
-	stderr []byte
-	status int
-	err    error
+	stdout   []byte
+	stderr   []byte
+	status   int
+	err      error
+	timedOut bool
+	canceled bool
+	signaled bool
 }
 
 type runner struct {
@@ -87,20 +90,24 @@ func (r *runner) command(dir, name string, args ...string) commandResult {
 	command.Stderr = &stderr
 	err := command.Run()
 	status := 0
+	var timedOut, canceled, signaled bool
 	if err != nil {
 		status = 1
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
 			status = exitError.ExitCode()
 			if status < 0 {
+				signaled = true
 				status = 1
 			}
 		}
 		if ctx.Err() != nil {
 			err = fmt.Errorf("%w (command timed out after %s)", ctx.Err(), r.timeout)
+			timedOut = errors.Is(ctx.Err(), context.DeadlineExceeded)
+			canceled = errors.Is(ctx.Err(), context.Canceled)
 		}
 	}
-	return commandResult{stdout: stdout.Bytes(), stderr: stderr.Bytes(), status: status, err: err}
+	return commandResult{stdout: stdout.Bytes(), stderr: stderr.Bytes(), status: status, err: err, timedOut: timedOut, canceled: canceled, signaled: signaled}
 }
 
 func (r *runner) run() error {
@@ -221,28 +228,38 @@ func excludedPath(path string) bool {
 	return false
 }
 
-func (r *runner) scanGo(moduleFile string, contract *exceptionContract) error {
+func (r *runner) scanGo(moduleFile string, _ *exceptionContract) error {
 	dir := filepath.Dir(moduleFile)
 	fmt.Fprintf(r.stdout, "govulncheck %s\n", dir)
-	args := []string{"run", "golang.org/x/vuln/cmd/govulncheck@" + govulncheckVersion}
-	if contract != nil {
-		args = append(args, "-json")
-	}
+	args := []string{"run", "golang.org/x/vuln/cmd/govulncheck@" + govulncheckVersion, "-json"}
 	args = append(args, "./...")
 	result := r.runGoCommand(dir, args...)
-	if contract == nil {
-		r.emitDirect(result)
+	if isCommandLifecycleError(result) {
+		r.emitFailure(result)
 		return commandError("govulncheck", dir, result)
 	}
-	if result.status == 0 {
-		return nil
+	if len(bytes.TrimSpace(result.stderr)) != 0 {
+		r.emitFailure(result)
+		return fmt.Errorf("govulncheck %s emitted diagnostics on stderr", dir)
 	}
-	if allGovulnFindingsWaived(result.stdout, *contract) {
-		fmt.Fprintf(r.stdout, "govulncheck %s: all findings match exact, active exceptions\n", dir)
-		return nil
+	if result.status != 0 {
+		r.emitFailure(result)
+		return statusError("govulncheck", dir, result.status)
 	}
-	r.emitFailure(result)
-	return commandError("govulncheck", dir, result)
+	if result.err != nil {
+		r.emitFailure(result)
+		return commandError("govulncheck", dir, result)
+	}
+	stream, err := parseGovulnStream(result.stdout)
+	if err != nil {
+		r.emitFailure(result)
+		return fmt.Errorf("govulncheck %s output is malformed or incomplete: %w", dir, err)
+	}
+	if len(stream.findings) > 0 {
+		finding := stream.findings[0]
+		return fmt.Errorf("govulncheck %s reported finding %s in %s", dir, finding.OSV, finding.Trace[0].Module)
+	}
+	return nil
 }
 
 func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
@@ -296,6 +313,10 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 		fmt.Fprintf(r.stdout, "bun audit %s: no Critical findings\n", dir)
 		return nil
 	}
+	if isBunTransportFailure(result) {
+		r.emitFailure(result)
+		return statusError("bun audit", dir, result.status)
+	}
 	status := result.status
 	if status == 0 {
 		status = 1
@@ -347,7 +368,18 @@ func isBunTransportFailure(result commandResult) bool {
 }
 
 func isBunLifecycleError(result commandResult) bool {
-	return errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)
+	return isCommandLifecycleError(result)
+}
+
+func isCommandLifecycleError(result commandResult) bool {
+	if result.timedOut || result.canceled || result.signaled {
+		return true
+	}
+	if errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded) {
+		return true
+	}
+	var exitError *exec.ExitError
+	return errors.As(result.err, &exitError) && exitError.ProcessState != nil && exitError.ProcessState.ExitCode() < 0
 }
 
 func hasBunTransportSignature(data []byte) bool {
@@ -409,6 +441,12 @@ func (r *runner) emitFailure(result commandResult) {
 }
 
 func commandError(scanner, dir string, result commandResult) error {
+	if isCommandLifecycleError(result) {
+		if result.err != nil {
+			return fmt.Errorf("%s %s failed: %w", scanner, dir, result.err)
+		}
+		return fmt.Errorf("%s %s failed due to command lifecycle interruption", scanner, dir)
+	}
 	if result.err != nil {
 		return fmt.Errorf("%s %s failed: %w", scanner, dir, result.err)
 	}
@@ -423,53 +461,6 @@ func statusError(scanner, dir string, status int) error {
 		status = 1
 	}
 	return fmt.Errorf("%s %s failed with status %d", scanner, dir, status)
-}
-
-type govulnEnvelope struct {
-	Finding *govulnFinding `json:"finding"`
-}
-
-type govulnFinding struct {
-	OSV   json.RawMessage `json:"osv"`
-	Trace []struct {
-		Module json.RawMessage `json:"module"`
-	} `json:"trace"`
-	Severity json.RawMessage `json:"severity"`
-}
-
-func allGovulnFindingsWaived(data []byte, contract exceptionContract) bool {
-	findings, ok := decodeGovulnFindings(data)
-	if !ok || len(findings) == 0 {
-		return false
-	}
-	for _, finding := range findings {
-		if finding.OSV == nil || len(finding.Trace) == 0 || finding.Trace[0].Module == nil || finding.Severity == nil {
-			return false
-		}
-		identity := findingIdentity{Scanner: "govulncheck", Rule: jsonScalar(finding.OSV), Resource: jsonScalar(finding.Trace[0].Module), Severity: jsonScalar(finding.Severity)}
-		if identity.Rule == "" || identity.Resource == "" || identity.Severity == "" || !matches(contract, identity) {
-			return false
-		}
-	}
-	return true
-}
-
-func decodeGovulnFindings(data []byte) ([]govulnFinding, bool) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	var findings []govulnFinding
-	for {
-		var envelope govulnEnvelope
-		err := decoder.Decode(&envelope)
-		if errors.Is(err, io.EOF) {
-			return findings, true
-		}
-		if err != nil {
-			return nil, false
-		}
-		if envelope.Finding != nil {
-			findings = append(findings, *envelope.Finding)
-		}
-	}
 }
 
 func bunFindingCounts(data []byte) (findingCount, criticalCount int, err error) {

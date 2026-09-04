@@ -117,6 +117,9 @@ func TestDependencyGateUsesOfflineEvidenceAndSeparateRefresh(t *testing.T) {
 	if !strings.Contains(required, "go run ./internal/app/tools/securitydependencies -root .") {
 		t.Fatal("required dependency task does not invoke the default security dependency evaluator")
 	}
+	if strings.Contains(required, "\n    deps:") {
+		t.Fatal("required dependency task must not prepare or invoke a live dependency path")
+	}
 	if strings.Contains(required, "-refresh-javascript-evidence") {
 		t.Fatal("required dependency task refreshes JavaScript evidence instead of evaluating the checked-in document")
 	}
@@ -125,6 +128,9 @@ func TestDependencyGateUsesOfflineEvidenceAndSeparateRefresh(t *testing.T) {
 	}
 	if !strings.Contains(refresh, "go run ./internal/app/tools/securitydependencies -root . -refresh-javascript-evidence") {
 		t.Fatal("JavaScript evidence refresh task does not invoke the explicit refresh flag")
+	}
+	if !strings.Contains(refresh, "deps:\n      - ci:prepare") {
+		t.Fatal("JavaScript evidence refresh task must prepare its live provider environment explicitly")
 	}
 	if strings.Contains(workflow, "task security:dependencies:evidence:refresh") {
 		t.Fatal("required Security workflow invokes the opt-in JavaScript evidence refresh")

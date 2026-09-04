@@ -1391,8 +1391,6 @@ tasks:
 
   security:dependencies:
     desc: Evaluate .security/javascript-vulnerability-evidence.json offline and run live source-aware Go dependency checks
-    deps:
-      - ci:prepare
     cmds:
       - go run ./internal/app/tools/securitydependencies -root .
 

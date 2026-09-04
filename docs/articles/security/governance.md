@@ -42,7 +42,8 @@ runs a live, source-aware `govulncheck` evaluation for every maintained Go
 module. The JavaScript evidence covers exactly five graphs: the root Bun graph,
 Desktop Bun, qualification Bun, the malicious-instance Electron Bun graph, and
 the APIGen TypeSpec npm graph. Every graph binds both its manifest and lockfile
-to SHA-256 identities and carries bounded UTC generation and expiry timestamps.
+to SHA-256 identities and carries UTC generation and expiry timestamps. The
+evidence lifetime cannot exceed 7 days (168 hours).
 The evaluator rejects missing, stale, future-dated, malformed, or mismatched
 evidence; it never turns unavailable input into a pass.
 
@@ -79,6 +80,21 @@ including a result with a blocking finding, replaces the document atomically;
 an operationally failed refresh cannot leave a newly claimed clean document or
 extend the old document's expiry. The required default remains offline for
 JavaScript evidence, while the live Go scan remains source-aware on every run.
+
+The scheduled/manual nightly workflow runs this refresh in a dedicated,
+read-only job, validates the resulting document through
+`task security:dependencies`, and uploads the evidence for review only when
+the refresh succeeds. It never commits or pushes. Reviewers compare the
+provider identities, normalized findings, exact seven-day timestamps, and
+manifest/lock SHA-256 bindings with the dependency change, then check the
+reviewed evidence into the same pull request. A refresh outage fails that job
+and leaves the prior checked-in document untouched; it does not extend expiry
+or turn an outage into a pass.
+
+The existing `dependency-security` aggregate and the retained
+`dependencyreport` clearance path are separate broad/live scanner paths where
+their workflows invoke them. They are not the required PR JavaScript evidence
+evaluator, and their live-scan behavior must not be described as offline.
 
 The security owner triages both feeds, assigns each accepted finding to the
 component owner, and verifies the remediation or exception evidence. The
