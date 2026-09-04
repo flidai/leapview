@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
@@ -110,7 +111,7 @@ func ensureTestRuntimeHost(ctx context.Context, store *platform.Store, states te
 		subjects = append(subjects, testRuntimeSubject{subject: subject, role: role})
 		return nil
 	}
-	if err := addSubject("dev", access.ProjectRoleAdmin); err != nil {
+	if err := addSubject(accessmodule.DevelopmentPrincipalID, access.ProjectRoleAdmin); err != nil {
 		return nil, err
 	}
 	for _, principal := range principals {

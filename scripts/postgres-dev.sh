@@ -15,7 +15,14 @@ ENV_FILE="${LEAPVIEW_POSTGRES_DEV_ENV_FILE:-$ROOT/.tmp/postgres-dev.env}"
 if [[ -f "$ENV_FILE" ]]; then
   while IFS='=' read -r generated_name generated_value; do
     case "$generated_name" in
-      LEAPVIEW_POSTGRES_*_PASSWORD)
+      LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD | \
+        LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD | \
+        LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD | \
+        LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD | \
+        LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_PASSWORD | \
+        LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD | \
+        LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD | \
+        LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD)
         if [[ -z "${!generated_name:-}" ]]; then
           export "$generated_name=$generated_value"
         fi

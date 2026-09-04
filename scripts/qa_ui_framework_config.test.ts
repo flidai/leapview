@@ -56,6 +56,8 @@ test('PostgreSQL helper preserves generated credentials across repeated up runs'
   const source = await readFile('scripts/postgres-dev.sh', 'utf8')
 
   expect(source).toContain('generated env file is the durable source for local credentials')
+  expect(source).toContain('LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD |')
+  expect(source).toContain('LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD)')
   expect(source).toContain('LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD=%s')
   expect(source).toContain('chmod 600 "$ENV_FILE"')
 
