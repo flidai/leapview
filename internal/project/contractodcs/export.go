@@ -1,10 +1,8 @@
 package contractodcs
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"regexp"
 	"sort"
 	"strings"
@@ -58,14 +56,14 @@ func Export(publication identityledger.ContractPublication) (Result, error) {
 	var mappingErr error
 	switch envelope.Kind {
 	case "Source":
-		var projection contractprojection.Source
-		if err := decodeStrictProjection(publication.CanonicalBytes, &projection); err != nil {
+		projection, err := contractprojection.DecodeSourcePublication(publication.CanonicalBytes)
+		if err != nil {
 			return Result{}, fmt.Errorf("%w: decode Source projection: %v", ErrInvalidPublication, err)
 		}
 		mappingErr = mapSource(projection, &document, reports)
 	case "Model":
-		var projection contractprojection.Model
-		if err := decodeStrictProjection(publication.CanonicalBytes, &projection); err != nil {
+		projection, err := contractprojection.DecodeModelPublication(publication.CanonicalBytes)
+		if err != nil {
 			return Result{}, fmt.Errorf("%w: decode Model projection: %v", ErrInvalidPublication, err)
 		}
 		mappingErr = mapModel(projection, &document, reports)
@@ -119,20 +117,7 @@ func validatePublication(publication identityledger.ContractPublication) (projec
 	return envelope, nil
 }
 
-func decodeStrictProjection(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return fmt.Errorf("trailing JSON value")
-	}
-	return nil
-}
-
-func mapSource(projection contractprojection.Source, document *Document, reports *reportBuilder) error {
+func mapSource(projection contractprojection.SourceView, document *Document, reports *reportBuilder) error {
 	reports.mapped("schema.object")
 	reports.loss(LossEntry{
 		Kind: LossDropped, SourceField: "contract.schema.mode", Reason: "ODCS 3.1 has no equivalent for LeapView declared-versus-inferred schema mode.",
@@ -175,7 +160,7 @@ func mapSource(projection contractprojection.Source, document *Document, reports
 	return nil
 }
 
-func mapModel(projection contractprojection.Model, document *Document, reports *reportBuilder) error {
+func mapModel(projection contractprojection.ModelView, document *Document, reports *reportBuilder) error {
 	reports.mapped("schema.object")
 	reports.loss(LossEntry{
 		Kind: LossDropped, SourceField: "contract.definition", Reason: "Executable SQL AST and direct source bindings are never exported to ODCS.",
@@ -289,7 +274,7 @@ func logicalType(value string) (string, map[string]any, bool, bool) {
 	}
 }
 
-func mapEntities(projection contractprojection.Model, object *SchemaObject, propertyIndex map[string]*SchemaProperty, reports *reportBuilder) error {
+func mapEntities(projection contractprojection.ModelView, object *SchemaObject, propertyIndex map[string]*SchemaProperty, reports *reportBuilder) error {
 	grain, exists := projection.Contract.Entities[projection.Contract.Grain.Entity]
 	if !exists {
 		reports.loss(unsupported("contract.grain.entity", "Selected grain does not resolve to a projected entity."))

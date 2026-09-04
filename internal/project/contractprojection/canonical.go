@@ -42,13 +42,13 @@ func validateProjectionEnvelope(value Projection) error {
 	var profile, apiVersion, kind, expectedKind string
 	switch typed := value.(type) {
 	case Source:
-		profile, apiVersion, kind = typed.Profile, typed.APIVersion, typed.Kind
+		profile, apiVersion, kind = typed.payload.Profile, typed.payload.APIVersion, typed.payload.Kind
 		expectedKind = "Source"
 	case Model:
-		profile, apiVersion, kind = typed.Profile, typed.APIVersion, typed.Kind
+		profile, apiVersion, kind = typed.payload.Profile, typed.payload.APIVersion, typed.payload.Kind
 		expectedKind = "Model"
 	case SemanticModel:
-		profile, apiVersion, kind = typed.Profile, typed.APIVersion, typed.Kind
+		profile, apiVersion, kind = typed.payload.Profile, typed.payload.APIVersion, typed.payload.Kind
 		expectedKind = "SemanticModel"
 	default:
 		return fmt.Errorf("canonicalize contract projection: unsupported projection %T", value)
@@ -73,8 +73,12 @@ func Digest(value Projection) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return digestCanonicalBytes(canonical), nil
+}
+
+func digestCanonicalBytes(canonical []byte) string {
 	sum := sha256.Sum256(canonical)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func normalizeJSONStrings(encoded []byte) ([]byte, error) {

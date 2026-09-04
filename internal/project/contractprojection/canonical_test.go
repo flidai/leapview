@@ -38,20 +38,23 @@ func TestCrossLanguageProjectionFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var projection Source
-	if err := json.Unmarshal(input, &projection); err != nil {
-		t.Fatal(err)
+	if _, err := DecodeSourcePublication(input); err == nil {
+		t.Fatal("non-canonical publication bytes were accepted")
 	}
-	got, err := CanonicalBytes(projection)
+	wire, err := os.ReadFile("testdata/cross-language-projection.canonical.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := os.ReadFile("testdata/cross-language-projection.canonical.json")
+	wire = bytes.TrimSpace(wire)
+	got, err := canonicalPublicationBytes(input, "Source")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, bytes.TrimSpace(want)) {
-		t.Fatalf("canonical bytes = %s, want %s", got, bytes.TrimSpace(want))
+	if !bytes.Equal(got, wire) {
+		t.Fatalf("canonical bytes = %s, want %s", got, wire)
+	}
+	if _, err := DecodeSourcePublication(wire); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -214,6 +217,34 @@ func TestSemanticProjectionPreservesTypedExactValuesAndExcludesPresentation(t *t
 	}
 }
 
+func TestDecodeSemanticPublicationRejectsNestedUnknownUnionField(t *testing.T) {
+	canonical := []byte(`{"apiVersion":"leapview.dev/v1","contract":{"datasets":{},"filters":{"active":{"field":"orders.id","operator":"equals","value":{"type":"String","value":"yes"}}},"metrics":{}},"kind":"SemanticModel","metadata":{"contract":{"compatibility":"backward","version":"1.2.3"},"id":"semantic-model:sales","name":"sales"},"profile":"leapview.contract/v1"}`)
+	if _, err := DecodeSemanticModelPublication(canonical); err != nil {
+		t.Fatalf("valid SemanticModel publication was rejected: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(canonical, &payload); err != nil {
+		t.Fatal(err)
+	}
+	contract := payload["contract"].(map[string]any)
+	filters := contract["filters"].(map[string]any)
+	active := filters["active"].(map[string]any)
+	value := active["value"].(map[string]any)
+	value["unknown"] = true
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withUnknown, err := canonicalizeRFC8785(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeSemanticModelPublication(withUnknown); err == nil {
+		t.Fatal("nested unknown field in SemanticModel union was accepted")
+	}
+}
+
 func TestSemanticSetNormalizationAndLiteralBoundaries(t *testing.T) {
 	values, err := canonicalAllowedValues([]any{"z", "a", "z"})
 	if err != nil {
@@ -244,7 +275,7 @@ func TestSemanticSetNormalizationAndLiteralBoundaries(t *testing.T) {
 }
 
 func TestCanonicalBytesNormalizesUnicodeAndRejectsControlCharacters(t *testing.T) {
-	value := Source{Profile: Profile, APIVersion: "leapview.dev/v1", Kind: "Source", Metadata: Metadata{ID: "source:cafe", Name: "Cafe\u0301", Contract: testContract}, Contract: SourceContract{Schema: SourceSchema{Mode: "inferred"}}}
+	value := projectSource(t, bytes.Replace(sourceJSON(false), []byte(`"name":"customers"`), []byte(`"name":"Cafe\u0301"`), 1))
 	canonical, err := CanonicalBytes(value)
 	if err != nil {
 		t.Fatal(err)
@@ -252,24 +283,76 @@ func TestCanonicalBytesNormalizesUnicodeAndRejectsControlCharacters(t *testing.T
 	if !strings.Contains(string(canonical), `"name":"Café"`) {
 		t.Fatalf("canonical string was not NFC: %s", canonical)
 	}
-	value.Metadata.Name = "bad\nname"
-	if _, err := CanonicalBytes(value); err == nil || !strings.Contains(err.Error(), "control character") {
+	badName := bytes.Replace(sourceJSON(false), []byte(`"name":"customers"`), []byte(`"name":"bad\nname"`), 1)
+	if _, err := ProjectSource(decodeSource(t, badName), testContract); err == nil || !strings.Contains(err.Error(), "control character") {
 		t.Fatalf("control-character error = %v", err)
 	}
 }
 
 func TestCanonicalBytesRejectsInvalidEnvelopeAndLossyIntegers(t *testing.T) {
-	value := Source{Profile: "wrong-profile", APIVersion: "leapview.dev/v1", Kind: "Source", Metadata: Metadata{ID: "source:orders", Name: "orders", Contract: testContract}, Contract: SourceContract{Schema: SourceSchema{Mode: "inferred"}}}
-	if _, err := CanonicalBytes(value); err == nil || !strings.Contains(err.Error(), "invalid envelope") {
+	badEnvelope := bytes.Replace(sourceJSON(false), []byte(`"apiVersion":"leapview.dev/v1"`), []byte(`"apiVersion":"wrong"`), 1)
+	if _, err := ProjectSource(decodeSource(t, badEnvelope), testContract); err == nil || !strings.Contains(err.Error(), "envelope") {
 		t.Fatalf("invalid envelope error = %v", err)
 	}
 
-	field := "updated_at"
-	value.Profile = Profile
-	value.Contract.Freshness = &SourceFreshness{Basis: "field", Field: &field, WarningAfter: &Duration{Amount: 1<<53 + 1, Unit: "second"}}
+	large := bytes.Replace(sourceJSON(false), []byte(`"amount":2`), []byte(`"amount":9007199254740993`), 1)
+	value := projectSource(t, large)
 	if _, err := CanonicalBytes(value); err == nil || !strings.Contains(err.Error(), "RFC 8785 exact range") {
 		t.Fatalf("lossy integer error = %v", err)
 	}
+}
+
+func TestSealedProjectionRejectsBypassAndZeroValue(t *testing.T) {
+	var zero Source
+	if _, err := CanonicalBytes(zero); err == nil {
+		t.Fatal("zero-value Source was accepted as a projection")
+	}
+	if err := json.Unmarshal([]byte(`{"profile":"leapview.contract/v1"}`), &zero); err == nil {
+		t.Fatal("JSON unmarshalling manufactured a sealed Source")
+	}
+	if _, implements := any(SourceView{}).(Projection); implements {
+		t.Fatal("generated SourceView unexpectedly satisfies Projection")
+	}
+	if _, implements := any(ModelView{}).(Projection); implements {
+		t.Fatal("generated ModelView unexpectedly satisfies Projection")
+	}
+	if _, implements := any(SemanticModelView{}).(Projection); implements {
+		t.Fatal("generated SemanticModelView unexpectedly satisfies Projection")
+	}
+}
+
+func TestProjectedPayloadAndCanonicalBytesAreMutationSafe(t *testing.T) {
+	authored := decodeSource(t, sourceJSON(false))
+	projected, err := ProjectSource(authored, testContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := CanonicalBytes(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first[0] = 'x'
+	authored.Metadata.Name = "mutated"
+	authored.Spec.Connection = "connection:mutated"
+	second, err := CanonicalBytes(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(second), "mutated") {
+		t.Fatalf("authored mutation leaked into sealed projection: %s", second)
+	}
+	if second[0] != '{' {
+		t.Fatalf("canonical bytes were not returned as a defensive copy: %s", second)
+	}
+}
+
+func projectSource(t *testing.T, encoded []byte) Source {
+	t.Helper()
+	value, err := ProjectSource(decodeSource(t, encoded), testContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 func decodeSource(t *testing.T, encoded []byte) projectcontracts.Source {

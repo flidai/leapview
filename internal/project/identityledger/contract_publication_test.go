@@ -2,20 +2,22 @@ package identityledger
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/flidai/leapview/internal/project/contractprojection"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 )
 
 func TestPrepareContractPublicationUsesProjectionAuthority(t *testing.T) {
-	datatype := "String"
-	nullable := false
-	fields := map[string]contractprojection.Field{"id": {Datatype: &datatype, Nullable: &nullable}}
-	projection := contractprojection.Source{
-		Profile: contractprojection.Profile, APIVersion: "leapview.dev/v1", Kind: "Source",
-		Metadata: contractprojection.Metadata{ID: "source:orders", Name: "orders", Contract: contractprojection.Contract{Version: "1.2.3+build.7", Compatibility: "backward"}},
-		Contract: contractprojection.SourceContract{Schema: contractprojection.SourceSchema{Mode: "strict", Fields: &fields}},
+	var source projectcontracts.Source
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"connection:warehouse","location":{"type":"path","path":"/tmp/orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{"id":{"datatype":"String","nullable":false}}}}}`), &source); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := contractprojection.ProjectSource(source, contractprojection.Contract{Version: "1.2.3+build.7", Compatibility: "backward"})
+	if err != nil {
+		t.Fatal(err)
 	}
 	input := ContractPublicationInput{
 		InstanceID: "instance-a", Projection: projection,

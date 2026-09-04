@@ -87,20 +87,26 @@ func TestSchemaAndExtensionValidationRejectUnsupportedFields(t *testing.T) {
 }
 
 func TestUnsupportedFeaturesRejectWithoutPartialDocument(t *testing.T) {
-	semantic := contractprojection.SemanticModel{
-		Profile: contractprojection.Profile, APIVersion: "leapview.dev/v1", Kind: "SemanticModel",
-		Metadata: contractprojection.Metadata{ID: "semantic-model:sales", Name: "sales", Contract: contract()},
-		Contract: contractprojection.SemanticModelContract{Datasets: map[string]contractprojection.SemanticDataset{}, Metrics: map[string]contractprojection.SemanticMetric{}},
+	var authored projectcontracts.SemanticModel
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic-model:sales","name":"sales"},"spec":{"datasets":{},"metrics":{}}}`), &authored); err != nil {
+		t.Fatal(err)
+	}
+	semantic, err := contractprojection.ProjectSemanticModel(authored, contract())
+	if err != nil {
+		t.Fatal(err)
 	}
 	result, err := Export(publication(t, semantic))
 	if !errors.Is(err, ErrUnsupportedMapping) || len(result.Document) != 0 || len(result.LossReport.Entries) != 2 || !hasLoss(result.LossReport, LossUnsupported, "contract") {
 		t.Fatalf("SemanticModel result=%#v err=%v", result, err)
 	}
 
-	opaque := contractprojection.Source{
-		Profile: contractprojection.Profile, APIVersion: "leapview.dev/v1", Kind: "Source",
-		Metadata: contractprojection.Metadata{ID: "source:opaque", Name: "opaque", Contract: contract()},
-		Contract: contractprojection.SourceContract{Schema: contractprojection.SourceSchema{Mode: "strict", Fields: &map[string]contractprojection.Field{"payload": {Datatype: pointer("Opaque")}}}},
+	var authoredSource projectcontracts.Source
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:opaque","name":"opaque"},"spec":{"connection":"connection:warehouse","location":{"type":"path","path":"/tmp/opaque.csv","format":"csv"},"schema":{"mode":"strict","fields":{"payload":{"datatype":"Opaque"}}}}}`), &authoredSource); err != nil {
+		t.Fatal(err)
+	}
+	opaque, err := contractprojection.ProjectSource(authoredSource, contract())
+	if err != nil {
+		t.Fatal(err)
 	}
 	result, err = Export(publication(t, opaque))
 	if !errors.Is(err, ErrUnsupportedMapping) || len(result.Document) != 0 || !hasLoss(result.LossReport, LossUnsupported, "contract.schema.fields.payload.datatype") {
@@ -136,9 +142,7 @@ func TestSecretsBindingsAndExecutableSQLCannotLeak(t *testing.T) {
 }
 
 func TestInvalidQualityMappingRejects(t *testing.T) {
-	projection := modelProjection()
-	checks := []contractprojection.ModelCheck{{ID: "bad_values", Type: "accepted_values", Field: pointer("email")}}
-	projection.Contract.Checks = &checks
+	projection := modelProjection(true)
 	result, err := Export(publication(t, projection))
 	if !errors.Is(err, ErrUnsupportedMapping) || !hasLoss(result.LossReport, LossUnsupported, "contract.checks.bad_values") {
 		t.Fatalf("invalid quality result=%#v err=%v", result, err)
@@ -168,34 +172,32 @@ func sourcePublication(t *testing.T) identityledger.ContractPublication {
 
 func modelPublication(t *testing.T) identityledger.ContractPublication {
 	t.Helper()
-	return publication(t, modelProjection())
+	return publication(t, modelProjection(false))
 }
 
-func modelProjection() contractprojection.Model {
-	fields := map[string]contractprojection.Field{
-		"id":     {Datatype: pointer("String"), Nullable: boolPointer(false)},
-		"email":  {Datatype: pointer("String"), Nullable: boolPointer(true)},
-		"amount": {Datatype: pointer("Decimal"), Nullable: boolPointer(true)},
+func modelProjection(unsupported bool) contractprojection.Model {
+	checks := `
+    ,"checks":[
+      {"id":"id_present","type":"non_null","field":"id","severity":"error"},
+      {"id":"email_values","type":"accepted_values","field":"email","values":["a@example.com","b@example.com"],"severity":"warning"},
+      {"id":"email_unique","type":"unique","fields":["email"],"severity":"error"},
+      {"id":"customer_link","type":"relationship","field":"id","to":"customers.id","severity":"warning"},
+      {"id":"row_bounds","type":"row_count","minimum":1,"maximum":100,"severity":"error"}`
+	if unsupported {
+		checks += `,{"id":"bad_values","type":"accepted_values","field":"unknown","values":["unused"]}`
 	}
-	checks := []contractprojection.ModelCheck{
-		{ID: "id_present", Type: "non_null", Field: pointer("id"), Severity: pointer("error")},
-		{ID: "email_values", Type: "accepted_values", Field: pointer("email"), Values: &[]string{"a@example.com", "b@example.com"}, Severity: pointer("warning")},
-		{ID: "email_unique", Type: "unique", Fields: &[]string{"email"}, Severity: pointer("error")},
-		{ID: "customer_link", Type: "relationship", Field: pointer("id"), To: pointer("customers.id"), Severity: pointer("warning")},
-		{ID: "row_bounds", Type: "row_count", Minimum: int64Pointer(1), Maximum: int64Pointer(100), Severity: pointer("error")},
+	checks += `]`
+	encoded := []byte(`{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders","contract":{"version":"1.2.3","compatibility":"backward"}},"spec":{"definition":{"type":"direct","source":"source:customers"},"entities":{"order":{"type":"primary","fields":["id"]},"email_index":{"type":"unique","fields":["email"]}},"grain":{"entity":"order"},"fields":{"id":{"datatype":"String","nullable":false},"email":{"datatype":"String","nullable":true},"amount":{"datatype":"Decimal","nullable":true}}`)
+	encoded = append(encoded, []byte(checks+`}}`)...)
+	var authored projectcontracts.Model
+	if err := json.Unmarshal(encoded, &authored); err != nil {
+		panic(err)
 	}
-	return contractprojection.Model{
-		Profile: contractprojection.Profile, APIVersion: "leapview.dev/v1", Kind: "Model",
-		Metadata: contractprojection.Metadata{ID: "model:orders", Name: "orders", Contract: contract()},
-		Contract: contractprojection.ModelContract{
-			Definition: contractprojection.ModelDefinition{Type: "sql", SQLAst: pointer("EXECUTABLE_SQL_SENTINEL")},
-			Entities: map[string]contractprojection.ModelEntity{
-				"order":       {Type: "primary", Fields: []string{"id"}},
-				"email_index": {Type: "unique", Fields: []string{"email"}},
-			},
-			Grain: contractprojection.ModelGrain{Entity: "order"}, Fields: fields, Checks: &checks,
-		},
+	value, err := contractprojection.ProjectModel(authored, contract())
+	if err != nil {
+		panic(err)
 	}
+	return value
 }
 
 func publication(t *testing.T, projection contractprojection.Projection) identityledger.ContractPublication {
@@ -214,10 +216,6 @@ func publication(t *testing.T, projection contractprojection.Projection) identit
 func contract() contractprojection.Contract {
 	return contractprojection.Contract{Version: "1.2.3", Compatibility: "backward"}
 }
-
-func pointer(value string) *string    { return &value }
-func boolPointer(value bool) *bool    { return &value }
-func int64Pointer(value int64) *int64 { return &value }
 
 func hasLoss(report LossReport, kind LossKind, source string) bool {
 	for _, entry := range report.Entries {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/project/contractprojection"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/project/identityledger"
 	"github.com/flidai/leapview/internal/release"
 )
@@ -233,16 +234,25 @@ func facetTestPipeline(t *testing.T) Pipeline {
 
 func facetTestSourcePublication(t *testing.T) ContractPublication {
 	t.Helper()
-	fields := map[string]contractprojection.Field{
-		"id":       {Datatype: facetString("String")},
-		"order_id": {Datatype: facetString("String")},
-		"a":        {Datatype: facetString("String")},
-		"z":        {Datatype: facetString("String")},
+	encoded, _ := json.Marshal(map[string]any{
+		"apiVersion": "leapview.dev/v1", "kind": "Source",
+		"metadata": map[string]any{"id": "source:orders", "name": "orders"},
+		"spec": map[string]any{
+			"connection": "connection:warehouse",
+			"location":   map[string]any{"type": "path", "path": "/tmp/orders.csv", "format": "csv"},
+			"schema": map[string]any{"mode": "strict", "fields": map[string]any{
+				"id": map[string]any{"datatype": "String"}, "order_id": map[string]any{"datatype": "String"},
+				"a": map[string]any{"datatype": "String"}, "z": map[string]any{"datatype": "String"},
+			}},
+		},
+	})
+	var authored projectcontracts.Source
+	if err := json.Unmarshal(encoded, &authored); err != nil {
+		t.Fatal(err)
 	}
-	projection := contractprojection.Source{
-		Profile: contractprojection.Profile, APIVersion: "leapview.dev/v1", Kind: "Source",
-		Metadata: contractprojection.Metadata{ID: "source:orders", Name: "orders", Contract: contractprojection.Contract{Version: "1.0.0", Compatibility: "backward"}},
-		Contract: contractprojection.SourceContract{Schema: contractprojection.SourceSchema{Mode: "strict", Fields: &fields}},
+	projection, err := contractprojection.ProjectSource(authored, contractprojection.Contract{Version: "1.0.0", Compatibility: "backward"})
+	if err != nil {
+		t.Fatal(err)
 	}
 	publication, err := identityledger.PrepareContractPublication(identityledger.ContractPublicationInput{
 		InstanceID: "instance:commerce", Projection: projection,
@@ -256,24 +266,14 @@ func facetTestSourcePublication(t *testing.T) ContractPublication {
 
 func facetTestModelPublication(t *testing.T) ContractPublication {
 	t.Helper()
-	checks := []contractprojection.ModelCheck{
-		{ID: "id_present", Type: "non_null", Field: facetString("id"), Severity: facetString("error")},
-		{ID: "amount_present", Type: "non_null", Field: facetString("amount"), Severity: facetString("warning")},
-		{ID: "row_bounds", Type: "row_count", Minimum: facetInt64(1), Maximum: facetInt64(100), Severity: facetString("error")},
-		{ID: "row_bounds_secondary", Type: "row_count", Minimum: facetInt64(1), Maximum: facetInt64(100), Severity: facetString("error")},
+	encoded := []byte(`{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders"},"spec":{"definition":{"type":"direct","source":"source:orders"},"entities":{"order":{"type":"primary","fields":["id"]}},"grain":{"entity":"order"},"fields":{"id":{"datatype":"String"},"amount":{"datatype":"Decimal"}},"checks":[{"id":"id_present","type":"non_null","field":"id","severity":"error"},{"id":"amount_present","type":"non_null","field":"amount","severity":"warning"},{"id":"row_bounds","type":"row_count","minimum":1,"maximum":100,"severity":"error"},{"id":"row_bounds_secondary","type":"row_count","minimum":1,"maximum":100,"severity":"error"}]}}`)
+	var authored projectcontracts.Model
+	if err := json.Unmarshal(encoded, &authored); err != nil {
+		t.Fatal(err)
 	}
-	fields := map[string]contractprojection.Field{
-		"id":     {Datatype: facetString("String")},
-		"amount": {Datatype: facetString("Decimal")},
-	}
-	projection := contractprojection.Model{
-		Profile: contractprojection.Profile, APIVersion: "leapview.dev/v1", Kind: "Model",
-		Metadata: contractprojection.Metadata{ID: "model:orders", Name: "orders", Contract: contractprojection.Contract{Version: "1.2.3", Compatibility: "backward"}},
-		Contract: contractprojection.ModelContract{
-			Definition: contractprojection.ModelDefinition{Type: "sql", SQLAst: facetString("EXECUTABLE_SQL_SENTINEL")},
-			Entities:   map[string]contractprojection.ModelEntity{"order": {Type: "primary", Fields: []string{"id"}}},
-			Grain:      contractprojection.ModelGrain{Entity: "order"}, Fields: fields, Checks: &checks,
-		},
+	projection, err := contractprojection.ProjectModel(authored, contractprojection.Contract{Version: "1.2.3", Compatibility: "backward"})
+	if err != nil {
+		t.Fatal(err)
 	}
 	publication, err := identityledger.PrepareContractPublication(identityledger.ContractPublicationInput{
 		InstanceID: "instance:commerce", Projection: projection,
@@ -324,6 +324,3 @@ func facetValue(t *testing.T, facets Facets, name string) map[string]any {
 	}
 	return value
 }
-
-func facetString(value string) *string { return &value }
-func facetInt64(value int64) *int64    { return &value }

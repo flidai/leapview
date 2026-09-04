@@ -58,7 +58,7 @@ func ProjectSource(value projectcontracts.Source, contract Contract) (Source, er
 	if err != nil {
 		return Source{}, err
 	}
-	return Source{Profile: Profile, APIVersion: input.APIVersion, Kind: input.Kind, Metadata: metadata, Contract: SourceContract{Schema: schema, Freshness: freshness}}, nil
+	return Source{payload: projectcontracts.SourceContractProjection{Profile: Profile, APIVersion: input.APIVersion, Kind: input.Kind, Metadata: metadata, Contract: SourceContract{Schema: schema, Freshness: freshness}}}, nil
 }
 
 func projectSourceSchema(raw json.RawMessage) (SourceSchema, error) {
@@ -255,7 +255,7 @@ func ProjectModel(value projectcontracts.Model, contract Contract) (Model, error
 	if len(checks) > 0 {
 		body.Checks = &checks
 	}
-	return Model{Profile: Profile, APIVersion: input.APIVersion, Kind: input.Kind, Metadata: metadata, Contract: body}, nil
+	return Model{payload: projectcontracts.ModelContractProjection{Profile: Profile, APIVersion: input.APIVersion, Kind: input.Kind, Metadata: metadata, Contract: body}}, nil
 }
 
 type authoredSemanticFilter struct {
@@ -426,7 +426,7 @@ func ProjectSemanticModel(value projectcontracts.SemanticModel, contract Contrac
 		}
 		result.Metrics[name] = metric
 	}
-	return SemanticModel{Profile: Profile, APIVersion: input.APIVersion, Kind: input.Kind, Metadata: metadata, Contract: result}, nil
+	return SemanticModel{payload: projectcontracts.SemanticModelContractProjection{Profile: Profile, APIVersion: input.APIVersion, Kind: input.Kind, Metadata: metadata, Contract: result}}, nil
 }
 
 func projectSemanticFilter(value authoredSemanticFilter, dimensions map[string]struct {

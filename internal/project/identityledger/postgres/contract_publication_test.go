@@ -2,12 +2,14 @@ package postgres
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/project/contractprojection"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/identityledger"
 )
@@ -155,13 +157,22 @@ func TestContractPublicationConcurrency(t *testing.T) {
 }
 
 func publicationInput(instance, authoredID, version, mode string) identityledger.ContractPublicationInput {
-	fields := map[string]contractprojection.Field{
-		"order_id": {Datatype: stringPointer("String"), Nullable: boolPointer(false)},
+	encoded, _ := json.Marshal(map[string]any{
+		"apiVersion": "leapview.dev/v1", "kind": "Source",
+		"metadata": map[string]any{"id": authoredID, "name": "orders"},
+		"spec": map[string]any{
+			"connection": "connection:warehouse",
+			"location":   map[string]any{"type": "path", "path": "/tmp/orders.csv", "format": "csv"},
+			"schema":     map[string]any{"mode": mode, "fields": map[string]any{"order_id": map[string]any{"datatype": "String", "nullable": false}}},
+		},
+	})
+	var authored projectcontracts.Source
+	if err := json.Unmarshal(encoded, &authored); err != nil {
+		panic(err)
 	}
-	projection := contractprojection.Source{
-		Profile: contractprojection.Profile, APIVersion: "leapview.dev/v1", Kind: "Source",
-		Metadata: contractprojection.Metadata{ID: authoredID, Name: "orders", Contract: contractprojection.Contract{Version: version, Compatibility: "backward"}},
-		Contract: contractprojection.SourceContract{Schema: contractprojection.SourceSchema{Mode: mode, Fields: &fields}},
+	projection, err := contractprojection.ProjectSource(authored, contractprojection.Contract{Version: version, Compatibility: "backward"})
+	if err != nil {
+		panic(err)
 	}
 	return identityledger.ContractPublicationInput{
 		InstanceID: instance, Projection: projection,
@@ -171,9 +182,6 @@ func publicationInput(instance, authoredID, version, mode string) identityledger
 		}},
 	}
 }
-
-func stringPointer(value string) *string { return &value }
-func boolPointer(value bool) *bool       { return &value }
 
 func activeBundleFor(id string) string {
 	if id == "source:replay" {

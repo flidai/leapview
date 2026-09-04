@@ -22,6 +22,14 @@
           "unique": true,
           "quality": [
             {
+              "id": "email_unique",
+              "name": "email_unique",
+              "type": "library",
+              "metric": "duplicateValues",
+              "severity": "error",
+              "mustBe": 0
+            },
+            {
               "id": "email_values",
               "name": "email_values",
               "type": "library",
@@ -33,14 +41,6 @@
                 ]
               },
               "severity": "warning",
-              "mustBe": 0
-            },
-            {
-              "id": "email_unique",
-              "name": "email_unique",
-              "type": "library",
-              "metric": "duplicateValues",
-              "severity": "error",
               "mustBe": 0
             }
           ]
@@ -92,7 +92,7 @@
         "namespace": "leapview.dev/odcs-extension/v1",
         "resourceKind": "Model",
         "projectionProfile": "leapview.contract/v1",
-        "projectionDigest": "sha256:ffd74dcccd84bc4421dc7570188a90eba20f6d7d7b3a3442ae548026fb5af941"
+        "projectionDigest": "sha256:b5890fa790e7656f40bdc25e74959faf75bce0e54d1428bfae60d74b79e425cc"
       },
       "description": "Immutable LeapView publication provenance; not executable contract semantics."
     }

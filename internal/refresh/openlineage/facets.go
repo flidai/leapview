@@ -1,10 +1,7 @@
 package openlineage
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -327,11 +324,12 @@ func decodeContractPublication(publication ContractPublication) (publicationSche
 	var version string
 	var fields []schemaField
 	var checks map[string]publishedCheck
-	var canonical []byte
+	var digest string
+	var projectionErr error
 	switch publication.ResourceKind {
 	case projectgraph.KindSource:
-		var projection contractprojection.Source
-		if err := decodeExact(publication.CanonicalBytes, &projection); err != nil {
+		projection, err := contractprojection.DecodeSourcePublication(publication.CanonicalBytes)
+		if err != nil {
 			return publicationSchema{}, fmt.Errorf("contract publication %q: decode Source projection: %w", publication.AuthoredID, err)
 		}
 		if projection.Kind != "Source" || projection.Metadata.ID != publication.AuthoredID.String() {
@@ -339,10 +337,10 @@ func decodeContractPublication(publication ContractPublication) (publicationSche
 		}
 		version = projection.Metadata.Contract.Version
 		fields = sourceSchemaFields(projection)
-		canonical, err = contractprojection.CanonicalBytes(projection)
+		digest, projectionErr = contractprojection.DigestSourcePublication(publication.CanonicalBytes)
 	case projectgraph.KindModel:
-		var projection contractprojection.Model
-		if err := decodeExact(publication.CanonicalBytes, &projection); err != nil {
+		projection, err := contractprojection.DecodeModelPublication(publication.CanonicalBytes)
+		if err != nil {
 			return publicationSchema{}, fmt.Errorf("contract publication %q: decode Model projection: %w", publication.AuthoredID, err)
 		}
 		if projection.Kind != "Model" || projection.Metadata.ID != publication.AuthoredID.String() {
@@ -354,55 +352,24 @@ func decodeContractPublication(publication ContractPublication) (publicationSche
 		if err != nil {
 			return publicationSchema{}, fmt.Errorf("contract publication %q: authored checks: %w", publication.AuthoredID, err)
 		}
-		canonical, err = contractprojection.CanonicalBytes(projection)
+		digest, projectionErr = contractprojection.DigestModelPublication(publication.CanonicalBytes)
 	default:
 		return publicationSchema{}, fmt.Errorf("contract publication %q has unsupported resource kind %q", publication.AuthoredID, publication.ResourceKind)
 	}
-	if err != nil {
-		return publicationSchema{}, fmt.Errorf("contract publication %q: canonicalize projection: %w", publication.AuthoredID, err)
+	if projectionErr != nil {
+		return publicationSchema{}, fmt.Errorf("contract publication %q: canonicalize projection: %w", publication.AuthoredID, projectionErr)
 	}
-	if version != publication.Version || !bytes.Equal(canonical, publication.CanonicalBytes) {
+	if version != publication.Version {
 		return publicationSchema{}, fmt.Errorf("contract publication %q disagrees with canonical projection", publication.AuthoredID)
 	}
-	var digest string
-	switch publication.ResourceKind {
-	case projectgraph.KindSource:
-		var projection contractprojection.Source
-		if err := json.Unmarshal(canonical, &projection); err != nil {
-			return publicationSchema{}, fmt.Errorf("contract publication %q: decode canonical projection: %w", publication.AuthoredID, err)
-		}
-		digest, err = contractprojection.Digest(projection)
-	case projectgraph.KindModel:
-		var projection contractprojection.Model
-		if err := json.Unmarshal(canonical, &projection); err != nil {
-			return publicationSchema{}, fmt.Errorf("contract publication %q: decode canonical projection: %w", publication.AuthoredID, err)
-		}
-		digest, err = contractprojection.Digest(projection)
-	}
-	if err != nil || digest != publication.Digest {
+	if digest != publication.Digest {
 		return publicationSchema{}, fmt.Errorf("contract publication %q has inconsistent digest", publication.AuthoredID)
 	}
 	sort.Slice(fields, func(i, j int) bool { return fields[i].name < fields[j].name })
 	return publicationSchema{version: publication.Version, fields: fields, checks: checks}, nil
 }
 
-func decodeExact(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("trailing JSON value")
-		}
-		return err
-	}
-	return nil
-}
-
-func sourceSchemaFields(projection contractprojection.Source) []schemaField {
+func sourceSchemaFields(projection contractprojection.SourceView) []schemaField {
 	if projection.Contract.Schema.Fields == nil {
 		return []schemaField{}
 	}
@@ -417,7 +384,7 @@ func sourceSchemaFields(projection contractprojection.Source) []schemaField {
 	return fields
 }
 
-func modelSchemaFields(projection contractprojection.Model) []schemaField {
+func modelSchemaFields(projection contractprojection.ModelView) []schemaField {
 	fields := make([]schemaField, 0, len(projection.Contract.Fields))
 	for name, field := range projection.Contract.Fields {
 		value := schemaField{name: name}
@@ -429,7 +396,7 @@ func modelSchemaFields(projection contractprojection.Model) []schemaField {
 	return fields
 }
 
-func modelPublishedChecks(projection contractprojection.Model) (map[string]publishedCheck, error) {
+func modelPublishedChecks(projection contractprojection.ModelView) (map[string]publishedCheck, error) {
 	checks := make(map[string]publishedCheck)
 	if projection.Contract.Checks == nil {
 		return checks, nil
