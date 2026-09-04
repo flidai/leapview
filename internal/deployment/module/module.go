@@ -192,7 +192,6 @@ type Config struct {
 	Production  bool
 	// States is retained for publication authorization reads.
 	States                    ServingStatePort
-	MaxJSONBodyBytes          int64
 	Logger                    *slog.Logger
 	InstanceID                string
 	CanonicalOrigin           string
@@ -355,7 +354,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	options := deploymenthttp.Options{MaxJSONBodyBytes: config.MaxJSONBodyBytes}
+	options := deploymenthttp.Options{}
 	options.CurrentPrincipal = func(r *http.Request) (deploymenthttp.Principal, bool) {
 		if config.CurrentPrincipal == nil {
 			return deploymenthttp.Principal{}, false
@@ -407,8 +406,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			return nil, err
 		}
 	}
-	options.Coordinator = coordinator
-	options.Logger = config.Logger
 	options.InstanceEnvironment = config.InstanceEnvironment
 	jobs := config.Jobs
 	if jobs.Coordinator == nil {

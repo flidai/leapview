@@ -3,7 +3,6 @@ package http
 
 import (
 	"context"
-	"log/slog"
 	stdhttp "net/http"
 
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
@@ -21,11 +20,8 @@ type Coordinator interface {
 }
 
 type Options struct {
-	Coordinator         Coordinator
 	CurrentPrincipal    func(*stdhttp.Request) (Principal, bool)
-	MaxJSONBodyBytes    int64
 	InstanceEnvironment string
-	Logger              *slog.Logger
 }
 
 type Handler struct {
@@ -33,12 +29,6 @@ type Handler struct {
 }
 
 func NewHandler(options Options) *Handler {
-	if options.MaxJSONBodyBytes <= 0 {
-		options.MaxJSONBodyBytes = 1 << 20
-	}
-	if options.Logger == nil {
-		options.Logger = slog.Default()
-	}
 	return &Handler{options: options}
 }
 
