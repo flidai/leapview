@@ -195,6 +195,114 @@ func claimRiverRefreshTest(ctx context.Context, adapter *PostgresJobsAdapter, ca
 	return claimed, err == nil, err
 }
 
+func TestPostgresClaimRiverJobRejectsRescuedAttemptAndAllowsHandoff(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
+	identity := projectgraph.ServingIdentity{ProjectID: "project-river-handoff", Environment: "prod", GenerationID: "generation-river-handoff"}
+	plan, err := projectpipelineplan.New(projectpipelineplan.Plan{
+		ID: "pipeline-plan-river-handoff", PipelineID: "pipeline-river-handoff", ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
+		SemanticModelID: "semantic-river-handoff", ServingGenerationID: identity.GenerationID,
+		ArtifactDigest: digest('a'), SelectionDigest: digest('b'), MaterializationScope: []string{"model-river-handoff"}, ModelExecutionOrder: []string{"model-river-handoff"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run-river-handoff"
+	input := refreshrun.RunInput{
+		RunID: runID, Identity: identity, SemanticModelID: projectgraph.ResourceID(plan.SemanticModelID), PipelineID: projectgraph.ResourceID(plan.PipelineID), PipelinePlan: &plan,
+		InvocationSource: "manual", PrincipalID: "principal:river-handoff", EstimatedMemoryBytes: 1,
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(plan.PipelineID), TriggerType: refreshrun.TriggerManual,
+		JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`,
+	}
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := queue.EnqueueRefreshTx(t.Context(), tx, input, runID)
+	if err == nil {
+		_, err = refreshRepo.CreateRunTx(t.Context(), tx, refreshpostgres.RunInput{
+			RunID: runID, ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
+			PipelineID: plan.PipelineID, SemanticModelID: plan.SemanticModelID, TargetType: refreshrun.TargetRefreshPipeline, TargetID: plan.PipelineID,
+			TriggerType: refreshrun.TriggerManual, InvocationSource: "manual", PlanDigest: plan.Digest, ArtifactDigest: plan.ArtifactDigest,
+			PrincipalID: input.PrincipalID, JobID: jobID,
+		})
+	}
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	history, err := jobsRepo.Get(t.Context(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var riverID int64
+	if err := db.QueryRow(t.Context(), `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, jobID).Scan(&riverID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `UPDATE public.river_job SET state='running', attempt=1, attempted_by=ARRAY['owner-a'] WHERE id=$1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	riverJob := &river.Job[jobspostgres.RefreshPipelineArgs]{JobRow: &rivertype.JobRow{
+		ID: riverID, Attempt: 1, State: rivertype.JobStateRunning, AttemptedBy: []string{"owner-a"},
+	}}
+	workerCtx := jobspostgres.ContextWithRiverExecution(t.Context(), riverJob, "owner-a", time.Minute)
+	history, err = jobsRepo.MarkRunning(workerCtx, jobID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history.LeaseOwner = "owner-a"
+	history.LeaseGeneration = 1
+	if _, err := db.Exec(t.Context(), `UPDATE public.river_job SET state='retryable', attempted_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.ClaimRiverJob(workerCtx, history, time.Minute); !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("rescued attempt claim error = %v, want conflict", err)
+	}
+	var runStatus string
+	var runAttemptCount, runFence int64
+	if err := db.QueryRow(t.Context(), `SELECT status,attempt_count,fence_generation FROM refresh.run WHERE run_id=$1`, runID).Scan(&runStatus, &runAttemptCount, &runFence); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != "queued" || runAttemptCount != 0 || runFence != 0 {
+		t.Fatalf("rescued attempt changed refresh run to status=%q attempts=%d fence=%d", runStatus, runAttemptCount, runFence)
+	}
+	var durableAttempts int
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM refresh.attempt WHERE run_id=$1`, runID).Scan(&durableAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if durableAttempts != 0 {
+		t.Fatalf("rescued attempt left %d durable refresh attempts", durableAttempts)
+	}
+
+	if _, err := db.Exec(t.Context(), `UPDATE public.river_job SET state='running', attempt=2, attempted_by=ARRAY['owner-a','owner-b'] WHERE id=$1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	nextRiverJob := &river.Job[jobspostgres.RefreshPipelineArgs]{JobRow: &rivertype.JobRow{
+		ID: riverID, Attempt: 2, State: rivertype.JobStateRunning, AttemptedBy: []string{"owner-a", "owner-b"},
+	}}
+	nextWorkerCtx := jobspostgres.ContextWithRiverExecution(t.Context(), nextRiverJob, "owner-b", time.Minute)
+	history, err = jobsRepo.MarkRunning(nextWorkerCtx, jobID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history.LeaseOwner = "owner-b"
+	history.LeaseGeneration = 2
+	claimed, err := queue.ClaimRiverJob(nextWorkerCtx, history, time.Minute)
+	if err != nil {
+		t.Fatalf("handoff attempt claim: %v", err)
+	}
+	if claimed.LeaseOwner != "owner-b" || claimed.LeaseRevision != 2 {
+		t.Fatalf("handoff claim fence = %q/%d, want owner-b/2", claimed.LeaseOwner, claimed.LeaseRevision)
+	}
+}
+
 // listRiverRefreshJobs is test-only setup for selecting a pending product
 // history row before simulating River's locked delivery. Production exposes
 // no list/claim loop outside River.
@@ -478,6 +586,9 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, servingArtifactDigest 
 		t.Fatal(err)
 	}
 	if _, err := delivery.CreateSnapshotSeal(t.Context(), deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: poolID, TenantDomain: "tenant-concrete", Region: "us-east", EncryptionDomain: "enc-concrete", ObjectNamespace: "objects/concrete", CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, CatalogVersion: 1, DuckLakeSnapshotID: 777, RelationNamespace: "candidate/concrete", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/concrete/777", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: admission.CompatibilityDigest, ServingArtifactID: "artifact-concrete", ServingArtifactDigest: servingArtifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `INSERT INTO ducklake.snapshot_retention(physical_pool_id,catalog_id,snapshot_id,state) VALUES ($1,$2,$3,'live')`, poolID, "catalog-concrete", int64(777)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := delivery.QualifyCandidate(t.Context(), candidateID, sealID, digest('3')); err != nil {

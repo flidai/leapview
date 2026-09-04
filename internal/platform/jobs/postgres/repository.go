@@ -442,6 +442,19 @@ func (r *Repository) RiverJobIDTx(ctx context.Context, tx Tx, id string) (int64,
 	return *riverID, nil
 }
 
+// ValidateCurrentClaimTx locks the River row bound to a product job and
+// verifies the exact owner/attempt fence. The caller must invoke this on the
+// same transaction that admits its product-side attempt, so a rescued worker
+// cannot establish a refresh lease after River has handed the job to a newer
+// attempt.
+func (r *Repository) ValidateCurrentClaimTx(ctx context.Context, tx Tx, id string, fence jobs.Fence) error {
+	// Direct adapter callers retain the narrow bootstrap compatibility used by
+	// poison-payload handling: an available, never-attempted River row may be
+	// terminalized before River starts a worker. A real worker always carries
+	// completion context, so rescued or otherwise non-running rows fail closed.
+	return r.lockRiverFence(ctx, tx, id, fence, completionFromContext(ctx) == nil)
+}
+
 // lockRiverFence locks the operational row that is bound to a product job and
 // verifies the exact River claim before the caller mutates product history or
 // River state. River's completion/cancellation helpers identify a row by ID;

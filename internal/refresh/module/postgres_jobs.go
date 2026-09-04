@@ -199,6 +199,14 @@ func (a *PostgresJobsAdapter) ClaimRiverJob(ctx context.Context, job jobs.Job, l
 		if _, err := a.Refresh.ClaimAttemptTx(ctx, tx, run.RunID, owner, int64(job.Attempts), lease); err != nil {
 			return err
 		}
+		// ClaimAttemptTx and the River-row validation share this transaction. The
+		// refresh update is therefore rolled back if River rescued this worker
+		// between MarkRunning and this adapter boundary. Keep this check after
+		// ClaimAttemptTx so the lock order remains refresh.run -> river_job,
+		// matching the fenced terminal transitions below.
+		if err := a.Jobs.ValidateCurrentClaimTx(ctx, tx, job.ID, jobs.Fence{Owner: owner, Generation: int64(job.Attempts)}); err != nil {
+			return err
+		}
 		run, err = a.Refresh.LookupRunTx(ctx, tx, job.ResourceID)
 		if err != nil {
 			return err

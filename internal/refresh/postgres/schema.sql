@@ -542,7 +542,7 @@ BEGIN
 		IF OLD.status='prepared' AND NEW.status NOT IN ('running','prepared','succeeded','failed','cancelled','superseded') THEN RAISE EXCEPTION 'illegal prepared run transition'; END IF;
 		IF NEW.status='running' THEN
 			IF NEW.lease_owner = '' OR NEW.lease_expires_at IS NULL OR NEW.lease_expires_at <= clock_timestamp() OR NEW.lease_expires_at > clock_timestamp() + interval '24 hours' THEN RAISE EXCEPTION 'running run requires a live bounded lease'; END IF;
-			IF OLD.status='queued' AND (NEW.fence_generation <> OLD.fence_generation + 1 OR NEW.attempt_count <> OLD.attempt_count + 1 OR NEW.started_at IS NULL) THEN RAISE EXCEPTION 'queued run claim must advance fence and attempt'; END IF;
+			IF OLD.status='queued' AND (NEW.fence_generation <= OLD.fence_generation OR NEW.attempt_count <> OLD.attempt_count + 1 OR NEW.started_at IS NULL) THEN RAISE EXCEPTION 'queued run claim must advance fence and attempt'; END IF;
 			IF OLD.status='running' AND NEW.fence_generation > OLD.fence_generation AND (OLD.lease_expires_at IS NULL OR OLD.lease_expires_at > clock_timestamp() OR NEW.attempt_count <> OLD.attempt_count + 1) THEN RAISE EXCEPTION 'run takeover requires expired lease and next attempt'; END IF;
 			IF OLD.status='prepared' AND (NEW.fence_generation <> OLD.fence_generation + 1 OR NEW.attempt_count <> OLD.attempt_count + 1 OR OLD.lease_expires_at IS NULL OR OLD.lease_expires_at > clock_timestamp()) THEN RAISE EXCEPTION 'prepared run takeover requires expired lease and next attempt'; END IF;
 			IF OLD.status='running' AND NEW.fence_generation = OLD.fence_generation AND NEW.lease_owner IS DISTINCT FROM OLD.lease_owner THEN RAISE EXCEPTION 'run owner change requires a new fence'; END IF;
