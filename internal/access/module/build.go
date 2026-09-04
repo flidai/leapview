@@ -19,7 +19,14 @@ import (
 
 type Config struct {
 	// Persistence is the capability-owned authority bundle.
-	Persistence                  *Persistence
+	Persistence *Persistence
+	// ProfileRepository is an explicitly injected, non-production repository for
+	// persistence-free profile/test surfaces. It keeps those surfaces governed
+	// without allowing the composition root to infer a database backend.
+	ProfileRepository access.Repository
+	// ProfileOAuthResource supplies the MCP resource verifier for persistence-free
+	// profile/test surfaces. Internal OAuth state remains PostgreSQL-owned.
+	ProfileOAuthResource         mcpoauth.ResourceServer
 	Production                   bool
 	Auth                         AuthConfig
 	ExistingAuth                 *Auth
@@ -35,24 +42,36 @@ type Config struct {
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
+	if config.Production && (config.ProfileRepository != nil || config.ProfileOAuthResource != nil) {
+		return nil, errors.New("production access build rejects profile-only authority injection")
+	}
+	if config.Persistence != nil && (config.ProfileRepository != nil || config.ProfileOAuthResource != nil) {
+		return nil, errors.New("profile-only authority injection requires persistence-free access build")
+	}
 	if config.Production && config.Persistence == nil {
 		return nil, errors.New("production access build requires injected PostgreSQL persistence")
 	}
 	if config.Persistence == nil {
 		auth := config.ExistingAuth
 		surface := surfaceConfig{
-			Persistence: config.Persistence,
-			Auth:        auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+			Persistence:   config.Persistence,
+			OAuthResource: config.ProfileOAuthResource,
+			Auth:          auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 			CurrentProjectID:   config.CurrentProjectID,
 			AuthoringProjectID: config.AuthoringProjectID,
 			Presentation:       config.Presentation, Assets: config.Assets,
+		}
+		if config.ProfileRepository != nil {
+			surface.Repository = func() (access.Repository, error) { return config.ProfileRepository, nil }
 		}
 		if auth != nil {
 			// ExistingAuth is an explicitly injected profile/test authority. Keep
 			// its repository available to the HTTP surface so authenticated
 			// persistence-free assemblies retain the same subject and credential
 			// lookups as the auth middleware.
-			if auth.repo != nil {
+			if auth.repo != nil && surface.Repository == nil {
+				// An explicitly supplied profile repository is authoritative;
+				// otherwise preserve the repository paired with ExistingAuth.
 				surface.Repository = func() (access.Repository, error) { return auth.repo, nil }
 			}
 			surface.CurrentPrincipal = auth.Principal

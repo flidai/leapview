@@ -352,6 +352,9 @@ func tokenRequest(t *testing.T, service *mcpoauth.Service, request *http.Request
 	if response.Code != http.StatusOK {
 		t.Fatalf("token status = %d body=%s", response.Code, response.Body.String())
 	}
+	if response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("token cache headers = %v, want no-store/no-cache", response.Header())
+	}
 	var token mcpoauth.TokenResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &token); err != nil {
 		t.Fatalf("decode token: %v", err)

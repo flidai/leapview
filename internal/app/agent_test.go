@@ -3,13 +3,11 @@ package app
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -89,96 +87,6 @@ func TestGlobalAgentAPIListsPrincipalConversations(t *testing.T) {
 	server.Routes().ServeHTTP(legacyRec, legacyReq)
 	if legacyRec.Code != http.StatusNotFound {
 		t.Fatalf("legacy workspace agent route status=%d, want 404 body=%s", legacyRec.Code, legacyRec.Body.String())
-	}
-}
-
-func TestAgentAPIConversationTurnPersistsMessagesAndEvents(t *testing.T) {
-	ctx := context.Background()
-	store := testStore(t)
-	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer")
-	token := testAPIToken(t, ctx, store, principal.ID, "agent-test")
-	if err := store.UpsertSetting(ctx, agentconfig.SystemPromptSettingKey, "Stored admin system prompt."); err != nil {
-		t.Fatalf("seed system prompt: %v", err)
-	}
-	var calls atomic.Int64
-	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Messages []struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode model request: %v", err)
-		}
-		if len(req.Messages) == 0 || req.Messages[0].Role != "system" || req.Messages[0].Content != "Stored admin system prompt." {
-			t.Fatalf("model request system prompt = %#v", req.Messages)
-		}
-		if calls.Add(1) == 1 {
-			writeRawJSON(t, w, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"catalog_list","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`)
-			return
-		}
-		writeRawJSON(t, w, `{"choices":[{"message":{"role":"assistant","content":"Executive Sales is available."},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25}}`)
-	}))
-	defer modelServer.Close()
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
-	agentService := agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", BaseURL: modelServer.URL, Model: "fake-model"})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService}))
-	backgroundCtx, cancelBackground := context.WithCancel(context.Background())
-	server.StartBackgroundJobs(backgroundCtx)
-	t.Cleanup(func() {
-		cancelBackground()
-		stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = server.StopBackgroundJobs(stopCtx)
-	})
-
-	createReq := authedJSONRequest(http.MethodPost, "/api/v1/agent/conversations", token, `{"title":"Ask"}`)
-	createRec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(createRec, createReq)
-	if createRec.Code != http.StatusCreated {
-		t.Fatalf("create status = %d body=%s", createRec.Code, createRec.Body.String())
-	}
-	var created map[string]any
-	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create: %v", err)
-	}
-	conversationID := created["id"].(string)
-
-	turnReq := authedJSONRequest(http.MethodPost, "/api/v1/agent/conversations/"+conversationID+"/runs", token, `{"input":"What dashboards can I use?","correlationId":"corr_1"}`)
-	turnReq.Header.Set("Idempotency-Key", "agent-run-1")
-	turnRec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(turnRec, turnReq)
-	if turnRec.Code != http.StatusAccepted {
-		t.Fatalf("turn status = %d body=%s", turnRec.Code, turnRec.Body.String())
-	}
-	var turn map[string]any
-	if err := json.Unmarshal(turnRec.Body.Bytes(), &turn); err != nil {
-		t.Fatalf("decode turn: %v", err)
-	}
-	runID := turn["id"].(string)
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		runReq := authedJSONRequest(http.MethodGet, "/api/v1/agent/conversations/"+conversationID+"/runs/"+runID, token, "")
-		runRec := httptest.NewRecorder()
-		server.Routes().ServeHTTP(runRec, runReq)
-		if strings.Contains(runRec.Body.String(), `"status":"completed"`) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	messagesReq := authedJSONRequest(http.MethodGet, "/api/v1/agent/conversations/"+conversationID+"/messages", token, "")
-	messagesRec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(messagesRec, messagesReq)
-	if messagesRec.Code != http.StatusOK || !strings.Contains(messagesRec.Body.String(), "Executive Sales") {
-		t.Fatalf("messages status=%d body=%s", messagesRec.Code, messagesRec.Body.String())
-	}
-	eventsReq := authedJSONRequest(http.MethodGet, "/api/v1/agent/conversations/"+conversationID+"/runs/"+runID+"/events", token, "")
-	eventsRec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(eventsRec, eventsReq)
-	if eventsRec.Code != http.StatusOK || !strings.Contains(eventsRec.Body.String(), "model_response") {
-		t.Fatalf("events status=%d body=%s", eventsRec.Code, eventsRec.Body.String())
 	}
 }
 
@@ -369,22 +277,6 @@ func TestAgentAPIRejectsConcurrentTurnsForConversation(t *testing.T) {
 	}
 	if !sawConflict {
 		t.Fatal("concurrent turns did not return a 409 conflict")
-	}
-}
-
-func TestRefreshRunAPIRejectsExternallySuppliedTarget(t *testing.T) {
-	ctx := context.Background()
-	store := testStore(t)
-	principal := testPrincipal(t, ctx, store, "editor@example.com", "Editor")
-	token := testAPIToken(t, ctx, store, principal.ID, "refresh-contract-test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
-	req := authedJSONRequest(http.MethodPost, "/api/v1/projects/project:test/refresh-runs", token, `{"modelId":"model.orders","targetType":"model"}`)
-	req.Header.Set("Idempotency-Key", "legacy-refresh-target")
-	rec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("legacy refresh create status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

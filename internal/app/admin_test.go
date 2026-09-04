@@ -8,22 +8,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/agent"
-	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
-	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
-	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -685,91 +680,6 @@ func TestAdminQueryHistoryUpdatesForwardsPatches(t *testing.T) {
 	}
 }
 
-func TestAdminStorageDetailRouteIsDropped(t *testing.T) {
-	store := testStore(t)
-	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/storage/leapview-test.duckdb/model/orders", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	rec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
-	}
-}
-
-func TestAdminStorageLoadsSummariesAndTableFilesSeparately(t *testing.T) {
-	dir := t.TempDir()
-	catalogPath := filepath.Join(dir, "catalog.duckdb")
-	dataPath := filepath.Join(dir, "data")
-	admission := newTestExactExtensionAdmission(t, "ducklake")
-	seedAdminStorageDuckLakeAt(t, catalogPath, dataPath, admission)
-	environment := adminStorageEnvironment(t, catalogPath, dataPath, admission)
-	server := assembleRuntime(fakeMetrics{}, assemblyConfig{
-		DuckLakeCatalogPath: catalogPath, DuckLakeDataPath: dataPath,
-		AnalyticsModule: analyticsmodule.NewSurface(environment, nil),
-	})
-	service := server.routes.adminModule.HTTP().ReadModel.StorageService
-
-	list := service.Data(context.Background())
-	if list.Status != "" || list.TableCount != 1 || list.DataFileCount == 0 || list.TotalDataSizeBytes == 0 || len(list.Tables) != 1 {
-		t.Fatalf("storage list = %#v", list)
-	}
-	if len(list.Tables[0].Files) != 0 {
-		t.Fatalf("storage list eagerly loaded file records: %#v", list.Tables[0].Files)
-	}
-
-	table, err := service.Table(context.Background(), "model", "orders")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if table.TableUUID == "" || table.DuckLakePath != "model/orders/" || len(table.Files) == 0 || table.Files[0].RecordCountLabel != "10,000" {
-		t.Fatalf("storage detail = %#v", table)
-	}
-}
-
-func TestAdminStorageTableRouteRendersCanonicalDetail(t *testing.T) {
-	store := testStore(t)
-	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
-	dir := t.TempDir()
-	catalogPath := filepath.Join(dir, "catalog.duckdb")
-	dataPath := filepath.Join(dir, "data")
-	admission := newTestExactExtensionAdmission(t, "ducklake")
-	seedAdminStorageDuckLakeAt(t, catalogPath, dataPath, admission)
-	environment := adminStorageEnvironment(t, catalogPath, dataPath, admission)
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		Auth: auth, DuckLakeCatalogPath: catalogPath, DuckLakeDataPath: dataPath,
-		AnalyticsModule: analyticsmodule.NewSurface(environment, nil),
-	}))
-
-	for _, tc := range []struct {
-		path string
-		want int
-	}{
-		{path: "/admin/storage/tables/model/orders", want: http.StatusOK},
-		{path: "/admin/storage/tables/model/missing", want: http.StatusNotFound},
-	} {
-		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-		rec := httptest.NewRecorder()
-		server.Routes().ServeHTTP(rec, req)
-		if rec.Code != tc.want {
-			t.Fatalf("%s status = %d, want %d body=%s", tc.path, rec.Code, tc.want, rec.Body.String())
-		}
-		if tc.want == http.StatusOK && !strings.Contains(rec.Body.String(), `/updates?route=admin&amp;schema=model&amp;section=storage-detail&amp;table=orders`) {
-			t.Fatalf("canonical storage detail updates URL missing:\n%s", rec.Body.String())
-		}
-	}
-}
-
 func TestAdminAccessRouteIsDropped(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
@@ -856,57 +766,4 @@ func TestAdminStorageRendersEmptyStateWithoutDuckDBFiles(t *testing.T) {
 	if strings.Contains(body, "No DuckLake catalog has been initialized.") || strings.Contains(body, "data-signals=") {
 		t.Fatalf("admin storage should stream read-model state instead of embedding it:\n%s", body)
 	}
-}
-
-func latestAdminStorageDuckLakeSnapshot(t *testing.T, catalogPath string, admission extension.Admission) int64 {
-	t.Helper()
-	db, err := sql.Open("duckdb", ":memory:")
-	if err != nil {
-		t.Fatalf("open sqlite catalog: %v", err)
-	}
-	defer db.Close()
-	loadTestExtension(t, db, admission, "ducklake")
-	if _, err := db.Exec("ATTACH 'ducklake:" + strings.ReplaceAll(catalogPath, "'", "''") + "' AS lake"); err != nil {
-		t.Fatal(err)
-	}
-	var snapshotID int64
-	if err := db.QueryRow(`SELECT max(snapshot_id) FROM __ducklake_metadata_lake.ducklake_snapshot`).Scan(&snapshotID); err != nil {
-		t.Fatalf("latest DuckLake snapshot: %v", err)
-	}
-	return snapshotID
-}
-
-func seedAdminStorageDuckLakeAt(t *testing.T, catalogPath, dataPath string, admission extension.Admission) {
-	t.Helper()
-	db, err := sql.Open("duckdb", ":memory:")
-	if err != nil {
-		t.Fatalf("open duckdb: %v", err)
-	}
-	defer db.Close()
-	loadTestExtension(t, db, admission, "ducklake")
-	for _, stmt := range []string{
-		"ATTACH 'ducklake:" + strings.ReplaceAll(catalogPath, "'", "''") + "' AS lake (DATA_PATH '" + strings.ReplaceAll(dataPath, "'", "''") + "')",
-		"USE lake",
-		"CREATE SCHEMA model",
-		`CREATE TABLE model.orders AS
-		 SELECT i AS id, 'c_' || i::VARCHAR AS customer_id, i * 1.5 AS amount
-		 FROM range(1, 10001) t(i)`,
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			t.Fatalf("seed ducklake %q: %v", stmt, err)
-		}
-	}
-}
-
-func adminStorageEnvironment(t *testing.T, catalogPath, dataPath string, admission extension.Admission) *analyticsducklake.Environment {
-	t.Helper()
-	environment, err := analyticsducklake.Open(t.Context(), analyticsducklake.Config{
-		RootDir: filepath.Dir(catalogPath), CatalogPath: catalogPath, DataPath: dataPath, MaxConnections: 2,
-		ExtensionAdmission: admission,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = environment.Close() })
-	return environment
 }

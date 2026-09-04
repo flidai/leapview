@@ -147,6 +147,22 @@ func TestHandlerCreateRunPropagatesTypedIdempotencyKeyToQueueAndAudit(t *testing
 	}
 }
 
+func TestHandlerCreateRunRejectsRetiredTargetSelection(t *testing.T) {
+	handler := Handler{
+		Repository:      func() (refreshrun.RunRepository, error) { return &authorizationRunRepository{}, nil },
+		ServingIdentity: func(*http.Request) (projectgraph.ServingIdentity, error) { return testIdentity(), nil },
+	}
+	request := withRouteParams(
+		httptest.NewRequest(http.MethodPost, "/api/v1/projects/sales/refresh-runs", strings.NewReader(`{"pipelineId":"sales-refresh","targetType":"model"}`)),
+		map[string]string{"project": "sales"},
+	)
+	response := httptest.NewRecorder()
+	handler.CreateRun(response, request, "sales", "")
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("response=%d body=%s, want 400 for retired target selection", response.Code, response.Body.String())
+	}
+}
+
 func TestHandlerBindsProjectAndFiltersUnauthorizedRuns(t *testing.T) {
 	repo := &authorizationRunRepository{runs: []refreshrun.RunRecord{
 		{ID: "run-visible", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "visible", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "visible", InvocationSource: refreshrun.TriggerManual, Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z"},

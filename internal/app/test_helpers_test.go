@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/access/http/mcpoauth"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
@@ -250,6 +251,7 @@ type assemblyConfig struct {
 	ReleaseModule           *releasemodule.Module
 	JobModule               *jobsmodule.Module
 	AccessRepo              access.Repository
+	MCPResource             mcpoauth.ResourceServer
 	AccessModule            *accessmodule.Module
 	Agent                   *agentmodule.Service
 	AgentConfig             agentmodule.ModelConfig
@@ -380,6 +382,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		var err error
 		options.AccessModule, err = accessmodule.Build(ctx, accessmodule.Config{
 			ExistingAuth: options.Auth, Auth: accessmodule.AuthConfig{Disabled: options.Auth == nil},
+			ProfileRepository: options.AccessRepo, ProfileOAuthResource: options.MCPResource,
 			Assets: options.Assets, InstanceID: instanceID, PublicURL: publicURL,
 		})
 		if err != nil {

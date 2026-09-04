@@ -3,19 +3,14 @@ package app
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	"github.com/flidai/leapview/internal/access/http/mcpoauth"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	agentcap "github.com/flidai/leapview/internal/agent"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
@@ -351,132 +346,45 @@ func TestMCPAcceptsOAuthTokensAndRejectsGeneralAPITokens(t *testing.T) {
 	}
 }
 
-func TestMCPOAuthDiscoveryAndBrowserConsent(t *testing.T) {
-	ctx := context.Background()
+// Internal MCP OAuth registration, consent, token, and revocation behavior is
+// covered by internal/access/http/mcpoauth's PostgreSQL integration suite. The
+// application profile fixture intentionally verifies only the fail-closed
+// boundary when that native authority is not composed.
+func TestMCPOAuthFailsClosedWithoutNativePersistence(t *testing.T) {
 	store := testStore(t)
-	repo := testAccessRepository(store)
-	principal := testPrincipal(t, ctx, store, "consent@example.com", "Consent User")
-	session, err := repo.CreateSession(ctx, principal.ID, time.Hour)
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 		Auth:     testAuth(store, accessmodule.AuthConfig{LocalAuth: true, CSRFKey: "0123456789abcdef0123456789abcdef"}),
 		MCPOAuth: MCPOAuthConfig{PublicURL: "https://leapview.example"},
 	}))
 	handler := server.Routes()
-
-	for path, want := range map[string]string{
-		"/.well-known/oauth-protected-resource/mcp": `"resource":"https://leapview.example/mcp"`,
-		"/.well-known/oauth-authorization-server":   `"client_id_metadata_document_supported":true`,
-	} {
-		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
-		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), want) {
-			t.Fatalf("GET %s = %d body=%s", path, recorder.Code, recorder.Body.String())
+	for _, path := range []string{"/.well-known/oauth-authorization-server", "/oauth/register", "/oauth/token"} {
+		method := http.MethodGet
+		if path == "/oauth/register" || path == "/oauth/token" {
+			method = http.MethodPost
 		}
-	}
-
-	registration := httptest.NewRequest(http.MethodPost, "/oauth/register", strings.NewReader(`{"client_name":"Claude","redirect_uris":["https://claude.example/callback"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none","logo_uri":"https://claude.example/logo.png"}`))
-	registration.Header.Set("Content-Type", "application/json")
-	registered := httptest.NewRecorder()
-	handler.ServeHTTP(registered, registration)
-	if registered.Code != http.StatusCreated {
-		t.Fatalf("register = %d body=%s", registered.Code, registered.Body.String())
-	}
-	var client mcpoauth.RegistrationResponse
-	if err := json.Unmarshal(registered.Body.Bytes(), &client); err != nil {
-		t.Fatalf("decode registration: %v", err)
-	}
-
-	verifier := strings.Repeat("v", 64)
-	challengeBytes := sha256.Sum256([]byte(verifier))
-	values := url.Values{
-		"response_type": {"code"}, "client_id": {client.ClientID}, "redirect_uri": {"https://claude.example/callback"},
-		"scope": {"mcp:use offline_access"}, "state": {"claude-client-state"},
-		"code_challenge": {base64.RawURLEncoding.EncodeToString(challengeBytes[:])}, "code_challenge_method": {"S256"},
-		"resource": {"https://leapview.example/mcp"},
-	}
-	consentRequest := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+values.Encode(), nil)
-	consentRequest.AddCookie(&http.Cookie{Name: "lv_session", Value: session})
-	consentResponse := httptest.NewRecorder()
-	handler.ServeHTTP(consentResponse, consentRequest)
-	if consentResponse.Code != http.StatusOK || !strings.Contains(consentResponse.Body.String(), "Claude is requesting permission") {
-		t.Fatalf("consent = %d body=%s", consentResponse.Code, consentResponse.Body.String())
-	}
-	match := regexp.MustCompile(`name="gorilla\.csrf\.Token" value="([^"]+)"`).FindStringSubmatch(consentResponse.Body.String())
-	if len(match) != 2 {
-		t.Fatalf("consent response missing CSRF token: %s", consentResponse.Body.String())
-	}
-	values.Set("gorilla.csrf.Token", match[1])
-	values.Set("decision", "approve")
-	approveRequest := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(values.Encode()))
-	approveRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	approveRequest.Header.Set("X-Request-ID", "oauth-consent-request")
-	approveRequest.AddCookie(&http.Cookie{Name: "lv_session", Value: session})
-	for _, cookie := range consentResponse.Result().Cookies() {
-		approveRequest.AddCookie(cookie)
-	}
-	approveResponse := httptest.NewRecorder()
-	handler.ServeHTTP(approveResponse, approveRequest)
-	if approveResponse.Code != http.StatusSeeOther || !strings.Contains(approveResponse.Header().Get("Location"), "code=") {
-		t.Fatalf("approve = %d location=%s body=%s", approveResponse.Code, approveResponse.Header().Get("Location"), approveResponse.Body.String())
-	}
-	audits, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{PrincipalID: principal.ID, Action: "mcp_oauth.authorization"})
-	if err != nil {
-		t.Fatalf("list OAuth audits: %v", err)
-	}
-	if len(audits) != 1 || audits[0].Status != "success" || audits[0].ResourceID != client.ClientID || audits[0].RequestID != "oauth-consent-request" {
-		t.Fatalf("OAuth authorization audit = %#v", audits)
+		recorder := httptest.NewRecorder()
+		body := ""
+		if path == "/oauth/token" {
+			body = "grant_type=authorization_code&resource=https%3A%2F%2Fleapview.example%2Fmcp"
+		}
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		if body != "" {
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "MCP OAuth is unavailable") {
+			t.Fatalf("%s %s = %d body=%s", method, path, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 
 func issueMCPUserToken(t *testing.T, server *appTestHarness, principalID string) string {
 	t.Helper()
-	registrationBody := `{"client_name":"Test MCP Client","redirect_uris":["https://client.example/callback"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none"}`
-	registrationRequest := httptest.NewRequest(http.MethodPost, "/oauth/register", strings.NewReader(registrationBody))
-	registrationRequest.Header.Set("Content-Type", "application/json")
-	registrationResponse := httptest.NewRecorder()
-	server.routes.accessModule.OAuthService().Register(registrationResponse, registrationRequest)
-	if registrationResponse.Code != http.StatusCreated {
-		t.Fatalf("register OAuth client = %d body=%s", registrationResponse.Code, registrationResponse.Body.String())
+	resource, ok := server.routes.accessModule.OAuthResource().(interface{ IssueToken(string) string })
+	if !ok {
+		t.Fatal("test MCP resource does not issue profile tokens")
 	}
-	var registration mcpoauth.RegistrationResponse
-	if err := json.Unmarshal(registrationResponse.Body.Bytes(), &registration); err != nil {
-		t.Fatalf("decode OAuth registration: %v", err)
-	}
-	verifier := "abcdefghijklmnopqrstuvwxyz-._~ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	challengeBytes := sha256.Sum256([]byte(verifier))
-	values := url.Values{
-		"response_type": {"code"}, "client_id": {registration.ClientID},
-		"redirect_uri": {"https://client.example/callback"}, "scope": {"mcp:use offline_access"},
-		"state": {"client-state"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(challengeBytes[:])},
-		"code_challenge_method": {"S256"}, "resource": {"https://leapview.example/mcp"},
-	}
-	authorizeRequest := httptest.NewRequest(http.MethodPost, "/oauth/authorize?"+values.Encode(), nil)
-	authorizeResponse := httptest.NewRecorder()
-	server.routes.accessModule.OAuthService().Authorize(authorizeResponse, authorizeRequest, principalID, true)
-	callback, err := url.Parse(authorizeResponse.Header().Get("Location"))
-	if err != nil || callback.Query().Get("code") == "" {
-		t.Fatalf("OAuth callback = %q err=%v body=%s", authorizeResponse.Header().Get("Location"), err, authorizeResponse.Body.String())
-	}
-	tokenValues := url.Values{
-		"grant_type": {"authorization_code"}, "client_id": {registration.ClientID},
-		"code": {callback.Query().Get("code")}, "redirect_uri": {"https://client.example/callback"},
-		"code_verifier": {verifier}, "resource": {"https://leapview.example/mcp"},
-	}
-	tokenRequest := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(tokenValues.Encode()))
-	tokenRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	tokenResponse := httptest.NewRecorder()
-	server.routes.accessModule.OAuthService().Token(tokenResponse, tokenRequest)
-	if tokenResponse.Code != http.StatusOK {
-		t.Fatalf("exchange OAuth code = %d body=%s", tokenResponse.Code, tokenResponse.Body.String())
-	}
-	var token mcpoauth.TokenResponse
-	if err := json.Unmarshal(tokenResponse.Body.Bytes(), &token); err != nil || token.AccessToken == "" {
-		t.Fatalf("decode OAuth token: %#v err=%v", token, err)
-	}
-	return token.AccessToken
+	return resource.IssueToken(principalID)
 }
 
 func TestMCPUsesAPIRateAndBodyLimits(t *testing.T) {

@@ -346,10 +346,6 @@ func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create service principal: %v", err)
 	}
-	spSecret, _, err := repo.CreateServicePrincipalSecret(ctx, servicePrincipal.ID, access.ServicePrincipalSecretInput{Name: "oauth"})
-	if err != nil {
-		t.Fatalf("create service principal secret: %v", err)
-	}
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
@@ -373,19 +369,6 @@ func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
 			wantStatus: http.StatusCreated,
 			secretMarkers: []string{
 				`"secret":`,
-			},
-		},
-		{
-			name: "oauth token",
-			req: func() *http.Request {
-				req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader("grant_type=client_credentials&client_id="+servicePrincipal.ID+"&client_secret="+spSecret+"&scope=mcp%3Ause&resource=http%3A%2F%2Flocalhost%3A8080%2Fmcp"))
-				req.Header.Set("Accept", "application/json")
-				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-				return req
-			}(),
-			wantStatus: http.StatusOK,
-			secretMarkers: []string{
-				`"access_token":`,
 			},
 		},
 	} {

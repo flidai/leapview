@@ -27,6 +27,9 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 	if options.AccessRepo == nil {
 		options.AccessRepo = testAccessRepository(store)
 	}
+	if options.MCPResource == nil {
+		options.MCPResource = newTestMCPResource(options.AccessRepo, options.MCPOAuth.PublicURL)
+	}
 	if options.AccessModule == nil && options.Auth != nil {
 		publicURL := options.PublicURL
 		if publicURL == "" {
@@ -34,6 +37,7 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		}
 		module, err := accessmodule.Build(context.Background(), accessmodule.Config{
 			ExistingAuth: options.Auth, PublicURL: publicURL,
+			ProfileRepository: options.AccessRepo, ProfileOAuthResource: options.MCPResource,
 			MCPIssuerURL: options.MCPOAuth.IssuerURL,
 		})
 		if err != nil {
