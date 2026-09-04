@@ -552,7 +552,7 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 		for i, field := range fields {
 			parts[i] = quoteIdent(field)
 		}
-		rows, err = runPlan(ctx, state, fmt.Sprintf("SELECT 1 AS value FROM %s GROUP BY %s HAVING COUNT(*) > 1 LIMIT %d", relation, strings.Join(parts, ", "), state.Bounds.MaxRows), nil)
+		rows, err = runPlan(ctx, state, "value", fmt.Sprintf("SELECT 1 AS value FROM %s GROUP BY %s HAVING COUNT(*) > 1 LIMIT %d", relation, strings.Join(parts, ", "), state.Bounds.MaxRows), nil)
 	case "accepted_values":
 		if !validField(check.Field) || len(check.Values) == 0 {
 			return result, gateError(identity, release.GateUnavailable, ErrGateUnavailable, nil)
@@ -588,7 +588,7 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 		if limit == nil || *limit < 0 || *limit >= state.Bounds.MaxRows {
 			return result, gateError(identity, release.GateUnavailable, ErrGateBounds, nil)
 		}
-		rows, err = runPlan(ctx, state, fmt.Sprintf("SELECT COUNT(*) AS count FROM (SELECT 1 FROM %s LIMIT ?) AS bounded", relation), []any{*limit + 1})
+		rows, err = runPlan(ctx, state, "count", fmt.Sprintf("SELECT COUNT(*) AS count FROM (SELECT 1 FROM %s LIMIT ?) AS bounded", relation), []any{*limit + 1})
 		if err == nil {
 			count, ok := int64Value(firstValue(rows, "count"))
 			if !ok {
@@ -672,7 +672,7 @@ func run(ctx context.Context, state *budget, relation, projection, predicate str
 		limit = 1
 	}
 	sql := fmt.Sprintf("SELECT %s AS value FROM %s WHERE %s LIMIT %d", projection, relation, predicate, limit)
-	return runPlan(ctx, state, sql, firstArgs(args))
+	return runPlan(ctx, state, "value", sql, firstArgs(args))
 }
 
 func runQualified(ctx context.Context, state *budget, relation, projection, predicate string, args []any) (semanticquery.Rows, error) {
@@ -680,16 +680,16 @@ func runQualified(ctx context.Context, state *budget, relation, projection, pred
 	if limit <= 0 {
 		limit = 1
 	}
-	return runPlan(ctx, state, fmt.Sprintf("SELECT %s AS value FROM %s WHERE %s LIMIT %d", projection, relation, predicate, limit), args)
+	return runPlan(ctx, state, "value", fmt.Sprintf("SELECT %s AS value FROM %s WHERE %s LIMIT %d", projection, relation, predicate, limit), args)
 }
 
-func runPlan(ctx context.Context, state *budget, sql string, args []any) (semanticquery.Rows, error) {
+func runPlan(ctx context.Context, state *budget, column, sql string, args []any) (semanticquery.Rows, error) {
 	if state.Queries >= state.Bounds.MaxQueries {
 		state.QueriesExceeded = true
 		return nil, ErrGateBounds
 	}
 	state.Queries++
-	rows, err := currentQuery(ctx, state, sql, args)
+	rows, err := currentQuery(ctx, state, column, sql, args)
 	if err != nil {
 		return nil, err
 	}
@@ -701,11 +701,11 @@ func runPlan(ctx context.Context, state *budget, sql string, args []any) (semant
 	return rows, nil
 }
 
-func currentQuery(ctx context.Context, state *budget, sql string, args []any) (semanticquery.Rows, error) {
+func currentQuery(ctx context.Context, state *budget, column, sql string, args []any) (semanticquery.Rows, error) {
 	if state == nil || state.Query == nil {
 		return nil, ErrGateUnavailable
 	}
-	return state.Query(ctx, semanticquery.Plan{SQL: sql, Args: args})
+	return state.Query(ctx, semanticquery.Plan{SQL: sql, Args: args, Columns: []string{column}})
 }
 
 func firstArgs(args [][]any) []any {
