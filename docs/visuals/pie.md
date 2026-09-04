@@ -4,6 +4,8 @@ Use a pie chart for a small number of categories that form a meaningful whole.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
+Pie presentation supports `rose`, `labelPosition`, and an optional `outerRadius`. Donut-only fields such as `centerLabel` and `innerRadius` are not part of the pie contract.
+
 ## Basic
 
 Use one categorical dimension and one metric for a part-to-whole comparison, sorting by value to keep the largest sectors easy to find.

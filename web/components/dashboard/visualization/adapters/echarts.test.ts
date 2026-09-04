@@ -628,7 +628,28 @@ test('ECharts translation builds radar indicators and aligned series from typed 
     splitLine: { lineStyle: { color: context.colors.grid } },
     splitArea: { areaStyle: { color: [context.colors.surface, context.colors.grid], opacity: 0.18 } },
   })
+  expect(option.series[0]).toMatchObject({ id: 'series:polar:radar', type: 'radar', areaStyle: {} })
+  expect(option.series[0]).not.toHaveProperty('pointer')
+  expect(option.series[0]).not.toHaveProperty('progress')
   expect(option.series[0].data).toEqual([{ name: 'A', value: [8, 9] }, { name: 'B', value: [6, 7] }])
+
+  envelope.spec.presentation.maximum = 12
+  envelope.spec.presentation.area = false
+  const configured = echartsOption(envelope, context) as any
+  expect(configured.radar.indicator.map((item: any) => item.max)).toEqual([12, 12])
+  expect(configured.series[0]).toMatchObject({ id: 'series:polar:radar', type: 'radar' })
+  expect(configured.series[0].areaStyle).toBeUndefined()
+
+  envelope.spec.presentation.maximum = undefined
+  envelope.dataState.datasets[0].rows = [['Speed', 'A', 0], ['Quality', 'A', 0]]
+  const zero = echartsOption(envelope, context) as any
+  expect(zero.radar.indicator.map((item: any) => item.max)).toEqual([1, 1])
+  expect(zero.series[0].data).toEqual([{ name: 'A', value: [0, 0] }])
+
+  envelope.dataState.datasets[0].rows = []
+  const empty = echartsOption(envelope, context) as any
+  expect(empty.radar.indicator).toEqual([])
+  expect(empty.series[0].data).toEqual([])
 })
 
 test('ECharts normalizes supported document locales and fails closed on unknown locales', () => {
@@ -985,6 +1006,60 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   expect(tree.series[0]).toMatchObject({ orient: 'TB', layout: 'orthogonal', initialTreeDepth: 2, roam: true })
 })
 
+test('ECharts emits only mark-supported proportional fields and preserves explicit false and zero', () => {
+  const pie = proportionalFixture('pie') as any
+  pie.spec.presentation.rose = false
+  pie.spec.presentation.outerRadius = 1
+  pie.spec.presentation.labelPosition = 'inside'
+  pie.spec.presentation.centerLabel = 'Not a pie center'
+  const pieOption = echartsOption(pie, defaultRendererContext) as any
+  expect(pieOption.series[0]).toMatchObject({
+    id: 'series:primary:pie', type: 'pie', encode: { itemName: 'label', value: 'value' },
+    radius: '100%', roseType: false, avoidLabelOverlap: true, minShowLabelAngle: 3,
+    label: { position: 'inside' }, labelLine: { show: false },
+  })
+  expect(pieOption.series[0].itemStyle.color).toEqual(expect.any(Function))
+  expect(pieOption.series[0]).not.toHaveProperty('funnelAlign')
+  expect(pieOption.series[0]).not.toHaveProperty('sort')
+  expect(pieOption.graphic).toBeUndefined()
+
+  const donut = proportionalFixture('donut') as any
+  donut.spec.presentation.rose = false
+  donut.spec.presentation.innerRadius = 0
+  donut.spec.presentation.outerRadius = 1
+  const donutOption = echartsOption(donut, defaultRendererContext) as any
+  expect(donutOption.series[0]).toMatchObject({
+    id: 'series:primary:donut', type: 'pie', encode: { itemName: 'label', value: 'value' },
+    radius: ['0%', '100%'], roseType: false, avoidLabelOverlap: true, minShowLabelAngle: 3,
+  })
+  expect(donutOption.graphic[0].style.text).toBe('Orders')
+  expect(donutOption.series[0].labelLine.show).toBe(true)
+
+  const emptyDonut = structuredClone(donut)
+  emptyDonut.spec.presentation.centerLabel = undefined
+  emptyDonut.dataState.datasets[0].rows = []
+  const emptyDonutOption = echartsOption(emptyDonut, defaultRendererContext) as any
+  expect(emptyDonutOption.dataset.source).toEqual([['label', 'value']])
+  expect(emptyDonutOption.graphic[0].style.text).toBe('{centerValue|0}\n{centerLabel|Total}')
+
+  const funnel = proportionalFixture('funnel') as any
+  funnel.spec.presentation.rose = true
+  funnel.spec.presentation.outerRadius = 0.8
+  funnel.spec.presentation.orientation = 'horizontal'
+  funnel.spec.presentation.align = 'center'
+  funnel.spec.presentation.sort = 'descending'
+  funnel.spec.presentation.labelPosition = 'inside'
+  const funnelOption = echartsOption(funnel, defaultRendererContext) as any
+  expect(funnelOption.series[0]).toMatchObject({
+    id: 'series:primary:funnel', type: 'funnel', encode: { itemName: 'label', value: 'value' },
+    orient: 'horizontal', funnelAlign: 'center', sort: 'descending', label: { position: 'inside' },
+  })
+  expect(funnelOption.series[0].itemStyle.color).toEqual(expect.any(Function))
+  for (const pieOnly of ['radius', 'roseType', 'avoidLabelOverlap', 'minShowLabelAngle', 'labelLine']) {
+    expect(funnelOption.series[0]).not.toHaveProperty(pieOnly)
+  }
+})
+
 test('ECharts gives donuts legible renderer defaults without changing their categories', () => {
   const envelope = proportionalFixture('donut') as any
   envelope.spec.presentation.centerLabel = undefined
@@ -1161,9 +1236,29 @@ test('ECharts leaves absent proportional geometry fields to renderer defaults', 
 test('ECharts formats gauges, applies semantic thresholds, and renders status states', () => {
   const envelope = gaugeFixture()
   const option = echartsOption(envelope, { ...defaultRendererContext, locale: 'pt-BR' },) as any
-  expect(option.series[0].id).toBe('series:polar:gauge')
+  expect(option.series[0]).toMatchObject({
+    id: 'series:polar:gauge', type: 'gauge', min: 0, max: 1,
+    pointer: { show: true }, progress: { show: true, width: 12 },
+    data: [{ value: 0.75, __lv_dataset: 'primary', __lv_row_index: 0 }],
+  })
   expect(option.series[0].axisLine.lineStyle.color).toEqual([[0.5, defaultRendererContext.colors.attention], [0.8, defaultRendererContext.colors.danger]])
   expect(option.series[0].detail.formatter(0.75)).toBe('75%')
+
+  envelope.spec.presentation.showPointer = false
+  envelope.spec.presentation.minimum = 0
+  envelope.spec.presentation.maximum = 1
+  envelope.spec.presentation.target = 0
+  envelope.spec.presentation.thresholds = [{ value: 0, tone: 'success' }, { value: 1, tone: 'danger' }]
+  envelope.dataState.datasets[0].rows = [[0]]
+  const bounded = echartsOption(envelope, defaultRendererContext) as any
+  expect(bounded.series[0]).toMatchObject({ min: 0, max: 1, pointer: { show: false }, data: [{ value: 0 }] })
+  expect(bounded.series[0].axisLine.lineStyle.color).toEqual([[0, defaultRendererContext.colors.success], [1, defaultRendererContext.colors.danger]])
+  expect(bounded.series[1].data[0]).toMatchObject({ value: 0, name: 'Target 0%' })
+
+  envelope.dataState.datasets[0].rows = [[1]]
+  const upperBoundary = echartsOption(envelope, defaultRendererContext) as any
+  expect(upperBoundary.series[0]).toMatchObject({ min: 0, max: 1, data: [{ value: 1 }] })
+  expect(upperBoundary.graphic).toBeUndefined()
 
   const noData = { ...cartesianFixture('line'), status: { kind: 'no_data', message: 'No matching rows' } } as VisualizationEnvelope
   const statusOption = echartsOption(noData, defaultRendererContext) as any

@@ -35,6 +35,20 @@ Fixed units remain fixed even when the current filtered values are smaller or la
 
 Policies also bound label length by Unicode grapheme, set minimum collision spacing, and declare whether selected, anomalous, or threshold-crossing data should win a collision. The same frame, locale, dimensions, and policy always produce the same label decision. Full untruncated values remain in governed tooltips when `tooltipFallback` is enabled.
 
+## Per-mark presentation
+
+Proportional and polar presentations share the common `legend`, `labels`, and `displayUnits` fields where those channels are meaningful. Mark-specific fields are intentionally scoped to the marks that can render them:
+
+| Mark | Mark-specific presentation fields |
+| --- | --- |
+| Pie | `rose`, `labelPosition`, `outerRadius` |
+| Donut | `rose`, `centerLabel`, `labelPosition`, `innerRadius`, `outerRadius` |
+| Funnel | `orientation`, `labelPosition`, `align`, `sort` |
+| Radar | `area`, `maximum` |
+| Gauge | `minimum`, `maximum`, `target`, `showPointer`, `progressWidth`, `thresholds` |
+
+Gauge has no categorical legend; radar uses `legend` for named governed series. A field from another mark's row is rejected during project validation rather than silently changing the rendered visual.
+
 ## Decision-context capability matrix
 
 All entries below describe renderer-neutral compiled contracts. Unsupported combinations fail project validation; LeapView never accepts an ECharts option object as a substitute.
