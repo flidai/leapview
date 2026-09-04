@@ -168,6 +168,17 @@ func createTreeRoot(t *testing.T, runs refreshrun.RunTreeRepository, input refre
 // claimant; River owns that behavior in production and in the jobs-module
 // PostgreSQL conformance suite.
 func claimRiverRefreshTest(ctx context.Context, adapter *PostgresJobsAdapter, candidate refreshrun.JobRecord, owner string, lease time.Duration) (refreshrun.JobRecord, bool, error) {
+	var riverID int64
+	if err := adapter.Jobs.DB().QueryRow(ctx, `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, candidate.ID).Scan(&riverID); err != nil {
+		return refreshrun.JobRecord{}, false, err
+	}
+	nextAttempt := candidate.AttemptCount + 1
+	if _, err := adapter.Jobs.DB().Exec(ctx, `
+		UPDATE public.river_job
+		SET state='running', attempt=$2, attempted_by=array_append(attempted_by, $3)
+		WHERE id=$1`, riverID, nextAttempt, owner); err != nil {
+		return refreshrun.JobRecord{}, false, err
+	}
 	history, err := adapter.Jobs.MarkRunning(ctx, candidate.ID, candidate.AttemptCount+1)
 	if err != nil {
 		return refreshrun.JobRecord{}, false, err

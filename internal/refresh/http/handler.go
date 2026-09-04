@@ -25,7 +25,6 @@ type Principal struct {
 type Handler struct {
 	Repository            func() (refreshrun.RunRepository, error)
 	RunnerConfigured      func() bool
-	DispatchQueued        func()
 	CurrentPrincipal      func(*nethttp.Request) (Principal, bool)
 	ServingIdentity       func(*nethttp.Request) (projectgraph.ServingIdentity, error)
 	RunCreated            func(context.Context, refreshrun.RunRecord) error
@@ -205,9 +204,6 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project
 			writeCommandFailure(w, r, operationID, apigenfailure.Wrap("unavailable", err))
 			return
 		}
-	}
-	if h.DispatchQueued != nil {
-		h.DispatchQueued()
 	}
 	w.Header().Set("Location", strings.TrimSuffix(r.URL.Path, "/")+"/"+run.ID)
 	response, ok := PipelineRunResponseFor(run)

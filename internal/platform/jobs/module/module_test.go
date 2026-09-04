@@ -14,7 +14,10 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
 
@@ -163,6 +166,119 @@ func TestRiverPostgreSQL18ExecutionAndProductHistory(t *testing.T) {
 	if rolledBackRiverRows != 0 {
 		t.Fatalf("rolled-back River rows = %d, want 0", rolledBackRiverRows)
 	}
+}
+
+func TestWorkRetainsRiverRetryWhenRetryPersistenceFails(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_retry_persistence_failure")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	db := retryPersistenceFailureDB{Pool: pool}
+	repository := jobpostgres.NewRepository(db)
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := Build(t.Context(), Config{
+		Persistence: &persistence,
+		Production:  true,
+		Admission:   jobs.AdmitterFunc(allowJobs),
+		OwnerID:     "river-retry-persistence-failure-test",
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
+		JobKind: "release.finalize",
+		Run: func(context.Context, jobs.Job) error {
+			return jobs.Retryable(errors.New("transient"), time.Millisecond)
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = module.Stop(context.Background()) })
+
+	job, err := module.Enqueue(t.Context(), testJobInput("job-retry-persistence-failure", "retry"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var riverJobID int64
+	if err := pool.QueryRow(t.Context(), `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, job.ID).Scan(&riverJobID); err != nil {
+		t.Fatal(err)
+	}
+	err = module.work(t.Context(), riverJobID, 1, jobpostgres.ExecutionArgs{ProductJobID: job.ID, RequestDigest: job.RequestDigest})
+	if err == nil {
+		t.Fatal("work succeeded after retry persistence failure")
+	}
+	if !strings.Contains(err.Error(), "ASYNC_JOB_RETRY_PERSISTENCE_FAILED") {
+		t.Fatalf("work error = %v, want retry persistence code", err)
+	}
+	var cancelErr *river.JobCancelError
+	if errors.As(err, &cancelErr) {
+		t.Fatalf("work error = %v, want River to retain an automatic retry", err)
+	}
+	if _, ok := module.retryAt.Load(riverJobID); ok {
+		t.Fatal("retry persistence failure scheduled a normal River retry")
+	}
+	current, err := module.Get(t.Context(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != jobs.StatusRunning {
+		t.Fatalf("product status after retry persistence failure = %q, want running", current.Status)
+	}
+}
+
+func TestRequeueAfterFailureRejectsNonRunningRow(t *testing.T) {
+	repository := jobpostgres.NewRepository(zeroRowsDB{})
+	err := repository.RequeueAfterFailure(t.Context(), "job", 1, []byte(`{"code":"ASYNC_JOB_RETRY"}`))
+	if !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("RequeueAfterFailure() error = %v, want conflict when no row is requeued", err)
+	}
+}
+
+type zeroRowsDB struct{}
+
+func (zeroRowsDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.NewCommandTag("UPDATE 0"), nil
+}
+
+func (zeroRowsDB) Query(context.Context, string, ...any) (pgx.Rows, error) { return nil, nil }
+
+func (zeroRowsDB) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
+
+type retryPersistenceFailureDB struct{ Pool *pgxpool.Pool }
+
+func (db retryPersistenceFailureDB) NativePool() *pgxpool.Pool { return db.Pool }
+
+func (db retryPersistenceFailureDB) Begin(ctx context.Context) (pgx.Tx, error) {
+	return db.Pool.Begin(ctx)
+}
+
+func (db retryPersistenceFailureDB) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "RequeueJobAfterFailure") {
+		return pgconn.CommandTag{}, errors.New("simulated retry persistence failure")
+	}
+	return db.Pool.Exec(ctx, query, args...)
+}
+
+func (db retryPersistenceFailureDB) Query(ctx context.Context, query string, args ...any) (pgx.Rows, error) {
+	return db.Pool.Query(ctx, query, args...)
+}
+
+func (db retryPersistenceFailureDB) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
+	return db.Pool.QueryRow(ctx, query, args...)
 }
 
 func testJobInput(id, resourceID string) jobs.EnqueueInput {

@@ -19,11 +19,8 @@ import (
 //
 // Recovery is the qualification-ledger repository and is intentionally
 // optional because scheduled qualification is independently configured.
-// TerminalRecovery is a separate startup authority for failing runs/jobs left
-// live by an interrupted process. It is required whenever persistence is
-// enabled so serving cannot start with stale live work; PostgreSQL composition
-// injects an explicit implementation. Runs, schedules and publication are
-// required whenever persistence is enabled.
+// Runs, schedules and publication are required whenever persistence is
+// enabled.
 type Persistence struct {
 	Runs             RunPersistence
 	Schedules        refreshschedule.Repository

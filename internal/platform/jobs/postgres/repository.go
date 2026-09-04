@@ -546,8 +546,14 @@ func (r *Repository) RequeueAfterFailure(ctx context.Context, id string, attempt
 	if !json.Valid(problem) {
 		return errors.New("retry evidence must be valid JSON")
 	}
-	_, err := queries(r.db).RequeueJobAfterFailure(ctx, jobdb.RequeueJobAfterFailureParams{ID: id, Attempt: int32(attempt), Problem: problem})
-	return err
+	changed, err := queries(r.db).RequeueJobAfterFailure(ctx, jobdb.RequeueJobAfterFailureParams{ID: id, Attempt: int32(attempt), Problem: problem})
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return jobs.ErrConflict
+	}
+	return nil
 }
 
 func (r *Repository) Cancel(ctx context.Context, id string) error {
@@ -585,10 +591,55 @@ func (r *Repository) CancelTx(ctx context.Context, tx Tx, id string) error {
 	return nil
 }
 func (r *Repository) CancelClaimed(ctx context.Context, id string, f jobs.Fence) error {
-	return r.Cancel(ctx, id)
+	return r.inTx(ctx, func(tx Tx) error { return r.CancelClaimedTx(ctx, tx, id, f) })
 }
-func (r *Repository) CancelClaimedTx(ctx context.Context, tx Tx, id string, _ jobs.Fence) error {
-	return r.CancelTx(ctx, tx, id)
+func (r *Repository) CancelClaimedTx(ctx context.Context, tx Tx, id string, f jobs.Fence) error {
+	if tx == nil || strings.TrimSpace(id) == "" || f.Generation <= 0 || strings.TrimSpace(f.Owner) != f.Owner || f.Owner == "" {
+		return errors.New("claimed cancellation fence is invalid")
+	}
+	riverID, err := r.RiverJobIDTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	// Keep the product-to-River lock order used by completion/failure paths;
+	// a stale result rolls this guarded product update back below.
+	if err := r.setTerminalTx(ctx, tx, id, f, jobs.StatusCancelled, nil); err != nil {
+		return err
+	}
+	// River's JobCancelTx API is intentionally ID-based. Lock and verify the
+	// current River attempt first so a stale worker cannot cancel a later
+	// attempt that reused the same operational row.
+	var state rivertype.JobState
+	var attempt int
+	var attemptedBy []string
+	row, err := queries(tx).LockRiverJobFence(ctx, riverID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return jobs.ErrConflict
+		}
+		return err
+	}
+	state = rivertype.JobState(row.State)
+	attempt = int(row.Attempt)
+	attemptedBy = row.AttemptedBy
+	if state != rivertype.JobStateRunning || attempt != int(f.Generation) || len(attemptedBy) == 0 || attemptedBy[len(attemptedBy)-1] != f.Owner {
+		return jobs.ErrConflict
+	}
+	client, err := r.riverClient()
+	if err != nil {
+		return err
+	}
+	pgxTx, nativeErr := nativeTransaction(tx)
+	if nativeErr != nil {
+		return nativeErr
+	}
+	if _, err := client.JobCancelTx(ctx, pgxTx, riverID); err != nil && !errors.Is(err, rivertype.ErrNotFound) {
+		return err
+	}
+	if completion := completionFromContext(ctx); completion != nil {
+		completion.done.Store(true)
+	}
+	return nil
 }
 func (r *Repository) SupersedeTx(ctx context.Context, tx Tx, ids []string) error {
 	for _, id := range ids {

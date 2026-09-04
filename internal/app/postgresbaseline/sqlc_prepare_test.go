@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
+	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -48,6 +49,14 @@ func TestSQLCVetPreparesAgainstBaselinePostgreSQL18(t *testing.T) {
 	defer pool.Close()
 	if _, err := pool.Exec(ctx, `GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator`); err != nil {
 		t.Fatal(err)
+	}
+	riverPool, err := pgxpool.New(ctx, database.URL(migrator))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer riverPool.Close()
+	if err := platformmigrations.ApplyRiver(ctx, riverPool); err != nil {
+		t.Fatalf("apply River baseline: %v", err)
 	}
 	migrationDB, err := sql.Open("pgx", database.URL(migrator))
 	if err != nil {

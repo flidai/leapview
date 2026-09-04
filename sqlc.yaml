@@ -234,7 +234,9 @@ sql:
 
   - engine: "postgresql"
     queries: "internal/platform/jobs/postgres/queries"
-    schema: "internal/platform/jobs/postgres/schema.sql"
+    schema:
+      - "internal/platform/jobs/postgres/schema.sql"
+      - "internal/platform/jobs/postgres/river_schema.sql"
     gen:
       go:
         package: "db"

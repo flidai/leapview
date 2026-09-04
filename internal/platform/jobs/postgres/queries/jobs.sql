@@ -35,6 +35,12 @@ SELECT river_job_id
 FROM jobs.job_history
 WHERE id = sqlc.arg(id);
 
+-- name: LockRiverJobFence :one
+SELECT id, state::text AS state, attempt, attempted_by
+FROM public.river_job
+WHERE id = sqlc.arg(id)
+FOR UPDATE;
+
 -- name: MarkJobRunning :execrows
 UPDATE jobs.job_history
 SET status = 'running',

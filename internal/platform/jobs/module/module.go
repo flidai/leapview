@@ -222,7 +222,13 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 	}
 	var retry *jobs.RetryError
 	if errors.As(err, &retry) && rowAttempt < jobpostgres.MaxAttempts {
-		_ = m.repository.RequeueAfterFailure(context.WithoutCancel(ctx), history.ID, rowAttempt, []byte(`{"code":"ASYNC_JOB_RETRY"}`))
+		if err := m.repository.RequeueAfterFailure(context.WithoutCancel(ctx), history.ID, rowAttempt, []byte(`{"code":"ASYNC_JOB_RETRY"}`)); err != nil {
+			// Keep River's attempt available until product history has durably
+			// moved back to queued. Without that transition, cancelling the row
+			// would strand the product job in running with no recovery authority.
+			// Returning an ordinary error lets River retry the persistence step.
+			return errors.New("ASYNC_JOB_RETRY_PERSISTENCE_FAILED")
+		}
 		m.retryAt.Store(riverJobID, time.Now().Add(max(retry.Delay, time.Millisecond)))
 		return errors.New("ASYNC_JOB_RETRY")
 	}
