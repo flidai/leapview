@@ -235,6 +235,20 @@ test('ECharts disables large scatter mode when conditional fill needs per-point 
   expect(option.series[0].itemStyle.color({ value: ['p-1', 'ok', 1, 10] })).toBe('rgb(147 65 76)')
 })
 
+test('ECharts partitions large categorical scatter frames without losing source identity', () => {
+  const rows = Array.from({ length: 5_000 }, (_, index) => [`p-${index}`, `category-${index % 5}`, index, index * 2])
+  const envelope = pointCategoricalFixture(rows) as any
+  envelope.spec.presentation.brush = []
+  envelope.spec.presentation.largeMode = 'automatic'
+  envelope.spec.presentation.largeThreshold = 1_000
+  const option = echartsOption(envelope, defaultRendererContext) as any
+
+  expect(option.series).toHaveLength(5)
+  expect(option.series.every((series: any) => series.large === true)).toBe(true)
+  expect(option.series.flatMap((series: any) => series.__lv_source_row_indices).sort((a: number, b: number) => a - b)).toEqual(Array.from({ length: 5_000 }, (_, index) => index))
+  expect(option.dataset[0].source).toHaveLength(5_001)
+})
+
 test('superseded ECharts mounts own isolated renderer frames', () => {
   const mounted: HTMLElement[] = []
   const container = {
