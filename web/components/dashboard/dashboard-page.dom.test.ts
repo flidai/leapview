@@ -51,6 +51,8 @@ test('dashboard header exposes favorite and contextual actions without crowding 
       await element.updateComplete
       return {
         breadcrumb: Array.from(element.shadowRoot.querySelectorAll('.breadcrumb-label')).map((item: Element) => item.textContent?.trim()),
+        headingOrder: Array.from(element.shadowRoot.querySelector('.dashboard-heading').children).map((item: Element) => item.className),
+        controlsRemainOutsideUtilityActions: !element.shadowRoot.querySelector('.actions .dashboard-favorite, .actions .dashboard-options'),
         initialFavoriteLabel,
         favoriteLabel: favorite.getAttribute('aria-label'),
         favoritePressed: favorite.getAttribute('aria-pressed'),
@@ -66,6 +68,8 @@ test('dashboard header exposes favorite and contextual actions without crowding 
     })
     expect(action).toEqual({
       breadcrumb: ['Dashboards', 'Executive Sales Dashboard'],
+      headingOrder: ['breadcrumb', 'icon-button dashboard-favorite', 'dashboard-options'],
+      controlsRemainOutsideUtilityActions: true,
       initialFavoriteLabel: 'Add Executive Sales Dashboard to favorites',
       favoriteLabel: 'Remove Executive Sales Dashboard from favorites',
       favoritePressed: 'true',

@@ -256,6 +256,22 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       padding: var(--lv-space-control, var(--base-size-8)) var(--base-size-16);
     }
 
+    .dashboard-heading {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: var(--base-size-2);
+    }
+
+    .dashboard-heading .breadcrumb {
+      min-width: 0;
+    }
+
+    .dashboard-heading .dashboard-favorite,
+    .dashboard-heading .dashboard-options {
+      flex: 0 0 auto;
+    }
+
     .rail-footer {
       box-sizing: border-box;
       min-width: 0;
@@ -1228,6 +1244,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
             ` : nothing}
           </footer>
           <header class="header">
+						<div class="dashboard-heading">
 						${renderBreadcrumb([
 						  { label: 'Dashboards', href: '/', className: 'breadcrumb-root' },
 						  {
@@ -1242,6 +1259,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 							>${lucideIcon(lucideIconByCanonicalName(page.appearanceIcon), { size: 16, strokeWidth: 1.75 })}</span>`,
 						  },
 						], 'Breadcrumb')}
+						${this.presentation === 'app' ? this.renderDashboardHeaderActions(page) : nothing}
+						</div>
 						<div class="actions">
 							${this.renderMobilePageMenu(page)}
 							<button
@@ -1267,7 +1286,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 								@click=${() => { this.setAgentDrawerOpen(!this.agentDrawerOpen) }}
 							>${agentIcon()}<span>Ask</span></button>
 							` : nothing}
-							${this.presentation === 'app' ? this.renderDashboardHeaderActions(page) : nothing}
 						</div>
           </header>
         <lv-sub-sidebar .config=${this.pageSidebar(page)} @click=${this.handlePageNavigation}></lv-sub-sidebar>
