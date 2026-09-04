@@ -960,6 +960,20 @@ func TestInstallBundledTypeSpecPackage_UsesWritableCache(t *testing.T) {
 	require.FileExists(t, filepath.Join(pkg.Dir, "dist", "src", "index.js"))
 }
 
+func TestEnsureTypeSpecToolchain_InstallsColdManagedPackage(t *testing.T) {
+	t.Helper()
+
+	cacheRoot := t.TempDir()
+	pkg, err := installBundledTypeSpecPackage(cacheRoot)
+	require.NoError(t, err)
+	require.True(t, pkg.Managed)
+	require.FileExists(t, filepath.Join(pkg.Dir, ".apigen-bundle-sha256"))
+	require.FileExists(t, filepath.Join(pkg.Dir, "package-lock.json"))
+
+	require.NoError(t, ensureTypeSpecToolchain(pkg))
+	require.FileExists(t, filepath.Join(pkg.Dir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js"))
+}
+
 func TestCompileTypeSpec_FailurePreservesExistingOutputs(t *testing.T) {
 	t.Helper()
 

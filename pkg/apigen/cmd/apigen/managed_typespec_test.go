@@ -13,12 +13,6 @@ import (
 
 var managedTypeSpecFixture managedTypeSpecTestFixture
 
-func TestMain(m *testing.M) {
-	code := m.Run()
-	managedTypeSpecFixture.cleanup()
-	os.Exit(code)
-}
-
 type managedTypeSpecTestFixture struct {
 	npmCacheOnce sync.Once
 	npmCachePath string
