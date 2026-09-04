@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ArrowLeft, ChevronDown, Copy, EllipsisVertical, PencilLine, SlidersHorizontal, Star } from 'lucide'
+import { ChevronDown, Copy, EllipsisVertical, PencilLine, SlidersHorizontal, Star } from 'lucide'
 import type {
   AgentContextSignal,
   AgentReferenceSignal,
@@ -296,17 +296,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       padding-inline: 0;
     }
 
-    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-back-link {
-      display: grid;
-      width: var(--control-medium-size);
-      gap: 0;
-      padding: 0;
-    }
-
-    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-back-label {
-      display: none;
-    }
-
     .breadcrumb-root {
       flex: 0 0 auto;
     }
@@ -338,52 +327,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       flex: 0 0 auto;
       color: var(--lv-fg-muted);
       font: var(--lv-type-body-compact);
-    }
-
-    .dashboard-back-link {
-      display: grid;
-      width: var(--control-medium-size);
-      height: var(--control-medium-size);
-      flex: 0 0 auto;
-      place-items: center;
-      border-radius: var(--lv-radius-default);
-      color: var(--lv-fg-muted);
-      text-decoration: none;
-    }
-
-    .dashboard-back-link:hover {
-      color: var(--lv-fg-default);
-    }
-
-    .dashboard-back-link:focus-visible {
-      color: var(--lv-fg-default);
-      outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
-    }
-
-    .dashboard-back-link svg {
-      width: var(--base-size-16);
-      height: var(--base-size-16);
-    }
-
-    .rail-back-link {
-      display: inline-flex;
-      width: auto;
-      min-width: 0;
-      max-width: 100%;
-      align-items: center;
-      gap: var(--base-size-8);
-      padding-right: var(--base-size-8);
-    }
-
-    .rail-back-label {
-      display: block;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-medium);
     }
 
     h1,
@@ -505,11 +448,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         z-index: var(--zIndex-sticky, 50);
         min-height: var(--control-large-size);
         padding: var(--base-size-8) var(--base-size-12);
-      }
-
-      :host(:not([presentation='embed'])) .dashboard-back-link {
-        width: var(--control-medium-size);
-        height: var(--control-medium-size);
       }
 
       :host(:not([presentation='embed'])) .actions {
@@ -863,16 +801,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const activeFilterCount = this.activeFilterCount(snapshot)
     return html`
 			<div class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`}>
-          <footer class="rail-footer">
-            ${this.presentation === 'app' ? html`
-              <a
-                class="dashboard-back-link rail-back-link"
-                href="/"
-                aria-label="Back to dashboards"
-                title="All dashboards"
-              >${lucideIcon(ArrowLeft)}<span class="rail-back-label">Back</span></a>
-            ` : nothing}
-          </footer>
+          <footer class="rail-footer"></footer>
           <header class="header">
 						<div class="dashboard-heading">
 						${renderBreadcrumb([
@@ -1013,6 +942,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       storageKey: 'leapview-report-sidebar-collapsed',
       widthStorageKey: 'leapview-report-sidebar-width',
       activeId: page.pageId,
+      backAction: this.presentation === 'app' ? { label: 'Back', href: '/', title: 'Back to dashboards' } : undefined,
+      searchable: this.presentation === 'app',
+      searchPlaceholder: 'Search pages',
       items: page.pages.map((item: DashboardPageNavSignal) => ({
         id: item.id,
         title: item.title,
