@@ -6,7 +6,7 @@ import { interactionOptions } from '../interaction-command'
 import { Change, type RendererAdapter, type RendererContext, type RendererHandle } from '../host-controller'
 import { MapSelectionControl } from './map-selection-control'
 import { blankMapStyle, loadGeometryAsset, loadMapStyleAsset, registerPMTilesProtocol } from './maplibre/assets'
-import { applyBasemapTheme, basemapThemeKey, createBasemapThemeScheduler, mapThemeColors, scheduleBasemapThemeMutation, type BasemapColors } from './maplibre/basemap'
+import { applyBasemapTheme, applyDataLabelTheme, basemapThemeKey, createBasemapThemeScheduler, mapDataLabelColors, mapThemeColors, scheduleBasemapThemeMutation, type BasemapColors, type DataLabelColors } from './maplibre/basemap'
 import { installMapLibreChromeStyles } from './maplibre/chrome'
 import { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
 import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledPrecisionLayerIDs } from './maplibre/layers'
@@ -18,7 +18,7 @@ import { combineMapFilters, formatMapRangeValue, mapValueFilteredEnvelope, mapVa
 import { coordinateReferenceGrid, fitMapToGeographicData, fitMapToSpatialExtent, resetMapToHome, type MapHomeCamera } from './maplibre/viewport'
 
 export { loadMapStyleAsset, sameOriginGeometryURL, verifyGeometryDigest } from './maplibre/assets'
-export { applyBasemapTheme, basemapBoundaryLayer, basemapLayer, basemapThemeKey, concreteCSSColor, createBasemapThemeScheduler, mapThemeColors } from './maplibre/basemap'
+export { applyBasemapTheme, applyDataLabelTheme, basemapBoundaryLayer, basemapLayer, basemapThemeKey, concreteCSSColor, createBasemapThemeScheduler, effectiveMapTheme, mapDataLabelColors, mapThemeColors } from './maplibre/basemap'
 export { mapLibreChromeCSS } from './maplibre/chrome'
 export { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
 export { applyFeatureScales, mapLayer, mapOutlineLayer, normalizeFeatureWeights, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledPrecisionLayerIDs } from './maplibre/layers'
@@ -149,13 +149,14 @@ export function mapSelectionControlAvailable(envelope: VisualizationEnvelope): b
   return envelope.spec.interactions.some((candidate) => candidate.kind === 'select')
 }
 
-class MapLibreHandle implements RendererHandle {
+export class MapLibreHandle implements RendererHandle {
   private sourceIDs: string[] = []
   private layerIDs: string[] = []
   private dynamicLayers: Array<{ spec: VisualizationGeographicLayer; sourceID: string; geometry?: FeatureCollection }> = []
   private tiledSourceID?: string
   private tiledRawLayerIDs: string[] = []
   private tiledAggregateLayerIDs: string[] = []
+  private dataLabelLayerIDs: string[] = []
   private tiledRawVisible?: boolean
   private tiledTileTemplate?: string
   private tiledSourceTransitioning = false
@@ -302,6 +303,7 @@ class MapLibreHandle implements RendererHandle {
     this.tooltipLayerIDs = []
     this.tiledRawLayerIDs = []
     this.tiledAggregateLayerIDs = []
+    this.dataLabelLayerIDs = []
     this.tiledRawVisible = undefined
     this.tiledTileTemplate = undefined
     this.tiledSourceTransitioning = false
@@ -426,7 +428,7 @@ class MapLibreHandle implements RendererHandle {
 				this.tiledAggregateLayerIDs.push(countID)
 				this.selectableLayerIDs.push(countID)
 			}
-      if (layer.kind === 'point' && layer.label) this.tiledRawLayerIDs.push(this.addDataLabelLayer(this.tiledSourceID, layer, envelope.spec.kind === 'geographic' ? envelope.spec.presentation.theme : 'auto', true))
+      if (layer.kind === 'point' && layer.label) this.tiledRawLayerIDs.push(this.addDataLabelLayer(this.tiledSourceID, layer, true))
       if (layer.kind === 'point') this.selectableLayerIDs.push(id)
       if (layer.tooltip.length > 0) this.tooltipLayerIDs.push(id)
       return { type: 'FeatureCollection', features: [] }
@@ -468,7 +470,7 @@ class MapLibreHandle implements RendererHandle {
       this.layerIDs.push(lineID, pointID)
     }
     if (layer.kind === 'point' && layer.cluster.enabled) this.addClusterLayers(id, layer, before)
-    if (layer.label && (layer.kind === 'point' || layer.kind === 'choropleth')) this.addDataLabelLayer(id, layer, envelope.spec.kind === 'geographic' ? envelope.spec.presentation.theme : 'auto')
+    if (layer.label && (layer.kind === 'point' || layer.kind === 'choropleth')) this.addDataLabelLayer(id, layer)
     if (layer.kind === 'choropleth') {
       const outlineID = `${id}-selected-outline`
       this.map.addLayer(mapOutlineLayer(outlineID, id))
@@ -591,14 +593,16 @@ class MapLibreHandle implements RendererHandle {
     this.clusterSources.set(countID, sourceID)
   }
 
-	private addDataLabelLayer(sourceID: string, layer: Extract<VisualizationGeographicLayer, { kind: 'point' | 'choropleth' }>, theme: 'auto' | 'light' | 'dark', tiled = false): string {
+	private addDataLabelLayer(sourceID: string, layer: Extract<VisualizationGeographicLayer, { kind: 'point' | 'choropleth' }>, tiled = false): string {
     const id = `${sourceID}-data-label`
     const labelField = tiled && layer.label ? layer.label.field : '__lv_label'
+    const colors = this.currentDataLabelColors()
     this.map.addLayer({ id, source: sourceID, ...(tiled ? { 'source-layer': 'primary' } : {}), type: 'symbol', filter: layer.kind === 'point' ? ['all', ['!', ['has', 'point_count']], ['!', ['boolean', ['get', '__lv_aggregate'], false]], ['!=', ['get', labelField], '']] : ['!=', ['get', labelField], ''], minzoom: layer.visibility.minimumZoom, maxzoom: layer.visibility.maximumZoom, layout: {
       'text-field': ['get', labelField], 'text-font': ['Noto Sans Medium'], 'text-size': 11, 'text-offset': [0, layer.kind === 'point' ? 1.25 : 0], 'text-anchor': layer.kind === 'point' ? 'top' : 'center', 'text-optional': true,
       ...(layer.kind === 'point' ? { 'text-padding': tiled ? 20 : 8, 'symbol-sort-key': ['-', ['to-number', ['get', '__lv_weight'], 0]] } : {}),
-    }, paint: { 'text-color': theme === 'dark' ? '#f0f6fc' : '#1f2328', 'text-halo-color': theme === 'dark' ? '#0d1821' : '#ffffff', 'text-halo-width': 1.25 } })
+    }, paint: { 'text-color': colors.text, 'text-halo-color': colors.halo, 'text-halo-width': 1.25 } })
     this.layerIDs.push(id)
+		this.dataLabelLayerIDs.push(id)
 		return id
   }
 
@@ -1005,12 +1009,14 @@ class MapLibreHandle implements RendererHandle {
   private async applyTheme(): Promise<void> {
     const labelDensity = this.envelope?.spec.kind === 'geographic' ? this.envelope.spec.presentation.labelDensity : 'normal'
     const colors = this.currentBasemapColors()
+    const dataLabelColors = this.currentDataLabelColors()
     const background = getComputedStyle(this.frame).backgroundColor || '#ffffff'
     const key = basemapThemeKey(colors, background, labelDensity)
     if (key === this.lastBasemapThemeKey) return
     await scheduleBasemapThemeMutation(() => {
       if (this.disposed) return
       applyBasemapTheme(this.map, colors, background, labelDensity)
+      applyDataLabelTheme(this.map, this.dataLabelLayerIDs, dataLabelColors)
       this.map.triggerRepaint()
     })
     if (!this.disposed) this.lastBasemapThemeKey = key
@@ -1019,6 +1025,11 @@ class MapLibreHandle implements RendererHandle {
   private currentBasemapColors(): BasemapColors {
     const theme = this.envelope?.spec.kind === 'geographic' ? this.envelope.spec.presentation.theme : 'auto'
     return mapThemeColors(theme, this.context.theme)
+  }
+
+  private currentDataLabelColors(): DataLabelColors {
+    const theme = this.envelope?.spec.kind === 'geographic' ? this.envelope.spec.presentation.theme : 'auto'
+    return mapDataLabelColors(theme, this.context.theme)
   }
 
 }

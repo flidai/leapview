@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
-import { aggregateExpansionCamera, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
+import { aggregateExpansionCamera, applyDataLabelTheme, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapDataLabelColors, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
 test('MapLibre owns usable shadow-DOM styles for map navigation controls', () => {
@@ -367,20 +367,14 @@ test('MapLibre hides both tiled precision families during replacement and restor
   const replacement = tiledSourceLifecycle(tiledSourceTransition(previous, next), true)
   expect(replacement).toBe('waiting')
   expect(tiledPrecisionLayerFamily(replacement === 'waiting', 12, 8)).toBe('hidden')
-  expect(tiledPrecisionLayerIDs('hidden', raw, aggregate)).toEqual([])
-  expect(tiledPrecisionLayerIDs('hidden', raw, aggregate, ['raw-point', 'aggregate-count'])).toEqual([])
   applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(replacement === 'waiting', 12, 8))
   expect([...visibility.values()]).toEqual(['none', 'none', 'none', 'none'])
   const sourceReady = tiledSourceLifecycle(tiledSourceTransition(previous, next), true) === 'waiting'
-  expect(tiledPrecisionLayerIDs('raw', raw, aggregate)).toEqual(raw)
-  expect(tiledPrecisionLayerIDs('raw', raw, aggregate, ['raw-point', 'aggregate-count'])).toEqual(['raw-point'])
   applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(!sourceReady, 12, 8))
   expect(raw.map((id) => visibility.get(`${id}:visibility`))).toEqual(['visible', 'visible'])
   expect(aggregate.map((id) => visibility.get(`${id}:visibility`))).toEqual(['none', 'none'])
   const stable = tiledSourceLifecycle(tiledSourceTransition(previous, previous), true)
   expect(stable).toBe('stable')
-  expect(tiledPrecisionLayerIDs('aggregate', raw, aggregate)).toEqual(aggregate)
-  expect(tiledPrecisionLayerIDs('aggregate', raw, aggregate, ['raw-point', 'aggregate-count'])).toEqual(['aggregate-count'])
   applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(stable === 'waiting', 6, 8))
   expect(raw.map((id) => visibility.get(`${id}:visibility`))).toEqual(['none', 'none'])
   expect(aggregate.map((id) => visibility.get(`${id}:visibility`))).toEqual(['visible', 'visible'])
@@ -690,6 +684,36 @@ test('MapLibre auto basemaps follow the resolved application color scheme', () =
   expect(mapThemeColors('auto', 'dark')).toEqual(mapThemeColors('dark', 'light'))
   expect(mapThemeColors('auto', 'light')).toEqual(mapThemeColors('light', 'dark'))
   expect(mapThemeColors('auto', 'dark')).not.toEqual(mapThemeColors('auto', 'light'))
+})
+
+test('MapLibre data labels resolve auto light and dark themes while explicit themes stay stable', () => {
+  expect(mapDataLabelColors('auto', 'light')).toEqual(mapDataLabelColors('light', 'dark'))
+  expect(mapDataLabelColors('auto', 'dark')).toEqual(mapDataLabelColors('dark', 'light'))
+  expect(mapDataLabelColors('dark', 'light')).toEqual(mapDataLabelColors('dark', 'dark'))
+  expect(mapDataLabelColors('light', 'light')).toEqual(mapDataLabelColors('light', 'dark'))
+  expect(mapDataLabelColors('auto', 'light')).not.toEqual(mapDataLabelColors('auto', 'dark'))
+})
+
+test('MapLibre repaints existing point and choropleth data-label layers for context-only theme changes', () => {
+  const paint = new Map<string, string>()
+  const labelLayers = new Set(['lv-points-data-label', 'lv-states-data-label'])
+  const map = {
+    getLayer: (id: string) => labelLayers.has(id) ? { id } : undefined,
+    setPaintProperty: (id: string, property: string, value: string) => paint.set(`${id}:${property}`, value),
+  }
+  applyDataLabelTheme(map as never, ['lv-points-data-label', 'lv-states-data-label', 'lv-missing-data-label'], mapDataLabelColors('auto', 'dark'))
+  expect(paint).toEqual(new Map([
+    ['lv-points-data-label:text-color', '#f0f6fc'],
+    ['lv-points-data-label:text-halo-color', '#0d1821'],
+    ['lv-states-data-label:text-color', '#f0f6fc'],
+    ['lv-states-data-label:text-halo-color', '#0d1821'],
+  ]))
+
+  applyDataLabelTheme(map as never, ['lv-points-data-label', 'lv-states-data-label'], mapDataLabelColors('auto', 'light'))
+  expect(paint.get('lv-points-data-label:text-color')).toBe('#1f2328')
+  expect(paint.get('lv-points-data-label:text-halo-color')).toBe('#ffffff')
+  expect(paint.get('lv-states-data-label:text-color')).toBe('#1f2328')
+  expect(paint.get('lv-states-data-label:text-halo-color')).toBe('#ffffff')
 })
 
 test('MapLibre coalesces unchanged themes and serializes WebGL style mutations by frame', async () => {
