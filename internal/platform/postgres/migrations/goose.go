@@ -108,6 +108,20 @@ func ApplyRiver(ctx context.Context, pool *pgxpool.Pool) error {
 	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
 		return fmt.Errorf("apply River migrations: %w", err)
 	}
+	// River's tables are upstream-owned, but LeapView's durable owner role
+	// installs the attempt-qualified worker-result trigger in the product
+	// baseline. Grant only that DDL capability from the migration login which
+	// owns the freshly installed River table.
+	if _, err := pool.Exec(ctx, `
+DO $river_trigger_authority$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_owner') THEN
+        EXECUTE 'GRANT TRIGGER ON TABLE public.river_job TO leapview_control_owner';
+    END IF;
+END
+$river_trigger_authority$`); err != nil {
+		return fmt.Errorf("grant River result-fence trigger authority: %w", err)
+	}
 	return nil
 }
 

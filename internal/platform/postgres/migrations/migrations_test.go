@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	jobpostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -32,7 +33,7 @@ func TestEmbeddedGooseBaselineIsTheOnlyImmutableMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(contents)
-	if got, want := hex.EncodeToString(sum[:]), "76b3d00baf662134bb417bd37afc970cb6a2371a613f7379bc3e49cdc07eb01d"; got != want {
+	if got, want := hex.EncodeToString(sum[:]), "87f0e8e6f10964d2f71f5b5378eaef10861dd49ddd4e63ec314451f0e7fd29ff"; got != want {
 		t.Fatalf("immutable Goose baseline digest = %s, want %s", got, want)
 	}
 	text := string(contents)
@@ -45,6 +46,20 @@ func TestEmbeddedGooseBaselineIsTheOnlyImmutableMigration(t *testing.T) {
 		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
 			t.Errorf("Goose baseline retains removed contract %q", forbidden)
 		}
+	}
+}
+
+func TestEmbeddedGooseBaselineMirrorsCanonicalJobsRiverFence(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := strings.ReplaceAll(strings.ReplaceAll(string(contents), "-- +goose StatementBegin\n", ""), "-- +goose StatementEnd\n", "")
+	canonical := strings.ReplaceAll(strings.ReplaceAll(jobpostgres.SchemaSQL(), "-- +goose StatementBegin\n", ""), "-- +goose StatementEnd\n", "")
+	const start = "CREATE OR REPLACE FUNCTION jobs.guard_river_result_fence()"
+	const end = "CREATE TABLE IF NOT EXISTS jobs.job_history ("
+	if got, want := recoverySQLBlock(t, baseline, start, end), recoverySQLBlock(t, canonical, start, end); got != want {
+		t.Error("Goose baseline River result fence differs from canonical jobs schema")
 	}
 }
 

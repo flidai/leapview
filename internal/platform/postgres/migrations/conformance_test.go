@@ -185,6 +185,24 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if !runtimePublicUsage || !readonlyPublicUsage || !backupPublicUsage {
 		t.Fatalf("Goose schema visibility missing: runtime=%t readonly=%t backup=%t", runtimePublicUsage, readonlyPublicUsage, backupPublicUsage)
 	}
+	var runtimeRiverRead, runtimeRiverInsert, runtimeRiverUpdate, runtimeRiverDelete, runtimeRiverMigrationRead, runtimeRiverJobSequence, runtimeRiverNotificationSequence bool
+	var ownerRiverTrigger, runtimeRiverTrigger bool
+	if err := db.QueryRow(ctx, `
+		SELECT has_table_privilege('leapview_control_runtime', 'public.river_job', 'SELECT'),
+		       has_table_privilege('leapview_control_runtime', 'public.river_job', 'INSERT'),
+		       has_table_privilege('leapview_control_runtime', 'public.river_job', 'UPDATE'),
+		       has_table_privilege('leapview_control_runtime', 'public.river_job', 'DELETE'),
+		       has_table_privilege('leapview_control_runtime', 'public.river_migration', 'SELECT'),
+		       has_sequence_privilege('leapview_control_runtime', 'public.river_job_id_seq', 'USAGE'),
+		       has_sequence_privilege('leapview_control_runtime', 'public.river_notification_id_seq', 'USAGE'),
+		       has_table_privilege('leapview_control_owner', 'public.river_job', 'TRIGGER'),
+		       has_table_privilege('leapview_control_runtime', 'public.river_job', 'TRIGGER')`).
+		Scan(&runtimeRiverRead, &runtimeRiverInsert, &runtimeRiverUpdate, &runtimeRiverDelete, &runtimeRiverMigrationRead, &runtimeRiverJobSequence, &runtimeRiverNotificationSequence, &ownerRiverTrigger, &runtimeRiverTrigger); err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeRiverRead || !runtimeRiverInsert || !runtimeRiverUpdate || !runtimeRiverDelete || !runtimeRiverMigrationRead || !runtimeRiverJobSequence || !runtimeRiverNotificationSequence || !ownerRiverTrigger || runtimeRiverTrigger {
+		t.Fatalf("River role policy invalid: runtime job=%t/%t/%t/%t migration-read=%t sequences=%t/%t owner/runtime-trigger=%t/%t", runtimeRiverRead, runtimeRiverInsert, runtimeRiverUpdate, runtimeRiverDelete, runtimeRiverMigrationRead, runtimeRiverJobSequence, runtimeRiverNotificationSequence, ownerRiverTrigger, runtimeRiverTrigger)
+	}
 	var runtimeTargetTableUpdate, runtimeTargetLockColumn, runtimeTargetRevisionColumn bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'delivery.delivery_target', 'UPDATE'),

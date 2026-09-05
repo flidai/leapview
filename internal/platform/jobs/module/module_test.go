@@ -294,6 +294,127 @@ func TestStaleRiverCancellationCannotInterruptSuccessorAttempt(t *testing.T) {
 	}
 }
 
+func TestRiverResultFenceClosesPostValidationHandoff(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_post_validation_handoff")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	repository := jobpostgres.NewRepository(pool)
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	module, err := Build(t.Context(), Config{
+		Persistence:  &persistence,
+		Production:   true,
+		Admission:    jobs.AdmitterFunc(allowJobs),
+		OwnerID:      "river-post-validation-test",
+		PollInterval: 5 * time.Millisecond,
+		LeaseTimeout: 10 * time.Second,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
+		JobKind: "release.finalize",
+		Run: func(ctx context.Context, _ jobs.Job) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var riverID int64
+	riverIDReady := make(chan struct{})
+	handoffDone := make(chan error, 1)
+	var handoffOnce sync.Once
+	module.afterRiverResultValidated = func() {
+		handoffOnce.Do(func() {
+			<-riverIDReady
+			_, handoffErr := pool.Exec(context.Background(), `
+				UPDATE public.river_job
+				SET attempt=2, attempted_by=array_append(attempted_by, 'river-successor'), attempted_at=clock_timestamp()
+				WHERE id=$1 AND state='running' AND attempt=1`, riverID)
+			handoffDone <- handoffErr
+		})
+	}
+	if err := module.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	job, err := module.Enqueue(t.Context(), testJobInput("job-post-validation-handoff", "post-validation-handoff"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(t.Context(), `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, job.ID).Scan(&riverID); err != nil {
+		t.Fatal(err)
+	}
+	close(riverIDReady)
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for River worker")
+	}
+
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- module.Stop(context.Background()) }()
+	select {
+	case err := <-handoffDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for post-validation handoff")
+	}
+	assertRiverState := func(want rivertype.JobState, wantAttempt int) {
+		t.Helper()
+		var state rivertype.JobState
+		var attempt int
+		var hasFence bool
+		if err := pool.QueryRow(t.Context(), `
+			SELECT state, attempt, metadata ? 'leapview:river_result_fence'
+			FROM public.river_job WHERE id=$1`, riverID).Scan(&state, &attempt, &hasFence); err != nil {
+			t.Fatal(err)
+		}
+		if state != want || attempt != wantAttempt || hasFence {
+			t.Fatalf("River row = state %q attempt %d fence=%v, want %q/%d/false", state, attempt, hasFence, want, wantAttempt)
+		}
+	}
+	assertRiverState(rivertype.JobStateRunning, 2)
+	select {
+	case err := <-stopDone:
+		t.Fatalf("stale River finalizer returned before the successor completed: %v", err)
+	case <-time.After(250 * time.Millisecond):
+	}
+	if _, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job SET state='completed', finalized_at=clock_timestamp()
+		WHERE id=$1 AND state='running' AND attempt=2`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for stale River finalizer to drain")
+	}
+	assertRiverState(rivertype.JobStateCompleted, 2)
+}
+
 func TestWorkRetainsRiverRetryWhenRetryPersistenceFails(t *testing.T) {
 	harness := postgrestest.Start(t)
 	database := harness.NewDatabase(t, "river_retry_persistence_failure")

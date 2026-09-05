@@ -36,6 +36,9 @@ type Module struct {
 	handlers    map[string]jobs.Handler
 	retryAt     sync.Map
 	mu          sync.RWMutex
+	// afterRiverResultValidated is a deterministic test seam for the narrow
+	// interval before River performs its separate worker-result transaction.
+	afterRiverResultValidated func()
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
@@ -277,12 +280,17 @@ func (m *Module) waitForStaleRiverClaim(ctx context.Context, riverJobID int64) e
 }
 
 func workTyped[T river.JobArgs](ctx context.Context, m *Module, job *river.Job[T], args jobpostgres.ExecutionArgs) error {
-	executionCtx := jobpostgres.ContextWithRiverExecution(ctx, job, m.config.OwnerID, m.config.LeaseTimeout)
-	result := m.work(executionCtx, job.ID, job.Attempt, args)
 	owner := strings.TrimSpace(m.config.OwnerID)
 	if owner == "" && len(job.AttemptedBy) > 0 {
 		owner = strings.TrimSpace(job.AttemptedBy[len(job.AttemptedBy)-1])
 	}
+	if err := jobpostgres.SetRiverResultFence(ctx, job.Attempt, owner); err != nil {
+		// A result without the metadata fence cannot be allowed to reach River's
+		// ID-only finalizer. Fail safe until the row is terminal.
+		return m.waitForStaleRiverClaim(ctx, job.ID)
+	}
+	executionCtx := jobpostgres.ContextWithRiverExecution(ctx, job, owner, m.config.LeaseTimeout)
+	result := m.work(executionCtx, job.ID, job.Attempt, args)
 	return m.protectRiverResult(ctx, job.ID, jobs.Fence{Owner: owner, Generation: int64(job.Attempt)}, result)
 }
 
@@ -297,6 +305,9 @@ func (m *Module) protectRiverResult(ctx context.Context, riverJobID int64, fence
 		err := m.repository.ValidateRiverResultClaim(probeCtx, riverJobID, fence)
 		cancel()
 		if err == nil {
+			if m.afterRiverResultValidated != nil {
+				m.afterRiverResultValidated()
+			}
 			return result
 		}
 		if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {

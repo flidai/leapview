@@ -32,6 +32,9 @@ const (
 	MaxAttempts     = 3
 	maxEventPage    = 200
 	maxPayloadBytes = 1 << 20
+	// RiverResultFenceMetadataKey is transient worker-result evidence consumed
+	// and stripped by jobs.guard_river_result_fence before River updates a row.
+	RiverResultFenceMetadataKey = "leapview:river_result_fence"
 )
 
 // ErrStaleRiverClaim distinguishes an executor that lost its River ownership
@@ -136,13 +139,32 @@ func ContextWithRiverExecution[T river.JobArgs](ctx context.Context, job *river.
 		if job == nil {
 			return errors.New("River completion requires a locked job")
 		}
-		if _, err := river.JobCompleteTx[*riverpgxv5.Driver](completeCtx, tx, job); err != nil {
+		updated, err := river.JobCompleteTx[*riverpgxv5.Driver](completeCtx, tx, job)
+		if err != nil {
 			return err
+		}
+		if updated == nil || updated.State != rivertype.JobStateCompleted || int64(updated.Attempt) != completion.generation || len(updated.AttemptedBy) == 0 || updated.AttemptedBy[len(updated.AttemptedBy)-1] != completion.owner {
+			return staleRiverConflict()
 		}
 		completion.done.Store(true)
 		return nil
 	}
 	return context.WithValue(ctx, riverCompletionKey{}, completion)
+}
+
+// SetRiverResultFence attaches exact attempt ownership to River's eventual
+// worker-result UPDATE. PostgreSQL consumes this marker in the same statement
+// that changes river_job, closing the gap between an application-side
+// ownership probe and River's ID-only finalizer.
+func SetRiverResultFence(ctx context.Context, attempt int, owner string) error {
+	owner = strings.TrimSpace(owner)
+	if attempt < 1 || owner == "" {
+		return errors.New("River result fence requires a positive attempt and owner")
+	}
+	return river.MetadataSet(ctx, RiverResultFenceMetadataKey, map[string]any{
+		"attempt": attempt,
+		"owner":   owner,
+	})
 }
 
 func completionFromContext(ctx context.Context) *riverCompletion {

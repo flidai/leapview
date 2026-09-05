@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,69 @@ func TestMarkRunningRejectsStaleRiverAttempt(t *testing.T) {
 	}
 	assertProductRunning(t, repository, job.ID, 1)
 	assertRiverFence(t, pool, riverID, rivertype.JobStateRunning, 2, []string{"owner-a", "owner-b"}, false)
+}
+
+func TestRiverResultFenceRejectsStaleFinalizerAndStripsCurrentFence(t *testing.T) {
+	repository, pool := cancelClaimedRepository(t)
+	job := enqueueClaimedJob(t, repository, pool, "river-result-fence", "owner-a", 1)
+	riverID := jobRiverID(t, pool, job.ID)
+	advanceRiverAttempt(t, pool, riverID)
+
+	_, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job
+		SET state = 'cancelled',
+		    finalized_at = clock_timestamp(),
+		    metadata = metadata || jsonb_build_object(
+		        'leapview:river_result_fence',
+		        jsonb_build_object('attempt', 1, 'owner', 'owner-a'))
+		WHERE id = $1 AND state = 'running'`, riverID)
+	if err == nil || !strings.Contains(err.Error(), "stale River result fence") {
+		t.Fatalf("stale River finalizer error = %v, want fenced rejection", err)
+	}
+	assertRiverFence(t, pool, riverID, rivertype.JobStateRunning, 2, []string{"owner-a", "owner-b"}, false)
+
+	current, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job
+		SET state = 'completed',
+		    finalized_at = clock_timestamp(),
+		    metadata = metadata || jsonb_build_object(
+		        'leapview:river_result_fence',
+		        jsonb_build_object('attempt', 2, 'owner', 'owner-b'))
+		WHERE id = $1 AND state = 'running'`, riverID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.RowsAffected() != 1 {
+		t.Fatalf("current River finalizer affected %d rows, want 1", current.RowsAffected())
+	}
+	var state rivertype.JobState
+	var hasFence bool
+	if err := pool.QueryRow(t.Context(), `
+		SELECT state, metadata ? 'leapview:river_result_fence'
+		FROM public.river_job WHERE id = $1`, riverID).Scan(&state, &hasFence); err != nil {
+		t.Fatal(err)
+	}
+	if state != rivertype.JobStateCompleted || hasFence {
+		t.Fatalf("current River finalizer = state %q fence=%v, want completed/false", state, hasFence)
+	}
+	if _, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job
+		SET metadata = metadata || jsonb_build_object(
+		        'stale-output', 'must-not-survive',
+		        'leapview:river_result_fence',
+		        jsonb_build_object('attempt', 1, 'owner', 'owner-a'))
+		WHERE id = $1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	var hasStaleOutput bool
+	if err := pool.QueryRow(t.Context(), `
+		SELECT metadata ? 'stale-output'
+		FROM public.river_job WHERE id = $1`, riverID).Scan(&hasStaleOutput); err != nil {
+		t.Fatal(err)
+	}
+	if hasStaleOutput {
+		t.Fatal("stale River retry mutated terminal successor metadata")
+	}
 }
 
 func TestMarkRunningRejectsMismatchedRiverOwner(t *testing.T) {

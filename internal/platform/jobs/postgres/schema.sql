@@ -5,6 +5,58 @@
 -- not depend on the executor's retention policy.
 CREATE SCHEMA IF NOT EXISTS jobs;
 
+CREATE OR REPLACE FUNCTION jobs.guard_river_result_fence()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, jobs
+-- +goose StatementBegin
+AS $$
+DECLARE
+    result_fence jsonb;
+    expected_attempt text;
+    expected_owner text;
+BEGIN
+    result_fence := NEW.metadata -> 'leapview:river_result_fence';
+    IF result_fence IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    -- The fence is transport-only evidence supplied by the finishing worker.
+    -- Never retain it in River metadata, even for an accepted current result.
+    NEW.metadata := NEW.metadata - 'leapview:river_result_fence';
+    IF OLD.state <> 'running' THEN
+        -- River may retry a stale completion after the successor has already
+        -- left running. Return the untouched terminal row so the completer can
+        -- drain without merging stale output or other worker metadata.
+        RETURN OLD;
+    END IF;
+    IF jsonb_typeof(result_fence) IS DISTINCT FROM 'object' THEN
+        RAISE EXCEPTION 'invalid River result fence';
+    END IF;
+    expected_attempt := result_fence ->> 'attempt';
+    expected_owner := result_fence ->> 'owner';
+    IF expected_attempt IS NULL
+       OR expected_attempt !~ '^[1-9][0-9]*$'
+       OR expected_attempt IS DISTINCT FROM OLD.attempt::text
+       OR expected_owner IS NULL
+       OR expected_owner IS DISTINCT FROM btrim(expected_owner)
+       OR expected_owner = ''
+       OR coalesce(array_length(OLD.attempted_by, 1), 0) = 0
+       OR expected_owner IS DISTINCT FROM OLD.attempted_by[array_upper(OLD.attempted_by, 1)] THEN
+        -- Abort River's ID-only UPDATE while another attempt is running.
+        -- River retries its completer; once that attempt leaves running, the
+        -- branch above drains the stale result without changing its state.
+        RAISE EXCEPTION 'stale River result fence';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE OR REPLACE TRIGGER river_result_fence_guard
+    BEFORE UPDATE ON public.river_job
+    FOR EACH ROW EXECUTE FUNCTION jobs.guard_river_result_fence();
+
 CREATE TABLE IF NOT EXISTS jobs.job_history (
     id                     text PRIMARY KEY,
     kind                   text NOT NULL,
@@ -160,7 +212,7 @@ $$;
 
 REVOKE ALL ON SCHEMA jobs FROM PUBLIC;
 REVOKE ALL ON ALL TABLES IN SCHEMA jobs FROM PUBLIC;
-REVOKE ALL ON FUNCTION jobs.guard_job_history_update(), jobs.reject_event_mutation(),
+REVOKE ALL ON FUNCTION jobs.guard_river_result_fence(), jobs.guard_job_history_update(), jobs.reject_event_mutation(),
     jobs.prune(timestamptz, integer) FROM PUBLIC;
 
 -- +goose StatementBegin
