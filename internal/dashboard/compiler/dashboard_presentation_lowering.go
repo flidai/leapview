@@ -111,8 +111,11 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 			}
 			out.Overplot = overplot.Strategy
 			if overplot.Opacity != nil {
+				if !finiteDashboardFloat(*overplot.Opacity) {
+					return nil, fmt.Errorf("presentation.overplot.opacity must be finite")
+				}
 				if *overplot.Opacity <= 0 || *overplot.Opacity > 1 {
-					return nil, fmt.Errorf("point overplot opacity must be greater than 0 and at most 1")
+					return nil, fmt.Errorf("presentation.overplot.opacity must be greater than 0 and at most 1")
 				}
 				out.Opacity = *overplot.Opacity
 			}

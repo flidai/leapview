@@ -738,7 +738,6 @@ model PointDashboardPresentation extends DashboardPresentation {
   y: DashboardResultField;
   size?: DashboardResultField;
   color?: DashboardResultField;
-  series?: DashboardResultField;
   label?: DashboardResultField;
   tooltip?: DashboardResultField[];
   colorScale?: PointDashboardColorScale;

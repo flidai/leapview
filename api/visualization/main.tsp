@@ -869,7 +869,6 @@ model PointVisualizationSpec extends VisualizationSpec {
   `y`: VisualizationFieldRef;
   `size`?: VisualizationFieldRef;
   `color`?: VisualizationFieldRef;
-  `series`?: VisualizationFieldRef;
   `label`?: VisualizationFieldRef;
   `tooltip`?: VisualizationFieldRef[];
   `colorScale`?: PointVisualizationColorScale;

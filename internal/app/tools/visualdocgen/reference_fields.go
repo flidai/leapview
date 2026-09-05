@@ -84,7 +84,7 @@ var presentationFieldReferences = map[string]visualdocs.FieldReference{
 	"y":                     field("result field", "required", nil, "Binds the governed result field used for the vertical point coordinate."),
 	"size":                  field("result field", "none", nil, "Binds an optional governed numeric result field to point size."),
 	"color":                 field("result field", "none", nil, "Binds an optional governed result field to point color."),
-	"series":                field("result field", "none", nil, "Binds an optional governed result field to point series."),
+	"series":                field("closed combo series list", "none", []string{"line", "area", "bar", "column"}, "Binds each compiled metric result field to one supported mark and the primary or secondary value axis."),
 	"label":                 field("result field", "none", nil, "Binds an optional governed result field to point labels."),
 	"tooltip":               field("result field list", "none", nil, "Binds governed result fields exposed in point tooltips."),
 	"colorScale":            field("point color scale", "none", []string{"categorical", "quantitative"}, "Constrains the governed point color channel and optional numeric domain."),

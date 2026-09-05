@@ -75973,11 +75973,6 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
           example: example
-        series:
-          type: string
-          minLength: 1
-          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example: example
         label:
           type: string
           minLength: 1
@@ -76097,7 +76092,6 @@ components:
             id: example
             label: example
             tone: neutral
-        series: example
         size: example
         sizeScale:
           maximum: 1
@@ -76250,8 +76244,6 @@ components:
           $ref: '#/components/schemas/VisualizationFieldRef'
         color:
           $ref: '#/components/schemas/VisualizationFieldRef'
-        series:
-          $ref: '#/components/schemas/VisualizationFieldRef'
         label:
           $ref: '#/components/schemas/VisualizationFieldRef'
         tooltip:
@@ -76357,9 +76349,6 @@ components:
             id: example
             label: example
             tone: neutral
-        series:
-          dataset: example
-          field: example
         size:
           dataset: example
           field: example

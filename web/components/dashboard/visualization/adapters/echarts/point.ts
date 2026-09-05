@@ -6,6 +6,7 @@ import { conditionalItemColor } from './conditional-color'
 import { resolveConditionalFormat, type ConditionalFormatResult } from '../../conditional-format'
 import { echartsLabelPolicy } from './label-policy'
 import { categoryIdentity, type CategoryColorRegistry } from './category-colors'
+import { parseDecimal } from '../../decimal'
 
 type PointSpec = Extract<VisualizationEnvelope['spec'], { kind: 'point' }>
 const warningPointSymbol = 'path://M0,-10 L9,8 L-9,8 Z M-1,-4 L-1,2 L1,2 L1,-4 Z M-1,4 L-1,6 L1,6 L1,4 Z'
@@ -144,7 +145,6 @@ function pointEncode(spec: PointSpec): EChartsTranslation {
     x: spec.x.field,
     y: spec.y.field,
     ...(spec.color ? { itemName: spec.color.field } : {}),
-    ...(spec.series ? { itemGroupId: spec.series.field } : {}),
     ...(spec.tooltip ? { tooltip: spec.tooltip.map((item) => item.field) } : {}),
   }
 }
@@ -340,14 +340,38 @@ function pointSymbolSize(envelope: VisualizationEnvelope, spec: PointSpec): numb
   if (!spec.size || !spec.sizeScale) return 10
   const dataset = inlineDataset(envelope, spec.size.dataset)
   const index = dataset?.columns.indexOf(spec.size.field) ?? -1
-  const values = (dataset?.rows ?? []).map((row) => row[index]).filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+  const values = (dataset?.rows ?? [])
+    .map((row) => pointNumericValue(row[index], 'size', spec.size!.field))
+    .filter((value): value is number => value !== undefined)
   const minimum = spec.sizeScale.minimum ?? (values.length ? Math.min(...values) : 0)
   const maximum = spec.sizeScale.maximum ?? (values.length ? Math.max(...values) : minimum)
+  const span = maximum - minimum
+  const scale = Math.max(Math.abs(minimum), Math.abs(maximum))
+  const normalizedMinimum = minimum / scale
+  const normalizedMaximum = maximum / scale
+  const normalizedSpan = normalizedMaximum - normalizedMinimum
+  if (minimum < maximum && !Number.isFinite(span)) {
+    // Scale the endpoints in the callback below when their direct difference overflows.
+    // The renderer must still reject a domain if its normalized range cannot be represented.
+    if (!Number.isFinite(normalizedSpan) || normalizedSpan <= 0) {
+      throw new Error(`point size field "${spec.size.field}" domain span is outside the JavaScript finite numeric range`)
+    }
+  }
   return (value: unknown[]) => {
-    const raw = Number(value[index])
-    if (!Number.isFinite(raw) || maximum <= minimum) return spec.sizeScale!.minimumPixels
-    const ratio = Math.max(0, Math.min(1, (raw - minimum) / (maximum - minimum)))
-    return spec.sizeScale!.minimumPixels + ratio * (spec.sizeScale!.maximumPixels - spec.sizeScale!.minimumPixels)
+    const raw = pointNumericValue(value[index], 'size', spec.size!.field)
+    if (raw === undefined || maximum <= minimum) return spec.sizeScale!.minimumPixels
+    const bounded = Math.max(minimum, Math.min(maximum, raw))
+    const ratio = Number.isFinite(span)
+      ? (bounded - minimum) / span
+      : (bounded / scale - normalizedMinimum) / normalizedSpan
+    if (!Number.isFinite(ratio)) {
+      throw new Error(`point size field "${spec.size!.field}" domain span is outside the JavaScript finite numeric range`)
+    }
+    const symbolSize = spec.sizeScale!.minimumPixels + Math.max(0, Math.min(1, ratio)) * (spec.sizeScale!.maximumPixels - spec.sizeScale!.minimumPixels)
+    if (!Number.isFinite(symbolSize)) {
+      throw new Error(`point size field "${spec.size!.field}" symbol size is outside the JavaScript finite numeric range`)
+    }
+    return symbolSize
   }
 }
 
@@ -360,11 +384,22 @@ function pointColorDomain(
   const dataset = inlineDataset(envelope, ref.dataset)
   const index = dataset?.columns.indexOf(ref.field) ?? -1
   const values = (dataset?.rows ?? [])
-    .map((row) => row[index])
-    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+    .map((row) => pointNumericValue(row[index], 'color', ref.field))
+    .filter((value): value is number => value !== undefined)
   let min = authoredMinimum ?? (values.length ? Math.min(...values) : 0)
   let max = authoredMaximum ?? (values.length ? Math.max(...values) : 1)
   if (min < max) return { min, max }
+  if (authoredMinimum === undefined && authoredMaximum === undefined) {
+    const delta = Math.max(1, Math.abs(min) * 0.01)
+    const expandedMinimum = min - delta
+    const expandedMaximum = max + delta
+    if (Number.isFinite(expandedMinimum) && Number.isFinite(expandedMaximum) && expandedMinimum < expandedMaximum) {
+      return { min: expandedMinimum, max: expandedMaximum }
+    }
+    if (min > 0) return { min: 0, max: min }
+    if (min < 0) return { min, max: 0 }
+    return { min: 0, max: 1 }
+  }
   if (authoredMinimum !== undefined && authoredMaximum === undefined) max = min + Math.max(1, Math.abs(min) * 0.01)
   else if (authoredMaximum !== undefined && authoredMinimum === undefined) min = max - Math.max(1, Math.abs(max) * 0.01)
   else {
@@ -372,7 +407,23 @@ function pointColorDomain(
     min -= delta
     max += delta
   }
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min >= max) {
+    throw new Error(`point color field "${ref.field}" domain is outside the JavaScript finite numeric range`)
+  }
   return { min, max }
+}
+
+function pointNumericValue(value: unknown, channel: 'color' | 'size', field: string): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value !== 'string') return undefined
+  const parsed = parseDecimal(value)
+  if (!parsed) return undefined
+  const converted = Number(value)
+  const zero = parsed.integer === '0' && /^0*$/.test(parsed.fraction)
+  if (!Number.isFinite(converted) || (converted === 0 && !zero)) {
+    throw new Error(`point ${channel} field "${field}" canonical decimal "${value}" is outside the JavaScript finite numeric range (overflows or underflows)`)
+  }
+  return converted
 }
 
 function pointBrush(spec: PointSpec): EChartsTranslation {

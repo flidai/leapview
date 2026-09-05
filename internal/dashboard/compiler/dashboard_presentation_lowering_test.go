@@ -72,6 +72,19 @@ func TestLowerCanonicalPointPresentationRejectsInvalidOverplot(t *testing.T) {
 	}
 }
 
+func TestLowerCanonicalPointPresentationRejectsNonFiniteOpacity(t *testing.T) {
+	for _, opacity := range []float64{math.NaN(), math.Inf(1)} {
+		value := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
+			Type: "point", Identity: []string{"id"}, X: "x", Y: "y",
+			Overplot: &document.PointDashboardOverplot{Strategy: visualizationir.VisualizationPointOverplotStrategyOpacity, Opacity: &opacity},
+		}}
+		_, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeScatter)
+		if err == nil || !strings.Contains(err.Error(), "presentation.overplot.opacity") || !strings.Contains(err.Error(), "finite") {
+			t.Fatalf("opacity %v error = %v, want path-bearing finite diagnostic", opacity, err)
+		}
+	}
+}
+
 func pointStringPtr(value string) *string { return &value }
 
 func TestLowerCanonicalPresentationVariantsPreserveTableAndKPIFields(t *testing.T) {

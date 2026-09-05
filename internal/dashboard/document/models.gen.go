@@ -3974,7 +3974,6 @@ type PointDashboardPresentation struct {
 	Y                string                                            `json:"y" yaml:"y"`
 	Size             *string                                           `json:"size,omitempty" yaml:"size,omitempty"`
 	Color            *string                                           `json:"color,omitempty" yaml:"color,omitempty"`
-	Series           *string                                           `json:"series,omitempty" yaml:"series,omitempty"`
 	Label            *string                                           `json:"label,omitempty" yaml:"label,omitempty"`
 	Tooltip          *[]string                                         `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
 	ColorScale       *PointDashboardColorScale                         `json:"colorScale,omitempty" yaml:"colorScale,omitempty"`

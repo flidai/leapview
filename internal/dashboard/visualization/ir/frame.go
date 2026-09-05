@@ -479,6 +479,9 @@ func validatePointSpecification(spec VisualizationSpec, schemas map[string]Visua
 	if !ok {
 		return nil
 	}
+	if !finite(point.Presentation.Opacity) {
+		return fmt.Errorf("point presentation.overplot.opacity must be finite")
+	}
 	if len(point.Identity) == 0 {
 		return fmt.Errorf("point visualization requires identity fields")
 	}
@@ -512,6 +515,18 @@ func validatePointSpecification(spec VisualizationSpec, schemas map[string]Visua
 		return fmt.Errorf("point size scale requires a size field")
 	}
 	if scale := point.SizeScale; scale != nil {
+		if scale.Minimum != nil && !finite(*scale.Minimum) {
+			return fmt.Errorf("point presentation.sizeScale.minimum must be finite")
+		}
+		if scale.Maximum != nil && !finite(*scale.Maximum) {
+			return fmt.Errorf("point presentation.sizeScale.maximum must be finite")
+		}
+		if !finite(scale.MinimumPixels) {
+			return fmt.Errorf("point presentation.sizeScale.minimumPixels must be finite")
+		}
+		if !finite(scale.MaximumPixels) {
+			return fmt.Errorf("point presentation.sizeScale.maximumPixels must be finite")
+		}
 		if scale.Minimum != nil && scale.Maximum != nil && *scale.Minimum >= *scale.Maximum {
 			return fmt.Errorf("point size scale minimum must be less than maximum")
 		}
@@ -948,7 +963,6 @@ func (visitor *specificationReferenceVisitor) VisitPointVisualizationSpec(value 
 	visitor.refs = append(visitor.refs, value.X, value.Y)
 	visitor.add(value.Size)
 	visitor.add(value.Color)
-	visitor.add(value.Series)
 	visitor.add(value.Label)
 	if value.Tooltip != nil {
 		visitor.refs = append(visitor.refs, *value.Tooltip...)

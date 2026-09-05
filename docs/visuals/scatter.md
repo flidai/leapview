@@ -1,6 +1,6 @@
 # Scatter chart
 
-Use a scatter chart to evaluate the relationship between two quantitative fields. Every point has stable entity identity; optional size, color, series, labels, and tooltips add governed context without changing that identity.
+Use a scatter chart to evaluate the relationship between two quantitative fields. Every point has stable entity identity; optional size, color, labels, and tooltips add governed context without changing that identity.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 

@@ -9064,11 +9064,6 @@
                         },
                         "type": "array"
                       },
-                      "series": {
-                        "minLength": 1,
-                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                        "type": "string"
-                      },
                       "size": {
                         "minLength": 1,
                         "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",

@@ -121,6 +121,55 @@ func TestCompileVisualsAcceptsOnePointMarkFillAndRejectsDuplicate(t *testing.T) 
 	}
 }
 
+func TestCanonicalVisualizationSpecRejectsNonFinitePointSizeScale(t *testing.T) {
+	minimum, maximum := 1.0, 12.0
+	size := "revenue"
+	cases := []struct {
+		name   string
+		mutate func(*document.PointDashboardSizeScale)
+		want   string
+	}{
+		{name: "minimum", mutate: func(scale *document.PointDashboardSizeScale) { scale.Minimum = floatPtr(math.NaN()) }, want: "presentation.sizeScale.minimum"},
+		{name: "maximum", mutate: func(scale *document.PointDashboardSizeScale) { scale.Maximum = floatPtr(math.Inf(1)) }, want: "presentation.sizeScale.maximum"},
+		{name: "minimumPixels", mutate: func(scale *document.PointDashboardSizeScale) { scale.MinimumPixels = math.NaN() }, want: "presentation.sizeScale.minimumPixels"},
+		{name: "maximumPixels", mutate: func(scale *document.PointDashboardSizeScale) { scale.MaximumPixels = math.Inf(1) }, want: "presentation.sizeScale.maximumPixels"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			scale := document.PointDashboardSizeScale{Minimum: &minimum, Maximum: &maximum, MinimumPixels: 6, MaximumPixels: 24}
+			test.mutate(&scale)
+			authored := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
+				Type: "point", Identity: []string{"state"}, X: "revenue", Y: "revenue", Size: &size, SizeScale: &scale,
+			}}
+			lowered, err := LowerCanonicalDashboardPresentation(authored, document.DashboardVisualTypeScatter)
+			if err != nil {
+				t.Fatalf("lower presentation: %v", err)
+			}
+			_, err = canonicalVisualizationSpec("scatter", document.DashboardVisual{Type: document.DashboardVisualTypeScatter, Presentation: authored}, pointQuery(), lowered, nil, dashboardQueryTestModel())
+			if err == nil || !strings.Contains(err.Error(), test.want) || !strings.Contains(err.Error(), "finite") {
+				t.Fatalf("canonicalVisualizationSpec() error = %v, want path-bearing finite diagnostic", err)
+			}
+		})
+	}
+}
+
+func TestCanonicalVisualizationSpecRejectsEqualPointSizeScalePixels(t *testing.T) {
+	minimum, maximum := 1.0, 12.0
+	size := "revenue"
+	scale := document.PointDashboardSizeScale{Minimum: &minimum, Maximum: &maximum, MinimumPixels: 12, MaximumPixels: 12}
+	authored := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
+		Type: "point", Identity: []string{"state"}, X: "revenue", Y: "revenue", Size: &size, SizeScale: &scale,
+	}}
+	lowered, err := LowerCanonicalDashboardPresentation(authored, document.DashboardVisualTypeScatter)
+	if err != nil {
+		t.Fatalf("lower presentation: %v", err)
+	}
+	_, err = canonicalVisualizationSpec("scatter", document.DashboardVisual{Type: document.DashboardVisualTypeScatter, Presentation: authored}, pointQuery(), lowered, nil, dashboardQueryTestModel())
+	if err == nil || !strings.Contains(err.Error(), "presentation.sizeScale pixel bounds are invalid") {
+		t.Fatalf("canonicalVisualizationSpec() error = %v, want equal pixel-bound diagnostic", err)
+	}
+}
+
 func lowerPointColorScaleSpec(t *testing.T, color string, scale *document.PointDashboardColorScale) (visualizationir.VisualizationSpec, error) {
 	t.Helper()
 	authored := document.DashboardPresentation{Value: &document.PointDashboardPresentation{

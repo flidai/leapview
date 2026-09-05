@@ -257,6 +257,19 @@ func TestDashboardDocumentSchemaRejectsUnknownVisualAndPresentationKinds(t *test
 	}
 }
 
+func TestDashboardDocumentSchemaRejectsRemovedPointSeries(t *testing.T) {
+	compiled := loadDashboardDocumentSchema(t)
+	document := loadDashboardDocumentFixture(t)
+	visual := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)
+	visual["type"] = "scatter"
+	visual["presentation"] = map[string]any{
+		"type": "point", "identity": []any{"month"}, "x": "month", "y": "revenue", "series": "month",
+	}
+	if err := compiled.Validate(document); err == nil {
+		t.Fatal("generated dashboard schema accepted removed point presentation.series")
+	}
+}
+
 func ptr[T any](value T) *T { return &value }
 
 func dimension(value string) DashboardDimensionSelection {
