@@ -79,11 +79,17 @@ export function applyBasemapTheme(map: Pick<MapLibreMap, 'getStyle' | 'getLayer'
     if (role === 'road' && layer.type === 'line') map.setPaintProperty(layer.id, 'line-color', colors.road ?? '#ffffff')
     if (role === 'building' && layer.type === 'fill') map.setPaintProperty(layer.id, 'fill-color', colors.building ?? '#d8dee4')
     if (role === 'label' && layer.type === 'symbol') {
-      map.setLayoutProperty(layer.id, 'visibility', labelDensity === 'hidden' ? 'none' : 'visible')
+      map.setLayoutProperty(layer.id, 'visibility', labelVisibility(layer.id, labelDensity))
       map.setPaintProperty(layer.id, 'text-color', colors.label ?? '#57606a')
       map.setPaintProperty(layer.id, 'text-halo-color', colors.land)
     }
   }
+}
+
+function labelVisibility(id: string, density: 'hidden' | 'normal' | 'dense'): 'none' | 'visible' {
+  if (density === 'hidden') return 'none'
+  if (density === 'dense') return 'visible'
+  return /^(address_label|pois|places_subplace|roads_labels_minor)$/.test(id) ? 'none' : 'visible'
 }
 
 export function applyDataLabelTheme(map: Pick<MapLibreMap, 'getLayer' | 'setPaintProperty'>, layerIDs: readonly string[], colors: DataLabelColors): void {

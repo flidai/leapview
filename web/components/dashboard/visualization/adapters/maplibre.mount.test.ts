@@ -86,7 +86,7 @@ async function digest(value: Uint8Array): Promise<string> {
   return `sha256:${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`
 }
 
-async function labelEnvelope(theme: 'auto' | 'light' | 'dark' = 'auto', specRevision = 'sha256:labels'): Promise<VisualizationEnvelope> {
+async function labelEnvelope(theme: 'auto' | 'light' | 'dark' = 'auto', specRevision = 'sha256:labels', labelDensity: 'hidden' | 'normal' | 'dense' = 'normal'): Promise<VisualizationEnvelope> {
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
   const geometryBytes = new TextEncoder().encode(geometryJSON)
   const geometryDigest = await digest(geometryBytes)
@@ -108,7 +108,7 @@ async function labelEnvelope(theme: 'auto' | 'light' | 'dark' = 'auto', specRevi
         { id: 'state', role: 'identity', dataType: 'string', nullable: false, label: 'State' }, { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' }, { id: 'name', role: 'dimension', dataType: 'string', nullable: false, label: 'Name' },
       ] }],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Labels', description: 'Labels' }, interactions: [], spatialInteractions: [], layers: [point, choropleth],
-      presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, roam: false, theme, labelDensity: 'normal', camera: { mode: 'fixed', center: [0, 0], zoom: 2, padding: 24, minimumZoom: 0, maximumZoom: 10 }, controls: { zoom: false, reset: false, compass: false } },
+      presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, roam: false, theme, labelDensity, camera: { mode: 'fixed', center: [0, 0], zoom: 2, padding: 24, minimumZoom: 0, maximumZoom: 10 }, controls: { zoom: false, reset: false, compass: false } },
     },
     dataState: { kind: 'inline', specRevision, dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision, dataRevision: 1, generation: 1, columns: ['latitude', 'longitude', 'state', 'value', 'name'], rows: [[-23.5, -46.6, 'SP', 10, 'São Paulo']], completeness: 'complete' }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
@@ -157,6 +157,40 @@ test('MapLibre mounted labels resolve theme and repaint in place on context-only
     expect(darkPaint).toEqual({ text: '#f0f6fc', halo: '#0d1821' })
     await handle.update(explicit, Change.Context, context('dark'))
     expect(layerPaint(map, 'lv-points-data-label')).toEqual(darkPaint)
+    handle.dispose()
+  } finally {
+    globalThis.document = previous.document
+    globalThis.window = previous.window
+    globalThis.location = previous.location
+    globalThis.getComputedStyle = previous.getComputedStyle
+    globalThis.requestAnimationFrame = previous.requestAnimationFrame
+    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
+    globalThis.fetch = previous.fetch
+    globalThis.CustomEvent = previous.CustomEvent
+    dom.window.close()
+  }
+})
+
+test('MapLibre changes basemap label density in place without rebuilding geographic data', async () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
+  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
+  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
+  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  try {
+    const normal = await labelEnvelope('auto', 'sha256:labels-normal', 'normal')
+    const dense = await labelEnvelope('auto', 'sha256:labels-dense', 'dense')
+    const container = dom.window.document.createElement('div')
+    const frame = dom.window.document.createElement('div')
+    const attribution = dom.window.document.createElement('div')
+    const map = new FakeMap()
+    const handle = new MapLibreHandle(container, frame, map as never, attribution, context('light'))
+    await handle.update(normal, Change.All, context('light'))
+    const sourcesBefore = [...map.sources.keys()]
+    const layersBefore = [...map.layers.keys()]
+    await handle.update(dense, Change.Spec, context('light'))
+    expect([...map.sources.keys()]).toEqual(sourcesBefore)
+    expect([...map.layers.keys()]).toEqual(layersBefore)
     handle.dispose()
   } finally {
     globalThis.document = previous.document

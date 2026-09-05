@@ -162,6 +162,24 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 	}
 }
 
+func TestLowerCanonicalGeographicPresentationPreservesExplicitLabelDensity(t *testing.T) {
+	density := visualizationir.VisualizationMapLabelDensityDense
+	lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{
+		Type:         "geographic",
+		LabelDensity: &density,
+	}}, document.DashboardVisualTypeMap)
+	if err != nil {
+		t.Fatalf("lower geographic presentation: %v", err)
+	}
+	got, ok := lowered.(visualizationir.GeographicVisualizationPresentation)
+	if !ok {
+		t.Fatalf("lowered type = %T", lowered)
+	}
+	if got.LabelDensity != visualizationir.VisualizationMapLabelDensityDense {
+		t.Fatalf("label density = %q, want dense", got.LabelDensity)
+	}
+}
+
 func TestLowerCanonicalPresentationRejectsIncompatibleAndInvalidValues(t *testing.T) {
 	if _, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.KPIDashboardPresentation{Type: "kpi"}}, document.DashboardVisualTypeBar); err == nil {
 		t.Fatal("incompatible presentation accepted")

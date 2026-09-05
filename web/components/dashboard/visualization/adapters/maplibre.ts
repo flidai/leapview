@@ -1,4 +1,4 @@
-import type { VisualizationEnvelope, VisualizationGeographicLayer, VisualizationGeometryAsset } from '../../../../generated/visualization'
+import type { VisualizationDataState, VisualizationEnvelope, VisualizationGeographicLayer, VisualizationGeometryAsset } from '../../../../generated/visualization'
 import { Map as MapLibre, NavigationControl, type GeoJSONSource, type Map as MapLibreMap, type MapMouseEvent, type MapOptions, type VectorTileSource } from 'maplibre-gl'
 import type { FeatureCollection } from 'geojson'
 import type { OptimisticInteractionCommand } from '../../interaction-selection'
@@ -145,6 +145,27 @@ export function mapPointerOptions(envelope: VisualizationEnvelope): Pick<MapOpti
   }
 }
 
+function comparableDataState(state: VisualizationDataState): unknown {
+  const { specRevision: _specRevision, ...withoutSpecRevision } = state
+  if (state.kind !== 'inline') return withoutSpecRevision
+  return {
+    ...withoutSpecRevision,
+    datasets: state.datasets.map(({ specRevision: _datasetSpecRevision, ...dataset }) => dataset),
+  }
+}
+
+function dataStateEquivalent(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {
+  if (previous.dataRevision !== next.dataRevision) return false
+  return JSON.stringify(comparableDataState(previous.dataState)) === JSON.stringify(comparableDataState(next.dataState))
+}
+
+function isLabelDensityOnlyChange(previous: VisualizationEnvelope | undefined, next: VisualizationEnvelope): boolean {
+  if (!previous || previous.spec.kind !== 'geographic' || next.spec.kind !== 'geographic') return false
+  const { labelDensity: _previousDensity, ...previousPresentation } = previous.spec.presentation
+  const { labelDensity: _nextDensity, ...nextPresentation } = next.spec.presentation
+  return dataStateEquivalent(previous, next) && JSON.stringify({ ...previous.spec, presentation: previousPresentation }) === JSON.stringify({ ...next.spec, presentation: nextPresentation })
+}
+
 export function mapSelectionControlAvailable(envelope: VisualizationEnvelope): boolean {
   return envelope.spec.interactions.some((candidate) => candidate.kind === 'select')
 }
@@ -234,6 +255,8 @@ export class MapLibreHandle implements RendererHandle {
   private async applyUpdate(envelope: VisualizationEnvelope, change: Change): Promise<void> {
     if (this.disposed) return
     if (envelope.spec.kind !== 'geographic') throw new Error(`MapLibre cannot render ${envelope.spec.kind}`)
+    const specChanged = (change & Change.Spec) !== 0
+    const densityOnlySpecChange = specChanged && isLabelDensityOnlyChange(this.envelope, envelope)
     this.envelope = envelope
     this.updateAccessibleFallback(envelope)
     this.map.setMinZoom(envelope.spec.presentation.camera.minimumZoom)
@@ -242,6 +265,10 @@ export class MapLibreHandle implements RendererHandle {
     if (this.disposed) return
     this.updateSelectionControl(envelope)
     this.updateSpatialSelectionControl(envelope)
+    if (densityOnlySpecChange) {
+      if ((change & Change.Selection) !== 0) this.updateSelectionData(envelope)
+      return
+    }
     if ((change & (Change.Spec | Change.Data)) === 0) {
       if ((change & Change.Selection) !== 0) this.updateSelectionData(envelope)
       return
