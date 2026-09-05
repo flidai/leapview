@@ -240,8 +240,10 @@ class MapLibreHandle implements RendererHandle {
     this.map.setMaxZoom(envelope.spec.presentation.camera.maximumZoom)
     await this.applyTheme()
     if (this.disposed) return
+    const specChanged = (change & Change.Spec) !== 0
     this.updateSelectionControl(envelope)
     this.updateSpatialSelectionControl(envelope)
+    if (specChanged) this.updateMapInteractionState(envelope)
     if ((change & (Change.Spec | Change.Data)) === 0) {
       if ((change & Change.Selection) !== 0) this.updateSelectionData(envelope)
       return
@@ -572,6 +574,30 @@ class MapLibreHandle implements RendererHandle {
     if (!this.spatialSelectionControl.element.isConnected) this.frame.append(this.spatialSelectionControl.element)
     this.spatialSelectionControl.update(envelope)
     this.syncMapSelectionControls()
+  }
+
+  private updateMapInteractionState(envelope: VisualizationEnvelope): void {
+    const options = mapPointerOptions(envelope)
+    const handlers = [
+      [this.map.scrollZoom, options.scrollZoom],
+      [this.map.boxZoom, options.boxZoom],
+      [this.map.dragRotate, options.dragRotate],
+      [this.map.dragPan, options.dragPan],
+      [this.map.keyboard, options.keyboard],
+      [this.map.doubleClickZoom, options.doubleClickZoom],
+      [this.map.touchZoomRotate, options.touchZoomRotate],
+      [this.map.touchPitch, options.touchPitch],
+    ] as const
+    for (const [handler, enabled] of handlers) {
+      if (handler === this.map.dragPan && this.spatialSelectionControl) continue
+      const shouldEnable = enabled === true
+      if (handler.isEnabled() === shouldEnable) continue
+      if (shouldEnable) handler.enable()
+      else handler.disable()
+    }
+    this.map.getCanvasContainer().classList.toggle('maplibregl-interactive', options.interactive)
+    this.map.getCanvas().tabIndex = options.interactive ? 0 : -1
+    this.spatialSelectionControl?.setRoamDragPanEnabled(options.dragPan === true)
   }
 
   private syncMapSelectionControls(): void {

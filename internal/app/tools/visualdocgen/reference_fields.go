@@ -67,7 +67,7 @@ var presentationFieldReferences = map[string]visualdocs.FieldReference{
 	"align":                 field("string", "renderer default", []string{"left", "center", "right"}, "Aligns compatible proportional stages."),
 	"sort":                  field("string", "query order", []string{"ascending", "descending"}, "Orders compatible proportional stages without changing query semantics."),
 	"initialDepth":          field("integer", "all levels", []string{"non-negative integer"}, "Limits the hierarchy depth expanded on first render."),
-	"roam":                  booleanOption("false", "Allows governed hierarchy panning and zooming."),
+	"roam":                  booleanOption("false", "Allows governed panning and zooming for compatible hierarchy and geographic visuals."),
 	"layout":                field("string", "standard", []string{"standard", "circular"}, "Selects the deterministic hierarchy or graph layout."),
 	"breadcrumb":            booleanOption("false", "Shows hierarchy navigation context."),
 	"nodeGap":               field("number", "renderer default", []string{"non-negative number"}, "Sets the spacing between hierarchy or flow nodes."),
