@@ -22,6 +22,8 @@
           "items": {
             "$ref": "#/$defs/DesktopAuthenticationMode"
           },
+          "maxItems": 16,
+          "minItems": 1,
           "type": "array"
         },
         "canonicalOrigin": {
@@ -33,6 +35,8 @@
           "items": {
             "$ref": "#/$defs/DesktopCapability"
           },
+          "maxItems": 16,
+          "minItems": 1,
           "type": "array"
         },
         "desktopProtocolMax": {

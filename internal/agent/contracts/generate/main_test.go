@@ -44,3 +44,18 @@ func TestPortableSchemaRejectsRecursiveReferences(t *testing.T) {
 		t.Fatal("portableSchema() accepted a recursive contract")
 	}
 }
+
+func TestPortableSchemaDropsUnsupportedArrayConstraints(t *testing.T) {
+	input := map[string]any{
+		"type": "array", "items": map[string]any{"type": "string"},
+		"minItems": 1, "maxItems": 4, "uniqueItems": true,
+	}
+	got, err := portableSchema(input, nil, map[string]bool{})
+	if err != nil {
+		t.Fatalf("portableSchema(): %v", err)
+	}
+	want := map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("portable schema = %#v, want %#v", got, want)
+	}
+}

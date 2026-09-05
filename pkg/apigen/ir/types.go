@@ -341,6 +341,9 @@ type SchemaRef struct {
 	Maximum              *float64              `json:"maximum,omitempty"`
 	MinLength            *int                  `json:"min_length,omitempty"`
 	MaxLength            *int                  `json:"max_length,omitempty"`
+	MinItems             *int                  `json:"min_items,omitempty"`
+	MaxItems             *int                  `json:"max_items,omitempty"`
+	UniqueItems          bool                  `json:"unique_items,omitempty"`
 	MinProperties        *int                  `json:"min_properties,omitempty"`
 	Pattern              string                `json:"pattern,omitempty"`
 	Items                *SchemaRef            `json:"items,omitempty"`
@@ -369,7 +372,11 @@ type Schema struct {
 	OneOf         []SchemaRef               `json:"one_of,omitempty"`
 	Discriminator *Discriminator            `json:"discriminator,omitempty"`
 	Enum          []string                  `json:"enum,omitempty"`
-	Extensions    map[string]any            `json:"extensions,omitempty"`
+	// ExactNumbers is an explicit code-generation opt-in for unions whose
+	// untyped numeric values must retain their JSON lexemes as json.Number.
+	// It is an internal IR flag, not a public schema extension.
+	ExactNumbers bool           `json:"exact_numbers,omitempty"`
+	Extensions   map[string]any `json:"extensions,omitempty"`
 }
 
 // Discriminator selects one schema alternative using an object property.

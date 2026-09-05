@@ -108,6 +108,11 @@ func DecodeResource(kind Kind, filename string, content []byte, destination any)
 			return resourceDiagnostic(filename, nil, "schema.decode", "Model destination requires kind model")
 		}
 		return decodeGeneratedResource(kind, filename, content, destination)
+	case *projectcontracts.SemanticModel:
+		if kind != KindSemanticModel {
+			return resourceDiagnostic(filename, nil, "schema.decode", "SemanticModel destination requires kind semantic-model")
+		}
+		return decodeGeneratedResource(kind, filename, content, destination)
 	case *projectcontracts.PipelineDocument:
 		if kind != KindPipeline {
 			return resourceDiagnostic(filename, nil, "schema.decode", "Pipeline destination requires kind pipeline")
@@ -135,8 +140,8 @@ func DecodeResource(kind Kind, filename string, content []byte, destination any)
 }
 
 func decodeGeneratedResource(kind Kind, filename string, content []byte, destination any) error {
-	if kind != KindConnection && kind != KindSource && kind != KindModel {
-		return resourceDiagnostic(filename, nil, "schema.decode", "generated decoding is only available for Connection, Source, and Model")
+	if kind != KindConnection && kind != KindSource && kind != KindModel && kind != KindSemanticModel {
+		return resourceDiagnostic(filename, nil, "schema.decode", "generated decoding is only available for Connection, Source, Model, and SemanticModel")
 	}
 	normalized, err := generatedResourceJSON(kind, filename, content)
 	if err != nil {
@@ -148,7 +153,7 @@ func decodeGeneratedResource(kind Kind, filename string, content []byte, destina
 	return nil
 }
 
-// validateGeneratedResource validates a generated Connection, Source, or Model
+// validateGeneratedResource validates a generated data-resource envelope
 // envelope without decoding into a destination. It is deliberately shared by
 // ValidateBytes and DecodeResource so direct schema callers cannot bypass the
 // generated tagged-union contract.
@@ -185,7 +190,7 @@ func generatedResourceJSON(kind Kind, filename string, content []byte) ([]byte, 
 	if err := json.Unmarshal(normalized, &envelope); err != nil {
 		return nil, resourceDiagnostic(filename, root, "schema.decode", err.Error())
 	}
-	wantKind := map[Kind]string{KindConnection: "Connection", KindSource: "Source", KindModel: "Model"}[kind]
+	wantKind := map[Kind]string{KindConnection: "Connection", KindSource: "Source", KindModel: "Model", KindSemanticModel: "SemanticModel"}[kind]
 	if envelope.Kind != wantKind {
 		return nil, resourceDiagnostic(filename, root, "schema.kind", fmt.Sprintf("resource kind %q does not match requested %s", envelope.Kind, wantKind))
 	}
@@ -203,7 +208,7 @@ var (
 func compiledGeneratedSchema(kind Kind) (*jsonschema.Schema, error) {
 	generatedSchemaOnce.Do(func() {
 		generatedSchemas = map[Kind]*jsonschema.Schema{}
-		for _, candidate := range []Kind{KindConnection, KindSource, KindModel} {
+		for _, candidate := range []Kind{KindConnection, KindSource, KindModel, KindSemanticModel} {
 			content, err := generatedJSONSchema(candidate)
 			if err != nil {
 				generatedSchemaErr = err
@@ -729,24 +734,27 @@ func yamlBool(value string) (bool, bool) {
 	}
 }
 
-func yamlFloat(value string) (float64, error) {
+func yamlFloat(value string) (json.Number, error) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	switch normalized {
 	case ".nan", "+.nan", "-.nan", ".inf", "+.inf", "-.inf":
-		return 0, fmt.Errorf("non-finite float %q cannot be represented in JSON", value)
+		return "", fmt.Errorf("non-finite float %q cannot be represented in JSON", value)
 	}
-	canonical := strings.ReplaceAll(value, "_", "")
+	canonical := jsonFloatToken(value)
+	if !json.Valid([]byte(canonical)) {
+		return "", fmt.Errorf("float value %q cannot be represented in JSON", value)
+	}
 	parsed, err := strconv.ParseFloat(canonical, 64)
 	if err != nil {
-		return 0, fmt.Errorf("float value %q cannot be represented in JSON: %v", value, err)
+		return "", fmt.Errorf("float value %q cannot be represented in JSON: %v", value, err)
 	}
 	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
-		return 0, fmt.Errorf("non-finite float %q cannot be represented in JSON", value)
+		return "", fmt.Errorf("non-finite float %q cannot be represented in JSON", value)
 	}
 	if parsed == 0 && numericMantissaIsNonZero(canonical) {
-		return 0, fmt.Errorf("float value %q underflows the finite JSON normalization range", value)
+		return "", fmt.Errorf("float value %q underflows the finite JSON normalization range", value)
 	}
-	return parsed, nil
+	return json.Number(canonical), nil
 }
 
 func numericMantissaIsNonZero(value string) bool {

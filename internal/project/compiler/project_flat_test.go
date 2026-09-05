@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
@@ -24,6 +23,7 @@ import (
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
@@ -518,7 +518,7 @@ func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T)
 		SourceIDs:     map[string]string{"orders": "source:orders"},
 		Models:        map[string]semanticmodel.Table{"base_model": base, "derived_model": derived},
 		ModelIDs:      map[string]string{"base_model": "model:base", "derived_model": "model:derived"},
-		SemanticModels: map[string]projectSemanticModelSpec{"sales": {Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+		SemanticModels: map[string]projectcontracts.SemanticModelSpec{"sales": {Datasets: map[string]projectcontracts.SemanticDataset{
 			"base_alias": {Model: "base_model"}, "derived_alias": {Model: "derived_model"},
 		}}},
 		SemanticModelIDs: map[string]string{"sales": "semantic:sales"},

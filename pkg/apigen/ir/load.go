@@ -1121,10 +1121,13 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 		if schema.Discriminator == nil {
 			seenVariants := make(map[string]struct{}, len(schema.OneOf))
 			scalarCount := 0
+			arrayCount := 0
 			objectCount := 0
 			for idx, variant := range schema.OneOf {
 				if isScalarUnionVariant(variant) {
 					scalarCount++
+				} else if isArrayUnionVariant(doc, variant) {
+					arrayCount++
 				} else if variant.Ref == "" {
 					return fmt.Errorf("schema %q union one_of[%d] must be an inline scalar when discriminator is omitted", name, idx)
 				} else {
@@ -1138,14 +1141,18 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 						return fmt.Errorf("schema %q union one_of[%d] object branch %q must reference an object schema", name, idx, variantName)
 					}
 				}
-				key := variant.Ref
-				if key == "" {
-					key = fmt.Sprintf("%s:%s:%v", variant.Type, variant.Format, variant.Enum)
-				}
+				encodedVariant, _ := json.Marshal(variant)
+				key := string(encodedVariant)
 				if _, exists := seenVariants[key]; exists {
 					return fmt.Errorf("schema %q union has duplicate one_of variant %q", name, key)
 				}
 				seenVariants[key] = struct{}{}
+			}
+			if arrayCount > 0 {
+				if arrayCount != len(schema.OneOf) || arrayCount < 2 {
+					return fmt.Errorf("schema %q untagged array union must contain at least two array-only branches", name)
+				}
+				return nil
 			}
 			// Pure scalar unions retain the existing untagged scalar behavior. A
 			// mixed scalar/object union is intentionally narrower: compact authored
@@ -1238,6 +1245,15 @@ func isScalarUnionVariant(variant SchemaRef) bool {
 	default:
 		return false
 	}
+}
+
+func isArrayUnionVariant(doc Document, variant SchemaRef) bool {
+	if variant.Ref == "" {
+		return strings.EqualFold(strings.TrimSpace(variant.Type), "array") && variant.Items != nil
+	}
+	name, normalized := NormalizedSchemaRefName(variant)
+	schema, found := doc.Schemas[name]
+	return normalized && found && schema.Type == "array" && schema.Items != nil
 }
 
 func containsString(values []string, expected string) bool {
@@ -1355,6 +1371,12 @@ func validateSchemaRefExists(doc Document, schemaRef SchemaRef, context string) 
 	}
 	if schemaRef.MinLength != nil && schemaRef.MaxLength != nil && *schemaRef.MinLength > *schemaRef.MaxLength {
 		return fmt.Errorf("%s min_length must not exceed max_length", context)
+	}
+	if (schemaRef.MinItems != nil && *schemaRef.MinItems < 0) || (schemaRef.MaxItems != nil && *schemaRef.MaxItems < 0) {
+		return fmt.Errorf("%s item bounds must be non-negative", context)
+	}
+	if schemaRef.MinItems != nil && schemaRef.MaxItems != nil && *schemaRef.MinItems > *schemaRef.MaxItems {
+		return fmt.Errorf("%s min_items must not exceed max_items", context)
 	}
 	if schemaRef.MinProperties != nil && *schemaRef.MinProperties < 0 {
 		return fmt.Errorf("%s min_properties must be non-negative", context)

@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -308,7 +309,7 @@ func projectDeterministic(project Project) bool {
 	}
 	for _, semantic := range project.SemanticModels {
 		for _, metric := range semantic.Metrics {
-			if metric.Expression != "" {
+			if derived, ok := metric.Value.(*projectcontracts.SemanticMetricDerivedVariant); ok && derived.Expression != "" {
 				return false
 			}
 		}

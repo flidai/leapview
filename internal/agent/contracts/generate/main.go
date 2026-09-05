@@ -110,7 +110,7 @@ func portableSchema(value any, definitions map[string]any, resolving map[string]
 		out := make(map[string]any, len(typed))
 		for key, item := range typed {
 			switch key {
-			case "$defs", "$schema":
+			case "$defs", "$schema", "minItems", "maxItems", "uniqueItems":
 				continue
 			case "unevaluatedProperties":
 				key = "additionalProperties"

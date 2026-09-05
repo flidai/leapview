@@ -5,6 +5,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -33,7 +34,7 @@ type Project struct {
 	ModelAIContexts         map[string]*semanticmodel.AIContext
 	ModelIDs                map[string]string
 	ModelPaths              map[string]string
-	SemanticModels          map[string]projectSemanticModelSpec
+	SemanticModels          map[string]projectcontracts.SemanticModelSpec
 	SemanticModelAIContexts map[string]*semanticmodel.AIContext
 	SemanticModelIDs        map[string]string
 	SemanticModelPaths      map[string]string
