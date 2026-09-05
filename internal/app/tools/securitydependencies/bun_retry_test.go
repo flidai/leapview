@@ -133,6 +133,36 @@ func TestBunCriticalFindingWithTransportDiagnosticIsNotRetried(t *testing.T) {
 	}
 }
 
+func TestBunMalformedSiblingCannotHideCriticalFindingBeforeRetry(t *testing.T) {
+	contract := exceptionContract{}
+	for range 100 {
+		var calls, waits int
+		var stdout, stderr bytes.Buffer
+		r := &runner{
+			stdout: &stdout, stderr: &stderr,
+			bunRetrySleep: func(time.Duration) { waits++ },
+			bunCommand: func(string, ...string) commandResult {
+				calls++
+				if calls == 1 {
+					return commandResult{
+						stdout: []byte(`{"malformed":[{}],"vulnerable":[{"severity":"critical"}]}`),
+						stderr: []byte("Timeout: audit request failed\n"),
+						status: 1,
+					}
+				}
+				return commandResult{stdout: []byte(`{}`)}
+			},
+		}
+
+		if err := r.scanBun("/fixture/bun.lock", &contract); err == nil {
+			t.Fatal("mixed malformed and Critical Bun result was accepted")
+		}
+		if calls != 1 || waits != 0 {
+			t.Fatalf("mixed malformed and Critical result invoked Bun %d times and waited %d times, want 1 and 0", calls, waits)
+		}
+	}
+}
+
 func TestBunCommandDeadlineIsNotRetried(t *testing.T) {
 	r := &runner{}
 	for _, commandErr := range []error{

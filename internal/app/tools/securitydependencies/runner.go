@@ -471,42 +471,59 @@ func bunFindingCounts(data []byte) (findingCount, criticalCount int, err error) 
 		}
 		return
 	}
-	for _, rawPackage := range packages {
+	packageNames := make([]string, 0, len(packages))
+	for name := range packages {
+		packageNames = append(packageNames, name)
+	}
+	sort.Strings(packageNames)
+	recordError := func(parseErr error) {
+		if err == nil {
+			err = parseErr
+		}
+	}
+	for _, name := range packageNames {
+		rawPackage := packages[name]
 		if bytes.Equal(bytes.TrimSpace(rawPackage), []byte("null")) {
-			return findingCount, criticalCount, errors.New("package findings are not an array")
+			recordError(errors.New("package findings are not an array"))
+			continue
 		}
 		var rawFindings []json.RawMessage
-		if err = json.Unmarshal(rawPackage, &rawFindings); err != nil || rawFindings == nil {
-			if err == nil {
-				err = errors.New("package findings are not an array")
+		if parseErr := json.Unmarshal(rawPackage, &rawFindings); parseErr != nil || rawFindings == nil {
+			if parseErr == nil {
+				parseErr = errors.New("package findings are not an array")
 			}
-			return
+			recordError(parseErr)
+			continue
 		}
 		for _, raw := range rawFindings {
 			var finding struct {
 				Severity string `json:"severity"`
 			}
-			if err = json.Unmarshal(raw, &finding); err != nil || !json.Valid(raw) {
-				if err == nil {
-					err = errors.New("finding is not an object")
+			if parseErr := json.Unmarshal(raw, &finding); parseErr != nil || !json.Valid(raw) {
+				if parseErr == nil {
+					parseErr = errors.New("finding is not an object")
 				}
-				return
+				recordError(parseErr)
+				continue
 			}
 			// Unmarshalling a scalar into the struct fails; an object without a
 			// severity is malformed rather than an advisory below the threshold.
 			var shape map[string]json.RawMessage
-			if err = json.Unmarshal(raw, &shape); err != nil || shape == nil {
-				if err == nil {
-					err = errors.New("finding is not an object")
+			if parseErr := json.Unmarshal(raw, &shape); parseErr != nil || shape == nil {
+				if parseErr == nil {
+					parseErr = errors.New("finding is not an object")
 				}
-				return
+				recordError(parseErr)
+				continue
 			}
 			severity, present := shape["severity"]
 			if !present || json.Unmarshal(severity, &finding.Severity) != nil {
-				return findingCount, criticalCount, errors.New("finding severity is not a usable string")
+				recordError(errors.New("finding severity is not a usable string"))
+				continue
 			}
 			if !usableBunSeverity(finding.Severity) {
-				return findingCount, criticalCount, errors.New("finding severity is not usable")
+				recordError(errors.New("finding severity is not usable"))
+				continue
 			}
 			findingCount++
 			if strings.EqualFold(finding.Severity, "critical") {
@@ -514,7 +531,7 @@ func bunFindingCounts(data []byte) (findingCount, criticalCount int, err error) 
 			}
 		}
 	}
-	return findingCount, criticalCount, nil
+	return findingCount, criticalCount, err
 }
 
 func usableBunSeverity(severity string) bool {
