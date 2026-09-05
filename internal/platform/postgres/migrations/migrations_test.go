@@ -93,7 +93,7 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 20 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() || recorder.sqls[14] != ContractPublicationIntegritySQL() || recorder.sqls[16] != PlatformBootstrapAuthoritySQL() || recorder.sqls[18] != AccessControlAuthoritySQL() {
+	if len(recorder.sqls) != 22 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() || recorder.sqls[14] != ContractPublicationIntegritySQL() || recorder.sqls[16] != PlatformBootstrapAuthoritySQL() || recorder.sqls[18] != AccessControlAuthoritySQL() || recorder.sqls[20] != TypedAttributeRegistrySQL() {
 		t.Fatal("Apply() did not execute the authored migrations in order")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
@@ -106,12 +106,43 @@ func TestVerifyRequiresEveryExactRevision(t *testing.T) {
 	if err := Verify(context.Background(), valid); err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}
-	delete(valid.revisions, AccessControlAuthorityRevision)
+	delete(valid.revisions, TypedAttributeRegistryRevision)
 	if err := Verify(context.Background(), valid); err == nil {
 		t.Fatal("Verify() accepted a missing current revision")
 	}
 	if err := Verify(context.Background(), nil); err == nil {
 		t.Fatal("Verify() accepted a nil reader")
+	}
+}
+
+func TestTypedAttributeRegistryMigrationIsForwardOnlyAndLeastPrivilege(t *testing.T) {
+	sql := TypedAttributeRegistrySQL()
+	for _, marker := range []string{
+		"SET ROLE leapview_control_owner",
+		"RESET ROLE",
+		"CREATE TABLE IF NOT EXISTS access.semantic_attribute_registry",
+		"CREATE TABLE IF NOT EXISTS access.semantic_attribute_definition",
+		"leapview.semantic-access/v1",
+		"registry_revision",
+		"registry_digest",
+		"semantic_attribute_registry_immutable",
+		"semantic_attribute_definition_immutable",
+		"semantic_attribute_registry_no_delete",
+		"semantic_attribute_definition_no_delete",
+		"GRANT SELECT, INSERT, UPDATE ON access.semantic_attribute_registry",
+		"REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER",
+		"leapview_control_readonly",
+		"leapview_control_backup",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("typed attribute registry migration missing %q", marker)
+		}
+	}
+	if strings.Contains(sql, "DROP TABLE") || strings.Contains(sql, "ALTER TABLE") {
+		t.Fatal("typed attribute registry migration must be additive")
+	}
+	if TypedAttributeRegistryRevision != 11 || TypedAttributeRegistryMigrationID != "011_typed_attribute_registry" {
+		t.Fatalf("typed attribute registry identity = %d/%q", TypedAttributeRegistryRevision, TypedAttributeRegistryMigrationID)
 	}
 }
 
@@ -438,6 +469,9 @@ func validRevisions() map[int64]recordingRow {
 		},
 		AccessControlAuthorityRevision: {
 			revision: AccessControlAuthorityRevision, migrationID: AccessControlAuthorityMigrationID, checksum: AccessControlAuthorityChecksum(),
+		},
+		TypedAttributeRegistryRevision: {
+			revision: TypedAttributeRegistryRevision, migrationID: TypedAttributeRegistryMigrationID, checksum: TypedAttributeRegistryChecksum(),
 		},
 	}
 }

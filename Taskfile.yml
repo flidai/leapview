@@ -1036,6 +1036,7 @@ tasks:
       - go test ./internal/platform/postgres -run '^TestPostgreSQL18PoolConformance$' -count=1 -v
       - go test ./internal/platform/postgres/migrations -run '^TestContractPublicationIntegrityPostgreSQL18$' -count=1 -v
       - go test ./internal/project/identityledger/postgres -run '^TestContractPublication(IsImmutableAndExactlyReplayable|Concurrency)$' -count=1 -v
+      - go test ./internal/access/postgres -run '^TestSemanticAttributeRegistryPostgreSQL18' -count=1 -v
 
   test:workload:qualify:
     desc: Qualify the reusable workload scheduler independently of LeapView

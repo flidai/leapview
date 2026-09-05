@@ -21,6 +21,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
 	h.GrantRole(t, owner, migrator)
 	database := h.NewDatabase(t, "leapview_control")
 	h.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
@@ -128,6 +129,35 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	}
 	if revision != AccessControlAuthorityRevision {
 		t.Fatalf("access control authority schema revision = %d, want %d", revision, AccessControlAuthorityRevision)
+	}
+	var typedAttributeRegistryChecksum string
+	if err := db.QueryRow(ctx, `SELECT revision, checksum FROM platform.schema_revision WHERE migration_id = $1`, TypedAttributeRegistryMigrationID).Scan(&revision, &typedAttributeRegistryChecksum); err != nil {
+		t.Fatal(err)
+	}
+	if revision != TypedAttributeRegistryRevision || typedAttributeRegistryChecksum != TypedAttributeRegistryChecksum() {
+		t.Fatalf("typed attribute registry schema revision/checksum = %d/%q, want %d/%q", revision, typedAttributeRegistryChecksum, TypedAttributeRegistryRevision, TypedAttributeRegistryChecksum())
+	}
+	var registryProfile, registryDigest string
+	var registryRevision int64
+	if err := db.QueryRow(ctx, `
+		SELECT profile, registry_revision, registry_digest
+		FROM access.semantic_attribute_registry WHERE singleton`).
+		Scan(&registryProfile, &registryRevision, &registryDigest); err != nil {
+		t.Fatal(err)
+	}
+	if registryProfile != "leapview.semantic-access/v1" || registryRevision != 0 || registryDigest != "sha256:9362dbdb62923a10f67bc1da04b02e2bbad74dce5b5442aaa3fb5e0cc5851b9d" {
+		t.Fatalf("typed attribute registry seed = %q/%d/%q", registryProfile, registryRevision, registryDigest)
+	}
+	var runtimeDelete, readonlyInsert, backupSelect bool
+	if err := db.QueryRow(ctx, `
+		SELECT has_table_privilege('leapview_control_runtime', 'access.semantic_attribute_definition', 'DELETE'),
+		       has_table_privilege('leapview_control_readonly', 'access.semantic_attribute_definition', 'INSERT'),
+		       has_table_privilege('leapview_control_backup', 'access.semantic_attribute_definition', 'SELECT')`).
+		Scan(&runtimeDelete, &readonlyInsert, &backupSelect); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeDelete || readonlyInsert || !backupSelect {
+		t.Fatalf("typed attribute registry ACLs = runtime delete:%t readonly insert:%t backup select:%t", runtimeDelete, readonlyInsert, backupSelect)
 	}
 	var nullable string
 	if err := db.QueryRow(ctx, `

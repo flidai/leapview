@@ -535,6 +535,11 @@ sections:
             type: explanation
             summary: Follow routing, query execution, and streamed UI updates.
             source: articles/architecture/runtime.md
+          - slug: architecture/semantic-attribute-registry
+            title: Semantic attribute registry
+            type: explanation
+            summary: Understand typed semantic attribute identity, ownership, lifecycle, and compatibility boundaries.
+            source: articles/architecture/semantic-attribute-registry.md
           - slug: architecture/arrow-optimization-evidence
             title: Evidence-gated Arrow optimization
             type: explanation

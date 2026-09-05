@@ -54,6 +54,9 @@ var platformBootstrapAuthoritySQL string
 //go:embed 010_access_control_authority.sql
 var accessControlAuthoritySQL string
 
+//go:embed 011_typed_attribute_registry.sql
+var typedAttributeRegistrySQL string
+
 // IdentityLedgerRevision introduces the PostgreSQL-only FAI-617 resource
 // identity ledger.
 const IdentityLedgerRevision int64 = 2
@@ -109,6 +112,12 @@ const PlatformBootstrapAuthorityMigrationID = "009_platform_bootstrap_authority"
 const AccessControlAuthorityRevision int64 = 10
 
 const AccessControlAuthorityMigrationID = "010_access_control_authority"
+
+// TypedAttributeRegistryRevision adds the FAI-636 typed semantic-access
+// registry without rewriting any earlier global control-plane revision.
+const TypedAttributeRegistryRevision int64 = 11
+
+const TypedAttributeRegistryMigrationID = "011_typed_attribute_registry"
 
 // BaselineSQL returns the exact authored baseline migration.  Callers should
 // execute it as a migration authority, inside a transaction where the driver
@@ -186,6 +195,13 @@ func AccessControlAuthorityChecksum() string {
 	return hex.EncodeToString(sum[:])
 }
 
+func TypedAttributeRegistrySQL() string { return typedAttributeRegistrySQL }
+
+func TypedAttributeRegistryChecksum() string {
+	sum := sha256.Sum256([]byte(typedAttributeRegistrySQL))
+	return hex.EncodeToString(sum[:])
+}
+
 // Tx is the transaction boundary required by Apply.  pgx.Tx and pgxpool.Tx
 // both satisfy it; keeping the boundary here avoids opening a second
 // connection or introducing repository policy into the schema package.
@@ -220,6 +236,7 @@ func ordered() []migration {
 		{ContractPublicationIntegrityRevision, ContractPublicationIntegrityMigrationID, contractPublicationIntegritySQL, ContractPublicationIntegrityChecksum()},
 		{PlatformBootstrapAuthorityRevision, PlatformBootstrapAuthorityMigrationID, platformBootstrapAuthoritySQL, PlatformBootstrapAuthorityChecksum()},
 		{AccessControlAuthorityRevision, AccessControlAuthorityMigrationID, accessControlAuthoritySQL, AccessControlAuthorityChecksum()},
+		{TypedAttributeRegistryRevision, TypedAttributeRegistryMigrationID, typedAttributeRegistrySQL, TypedAttributeRegistryChecksum()},
 	}
 }
 
