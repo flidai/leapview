@@ -222,8 +222,12 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		if !ok {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("polar presentation lowering returned %T", presentation)
 		}
-		if len(dimensions) > 1 || len(metrics) != 1 {
-			return visualizationir.VisualizationSpec{}, fmt.Errorf("polar requires zero or one dimension and exactly one metric, got %d and %d", len(dimensions), len(metrics))
+		if typ == document.DashboardVisualTypeGauge {
+			if len(dimensions) != 0 || len(metrics) != 1 {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("gauge requires zero dimensions and exactly one metric, got %d and %d", len(dimensions), len(metrics))
+			}
+		} else if len(dimensions) != 1 || len(metrics) != 1 {
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("radar requires exactly one category dimension and exactly one metric, got %d and %d", len(dimensions), len(metrics))
 		}
 		base.Kind = "polar"
 		var category *visualizationir.VisualizationFieldRef
@@ -231,7 +235,12 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			categoryRef := dimensions[0]
 			category = &categoryRef
 		}
-		return visualizationir.VisualizationSpec{Value: &visualizationir.PolarVisualizationSpec{VisualizationSpecBase: base, Kind: "polar", Mark: visualizationir.VisualizationPolarMark(typ), Category: category, Value: metricRef(0), Presentation: p}}, nil
+		var series *visualizationir.VisualizationFieldRef
+		if query.Binding.Aggregate != nil && query.Binding.Aggregate.Series != nil {
+			seriesRef := visualizationir.VisualizationFieldRef{Dataset: "primary", Field: query.Binding.Aggregate.Series.Alias}
+			series = &seriesRef
+		}
+		return visualizationir.VisualizationSpec{Value: &visualizationir.PolarVisualizationSpec{VisualizationSpecBase: base, Kind: "polar", Mark: visualizationir.VisualizationPolarMark(typ), Category: category, Value: metricRef(0), Series: series, Presentation: p}}, nil
 	case document.DashboardVisualTypeScatter:
 		p, ok := presentation.(visualizationir.PointVisualizationPresentation)
 		if !ok {

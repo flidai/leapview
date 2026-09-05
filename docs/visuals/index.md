@@ -47,7 +47,7 @@ Proportional and polar presentations share the common `legend`, `labels`, and `d
 | Radar | `area`, `maximum` |
 | Gauge | `minimum`, `maximum`, `target`, `showPointer`, `progressWidth`, `thresholds` |
 
-Gauge has no categorical legend; radar uses `legend` for named governed series. A field from another mark's row is rejected during project validation rather than silently changing the rendered visual.
+Gauge has no categorical legend; radar can use `legend` when its aggregate query includes a second governed dimension for series values. A field from another mark's row is rejected during project validation rather than silently changing the rendered visual.
 
 ## Decision-context capability matrix
 

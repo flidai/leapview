@@ -140,6 +140,9 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if err != nil {
 			return nil, err
 		}
+		if visualType == document.DashboardVisualTypeDonut && variant.CenterLabel != nil && strings.TrimSpace(*variant.CenterLabel) == "" {
+			return nil, fmt.Errorf("presentation.centerLabel must not be empty")
+		}
 		out := visualizationir.ProportionalVisualizationPresentation{VisualizationPresentation: base, Orientation: visualizationir.VisualizationOrientationVertical}
 		if variant.Orientation != nil {
 			orientation, orientationErr := lowerOrientation(*variant.Orientation)

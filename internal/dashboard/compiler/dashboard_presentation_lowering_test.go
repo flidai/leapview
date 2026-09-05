@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -257,6 +258,17 @@ func TestLowerCanonicalProportionalPresentationRejectsInapplicableOptions(t *tes
 			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, test.visualType)
 			if err == nil || !strings.Contains(err.Error(), test.want+" is not supported for "+string(test.visualType)+" visuals") {
 				t.Fatalf("error = %v, want path-bearing applicability error", err)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalDonutRejectsBlankCenterLabel(t *testing.T) {
+	for _, label := range []string{"", "   \t"} {
+		t.Run(fmt.Sprintf("%q", label), func(t *testing.T) {
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{Type: "proportional", CenterLabel: stringPointer(label)}}, document.DashboardVisualTypeDonut)
+			if err == nil || !strings.Contains(err.Error(), "presentation.centerLabel must not be empty") {
+				t.Fatalf("error = %v, want actionable centerLabel error", err)
 			}
 		})
 	}

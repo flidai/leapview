@@ -8,7 +8,7 @@ Radar presentation supports `area` and an optional shared `maximum` across its i
 
 ## Basic
 
-Use one categorical dimension to create the radar indicators and one metric to set each spoke length.
+Use one categorical dimension to create the radar indicators and one metric to set each spoke length. Add a second dimension to compare governed series; the first dimension remains the category and `presentation.legend` controls the series legend.
 
 {{< visual id="status_radar" >}}
 

@@ -611,7 +611,7 @@ test('ECharts translation builds radar indicators and aligned series from typed 
     },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{
       id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['metric', 'team', 'value'],
-      rows: [['Speed', 'A', 8], ['Quality', 'A', 9], ['Speed', 'B', 6], ['Quality', 'B', 7]], completeness: 'complete',
+      rows: [['Speed', 'A', '8'], ['Quality', 'A', '9'], ['Speed', 'B', '6'], ['Quality', 'B', '7']], completeness: 'complete',
     }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
@@ -631,7 +631,7 @@ test('ECharts translation builds radar indicators and aligned series from typed 
   expect(option.series[0]).toMatchObject({ id: 'series:polar:radar', type: 'radar', areaStyle: {} })
   expect(option.series[0]).not.toHaveProperty('pointer')
   expect(option.series[0]).not.toHaveProperty('progress')
-  expect(option.series[0].data).toEqual([{ name: 'A', value: [8, 9] }, { name: 'B', value: [6, 7] }])
+  expect(option.series[0].data).toEqual([{ name: 'A', value: ['8', '9'] }, { name: 'B', value: ['6', '7'] }])
 
   envelope.spec.presentation.maximum = 12
   envelope.spec.presentation.area = false
@@ -641,10 +641,10 @@ test('ECharts translation builds radar indicators and aligned series from typed 
   expect(configured.series[0].areaStyle).toBeUndefined()
 
   envelope.spec.presentation.maximum = undefined
-  envelope.dataState.datasets[0].rows = [['Speed', 'A', 0], ['Quality', 'A', 0]]
+  envelope.dataState.datasets[0].rows = [['Speed', 'A', '0'], ['Quality', 'A', '0']]
   const zero = echartsOption(envelope, context) as any
   expect(zero.radar.indicator.map((item: any) => item.max)).toEqual([1, 1])
-  expect(zero.series[0].data).toEqual([{ name: 'A', value: [0, 0] }])
+  expect(zero.series[0].data).toEqual([{ name: 'A', value: ['0', '0'] }])
 
   envelope.dataState.datasets[0].rows = []
   const empty = echartsOption(envelope, context) as any
@@ -1239,7 +1239,7 @@ test('ECharts formats gauges, applies semantic thresholds, and renders status st
   expect(option.series[0]).toMatchObject({
     id: 'series:polar:gauge', type: 'gauge', min: 0, max: 1,
     pointer: { show: true }, progress: { show: true, width: 12 },
-    data: [{ value: 0.75, __lv_dataset: 'primary', __lv_row_index: 0 }],
+    data: [{ value: '0.75', __lv_dataset: 'primary', __lv_row_index: 0 }],
   })
   expect(option.series[0].axisLine.lineStyle.color).toEqual([[0.5, defaultRendererContext.colors.attention], [0.8, defaultRendererContext.colors.danger]])
   expect(option.series[0].detail.formatter(0.75)).toBe('75%')
@@ -1249,15 +1249,15 @@ test('ECharts formats gauges, applies semantic thresholds, and renders status st
   envelope.spec.presentation.maximum = 1
   envelope.spec.presentation.target = 0
   envelope.spec.presentation.thresholds = [{ value: 0, tone: 'success' }, { value: 1, tone: 'danger' }]
-  envelope.dataState.datasets[0].rows = [[0]]
+  envelope.dataState.datasets[0].rows = [['0']]
   const bounded = echartsOption(envelope, defaultRendererContext) as any
-  expect(bounded.series[0]).toMatchObject({ min: 0, max: 1, pointer: { show: false }, data: [{ value: 0 }] })
+  expect(bounded.series[0]).toMatchObject({ min: 0, max: 1, pointer: { show: false }, data: [{ value: '0' }] })
   expect(bounded.series[0].axisLine.lineStyle.color).toEqual([[0, defaultRendererContext.colors.success], [1, defaultRendererContext.colors.danger]])
   expect(bounded.series[1].data[0]).toMatchObject({ value: 0, name: 'Target 0%' })
 
-  envelope.dataState.datasets[0].rows = [[1]]
+  envelope.dataState.datasets[0].rows = [['1']]
   const upperBoundary = echartsOption(envelope, defaultRendererContext) as any
-  expect(upperBoundary.series[0]).toMatchObject({ min: 0, max: 1, data: [{ value: 1 }] })
+  expect(upperBoundary.series[0]).toMatchObject({ min: 0, max: 1, data: [{ value: '1' }] })
   expect(upperBoundary.graphic).toBeUndefined()
 
   const noData = { ...cartesianFixture('line'), status: { kind: 'no_data', message: 'No matching rows' } } as VisualizationEnvelope
@@ -1299,7 +1299,7 @@ test('ECharts renders an explicit labeled target independently from the metricd 
 
 test('ECharts renders a visible diagnostic instead of clipping an out-of-domain gauge value', () => {
   const envelope = gaugeFixture() as any
-  envelope.dataState.datasets[0].rows = [[1.2]]
+  envelope.dataState.datasets[0].rows = [['1.2']]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series).toEqual([])
   expect(option.graphic[0].style.text).toContain('outside configured gauge domain 0.0%–100.0%')
@@ -1377,6 +1377,6 @@ function gaugeFixture(): VisualizationEnvelope {
   return {
     schemaVersion: 9, visualID: 'gauge', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: { kind: 'polar', title: 'Gauge', mark: 'gauge', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Rate', format: { kind: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 } }] }], dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Gauge', description: 'Gauge' }, interactions: [], value: { dataset: 'primary', field: 'value' }, presentation: { legend: 'hidden', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, minimum: 0, maximum: 1, showPointer: true, progressWidth: 12, thresholds: [{ value: 0.5, tone: 'warning' }, { value: 0.8, tone: 'danger' }] } },
-    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['value'], rows: [[0.75]], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
+    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['value'], rows: [['0.75']], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
 }
