@@ -11,14 +11,14 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   const spec = envelope.spec
   if (spec.kind !== 'proportional') return {}
   const presentation = spec.presentation
+  const isPie = spec.mark === 'pie' || spec.mark === 'donut'
   const radius = spec.mark === 'donut'
     ? [percent(presentation.innerRadius, 0.45), percent(presentation.outerRadius, 0.72)]
-    : presentation.outerRadius ? percent(presentation.outerRadius, 0.72) : undefined
+    : spec.mark === 'pie' && presentation.outerRadius !== undefined ? percent(presentation.outerRadius, 0.72) : undefined
   const dataset = inlineDataset(envelope, spec.category.dataset)
   const categoryIndex = dataset?.columns.indexOf(spec.category.field) ?? -1
   const valueIndex = dataset?.columns.indexOf(spec.value.field) ?? -1
   const outside = presentation.labelPosition !== 'inside'
-  const isPie = spec.mark === 'pie' || spec.mark === 'donut'
   const labels = echartsLabelPolicy(envelope, spec.value.dataset, presentation.labelPolicy, ({ value }) => {
     const row = Array.isArray(value) ? value : []
     const amount = formatDisplayField(envelope, spec.value, valueIndex >= 0 ? row[valueIndex] : undefined, context)
@@ -49,7 +49,7 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
         lineStyle: { color: context.colors.muted },
       },
     } : {}),
-    roseType: presentation.rose ? 'radius' : false,
+    ...(isPie ? { roseType: presentation.rose ? 'radius' : false } : {}),
     itemStyle: {
       color: governedColor ?? ((params: { value?: unknown[] }) => categoryColors.color(envelope, spec.category, Array.isArray(params.value) ? params.value[categoryIndex] : undefined, context)),
     },

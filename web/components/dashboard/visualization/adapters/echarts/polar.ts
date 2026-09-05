@@ -2,6 +2,7 @@ import type { VisualizationEnvelope } from '../../../../../generated/visualizati
 import type { RendererContext } from '../../host-controller'
 import { displayUnitForField, formatDisplayField, formatField, inlineDataset, legend, toneColor, type EChartsTranslation } from './common'
 import { echartsLabelPolicy, truncateVisualizationLabel } from './label-policy'
+import { parseDecimal } from '../../decimal'
 
 export function polarOption(envelope: VisualizationEnvelope, context: RendererContext): EChartsTranslation {
   const spec = envelope.spec
@@ -13,9 +14,10 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
     const dataset = inlineDataset(envelope, spec.value.dataset)
     const valueIndex = dataset?.columns.indexOf(spec.value.field) ?? -1
     const value = valueIndex >= 0 ? dataset?.rows[0]?.[valueIndex] : undefined
+    const approximateValue = approximateNumericValue(value)
     const minimum = spec.presentation.minimum, maximum = spec.presentation.maximum
     const displayUnit = displayUnitForField(envelope, spec.value, undefined, [spec.value], [minimum, maximum, spec.presentation.target])
-    if (typeof value === 'number' && Number.isFinite(value) && (value < minimum || value > maximum)) {
+    if (approximateValue !== undefined && (approximateValue < minimum || approximateValue > maximum)) {
       const formattedValue = formatField(envelope, spec.value, value, context)
       const formattedMinimum = formatField(envelope, spec.value, minimum, context)
       const formattedMaximum = formatField(envelope, spec.value, maximum, context)
@@ -98,7 +100,10 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
     value: categories.map((category) => dataset.rows.find((row, index) => String(seriesIndex >= 0 ? row[seriesIndex] : spec.title) === series && String(categoryIndex >= 0 ? row[categoryIndex] : index + 1) === category)?.[valueIndex] ?? null),
   }))
   const configuredMaximum = spec.presentation.maximum
-  const observedMaximum = Math.max(0, ...values.flatMap((series) => series.value.flatMap((value) => typeof value === 'number' && Number.isFinite(value) ? [value] : [])))
+  const observedMaximum = Math.max(0, ...values.flatMap((series) => series.value.flatMap((value) => {
+    const approximate = approximateNumericValue(value)
+    return approximate === undefined ? [] : [approximate]
+  })))
   const sharedMaximum = configuredMaximum ?? niceRadarMaximum(observedMaximum)
   const maxima = categories.map(() => sharedMaximum)
   const labels = echartsLabelPolicy(
@@ -126,4 +131,11 @@ function niceRadarMaximum(value: number): number {
   const normalized = value / magnitude
   const factor = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
   return factor * magnitude
+}
+
+function approximateNumericValue(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value !== 'string' || !parseDecimal(value)) return undefined
+  const approximate = Number(value)
+  return Number.isFinite(approximate) ? approximate : undefined
 }

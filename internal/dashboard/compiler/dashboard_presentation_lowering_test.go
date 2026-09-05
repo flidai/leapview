@@ -1,6 +1,8 @@
 package compiler
 
 import (
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -100,6 +102,7 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 	initialDepth := int32(2)
 	roam := true
 	units := visualizationir.VisualizationDisplayUnitsBillions
+	minimum, maximum := 0.0, 100.0
 	layout := visualizationir.VisualizationHierarchyLayoutCircular
 	cases := []struct {
 		name       string
@@ -129,7 +132,7 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 		},
 		{
 			name: "polar", visualType: document.DashboardVisualTypeGauge,
-			value: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", DisplayUnits: &units}},
+			value: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", DisplayUnits: &units, Minimum: &minimum, Maximum: &maximum}},
 			check: func(t *testing.T, value any) {
 				got := value.(visualizationir.PolarVisualizationPresentation)
 				if got.DisplayUnits == nil || *got.DisplayUnits != visualizationir.VisualizationDisplayUnitsBillions || !got.ShowPointer {
@@ -172,6 +175,284 @@ func TestLowerCanonicalPresentationRejectsIncompatibleAndInvalidValues(t *testin
 		t.Fatal("zero table row height accepted")
 	}
 }
+
+func TestLowerCanonicalProportionalPresentationSupportsMarkSpecificOptions(t *testing.T) {
+	falseValue := false
+	zero, one := 0.0, 1.0
+	horizontal := document.DashboardOrientationHorizontal
+	center := document.DashboardProportionalAlignmentCenter
+	ascending := visualizationir.VisualizationSortDirectionAscending
+	cases := []struct {
+		name       string
+		visualType document.DashboardVisualType
+		value      document.ProportionalDashboardPresentation
+		check      func(t *testing.T, got visualizationir.ProportionalVisualizationPresentation)
+	}{
+		{
+			name: "pie preserves rose false and outer radius", visualType: document.DashboardVisualTypePie,
+			value: document.ProportionalDashboardPresentation{Type: "proportional", Rose: &falseValue, OuterRadius: &one},
+			check: func(t *testing.T, got visualizationir.ProportionalVisualizationPresentation) {
+				if got.Rose || got.OuterRadius == nil || *got.OuterRadius != 1 {
+					t.Fatalf("pie presentation = %#v", got)
+				}
+			},
+		},
+		{
+			name: "donut preserves zero inner radius", visualType: document.DashboardVisualTypeDonut,
+			value: document.ProportionalDashboardPresentation{Type: "proportional", Rose: &falseValue, InnerRadius: &zero, OuterRadius: &one, CenterLabel: stringPointer("Total")},
+			check: func(t *testing.T, got visualizationir.ProportionalVisualizationPresentation) {
+				if got.Rose || got.InnerRadius == nil || *got.InnerRadius != 0 || got.OuterRadius == nil || *got.OuterRadius != 1 || got.CenterLabel == nil || *got.CenterLabel != "Total" {
+					t.Fatalf("donut presentation = %#v", got)
+				}
+			},
+		},
+		{
+			name: "funnel preserves closed options", visualType: document.DashboardVisualTypeFunnel,
+			value: document.ProportionalDashboardPresentation{Type: "proportional", Orientation: &horizontal, Align: &center, Sort: &ascending},
+			check: func(t *testing.T, got visualizationir.ProportionalVisualizationPresentation) {
+				if got.Orientation != visualizationir.VisualizationOrientationHorizontal || got.Align == nil || *got.Align != "center" || got.Sort == nil || *got.Sort != ascending {
+					t.Fatalf("funnel presentation = %#v", got)
+				}
+			},
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &test.value}, test.visualType)
+			if err != nil {
+				t.Fatalf("lower: %v", err)
+			}
+			got, ok := lowered.(visualizationir.ProportionalVisualizationPresentation)
+			if !ok {
+				t.Fatalf("lowered type = %T", lowered)
+			}
+			test.check(t, got)
+		})
+	}
+}
+
+func TestLowerCanonicalProportionalPresentationRejectsInapplicableOptions(t *testing.T) {
+	falseValue := false
+	zero := 0.0
+	vertical := document.DashboardOrientationVertical
+	center := document.DashboardProportionalAlignmentCenter
+	ascending := visualizationir.VisualizationSortDirectionAscending
+	cases := []struct {
+		name       string
+		visualType document.DashboardVisualType
+		set        func(*document.ProportionalDashboardPresentation)
+		want       string
+	}{
+		{name: "orientation on pie", visualType: document.DashboardVisualTypePie, set: func(value *document.ProportionalDashboardPresentation) { value.Orientation = &vertical }, want: "presentation.orientation"},
+		{name: "rose false on funnel", visualType: document.DashboardVisualTypeFunnel, set: func(value *document.ProportionalDashboardPresentation) { value.Rose = &falseValue }, want: "presentation.rose"},
+		{name: "center label on pie", visualType: document.DashboardVisualTypePie, set: func(value *document.ProportionalDashboardPresentation) { value.CenterLabel = stringPointer("ignored") }, want: "presentation.centerLabel"},
+		{name: "inner radius on pie", visualType: document.DashboardVisualTypePie, set: func(value *document.ProportionalDashboardPresentation) { value.InnerRadius = &zero }, want: "presentation.innerRadius"},
+		{name: "outer radius on funnel", visualType: document.DashboardVisualTypeFunnel, set: func(value *document.ProportionalDashboardPresentation) { value.OuterRadius = &zero }, want: "presentation.outerRadius"},
+		{name: "align on donut", visualType: document.DashboardVisualTypeDonut, set: func(value *document.ProportionalDashboardPresentation) { value.Align = &center }, want: "presentation.align"},
+		{name: "sort on pie", visualType: document.DashboardVisualTypePie, set: func(value *document.ProportionalDashboardPresentation) { value.Sort = &ascending }, want: "presentation.sort"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.ProportionalDashboardPresentation{Type: "proportional"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, test.visualType)
+			if err == nil || !strings.Contains(err.Error(), test.want+" is not supported for "+string(test.visualType)+" visuals") {
+				t.Fatalf("error = %v, want path-bearing applicability error", err)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalDonutRejectsBlankCenterLabel(t *testing.T) {
+	for _, label := range []string{"", "   \t"} {
+		t.Run(fmt.Sprintf("%q", label), func(t *testing.T) {
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{Type: "proportional", CenterLabel: stringPointer(label)}}, document.DashboardVisualTypeDonut)
+			if err == nil || !strings.Contains(err.Error(), "presentation.centerLabel must not be empty") {
+				t.Fatalf("error = %v, want actionable centerLabel error", err)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalProportionalPresentationRejectsNonFiniteAndUnknownFunnelValues(t *testing.T) {
+	cases := []struct {
+		name string
+		set  func(*document.ProportionalDashboardPresentation)
+		want string
+	}{
+		{name: "non-finite inner radius", set: func(value *document.ProportionalDashboardPresentation) {
+			radius := math.NaN()
+			value.InnerRadius = &radius
+		}, want: "presentation.innerRadius must be finite"},
+		{name: "non-finite outer radius", set: func(value *document.ProportionalDashboardPresentation) {
+			radius := math.Inf(1)
+			value.OuterRadius = &radius
+		}, want: "presentation.outerRadius must be finite"},
+		{name: "inner radius below zero", set: func(value *document.ProportionalDashboardPresentation) { radius := -0.1; value.InnerRadius = &radius }, want: "presentation.innerRadius must be between zero and one"},
+		{name: "outer radius zero", set: func(value *document.ProportionalDashboardPresentation) { radius := 0.0; value.OuterRadius = &radius }, want: "presentation.outerRadius must be greater than zero"},
+		{name: "inner radius not below outer radius", set: func(value *document.ProportionalDashboardPresentation) {
+			inner, outer := 0.8, 0.8
+			value.InnerRadius, value.OuterRadius = &inner, &outer
+		}, want: "presentation.innerRadius must be less than outerRadius"},
+		{name: "unknown align", set: func(value *document.ProportionalDashboardPresentation) {
+			align := document.DashboardProportionalAlignment("start")
+			value.Align = &align
+		}, want: "presentation.align must be left, center, or right"},
+		{name: "unknown sort", set: func(value *document.ProportionalDashboardPresentation) {
+			sort := visualizationir.VisualizationSortDirection("natural")
+			value.Sort = &sort
+		}, want: "presentation.sort must be ascending or descending"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.ProportionalDashboardPresentation{Type: "proportional"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, func() document.DashboardVisualType {
+				if value.Align != nil || value.Sort != nil {
+					return document.DashboardVisualTypeFunnel
+				}
+				return document.DashboardVisualTypeDonut
+			}())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalPolarPresentationSupportsGaugeAndRadarOptions(t *testing.T) {
+	minimum, maximum, target, progressWidth := 0.0, 100.0, 100.0, 12.0
+	showPointer := false
+	area := false
+	thresholds := []visualizationir.VisualizationThreshold{{Value: 0, Tone: visualizationir.VisualizationToneSuccess}, {Value: 50, Tone: visualizationir.VisualizationToneWarning}, {Value: 100, Tone: visualizationir.VisualizationToneDanger}}
+	gauge, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Minimum: &minimum, Maximum: &maximum, Target: &target, ShowPointer: &showPointer, ProgressWidth: &progressWidth, Thresholds: &thresholds}}, document.DashboardVisualTypeGauge)
+	if err != nil {
+		t.Fatalf("lower gauge: %v", err)
+	}
+	gaugePresentation := gauge.(visualizationir.PolarVisualizationPresentation)
+	if gaugePresentation.ShowPointer || gaugePresentation.Target == nil || *gaugePresentation.Target != 100 || gaugePresentation.ProgressWidth == nil || *gaugePresentation.ProgressWidth != 12 || gaugePresentation.Thresholds == nil || len(*gaugePresentation.Thresholds) != 3 {
+		t.Fatalf("gauge presentation = %#v", gaugePresentation)
+	}
+
+	maximum = 10
+	legend := document.DashboardLegendPositionRight
+	radar, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Legend: &legend, Maximum: &maximum, Area: &area}}, document.DashboardVisualTypeRadar)
+	if err != nil {
+		t.Fatalf("lower radar: %v", err)
+	}
+	radarPresentation := radar.(visualizationir.PolarVisualizationPresentation)
+	if radarPresentation.Legend != visualizationir.VisualizationLegendPositionRight || radarPresentation.Maximum == nil || *radarPresentation.Maximum != 10 || radarPresentation.Area == nil || *radarPresentation.Area {
+		t.Fatalf("radar presentation = %#v", radarPresentation)
+	}
+}
+
+func TestLowerCanonicalPolarPresentationRejectsInapplicableAndInvalidOptions(t *testing.T) {
+	falseValue := false
+	zero := 0.0
+	minimum, maximum := 0.0, 100.0
+	legend := document.DashboardLegendPositionRight
+	emptyThresholds := []visualizationir.VisualizationThreshold{}
+	cases := []struct {
+		name       string
+		visualType document.DashboardVisualType
+		set        func(*document.PolarDashboardPresentation)
+		want       string
+	}{
+		{name: "minimum on radar", visualType: document.DashboardVisualTypeRadar, set: func(value *document.PolarDashboardPresentation) { value.Minimum = &zero }, want: "presentation.minimum is not supported for radar visuals"},
+		{name: "legend on gauge", visualType: document.DashboardVisualTypeGauge, set: func(value *document.PolarDashboardPresentation) { value.Legend = &legend }, want: "presentation.legend is not supported for gauge visuals"},
+		{name: "target on radar", visualType: document.DashboardVisualTypeRadar, set: func(value *document.PolarDashboardPresentation) { value.Target = &zero }, want: "presentation.target is not supported for radar visuals"},
+		{name: "pointer false on radar", visualType: document.DashboardVisualTypeRadar, set: func(value *document.PolarDashboardPresentation) { value.ShowPointer = &falseValue }, want: "presentation.showPointer is not supported for radar visuals"},
+		{name: "area false on gauge", visualType: document.DashboardVisualTypeGauge, set: func(value *document.PolarDashboardPresentation) { value.Area = &falseValue }, want: "presentation.area is not supported for gauge visuals"},
+		{name: "progress zero on radar", visualType: document.DashboardVisualTypeRadar, set: func(value *document.PolarDashboardPresentation) { value.ProgressWidth = &zero }, want: "presentation.progressWidth is not supported for radar visuals"},
+		{name: "empty thresholds on radar", visualType: document.DashboardVisualTypeRadar, set: func(value *document.PolarDashboardPresentation) { value.Thresholds = &emptyThresholds }, want: "presentation.thresholds is not supported for radar visuals"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.PolarDashboardPresentation{Type: "polar"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, test.visualType)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+
+	invalid := []struct {
+		name string
+		set  func(*document.PolarDashboardPresentation)
+		want string
+	}{
+		{name: "missing minimum", set: func(value *document.PolarDashboardPresentation) { value.Maximum = &maximum }, want: "presentation.minimum and presentation.maximum are required"},
+		{name: "missing maximum", set: func(value *document.PolarDashboardPresentation) { value.Minimum = &minimum }, want: "presentation.minimum and presentation.maximum are required"},
+		{name: "non-finite minimum", set: func(value *document.PolarDashboardPresentation) {
+			value.Minimum, value.Maximum = floatPointer(math.NaN()), &maximum
+		}, want: "presentation.minimum must be finite"},
+		{name: "non-finite maximum", set: func(value *document.PolarDashboardPresentation) {
+			value.Minimum, value.Maximum = &minimum, floatPointer(math.Inf(1))
+		}, want: "presentation.maximum must be finite"},
+		{name: "reversed domain", set: func(value *document.PolarDashboardPresentation) {
+			lower, upper := 10.0, 1.0
+			value.Minimum, value.Maximum = &lower, &upper
+		}, want: "presentation.minimum must be less than maximum"},
+		{name: "non-finite target", set: func(value *document.PolarDashboardPresentation) {
+			value.Minimum, value.Maximum, value.Target = &minimum, &maximum, floatPointer(math.NaN())
+		}, want: "presentation.target must be finite"},
+		{name: "target below domain", set: func(value *document.PolarDashboardPresentation) {
+			target := -1.0
+			value.Minimum, value.Maximum, value.Target = &minimum, &maximum, &target
+		}, want: "presentation.target must be within the gauge domain"},
+		{name: "non-finite progress width", set: func(value *document.PolarDashboardPresentation) {
+			value.Minimum, value.Maximum, value.ProgressWidth = &minimum, &maximum, floatPointer(math.Inf(1))
+		}, want: "presentation.progressWidth must be finite"},
+		{name: "zero progress width", set: func(value *document.PolarDashboardPresentation) {
+			value.Minimum, value.Maximum, value.ProgressWidth = &minimum, &maximum, floatPointer(0)
+		}, want: "presentation.progressWidth must be greater than zero"},
+		{name: "non-finite threshold", set: func(value *document.PolarDashboardPresentation) {
+			thresholds := []visualizationir.VisualizationThreshold{{Value: math.NaN()}}
+			value.Minimum, value.Maximum, value.Thresholds = &minimum, &maximum, &thresholds
+		}, want: "presentation.thresholds[0].value must be finite"},
+		{name: "threshold outside domain", set: func(value *document.PolarDashboardPresentation) {
+			thresholds := []visualizationir.VisualizationThreshold{{Value: 101}}
+			value.Minimum, value.Maximum, value.Thresholds = &minimum, &maximum, &thresholds
+		}, want: "presentation.thresholds[0].value must be within the gauge domain"},
+		{name: "thresholds not ordered", set: func(value *document.PolarDashboardPresentation) {
+			thresholds := []visualizationir.VisualizationThreshold{{Value: 50}, {Value: 50}}
+			value.Minimum, value.Maximum, value.Thresholds = &minimum, &maximum, &thresholds
+		}, want: "presentation.thresholds[1].value must be greater than the previous threshold"},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.PolarDashboardPresentation{Type: "polar"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, document.DashboardVisualTypeGauge)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name  string
+		value float64
+		want  string
+	}{
+		{name: "non-finite maximum", value: math.NaN(), want: "presentation.maximum must be finite"},
+		{name: "zero maximum", value: 0, want: "presentation.maximum must be greater than zero for radar visuals"},
+		{name: "negative maximum", value: -1, want: "presentation.maximum must be greater than zero for radar visuals"},
+	} {
+		t.Run("radar "+test.name, func(t *testing.T) {
+			maximum := test.value
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Maximum: &maximum}}, document.DashboardVisualTypeRadar)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func stringPointer(value string) *string { return &value }
+
+func floatPointer(value float64) *float64 { return &value }
 
 func TestLowerCanonicalHierarchyPresentationSupportsOptionsByVisualType(t *testing.T) {
 	tests := []struct {

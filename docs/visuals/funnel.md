@@ -4,6 +4,8 @@ Use a funnel chart to show ordered stages whose values usually decrease through 
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
+Funnel presentation supports `orientation`, `labelPosition`, `align`, and `sort`. Pie and donut geometry fields such as `rose`, `centerLabel`, `innerRadius`, and `outerRadius` do not apply to stages.
+
 ## Ordered conversion stages
 
 Use actual sequential stages whose population narrows through one process. Numeric prefixes keep the business sequence explicit and stable.

@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
@@ -174,6 +175,186 @@ func TestCanonicalVisualizationSpecBoxplotAndCandlestickContracts(t *testing.T) 
 			t.Fatalf("invalid candlestick operands accepted: %#v", test.Binding.Aggregate)
 		}
 	}
+}
+
+func TestCanonicalVisualizationSpecsCompileProportionalAndPolarAuthoredOptions(t *testing.T) {
+	model := dashboardQueryTestModel()
+	dimension := []visualizationdefinition.FieldBinding{{FieldID: "status", Alias: "status"}}
+	metric := []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "revenue"}}
+	categoryQuery := LoweredDashboardQuery{
+		Type: "aggregate",
+		Binding: visualizationdefinition.QueryBinding{
+			ResultShape: visualizationdefinition.ResultCategoryValue,
+			Aggregate:   &visualizationdefinition.AggregateQueryBinding{Dimensions: dimension, Metrics: metric},
+		},
+		ResultFrame: []DashboardQueryResultField{{Name: "status"}, {Name: "revenue"}},
+	}
+	valueQuery := LoweredDashboardQuery{
+		Type: "aggregate",
+		Binding: visualizationdefinition.QueryBinding{
+			ResultShape: visualizationdefinition.ResultCategoryValue,
+			Aggregate:   &visualizationdefinition.AggregateQueryBinding{Metrics: metric},
+		},
+		ResultFrame: []DashboardQueryResultField{{Name: "revenue"}},
+	}
+	outerRadius := 1.0
+	minimum, maximum := 0.0, 100.0
+	showPointer := false
+	cases := []struct {
+		name       string
+		visualType document.DashboardVisualType
+		visual     document.DashboardVisual
+		query      LoweredDashboardQuery
+		check      func(t *testing.T, spec visualizationir.VisualizationSpec)
+	}{
+		{
+			name: "donut authored geometry", visualType: document.DashboardVisualTypeDonut, query: categoryQuery,
+			visual: document.DashboardVisual{Type: document.DashboardVisualTypeDonut, Presentation: document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{Type: "proportional", InnerRadius: floatPointer(0), OuterRadius: &outerRadius, CenterLabel: stringPointer("Orders")}}},
+			check: func(t *testing.T, spec visualizationir.VisualizationSpec) {
+				got := spec.Value.(*visualizationir.ProportionalVisualizationSpec)
+				if got.Mark != visualizationir.VisualizationProportionalMarkDonut || got.Category.Field != "status" || got.Value.Field != "revenue" || got.Presentation.InnerRadius == nil || *got.Presentation.InnerRadius != 0 || got.Presentation.CenterLabel == nil || *got.Presentation.CenterLabel != "Orders" {
+					t.Fatalf("donut spec = %#v", got)
+				}
+			},
+		},
+		{
+			name: "funnel authored ordering", visualType: document.DashboardVisualTypeFunnel, query: categoryQuery,
+			visual: document.DashboardVisual{Type: document.DashboardVisualTypeFunnel, Presentation: document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{Type: "proportional", Align: alignmentPointer(document.DashboardProportionalAlignmentCenter), Sort: sortPointer(visualizationir.VisualizationSortDirectionDescending)}}},
+			check: func(t *testing.T, spec visualizationir.VisualizationSpec) {
+				got := spec.Value.(*visualizationir.ProportionalVisualizationSpec)
+				if got.Mark != visualizationir.VisualizationProportionalMarkFunnel || got.Presentation.Align == nil || *got.Presentation.Align != "center" || got.Presentation.Sort == nil || *got.Presentation.Sort != visualizationir.VisualizationSortDirectionDescending {
+					t.Fatalf("funnel spec = %#v", got)
+				}
+			},
+		},
+		{
+			name: "gauge authored domain and pointer", visualType: document.DashboardVisualTypeGauge, query: valueQuery,
+			visual: document.DashboardVisual{Type: document.DashboardVisualTypeGauge, Presentation: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Minimum: &minimum, Maximum: &maximum, ShowPointer: &showPointer}}},
+			check: func(t *testing.T, spec visualizationir.VisualizationSpec) {
+				got := spec.Value.(*visualizationir.PolarVisualizationSpec)
+				if got.Mark != visualizationir.VisualizationPolarMarkGauge || got.Value.Field != "revenue" || got.Presentation.Minimum == nil || *got.Presentation.Minimum != 0 || got.Presentation.Maximum == nil || *got.Presentation.Maximum != 100 || got.Presentation.ShowPointer {
+					t.Fatalf("gauge spec = %#v", got)
+				}
+			},
+		},
+		{
+			name: "radar authored maximum", visualType: document.DashboardVisualTypeRadar, query: categoryQuery,
+			visual: document.DashboardVisual{Type: document.DashboardVisualTypeRadar, Presentation: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Maximum: floatPointer(10)}}},
+			check: func(t *testing.T, spec visualizationir.VisualizationSpec) {
+				got := spec.Value.(*visualizationir.PolarVisualizationSpec)
+				if got.Mark != visualizationir.VisualizationPolarMarkRadar || got.Category == nil || got.Category.Field != "status" || got.Presentation.Maximum == nil || *got.Presentation.Maximum != 10 {
+					t.Fatalf("radar spec = %#v", got)
+				}
+			},
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			presentation, err := LowerCanonicalDashboardPresentationForQuery(test.visual.Presentation, test.visualType, test.query)
+			if err != nil {
+				t.Fatalf("lower presentation: %v", err)
+			}
+			spec, err := canonicalVisualizationSpec(test.name, test.visual, test.query, presentation, nil, model)
+			if err != nil {
+				t.Fatalf("compile spec: %v", err)
+			}
+			test.check(t, spec)
+		})
+	}
+}
+
+func TestCanonicalPolarVisualizationSpecEnforcesShapeAndSeriesContracts(t *testing.T) {
+	model := dashboardQueryTestModel()
+	metric := []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "revenue"}}
+	query := func(dimensions []visualizationdefinition.FieldBinding, shape visualizationdefinition.ResultShape) LoweredDashboardQuery {
+		frame := make([]DashboardQueryResultField, 0, len(dimensions)+1)
+		for _, dimension := range dimensions {
+			frame = append(frame, DashboardQueryResultField{Source: dimension.FieldID, Name: dimension.Alias})
+		}
+		frame = append(frame, DashboardQueryResultField{Source: "revenue", Name: "revenue"})
+		return LoweredDashboardQuery{
+			Type: "aggregate",
+			Binding: visualizationdefinition.QueryBinding{
+				ResultShape: shape,
+				Aggregate:   &visualizationdefinition.AggregateQueryBinding{Dimensions: dimensions, Metrics: metric},
+			},
+			ResultFrame: frame,
+		}
+	}
+	compile := func(t *testing.T, visualType document.DashboardVisualType, visual document.DashboardVisual, lowered LoweredDashboardQuery) visualizationir.VisualizationSpec {
+		t.Helper()
+		presentation, err := LowerCanonicalDashboardPresentationForQuery(visual.Presentation, visualType, lowered)
+		if err != nil {
+			t.Fatalf("lower presentation: %v", err)
+		}
+		spec, err := canonicalVisualizationSpec(string(visualType), visual, lowered, presentation, nil, model)
+		if err != nil {
+			t.Fatalf("compile spec: %v", err)
+		}
+		return spec
+	}
+
+	t.Run("gauge accepts scalar shape only", func(t *testing.T) {
+		visual := document.DashboardVisual{Type: document.DashboardVisualTypeGauge, Presentation: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Minimum: floatPointer(0), Maximum: floatPointer(100)}}}
+		spec := compile(t, document.DashboardVisualTypeGauge, visual, query(nil, visualizationdefinition.ResultScalar))
+		got := spec.Value.(*visualizationir.PolarVisualizationSpec)
+		if got.Category != nil || got.Series != nil || got.Value.Field != "revenue" {
+			t.Fatalf("gauge spec = %#v", got)
+		}
+	})
+
+	t.Run("gauge rejects category dimension", func(t *testing.T) {
+		visual := document.DashboardVisual{Type: document.DashboardVisualTypeGauge, Presentation: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Minimum: floatPointer(0), Maximum: floatPointer(100)}}}
+		presentation, err := LowerCanonicalDashboardPresentationForQuery(visual.Presentation, visual.Type, query([]visualizationdefinition.FieldBinding{{FieldID: "state", Alias: "state"}}, visualizationdefinition.ResultCategoryValue))
+		if err != nil {
+			t.Fatalf("lower presentation: %v", err)
+		}
+		_, err = canonicalVisualizationSpec("gauge", visual, query([]visualizationdefinition.FieldBinding{{FieldID: "state", Alias: "state"}}, visualizationdefinition.ResultCategoryValue), presentation, nil, model)
+		if err == nil || !strings.Contains(err.Error(), "gauge requires zero dimensions") {
+			t.Fatalf("error = %v, want gauge dimension contract", err)
+		}
+	})
+
+	t.Run("radar requires category dimension", func(t *testing.T) {
+		visual := document.DashboardVisual{Type: document.DashboardVisualTypeRadar, Presentation: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar"}}}
+		lowered := query(nil, visualizationdefinition.ResultScalar)
+		presentation, err := LowerCanonicalDashboardPresentationForQuery(visual.Presentation, visual.Type, lowered)
+		if err != nil {
+			t.Fatalf("lower presentation: %v", err)
+		}
+		_, err = canonicalVisualizationSpec("radar", visual, lowered, presentation, nil, model)
+		if err == nil || !strings.Contains(err.Error(), "radar requires exactly one category dimension") {
+			t.Fatalf("error = %v, want radar category contract", err)
+		}
+	})
+
+	t.Run("radar derives second dimension as governed series", func(t *testing.T) {
+		dimensions := []visualizationdefinition.FieldBinding{{FieldID: "state", Alias: "state"}, {FieldID: "status", Alias: "status"}}
+		lowered := query(dimensions, visualizationdefinition.ResultCategoryMultiMeasure)
+		if err := lowerCanonicalVisualSeries(&lowered, document.DashboardVisualTypeRadar); err != nil {
+			t.Fatalf("lower radar series: %v", err)
+		}
+		if lowered.Binding.ResultShape != visualizationdefinition.ResultCategorySeriesValue || lowered.Binding.Aggregate.Series == nil || lowered.Binding.Aggregate.Series.Alias != "status" {
+			t.Fatalf("radar query series = %#v", lowered.Binding)
+		}
+		visual := document.DashboardVisual{Type: document.DashboardVisualTypeRadar, Presentation: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Legend: func() *document.DashboardLegendPosition {
+			value := document.DashboardLegendPositionRight
+			return &value
+		}()}}}
+		spec := compile(t, document.DashboardVisualTypeRadar, visual, lowered)
+		got := spec.Value.(*visualizationir.PolarVisualizationSpec)
+		if got.Category == nil || got.Category.Field != "state" || got.Series == nil || got.Series.Field != "status" || got.Value.Field != "revenue" {
+			t.Fatalf("radar spec = %#v", got)
+		}
+	})
+}
+
+func alignmentPointer(value document.DashboardProportionalAlignment) *document.DashboardProportionalAlignment {
+	return &value
+}
+
+func sortPointer(value visualizationir.VisualizationSortDirection) *visualizationir.VisualizationSortDirection {
+	return &value
 }
 
 func fieldIDs(fields []visualizationir.VisualizationField) string {

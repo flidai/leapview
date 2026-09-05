@@ -4,6 +4,8 @@ Use a gauge to communicate one value against a known range or threshold scale.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
+Gauge presentation requires an explicit `minimum` and `maximum` domain. Optional `target`, `showPointer`, `progressWidth`, and `thresholds` annotate that domain; gauge values at either configured boundary remain in range.
+
 ## Customer review health
 
 Use a naturally bounded score with an explicit target, so the position and distance from goal are immediately interpretable.
