@@ -9,6 +9,25 @@ func (g *Graph) Dependencies() (Dependencies, error) {
 	if err := g.Validate(); err != nil {
 		return Dependencies{}, err
 	}
+	return g.dependenciesValidated(), nil
+}
+
+// DependencyEvidence derives the physical dependency scope and its canonical
+// target-independent plan bytes after one validation pass. Consumers that
+// need both values for one immutable plan should use this method instead of
+// calling Dependencies and DependencyCanonical independently.
+func (g *Graph) DependencyEvidence() (Dependencies, []byte, error) {
+	if err := g.Validate(); err != nil {
+		return Dependencies{}, nil, err
+	}
+	canonical, err := g.dependencyCanonicalValidated()
+	if err != nil {
+		return Dependencies{}, nil, err
+	}
+	return g.dependenciesValidated(), canonical, nil
+}
+
+func (g *Graph) dependenciesValidated() Dependencies {
 	datasets := map[string]struct{}{}
 	physical := map[string]struct{}{}
 	paths := map[string]struct{}{}
@@ -50,7 +69,7 @@ func (g *Graph) Dependencies() (Dependencies, error) {
 			}
 		}
 	}
-	return Dependencies{Datasets: sortedSet(datasets), PhysicalFields: sortedSet(physical), RelationshipPaths: sortedSet(paths)}, nil
+	return Dependencies{Datasets: sortedSet(datasets), PhysicalFields: sortedSet(physical), RelationshipPaths: sortedSet(paths)}
 }
 
 func (g *Graph) reachableIDs() []string {
