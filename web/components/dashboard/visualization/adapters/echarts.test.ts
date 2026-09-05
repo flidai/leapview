@@ -228,11 +228,14 @@ test('ECharts translates governed heatmap gradients and waterfall rule styles', 
   }]
   const heatmapOption = echartsOption(heatmap, defaultRendererContext) as any
   expect(heatmapOption.visualMap).toMatchObject({
+    type: 'continuous',
+    dimension: 'value',
     min: 0,
     max: 100,
-    calculable: false,
+    calculable: true,
     text: ['100', '0'],
     inRange: { color: [defaultRendererContext.colors.danger, defaultRendererContext.colors.success] },
+    outOfRange: { opacity: 0 },
   })
 
   const waterfall = cartesianFixture('waterfall', ['label', 'start', 'value']) as any
@@ -864,14 +867,16 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   const heatmap = echartsOption(heatmapEnvelope, defaultRendererContext) as any
   expect(heatmap.series[0]).toMatchObject({ id: 'series:primary:heatmap', type: 'heatmap', encode: { x: 'label', y: 'row', value: 'value' } })
   expect(heatmap.visualMap).toMatchObject({
+    type: 'continuous',
+    dimension: 'value',
     min: 1,
     max: 3,
-    calculable: false,
+    calculable: true,
     text: ['3', '1'],
     inRange: { color: ['rgba(0, 110, 219, 0.18)', defaultRendererContext.colors.data[0]] },
+    outOfRange: { opacity: 0 },
   })
   expect(heatmap.visualMap.precision).toBeUndefined()
-  expect(heatmap.visualMap.outOfRange).toBeUndefined()
   const boxplot = echartsOption(cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']), defaultRendererContext) as any
   expect(boxplot.xAxis.data).toEqual(['A'])
   expect(boxplot.series[0]).toMatchObject({ id: 'series:primary:boxplot', type: 'boxplot', data: [{ name: 'A', value: [1, 2, 3, 4, 5], __lv_dataset: 'primary', __lv_row_index: 0 }] })
