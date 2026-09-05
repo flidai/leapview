@@ -36,7 +36,9 @@ normal cleanup. Set
 `LEAPVIEW_POSTGRES_HA_WAIT_SECONDS` (10–600) for a bounded local timeout per
 readiness/failover wait. The default credentials are disposable and are never
 included in evidence; URL-safe overrides are accepted through the three
-`LEAPVIEW_POSTGRES_HA_*_PASSWORD` variables.
+`LEAPVIEW_POSTGRES_HA_SUPERUSER_PASSWORD`,
+`LEAPVIEW_POSTGRES_HA_REPLICATION_PASSWORD`, and
+`LEAPVIEW_POSTGRES_HA_REWIND_PASSWORD` variables.
 
 This validates Patroni/DCS behavior and the leader endpoint on one host. It
 does not prove independent failure domains, network partitions, provider

@@ -3121,6 +3121,41 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_POSTGRES_HA_EVIDENCE_DIR": {
+      "description": "Optional directory for redacted PostgreSQL HA qualification evidence.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "local PostgreSQL HA qualification"
+    },
+    "LEAPVIEW_POSTGRES_HA_REPLICATION_PASSWORD": {
+      "description": "Disposable replication credential for the PostgreSQL HA qualification fixture.",
+      "type": "string",
+      "writeOnly": true,
+      "x-lifecycle": "internal",
+      "x-scope": "local PostgreSQL HA qualification"
+    },
+    "LEAPVIEW_POSTGRES_HA_REWIND_PASSWORD": {
+      "description": "Disposable rewind credential for the PostgreSQL HA qualification fixture.",
+      "type": "string",
+      "writeOnly": true,
+      "x-lifecycle": "internal",
+      "x-scope": "local PostgreSQL HA qualification"
+    },
+    "LEAPVIEW_POSTGRES_HA_SUPERUSER_PASSWORD": {
+      "description": "Disposable superuser credential for the PostgreSQL HA qualification fixture.",
+      "type": "string",
+      "writeOnly": true,
+      "x-lifecycle": "internal",
+      "x-scope": "local PostgreSQL HA qualification"
+    },
+    "LEAPVIEW_POSTGRES_HA_WAIT_SECONDS": {
+      "default": "120",
+      "description": "Bounded wait in seconds for each PostgreSQL HA qualification transition.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "local PostgreSQL HA qualification"
+    },
     "LEAPVIEW_POSTGRES_PROJECT_SUFFIX": {
       "description": "Isolate the Docker Compose project name used by worktree-local PostgreSQL tests.",
       "type": "string",
