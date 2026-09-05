@@ -197,10 +197,17 @@ wait_for_dcs_member() {
     return 1
 }
 
-dcs_quorum_write() {
-    compose exec -T etcd1 etcdctl \
-        --endpoints=http://etcd1:2379,http://etcd2:2379 \
-        put "/qualification/${RUN_ID}" "$RUN_ID" >/dev/null 2>&1
+wait_for_dcs_quorum_write() {
+    until_deadline
+    while within_deadline; do
+        if compose exec -T etcd1 etcdctl \
+            --endpoints=http://etcd1:2379,http://etcd2:2379 \
+            put "/qualification/${RUN_ID}" "$RUN_ID" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
 }
 
 dcs_cluster_converged() {
@@ -423,9 +430,8 @@ if ! compose kill -s SIGKILL etcd3 >/dev/null 2>&1; then
     record_result failed
     exit 1
 fi
-if compose ps --status running --services | grep -Fxq etcd3 || ! dcs_quorum_write || ! wait_for_endpoint_write "$current_leader" "$dcs_loss_marker"; then
+if compose ps --status running --services | grep -Fxq etcd3 || ! wait_for_dcs_quorum_write || ! wait_for_endpoint_write "$current_leader" "$dcs_loss_marker"; then
     record_event dcs-member-loss failed
-    record_diagnostics dcs-member-loss
     record_diagnostics dcs-member-loss
     record_result failed
     exit 1
@@ -434,7 +440,6 @@ record_event dcs-member-loss passed
 
 if ! compose up --detach etcd3 >/dev/null 2>&1 || ! wait_for_dcs_member etcd3 || ! dcs_cluster_converged; then
     record_event dcs-member-recovery failed
-    record_diagnostics dcs-member-recovery
     record_diagnostics dcs-member-recovery
     record_result failed
     exit 1

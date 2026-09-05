@@ -11,4 +11,5 @@ RUN apk add --no-cache 'python3=3.14.7-r1' \
 COPY patroni-entrypoint.sh /usr/local/bin/patroni-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/patroni-entrypoint.sh
 
+USER postgres
 ENTRYPOINT ["/usr/local/bin/patroni-entrypoint.sh"]

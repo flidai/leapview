@@ -14,7 +14,7 @@ set -euo pipefail
 # the postmaster lifecycle and must bootstrap/clone an empty member directory
 # itself. Manually running initdb here would give both members different system
 # identifiers and prevent the standby from cloning the first primary.
-install -d -o postgres -g postgres -m 0700 "${PGDATA}"
+install -d -m 0700 "${PGDATA}"
 
 patroni_config="$(mktemp /tmp/patroni.XXXXXX)"
 cat >"${patroni_config}" <<EOF
@@ -72,7 +72,6 @@ postgresql:
   parameters:
     unix_socket_directories: '/var/run/postgresql'
 EOF
-chown postgres:postgres "${patroni_config}"
 chmod 0600 "${patroni_config}"
 
-exec gosu postgres /opt/patroni/bin/patroni "${patroni_config}"
+exec /opt/patroni/bin/patroni "${patroni_config}"
