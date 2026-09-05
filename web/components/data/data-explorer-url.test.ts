@@ -64,6 +64,18 @@ test('browse URL preserves only the selected object', () => {
   expect(dataExplorerURL({ mode: 'browse', objectKey: 'model:orders' } as DataExplorerCommand)).toBe('/explore?object=model%3Aorders')
 })
 
+test('saved selection survives durable explorer URL updates', () => {
+  const command = { mode: 'browse', objectKey: 'model:orders' } as DataExplorerCommand
+  expect(dataExplorerURL(command, 'exploration:orders')).toBe('/explore?saved=exploration%3Aorders&object=model%3Aorders')
+  expect(dataExplorerURL({ mode: 'explore', explore: { spec: { schemaVersion: 1, modelId: ' ', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 } } } as DataExplorerCommand, 'exploration:orders')).toBe('/explore?saved=exploration%3Aorders')
+})
+
+test('archived saved selection carries explicit archived-list scope', () => {
+  const command = { mode: 'browse', objectKey: 'model:orders' } as DataExplorerCommand
+  expect(dataExplorerURL(command, 'exploration:archived', true)).toBe('/explore?saved=exploration%3Aarchived&includeArchived=true&object=model%3Aorders')
+  expect(dataExplorerURL(command, 'exploration:active')).toBe('/explore?saved=exploration%3Aactive&object=model%3Aorders')
+})
+
 test('filter editor preserves typed scalar values and fails closed', () => {
   expect(makeExplorationFilter('orders.count', 'greater_than', ['10'], 'number')?.expression).toEqual({ kind: 'comparison', operator: 'greater_than', value: { kind: 'decimal', value: '10' } })
   expect(makeExplorationFilter('orders.active', 'equals', ['true'], 'boolean')?.expression).toEqual({ kind: 'comparison', operator: 'equals', value: { kind: 'boolean', value: true } })

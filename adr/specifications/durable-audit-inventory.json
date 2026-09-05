@@ -143,6 +143,17 @@
       "evidence": ["internal/analytics/connectionbinding/rotation_test.go"]
     },
     {
+      "id": "saved-exploration.commands",
+      "owner": "analytics",
+      "kind": "generated-command-audit",
+      "events": ["saved exploration create, update, duplicate, and archive"],
+      "guarantee": "transactional",
+      "failureBehavior": "Saved-exploration lifecycle state, revision, and durable audit intent commit together; audit failure rolls the mutation back.",
+      "implementation": ["internal/analytics/exploration/saved/application/service.go", "internal/analytics/exploration/saved/sqlite/repository.go"],
+      "contractSources": ["api/typespec/saved_explorations.tsp"],
+      "evidence": ["internal/analytics/exploration/saved/application/service_test.go", "internal/analytics/exploration/saved/sqlite/repository_contract_test.go"]
+    },
+    {
       "id": "agent.commands",
       "owner": "agent",
       "kind": "generated-command-audit",

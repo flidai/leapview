@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"bytes"
 	"net/url"
+	"strings"
 	"testing"
 
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
@@ -29,6 +31,10 @@ func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 	}
 	if signals["agent"] == nil || signals["agentVisuals"] == nil {
 		t.Fatalf("agent bootstrap = %#v", signals)
+	}
+	saved, ok := signals["savedExplorations"].(uisignals.SavedExplorationStateSignal)
+	if !ok || saved.Enabled || saved.Command.Action != "create" || saved.Save.State != "saved" || saved.List.Items == nil {
+		t.Fatalf("legacy saved-exploration bootstrap = %#v, want disabled valid default", signals["savedExplorations"])
 	}
 }
 
@@ -113,6 +119,92 @@ func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
 	}
 	if values.Has("requestSeq") || values.Has("resetVersion") {
 		t.Fatalf("runtime state leaked into updates URL: %#v", values)
+	}
+}
+
+func TestDataExplorerUpdatesURLPreservesSavedSelection(t *testing.T) {
+	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("explore"), Explore: &uisignals.DataExploreCommand{Spec: exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: uisignals.Pointer("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+	}}}
+	updates, err := url.Parse(dataExplorerUpdatesURL(command, "exploration:orders"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := updates.Query().Get("saved"); got != "exploration:orders" {
+		t.Fatalf("saved selection = %q, want selected deep-link ID", got)
+	}
+}
+
+func TestDataExplorerUpdatesURLIncludesArchivedOnlyForArchivedSelection(t *testing.T) {
+	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("explore"), Explore: &uisignals.DataExploreCommand{Spec: exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: uisignals.Pointer("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+	}}}
+	updates, err := url.Parse(dataExplorerUpdatesURLWithOptions(command, "exploration:archived", true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := updates.Query().Get("includeArchived"); got != "true" {
+		t.Fatalf("includeArchived = %q, want true", got)
+	}
+	active, err := url.Parse(dataExplorerUpdatesURLWithOptions(command, "exploration:active", false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Query().Has("includeArchived") {
+		t.Fatalf("active selection unexpectedly includes archived list flag: %s", active)
+	}
+}
+
+func TestDataExplorerPageRendersSavedSelectionInInitialUpdatesStream(t *testing.T) {
+	selectedID := "exploration:orders"
+	explorer := uisignals.DataExplorerSignal{Command: uisignals.DataExplorerCommand{
+		Mode: uisignals.Pointer("explore"),
+		Explore: &uisignals.DataExploreCommand{Spec: exploration.ExplorationSpec{
+			SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: uisignals.Pointer("orders"),
+			Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{},
+			Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+		}},
+	}}
+	saved := DataExplorerSavedExplorationBootstrap{
+		Enabled: true,
+		State: uisignals.SavedExplorationStateSignal{
+			List:    uisignals.SavedExplorationListSignal{Items: []uisignals.SavedExplorationListItemSignal{}, SelectedID: &selectedID},
+			Command: uisignals.SavedExplorationCommandSignal{Action: "reopen"},
+			Save:    uisignals.SavedExplorationSaveStateSignal{State: "saved"},
+		},
+	}
+	var rendered bytes.Buffer
+	if err := DataExplorerPageWithSavedExplorations(catalogFixture(), uisignals.DataExplorerPageSignal{}, explorer, saved, "", testLayoutProvider()).Render(&rendered); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered.String(), "/updates?mode=explore&amp;route=data&amp;saved=exploration%3Aorders&amp;state=") {
+		t.Fatalf("initial updates stream omitted selected saved ID:\n%s", rendered.String())
+	}
+}
+
+func TestDataExplorerPageRendersArchivedSelectionInInitialUpdatesStream(t *testing.T) {
+	selectedID := "exploration:archived"
+	explorer := uisignals.DataExplorerSignal{Command: uisignals.DataExplorerCommand{
+		Mode: uisignals.Pointer("explore"), Explore: &uisignals.DataExploreCommand{Spec: exploration.ExplorationSpec{
+			SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: uisignals.Pointer("orders"),
+			Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{},
+			Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+		}},
+	}}
+	saved := DataExplorerSavedExplorationBootstrap{Enabled: true, State: uisignals.SavedExplorationStateSignal{
+		List:    uisignals.SavedExplorationListSignal{Items: []uisignals.SavedExplorationListItemSignal{{ID: selectedID, Status: "archived"}}, SelectedID: &selectedID},
+		Command: uisignals.SavedExplorationCommandSignal{Action: "reopen"}, Save: uisignals.SavedExplorationSaveStateSignal{State: "saved"},
+	}}
+	var rendered bytes.Buffer
+	if err := DataExplorerPageWithSavedExplorations(catalogFixture(), uisignals.DataExplorerPageSignal{}, explorer, saved, "", testLayoutProvider()).Render(&rendered); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered.String(), "includeArchived=true") {
+		t.Fatalf("initial updates stream omitted archived selection flag:\n%s", rendered.String())
 	}
 }
 

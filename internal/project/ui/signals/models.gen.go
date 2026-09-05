@@ -1122,6 +1122,7 @@ type DataExplorerPageEnvelope struct {
 	DataExplorer         DataExplorerSignal                               `json:"dataExplorer" yaml:"dataExplorer"`
 	Page                 DataExplorerPageSignal                           `json:"page" yaml:"page"`
 	Runtime              RouteRuntimeSignal                               `json:"runtime" yaml:"runtime"`
+	SavedExplorations    SavedExplorationStateSignal                      `json:"savedExplorations" yaml:"savedExplorations"`
 	Status               DashboardStatus                                  `json:"status" yaml:"status"`
 }
 
@@ -1489,6 +1490,68 @@ type RouteRuntimeSignal struct {
 	StreamInstanceID *string   `json:"streamInstanceId,omitempty" yaml:"streamInstanceId,omitempty"`
 	ServingStateID   *string   `json:"servingStateId,omitempty" yaml:"servingStateId,omitempty"`
 	ProjectID        *string   `json:"projectId,omitempty" yaml:"projectId,omitempty"`
+}
+
+type SavedExplorationCommandSignal struct {
+	Action                 string                          `json:"action" yaml:"action"`
+	ExplorationID          *string                         `json:"explorationId,omitempty" yaml:"explorationId,omitempty"`
+	SourceExplorationID    *string                         `json:"sourceExplorationId,omitempty" yaml:"sourceExplorationId,omitempty"`
+	Title                  *string                         `json:"title,omitempty" yaml:"title,omitempty"`
+	Slug                   *string                         `json:"slug,omitempty" yaml:"slug,omitempty"`
+	Visibility             *string                         `json:"visibility,omitempty" yaml:"visibility,omitempty"`
+	Spec                   *exploration.ExplorationSpec    `json:"spec,omitempty" yaml:"spec,omitempty"`
+	ExpectedRevision       *SavedExplorationRevisionSignal `json:"expectedRevision,omitempty" yaml:"expectedRevision,omitempty"`
+	ExpectedSourceRevision *SavedExplorationRevisionSignal `json:"expectedSourceRevision,omitempty" yaml:"expectedSourceRevision,omitempty"`
+}
+
+type SavedExplorationCurrentSignal struct {
+	ID              string                         `json:"id" yaml:"id"`
+	Title           string                         `json:"title" yaml:"title"`
+	Slug            string                         `json:"slug" yaml:"slug"`
+	Visibility      string                         `json:"visibility" yaml:"visibility"`
+	Status          string                         `json:"status" yaml:"status"`
+	SemanticModelID string                         `json:"semanticModelId" yaml:"semanticModelId"`
+	Revision        SavedExplorationRevisionSignal `json:"revision" yaml:"revision"`
+	Detached        bool                           `json:"detached" yaml:"detached"`
+	Spec            *exploration.ExplorationSpec   `json:"spec,omitempty" yaml:"spec,omitempty"`
+}
+
+type SavedExplorationListItemSignal struct {
+	ID              string                         `json:"id" yaml:"id"`
+	Title           string                         `json:"title" yaml:"title"`
+	Slug            string                         `json:"slug" yaml:"slug"`
+	Visibility      string                         `json:"visibility" yaml:"visibility"`
+	Status          string                         `json:"status" yaml:"status"`
+	SemanticModelID string                         `json:"semanticModelId" yaml:"semanticModelId"`
+	CreatedAt       string                         `json:"createdAt" yaml:"createdAt"`
+	UpdatedAt       string                         `json:"updatedAt" yaml:"updatedAt"`
+	ArchivedAt      *string                        `json:"archivedAt,omitempty" yaml:"archivedAt,omitempty"`
+	Revision        SavedExplorationRevisionSignal `json:"revision" yaml:"revision"`
+}
+
+type SavedExplorationListSignal struct {
+	Items           []SavedExplorationListItemSignal `json:"items" yaml:"items"`
+	IncludeArchived bool                             `json:"includeArchived" yaml:"includeArchived"`
+	SelectedID      *string                          `json:"selectedId,omitempty" yaml:"selectedId,omitempty"`
+}
+
+type SavedExplorationRevisionSignal struct {
+	RevisionID  string `json:"revisionId" yaml:"revisionId"`
+	Number      int64  `json:"number" yaml:"number"`
+	ContentHash string `json:"contentHash" yaml:"contentHash"`
+}
+
+type SavedExplorationSaveStateSignal struct {
+	State   string  `json:"state" yaml:"state"`
+	Message *string `json:"message,omitempty" yaml:"message,omitempty"`
+}
+
+type SavedExplorationStateSignal struct {
+	Enabled bool                            `json:"enabled" yaml:"enabled"`
+	List    SavedExplorationListSignal      `json:"list" yaml:"list"`
+	Current *SavedExplorationCurrentSignal  `json:"current,omitempty" yaml:"current,omitempty"`
+	Command SavedExplorationCommandSignal   `json:"command" yaml:"command"`
+	Save    SavedExplorationSaveStateSignal `json:"save" yaml:"save"`
 }
 
 type SemanticModelGraphEdgeSignal struct {

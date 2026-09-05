@@ -3,13 +3,15 @@ import { canonicalExplorationSpec, explorationSpecFor } from './data-explorer-sp
 
 export type DataExplorerHistoryMode = 'push' | 'replace'
 
-export function dataExplorerURL(command: DataExplorerCommand): string {
+export function dataExplorerURL(command: DataExplorerCommand, savedID?: string, includeArchived = false): string {
   const mode = command.mode === 'explore' ? 'explore' : 'browse'
   const objectKey = command.objectKey || ''
   const params = new URLSearchParams()
+  if (savedID?.trim()) params.set('saved', savedID.trim())
+  if (includeArchived) params.set('includeArchived', 'true')
   if (mode === 'explore') {
     const spec = explorationSpecFor(command.explore)
-    if (!spec.modelId?.trim()) return '/explore'
+    if (!spec.modelId?.trim()) return params.toString() ? `/explore?${params.toString()}` : '/explore'
     params.set('v', '2')
     params.set('mode', 'explore')
     params.set('state', JSON.stringify(canonicalExplorationSpec(spec)))
@@ -26,8 +28,8 @@ export function dataExplorerURL(command: DataExplorerCommand): string {
  * The server owns URL decoding and hydration. This helper only changes the
  * browser address bar; a popstate is handled by the page lifecycle below.
  */
-export function updateDataExplorerURL(command: DataExplorerCommand, mode: DataExplorerHistoryMode): string {
-  const next = dataExplorerURL(command)
+export function updateDataExplorerURL(command: DataExplorerCommand, mode: DataExplorerHistoryMode, savedID?: string, includeArchived = false): string {
+  const next = dataExplorerURL(command, savedID, includeArchived)
   if (typeof window === 'undefined') return next
 
   const current = `${window.location.pathname}${window.location.search}`

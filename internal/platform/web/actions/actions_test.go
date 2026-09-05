@@ -21,6 +21,14 @@ func TestRequestWithoutSignalFilter(t *testing.T) {
 	}
 }
 
+func TestGetPathExpressionKeepsDynamicReadPathSeparateFromCommandHeaders(t *testing.T) {
+	got := GetPathExpression("'/explore/saved/' + encodeURIComponent(evt.detail.explorationId)", "page", "savedExplorations")
+	want := `@get('/explore/saved/' + encodeURIComponent(evt.detail.explorationId), {filterSignals: {include: /^(?:page|savedExplorations)(?:[.]|$)/}, headers: window.LeapViewCommand.headers()})`
+	if got != want {
+		t.Fatalf("GetPathExpression() = %q, want %q", got, want)
+	}
+}
+
 func TestCommandRequestsCarryTypedGeneratedOperationIdentity(t *testing.T) {
 	binding := apigenui.MustAction("widget.create", "createWidget")
 	if got, want := CommandPost(binding, "/widgets", "widget"), `@post('/widgets', {filterSignals: {include: /^(?:widget)(?:[.]|$)/}, headers: window.LeapViewCommand.headers('createWidget')})`; got != want {

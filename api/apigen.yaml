@@ -77,6 +77,10 @@ targets:
         go_package: github.com/flidai/leapview/internal/dashboard/visualization/ir
         go_alias: visualizationir
         typescript_module: ../visualization
+      LeapViewExploration:
+        go_package: github.com/flidai/leapview/internal/analytics/exploration
+        go_alias: exploration
+        typescript_module: ../exploration
   - name: ui-signals
     kind: contracts
     typespec_dir: .

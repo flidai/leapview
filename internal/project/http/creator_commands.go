@@ -441,6 +441,8 @@ func (h *BrowserHandler) AuthorizeCreatorMutationReplay(r *stdhttp.Request) bool
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	switch r.URL.Path {
+	case "/explore/saved/command":
+		return h.authorizeSavedExplorationMutationReplay(r)
 	case "/pipelines/command":
 		var payload creatorPipelineCommand
 		if json.Unmarshal(body, &payload) != nil || h.AuthorizePipeline == nil {

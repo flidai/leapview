@@ -202,6 +202,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Audit](/docs/api/audit): Project audit event discovery.
 - [Publications](/docs/api/publications): Anonymous public dashboard publication lifecycle.
 - [Managed Data](/docs/api/managed-data): Project-global managed-data revisions and uploads.
+- [Saved Explorations](/docs/api/saved-explorations): Durable authored exploration identities, revisions, lifecycle, and governed execution.
 
 #### Visuals
 
