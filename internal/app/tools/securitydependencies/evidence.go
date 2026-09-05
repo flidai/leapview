@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -409,7 +410,7 @@ func (r *runner) refreshBunGraph(spec javascriptEvidenceGraphSpec) (javascriptEv
 		}
 		count, critical, parseErr = bunFindingCounts(result.stdout)
 	}
-	if len(bytes.TrimSpace(result.stderr)) != 0 {
+	if !bunAuditStderrIsOnlyBanner(result.stderr, version) {
 		return javascriptEvidenceGraph{}, scannerDiagnosticError("bun audit", dir, result)
 	}
 	if result.status != 0 && result.status != 1 {
@@ -429,6 +430,17 @@ func (r *runner) refreshBunGraph(spec javascriptEvidenceGraphSpec) (javascriptEv
 		return javascriptEvidenceGraph{}, fmt.Errorf("bun audit %s output is malformed: %w", dir, err)
 	}
 	return r.makeEvidenceGraph(spec, version, findings)
+}
+
+func bunAuditStderrIsOnlyBanner(stderr []byte, version string) bool {
+	trimmed := bytes.TrimSpace(stderr)
+	if len(trimmed) == 0 {
+		return true
+	}
+	plain := ansiEscapePattern.ReplaceAll(trimmed, nil)
+	pattern := `^bun audit v` + regexp.QuoteMeta(version) + ` \([0-9a-f]{7,64}\)$`
+	matched, err := regexp.Match(pattern, plain)
+	return err == nil && matched
 }
 
 func (r *runner) refreshNPMGraph(spec javascriptEvidenceGraphSpec) (javascriptEvidenceGraph, error) {

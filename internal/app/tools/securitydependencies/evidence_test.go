@@ -373,6 +373,29 @@ func TestRefreshPreservesEvidenceOnOperationalAndPartialFailures(t *testing.T) {
 }
 
 func TestRefreshRejectsGenericBunAndNPMDiagnostics(t *testing.T) {
+	t.Run("bun version banner", func(t *testing.T) {
+		fixture := newJavaScriptEvidenceFixture(t)
+		fixture.writeEvidence(t, fixture.evidence(nil))
+		r := &runner{
+			root: fixture.root, timeout: time.Second, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, now: func() time.Time { return evidenceTestNow },
+			bunCommand: func(_ string, args ...string) commandResult {
+				if len(args) == 1 && args[0] == "--version" {
+					return commandResult{stdout: []byte("1.3.14\n")}
+				}
+				return commandResult{stdout: []byte(`{}`), stderr: []byte("\x1b[0m\x1b[1mbun audit \x1b[0m\x1b[2mv1.3.14 (0d9b296a)\x1b[0m\n")}
+			},
+			npmCommand: func(_ string, args ...string) commandResult {
+				if len(args) == 1 && args[0] == "--version" {
+					return commandResult{stdout: []byte("11.6.0\n")}
+				}
+				return commandResult{stdout: []byte(cleanNPMEvidenceJSON)}
+			},
+		}
+		if err := r.runRefresh(); err != nil {
+			t.Fatalf("exact Bun version banner was rejected: %v", err)
+		}
+	})
+
 	t.Run("bun network diagnostic", func(t *testing.T) {
 		fixture := newJavaScriptEvidenceFixture(t)
 		fixture.writeEvidence(t, fixture.evidence(nil))

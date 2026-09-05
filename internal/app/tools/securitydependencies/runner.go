@@ -33,6 +33,7 @@ const (
 
 var ghsaPattern = regexp.MustCompile(`GHSA-[A-Za-z0-9-]+`)
 var sensitiveDiagnostic = regexp.MustCompile(`(?i)(\b(?:token|password|secret|api[_-]?key|authorization|private[_-]?key)\b\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)`)
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 type exceptionContract = securitypolicy.Exceptions
 type findingIdentity = securitypolicy.Finding
