@@ -90,6 +90,7 @@ var settings = []Setting{
 	{Name: "LEAPVIEW_DEV_READY_INTERVAL", Type: TypeDuration, Default: "200ms", Category: "development", Scope: "dev server", Description: "Delay between managed development server readiness attempts.", Lifecycle: "development"},
 	{Name: "LEAPVIEW_DEV_MCP_ATTEMPTS", Type: TypeInt, Default: "20", Category: "development", Scope: "dev server", Description: "Attempts made by the development MCP smoke check while the active project converges.", Lifecycle: "development"},
 	{Name: "LEAPVIEW_DEV_MCP_INTERVAL", Type: TypeDuration, Default: "500ms", Category: "development", Scope: "dev server", Description: "Delay between development MCP smoke-check attempts.", Lifecycle: "development"},
+	{Name: "LEAPVIEW_DEV_ONCE", Type: TypeBool, Default: "false", Category: "development", Scope: "dev server", Description: "Stop the managed development server after one successful candidate publication and MCP smoke check.", Lifecycle: "development"},
 	{Name: "LEAPVIEW_DEV_RESTART", Type: TypeBool, Default: "false", Category: "development", Scope: "dev server", Description: "Force the managed development server to restart.", Lifecycle: "development"},
 	{Name: "LEAPVIEW_DEV_SKIP_PUBLISH", Type: TypeBool, Default: "false", Category: "development", Scope: "dev server", Description: "Skip automatic project publishing in the managed development server.", Lifecycle: "development"},
 	{Name: "LEAPVIEW_DEV_WORKTREE", Type: TypeString, Category: "development", Scope: "dev server", Description: "Worktree path exported by the managed development server.", Lifecycle: "internal"},
@@ -314,17 +315,17 @@ type Rule struct {
 func Rules() []Rule { return append([]Rule(nil), rules...) }
 
 var (
-	production        = True("LEAPVIEW_PRODUCTION")
-	evaluation        = True("LEAPVIEW_EVALUATION_MODE")
-	oidcAny           = Any(Present("LEAPVIEW_OIDC_ISSUER_URL"), Present("LEAPVIEW_OIDC_CLIENT_ID"), Present("LEAPVIEW_OIDC_CLIENT_SECRET"), Present("LEAPVIEW_OIDC_CALLBACK_URL"), Present("LEAPVIEW_OIDC_SCOPES"))
-	oidcComplete      = All(Present("LEAPVIEW_OIDC_ISSUER_URL"), Present("LEAPVIEW_OIDC_CLIENT_ID"), Present("LEAPVIEW_OIDC_CLIENT_SECRET"), Present("LEAPVIEW_OIDC_CALLBACK_URL"))
-	azureAny          = Any(Present("LEAPVIEW_AZURE_CLIENT_ID"), Present("LEAPVIEW_AZURE_CLIENT_SECRET"), Present("LEAPVIEW_AZURE_CALLBACK_URL"), Present("LEAPVIEW_AZURE_TENANT"))
-	azureComplete     = All(Present("LEAPVIEW_AZURE_CLIENT_ID"), Present("LEAPVIEW_AZURE_CLIENT_SECRET"), Present("LEAPVIEW_AZURE_CALLBACK_URL"))
-	browserAuth       = Any(True("LEAPVIEW_LOCAL_AUTH"), oidcComplete, azureComplete)
-	managedData       = Present("LEAPVIEW_MANAGED_DATA_BACKEND")
-	managedS3         = Equals("LEAPVIEW_MANAGED_DATA_BACKEND", "s3")
-	infisicalAny      = Any(Present("LEAPVIEW_INFISICAL_BASE_URL"), Present("LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_ID"), Present("LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_SECRET"), Present("LEAPVIEW_INFISICAL_ALLOWED_SCOPES"))
-	infisicalComplete = All(Present("LEAPVIEW_INFISICAL_BASE_URL"), Present("LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_ID"), Present("LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_SECRET"), Present("LEAPVIEW_INFISICAL_ALLOWED_SCOPES"))
+	production            = True("LEAPVIEW_PRODUCTION")
+	evaluation            = True("LEAPVIEW_EVALUATION_MODE")
+	oidcAny               = Any(Present("LEAPVIEW_OIDC_ISSUER_URL"), Present("LEAPVIEW_OIDC_CLIENT_ID"), Present("LEAPVIEW_OIDC_CLIENT_SECRET"), Present("LEAPVIEW_OIDC_CALLBACK_URL"), Present("LEAPVIEW_OIDC_SCOPES"))
+	oidcComplete          = All(Present("LEAPVIEW_OIDC_ISSUER_URL"), Present("LEAPVIEW_OIDC_CLIENT_ID"), Present("LEAPVIEW_OIDC_CLIENT_SECRET"), Present("LEAPVIEW_OIDC_CALLBACK_URL"))
+	azureAny              = Any(Present("LEAPVIEW_AZURE_CLIENT_ID"), Present("LEAPVIEW_AZURE_CLIENT_SECRET"), Present("LEAPVIEW_AZURE_CALLBACK_URL"), Present("LEAPVIEW_AZURE_TENANT"))
+	azureComplete         = All(Present("LEAPVIEW_AZURE_CLIENT_ID"), Present("LEAPVIEW_AZURE_CLIENT_SECRET"), Present("LEAPVIEW_AZURE_CALLBACK_URL"))
+	browserAuth           = Any(True("LEAPVIEW_LOCAL_AUTH"), oidcComplete, azureComplete)
+	managedData           = Present("LEAPVIEW_MANAGED_DATA_BACKEND")
+	managedS3             = Equals("LEAPVIEW_MANAGED_DATA_BACKEND", "s3")
+	infisicalAny          = Any(Present("LEAPVIEW_INFISICAL_BASE_URL"), Present("LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_ID"), Present("LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_SECRET"), Present("LEAPVIEW_INFISICAL_ALLOWED_SCOPES"))
+	infisicalComplete     = All(Present("LEAPVIEW_INFISICAL_BASE_URL"), Present("LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_ID"), Present("LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_SECRET"), Present("LEAPVIEW_INFISICAL_ALLOWED_SCOPES"))
 	postgresControlIntent = OneOf("LEAPVIEW_POSTGRES_CONTROL_INTENT", "read-write")
 )
 

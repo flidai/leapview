@@ -12,7 +12,7 @@ PORT_COUNT="${LEAPVIEW_DEV_PORT_COUNT:-100}"
 mkdir -p "$TMP_DIR"
 
 usage() {
-	echo "Usage: $0 start [project [connection source-root]]|publish [project [connection source-root]]|stop|status|logs"
+	echo "Usage: $0 start [project [connection source-root]]|once [project [connection source-root]]|publish [project [connection source-root]]|stop|status|logs"
 }
 
 is_alive() {
@@ -440,6 +440,10 @@ start() {
       echo "Logs: $LOG_FILE"
       echo "Publishing project candidate to existing target..."
 			publish_project "$existing_port" "$project" "$connection" "$from"
+      if [[ "${LEAPVIEW_DEV_ONCE:-}" == "1" ]]; then
+        echo "One-shot candidate publication completed on the existing target"
+        return 0
+      fi
       echo "Attached to LeapView logs. Press Ctrl-C to stop."
       attach_server "$existing_pid" "$existing_port"
       return 0
@@ -501,6 +505,14 @@ start() {
     exit 1
   fi
 
+  if [[ "${LEAPVIEW_DEV_ONCE:-}" == "1" ]]; then
+    stop_pid "$pid" "LeapView one-shot dev server"
+    rm -f "$PID_FILE"
+    stop_port "$port"
+    echo "One-shot candidate publication completed"
+    return 0
+  fi
+
   echo "LeapView listening at http://localhost:$port"
   echo "Attached to LeapView logs. Press Ctrl-C to stop."
   attach_server "$pid" "$port"
@@ -553,6 +565,7 @@ action="${1:-}"
 shift || true
 case "$action" in
   start) start "$@" ;;
+  once) LEAPVIEW_DEV_ONCE=1 start "$@" ;;
   publish) publish_running "$@" ;;
   stop) stop ;;
   status) status ;;

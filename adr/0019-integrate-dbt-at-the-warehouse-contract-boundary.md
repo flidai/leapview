@@ -6,6 +6,9 @@ Decision date: 2026-09-03
 
 Implementation: pending
 
+Implementation evidence:
+[dbt warehouse-boundary conformance map](specifications/dbt-warehouse-boundary-conformance.md)
+
 Deciders: LeapView maintainers
 
 Supersedes: none

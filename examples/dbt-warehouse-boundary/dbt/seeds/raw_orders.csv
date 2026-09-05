@@ -1,0 +1,6 @@
+order_id,customer_id,order_date,status,line_amount
+o-100,c-1,2026-08-01,SHIPPED,24.50
+o-100,c-1,2026-08-01,SHIPPED,15.50
+o-101,c-2,2026-08-02,DELIVERED,75.00
+o-102,c-1,2026-08-03,PROCESSING,12.25
+o-103,c-3,2026-08-03,CANCELLED,9.99

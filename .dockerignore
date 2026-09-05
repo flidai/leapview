@@ -13,6 +13,9 @@ bin
 coverage.out
 node_modules
 **/node_modules
+examples/dbt-warehouse-boundary/dbt/logs
+examples/dbt-warehouse-boundary/dbt/target
+examples/dbt-warehouse-boundary/published
 
 .env
 .env.*
