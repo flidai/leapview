@@ -217,6 +217,29 @@ func TestEphemeralDeploymentExercisesPublicContracts(t *testing.T) {
 	}
 }
 
+func TestMainArtifactsAllowsOnlyProtectedOpenPRCandidates(t *testing.T) {
+	workflow := readFile(t, filepath.Join("..", "..", ".github", "workflows", "artifacts.yml"))
+	for _, fragment := range []string{
+		"workflow_dispatch:",
+		"source_revision:",
+		"environment: leapview-ephemeral-qualification",
+		"github.event_name == 'workflow_dispatch'",
+		"commits/${revision}/pulls",
+		`.base.ref == "main"`,
+		`.head.sha == $revision`,
+		"ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_revision || github.sha }}",
+		"needs.authorize-candidate.result == 'success'",
+		`channel="candidate"`,
+		"${{ steps.identity.outputs.channel }}-${{ steps.identity.outputs.revision }}",
+		"source-revision: ${{ needs.build-production-image.outputs.revision }}",
+	} {
+		requireContains(t, workflow, fragment)
+	}
+	if strings.Contains(workflow, "pull_request:") {
+		t.Fatal("candidate image publication must require an explicit, environment-protected dispatch")
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	contents, err := os.ReadFile(path)

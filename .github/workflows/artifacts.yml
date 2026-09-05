@@ -4,22 +4,62 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      source_revision:
+        description: Exact open pull-request head commit to qualify
+        required: true
+        type: string
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: main-artifacts
+  group: production-artifacts-${{ github.event_name == 'workflow_dispatch' && inputs.source_revision || 'main' }}
   cancel-in-progress: true
 
 env:
   IMAGE_REPOSITORY: ghcr.io/flidai/leapview
 
 jobs:
+  authorize-candidate:
+    name: Authorize pull-request candidate
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: leapview-ephemeral-qualification
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_revision }}
+          fetch-depth: 0
+
+      - name: Require the exact head of one open pull request to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          set -euo pipefail
+          revision="${SOURCE_REVISION}"
+          [[ "${revision}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${revision}"
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${revision}/pulls" \
+            | jq -e --arg revision "${revision}" \
+              'map(select(.base.ref == "main" and .state == "open" and .head.sha == $revision)) | length == 1' \
+              >/dev/null
+
   build-production-image:
     name: Build production image
-    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    needs: [authorize-candidate]
+    if: >-
+      ${{ always() && github.repository == 'flidai/leapview' &&
+          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'workflow_dispatch' && needs.authorize-candidate.result == 'success')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -36,21 +76,34 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_revision || github.sha }}
+          fetch-depth: 0
 
-      - name: Resolve authoritative main build identity
+      - name: Resolve authoritative build identity
         id: identity
+        env:
+          SOURCE_REVISION: ${{ inputs.source_revision }}
         run: |
-          test "$GITHUB_REF" = refs/heads/main
+          set -euo pipefail
           revision="$(git rev-parse HEAD)"
-          test "$revision" = "$GITHUB_SHA"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            test "$revision" = "$SOURCE_REVISION"
+            channel="candidate"
+          else
+            test "$GITHUB_REF" = refs/heads/main
+            test "$revision" = "$GITHUB_SHA"
+            channel="main"
+          fi
           canonical_version="$(tr -d '[:space:]' < VERSION)"
           test -n "$canonical_version"
           build_time="$(git show -s --format=%cI "$revision")"
-          version="${canonical_version}+main.${revision:0:12}"
+          version="${canonical_version}+${channel}.${revision:0:12}"
           {
             echo "version=$version"
             echo "revision=$revision"
             echo "build_time=$build_time"
+            echo "channel=$channel"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
@@ -78,7 +131,7 @@ jobs:
             BUILD_RELEASE=false
           push: true
           pull: true
-          tags: ${{ env.IMAGE_REPOSITORY }}:main-${{ github.sha }}
+          tags: ${{ env.IMAGE_REPOSITORY }}:${{ steps.identity.outputs.channel }}-${{ steps.identity.outputs.revision }}
           cache-from: type=gha,scope=production-amd64
           cache-to: type=gha,mode=max,scope=production-amd64,ignore-error=true
           provenance: mode=max
@@ -94,6 +147,7 @@ jobs:
   qualify-production-image:
     name: Qualify production image
     needs: build-production-image
+    if: needs.build-production-image.result == 'success'
     runs-on: ubuntu-24.04
     # The release gate now includes the policy-driven performance and repeated
     # native-refresh phase. Its bounded phase budgets total 115 minutes before
@@ -108,6 +162,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.build-production-image.outputs.revision }}
 
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
