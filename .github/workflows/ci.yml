@@ -269,6 +269,10 @@ jobs:
       - name: Run real dbt Parquet through the headless LeapView lifecycle
         run: DBT_BIN="$(command -v dbt)" task dbt:warehouse:qualify
 
+      - name: Stop the isolated PostgreSQL development service
+        if: always()
+        run: task postgres:dev:down
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}

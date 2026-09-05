@@ -40,6 +40,7 @@ tasks:
   dbt:warehouse:qualify:
     desc: Run the physical dbt Parquet publication through the ordinary headless LeapView candidate lifecycle
     cmds:
+      - task: postgres:dev:up
       - task: generate
       - task: build
       - task: map-assets:install
@@ -49,6 +50,7 @@ tasks:
   dbt:warehouse:
     desc: Build the dbt-duckdb showcase and start LeapView through the managed development flow
     cmds:
+      - task: postgres:dev:up
       - task: generate
       - task: build
       - task: map-assets:install

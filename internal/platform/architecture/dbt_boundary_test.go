@@ -147,6 +147,7 @@ func TestDBTWarehouseBoundaryTasksSequencePrerequisites(t *testing.T) {
 
 		previous := -1
 		for _, command := range []string{
+			"      - task: postgres:dev:up",
 			"      - task: generate",
 			"      - task: build",
 			"      - task: map-assets:install",
@@ -514,6 +515,14 @@ func TestDBTWarehouseBoundaryCIJobUsesTheTieredWorkflow(t *testing.T) {
 		}
 	}
 	dbtWarehouseCI := workflowJobBlock(t, text, "dbt-warehouse-boundary-validation")
+	for _, want := range []string{
+		"if: always()",
+		"run: task postgres:dev:down",
+	} {
+		if !strings.Contains(dbtWarehouseCI, want) {
+			t.Fatalf("dbt validation job does not clean up its PostgreSQL service: missing %q", want)
+		}
+	}
 	for _, want := range []string{
 		"github.event_name == 'workflow_dispatch'",
 		"github.event.pull_request.stack == null",
