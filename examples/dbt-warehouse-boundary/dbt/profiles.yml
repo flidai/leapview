@@ -1,0 +1,9 @@
+leapview_warehouse_boundary:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      path: target/warehouse.duckdb
+      schema: analytics
+      threads: 2
+      external_root: ../published

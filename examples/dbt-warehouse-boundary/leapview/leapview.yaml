@@ -1,0 +1,20 @@
+apiVersion: leapview.dev/v1
+kind: Project
+metadata:
+  id: project:dbt-warehouse-boundary
+  name: dbt-warehouse-boundary
+spec:
+  connections:
+    include: [connections/*.yaml]
+  sources:
+    include: [sources/*.yaml]
+  models:
+    include: [models/*.yaml]
+  semanticModels:
+    include: [semantic-models/*.yaml]
+  pipelines:
+    include: []
+  dashboards:
+    include: [dashboards/*.yaml]
+  access:
+    include: []

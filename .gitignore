@@ -5,6 +5,11 @@
 .leapview/
 .task/
 .tmp/
+examples/dbt-warehouse-boundary/published/
+examples/dbt-warehouse-boundary/dbt/target/
+examples/dbt-warehouse-boundary/dbt/dbt_packages/
+examples/dbt-warehouse-boundary/dbt/logs/
+examples/dbt-warehouse-boundary/dbt/.user.yml
 .venv/
 node_modules/
 desktop/dist/

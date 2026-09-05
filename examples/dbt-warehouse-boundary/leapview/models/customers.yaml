@@ -1,0 +1,37 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:customers
+  name: customers
+  displayName: Warehouse customers serving contract
+  description: Thin projection and safe-cast boundary over the dbt-owned customer mart.
+spec:
+  definition:
+    type: sql
+    sql: |
+      SELECT
+        CAST(customer_id AS VARCHAR) AS customer_id,
+        CAST(customer_name AS VARCHAR) AS customer_name,
+        CAST(region AS VARCHAR) AS region,
+        TRY_CAST(order_count AS BIGINT) AS order_count,
+        TRY_CAST(lifetime_value AS DOUBLE) AS lifetime_value
+      FROM source."warehouse.dim_customers"
+  entities:
+    customer:
+      type: primary
+      fields: [customer_id]
+  grain:
+    entity: customer
+  fields:
+    customer_id: {datatype: String, description: Stable warehouse customer identifier.}
+    customer_name: {datatype: String, description: Customer display name.}
+    region: {datatype: String, description: dbt-normalized sales region.}
+    order_count: {datatype: Integer, description: dbt-owned customer order count.}
+    lifetime_value: {datatype: Float, description: dbt-owned customer lifetime revenue.}
+  checks:
+    - {type: non_null, field: customer_id, severity: error}
+    - {type: non_null, field: customer_name, severity: error}
+    - {type: non_null, field: region, severity: error}
+    - {type: non_null, field: order_count, severity: error}
+    - {type: non_null, field: lifetime_value, severity: error}
+    - {type: row_count, minimum: 1, severity: error}

@@ -381,6 +381,11 @@ sections:
         type: how-to
         summary: Query dashboards and semantic models through stable contracts.
         source: articles/integrate/headless-bi.md
+      - slug: guides/integrate/dbt-warehouse-boundary
+        title: Use dbt at the warehouse boundary
+        type: how-to
+        summary: Publish tested dbt marts and consume their physical contract through ordinary LeapView resources.
+        source: articles/integrate/dbt-warehouse-boundary.md
       - slug: guides/integrate/public-dashboards
         title: Public and embedded dashboards
         type: how-to
