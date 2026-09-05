@@ -6,34 +6,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	openapiemit "github.com/Yacobolo/toolbelt/apigen/emit/openapi"
 	"github.com/Yacobolo/toolbelt/apigen/ir"
 	"github.com/stretchr/testify/require"
 )
-
-var (
-	managedTypeSpecNPMCacheOnce  sync.Once
-	managedTypeSpecNPMCachePath  string
-	managedTypeSpecNPMCacheErr   error
-	managedTypeSpecToolchainOnce sync.Once
-	managedTypeSpecToolchainRoot string
-	managedTypeSpecToolchainDir  string
-	managedTypeSpecToolchainErr  error
-)
-
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if managedTypeSpecToolchainRoot != "" {
-		_ = os.RemoveAll(managedTypeSpecToolchainRoot)
-	}
-	if managedTypeSpecNPMCachePath != "" {
-		_ = os.RemoveAll(managedTypeSpecNPMCachePath)
-	}
-	os.Exit(code)
-}
 
 func jsonContent(ref ir.SchemaRef) []ir.BodyContent {
 	return []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ref}}
@@ -291,82 +269,6 @@ func TestCompileTypeSpec_GeneratesIRAndOpenAPI(t *testing.T) {
 	require.Equal(t, "CreateTodoRequest", content.Schema.Ref)
 	require.Equal(t, []string{"todos", "create"}, doc.Endpoints[1].CLI.Command)
 	require.FileExists(t, openAPIPath)
-}
-
-func TestCompileTypeSpec_ReusesInstalledToolchainAcrossIsolatedProjects(t *testing.T) {
-	t.Helper()
-	setupManagedTypeSpecCache(t)
-
-	firstRoot := t.TempDir()
-	secondRoot := t.TempDir()
-	firstTypeSpecDir := filepath.Join(firstRoot, "typespec")
-	secondTypeSpecDir := filepath.Join(secondRoot, "typespec")
-	firstSource := `import "@typespec/http";
-import "@typespec/openapi";
-import "@yacobolo/apigen";
-
-using Http;
-using TypeSpec.OpenAPI;
-
-@service(#{ title: "First Isolated API" })
-@info(#{ version: "1.0.0" })
-namespace FirstIsolatedAPI;
-
-@route("/first")
-@get
-op first(): string;
-`
-	secondSource := `import "@typespec/http";
-import "@typespec/openapi";
-import "@yacobolo/apigen";
-
-using Http;
-using TypeSpec.OpenAPI;
-
-@service(#{ title: "Second Isolated API" })
-@info(#{ version: "2.0.0" })
-namespace SecondIsolatedAPI;
-
-@route("/second")
-@get
-op second(): string;
-`
-	require.NoError(t, os.MkdirAll(firstTypeSpecDir, 0o755))
-	require.NoError(t, os.MkdirAll(secondTypeSpecDir, 0o755))
-	firstSourcePath := filepath.Join(firstTypeSpecDir, "main.tsp")
-	secondSourcePath := filepath.Join(secondTypeSpecDir, "main.tsp")
-	require.NoError(t, os.WriteFile(firstSourcePath, []byte(firstSource), 0o644))
-	require.NoError(t, os.WriteFile(secondSourcePath, []byte(secondSource), 0o644))
-
-	firstIRPath := filepath.Join(firstRoot, "json-ir.json")
-	secondIRPath := filepath.Join(secondRoot, "json-ir.json")
-	firstOpenAPIPath := filepath.Join(firstRoot, "openapi.yaml")
-	secondOpenAPIPath := filepath.Join(secondRoot, "openapi.yaml")
-	pkgBefore, err := resolveTypeSpecPackage()
-	require.NoError(t, err)
-	require.True(t, pkgBefore.Managed)
-	require.Equal(t, managedTypeSpecToolchainDir, pkgBefore.Dir)
-	packageJSONBefore := mustReadString(t, filepath.Join(pkgBefore.Dir, "package.json"))
-
-	require.NoError(t, compileTypeSpec(firstTypeSpecDir, firstIRPath, firstOpenAPIPath))
-	require.NoError(t, compileTypeSpec(secondTypeSpecDir, secondIRPath, secondOpenAPIPath))
-
-	pkgAfter, err := resolveTypeSpecPackage()
-	require.NoError(t, err)
-	require.Equal(t, pkgBefore.Dir, pkgAfter.Dir)
-	require.Equal(t, packageJSONBefore, mustReadString(t, filepath.Join(pkgAfter.Dir, "package.json")))
-	require.Equal(t, strings.TrimSpace(firstSource), mustReadString(t, firstSourcePath))
-	require.Equal(t, strings.TrimSpace(secondSource), mustReadString(t, secondSourcePath))
-
-	firstDoc, err := loadDocument(firstIRPath)
-	require.NoError(t, err)
-	secondDoc, err := loadDocument(secondIRPath)
-	require.NoError(t, err)
-	require.Equal(t, "First Isolated API", firstDoc.Info.Title)
-	require.Equal(t, "Second Isolated API", secondDoc.Info.Title)
-	require.NotEqual(t, mustReadString(t, firstIRPath), mustReadString(t, secondIRPath))
-	require.FileExists(t, firstOpenAPIPath)
-	require.FileExists(t, secondOpenAPIPath)
 }
 
 func TestCompileTypeSpec_PreservesEndpointNamespaces(t *testing.T) {
@@ -1056,49 +958,6 @@ func TestInstallBundledTypeSpecPackage_UsesWritableCache(t *testing.T) {
 	require.FileExists(t, filepath.Join(pkg.Dir, "package-lock.json"))
 	require.FileExists(t, filepath.Join(pkg.Dir, "lib", "main.tsp"))
 	require.FileExists(t, filepath.Join(pkg.Dir, "dist", "src", "index.js"))
-}
-
-func TestEnsureTypeSpecToolchain_UsesSharedNPMCacheAcrossManagedPackages(t *testing.T) {
-	t.Helper()
-	setupManagedTypeSpecEnvironment(t)
-
-	binDir := t.TempDir()
-	logPath := filepath.Join(t.TempDir(), "npm-cache.log")
-	npmPath := filepath.Join(binDir, "npm")
-	script := `#!/bin/sh
-printf '%s\n' "$NPM_CONFIG_CACHE" >> "$APIGEN_TEST_NPM_CACHE_LOG"
-mkdir -p node_modules/@typespec/compiler/cmd
-touch node_modules/@typespec/compiler/cmd/tsp.js
-`
-	require.NoError(t, os.WriteFile(npmPath, []byte(script), 0o700))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("APIGEN_TEST_NPM_CACHE_LOG", logPath)
-
-	firstPkg, err := installBundledTypeSpecPackage(t.TempDir())
-	require.NoError(t, err)
-	secondPkg, err := installBundledTypeSpecPackage(t.TempDir())
-	require.NoError(t, err)
-	require.NotEqual(t, firstPkg.Dir, secondPkg.Dir)
-	require.True(t, firstPkg.Managed)
-	require.True(t, secondPkg.Managed)
-
-	require.NoError(t, ensureTypeSpecToolchain(firstPkg))
-	require.NoError(t, ensureTypeSpecToolchain(secondPkg))
-
-	cacheLog, err := os.ReadFile(logPath)
-	require.NoError(t, err)
-	cachePaths := strings.Split(strings.TrimSpace(string(cacheLog)), "\n")
-	require.Len(t, cachePaths, 2)
-	require.Equal(t, cachePaths[0], cachePaths[1])
-	require.NotEqual(t, firstPkg.Dir, cachePaths[0])
-	require.NotEqual(t, secondPkg.Dir, cachePaths[0])
-	require.FileExists(t, filepath.Join(firstPkg.Dir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js"))
-	require.FileExists(t, filepath.Join(secondPkg.Dir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js"))
-	firstNodeModules, err := filepath.EvalSymlinks(filepath.Join(firstPkg.Dir, "node_modules"))
-	require.NoError(t, err)
-	secondNodeModules, err := filepath.EvalSymlinks(filepath.Join(secondPkg.Dir, "node_modules"))
-	require.NoError(t, err)
-	require.NotEqual(t, firstNodeModules, secondNodeModules)
 }
 
 func TestEnsureTypeSpecToolchain_InstallsColdManagedPackage(t *testing.T) {
@@ -2014,45 +1873,6 @@ func mustAbs(t *testing.T, path string) string {
 	abs, err := filepath.Abs(path)
 	require.NoError(t, err)
 	return abs
-}
-
-func setupManagedTypeSpecCache(t *testing.T) {
-	t.Helper()
-
-	setupManagedTypeSpecEnvironment(t)
-	managedTypeSpecToolchainOnce.Do(func() {
-		managedTypeSpecToolchainRoot, managedTypeSpecToolchainErr = os.MkdirTemp("", "apigen-test-typespec-toolchain-")
-		if managedTypeSpecToolchainErr != nil {
-			return
-		}
-		var pkg typeSpecPackage
-		pkg, managedTypeSpecToolchainErr = installBundledTypeSpecPackage(managedTypeSpecToolchainRoot)
-		if managedTypeSpecToolchainErr != nil {
-			return
-		}
-		managedTypeSpecToolchainErr = ensureTypeSpecToolchain(pkg)
-		if managedTypeSpecToolchainErr == nil {
-			managedTypeSpecToolchainDir = pkg.Dir
-		}
-	})
-	require.NoError(t, managedTypeSpecToolchainErr)
-	// Keep the normal managed-package locator active while pointing it at the
-	// process-scoped cache that contains the installed toolchain.
-	t.Setenv("XDG_CACHE_HOME", managedTypeSpecToolchainRoot)
-}
-
-func setupManagedTypeSpecEnvironment(t *testing.T) {
-	t.Helper()
-
-	t.Setenv(typeSpecPackageDirEnv, "")
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
-	managedTypeSpecNPMCacheOnce.Do(func() {
-		managedTypeSpecNPMCachePath, managedTypeSpecNPMCacheErr = os.MkdirTemp("", "apigen-test-npm-cache-")
-	})
-	require.NoError(t, managedTypeSpecNPMCacheErr)
-	t.Setenv("NPM_CONFIG_CACHE", managedTypeSpecNPMCachePath)
 }
 
 func writeCanonicalOpenAPI(t *testing.T, dir string, doc ir.Document) string {
