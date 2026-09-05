@@ -1,4 +1,5 @@
-import ts from 'typescript'
+// TypeScript 7's native compiler does not expose the JavaScript compiler API.
+import ts from 'typescript-compiler-api'
 import { relative, resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 
