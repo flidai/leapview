@@ -252,6 +252,7 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	event := "deployment.active"
 	if err != nil {
 		event = "deployment.failed"
+		logger.ErrorContext(ctx, "deployment activation failed", "deployment", payload.Deployment, "error", err)
 	}
 	m.appendActivationEvent(
 		ctx,

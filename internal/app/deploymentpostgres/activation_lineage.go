@@ -50,7 +50,11 @@ func (v *ActivationLineageVerifierAdapter) VerifyActivationLineage(ctx context.C
 	if input.CompiledGraphDigest == "" {
 		return fmt.Errorf("%w: activation lineage graph digest is missing", deploymentnative.ErrConflict)
 	}
-	if projection.Digest != input.CompiledGraphDigest {
+	compiledGraphDigest, err := lineagepostgres.CompilerGraphDigest(projection)
+	if err != nil {
+		return fmt.Errorf("%w: reconstruct activation lineage graph: %v", deploymentnative.ErrConflict, err)
+	}
+	if compiledGraphDigest != input.CompiledGraphDigest {
 		return fmt.Errorf("%w: activation lineage graph digest differs from generation", deploymentnative.ErrConflict)
 	}
 	return nil

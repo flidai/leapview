@@ -54,7 +54,10 @@ func TestActivationLineageVerifierAdapterResolvesExactBinding(t *testing.T) {
 		defer readTx.Rollback(t.Context())
 		return verifier.VerifyActivationLineage(t.Context(), readTx, input)
 	}
-	if err := verify(deploymentnative.ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: generationID, CompiledGraphDigest: projection.Digest}); err != nil {
+	if graph.Digest() == projection.Digest {
+		t.Fatal("compiler graph and lineage projection unexpectedly share a digest domain")
+	}
+	if err := verify(deploymentnative.ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: generationID, CompiledGraphDigest: graph.Digest()}); err != nil {
 		t.Fatalf("exact activation lineage binding rejected: %v", err)
 	}
 	if err := verify(deploymentnative.ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: generationID, CompiledGraphDigest: "sha256:" + "0" + strings.Repeat("1", 63)}); err == nil || !errors.Is(err, deploymentnative.ErrConflict) {

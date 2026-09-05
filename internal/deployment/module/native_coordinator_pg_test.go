@@ -430,6 +430,23 @@ func TestNativeCoordinatorPostgresPublishCandidatePersistsEvidenceAndReplays(t *
 	}
 }
 
+func TestNativeCoordinatorPostgresPublishedCandidateActivates(t *testing.T) {
+	f := newNativePGFixture(t)
+	request := nativePublishRequest(f, "publish-native-activate")
+	pending, err := f.coordinator.PublishCandidate(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := f.coordinator.Activate(t.Context(), apiadapter.ActivateRequest{
+		Scope: apiadapter.Scope{Project: request.ProjectID.String(), DeploymentID: pending.ID.String()},
+		Actor: request.PrincipalID, IdempotencyKey: "publish-native-activate-terminal",
+	})
+	if err != nil || active.Status != apiadapter.StatusActive {
+		t.Fatalf("activate published candidate = %#v, %v", active, err)
+	}
+}
+
 func TestNativeCoordinatorPostgresRollbackRequiresRetainedGeneration(t *testing.T) {
 	t.Run("live root succeeds and replays", func(t *testing.T) {
 		f := newNativePGFixture(t)

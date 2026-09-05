@@ -245,6 +245,57 @@ func GraphDigest(g projectgraph.ProjectGraph) (string, error) {
 	return p.Digest, nil
 }
 
+// CompilerGraphDigest reconstructs the compiler-owned graph represented by a
+// canonical lineage projection and returns its digest. The lineage projection
+// has its own content-addressing domain, so its Digest must never be compared
+// directly with ProjectGraph.Digest.
+func CompilerGraphDigest(p Projection) (string, error) {
+	p, err := canonicalProjection(p)
+	if err != nil {
+		return "", err
+	}
+	resources := make([]projectgraph.Resource, 0, len(p.Nodes))
+	for _, node := range p.Nodes {
+		id, err := projectgraph.NewResourceID(node.ID)
+		if err != nil {
+			return "", fmt.Errorf("%w: compiler resource id: %v", ErrInvalid, err)
+		}
+		kind, err := projectgraph.ParseKind(node.ResourceKind)
+		if err != nil {
+			return "", fmt.Errorf("%w: compiler resource kind: %v", ErrInvalid, err)
+		}
+		var properties struct {
+			Name       string                  `json:"name"`
+			Metadata   projectgraph.Metadata   `json:"metadata,omitempty"`
+			Provenance projectgraph.Provenance `json:"provenance,omitempty"`
+		}
+		if err := strictjson.DecodeWithOptions(node.Properties, &properties, strictjson.Options{MaxBytes: maxPropertyBytes}); err != nil {
+			return "", fmt.Errorf("%w: decode compiler resource properties: %v", ErrInvalid, err)
+		}
+		resources = append(resources, projectgraph.Resource{ID: id, Kind: kind, Name: properties.Name, Metadata: properties.Metadata, Provenance: properties.Provenance})
+	}
+	edges := make([]projectgraph.Edge, 0, len(p.Edges))
+	for _, edge := range p.Edges {
+		from, err := projectgraph.NewResourceID(edge.From)
+		if err != nil {
+			return "", fmt.Errorf("%w: compiler edge source: %v", ErrInvalid, err)
+		}
+		to, err := projectgraph.NewResourceID(edge.To)
+		if err != nil {
+			return "", fmt.Errorf("%w: compiler edge destination: %v", ErrInvalid, err)
+		}
+		edges = append(edges, projectgraph.Edge{From: from, To: to, Relation: edge.Relation})
+	}
+	graph, err := projectgraph.NewProjectGraph(resources, edges)
+	if err != nil {
+		return "", fmt.Errorf("%w: reconstruct compiler graph: %v", ErrInvalid, err)
+	}
+	if graph.ProjectID().String() != p.ProjectID {
+		return "", fmt.Errorf("%w: compiler graph project differs from lineage projection", ErrTampered)
+	}
+	return graph.Digest(), nil
+}
+
 // FromArtifact projects the graph carried by an immutable compiler artifact.
 // No serving identity or manifest projection is inferred here.
 func FromArtifact(a interface {
