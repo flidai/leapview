@@ -167,6 +167,7 @@ class MapLibreHandle implements RendererHandle {
   private selectionControl?: MapSelectionControl
   private spatialSelectionControl?: MapSpatialSelectionControl
   private navigationControl?: NavigationControl
+  private navigationControlOptions?: { showZoom: boolean; showCompass: boolean }
   private resetButton?: HTMLButtonElement
   private readonly tooltip: HTMLDivElement
   private readonly legend: HTMLDivElement
@@ -373,7 +374,10 @@ class MapLibreHandle implements RendererHandle {
     this.selectionControl?.dispose()
     this.spatialSelectionControl?.dispose()
     if (this.navigationControl) this.map.removeControl(this.navigationControl)
+    this.navigationControl = undefined
+    this.navigationControlOptions = undefined
     this.resetButton?.remove()
+    this.resetButton = undefined
     this.map.remove()
     removeRendererFrame(this.container, this.frame)
   }
@@ -620,18 +624,31 @@ class MapLibreHandle implements RendererHandle {
   }
 
   private updateMapControls(envelope: VisualizationEnvelope): void {
-    if (envelope.spec.kind !== 'geographic' || this.navigationControl || this.resetButton) return
+    if (envelope.spec.kind !== 'geographic') return
     const controls = envelope.spec.presentation.controls
-    if (controls.zoom || controls.compass) {
-      this.navigationControl = new NavigationControl({ showZoom: controls.zoom, showCompass: controls.compass, visualizePitch: false })
-      this.map.addControl(this.navigationControl, 'top-right')
+    const wantsNavigation = controls.zoom || controls.compass
+    const navigationUnchanged = wantsNavigation && this.navigationControl
+      && this.navigationControlOptions?.showZoom === controls.zoom
+      && this.navigationControlOptions?.showCompass === controls.compass
+    if (!navigationUnchanged) {
+      if (this.navigationControl) this.map.removeControl(this.navigationControl)
+      this.navigationControl = undefined
+      this.navigationControlOptions = undefined
+      if (wantsNavigation) {
+        this.navigationControl = new NavigationControl({ showZoom: controls.zoom, showCompass: controls.compass, visualizePitch: false })
+        this.navigationControlOptions = { showZoom: controls.zoom, showCompass: controls.compass }
+        this.map.addControl(this.navigationControl, 'top-right')
+      }
     }
-    if (controls.reset) {
+    if (controls.reset && !this.resetButton) {
       const button = document.createElement('button')
       button.type = 'button'; button.className = 'lv-map-reset'; button.textContent = 'Reset view'; button.setAttribute('aria-label', 'Reset map view')
       button.style.cssText = 'position:absolute;z-index:3;top:10px;right:50px;padding:5px 8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:4px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-caption);font-weight:var(--base-text-weight-medium);cursor:pointer;box-shadow:0 1px 2px rgba(31,35,40,.08)'
       button.addEventListener('click', () => { if (this.homeCamera) resetMapToHome(this.map, this.homeCamera) })
       this.frame.append(button); this.resetButton = button
+    } else if (!controls.reset && this.resetButton) {
+      this.resetButton.remove()
+      this.resetButton = undefined
     }
   }
 
