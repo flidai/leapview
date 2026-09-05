@@ -38,7 +38,12 @@ type Module struct {
 	// afterRiverResultValidated is a deterministic test seam for the narrow
 	// interval before River performs its separate worker-result transaction.
 	afterRiverResultValidated func()
+	// beforeStaleRiverWait is a deterministic test seam at the point where a
+	// stale executor begins waiting for its successor to become terminal.
+	beforeStaleRiverWait func()
 }
+
+var errWaitForStaleRiverClaim = errors.New("wait for stale River claim finalization")
 
 func Build(_ context.Context, config Config) (*Module, error) {
 	if config.Persistence == nil {
@@ -177,7 +182,7 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 	history, err = m.repository.MarkRunning(lease.Context(), history.ID, rowAttempt)
 	if err != nil {
 		if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
-			return m.waitForStaleRiverClaim(ctx, riverJobID)
+			return errWaitForStaleRiverClaim
 		}
 		if ctx.Err() != nil || lease.Context().Err() != nil {
 			if ctx.Err() != nil {
@@ -200,7 +205,7 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 	handler := m.handlers[history.Kind]
 	m.mu.RUnlock()
 	if handler == nil {
-		return m.failTerminal(ctx, riverJobID, history.ID, history.Fence())
+		return m.failTerminal(ctx, history.ID, history.Fence())
 	}
 	err = handler.Handle(lease.Context(), history)
 	if err == nil {
@@ -212,7 +217,7 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 		} else {
 			if err := m.repository.Complete(lease.Context(), history.ID, history.Fence()); err != nil {
 				if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
-					return m.waitForStaleRiverClaim(ctx, riverJobID)
+					return errWaitForStaleRiverClaim
 				}
 				return river.JobCancel(errors.New("ASYNC_JOB_COMPLETION_FAILED"))
 			}
@@ -220,7 +225,7 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 		return nil
 	}
 	if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
-		return m.waitForStaleRiverClaim(ctx, riverJobID)
+		return errWaitForStaleRiverClaim
 	}
 	// River cancels a worker context on shutdown, lease loss, and explicit
 	// client cancellation. Preserve the row for replay in those cases instead
@@ -235,7 +240,7 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 	if errors.As(err, &retry) && rowAttempt < jobpostgres.MaxAttempts {
 		if err := m.repository.RequeueAfterFailure(context.WithoutCancel(ctx), history.ID, rowAttempt, []byte(`{"code":"ASYNC_JOB_RETRY"}`)); err != nil {
 			if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
-				return m.waitForStaleRiverClaim(ctx, riverJobID)
+				return errWaitForStaleRiverClaim
 			}
 			// Keep River's attempt available until product history has durably
 			// moved back to queued. Without that transition, cancelling the row
@@ -246,15 +251,26 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 		m.retryAt.Store(riverJobID, time.Now().Add(max(retry.Delay, time.Millisecond)))
 		return errors.New("ASYNC_JOB_RETRY")
 	}
-	return m.failTerminal(ctx, riverJobID, history.ID, history.Fence())
+	return m.failTerminal(ctx, history.ID, history.Fence())
 }
 
-func (m *Module) failTerminal(ctx context.Context, riverJobID int64, id string, fence jobs.Fence) error {
+// workAndWait keeps stale-successor waiting outside work's partition and
+// admission scopes. work has returned before this branch runs, so all deferred
+// releases have completed and a successor can acquire the same partition.
+func (m *Module) workAndWait(ctx context.Context, riverJobID int64, rowAttempt int, args jobpostgres.ExecutionArgs) error {
+	result := m.work(ctx, riverJobID, rowAttempt, args)
+	if errors.Is(result, errWaitForStaleRiverClaim) {
+		return m.waitForStaleRiverClaim(ctx, riverJobID)
+	}
+	return result
+}
+
+func (m *Module) failTerminal(ctx context.Context, id string, fence jobs.Fence) error {
 	// Check the River fence before reading product terminal state. A stale
 	// worker can otherwise observe a successor's terminal product update and
 	// return JobCancel while that successor's River row is still running.
 	if err := m.repository.ValidateCurrentClaim(context.WithoutCancel(ctx), id, fence); errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
-		return m.waitForStaleRiverClaim(ctx, riverJobID)
+		return errWaitForStaleRiverClaim
 	}
 	history, err := m.repository.Get(context.WithoutCancel(ctx), id)
 	if err == nil && (history.Status == jobs.StatusFailed || history.Status == jobs.StatusCancelled) {
@@ -262,7 +278,7 @@ func (m *Module) failTerminal(ctx context.Context, riverJobID int64, id string, 
 	}
 	if err := m.repository.Fail(context.WithoutCancel(ctx), id, fence, []byte(`{"code":"ASYNC_JOB_FAILED"}`)); err != nil {
 		if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
-			return m.waitForStaleRiverClaim(ctx, riverJobID)
+			return errWaitForStaleRiverClaim
 		}
 		return river.JobCancel(errors.New("ASYNC_JOB_FAILURE_PERSISTENCE_FAILED"))
 	}
@@ -275,6 +291,9 @@ func (m *Module) waitForStaleRiverClaim(ctx context.Context, riverJobID int64) e
 	// so the eventual ID-only result cannot finalize an active or re-claimable
 	// successor. The repository keeps polling even if this worker's ordinary
 	// context is cancelled while the successor is active.
+	if m.beforeStaleRiverWait != nil {
+		m.beforeStaleRiverWait()
+	}
 	return m.repository.WaitForRiverClaimFinalization(ctx, riverJobID)
 }
 
@@ -289,7 +308,7 @@ func workTyped[T river.JobArgs](ctx context.Context, m *Module, job *river.Job[T
 		return m.waitForStaleRiverClaim(ctx, job.ID)
 	}
 	executionCtx := jobpostgres.ContextWithRiverExecution(ctx, job, owner, m.config.LeaseTimeout)
-	result := m.work(executionCtx, job.ID, job.Attempt, args)
+	result := m.workAndWait(executionCtx, job.ID, job.Attempt, args)
 	return m.protectRiverResult(ctx, job.ID, jobs.Fence{Owner: owner, Generation: int64(job.Attempt)}, result)
 }
 

@@ -295,6 +295,91 @@ func TestStaleRiverCancellationCannotInterruptSuccessorAttempt(t *testing.T) {
 	}
 }
 
+func TestStaleRiverWaitReleasesPartitionLock(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_stale_partition_release")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	repository := jobpostgres.NewRepository(pool)
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := Build(t.Context(), Config{
+		Persistence: &persistence, Production: true, Admission: jobs.AdmitterFunc(allowJobs),
+		OwnerID: "river-stale-partition-release-test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{JobKind: "release.finalize", Run: func(context.Context, jobs.Job) error { return nil }}}); err != nil {
+		t.Fatal(err)
+	}
+
+	job := enqueueTestJob(t, module, "job-stale-partition-release", "stale-partition-release")
+	var riverID int64
+	if err := pool.QueryRow(t.Context(), `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, job.ID).Scan(&riverID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job
+		SET state='running', attempt=2, attempted_by=ARRAY['river-successor'], attempted_at=clock_timestamp()
+		WHERE id=$1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+
+	waitStarted := make(chan struct{})
+	module.beforeStaleRiverWait = func() { close(waitStarted) }
+	staleJob := &river.Job[jobpostgres.ReleaseFinalizeArgs]{JobRow: &rivertype.JobRow{
+		ID: riverID, Attempt: 1, State: rivertype.JobStateRunning, AttemptedBy: []string{"river-stale"},
+	}}
+	workCtx := jobpostgres.ContextWithRiverExecution(t.Context(), staleJob, "river-stale", time.Minute)
+	workDone := make(chan error, 1)
+	go func() {
+		workDone <- module.workAndWait(workCtx, riverID, 1, jobpostgres.ExecutionArgs{ProductJobID: job.ID, RequestDigest: job.RequestDigest})
+	}()
+	select {
+	case <-waitStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for stale River terminalization wait")
+	}
+
+	probe, err := pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var acquired bool
+	if err := probe.QueryRow(t.Context(), `SELECT pg_try_advisory_lock(hashtextextended($1, 0))`, job.PartitionKey).Scan(&acquired); err != nil {
+		probe.Release()
+		t.Fatal(err)
+	}
+	if acquired {
+		_, _ = probe.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtextextended($1, 0))`, job.PartitionKey)
+	}
+	probe.Release()
+	if _, err := pool.Exec(t.Context(), `UPDATE public.river_job SET state='completed', finalized_at=clock_timestamp() WHERE id=$1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-workDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out draining stale River worker")
+	}
+	if !acquired {
+		t.Fatal("stale River terminalization wait retained the partition advisory lock")
+	}
+}
+
 func TestRiverResultFenceClosesPostValidationHandoff(t *testing.T) {
 	harness := postgrestest.Start(t)
 	database := harness.NewDatabase(t, "river_post_validation_handoff")
