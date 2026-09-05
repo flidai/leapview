@@ -15,6 +15,7 @@ sql:
     queries:
       - "internal/analytics/queryaudit/sqlite/queries"
       - "internal/analytics/sqlite/queries"
+      - "internal/analytics/exploration/saved/sqlite/queries"
     schema: "internal/platform/migrations"
     gen:
       go:

@@ -12,6 +12,7 @@ import type {
   DataExplorerPageSignal,
   DataExplorerSignal,
   DataPreviewSignal,
+  SavedExplorationStateSignal,
 } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
 import { DatastarLit } from '../shared/datastar-lit'
@@ -42,7 +43,16 @@ import {
   explorationSpecFor,
   toggleExplorationField,
 } from './data-explorer-spec'
-import { dataExplorerURL, updateDataExplorerURL } from './data-explorer-url'
+import { dataExplorerURL } from './data-explorer-url'
+import { filterObjects, objectColumnMatchesSearch } from './data-explorer-search'
+import {
+  emptySavedExplorations,
+  renderSavedExplorations,
+  SavedExplorationTracker,
+  savedExplorationStyles,
+  synchronizeSavedExplorationURL,
+  updateSavedExplorationURL,
+} from './data-explorer-saved'
 import '../chat/chat-drawer'
 import './preview-table'
 import './explore-table'
@@ -96,6 +106,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private browserCollapsed = false
   @state() private browserWidth = 320
   @state() private exploreVisibleColumns: string[] = []
+  @state() private savedTitle = ''
+  @state() private savedDuplicateTitle = ''
   private lastSearch = ''
   private expandedGroupIDs = new Set<string>()
   private exploreTimer = 0
@@ -108,6 +120,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private readonly panelController = new DataExplorerPanelController()
   private readonly queryController = new DataExplorerQueryController()
   private readonly selectionController = new DataExplorerSelectionController()
+  private readonly savedExplorationTracker = new SavedExplorationTracker({
+    onBaselineChanged: () => this.savedDuplicateTitle = '',
+    onDirty: () => this.dispatchEvent(new CustomEvent('lv-saved-exploration-dirty', { bubbles: true, composed: true })),
+  })
 
   static styles = css`
     :host {
@@ -854,6 +870,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       width: auto;
     }
 
+    ${savedExplorationStyles}
+
     .content {
       display: grid;
       min-width: 0;
@@ -1056,7 +1074,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
     if (this.optimisticExplore && (this.dataExplorer.explore?.command?.requestSeq ?? 0) >= this.optimisticExplore.requestSeq) {
       this.optimisticExplore = null
-      if (!this.embedded) updateDataExplorerURL(this.dataExplorer.command, 'replace')
+      if (!this.embedded) updateSavedExplorationURL(this.dataExplorer.command, 'replace', this.savedExplorations)
     }
     const agent = this.signal<{ activeConversationId?: string } | null>('agent', null)
     const activeConversationId = agent?.activeConversationId?.trim() ?? ''
@@ -1069,6 +1087,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.agentRestoreDispatched = true
       emitDomainEvent(this, domainEvents.chatRestore, { conversationId: this.restoredAgentConversationId })
     }
+    const saved = this.savedExplorations
+    synchronizeSavedExplorationURL(this.dataExplorer.command, saved, this.embedded, Object.prototype.hasOwnProperty.call(this.signals, 'savedExplorations'))
+    this.savedExplorationTracker.observe(saved, this.optimisticExplore?.spec ?? this.dataExplorer.explore?.command?.spec)
   }
 
   get page(): DataExplorerPageSignal | null {
@@ -1077,6 +1098,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
   get dataExplorer(): DataExplorerSignal {
     return this.signal<DataExplorerSignal>('dataExplorer', emptyExplorer)
+  }
+
+  get savedExplorations(): SavedExplorationStateSignal {
+    return this.signal<SavedExplorationStateSignal>('savedExplorations', emptySavedExplorations)
   }
 
   render() {
@@ -1089,6 +1114,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const agentEnabled = this.signal<unknown | null>('agent', null) !== null
     const columns = this.headerColumns(explorer, semanticActive)
     const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
+    const savedExplorations = this.savedExplorations
     return html`
       <section class=${`route${semanticActive ? ' semantic' : ''}${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
         <header class="header">
@@ -1121,6 +1147,17 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             ${agentEnabled ? html`<button type="button" class="icon-button ask-button" aria-label="Ask about this data" aria-expanded=${String(this.agentDrawerOpen)} title="Ask about this data" @click=${() => this.setAgentDrawerOpen(!this.agentDrawerOpen)}>${agentIcon()}<span>Ask</span></button>` : nothing}
           </div>
         </header>
+        ${renderSavedExplorations(savedExplorations, {
+          savedTitle: () => this.savedTitle,
+          savedDuplicateTitle: () => this.savedDuplicateTitle,
+          activeSpec: () => this.optimisticExplore?.spec ?? this.dataExplorer.explore?.command?.spec ?? emptyExplorer.explore.command.spec,
+          onSavedTitleInput: (value) => this.savedTitle = value,
+          onDuplicateTitleInput: (value) => this.savedDuplicateTitle = value,
+          onCommand: (command) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-command', { bubbles: true, composed: true, detail: command })),
+          onReopen: (current) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
+            bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },
+          })),
+        })}
         <div
           class=${`explorer${this.browserCollapsed ? ' browser-collapsed' : ''}`}
         >
@@ -1472,7 +1509,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const current = baseCommand ?? this.optimisticExplore ?? this.dataExplorer.explore.command ?? emptyExplorer.explore.command
     const command = this.queryController.explore(current, next, immediate)
     this.optimisticExplore = command
-    if (!this.embedded) updateDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command }, 'push')
+    if (!this.embedded) updateSavedExplorationURL({ ...this.dataExplorer.command, mode: 'explore', explore: command }, 'push', this.savedExplorations)
     const dispatch = () => this.emitCommand({ mode: 'explore', explore: command })
     if (immediate) dispatch()
     else this.exploreTimer = window.setTimeout(dispatch, 320)
@@ -1889,7 +1926,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       objectKey: current.objectKey ?? this.dataExplorer?.selectedKey ?? '',
     }, partial)
     if (!this.embedded && (partial.objectKey !== undefined || partial.mode !== undefined || partial.explore !== undefined)) {
-      updateDataExplorerURL(next, 'push')
+      updateSavedExplorationURL(next, 'push', this.savedExplorations)
     }
     this.dispatchEvent(new CustomEvent('lv-data-explorer-command', { bubbles: true, composed: true, detail: next }))
   }
@@ -1898,7 +1935,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     if (this.embedded || this.initialURLCanonicalized || this.optimisticExplore) return
     if (!Object.prototype.hasOwnProperty.call(this.signals, 'dataExplorer')) return
     this.initialURLCanonicalized = true
-    updateDataExplorerURL(this.dataExplorer.command, 'replace')
+    updateSavedExplorationURL(this.dataExplorer.command, 'replace', this.savedExplorations)
   }
 
   /**
@@ -1913,32 +1950,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.closeFilter()
     window.location.reload()
   }
-}
-
-function filterObjects(objects: DataExplorerObjectSignal[], query: string): DataExplorerObjectSignal[] {
-  const normalized = query.trim().toLowerCase()
-  if (!normalized) return objects
-  return objects.filter((object) => objectSearchValues(object)
-    .some((value) => value.toLowerCase().includes(normalized)))
-}
-
-function objectSearchValues(object: DataExplorerObjectSignal): string[] {
-  return [
-    object.title,
-    object.description,
-    object.layer,
-    object.resourceId,
-    object.semanticModelId,
-    object.datasetId,
-    ...(object.columns ?? []).flatMap((column) => [column.key, column.label, column.type, column.description]),
-  ].map((value) => String(value ?? ''))
-}
-
-function objectColumnMatchesSearch(object: DataExplorerObjectSignal, query: string): boolean {
-  const normalized = query.trim().toLowerCase()
-  if (!normalized) return false
-  return (object.columns ?? []).some((column) => [column.key, column.label, column.type, column.description]
-    .some((value) => String(value ?? '').toLowerCase().includes(normalized)))
 }
 
 function groupObjectsBySemanticModel(objects: DataExplorerObjectSignal[], semanticModels: DataExploreSignal['semanticModels'] = []): ResourceGroup[] {

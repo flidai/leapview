@@ -26,6 +26,86 @@ enum RouteKind {
   login: "login",
 }
 
+/** Metadata-only saved-exploration lifecycle projection for browser lists. */
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationRevisionSignal {
+  `revisionId`: string;
+  `number`: int64;
+  `contentHash`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationListItemSignal {
+  `id`: string;
+  `title`: string;
+  `slug`: string;
+  `visibility`: "private" | "organization";
+  `status`: "active" | "archived";
+  `semanticModelId`: string;
+  `createdAt`: utcDateTime;
+  `updatedAt`: utcDateTime;
+  `archivedAt`?: utcDateTime;
+  `revision`: SavedExplorationRevisionSignal;
+}
+
+/** The selected resource is metadata-only until an explicit reopen command. */
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationCurrentSignal {
+  `id`: string;
+  `title`: string;
+  `slug`: string;
+  `visibility`: "private" | "organization";
+  `status`: "active" | "archived";
+  `semanticModelId`: string;
+  `revision`: SavedExplorationRevisionSignal;
+  `detached`: boolean;
+  `spec`?: LeapViewExploration.ExplorationSpec;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "command"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationCommandSignal {
+  `action`: "create" | "update" | "duplicate" | "archive" | "reopen";
+  /** The canonical target for update, archive, and reopen. */
+  `explorationId`?: string;
+  /** The canonical source for duplicate. */
+  `sourceExplorationId`?: string;
+  `title`?: string;
+  `slug`?: string;
+  `visibility`?: "private" | "organization";
+  `spec`?: LeapViewExploration.ExplorationSpec;
+  `expectedRevision`?: SavedExplorationRevisionSignal;
+  `expectedSourceRevision`?: SavedExplorationRevisionSignal;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationSaveStateSignal {
+  `state`: "saved" | "dirty" | "saving" | "error";
+  `message`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationListSignal {
+  `items`: SavedExplorationListItemSignal[];
+  `includeArchived`: boolean;
+  `selectedId`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationStateSignal {
+  `enabled`: boolean;
+  `list`: SavedExplorationListSignal;
+  `current`?: SavedExplorationCurrentSignal;
+  `command`: SavedExplorationCommandSignal;
+  `save`: SavedExplorationSaveStateSignal;
+}
+
 /**
  * Typed authoring transport for the unreleased dashboard builder. This is
  * deliberately separate from DashboardEnvelope: the builder edits a draft
@@ -1451,6 +1531,8 @@ model DataExplorerPageEnvelope {
   `page`: DataExplorerPageSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
   `runtime`: RouteRuntimeSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "savedExplorations" })
+  `savedExplorations`: SavedExplorationStateSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
   `status`: DashboardStatus;
 }

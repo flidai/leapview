@@ -1754,7 +1754,11 @@ func pathParamTypeName(param ir.Parameter) string {
 
 func schemaTypeName(schema ir.SchemaRef) string {
 	if schema.Ref != "" {
-		return exportedName(schema.Ref)
+		// Schema aliases are emitted by requestmodelgo with the GenSchema
+		// prefix.  Keep strict server parameters tied to that generated alias;
+		// using the bare schema name leaves protocol enums such as ResourceKind
+		// undefined in packages that do not emit a local concrete type.
+		return "GenSchema" + exportedName(schema.Ref)
 	}
 
 	schemaType := strings.ToLower(strings.TrimSpace(schema.Type))

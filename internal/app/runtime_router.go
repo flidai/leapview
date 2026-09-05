@@ -73,20 +73,21 @@ type capabilityRoutes struct {
 }
 
 type runtimeServices struct {
-	analyticsModule       *analyticsmodule.Module
-	metrics               QueryMetrics
-	workloads             workloadControl
-	broker                *pagestream.Broker
-	dashboardBroker       *dashboardmodule.DeliveryBroker
-	pageStreams           *uitransport.PageStream
-	persistenceConfigured bool
-	platformHealth        platformHealth
-	storageRetention      *servingstatemodule.Retention
-	queryAuditProvider    adminmodule.QueryAuditReaderProvider
-	candidateMetrics      func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
-	runtimeHostModule     *runtimehostmodule.Module
-	projectID             projectgraph.ResourceID
-	projectIDResolver     func(context.Context) (projectgraph.ResourceID, error)
+	analyticsModule         *analyticsmodule.Module
+	savedExplorationService analyticsmodule.SavedExplorationService
+	metrics                 QueryMetrics
+	workloads               workloadControl
+	broker                  *pagestream.Broker
+	dashboardBroker         *dashboardmodule.DeliveryBroker
+	pageStreams             *uitransport.PageStream
+	persistenceConfigured   bool
+	platformHealth          platformHealth
+	storageRetention        *servingstatemodule.Retention
+	queryAuditProvider      adminmodule.QueryAuditReaderProvider
+	candidateMetrics        func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
+	runtimeHostModule       *runtimehostmodule.Module
+	projectID               projectgraph.ResourceID
+	projectIDResolver       func(context.Context) (projectgraph.ResourceID, error)
 }
 
 type dashboardAppearanceReader interface {
@@ -1036,6 +1037,29 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}
 		}
 	}
+	var apiDispatcher *apiGenDispatcher
+	savedExplorationWiring, err := configureSavedExploration(savedExplorationWiringInputs{
+		accessModule:            routes.accessModule,
+		auth:                    platform.auth,
+		assets:                  platform.assets,
+		resolveProjectID:        runtime.resolveProjectID,
+		instanceID:              storage.instanceID,
+		publicURL:               storage.publicURL,
+		runtime:                 runtime.runtimeHostModule,
+		admitter:                runtime.workloads,
+		analyticsModule:         runtime.analyticsModule,
+		savedExplorationService: runtime.savedExplorationService,
+		projectBrowser:          routes.projectBrowser,
+		ctx:                     ctx,
+		database:                database,
+		auditIntentRecorder:     persistence.auditRecorder,
+		accessRepo:              persistence.accessRepo,
+	})
+	if err != nil {
+		return err
+	}
+	routes.accessModule = savedExplorationWiring.accessModule
+	runtime.savedExplorationService = savedExplorationWiring.savedExplorationService
 	analyticsAPI := analyticsmodule.AnalyticsAPIGenConfig{
 		QueryAudit: analyticsmodule.QueryAuditAPIGenConfig{
 			Reader: runtime.queryAuditProvider,
@@ -1051,21 +1075,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return principal.ID, ok
 			},
 		},
-	}
-	var apiDispatcher *apiGenDispatcher
-	if routes.accessModule == nil {
-		var err error
-		routes.accessModule, err = accessmodule.Build(ctx, accessmodule.Config{
-			Database: database, ExistingAuth: platform.auth,
-			InstanceID:       storage.instanceID,
-			PublicURL:        storage.publicURL,
-			CurrentProjectID: runtime.resolveProjectID,
-			Presentation:     webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
-			Assets:           platform.assets,
-		})
-		if err != nil {
-			return fmt.Errorf("build access module: %w", err)
-		}
+		SavedExplorations: savedExplorationAPIGenConfig(runtime.savedExplorationService, routes.accessModule, platform.auth),
 	}
 	if routes.deploymentModule == nil {
 		config := moduleWorkflow.deploymentConfig
@@ -1728,7 +1738,20 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}); err != nil {
 		return fmt.Errorf("validate generated command dependencies: %w", err)
 	}
-	platform.apiProtocol.SetReplayAuthorize(apiGenAuthorizer.AuthorizeReplay)
+	// Saved-exploration responses include authored specs. Their durable replay
+	// path therefore rechecks the feature service's current model/resource/
+	// project authorization, while every unrelated operation retains the
+	// generated generic replay policy.
+	savedReplayConfig := analyticsAPI.SavedExplorations
+	platform.apiProtocol.SetReplayAuthorize(func(r *http.Request) bool {
+		if analyticsmodule.IsSavedExplorationMutationRequest(r) {
+			if !apiGenAuthorizer.AuthorizeReplay(r) {
+				return false
+			}
+			return analyticsmodule.AuthorizeSavedExplorationMutationReplay(savedReplayConfig, r)
+		}
+		return apiGenAuthorizer.AuthorizeReplay(r)
+	})
 	appResponder := apiprotocol.TransportErrorResponder{Logger: platform.logger}
 	appAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return apigenapi.DispatchAPIGenOperation(operationID, apiDispatcher, appResponder, w, r)

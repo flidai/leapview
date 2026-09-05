@@ -12,6 +12,13 @@ func Get(path string, signalPaths ...string) string {
 	return request("get", path, signalPaths, "")
 }
 
+// GetPathExpression issues a read-only request whose path is evaluated from
+// the current event. Callers must build the expression from encoded signal
+// values; it is kept separate from Get so static paths remain the default.
+func GetPathExpression(pathExpression string, signalPaths ...string) string {
+	return requestWithPathExpression("get", pathExpression, signalPaths, "")
+}
+
 // QueryPost is an explicitly non-mutating POST used for signal-backed search
 // and read-model commands whose payload is too rich for a query string.
 func QueryPost(path string, signalPaths ...string) string {

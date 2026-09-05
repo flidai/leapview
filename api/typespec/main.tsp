@@ -18,6 +18,7 @@ import "./connection_bindings.tsp";
 import "./dashboard_publications.tsp";
 import "./dashboard_authoring.tsp";
 import "./managed_data.tsp";
+import "./saved_explorations.tsp";
 import "./upload_tus.tsp";
 import "./upload_s3_multipart.tsp";
 
@@ -29,7 +30,7 @@ using LeapViewAPI.Protocol;
 @doc("Headless API for LeapView projects, deployments, managed data, access control, refreshes, and agent operations.")
 @info(#{ version: "1.0.0" })
 @useAuth(BearerAuth)
-@tagMetadata(#[#{ name: "System", description: "API capabilities and protocol discovery." }, #{ name: "Instance", description: "The immutable serving identity of this LeapView installation." }, #{ name: "Projects", description: "Active project graph assertion." }, #{ name: "Releases", description: "Immutable project releases and artifacts." }, #{ name: "Current User", description: "Current principal, sessions, tokens, and capabilities." }, #{ name: "Search", description: "Progressive project-graph discovery across governed resources." }, #{ name: "BI", description: "Dashboard and semantic model read APIs." }, #{ name: "Connections", description: "Target-owned logical connection bindings, tests, refreshes, and redacted health." }, #{ name: "Deployments", description: "Atomic project release deployment." }, #{ name: "Refresh Runs", description: "Headless refresh run operations." }, #{ name: "Agent", description: "Headless agent conversation and run operations." }, #{ name: "Access", description: "Principals, groups, roles, and role bindings." }, #{ name: "Audit", description: "Project audit event discovery." }, #{ name: "Publications", description: "Anonymous public dashboard publication lifecycle." }, #{ name: "Managed Data", description: "Project-global managed-data revisions and uploads." }])
+@tagMetadata(#[#{ name: "System", description: "API capabilities and protocol discovery." }, #{ name: "Instance", description: "The immutable serving identity of this LeapView installation." }, #{ name: "Projects", description: "Active project graph assertion." }, #{ name: "Releases", description: "Immutable project releases and artifacts." }, #{ name: "Current User", description: "Current principal, sessions, tokens, and capabilities." }, #{ name: "Search", description: "Progressive project-graph discovery across governed resources." }, #{ name: "BI", description: "Dashboard and semantic model read APIs." }, #{ name: "Connections", description: "Target-owned logical connection bindings, tests, refreshes, and redacted health." }, #{ name: "Deployments", description: "Atomic project release deployment." }, #{ name: "Refresh Runs", description: "Headless refresh run operations." }, #{ name: "Agent", description: "Headless agent conversation and run operations." }, #{ name: "Access", description: "Principals, groups, roles, and role bindings." }, #{ name: "Audit", description: "Project audit event discovery." }, #{ name: "Publications", description: "Anonymous public dashboard publication lifecycle." }, #{ name: "Managed Data", description: "Project-global managed-data revisions and uploads." }, #{ name: "Saved Explorations", description: "Durable authored exploration identities, revisions, lifecycle, and governed execution." }])
 @apigen.transportErrors(ProblemDetails, #{
   contentType: "application/problem+json",
   failures: #[
