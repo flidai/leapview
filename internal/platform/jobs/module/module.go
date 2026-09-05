@@ -277,7 +277,35 @@ func (m *Module) waitForStaleRiverClaim(ctx context.Context, riverJobID int64) e
 }
 
 func workTyped[T river.JobArgs](ctx context.Context, m *Module, job *river.Job[T], args jobpostgres.ExecutionArgs) error {
-	return m.work(jobpostgres.ContextWithRiverExecution(ctx, job, m.config.OwnerID, m.config.LeaseTimeout), job.ID, job.Attempt, args)
+	executionCtx := jobpostgres.ContextWithRiverExecution(ctx, job, m.config.OwnerID, m.config.LeaseTimeout)
+	result := m.work(executionCtx, job.ID, job.Attempt, args)
+	owner := strings.TrimSpace(m.config.OwnerID)
+	if owner == "" && len(job.AttemptedBy) > 0 {
+		owner = strings.TrimSpace(job.AttemptedBy[len(job.AttemptedBy)-1])
+	}
+	return m.protectRiverResult(ctx, job.ID, jobs.Fence{Owner: owner, Generation: int64(job.Attempt)}, result)
+}
+
+func (m *Module) protectRiverResult(ctx context.Context, riverJobID int64, fence jobs.Fence, result error) error {
+	// River v0.47 reports worker results by job ID and running state, without
+	// an attempt predicate. Recheck every result at the outermost worker
+	// boundary so cancellation and indeterminate persistence errors cannot
+	// bypass the capability-specific stale-claim branches above.
+	waitCtx := context.WithoutCancel(ctx)
+	for {
+		probeCtx, cancel := context.WithTimeout(waitCtx, time.Second)
+		err := m.repository.ValidateRiverResultClaim(probeCtx, riverJobID, fence)
+		cancel()
+		if err == nil {
+			return result
+		}
+		if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
+			return m.waitForStaleRiverClaim(ctx, riverJobID)
+		}
+		// The current state is unknown. Returning would permit an ID-only
+		// finalizer to race a recovered connection, so retry the proof.
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 type riverWorkerDefaults[T river.JobArgs] struct {

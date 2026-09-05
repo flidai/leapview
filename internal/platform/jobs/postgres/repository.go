@@ -470,6 +470,30 @@ func (r *Repository) ValidateCurrentClaim(ctx context.Context, id string, fence 
 	})
 }
 
+// ValidateRiverResultClaim proves that an outer River result can still be
+// reported for this exact attempt. Terminal or deleted rows are also safe:
+// River's state update is conditional on running and will therefore be a
+// no-op. Any nonterminal row owned by another attempt is a stale claim.
+func (r *Repository) ValidateRiverResultClaim(ctx context.Context, riverJobID int64, fence jobs.Fence) error {
+	return r.inTx(ctx, func(tx Tx) error {
+		row, err := queries(tx).LockRiverJobFence(ctx, riverJobID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		state := rivertype.JobState(row.State)
+		if state == rivertype.JobStateCompleted || state == rivertype.JobStateCancelled || state == rivertype.JobStateDiscarded {
+			return nil
+		}
+		if state == rivertype.JobStateRunning && int64(row.Attempt) == fence.Generation && fence.Owner != "" && len(row.AttemptedBy) > 0 && row.AttemptedBy[len(row.AttemptedBy)-1] == fence.Owner {
+			return nil
+		}
+		return staleRiverConflict()
+	})
+}
+
 // WaitForRiverClaimFinalization waits until the operational row is terminal or
 // deleted. A stale executor must not return while a successor is running or
 // merely retryable: River reports every worker result by job ID, so returning
