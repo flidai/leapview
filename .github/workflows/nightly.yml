@@ -216,6 +216,41 @@ jobs:
             }
           done
 
+  dependency-evidence-refresh:
+    name: JavaScript dependency evidence refresh
+    if: github.repository == 'flidai/leapview'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up the cached security toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Refresh checked-in JavaScript vulnerability evidence
+        id: evidence-refresh
+        run: task security:dependencies:evidence:refresh
+
+      - name: Validate refreshed JavaScript vulnerability evidence
+        id: evidence-validation
+        if: ${{ steps.evidence-refresh.outcome == 'success' }}
+        run: task security:dependencies
+
+      - name: Upload refreshed JavaScript vulnerability evidence
+        if: ${{ !cancelled() && steps.evidence-refresh.outcome == 'success' && steps.evidence-validation.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: javascript-vulnerability-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 30
+          if-no-files-found: error
+          path: .security/javascript-vulnerability-evidence.json
+
   agent-tool-evaluation:
     name: Agent all-tools evaluation (diagnostic)
     if: github.repository == 'flidai/leapview'
@@ -268,7 +303,7 @@ jobs:
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation, security-validation]
+    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation, security-validation, dependency-evidence-refresh]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -280,8 +315,9 @@ jobs:
           FRONTEND_RESULT: ${{ needs.frontend-validation.result }}
           FULL_RESULT: ${{ needs.full-validation.result }}
           SECURITY_RESULT: ${{ needs.security-validation.result }}
+          DEPENDENCY_EVIDENCE_REFRESH_RESULT: ${{ needs.dependency-evidence-refresh.result }}
         run: |
-          for result in "${APIGEN_RESULT}" "${GO_PACKAGES_RESULT}" "${GO_APPLICATION_RESULT}" "${FRONTEND_RESULT}" "${FULL_RESULT}" "${SECURITY_RESULT}"; do
+          for result in "${APIGEN_RESULT}" "${GO_PACKAGES_RESULT}" "${GO_APPLICATION_RESULT}" "${FRONTEND_RESULT}" "${FULL_RESULT}" "${SECURITY_RESULT}" "${DEPENDENCY_EVIDENCE_REFRESH_RESULT}"; do
             test "${result}" = success || {
               printf 'Nightly validation result: %s\n' "${result}" >&2
               exit 1

@@ -50,6 +50,14 @@ jobs:
         with:
           browser: "false"
 
+      - name: Prepare generated Go source for dependency scan
+        env:
+          NPM_CONFIG_AUDIT: "false"
+        run: |
+          task db:generate
+          task config:generate
+          task ui-signals:generate
+
       - name: Scan every maintained dependency graph
         run: task security:dependencies
 
