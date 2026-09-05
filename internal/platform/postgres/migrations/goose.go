@@ -112,6 +112,8 @@ func ApplyRiver(ctx context.Context, pool *pgxpool.Pool) error {
 	// installs the attempt-qualified worker-result trigger in the product
 	// baseline. Grant only that DDL capability from the migration login which
 	// owns the freshly installed River table.
+	// sqlc-exception: schema-ddl. This conditional grant targets an upstream-owned
+	// table during explicit migration, before the product baseline creates the trigger.
 	if _, err := pool.Exec(ctx, `
 DO $river_trigger_authority$
 BEGIN
