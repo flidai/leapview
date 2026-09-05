@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
-import { aggregateExpansionCamera, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
+import { aggregateExpansionCamera, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
 test('MapLibre owns usable shadow-DOM styles for map navigation controls', () => {
@@ -367,14 +367,20 @@ test('MapLibre hides both tiled precision families during replacement and restor
   const replacement = tiledSourceLifecycle(tiledSourceTransition(previous, next), true)
   expect(replacement).toBe('waiting')
   expect(tiledPrecisionLayerFamily(replacement === 'waiting', 12, 8)).toBe('hidden')
+  expect(tiledPrecisionLayerIDs('hidden', raw, aggregate)).toEqual([])
+  expect(tiledPrecisionLayerIDs('hidden', raw, aggregate, ['raw-point', 'aggregate-count'])).toEqual([])
   applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(replacement === 'waiting', 12, 8))
   expect([...visibility.values()]).toEqual(['none', 'none', 'none', 'none'])
   const sourceReady = tiledSourceLifecycle(tiledSourceTransition(previous, next), true) === 'waiting'
+  expect(tiledPrecisionLayerIDs('raw', raw, aggregate)).toEqual(raw)
+  expect(tiledPrecisionLayerIDs('raw', raw, aggregate, ['raw-point', 'aggregate-count'])).toEqual(['raw-point'])
   applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(!sourceReady, 12, 8))
   expect(raw.map((id) => visibility.get(`${id}:visibility`))).toEqual(['visible', 'visible'])
   expect(aggregate.map((id) => visibility.get(`${id}:visibility`))).toEqual(['none', 'none'])
   const stable = tiledSourceLifecycle(tiledSourceTransition(previous, previous), true)
   expect(stable).toBe('stable')
+  expect(tiledPrecisionLayerIDs('aggregate', raw, aggregate)).toEqual(aggregate)
+  expect(tiledPrecisionLayerIDs('aggregate', raw, aggregate, ['raw-point', 'aggregate-count'])).toEqual(['aggregate-count'])
   applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(stable === 'waiting', 6, 8))
   expect(raw.map((id) => visibility.get(`${id}:visibility`))).toEqual(['none', 'none'])
   expect(aggregate.map((id) => visibility.get(`${id}:visibility`))).toEqual(['visible', 'visible'])

@@ -1,6 +1,11 @@
 import type { FeatureCollection } from 'geojson'
 import type { SpatialTiledVisualizationDataState, VisualizationGeographicLayer } from '../../../../../generated/visualization'
 
+export function tiledPrecisionLayerIDs(family: 'hidden' | 'raw' | 'aggregate', rawLayerIDs: readonly string[], aggregateLayerIDs: readonly string[], candidates?: readonly string[]): string[] {
+	const layerIDs = family === 'raw' ? [...rawLayerIDs] : family === 'aggregate' ? [...aggregateLayerIDs] : []
+	return candidates ? layerIDs.filter((id) => candidates.includes(id)) : layerIDs
+}
+
 export function mapLayer(id: string, layerOrKind: VisualizationGeographicLayer | VisualizationGeographicLayer['kind'], tiled?: SpatialTiledVisualizationDataState, sourceID = id): any {
   const layer = typeof layerOrKind === 'string' ? undefined : layerOrKind
   const kind = typeof layerOrKind === 'string' ? layerOrKind : layerOrKind.kind

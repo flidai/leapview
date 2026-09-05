@@ -9,7 +9,7 @@ import { blankMapStyle, loadGeometryAsset, loadMapStyleAsset, registerPMTilesPro
 import { applyBasemapTheme, basemapThemeKey, createBasemapThemeScheduler, mapThemeColors, scheduleBasemapThemeMutation, type BasemapColors } from './maplibre/basemap'
 import { installMapLibreChromeStyles } from './maplibre/chrome'
 import { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
-import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer } from './maplibre/layers'
+import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledPrecisionLayerIDs } from './maplibre/layers'
 import { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
 import { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries, type RenderedFeatureLocator } from './maplibre/overlays'
 import { emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
@@ -21,7 +21,7 @@ export { loadMapStyleAsset, sameOriginGeometryURL, verifyGeometryDigest } from '
 export { applyBasemapTheme, basemapBoundaryLayer, basemapLayer, basemapThemeKey, concreteCSSColor, createBasemapThemeScheduler, mapThemeColors } from './maplibre/basemap'
 export { mapLibreChromeCSS } from './maplibre/chrome'
 export { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
-export { applyFeatureScales, mapLayer, mapOutlineLayer, normalizeFeatureWeights, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer } from './maplibre/layers'
+export { applyFeatureScales, mapLayer, mapOutlineLayer, normalizeFeatureWeights, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledPrecisionLayerIDs } from './maplibre/layers'
 export { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
 export { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries } from './maplibre/overlays'
 export { installWebGLRecovery, removeRendererFrame, waitForMapIdle, waitForMapRender } from './maplibre/lifecycle'
@@ -781,8 +781,8 @@ class MapLibreHandle implements RendererHandle {
   }
 
   private queryRenderedTiledFeatures(): RenderedFeatureLocator[] {
-    if (!this.tiledSourceID) return []
-    const layers = this.layerIDs.filter((id) => this.map.getLayer(id)?.source === this.tiledSourceID)
+    if (!this.tiledSourceID || this.envelope?.dataState.kind !== 'spatial_tiled') return []
+    const layers = tiledPrecisionLayerIDs(tiledPrecisionLayerFamily(this.tiledSourceTransitioning, this.map.getZoom(), this.envelope.dataState.rawMinimumZoom), this.tiledRawLayerIDs, this.tiledAggregateLayerIDs).filter((id) => this.map.getLayer(id)?.source === this.tiledSourceID)
     return layers.length > 0 ? this.map.queryRenderedFeatures({ layers }) : []
   }
 
@@ -835,8 +835,9 @@ class MapLibreHandle implements RendererHandle {
     if (!this.envelope) return
     if (this.spatialSelectionControl?.consumeClick()) return
     const canRefineCamera = mapClickCanRefineCamera(this.envelope)
+    const selectableLayers = this.envelope.dataState.kind === 'spatial_tiled' ? tiledPrecisionLayerIDs(tiledPrecisionLayerFamily(this.tiledSourceTransitioning, this.map.getZoom(), this.envelope.dataState.rawMinimumZoom), this.tiledRawLayerIDs, this.tiledAggregateLayerIDs, this.selectableLayerIDs) : this.selectableLayerIDs
     if (this.envelope.dataState.kind === 'spatial_tiled') {
-      const features = this.selectableLayerIDs.length ? this.map.queryRenderedFeatures(event.point, { layers: this.selectableLayerIDs }) : []
+      const features = selectableLayers.length ? this.map.queryRenderedFeatures(event.point, { layers: selectableLayers }) : []
       const aggregate = features.find((feature) => feature.properties?.__lv_aggregate === true)
       if (aggregate) {
 				if (canRefineCamera) {
@@ -855,9 +856,9 @@ class MapLibreHandle implements RendererHandle {
 		}
       return
     }
-    if (this.selectableLayerIDs.length === 0) return
-    const features = this.map.queryRenderedFeatures(event.point, { layers: this.selectableLayerIDs })
-    const command = mapInteractionCommand(this.envelope, features, this.selectableLayerIDs)
+    if (selectableLayers.length === 0) return
+    const features = this.map.queryRenderedFeatures(event.point, { layers: selectableLayers })
+    const command = mapInteractionCommand(this.envelope, features, selectableLayers)
     if (command) this.dispatchInteraction(command)
   }
 
@@ -894,8 +895,9 @@ class MapLibreHandle implements RendererHandle {
 
   private readonly handlePointerMove = (event: MapMouseEvent) => {
     if (!this.envelope) return
-    const layers = [...new Set([...this.selectableLayerIDs, ...this.tooltipLayerIDs])]
-    if (layers.length === 0) return
+    const candidates = [...new Set([...this.selectableLayerIDs, ...this.tooltipLayerIDs])]
+    const layers = this.envelope.dataState.kind === 'spatial_tiled' ? tiledPrecisionLayerIDs(tiledPrecisionLayerFamily(this.tiledSourceTransitioning, this.map.getZoom(), this.envelope.dataState.rawMinimumZoom), this.tiledRawLayerIDs, this.tiledAggregateLayerIDs, candidates) : candidates
+    if (layers.length === 0) { this.map.getCanvas().style.cursor = ''; this.tooltip.hidden = true; return }
     const features = this.map.queryRenderedFeatures(event.point, { layers })
     this.map.getCanvas().style.cursor = interactionCommandForRenderedFeatures(this.envelope, features, this.selectableLayerIDs) ? 'pointer' : ''
     this.updateTooltip(event, features)
