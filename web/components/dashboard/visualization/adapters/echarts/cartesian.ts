@@ -19,9 +19,12 @@ export function cartesianOption(envelope: VisualizationEnvelope, context: Render
 function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): EChartsTranslation {
   const spec = envelope.spec as CartesianSpec
   const horizontal = spec.presentation.orientation === 'horizontal' || spec.mark === 'bar'
-  const xType = axisType(envelope, spec.x, horizontal ? 'value' : 'category')
-  const xAxis = axis(envelope, horizontal ? spec.y[0]! : spec.x, xType, context, horizontal ? 'primary_y' : 'x', horizontal ? spec.y : [spec.x])
-  const yAxis = axis(envelope, horizontal ? spec.x : spec.y[0]!, horizontal ? 'category' : 'value', context, horizontal ? 'x' : 'primary_y', horizontal ? [spec.x] : spec.y)
+  const xRef = horizontal ? spec.y[0]! : spec.x
+  const xType = axisType(envelope, xRef, horizontal ? 'value' : 'category')
+  const xAxis = axis(envelope, xRef, xType, context, horizontal ? 'primary_y' : 'x', horizontal ? spec.y : [spec.x])
+  const yRef = horizontal ? spec.x : spec.y[0]!
+  const yType = axisType(envelope, yRef, horizontal ? 'category' : 'value')
+  const yAxis = axis(envelope, yRef, yType, context, horizontal ? 'x' : 'primary_y', horizontal ? [spec.x] : spec.y)
   const stack = stackingMode(spec)
   if (stack === 'percent') applyPercentAxis(horizontal ? xAxis : yAxis, context)
   const axes = { grid: cartesianGrid(spec), xAxis, yAxis }
@@ -474,7 +477,7 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
     return {
       id: `series:${spec.series?.dataset}:${spec.series?.field}:${token}`, datasetId: datasetID, name: String(value), type: cartesianSeriesType(mark),
       ...(horizontal ? { xAxisIndex: combo?.axis === 'secondary' ? 1 : 0 } : { yAxisIndex: combo?.axis === 'secondary' ? 1 : 0 }),
-      encode: horizontal ? { x: normalized?.dimension ?? spec.y[0]?.field, y: spec.x.field } : { x: spec.x.field, y: normalized?.dimension ?? spec.y[0]?.field }, smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none',
+      encode: horizontal ? { x: normalized?.dimension ?? spec.y[0]?.field, y: spec.x.field } : { x: spec.x.field, y: normalized?.dimension ?? spec.y[0]?.field }, smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none', symbolSize: spec.presentation.symbolSize,
       stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || mark === 'area' ? {} : undefined,
       itemStyle: {
         color: markColor,
