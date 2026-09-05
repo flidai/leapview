@@ -33,9 +33,6 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 	}
 	switch variant := value.Value.(type) {
 	case *document.CartesianDashboardPresentation:
-		if variant.Series != nil && visualType != document.DashboardVisualTypeCombo {
-			return nil, fmt.Errorf("presentation.series is only supported for combo visuals")
-		}
 		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
 		if err != nil {
 			return nil, err
@@ -54,8 +51,11 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 			out.Step = *variant.Step
 		}
 		if variant.SymbolSize != nil {
+			if !finiteDashboardFloat(*variant.SymbolSize) {
+				return nil, fmt.Errorf("presentation.symbolSize must be finite")
+			}
 			if *variant.SymbolSize <= 0 {
-				return nil, fmt.Errorf("cartesian symbolSize must be greater than zero")
+				return nil, fmt.Errorf("presentation.symbolSize must be greater than zero")
 			}
 			out.SymbolSize = variant.SymbolSize
 		}
@@ -442,6 +442,8 @@ func validateCanonicalPresentationApplicability(value document.DashboardPresenta
 		return nil
 	}
 	switch variant := value.Value.(type) {
+	case *document.CartesianDashboardPresentation:
+		return validateCanonicalCartesianPresentationApplicability(variant, visualType)
 	case *document.HierarchyDashboardPresentation:
 		if variant == nil {
 			return nil
