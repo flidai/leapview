@@ -63,6 +63,8 @@ Configure a durable `LEAPVIEW_HOME` for runtime state, DuckDB temporary data, ar
 
 Choose `local` or `s3` for managed data. The S3 backend requires bucket and region, a private local staging/cache directory, and either ambient credentials or a complete key pair. Enable bucket versioning and provider-native replication or backup for authoritative S3 objects; LeapView does not create an instance archive for them. Coordinate those external recovery points with PostgreSQL and DuckLake using the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore).
 
+The separate immutable S3 object store has a stricter provider contract: the provider must enforce `If-None-Match: *` on `PutObject` when the key already exists. Versioning alone is insufficient because accepting a second create-only write changes the current object even when the older version remains recoverable. Qualify that behavior against the real bucket before production admission. Configure `AES256` (SSE-S3), `aws:kms` (SSE-KMS), or `sse-c` (SSE-C) according to provider support. SSE-C requires an HTTPS connection, a standard-base64 32-byte customer key stored only in the deployment secret manager, and a non-secret opaque key-epoch reference; retain old key versions for every object generation that may need recovery.
+
 Set upload size, file-count, free-space, session TTL, and garbage-collection limits according to actual capacity. The revision size limit must be at least the single-file limit.
 
 ## Query and refresh capacity

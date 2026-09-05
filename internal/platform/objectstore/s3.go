@@ -2,7 +2,9 @@ package objectstore
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -44,12 +46,14 @@ type S3Client interface {
 
 // S3EncryptionMode identifies the explicit server-side encryption policy.
 // S3EncryptionSSES3 is the AWS-managed SSE-S3 key; S3EncryptionSSEKMS binds a
-// target-resolved provider KMS key to an opaque application reference.
+// target-resolved provider KMS key to an opaque application reference; and
+// S3EncryptionSSEC uses a secret customer-provided key with that reference.
 type S3EncryptionMode string
 
 const (
 	S3EncryptionSSES3  S3EncryptionMode = "AES256"
 	S3EncryptionSSEKMS S3EncryptionMode = "aws:kms"
+	S3EncryptionSSEC   S3EncryptionMode = "sse-c"
 )
 
 // S3EncryptionConfig deliberately keeps OpaqueKeyRef and ProviderKey
@@ -59,6 +63,10 @@ type S3EncryptionConfig struct {
 	Mode         S3EncryptionMode
 	OpaqueKeyRef string
 	ProviderKey  string
+	// CustomerKey is the standard-base64 SSE-C customer key. The adapter decodes
+	// and validates it during store construction, then retains only private
+	// request material and its MD5 representation.
+	CustomerKey string
 }
 
 // S3StoreConfig configures an immutable S3 namespace. Prefix and domain are
@@ -90,6 +98,8 @@ type S3Store struct {
 	encryptionMode        S3EncryptionMode
 	encryptionKeyRef      string
 	providerEncryptionKey string
+	customerKeyBase64     string
+	customerKeyMD5        string
 	tempDir               string
 	expectedBucketOwner   *string
 	reconcileTimeout      time.Duration
@@ -144,7 +154,11 @@ func NewS3Store(client S3Client, config S3StoreConfig) (*S3Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateEncryptionValues(mode, enc.OpaqueKeyRef, enc.ProviderKey); err != nil {
+	if err := validateEncryptionValues(mode, enc.OpaqueKeyRef, enc.ProviderKey, enc.CustomerKey); err != nil {
+		return nil, err
+	}
+	customerKeyBase64, customerKeyMD5, err := decodeSSECustomerKey(mode, enc.CustomerKey)
+	if err != nil {
 		return nil, err
 	}
 	now := config.Now
@@ -162,7 +176,8 @@ func NewS3Store(client S3Client, config S3StoreConfig) (*S3Store, error) {
 		client: client, bucket: config.Bucket, prefix: config.Prefix,
 		domain: config.StorageSecurityDomain, maxObjectBytes: maxBytes,
 		encryptionMode: mode, encryptionKeyRef: enc.OpaqueKeyRef,
-		providerEncryptionKey: enc.ProviderKey, tempDir: tempDir,
+		providerEncryptionKey: enc.ProviderKey, customerKeyBase64: customerKeyBase64,
+		customerKeyMD5: customerKeyMD5, tempDir: tempDir,
 		expectedBucketOwner: expectedOwner, reconcileTimeout: reconcileTimeout, now: now,
 	}, nil
 }
@@ -173,12 +188,14 @@ func normalizeS3Encryption(mode S3EncryptionMode) (S3EncryptionMode, error) {
 		return S3EncryptionSSES3, nil
 	case "aws:kms", "kms", "sse-kms":
 		return S3EncryptionSSEKMS, nil
+	case "sse-c":
+		return S3EncryptionSSEC, nil
 	default:
 		return "", fmt.Errorf("%w: unsupported S3 encryption mode %q", ErrInvalid, mode)
 	}
 }
 
-func validateEncryptionValues(mode S3EncryptionMode, ref, provider string) error {
+func validateEncryptionValues(mode S3EncryptionMode, ref, provider, customer string) error {
 	if strings.TrimSpace(ref) != ref || strings.ContainsAny(ref, "\x00\r\n") || len(ref) > 1024 {
 		return fmt.Errorf("%w: invalid opaque S3 encryption key reference", ErrInvalid)
 	}
@@ -186,18 +203,42 @@ func validateEncryptionValues(mode S3EncryptionMode, ref, provider string) error
 		return fmt.Errorf("%w: invalid resolved S3 encryption key identity", ErrInvalid)
 	}
 	if mode == S3EncryptionSSES3 {
-		if ref != "" || provider != "" {
-			return fmt.Errorf("%w: SSE-S3 cannot carry KMS key references", ErrInvalid)
+		if ref != "" || provider != "" || customer != "" {
+			return fmt.Errorf("%w: SSE-S3 cannot carry encryption key identities", ErrInvalid)
+		}
+		return nil
+	}
+	if mode == S3EncryptionSSEC {
+		if ref == "" || provider != "" || customer == "" {
+			return fmt.Errorf("%w: SSE-C requires an opaque key reference and customer key without a provider key", ErrInvalid)
 		}
 		return nil
 	}
 	if ref == "" || provider == "" {
 		return fmt.Errorf("%w: KMS requires opaque and resolved key identities", ErrInvalid)
 	}
+	if customer != "" {
+		return fmt.Errorf("%w: SSE-KMS cannot carry a customer key", ErrInvalid)
+	}
 	if ref == provider {
 		return fmt.Errorf("%w: opaque encryption key reference was not resolved", ErrInvalid)
 	}
 	return nil
+}
+
+// decodeSSECustomerKey validates and derives the only representations the
+// adapter needs for SSE-C requests. Error text deliberately carries no key
+// material, decoded bytes, or digest.
+func decodeSSECustomerKey(mode S3EncryptionMode, encoded string) (string, string, error) {
+	if mode != S3EncryptionSSEC {
+		return "", "", nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(decoded) != 32 || base64.StdEncoding.EncodeToString(decoded) != encoded {
+		return "", "", fmt.Errorf("%w: invalid SSE-C customer key", ErrInvalid)
+	}
+	digest := md5.Sum(decoded)
+	return encoded, base64.StdEncoding.EncodeToString(digest[:]), nil
 }
 
 func validateS3Bucket(bucket string) error {
@@ -424,7 +465,7 @@ func (s *S3Store) PutImmutable(ctx context.Context, key string, reader io.Reader
 			}
 		}
 		if expected.ETag == "" || expected.VersionID == "" {
-			head, headErr := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner})
+			head, headErr := s.client.HeadObject(ctx, s.headInput(full))
 			if headErr != nil {
 				if isS3NotFound(headErr) {
 					return ObjectInfo{}, fmt.Errorf("%w: committed object is not yet visible", ErrAmbiguous)
@@ -494,7 +535,45 @@ func (s *S3Store) applyEncryption(input *awss3.PutObjectInput) {
 		input.SSEKMSKeyId = aws.String(s.providerEncryptionKey)
 		return
 	}
+	if s.encryptionMode == S3EncryptionSSEC {
+		s.applySSECustomerPut(input)
+		return
+	}
 	input.ServerSideEncryption = awss3types.ServerSideEncryptionAes256
+}
+
+func (s *S3Store) sseCustomerValues() (*string, *string, *string) {
+	if s == nil || s.encryptionMode != S3EncryptionSSEC {
+		return nil, nil, nil
+	}
+	return aws.String("AES256"), aws.String(s.customerKeyBase64), aws.String(s.customerKeyMD5)
+}
+
+func (s *S3Store) applySSECustomerPut(input *awss3.PutObjectInput) {
+	algorithm, key, keyMD5 := s.sseCustomerValues()
+	input.SSECustomerAlgorithm = algorithm
+	input.SSECustomerKey = key
+	input.SSECustomerKeyMD5 = keyMD5
+}
+
+func (s *S3Store) applySSECustomerHead(input *awss3.HeadObjectInput) {
+	algorithm, key, keyMD5 := s.sseCustomerValues()
+	input.SSECustomerAlgorithm = algorithm
+	input.SSECustomerKey = key
+	input.SSECustomerKeyMD5 = keyMD5
+}
+
+func (s *S3Store) applySSECustomerGet(input *awss3.GetObjectInput) {
+	algorithm, key, keyMD5 := s.sseCustomerValues()
+	input.SSECustomerAlgorithm = algorithm
+	input.SSECustomerKey = key
+	input.SSECustomerKeyMD5 = keyMD5
+}
+
+func (s *S3Store) headInput(full string) *awss3.HeadObjectInput {
+	input := &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner}
+	s.applySSECustomerHead(input)
+	return input
 }
 
 func sameIdentity(a, b ObjectInfo) bool {
@@ -510,7 +589,7 @@ func (s *S3Store) reconcilePut(ctx context.Context, key string, expected ObjectI
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	head, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner})
+	head, err := s.client.HeadObject(ctx, s.headInput(full))
 	if err != nil {
 		if isS3NotFound(err) {
 			return ObjectInfo{}, fmt.Errorf("%w: conflicting object is not yet visible", ErrAmbiguous)
@@ -552,7 +631,7 @@ func (s *S3Store) Open(ctx context.Context, key string) (Object, error) {
 	if err != nil {
 		return Object{}, err
 	}
-	head, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner})
+	head, err := s.client.HeadObject(ctx, s.headInput(full))
 	if err != nil {
 		if isS3NotFound(err) {
 			return Object{}, fmt.Errorf("%w: key %q", ErrNotFound, key)
@@ -568,6 +647,7 @@ func (s *S3Store) Open(ctx context.Context, key string) (Object, error) {
 
 func (s *S3Store) openWithHead(ctx context.Context, key, full string, head *awss3.HeadObjectOutput, info ObjectInfo) (Object, error) {
 	input := &awss3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner}
+	s.applySSECustomerGet(input)
 	if head.VersionId != nil && aws.ToString(head.VersionId) != "" && !strings.EqualFold(aws.ToString(head.VersionId), "null") {
 		input.VersionId = head.VersionId
 	} else if head.ETag != nil && aws.ToString(head.ETag) != "" {
@@ -704,6 +784,12 @@ func (s *S3Store) verifyEncryption(head *awss3.HeadObjectOutput) error {
 	if head == nil {
 		return fmt.Errorf("%w: nil S3 HEAD response", ErrCorrupt)
 	}
+	if s.encryptionMode == S3EncryptionSSEC {
+		if aws.ToString(head.SSECustomerAlgorithm) != "AES256" || aws.ToString(head.SSECustomerKeyMD5) != s.customerKeyMD5 || head.Metadata[s3EncryptionRefKey] != s.encryptionKeyRef {
+			return fmt.Errorf("%w: SSE-C encryption evidence mismatch", ErrCorrupt)
+		}
+		return nil
+	}
 	if s.encryptionMode == S3EncryptionSSEKMS {
 		if head.ServerSideEncryption != awss3types.ServerSideEncryptionAwsKms || aws.ToString(head.SSEKMSKeyId) != s.providerEncryptionKey || head.Metadata[s3EncryptionRefKey] != s.encryptionKeyRef {
 			return fmt.Errorf("%w: KMS encryption evidence mismatch", ErrCorrupt)
@@ -785,7 +871,7 @@ func (s *S3Store) List(ctx context.Context, prefix, cursor string, limit int) ([
 			if !prefixMatch(relative, prefix) || (cursor != "" && relative <= cursor) {
 				continue
 			}
-			head, headErr := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: entry.Key, ExpectedBucketOwner: s.expectedBucketOwner})
+			head, headErr := s.client.HeadObject(ctx, s.headInput(aws.ToString(entry.Key)))
 			if headErr != nil {
 				if isS3NotFound(headErr) {
 					return nil, "", fmt.Errorf("%w: key %q", ErrNotFound, relative)
@@ -831,7 +917,7 @@ func (s *S3Store) Delete(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	head, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner})
+	head, err := s.client.HeadObject(ctx, s.headInput(full))
 	if err != nil {
 		if isS3NotFound(err) {
 			return fmt.Errorf("%w: key %q", ErrNotFound, key)
@@ -924,7 +1010,7 @@ func (s *S3Store) DeleteExact(ctx context.Context, observed ObjectInfo) error {
 }
 
 func (s *S3Store) reconcileDeleteExact(ctx context.Context, key, full string, observed ObjectInfo) error {
-	headInput := &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner}
+	headInput := s.headInput(full)
 	if observed.VersionID != "" && !strings.EqualFold(observed.VersionID, "null") {
 		headInput.VersionId = aws.String(observed.VersionID)
 	}
@@ -959,7 +1045,7 @@ func (s *S3Store) reconcileDeleteExact(ctx context.Context, key, full string, ob
 }
 
 func (s *S3Store) reconcileDelete(ctx context.Context, key, full string, original ObjectInfo) error {
-	head, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner})
+	head, err := s.client.HeadObject(ctx, s.headInput(full))
 	if err != nil {
 		if isS3NotFound(err) {
 			return nil

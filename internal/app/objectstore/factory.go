@@ -163,21 +163,37 @@ func newS3(ctx context.Context, cfg appconfig.Config, instanceID, environment st
 	if err != nil {
 		return nil, "", err
 	}
-	enc := platformstore.S3EncryptionConfig{Mode: mode, OpaqueKeyRef: cfg.ObjectStoreS3EncryptionKeyRef, ProviderKey: cfg.ObjectStoreS3EncryptionProviderKey}
+	enc := platformstore.S3EncryptionConfig{Mode: mode, OpaqueKeyRef: cfg.ObjectStoreS3EncryptionKeyRef, ProviderKey: cfg.ObjectStoreS3EncryptionProviderKey, CustomerKey: cfg.ObjectStoreS3EncryptionCustomerKey}
 	if strings.TrimSpace(enc.OpaqueKeyRef) != enc.OpaqueKeyRef || strings.TrimSpace(enc.ProviderKey) != enc.ProviderKey {
 		return nil, "", fmt.Errorf("object-store S3 encryption identities must not contain surrounding whitespace")
 	}
-	if mode == platformstore.S3EncryptionSSES3 {
-		if enc.OpaqueKeyRef != "" || enc.ProviderKey != "" {
-			return nil, "", fmt.Errorf("SSE-S3 object storage cannot carry KMS key identities")
+	switch mode {
+	case platformstore.S3EncryptionSSES3:
+		if enc.OpaqueKeyRef != "" || enc.ProviderKey != "" || enc.CustomerKey != "" {
+			return nil, "", fmt.Errorf("SSE-S3 object storage cannot carry encryption key identities")
 		}
-	} else if enc.OpaqueKeyRef == "" || enc.ProviderKey == "" || enc.OpaqueKeyRef == enc.ProviderKey {
-		return nil, "", fmt.Errorf("SSE-KMS object storage requires distinct opaque and resolved provider key identities")
+	case platformstore.S3EncryptionSSEKMS:
+		if enc.OpaqueKeyRef == "" || enc.ProviderKey == "" || enc.OpaqueKeyRef == enc.ProviderKey || enc.CustomerKey != "" {
+			return nil, "", fmt.Errorf("SSE-KMS object storage requires distinct opaque and resolved provider key identities without a customer key")
+		}
+	case platformstore.S3EncryptionSSEC:
+		if enc.OpaqueKeyRef == "" || enc.ProviderKey != "" || enc.CustomerKey == "" {
+			return nil, "", fmt.Errorf("SSE-C object storage requires an opaque key epoch and customer key without a provider key")
+		}
+		if endpoint != "" {
+			parsedEndpoint, parseErr := url.Parse(endpoint)
+			if parseErr != nil || parsedEndpoint.Scheme != "https" {
+				return nil, "", fmt.Errorf("SSE-C object storage requires an HTTPS custom endpoint")
+			}
+		}
 	}
 	if strings.TrimSpace(cfg.ObjectStoreS3ExpectedBucketOwner) != cfg.ObjectStoreS3ExpectedBucketOwner {
 		return nil, "", fmt.Errorf("object-store S3 expected bucket owner must not contain surrounding whitespace")
 	}
-	encryptionIdentity := string(mode) + "|opaque=" + enc.OpaqueKeyRef + "|provider=" + enc.ProviderKey
+	encryptionIdentity := string(mode) + "|opaque=" + enc.OpaqueKeyRef
+	if mode == platformstore.S3EncryptionSSEKMS {
+		encryptionIdentity += "|provider=" + enc.ProviderKey
+	}
 	namespace := "s3:" + strings.TrimSpace(cfg.ObjectStoreS3Bucket) + "|prefix=" + prefix + "|region=" + strings.TrimSpace(cfg.ObjectStoreS3Region) + "|endpoint=" + endpoint
 	domain, err := DeriveStorageSecurityDomain(instanceID, environment, namespace, encryptionIdentity)
 	if err != nil {
@@ -241,6 +257,8 @@ func normalizeEncryptionMode(raw string) (platformstore.S3EncryptionMode, error)
 		return platformstore.S3EncryptionSSES3, nil
 	case "aws:kms":
 		return platformstore.S3EncryptionSSEKMS, nil
+	case "sse-c":
+		return platformstore.S3EncryptionSSEC, nil
 	default:
 		return "", fmt.Errorf("unsupported object-store S3 encryption mode %q", raw)
 	}

@@ -1740,13 +1740,23 @@
             "required": [
               "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE"
             ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE": {
+                "const": "sse-c"
+              }
+            },
+            "required": [
+              "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE"
+            ]
           }
         ]
       },
-      "x-error-message": "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE must be AES256 (SSE-S3) or aws:kms (SSE-KMS)"
+      "x-error-message": "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE must be AES256 (SSE-S3), aws:kms (SSE-KMS), or sse-c (SSE-C)"
     },
     {
-      "description": "SSE-S3 does not accept KMS key identities.",
+      "description": "SSE-S3 does not accept encryption key identities.",
       "if": {
         "allOf": [
           {
@@ -1796,13 +1806,25 @@
                 "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_PROVIDER_KEY"
               ]
             }
+          },
+          {
+            "not": {
+              "properties": {
+                "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_CUSTOMER_KEY": {
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_CUSTOMER_KEY"
+              ]
+            }
           }
         ]
       },
-      "x-error-message": "SSE-S3 object storage must not set LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_KEY_REF or LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_PROVIDER_KEY"
+      "x-error-message": "SSE-S3 object storage must not set encryption key references, provider keys, or customer keys"
     },
     {
-      "description": "SSE-KMS requires both opaque and resolved provider key identities.",
+      "description": "SSE-KMS requires both opaque and resolved provider key identities and no customer key.",
       "if": {
         "allOf": [
           {
@@ -1848,10 +1870,140 @@
             "required": [
               "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_PROVIDER_KEY"
             ]
+          },
+          {
+            "not": {
+              "properties": {
+                "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_CUSTOMER_KEY": {
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_CUSTOMER_KEY"
+              ]
+            }
           }
         ]
       },
-      "x-error-message": "SSE-KMS object storage requires LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_KEY_REF and LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_PROVIDER_KEY"
+      "x-error-message": "SSE-KMS object storage requires an opaque key reference and resolved provider key, and must not set a customer key"
+    },
+    {
+      "description": "SSE-C requires an opaque key epoch and customer key without a provider key.",
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "LEAPVIEW_OBJECT_STORE_BACKEND": {
+                "const": "s3"
+              }
+            },
+            "required": [
+              "LEAPVIEW_OBJECT_STORE_BACKEND"
+            ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE": {
+                "const": "sse-c"
+              }
+            },
+            "required": [
+              "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_KEY_REF": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_KEY_REF"
+            ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_CUSTOMER_KEY": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_CUSTOMER_KEY"
+            ]
+          },
+          {
+            "not": {
+              "properties": {
+                "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_PROVIDER_KEY": {
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_PROVIDER_KEY"
+              ]
+            }
+          }
+        ]
+      },
+      "x-error-message": "SSE-C object storage requires LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_KEY_REF and LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_CUSTOMER_KEY, and must not set a provider key"
+    },
+    {
+      "description": "A configured SSE-C custom endpoint must use HTTPS; the AWS default endpoint is also supported.",
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "LEAPVIEW_OBJECT_STORE_BACKEND": {
+                "const": "s3"
+              }
+            },
+            "required": [
+              "LEAPVIEW_OBJECT_STORE_BACKEND"
+            ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE": {
+                "const": "sse-c"
+              }
+            },
+            "required": [
+              "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "not": {
+              "properties": {
+                "LEAPVIEW_OBJECT_STORE_S3_ENDPOINT": {
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "LEAPVIEW_OBJECT_STORE_S3_ENDPOINT"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "LEAPVIEW_OBJECT_STORE_S3_ENDPOINT": {
+                "pattern": "^https://[^/]+"
+              }
+            },
+            "required": [
+              "LEAPVIEW_OBJECT_STORE_S3_ENDPOINT"
+            ]
+          }
+        ]
+      },
+      "x-error-message": "SSE-C object storage custom endpoints must use HTTPS"
     }
   ],
   "properties": {
@@ -2456,15 +2608,22 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_CUSTOMER_KEY": {
+      "description": "Secret standard-base64 32-byte customer key used for immutable object-store S3 SSE-C requests.",
+      "type": "string",
+      "writeOnly": true,
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_KEY_REF": {
-      "description": "Opaque application reference for resolving the immutable object-store S3 KMS key; never sent to S3 as a key ID.",
+      "description": "Opaque application encryption-key epoch reference for immutable object-store S3 encryption; never sent to S3 as a key ID.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
     "LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE": {
       "default": "AES256",
-      "description": "Explicit server-side encryption mode for immutable object-store S3 objects: AES256 (SSE-S3) or aws:kms (SSE-KMS).",
+      "description": "Explicit server-side encryption mode for immutable object-store S3 objects: AES256 (SSE-S3), aws:kms (SSE-KMS), or sse-c (SSE-C).",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"

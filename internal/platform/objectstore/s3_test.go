@@ -3,11 +3,15 @@ package objectstore
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,14 +23,16 @@ import (
 )
 
 type fakeS3Object struct {
-	body        []byte
-	meta        map[string]string
-	contentType string
-	created     time.Time
-	etag        string
-	version     string
-	encryption  awss3types.ServerSideEncryption
-	kmsKey      string
+	body              []byte
+	meta              map[string]string
+	contentType       string
+	created           time.Time
+	etag              string
+	version           string
+	encryption        awss3types.ServerSideEncryption
+	kmsKey            string
+	customerAlgorithm string
+	customerKeyMD5    string
 }
 
 type fakeS3Client struct {
@@ -41,8 +47,10 @@ type fakeS3Client struct {
 	deleteErrAfterDelete bool
 	deleteRejectIfMatch  bool
 	puts                 []*awss3.PutObjectInput
+	heads                []*awss3.HeadObjectInput
 	deletes              []*awss3.DeleteObjectInput
 	gets                 []*awss3.GetObjectInput
+	lists                []*awss3.ListObjectsV2Input
 }
 
 func newFakeS3() *fakeS3Client { return &fakeS3Client{objects: make(map[string]fakeS3Object)} }
@@ -66,7 +74,7 @@ func (f *fakeS3Client) PutObject(ctx context.Context, in *awss3.PutObjectInput, 
 	if putErr != nil && !f.putErrAfterCommit {
 		return nil, putErr
 	}
-	f.objects[key] = fakeS3Object{body: body, meta: cloneMap(in.Metadata), contentType: aws.ToString(in.ContentType), created: time.Now().UTC(), etag: "\"etag-" + strconv.Itoa(len(f.objects)) + "\"", version: "v1", encryption: in.ServerSideEncryption, kmsKey: aws.ToString(in.SSEKMSKeyId)}
+	f.objects[key] = fakeS3Object{body: body, meta: cloneMap(in.Metadata), contentType: aws.ToString(in.ContentType), created: time.Now().UTC(), etag: "\"etag-" + strconv.Itoa(len(f.objects)) + "\"", version: "v1", encryption: in.ServerSideEncryption, kmsKey: aws.ToString(in.SSEKMSKeyId), customerAlgorithm: aws.ToString(in.SSECustomerAlgorithm), customerKeyMD5: aws.ToString(in.SSECustomerKeyMD5)}
 	if putErr != nil {
 		return nil, putErr
 	}
@@ -79,6 +87,7 @@ func (f *fakeS3Client) HeadObject(ctx context.Context, in *awss3.HeadObjectInput
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.heads = append(f.heads, in)
 	if f.headErr != nil {
 		return nil, f.headErr
 	}
@@ -89,7 +98,7 @@ func (f *fakeS3Client) HeadObject(ctx context.Context, in *awss3.HeadObjectInput
 	if in.VersionId != nil && aws.ToString(in.VersionId) != o.version {
 		return nil, &smithy.GenericAPIError{Code: "NoSuchVersion", Message: "version missing"}
 	}
-	return &awss3.HeadObjectOutput{ContentLength: aws.Int64(int64(len(o.body))), Metadata: cloneMap(o.meta), ContentType: aws.String(o.contentType), LastModified: aws.Time(o.created), ETag: aws.String(o.etag), VersionId: aws.String(o.version), ServerSideEncryption: o.encryption, SSEKMSKeyId: aws.String(o.kmsKey)}, nil
+	return &awss3.HeadObjectOutput{ContentLength: aws.Int64(int64(len(o.body))), Metadata: cloneMap(o.meta), ContentType: aws.String(o.contentType), LastModified: aws.Time(o.created), ETag: aws.String(o.etag), VersionId: aws.String(o.version), ServerSideEncryption: o.encryption, SSEKMSKeyId: aws.String(o.kmsKey), SSECustomerAlgorithm: aws.String(o.customerAlgorithm), SSECustomerKeyMD5: aws.String(o.customerKeyMD5)}, nil
 }
 
 func (f *fakeS3Client) GetObject(ctx context.Context, in *awss3.GetObjectInput, _ ...func(*awss3.Options)) (*awss3.GetObjectOutput, error) {
@@ -118,6 +127,7 @@ func (f *fakeS3Client) ListObjectsV2(ctx context.Context, in *awss3.ListObjectsV
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
+	f.lists = append(f.lists, in)
 	keys := make([]string, 0, len(f.objects))
 	for key := range f.objects {
 		if len(aws.ToString(in.Prefix)) == 0 || bytes.HasPrefix([]byte(key), []byte(aws.ToString(in.Prefix))) {
@@ -363,6 +373,78 @@ func TestS3StoreKMSAndStrictConfiguration(t *testing.T) {
 		if _, err := NewS3Store(client, cfg); !errors.Is(err, ErrInvalid) {
 			t.Errorf("config %#v error = %v", cfg, err)
 		}
+	}
+}
+
+func TestS3StoreSSECustomerEncryptionHeadersAndEvidence(t *testing.T) {
+	client := newFakeS3()
+	keyBytes := bytes.Repeat([]byte{0x42}, 32)
+	customerKey := base64.StdEncoding.EncodeToString(keyBytes)
+	keyMD5Sum := md5.Sum(keyBytes)
+	keyMD5 := base64.StdEncoding.EncodeToString(keyMD5Sum[:])
+	store := s3TestStore(t, client, S3EncryptionConfig{Mode: S3EncryptionSSEC, OpaqueKeyRef: "customer-epoch-1", CustomerKey: customerKey})
+	body := []byte("sse-c")
+	if _, err := store.PutImmutable(context.Background(), "customer/item", bytes.NewReader(body), metadataFor(body)); err != nil {
+		t.Fatal(err)
+	}
+	put := client.puts[0]
+	if put.ServerSideEncryption != "" || aws.ToString(put.SSECustomerAlgorithm) != "AES256" || aws.ToString(put.SSECustomerKey) != customerKey || aws.ToString(put.SSECustomerKeyMD5) != keyMD5 {
+		t.Fatal("SSE-C PUT encryption headers were not applied")
+	}
+	if put.Metadata[s3EncryptionRefKey] != "customer-epoch-1" || strings.Contains(fmt.Sprint(put.Metadata), customerKey) || strings.Contains(fmt.Sprint(put.Metadata), keyMD5) {
+		t.Fatalf("SSE-C metadata exposed key material: %#v", put.Metadata)
+	}
+	assertSSECustomerHead := func() {
+		t.Helper()
+		if len(client.heads) == 0 {
+			t.Fatal("SSE-C operation did not issue HEAD")
+		}
+		head := client.heads[len(client.heads)-1]
+		if aws.ToString(head.SSECustomerAlgorithm) != "AES256" || aws.ToString(head.SSECustomerKey) != customerKey || aws.ToString(head.SSECustomerKeyMD5) != keyMD5 {
+			t.Fatal("SSE-C HEAD encryption headers were not applied")
+		}
+	}
+	assertSSECustomerHead()
+	opened, err := store.Open(context.Background(), "customer/item")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened.Body.Close()
+	assertSSECustomerHead()
+	get := client.gets[len(client.gets)-1]
+	if aws.ToString(get.SSECustomerAlgorithm) != "AES256" || aws.ToString(get.SSECustomerKey) != customerKey || aws.ToString(get.SSECustomerKeyMD5) != keyMD5 {
+		t.Fatal("SSE-C GET encryption headers were not applied")
+	}
+	if _, _, err := store.List(context.Background(), "customer", "", 10); err != nil {
+		t.Fatal(err)
+	}
+	assertSSECustomerHead()
+	if err := store.Delete(context.Background(), "customer/item"); err != nil {
+		t.Fatal(err)
+	}
+	assertSSECustomerHead()
+}
+
+func TestS3StoreSSECustomerKeyValidationAndMutualExclusion(t *testing.T) {
+	client := newFakeS3()
+	valid := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x7f}, 32))
+	for name, encryption := range map[string]S3EncryptionConfig{
+		"invalid base64": {Mode: S3EncryptionSSEC, OpaqueKeyRef: "epoch", CustomerKey: "not-base64"},
+		"wrong length":   {Mode: S3EncryptionSSEC, OpaqueKeyRef: "epoch", CustomerKey: base64.StdEncoding.EncodeToString([]byte("short"))},
+		"provider key":   {Mode: S3EncryptionSSEC, OpaqueKeyRef: "epoch", ProviderKey: "provider", CustomerKey: valid},
+		"missing epoch":  {Mode: S3EncryptionSSEC, CustomerKey: valid},
+		"AES256 key":     {Mode: S3EncryptionSSES3, CustomerKey: valid},
+		"KMS key":        {Mode: S3EncryptionSSEKMS, OpaqueKeyRef: "epoch", ProviderKey: "provider", CustomerKey: valid},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewS3Store(client, S3StoreConfig{Bucket: "bucket-a", StorageSecurityDomain: "domain-a", Encryption: encryption})
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatalf("error = %v, want ErrInvalid", err)
+			}
+			if strings.Contains(err.Error(), valid) {
+				t.Fatalf("error exposed customer key: %v", err)
+			}
+		})
 	}
 }
 

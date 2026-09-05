@@ -1,7 +1,9 @@
 package objectstore
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"os"
@@ -138,6 +140,64 @@ func TestS3FactoryUsesInjectedConstructorsAndAmbientCredentials(t *testing.T) {
 	}
 	if kmsDomain == domain {
 		t.Fatal("SSE-KMS encryption identity did not change storage domain")
+	}
+}
+
+func TestS3FactorySSECustomerConfigurationAndDomainIdentity(t *testing.T) {
+	customerKey := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	base := config.Config{
+		ObjectStoreBackend:                 "s3",
+		ObjectStoreS3Bucket:                "objects",
+		ObjectStoreS3Region:                "eu-west-1",
+		ObjectStoreS3Endpoint:              "https://s3.example.com",
+		ObjectStoreS3EncryptionMode:        "sse-c",
+		ObjectStoreS3EncryptionKeyRef:      "customer-epoch-1",
+		ObjectStoreS3EncryptionCustomerKey: customerKey,
+	}
+	options := Options{
+		LoadAWSConfig: func(context.Context, ...func(*awsconfig.LoadOptions) error) (aws.Config, error) {
+			return aws.Config{}, nil
+		},
+		NewS3Client: func(aws.Config, ...func(*awss3.Options)) platformstore.S3Client { return &stubS3Client{} },
+	}
+	if _, domain, err := NewWithOptions(context.Background(), base, "instance-a", "production", options); err != nil || domain == "" {
+		t.Fatalf("valid SSE-C object store = %q, %v", domain, err)
+	}
+	_, domain, err := NewWithOptions(context.Background(), base, "instance-a", "production", options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedCustomerKey := base
+	changedCustomerKey.ObjectStoreS3EncryptionCustomerKey = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
+	_, changedDomain, err := NewWithOptions(context.Background(), changedCustomerKey, "instance-a", "production", options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changedDomain != domain {
+		t.Fatalf("customer key changed security domain: %q != %q", changedDomain, domain)
+	}
+	changedEpoch := base
+	changedEpoch.ObjectStoreS3EncryptionKeyRef = "customer-epoch-2"
+	_, epochDomain, err := NewWithOptions(context.Background(), changedEpoch, "instance-a", "production", options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if epochDomain == domain {
+		t.Fatal("opaque customer-key epoch did not change security domain")
+	}
+	for name, endpoint := range map[string]string{"http": "http://s3.example.com"} {
+		t.Run(name, func(t *testing.T) {
+			invalid := base
+			invalid.ObjectStoreS3Endpoint = endpoint
+			if _, _, err := NewWithOptions(context.Background(), invalid, "instance-a", "production", options); err == nil {
+				t.Fatalf("SSE-C endpoint %q was accepted", endpoint)
+			}
+		})
+	}
+	withoutCustomEndpoint := base
+	withoutCustomEndpoint.ObjectStoreS3Endpoint = ""
+	if _, _, err := NewWithOptions(context.Background(), withoutCustomEndpoint, "instance-a", "production", options); err != nil {
+		t.Fatalf("SSE-C with AWS default endpoint rejected: %v", err)
 	}
 }
 
