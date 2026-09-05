@@ -1867,7 +1867,7 @@ func setupManagedTypeSpecCache(t *testing.T) {
 	t.Setenv(typeSpecPackageDirEnv, "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_CACHE_HOME", managedTypeSpecCacheRoot)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 }
 
 func writeCanonicalOpenAPI(t *testing.T, dir string, doc ir.Document) string {

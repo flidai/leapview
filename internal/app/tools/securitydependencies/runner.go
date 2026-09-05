@@ -220,10 +220,6 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 		args = append(args, "--json")
 	}
 	result := r.command(dir, "bun", args...)
-	if retryableBunAuditTransport(result) {
-		fmt.Fprintf(r.stderr, "bun audit %s: transient transport failure; retrying once\n", dir)
-		result = r.command(dir, "bun", args...)
-	}
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("bun audit", dir, result)
@@ -259,26 +255,6 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 	return statusError("bun audit", dir, status)
 }
 
-func retryableBunAuditTransport(result commandResult) bool {
-	if result.status == 0 {
-		return false
-	}
-	if _, _, err := bunFindingCounts(result.stdout); err == nil {
-		return false
-	}
-	diagnostic := strings.ToLower(string(result.stdout) + "\n" + string(result.stderr))
-	for _, signature := range []string{
-		"audit request failed (status 503)",
-		"connectionclosed: audit request failed",
-		"timeout: audit request failed",
-	} {
-		if strings.Contains(diagnostic, signature) {
-			return true
-		}
-	}
-	return false
-}
-
 func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 	dir := filepath.Dir(lockFile)
 	fmt.Fprintf(r.stdout, "npm audit %s\n", dir)
@@ -287,10 +263,6 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 		args = append(args, "--json")
 	}
 	result := r.command(dir, "npm", args...)
-	if retryableNPMAuditTransport(result) {
-		fmt.Fprintf(r.stderr, "npm audit %s: transient transport failure; retrying once\n", dir)
-		result = r.command(dir, "npm", args...)
-	}
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("npm audit", dir, result)
@@ -305,28 +277,6 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 	r.emitFailure(result)
 	return commandError("npm audit", dir, result)
 }
-
-func retryableNPMAuditTransport(result commandResult) bool {
-	if result.status == 0 {
-		return false
-	}
-	var payload struct {
-		StatusCode      int             `json:"statusCode"`
-		Message         string          `json:"message"`
-		Vulnerabilities json.RawMessage `json:"vulnerabilities"`
-	}
-	if err := json.Unmarshal(result.stdout, &payload); err != nil || payload.Vulnerabilities != nil {
-		return false
-	}
-	if payload.StatusCode != 503 || payload.Message != npmAuditBulk503Message {
-		return false
-	}
-	diagnostic := strings.ToLower(string(result.stderr))
-	return strings.Contains(diagnostic, "npm warn audit 503 service unavailable") ||
-		strings.Contains(diagnostic, "npm error audit endpoint returned an error")
-}
-
-const npmAuditBulk503Message = "503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable"
 
 func (r *runner) emitDirect(result commandResult) {
 	if len(result.stdout) > 0 {

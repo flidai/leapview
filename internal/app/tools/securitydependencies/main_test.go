@@ -72,9 +72,6 @@ func TestCoveredBunFailsClosedAndAcceptsOnlyNonblockingStatusOne(t *testing.T) {
 	if err := r.scanBun(filepath.Join(root, "bun.lock"), &contract); err == nil || !strings.Contains(stderr.String(), "not valid JSON") {
 		t.Fatalf("malformed Bun output was not rejected: err=%v stderr=%q stdout=%q", err, stderr.String(), stdout.String())
 	}
-	if got := strings.Count(mustRead(t, log), "bun|"); got != 1 {
-		t.Fatalf("malformed Bun output was retried: %d invocations", got)
-	}
 
 	setFakeScannerMode(t, "bun-nonblocking")
 	stdout.Reset()
@@ -91,123 +88,6 @@ func TestCoveredBunFailsClosedAndAcceptsOnlyNonblockingStatusOne(t *testing.T) {
 	stderr.Reset()
 	if err := r.scanBun(filepath.Join(root, "bun.lock"), &contract); err == nil || !strings.Contains(stderr.String(), "scanner failed without decoded blocking findings") {
 		t.Fatalf("Bun outage was not rejected: err=%v stderr=%q stdout=%q", err, stderr.String(), stdout.String())
-	}
-}
-
-func TestCoveredBunRetriesTransientTransportOnce(t *testing.T) {
-	contract := exceptionContract{}
-	root, bin, log := scannerFixture(t)
-	setFakeScannerEnv(t, bin, log, "bun-transient-once")
-	var stdout, stderr bytes.Buffer
-	r := &runner{root: root, timeout: time.Second, stdout: &stdout, stderr: &stderr}
-	if err := r.scanBun(filepath.Join(root, "bun.lock"), &contract); err != nil {
-		t.Fatalf("transient Bun audit failure was not recovered: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
-	}
-	if got := strings.Count(mustRead(t, log), "bun|"); got != 2 {
-		t.Fatalf("transient Bun audit failure attempts = %d, want 2", got)
-	}
-	if !strings.Contains(stderr.String(), "retrying once") {
-		t.Fatalf("retry diagnostic is missing: %s", stderr.String())
-	}
-
-	setFakeScannerMode(t, "bun-finding-with-transport-error")
-	stdout.Reset()
-	stderr.Reset()
-	before := strings.Count(mustRead(t, log), "bun|")
-	if err := r.scanBun(filepath.Join(root, "bun.lock"), &contract); err == nil {
-		t.Fatal("decoded critical finding was accepted")
-	}
-	if got := strings.Count(mustRead(t, log), "bun|"); got != before+1 {
-		t.Fatalf("decoded critical finding was retried: %d new invocations", got-before)
-	}
-}
-
-func TestNPMRetriesTransientTransportOnce(t *testing.T) {
-	statusJSON := `{"statusCode":503,"message":"` + npmAuditBulk503Message + `","error":{"code":"E503"}}`
-	stderrText := "npm warn audit 503 Service Unavailable\nnpm error audit endpoint returned an error"
-	result := commandResult{
-		status: 1,
-		stdout: []byte(statusJSON),
-		stderr: []byte(stderrText),
-	}
-	if !retryableNPMAuditTransport(result) {
-		t.Fatal("observed npm audit transport failure was not classified as retryable")
-	}
-	for _, tc := range []struct {
-		name   string
-		stdout string
-		stderr string
-	}{
-		{name: "missing status code", stdout: `{"message":"` + npmAuditBulk503Message + `"}`, stderr: stderrText},
-		{name: "missing endpoint URL", stdout: `{"statusCode":503,"message":"503 Service Unavailable"}`, stderr: stderrText},
-		{name: "missing npm diagnostic", stdout: statusJSON, stderr: "npm warn audit request failed"},
-		{name: "nested old shape", stdout: `{"error":{"statusCode":503,"message":"` + npmAuditBulk503Message + `"}}`, stderr: stderrText},
-		{name: "malformed JSON", stdout: `{"statusCode":503,"message":"` + npmAuditBulk503Message + `"`, stderr: stderrText},
-		{name: "trailing garbage", stdout: statusJSON + " trailing", stderr: stderrText},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if retryableNPMAuditTransport(commandResult{status: 1, stdout: []byte(tc.stdout), stderr: []byte(tc.stderr)}) {
-				t.Fatal("incomplete npm audit transport failure was classified as retryable")
-			}
-		})
-	}
-
-	contract := exceptionContract{}
-	root, bin, log := scannerFixture(t)
-	setFakeScannerEnv(t, bin, log, "npm-transient-once")
-	var stdout, stderr bytes.Buffer
-	r := &runner{root: root, timeout: time.Second, stdout: &stdout, stderr: &stderr}
-	if err := r.scanNPM(filepath.Join(root, "typespec", "package-lock.json"), &contract); err != nil {
-		t.Fatalf("transient npm audit failure was not recovered: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
-	}
-	if got := strings.Count(mustRead(t, log), "npm|"); got != 2 {
-		t.Fatalf("transient npm audit failure attempts = %d, want 2", got)
-	}
-	if !strings.Contains(stderr.String(), "retrying once") {
-		t.Fatalf("retry diagnostic is missing: %s", stderr.String())
-	}
-}
-
-func TestNPMDoesNotRetryValidFindings(t *testing.T) {
-	contract := exceptionContract{}
-	root, bin, log := scannerFixture(t)
-	setFakeScannerEnv(t, bin, log, "npm-finding")
-	var stdout, stderr bytes.Buffer
-	r := &runner{root: root, timeout: time.Second, stdout: &stdout, stderr: &stderr}
-	if err := r.scanNPM(filepath.Join(root, "typespec", "package-lock.json"), &contract); err == nil {
-		t.Fatal("critical npm finding was accepted")
-	}
-	if got := strings.Count(mustRead(t, log), "npm|"); got != 1 {
-		t.Fatalf("valid npm finding was retried: %d invocations", got)
-	}
-
-	setFakeScannerMode(t, "npm-finding-with-transport-error")
-	stdout.Reset()
-	stderr.Reset()
-	before := strings.Count(mustRead(t, log), "npm|")
-	if err := r.scanNPM(filepath.Join(root, "typespec", "package-lock.json"), &contract); err == nil {
-		t.Fatal("critical npm finding with transport diagnostics was accepted")
-	}
-	if got := strings.Count(mustRead(t, log), "npm|"); got != before+1 {
-		t.Fatalf("valid npm finding with transport diagnostics was retried: %d new invocations", got-before)
-	}
-
-	setFakeScannerMode(t, "npm-malformed")
-	stdout.Reset()
-	stderr.Reset()
-	before = strings.Count(mustRead(t, log), "npm|")
-	if err := r.scanNPM(filepath.Join(root, "typespec", "package-lock.json"), &contract); err == nil {
-		t.Fatal("malformed npm output was accepted")
-	}
-	if got := strings.Count(mustRead(t, log), "npm|"); got != before+1 {
-		t.Fatalf("malformed npm output was retried: %d new invocations", got-before)
-	}
-}
-
-func TestRetryableBunAuditTransportRejectsUnrelatedMalformedOutput(t *testing.T) {
-	result := commandResult{status: 1, stderr: []byte("audit request failed while parsing timeout metadata")}
-	if retryableBunAuditTransport(result) {
-		t.Fatal("unrelated malformed output was classified as a transport failure")
 	}
 }
 
@@ -271,35 +151,7 @@ func scannerFixture(t *testing.T) (root, bin, log string) {
 set -eu
 tool="$(basename "$0")"
 printf '%s|%s|%s\n' "$tool" "$PWD" "$*" >> "$SECURITY_TEST_LOG"
-if [[ "$tool" == "go" ]]; then exit 0; fi
-if [[ "$tool" == "npm" ]]; then
-  case "${SECURITY_TEST_MODE:-}" in
-  npm-transient-once)
-    attempts="$(grep -c '^npm|' "$SECURITY_TEST_LOG" || true)"
-    if [[ "$attempts" == "1" ]]; then
-      printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","error":{"code":"E503"}}\n'
-      printf 'npm warn audit 503 Service Unavailable\n' >&2
-      printf 'npm error audit endpoint returned an error\n' >&2
-      exit 1
-    fi
-    printf '{}\n'
-    ;;
-  npm-finding)
-    printf '{"vulnerabilities":{"example-package":{"severity":"critical","via":[{"source":"GHSA-test-1","severity":"critical"}]}}}\n'
-    exit 1
-    ;;
-  npm-finding-with-transport-error)
-    printf '{"vulnerabilities":{"example-package":{"severity":"critical","via":[{"source":"GHSA-test-1","severity":"critical"}]}},"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","error":{"code":"E503"}}\n'
-    printf 'npm error audit endpoint returned an error\n' >&2
-    exit 1
-    ;;
-  npm-malformed)
-    printf 'npm audit returned malformed output\n'
-    exit 1
-    ;;
-  esac
-  exit 0
-fi
+if [[ "$tool" == "go" || "$tool" == "npm" ]]; then exit 0; fi
 case "${SECURITY_TEST_MODE:-}" in
 vulnerable)
   if [[ "$tool" == "bun" ]]; then printf 'critical dependency finding\n' >&2; exit 1; fi ;;
@@ -309,18 +161,6 @@ bun-nonblocking)
   if [[ "$tool" == "bun" ]]; then printf '{"example-package":[{"id":123,"severity":"moderate"}]}\n'; exit 1; fi ;;
 bun-outage)
   if [[ "$tool" == "bun" ]]; then printf '{}\n'; printf 'bun scanner unavailable\n' >&2; exit 70; fi ;;
-bun-transient-once)
-  if [[ "$tool" == "bun" ]]; then
-    attempts="$(grep -c '^bun|' "$SECURITY_TEST_LOG" || true)"
-    if [[ "$attempts" == "1" ]]; then printf 'error: ConnectionClosed: audit request failed (status 503)\n' >&2; exit 1; fi
-    printf '{}\n'
-  fi ;;
-bun-finding-with-transport-error)
-  if [[ "$tool" == "bun" ]]; then
-    printf '{"example-package":[{"id":"GHSA-test-1","severity":"critical"}]}\n'
-    printf 'Timeout: audit request failed\n' >&2
-    exit 1
-  fi ;;
 esac
 exit 0
 `
