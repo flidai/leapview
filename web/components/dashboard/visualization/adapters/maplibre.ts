@@ -1,4 +1,4 @@
-import type { VisualizationEnvelope, VisualizationGeographicLayer, VisualizationGeometryAsset } from '../../../../generated/visualization'
+import type { VisualizationEnvelope, VisualizationGeographicLayer, VisualizationGeometryAsset, VisualizationMapStyleAsset } from '../../../../generated/visualization'
 import { Map as MapLibre, NavigationControl, type GeoJSONSource, type Map as MapLibreMap, type MapMouseEvent, type MapOptions, type VectorTileSource } from 'maplibre-gl'
 import type { FeatureCollection } from 'geojson'
 import type { OptimisticInteractionCommand } from '../../interaction-selection'
@@ -12,7 +12,7 @@ import { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
 import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledPrecisionLayerIDs } from './maplibre/layers'
 import { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
 import { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries, type RenderedFeatureLocator } from './maplibre/overlays'
-import { emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
+import { emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, setMapStyleAndWait, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
 import { MapSpatialSelectionControl } from './maplibre/spatial-selection-control'
 import { combineMapFilters, formatMapRangeValue, mapValueFilteredEnvelope, mapValueFilterExpression, mapValueRange, mapValueRangePercent, withMapValueSelection, type MapValueRange } from './maplibre/value-range'
 import { coordinateReferenceGrid, fitMapToGeographicData, fitMapToSpatialExtent, resetMapToHome, type MapHomeCamera } from './maplibre/viewport'
@@ -24,7 +24,7 @@ export { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
 export { applyFeatureScales, mapLayer, mapOutlineLayer, normalizeFeatureWeights, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledPrecisionLayerIDs } from './maplibre/layers'
 export { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
 export { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries } from './maplibre/overlays'
-export { installWebGLRecovery, removeRendererFrame, waitForMapIdle, waitForMapRender } from './maplibre/lifecycle'
+export { installWebGLRecovery, removeRendererFrame, setMapStyleAndWait, waitForMapIdle, waitForMapRender } from './maplibre/lifecycle'
 export { coordinateReferenceGrid, fitMapToGeographicData, resetMapToHome } from './maplibre/viewport'
 
 export const mapAccessibleTableStyle = 'position:absolute;z-index:3;left:10px;bottom:50px;max-width:min(520px,calc(100% - 20px));max-height:55%;overflow:auto;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary);box-shadow:0 1px 3px rgba(31,35,40,.12)'
@@ -145,6 +145,11 @@ export function mapPointerOptions(envelope: VisualizationEnvelope): Pick<MapOpti
   }
 }
 
+export function mapBasemapIdentity(asset: VisualizationMapStyleAsset | undefined): string {
+  if (!asset) return 'blank'
+  return [asset.id, asset.styleUrl, asset.styleDigest, asset.archiveUrl, asset.archiveDigest, asset.glyphsUrl, asset.spriteUrl].join('\u0000')
+}
+
 export function mapSelectionControlAvailable(envelope: VisualizationEnvelope): boolean {
   return envelope.spec.interactions.some((candidate) => candidate.kind === 'select')
 }
@@ -181,6 +186,7 @@ class MapLibreHandle implements RendererHandle {
   private viewportInitialized = false
   private updateQueue: Promise<void> = Promise.resolve()
   private lastBasemapThemeKey = ''
+  private basemapIdentity?: string
   private disposed = false
   private readonly disposeWebGLRecovery: () => void
   constructor(private readonly container: HTMLElement, private readonly frame: HTMLElement, private readonly map: MapLibreMap, private readonly attribution: HTMLElement, private context: RendererContext) {
@@ -234,13 +240,20 @@ class MapLibreHandle implements RendererHandle {
   private async applyUpdate(envelope: VisualizationEnvelope, change: Change): Promise<void> {
     if (this.disposed) return
     if (envelope.spec.kind !== 'geographic') throw new Error(`MapLibre cannot render ${envelope.spec.kind}`)
+    const specChanged = (change & Change.Spec) !== 0
+    const basemapIdentity = mapBasemapIdentity(envelope.spec.presentation.basemap)
+    const basemapChanged = specChanged && this.basemapIdentity !== undefined && this.basemapIdentity !== basemapIdentity
+    if (basemapChanged) {
+      await this.replaceBasemapStyle(envelope.spec.presentation.basemap)
+      if (this.disposed) return
+    }
+    this.basemapIdentity = basemapIdentity
     this.envelope = envelope
     this.updateAccessibleFallback(envelope)
     this.map.setMinZoom(envelope.spec.presentation.camera.minimumZoom)
     this.map.setMaxZoom(envelope.spec.presentation.camera.maximumZoom)
     await this.applyTheme()
     if (this.disposed) return
-    const specChanged = (change & Change.Spec) !== 0
     this.updateSelectionControl(envelope)
     this.updateSpatialSelectionControl(envelope)
     if (specChanged) this.updateMapInteractionState(envelope)
@@ -296,7 +309,7 @@ class MapLibreHandle implements RendererHandle {
       if (sourceLifecycle !== 'error') this.updateAccessibleTiledFeatures(envelope)
       return
     }
-    this.removeOwnedMapData()
+    if (!basemapChanged) this.removeOwnedMapData()
     this.legendBaseFilters.clear()
     this.sourceIDs = []
     this.layerIDs = []
@@ -1043,6 +1056,15 @@ class MapLibreHandle implements RendererHandle {
 
   private async loadGeometry(asset: VisualizationGeometryAsset): Promise<FeatureCollection> {
     return loadGeometryAsset(asset, location.href)
+  }
+
+  private async replaceBasemapStyle(asset: VisualizationMapStyleAsset | undefined): Promise<void> {
+    const background = getComputedStyle(this.frame).backgroundColor || '#f6f8fa'
+    const style = asset ? await loadMapStyleAsset(asset, location.href) : blankMapStyle(background)
+    if (this.disposed) return
+    await setMapStyleAndWait(this.map, style)
+    if (this.disposed) return
+    this.lastBasemapThemeKey = ''
   }
 
   private async applyTheme(): Promise<void> {

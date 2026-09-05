@@ -1,4 +1,4 @@
-import type { Map as MapLibreMap } from 'maplibre-gl'
+import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl'
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 
 export type MapObservationStage = 'basemap_load' | 'layer_shape' | 'webgl_context_loss' | 'webgl_context_restored'
@@ -55,6 +55,37 @@ export function waitForMapIdle(map: MapLibreMap): Promise<void> {
 // visualization host permanently busy even though a useful frame is visible.
 export function waitForMapRender(map: MapLibreMap): Promise<void> {
   return waitForMapEvent(map, ['idle', 'render'], 2_000)
+}
+
+export function setMapStyleAndWait(map: Pick<MapLibreMap, 'setStyle' | 'on' | 'off'>, style: StyleSpecification): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const cleanup = () => {
+      if (timer !== undefined) clearTimeout(timer)
+      map.off('styledata', ready)
+      map.off('error', fail)
+      map.off('remove', removed)
+    }
+    const settle = (result: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      result()
+    }
+    const ready = () => settle(resolve)
+    const removed = () => settle(resolve)
+    const fail = (event: { error?: unknown }) => settle(() => reject(event.error instanceof Error ? event.error : new Error('MapLibre basemap style failed to load')))
+    map.on('styledata', ready)
+    map.on('error', fail)
+    map.on('remove', removed)
+    timer = setTimeout(() => settle(() => reject(new Error('Timed out waiting for MapLibre basemap style'))), 10_000)
+    try {
+      map.setStyle(style, { diff: false })
+    } catch (error) {
+      settle(() => reject(error))
+    }
+  })
 }
 
 function waitForMapEvent(map: MapLibreMap, events: Array<'idle' | 'render'>, timeoutMs: number): Promise<void> {

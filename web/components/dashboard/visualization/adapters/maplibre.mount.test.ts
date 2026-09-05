@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { JSDOM } from 'jsdom'
-import type { VisualizationEnvelope } from '../../../../generated/visualization'
+import type { VisualizationEnvelope, VisualizationMapStyleAsset } from '../../../../generated/visualization'
 import { MapLibreHandle } from './maplibre'
 import { Change, defaultRendererContext } from '../host-controller'
 
@@ -24,6 +24,8 @@ class FakeMap {
   readonly sourceDataCalls: unknown[] = []
   readonly addedControls: unknown[] = []
   readonly removedControls: unknown[] = []
+  readonly styleCalls: unknown[] = []
+  readonly layerBefore = new Map<string, string | undefined>()
   readonly canvas: HTMLCanvasElement
   readonly canvasContainer: HTMLDivElement
   readonly scrollZoom = fakeHandler()
@@ -36,12 +38,15 @@ class FakeMap {
   readonly touchPitch = fakeHandler()
   private center: [number, number] = [0, 0]
   private zoom = 0
+  private styleLoaded = true
 
-  constructor() {
+  constructor(style?: { layers?: FakeLayer[] }) {
     this.canvas = document.createElement('canvas')
     this.canvasContainer = document.createElement('div')
     this.canvasContainer.append(this.canvas)
-    this.layers.set('__lv-background', { id: '__lv-background', type: 'background', metadata: { 'leapview:role': 'background' }, paint: {} })
+    for (const layer of style?.layers ?? [{ id: '__lv-background', type: 'background', metadata: { 'leapview:role': 'background' }, paint: {} }]) {
+      this.layers.set(layer.id, { ...layer, paint: { ...(layer.paint ?? {}) } })
+    }
   }
 
   once(event: string, listener: Listener): this {
@@ -65,6 +70,16 @@ class FakeMap {
   getCanvas(): HTMLCanvasElement { return this.canvas }
   getCanvasContainer(): HTMLDivElement { return this.canvasContainer }
   getStyle(): { layers: FakeLayer[] } { return { layers: [...this.layers.values()] } }
+  isStyleLoaded(): boolean { return this.styleLoaded }
+  setStyle(style: { layers?: FakeLayer[] }, _options?: unknown): this {
+    this.styleCalls.push(style)
+    this.styleLoaded = false
+    this.layers.clear()
+    this.sources.clear()
+    for (const layer of style.layers ?? []) this.layers.set(layer.id, { ...layer, paint: { ...(layer.paint ?? {}) } })
+    queueMicrotask(() => { this.styleLoaded = true; this.emit('styledata') })
+    return this
+  }
   getLayer(id: string): FakeLayer | undefined { return this.layers.get(id) }
   setPaintProperty(id: string, property: string, value: unknown): void {
     const layer = this.layers.get(id)
@@ -78,7 +93,7 @@ class FakeMap {
   }
   getSource(id: string): { setData: (value: unknown) => void } | undefined { return this.sources.get(id) }
   removeSource(id: string): void { this.sources.delete(id) }
-  addLayer(layer: FakeLayer): void { this.layers.set(layer.id, { ...layer, paint: { ...(layer.paint ?? {}) } }) }
+  addLayer(layer: FakeLayer, before?: string): void { this.layerBefore.set(layer.id, before); this.layers.set(layer.id, { ...layer, paint: { ...(layer.paint ?? {}) } }) }
   removeLayer(id: string): void { this.layers.delete(id) }
   setMinZoom(_value: number): void {}
   setMaxZoom(_value: number): void {}
@@ -109,7 +124,33 @@ async function digest(value: Uint8Array): Promise<string> {
   return `sha256:${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`
 }
 
-async function labelEnvelope(theme: 'auto' | 'light' | 'dark' = 'auto', specRevision = 'sha256:labels', controls = { zoom: false, reset: false, compass: false }, roam = false, selectable = false, spatial = false): Promise<VisualizationEnvelope> {
+async function basemapFixture(id: string, labelAnchor: string, attribution: string): Promise<{ asset: VisualizationMapStyleAsset; style: { layers: FakeLayer[] }; body: string }> {
+  const style = {
+    version: 8,
+    sources: { base: { type: 'vector', url: 'pmtiles://__LEAPVIEW_ARCHIVE__' } },
+    layers: [
+      { id: `background-${id}`, type: 'background', metadata: { 'leapview:role': 'background' }, paint: { 'background-color': '#ffffff' } },
+      { id: `land-${id}`, source: 'base', type: 'fill', metadata: { 'leapview:role': 'land' }, paint: { 'fill-color': '#f4f1ea' } },
+      { id: labelAnchor, source: 'base', type: 'symbol', metadata: { 'leapview:role': 'label' }, layout: {}, paint: { 'text-color': '#4b4d49', 'text-halo-color': '#f4f1ea' } },
+    ],
+  }
+  const body = JSON.stringify(style)
+  const styleDigest = await digest(new TextEncoder().encode(body))
+  const digestHex = styleDigest.slice('sha256:'.length)
+  return {
+    style,
+    body,
+    asset: {
+      id,
+      styleUrl: `/map-assets/leapview-streets/styles/${digestHex}/style.json`, styleDigest,
+      archiveUrl: `/map-assets/leapview-streets/archives/${'a'.repeat(64)}/basemap.pmtiles`, archiveDigest: `sha256:${'a'.repeat(64)}`,
+      glyphsUrl: `/map-assets/leapview-streets/assets/${'b'.repeat(40)}/glyphs/{fontstack}/{range}.pbf`, spriteUrl: `/map-assets/leapview-streets/assets/${'b'.repeat(40)}/sprites/leapview`,
+      source: 'OSM', license: 'ODbL', attribution, minimumZoom: 0, maximumZoom: 6, bounds: [-180, -85, 180, 85], labelAnchor,
+    },
+  }
+}
+
+async function labelEnvelope(theme: 'auto' | 'light' | 'dark' = 'auto', specRevision = 'sha256:labels', controls = { zoom: false, reset: false, compass: false }, roam = false, selectable = false, spatial = false, basemap?: VisualizationMapStyleAsset, cameraMode: 'fixed' | 'preserve' = 'fixed'): Promise<VisualizationEnvelope> {
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
   const geometryBytes = new TextEncoder().encode(geometryJSON)
   const geometryDigest = await digest(geometryBytes)
@@ -131,7 +172,7 @@ async function labelEnvelope(theme: 'auto' | 'light' | 'dark' = 'auto', specRevi
         { id: 'state', role: 'identity', dataType: 'string', nullable: false, label: 'State' }, { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' }, { id: 'name', role: 'dimension', dataType: 'string', nullable: false, label: 'Name' },
       ] }],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Labels', description: 'Labels' }, interactions: selectable ? [{ id: 'selection', kind: 'select', mode: 'single', requiresStableIdentity: true, targets: [], mappings: [] }] : [], spatialInteractions: spatial ? [{ id: 'area', gestures: ['box'] }] : [], layers: [point, choropleth],
-      presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, roam, theme, labelDensity: 'normal', camera: { mode: 'fixed', center: [0, 0], zoom: 2, padding: 24, minimumZoom: 0, maximumZoom: 10 }, controls },
+      presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, basemap, roam, theme, labelDensity: 'normal', camera: { mode: cameraMode, center: [0, 0], zoom: 2, padding: 24, minimumZoom: 0, maximumZoom: 10 }, controls },
     },
     dataState: { kind: 'inline', specRevision, dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision, dataRevision: 1, generation: 1, columns: ['latitude', 'longitude', 'state', 'value', 'name'], rows: [[-23.5, -46.6, 'SP', 10, 'São Paulo']], completeness: 'complete' }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
@@ -191,6 +232,88 @@ test('MapLibre mounted labels resolve theme and repaint in place on context-only
     expect(darkPaint).toEqual({ text: '#f0f6fc', halo: '#0d1821' })
     await handle.update(explicit, Change.Context, context('dark'))
     expect(layerPaint(map, 'lv-points-data-label')).toEqual(darkPaint)
+    handle.dispose()
+  } finally {
+    globalThis.document = previous.document
+    globalThis.window = previous.window
+    globalThis.location = previous.location
+    globalThis.getComputedStyle = previous.getComputedStyle
+    globalThis.requestAnimationFrame = previous.requestAnimationFrame
+    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
+    globalThis.fetch = previous.fetch
+    globalThis.CustomEvent = previous.CustomEvent
+    dom.window.close()
+  }
+})
+
+test('MapLibre reconciles basemap styles without replacing controls or stale data', async () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
+  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
+  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
+  const styleA = await basemapFixture('streets-a', 'labels-a', 'OSM A')
+  const styleB = await basemapFixture('streets-b', 'labels-b', 'OSM B')
+  const failed = await basemapFixture('streets-failed', 'labels-failed', 'OSM failed')
+  globalThis.fetch = async (input) => {
+    const url = String(input)
+    if (url.includes(styleA.asset.styleUrl)) return new Response(styleA.body, { status: 200 })
+    if (url.includes(styleB.asset.styleUrl)) return new Response(styleB.body, { status: 200 })
+    if (url.includes(failed.asset.styleUrl)) return new Response('unavailable', { status: 503 })
+    return new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  try {
+    const controls = { zoom: true, reset: true, compass: true }
+    const envelopeA = await labelEnvelope('auto', 'sha256:basemap-a', controls, false, false, false, styleA.asset)
+    const envelopeB = await labelEnvelope('auto', 'sha256:basemap-b', controls, false, false, false, styleB.asset, 'preserve')
+    const envelopeFailed = await labelEnvelope('auto', 'sha256:basemap-failed', controls, false, false, false, failed.asset)
+    const envelopeBlank = await labelEnvelope('auto', 'sha256:basemap-blank', controls)
+    const container = dom.window.document.createElement('div')
+    const frame = dom.window.document.createElement('div')
+    const attribution = dom.window.document.createElement('div')
+    const map = new FakeMap(styleA.style)
+    const handle = new MapLibreHandle(container, frame, map as never, attribution, context('light'))
+    const handlers = [map.scrollZoom, map.boxZoom, map.dragRotate, map.dragPan, map.keyboard, map.doubleClickZoom, map.touchZoomRotate, map.touchPitch]
+    await handle.update(envelopeA, Change.All, context('light'))
+    const navigation = map.addedControls[0]
+    expect(map.styleCalls).toHaveLength(0)
+    expect(map.getLayer('labels-a')).toBeDefined()
+    expect(map.layerBefore.get('lv-states')).toBe('labels-a')
+    expect(attribution.textContent).toBe('OSM A')
+    expect(frame.querySelector('.lv-map-reset')).not.toBeNull()
+
+    await handle.update(envelopeA, Change.Context, context('dark'))
+    await handle.update(envelopeA, Change.Data, context('dark'))
+    expect(map.styleCalls).toHaveLength(0)
+
+    await expect(handle.update(envelopeFailed, Change.Spec, context('dark'))).rejects.toThrow(/returned 503/)
+    expect(map.styleCalls).toHaveLength(0)
+    expect(map.getLayer('labels-a')).toBeDefined()
+    expect(map.getLayer('lv-states')).toBeDefined()
+
+    map.jumpTo({ center: [12.5, -3.25], zoom: 5.5 })
+    await handle.update(envelopeB, Change.Spec, context('dark'))
+    expect(map.styleCalls).toHaveLength(1)
+    expect(map.getLayer('labels-a')).toBeUndefined()
+    expect(map.getLayer('labels-b')).toBeDefined()
+    expect(map.layerBefore.get('lv-states')).toBe('labels-b')
+    expect(attribution.textContent).toBe('OSM B')
+    expect(map.addedControls[0]).toBe(navigation)
+    expect(map.removedControls).toHaveLength(0)
+    expect(handlers.every((handler) => !handler.enabled)).toBe(true)
+    expect(map.getCenter()).toEqual({ lng: 12.5, lat: -3.25 })
+    expect(map.getZoom()).toBe(5.5)
+
+    await handle.update(envelopeB, Change.Spec, context('dark'))
+    expect(map.styleCalls).toHaveLength(1)
+
+    await handle.update(envelopeBlank, Change.Spec, context('dark'))
+    expect(map.styleCalls).toHaveLength(2)
+    expect(map.getLayer('labels-b')).toBeUndefined()
+    expect(map.getLayer('__lv-coordinate-reference')).toBeDefined()
+    expect(attribution.textContent).toBe('')
+    expect(attribution.hidden).toBe(true)
+    expect(map.addedControls[0]).toBe(navigation)
+    expect(map.removedControls).toHaveLength(0)
     handle.dispose()
   } finally {
     globalThis.document = previous.document
