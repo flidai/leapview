@@ -112,6 +112,16 @@ func TestDashboardDocumentSchemaRejectsUnsupportedGeographicLabelPaths(t *testin
 	}
 }
 
+func TestDashboardDocumentSchemaRejectsRemovedPathCurvature(t *testing.T) {
+	compiled := loadDashboardDocumentSchema(t)
+	document := geographicSchemaDocument(t, "path", false)
+	layer := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)["presentation"].(map[string]any)["layers"].([]any)[0].(map[string]any)
+	layer["line"] = map[string]any{"width": 3, "curvature": 0}
+	if err := compiled.Validate(document); err == nil || !strings.Contains(err.Error(), "curvature") {
+		t.Fatalf("generated dashboard schema accepted removed path curvature: %v", err)
+	}
+}
+
 func geographicSchemaDocument(t *testing.T, kind string, label bool) map[string]any {
 	t.Helper()
 	document := loadDashboardDocumentFixture(t)

@@ -151,6 +151,14 @@ func TestDashboardGeographicGeneratedDecoderRejectsUnsupportedLabelFields(t *tes
 	}
 }
 
+func TestDashboardGeographicGeneratedDecoderRejectsRemovedLineCurvature(t *testing.T) {
+	var layer DashboardGeographicLayer
+	err := json.Unmarshal([]byte(`{"kind":"path","id":"route","latitude":"latitude","longitude":"longitude","path":"route_id","order":"point_order","line":{"width":3,"curvature":0}}`), &layer)
+	if err == nil || !strings.Contains(err.Error(), `unknown field "curvature"`) {
+		t.Fatalf("path line curvature error = %v, want generated unknown-field diagnostic", err)
+	}
+}
+
 func TestCanonicalYAMLFixtureUsesGeneratedJSONContract(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join("testdata", "canonical.yaml"))
 	if err != nil {

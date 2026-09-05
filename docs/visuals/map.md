@@ -248,6 +248,5 @@ visuals:
           opacity: 0.9
         line:
           width: 3
-          curvature: 0
         opacity: 0.9
 ```

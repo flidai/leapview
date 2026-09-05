@@ -69261,12 +69261,7 @@ components:
           type: number
           format: double
           example: 1
-        curvature:
-          type: number
-          format: double
-          example: 1
       example:
-        curvature: 1
         width: 1
     DashboardMapSizeScale:
       type: object
@@ -69766,7 +69761,6 @@ components:
         kind: example
         latitude: example
         line:
-          curvature: 1
           width: 1
         longitude: example
         opacity: 1

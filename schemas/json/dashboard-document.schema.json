@@ -1583,10 +1583,6 @@
     },
     "DashboardMapLineStyle": {
       "properties": {
-        "curvature": {
-          "format": "double",
-          "type": "number"
-        },
         "width": {
           "format": "double",
           "type": "number"

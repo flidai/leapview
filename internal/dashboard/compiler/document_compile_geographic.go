@@ -324,18 +324,15 @@ func canonicalMapHeat(value *document.DashboardMapHeatStyle) (visualizationir.Vi
 }
 
 func canonicalMapLine(value *document.DashboardMapLineStyle) (visualizationir.VisualizationMapLineStyle, error) {
-	out := visualizationir.VisualizationMapLineStyle{Width: 3}
+	out := visualizationir.VisualizationMapLineStyle{Width: 3, Curvature: 0}
 	if value == nil {
 		return out, nil
 	}
 	if value.Width != nil {
 		out.Width = *value.Width
 	}
-	if value.Curvature != nil {
-		out.Curvature = *value.Curvature
-	}
-	if out.Width < 0 || out.Curvature < 0 || out.Curvature > 1 {
-		return visualizationir.VisualizationMapLineStyle{}, fmt.Errorf("line style has invalid width or curvature")
+	if out.Width < 0 {
+		return visualizationir.VisualizationMapLineStyle{}, fmt.Errorf("line style has invalid width")
 	}
 	return out, nil
 }

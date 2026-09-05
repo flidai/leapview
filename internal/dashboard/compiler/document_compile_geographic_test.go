@@ -68,3 +68,31 @@ func TestCanonicalGeographicLayerLabelReferencesUseActionablePath(t *testing.T) 
 		t.Fatalf("invalid point label error = %v, want presentation.layers[0]: label: unknown field path", err)
 	}
 }
+
+func TestCanonicalMapLineHonorsWidthAndDefaultsCurvatureToZero(t *testing.T) {
+	width := 7.5
+	got, err := canonicalMapLine(&document.DashboardMapLineStyle{Width: &width})
+	if err != nil {
+		t.Fatalf("lower line style: %v", err)
+	}
+	if got.Width != width || got.Curvature != 0 {
+		t.Fatalf("line style = %#v, want width %v and zero curvature", got, width)
+	}
+
+	got, err = canonicalMapLine(nil)
+	if err != nil {
+		t.Fatalf("lower default line style: %v", err)
+	}
+	if got.Width != 3 || got.Curvature != 0 {
+		t.Fatalf("default line style = %#v, want width 3 and zero curvature", got)
+	}
+	zeroWidth := 0.0
+	if got, err = canonicalMapLine(&document.DashboardMapLineStyle{Width: &zeroWidth}); err != nil || got.Width != 0 || got.Curvature != 0 {
+		t.Fatalf("zero-width line style = %#v, %v, want width and curvature 0", got, err)
+	}
+
+	negativeWidth := -1.0
+	if _, err := canonicalMapLine(&document.DashboardMapLineStyle{Width: &negativeWidth}); err == nil || !strings.Contains(err.Error(), "line style has invalid width") {
+		t.Fatalf("negative line width error = %v, want invalid-width diagnostic", err)
+	}
+}

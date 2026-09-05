@@ -2299,8 +2299,7 @@ type DashboardMapHeatStyle struct {
 }
 
 type DashboardMapLineStyle struct {
-	Width     *float64 `json:"width,omitempty" yaml:"width,omitempty"`
-	Curvature *float64 `json:"curvature,omitempty" yaml:"curvature,omitempty"`
+	Width *float64 `json:"width,omitempty" yaml:"width,omitempty"`
 }
 
 type DashboardMapSizeScale struct {

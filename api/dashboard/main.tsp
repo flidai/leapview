@@ -865,7 +865,6 @@ model DashboardMapHeatStyle {
 
 model DashboardMapLineStyle {
   width?: float64;
-  curvature?: float64;
 }
 
 model DashboardMapCluster {

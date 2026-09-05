@@ -12526,9 +12526,6 @@
                                 "line": {
                                   "additionalProperties": false,
                                   "properties": {
-                                    "curvature": {
-                                      "type": "number"
-                                    },
                                     "width": {
                                       "type": "number"
                                     }
