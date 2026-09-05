@@ -34,6 +34,13 @@ integration, source-provider adapters, semantic generation references, or
 cache/event invalidation. Those requirements remain normative targets and
 their evidence remains pending or partial below.
 
+FAI-619 is a structural contract cutover only. Its generated SemanticModel
+boundary and compatibility-lowering fixtures do not qualify semantic policy
+compilation, planner security barriers, or consumer admission. Those follow-on
+integration slices remain pending under FAI-639 and FAI-641; VAL-11 remains
+Partial until generated canonicalization and the complete control-plane and
+runtime equivalence paths are evidenced.
+
 ## Change control
 
 - **CHG-01:** Editorial clarification, new non-normative examples, added test
@@ -81,26 +88,27 @@ spec:
       datatype: String
       bindings:
         orders:
-          field: region
+          field: orders.region
     customerEmail:
       datatype: String
       bindings:
         orders:
-          field: customer_email
+          field: orders.customer_email
       requiredAccessGrants:
         - canViewPII
-  measures:
-    revenue:
-      dataset: orders
-      aggregation: sum
-      input:
-        field: revenue
-    cost:
-      dataset: orders
-      aggregation: sum
-      input:
-        field: cost
   metrics:
+    revenue:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input:
+        field: orders.revenue
+    cost:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input:
+        field: orders.cost
     grossMargin:
       type: derived
       expression: revenue - cost
@@ -543,7 +551,8 @@ remain unqualified, so LIF is not complete.
 | Requirement range | Evidence | Status |
 |---|---|---|
 | CHG-01–CHG-04 | Profile-version, historical-policy, and normative-change checks | Pending |
-| STR-01–STR-12 | Generated TypeSpec, JSON Schema, DTO, extracted-YAML, and authoring-registry fixtures | Pending |
+| FAI-619 structural authority | [`api/data-resources/main.tsp`](../../api/data-resources/main.tsp), generated [JSON Schema](../../internal/project/contracts/gen/data-resources.schema.json) and [Go DTOs](../../internal/project/contracts/models.gen.go), [generated-boundary fixtures](../../internal/project/contracts/contracts_test.go), [structural and extracted-YAML fixtures](../../internal/project/schema/semantic_access_contract_test.go), [generated-schema matrix](../../internal/project/schema/semantic_model_generated_schema_test.go), and compiler compatibility/exact-number fixtures. This is a structural cutover only; FAI-639 and FAI-641 semantic policy compilation, planner, and consumer integration remain pending. | Partial |
+| STR-01–STR-12 | The FAI-619 generated-boundary, structural, extracted-YAML, and compiler fixtures above cover the migrated surface. STR-08 remains partial: standalone transitional `DataPolicy` rejection and contextual access-reference/type-registry resolution are outside this cutover. | Partial |
 | ATT-01–ATT-04, ATT-08, ATT-11–ATT-12 | PostgreSQL registry/control migrations and repositories, typed API envelopes, canonical-value tests, trustedclaims structural tests, and platform-admin route/attenuation tests | Partial: durable definition/assignment/mapping boundaries are implemented; principal-context integration, source adapters, and semantic-consumer admission are not. |
 | ATT-05–ATT-07, ATT-09–ATT-10 | Control snapshot identity and disable/tombstone behavior exist; generation-reference, provider-admission, runtime expiry wiring, dependent-object invalidation, and rollback retention checks remain unqualified | Partial |
 | VAL-01–VAL-10 | [`internal/semanticvalue`](../../internal/semanticvalue/value.go), its [unit](../../internal/semanticvalue/value_test.go) and [cross-path](../../internal/semanticvalue/crosspath_test.go) tests, the independent [`profile-v1.json`](../../internal/semanticvalue/testdata/profile-v1.json) fixture, and semantic-filter integration | Implemented at the shared semantic-value boundary; typed control ingress also consumes it |

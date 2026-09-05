@@ -3,6 +3,7 @@ package compiler
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -132,6 +133,252 @@ func decodeSourceResource(path string, content []byte, metadata metadata) (seman
 func decodeModelResource(path string, content []byte, metadata metadata) (semanticmodel.Table, *semanticmodel.AIContext, error) {
 	table, aiContext, _, err := decodeModelResourceWithDefinition(path, content, metadata)
 	return table, aiContext, err
+}
+
+// decodeSemanticModelResource is the sole SemanticModel authoring boundary.
+// The TypeSpec-generated document remains intact in compiler state until the
+// project graph is lowered into analytics runtime types.
+func decodeSemanticModelResource(path string, content []byte) (projectcontracts.SemanticModelSpec, *semanticmodel.AIContext, error) {
+	var authored projectcontracts.SemanticModel
+	if err := configschema.DecodeResource(configschema.KindSemanticModel, path, content, &authored); err != nil {
+		return projectcontracts.SemanticModelSpec{}, nil, err
+	}
+	return authored.Spec, lowerAIContext(authored.AiContext), nil
+}
+
+// rejectSemanticAccessPolicy prevents policy-bearing generated fields from
+// being silently discarded while the runtime policy compiler is still
+// pending. Keep this check at the generated-to-runtime boundary so every
+// compiler path has the same fail-closed behavior.
+func rejectSemanticAccessPolicy(spec projectcontracts.SemanticModelSpec) error {
+	const pending = "compiled access-policy support is not available"
+	if spec.AccessGrants != nil {
+		return fmt.Errorf("SemanticModel spec accessGrants: %s", pending)
+	}
+	datasetNames := make([]string, 0, len(spec.Datasets))
+	for name := range spec.Datasets {
+		datasetNames = append(datasetNames, name)
+	}
+	sort.Strings(datasetNames)
+	for _, name := range datasetNames {
+		dataset := spec.Datasets[name]
+		if dataset.RequiredAccessGrants != nil {
+			return fmt.Errorf("SemanticModel dataset %q requiredAccessGrants: %s", name, pending)
+		}
+		if dataset.AccessFilters != nil {
+			return fmt.Errorf("SemanticModel dataset %q accessFilters: %s", name, pending)
+		}
+	}
+	if spec.Dimensions != nil {
+		dimensionNames := make([]string, 0, len(*spec.Dimensions))
+		for name := range *spec.Dimensions {
+			dimensionNames = append(dimensionNames, name)
+		}
+		sort.Strings(dimensionNames)
+		for _, name := range dimensionNames {
+			dimension := (*spec.Dimensions)[name]
+			if dimension.RequiredAccessGrants != nil {
+				return fmt.Errorf("SemanticModel dimension %q requiredAccessGrants: %s", name, pending)
+			}
+		}
+	}
+	metricNames := make([]string, 0, len(spec.Metrics))
+	for name := range spec.Metrics {
+		metricNames = append(metricNames, name)
+	}
+	sort.Strings(metricNames)
+	for _, name := range metricNames {
+		metric := spec.Metrics[name]
+		var required *[]string
+		switch variant := metric.Value.(type) {
+		case *projectcontracts.SemanticMetricAggregateVariant:
+			required = variant.RequiredAccessGrants
+		case *projectcontracts.SemanticMetricDerivedVariant:
+			required = variant.RequiredAccessGrants
+		case *projectcontracts.SemanticMetricRatioVariant:
+			required = variant.RequiredAccessGrants
+		}
+		if required != nil {
+			return fmt.Errorf("SemanticModel metric %q requiredAccessGrants: %s", name, pending)
+		}
+	}
+	return nil
+}
+
+func lowerSemanticDatasets(values map[string]projectcontracts.SemanticDataset) map[string]semanticmodel.SemanticDatasetSpec {
+	result := make(map[string]semanticmodel.SemanticDatasetSpec, len(values))
+	for name, value := range values {
+		result[name] = semanticmodel.SemanticDatasetSpec{
+			Model:                value.Model,
+			DefaultTimeDimension: optionalString(value.DefaultTimeDimension),
+			DisplayName:          optionalString(value.DisplayName),
+			Description:          optionalString(value.Description),
+			AIContext:            lowerAIContext(value.AiContext),
+		}
+	}
+	return result
+}
+
+func lowerSemanticRelationships(values *map[string]projectcontracts.SemanticRelationship) (map[string]semanticmodel.RelationshipSpec, error) {
+	if values == nil {
+		return nil, nil
+	}
+	result := make(map[string]semanticmodel.RelationshipSpec, len(*values))
+	for name, value := range *values {
+		from, err := lowerSemanticRelationshipEndpoint(value.From)
+		if err != nil {
+			return nil, fmt.Errorf("relationship %q from: %w", name, err)
+		}
+		to, err := lowerSemanticRelationshipEndpoint(value.To)
+		if err != nil {
+			return nil, fmt.Errorf("relationship %q to: %w", name, err)
+		}
+		result[name] = semanticmodel.RelationshipSpec{From: from, To: to, Description: optionalString(value.Description), AIContext: lowerAIContext(value.AiContext)}
+	}
+	return result, nil
+}
+
+func lowerSemanticRelationshipEndpoint(value projectcontracts.SemanticRelationshipEndpoint) (semanticmodel.RelationshipEndpointSpec, error) {
+	switch variant := value.Value.(type) {
+	case *projectcontracts.NamedSemanticRelationshipEndpoint:
+		return semanticmodel.RelationshipEndpointSpec{Dataset: variant.Dataset, Entity: variant.Entity}, nil
+	case *projectcontracts.FieldsSemanticRelationshipEndpoint:
+		return semanticmodel.RelationshipEndpointSpec{Dataset: variant.Dataset, Fields: append([]string(nil), variant.Fields...)}, nil
+	case nil:
+		return semanticmodel.RelationshipEndpointSpec{}, fmt.Errorf("endpoint variant is required")
+	default:
+		return semanticmodel.RelationshipEndpointSpec{}, fmt.Errorf("unsupported endpoint variant %T", value.Value)
+	}
+}
+
+func lowerSemanticDimensions(values *map[string]projectcontracts.SemanticDimension) map[string]semanticmodel.SemanticDimensionSpec {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]semanticmodel.SemanticDimensionSpec, len(*values))
+	for name, value := range *values {
+		bindings := make(map[string]semanticmodel.DimensionBinding, len(value.Bindings))
+		for dataset, binding := range value.Bindings {
+			bindings[dataset] = semanticmodel.DimensionBinding{Field: binding.Field, Path: optionalStrings(binding.Path)}
+		}
+		dimension := semanticmodel.SemanticDimensionSpec{
+			Label: optionalString(value.Label), Description: optionalString(value.Description), AIContext: lowerAIContext(value.AiContext),
+			Datatype: semanticmodel.LogicalDataType(value.Datatype), Bindings: bindings,
+		}
+		if value.Time != nil {
+			dimension.Time = &semanticmodel.TimeSemanticsSpec{
+				NativeGrain: value.Time.NativeGrain, Grains: append([]string(nil), value.Time.Grains...),
+				Calendar: optionalString(value.Time.Calendar), Timezone: optionalString(value.Time.Timezone),
+			}
+		}
+		result[name] = dimension
+	}
+	return result
+}
+
+func lowerSemanticFilters(values *map[string]projectcontracts.SemanticFilter) (map[string]semanticmodel.SemanticFilterSpec, error) {
+	if values == nil {
+		return nil, nil
+	}
+	result := make(map[string]semanticmodel.SemanticFilterSpec, len(*values))
+	for name, value := range *values {
+		filter, err := lowerSemanticFilter(value)
+		if err != nil {
+			return nil, fmt.Errorf("filter %q: %w", name, err)
+		}
+		result[name] = filter
+	}
+	return result, nil
+}
+
+func lowerSemanticFilter(value projectcontracts.SemanticFilter) (semanticmodel.SemanticFilterSpec, error) {
+	lowerLeaf := func(field, operator string, literal any, path *[]string, aiContext *projectcontracts.AIContext) semanticmodel.SemanticFilterSpec {
+		return semanticmodel.SemanticFilterSpec{Field: field, Operator: operator, Value: literal, Path: optionalStrings(path), AIContext: lowerAIContext(aiContext)}
+	}
+	switch variant := value.Value.(type) {
+	case *projectcontracts.EqualsSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.NotEqualsSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.InSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, append([]any(nil), variant.Value...), variant.Path, variant.AiContext), nil
+	case *projectcontracts.NotInSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, append([]any(nil), variant.Value...), variant.Path, variant.AiContext), nil
+	case *projectcontracts.LessThanSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.LessThanOrEqualSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.GreaterThanSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.GreaterThanOrEqualSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.IsNullSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, nil, variant.Path, variant.AiContext), nil
+	case *projectcontracts.IsNotNullSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, nil, variant.Path, variant.AiContext), nil
+	case *projectcontracts.AllSemanticFilter:
+		children, err := lowerSemanticFilterList(variant.All)
+		return semanticmodel.SemanticFilterSpec{All: children}, err
+	case *projectcontracts.AnySemanticFilter:
+		children, err := lowerSemanticFilterList(variant.Any)
+		return semanticmodel.SemanticFilterSpec{Any: children}, err
+	case *projectcontracts.NotSemanticFilter:
+		child, err := lowerSemanticFilter(variant.Not)
+		return semanticmodel.SemanticFilterSpec{Not: &child}, err
+	case nil:
+		return semanticmodel.SemanticFilterSpec{}, fmt.Errorf("filter variant is required")
+	default:
+		return semanticmodel.SemanticFilterSpec{}, fmt.Errorf("unsupported filter variant %T", value.Value)
+	}
+}
+
+func lowerSemanticFilterList(values []projectcontracts.SemanticFilter) ([]semanticmodel.SemanticFilterSpec, error) {
+	result := make([]semanticmodel.SemanticFilterSpec, 0, len(values))
+	for index, value := range values {
+		filter, err := lowerSemanticFilter(value)
+		if err != nil {
+			return nil, fmt.Errorf("child %d: %w", index, err)
+		}
+		result = append(result, filter)
+	}
+	return result, nil
+}
+
+func lowerSemanticMetrics(values map[string]projectcontracts.SemanticMetric) (map[string]semanticmodel.SemanticMetricSpec, error) {
+	result := make(map[string]semanticmodel.SemanticMetricSpec, len(values))
+	for name, value := range values {
+		metric := semanticmodel.SemanticMetricSpec{}
+		switch variant := value.Value.(type) {
+		case *projectcontracts.SemanticMetricAggregateVariant:
+			metric.Type, metric.Dataset, metric.Aggregation = variant.Type, variant.Dataset, variant.Aggregation
+			metric.Input = &semanticmodel.MetricInput{Field: variant.Input.Field}
+			metric.Where, metric.Empty, metric.TimeDimension = optionalStrings(variant.Where), optionalString(variant.Empty), optionalString(variant.TimeDimension)
+			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
+		case *projectcontracts.SemanticMetricDerivedVariant:
+			metric.Type, metric.Expression = variant.Type, variant.Expression
+			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
+		case *projectcontracts.SemanticMetricRatioVariant:
+			metric.Type, metric.Numerator, metric.Denominator = variant.Type, variant.Numerator, variant.Denominator
+			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
+		case nil:
+			return nil, fmt.Errorf("metric %q variant is required", name)
+		default:
+			return nil, fmt.Errorf("metric %q has unsupported variant %T", name, value.Value)
+		}
+		result[name] = metric
+	}
+	return result, nil
+}
+
+func lowerSemanticMetricCommon(metric *semanticmodel.SemanticMetricSpec, label, description *string, aiContext *projectcontracts.AIContext, unit, format *string, hidden *bool) {
+	metric.Label = optionalString(label)
+	metric.Description = optionalString(description)
+	metric.AIContext = lowerAIContext(aiContext)
+	metric.Unit = optionalString(unit)
+	metric.Format = optionalString(format)
+	if hidden != nil {
+		metric.Hidden = *hidden
+	}
 }
 
 // decodeModelResourceWithDefinition lowers the executable model contract while

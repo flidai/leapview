@@ -793,7 +793,7 @@ tasks:
       - go run ./internal/agent/contracts/generate
 
   data-resource-contracts:generate:
-    desc: Generate strict Connection, Source, Model DTOs and connector registry
+    desc: Generate strict Connection, Source, Model, and SemanticModel DTOs and connector registry
     deps:
       - apigen:build
     method: checksum

@@ -121,25 +121,25 @@ func (value *PipelineSpec) UnmarshalJSON(data []byte) error {
 	}
 	{
 		valid := true
-		if _, ok := fields["selection"]; !ok {
+		if _, ok := fields["concurrencyPolicy"]; !ok {
 			valid = false
-			failures = append(failures, "ScheduledPipelineSpec: required property selection is missing")
+			failures = append(failures, "ScheduledPipelineSpec: required property concurrencyPolicy is missing")
 		}
 		if _, ok := fields["schedules"]; !ok {
 			valid = false
 			failures = append(failures, "ScheduledPipelineSpec: required property schedules is missing")
 		}
-		if _, ok := fields["timezone"]; !ok {
+		if _, ok := fields["selection"]; !ok {
 			valid = false
-			failures = append(failures, "ScheduledPipelineSpec: required property timezone is missing")
+			failures = append(failures, "ScheduledPipelineSpec: required property selection is missing")
 		}
 		if _, ok := fields["startingDeadlineSeconds"]; !ok {
 			valid = false
 			failures = append(failures, "ScheduledPipelineSpec: required property startingDeadlineSeconds is missing")
 		}
-		if _, ok := fields["concurrencyPolicy"]; !ok {
+		if _, ok := fields["timezone"]; !ok {
 			valid = false
-			failures = append(failures, "ScheduledPipelineSpec: required property concurrencyPolicy is missing")
+			failures = append(failures, "ScheduledPipelineSpec: required property timezone is missing")
 		}
 		if valid {
 			var candidate ScheduledPipelineSpec

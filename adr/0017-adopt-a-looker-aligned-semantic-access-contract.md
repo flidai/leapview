@@ -168,12 +168,12 @@ spec:
       datatype: String
       bindings:
         orders:
-          field: region
+          field: orders.region
     customerEmail:
       datatype: String
       bindings:
         orders:
-          field: customer_email
+          field: orders.customer_email
       requiredAccessGrants: [canViewPII]
 ```
 
@@ -351,6 +351,13 @@ input is the opaque `trustedclaims.Envelope` boundary; wiring a real provider
 through the verifier and into a principal authorization context remains
 pending.
 
+FAI-619 qualifies only the generated structural SemanticModel contract and
+compatibility lowering boundary. Its fixtures do not claim semantic access
+policy compilation, planner security barriers, or consumer admission. Those
+follow-on integration slices remain pending under FAI-639 and FAI-641, and
+VAL-11 remains Partial until generated canonicalization and complete
+control-plane/runtime equivalence are evidenced.
+
 ### Immediate invalidation identity
 
 FAI-637 establishes, but does not yet consume, durable invalidation inputs.
@@ -413,10 +420,10 @@ its own governed consumption contract rather than reuse of internal resources.
   rejects access-policy fields on every resource other than SemanticModel. The
   current FAI-637 slice does not claim that the existing legacy compiler and
   consumer paths have completed this migration.
-- Schema and compiler fixtures cover the normative cases in the semantic
-  access-policy conformance specification, including unknown fields, dangling
-  grants, incompatible attributes, unbound dimensions, and prohibited identity
-  or executable-string fields.
+- FAI-619's generated-boundary, structural, extracted-YAML, and compiler
+  compatibility fixtures cover the migrated structural surface. They do not
+  claim the pending FAI-639/641 semantic policy compiler, planner, or consumer
+  integration requirements.
 - Query authorization tests prove fail-closed scalar and list matching,
   all-grants and all-filters composition, discovery filtering, direct-reference
   rejection, parameterized planning, and identical enforcement for every

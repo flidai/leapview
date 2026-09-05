@@ -75,6 +75,29 @@ func TestEmit_PreservesPatternAndPropertyNames(t *testing.T) {
 	require.Equal(t, map[string]any{"type": "string"}, refSibling["additionalProperties"])
 }
 
+func TestEmit_PreservesItemBounds(t *testing.T) {
+	minItems, maxItems := 1, 4
+	doc := ir.Document{
+		Info:      ir.Info{Title: "Constrained", Version: "1"},
+		Contracts: []ir.Contract{{Name: "payload", Schema: ir.SchemaRef{Ref: "Payload"}}},
+		Schemas: map[string]ir.Schema{
+			"Payload": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"values": {Schema: ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Type: "string"}, MinItems: &minItems, MaxItems: &maxItems, UniqueItems: true}},
+				},
+			},
+		},
+	}
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	decoded := decodedObject(t, b)
+	values := decoded["$defs"].(map[string]any)["Payload"].(map[string]any)["properties"].(map[string]any)["values"].(map[string]any)
+	require.Equal(t, float64(1), values["minItems"])
+	require.Equal(t, float64(4), values["maxItems"])
+	require.Equal(t, true, values["uniqueItems"])
+}
+
 func TestEmit_PreservesDiscriminatedComposition(t *testing.T) {
 	doc := ir.Document{
 		Info: ir.Info{Title: "Visuals", Version: "1"},

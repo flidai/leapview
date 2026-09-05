@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -105,6 +106,12 @@ func coerceFloat(value any) (float64, error) {
 		return float64(number), nil
 	case uint64:
 		return float64(number), nil
+	case json.Number:
+		parsed, err := number.Float64()
+		if err != nil {
+			return 0, fmt.Errorf("value %v is not numeric", value)
+		}
+		return parsed, nil
 	default:
 		return 0, fmt.Errorf("value %v is not numeric", value)
 	}

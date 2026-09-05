@@ -11,6 +11,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
@@ -53,7 +54,7 @@ func LoadProject(projectPath string) (Project, error) {
 		ModelAIContexts:         map[string]*semanticmodel.AIContext{},
 		ModelIDs:                map[string]string{},
 		ModelPaths:              map[string]string{},
-		SemanticModels:          map[string]projectSemanticModelSpec{},
+		SemanticModels:          map[string]projectcontracts.SemanticModelSpec{},
 		SemanticModelAIContexts: map[string]*semanticmodel.AIContext{},
 		SemanticModelIDs:        map[string]string{},
 		SemanticModelPaths:      map[string]string{},
