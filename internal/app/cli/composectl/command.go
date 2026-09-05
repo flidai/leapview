@@ -118,6 +118,7 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	qualifyInstalled.Flags().StringVar(&installedQualification.EvidenceDir, "evidence-dir", "", "directory for bounded qualification evidence")
 	qualifyInstalled.Flags().BoolVar(&installedQualification.AllowLocal, "allow-local-image", false, "allow a local immutable registry reference during development")
 	qualifyInstalled.Flags().Int64Var(&installedQualification.MinFreeBytes, "minimum-free-bytes", 0, "local-only managed-data free-space override")
+	qualifyInstalled.Flags().BoolVar(&installedQualification.MultiNodeProcess, "multi-node-process", false, "qualify two independent application processes against one native PostgreSQL authority")
 
 	qualify := &cobra.Command{
 		Use:   "qualify",

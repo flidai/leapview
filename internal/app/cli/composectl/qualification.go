@@ -63,6 +63,11 @@ type QualificationInstalledOptions struct {
 	EvidenceDir  string
 	AllowLocal   bool
 	MinFreeBytes int64
+	// MultiNodeProcess enables the opt-in process-level PostgreSQL authority
+	// qualification. It starts a second independent application node against
+	// the same native PostgreSQL topology, then exercises abrupt loss and
+	// rolling recovery.
+	MultiNodeProcess bool
 }
 
 type QualificationCandidate struct {

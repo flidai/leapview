@@ -14,6 +14,22 @@ tests:
         values: '0+5x20'
       - series: 'leapview_duckdb_fatal_health{job="leapview",instance="app:8080",pod="leapview-healthy"}'
         values: '0x20'
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '10x20'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '2x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '8x20'
+      - series: 'leapview_postgres_pool_constructing_connections{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '0x20'
+      - series: 'leapview_postgres_pool_acquire_count_total{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '0+10x20'
+      - series: 'leapview_postgres_pool_acquire_duration_seconds_total{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '0+10x20'
+      - series: 'leapview_postgres_pool_empty_acquire_count_total{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '0x20'
+      - series: 'leapview_postgres_pool_canceled_acquire_count_total{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '0x20'
     alert_rule_test:
       - eval_time: 15m
         alertname: LeapViewTargetUnavailable
@@ -29,6 +45,24 @@ tests:
         exp_alerts: []
       - eval_time: 15m
         alertname: LeapViewDashboardRefreshSlowBurn
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolSaturation
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolCriticalSaturation
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolNoHeadroom
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolCanceledAcquire
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolAcquireLatency
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolConnectionChurn
         exp_alerts: []
 
   - name: unavailable target fires after two minutes
@@ -979,3 +1013,209 @@ tests:
               summary: "LeapView dashboard refresh latency on app:8080 is steadily consuming error budget"
               description: "Slow completed dashboard refreshes on app:8080 meet or exceed the 6x burn-rate threshold over both 30 minutes and 6 hours, with at least 60 completed refreshes in the 6-hour window."
               runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-latency-slow-burn-alert-fires"
+
+  - name: PostgreSQL pool warning saturation preserves bounded labels
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="control_runtime",pod="leapview-1"}'
+        values: '100x20'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="control_runtime",pod="leapview-1"}'
+        values: '90x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="control_runtime",pod="leapview-1"}'
+        values: '10x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: LeapViewPostgresPoolSaturation
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolSaturation
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              pool: control_runtime
+              service: leapview
+              severity: warning
+            exp_annotations:
+              summary: "LeapView PostgreSQL pool control_runtime on app:8080 is saturated"
+              description: "The control_runtime PostgreSQL pool on app:8080 has remained at or above 90% acquired capacity for more than 10 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-saturation-alert-fires"
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolCriticalSaturation
+        exp_alerts: []
+
+  - name: PostgreSQL pool critical saturation fires at threshold
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="ducklake_runtime"}'
+        values: '100x20'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="ducklake_runtime"}'
+        values: '98x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="ducklake_runtime"}'
+        values: '2x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: LeapViewPostgresPoolCriticalSaturation
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: LeapViewPostgresPoolCriticalSaturation
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              pool: ducklake_runtime
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView PostgreSQL pool ducklake_runtime on app:8080 has critical saturation"
+              description: "The ducklake_runtime PostgreSQL pool on app:8080 has remained at or above 98% acquired capacity for more than 5 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-critical-saturation-alert-fires"
+
+  - name: PostgreSQL pool saturation ignores disabled zero-capacity pools
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="control_readonly"}'
+        values: '0x20'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="control_readonly"}'
+        values: '0x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="control_readonly"}'
+        values: '0x20'
+      - series: 'leapview_postgres_pool_empty_acquire_count_total{job="leapview",instance="app:8080",pool="control_readonly"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolSaturation
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolCriticalSaturation
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolNoHeadroom
+        exp_alerts: []
+
+  - name: PostgreSQL pool no headroom fires for high utilization without idle capacity
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="control_maintenance"}'
+        values: '20x20'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="control_maintenance"}'
+        values: '19x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="control_maintenance"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: LeapViewPostgresPoolNoHeadroom
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: LeapViewPostgresPoolNoHeadroom
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              pool: control_maintenance
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView PostgreSQL pool control_maintenance on app:8080 has no headroom"
+              description: "The control_maintenance PostgreSQL pool on app:8080 has had no idle capacity at high utilization or has waited for an empty pool for more than 5 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-no-headroom-alert-fires"
+
+  - name: PostgreSQL pool no headroom fires for successful waits
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="ducklake_maintenance"}'
+        values: '4x20'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="ducklake_maintenance"}'
+        values: '1x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="ducklake_maintenance"}'
+        values: '3x20'
+      - series: 'leapview_postgres_pool_empty_acquire_count_total{job="leapview",instance="app:8080",pool="ducklake_maintenance"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: LeapViewPostgresPoolNoHeadroom
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: LeapViewPostgresPoolNoHeadroom
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              pool: ducklake_maintenance
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView PostgreSQL pool ducklake_maintenance on app:8080 has no headroom"
+              description: "The ducklake_maintenance PostgreSQL pool on app:8080 has had no idle capacity at high utilization or has waited for an empty pool for more than 5 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-no-headroom-alert-fires"
+
+  - name: PostgreSQL pool canceled acquisitions fire a warning
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_canceled_acquire_count_total{job="leapview",instance="app:8080",pool="control_runtime",request_id="restricted"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: LeapViewPostgresPoolCanceledAcquire
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolCanceledAcquire
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              pool: control_runtime
+              service: leapview
+              severity: warning
+            exp_annotations:
+              summary: "LeapView PostgreSQL pool control_runtime on app:8080 has canceled acquires"
+              description: "The control_runtime PostgreSQL pool on app:8080 has recorded canceled connection acquisitions for more than 10 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-canceled-acquire-alert-fires"
+
+  - name: PostgreSQL pool acquire latency fires above two seconds
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_acquire_count_total{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '0+1x20'
+      - series: 'leapview_postgres_pool_acquire_duration_seconds_total{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '0+3x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: LeapViewPostgresPoolAcquireLatency
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolAcquireLatency
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              pool: control_runtime
+              service: leapview
+              severity: warning
+            exp_annotations:
+              summary: "LeapView PostgreSQL pool control_runtime on app:8080 has high acquire latency"
+              description: "The ten-minute average connection-acquire wait for the control_runtime PostgreSQL pool on app:8080 has remained above 2 seconds for more than 10 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-acquire-latency-alert-fires"
+
+  - name: PostgreSQL pool connection churn fires while constructing
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_constructing_connections{job="leapview",instance="app:8080",pool="ducklake_runtime",pod="leapview-1"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: LeapViewPostgresPoolConnectionChurn
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolConnectionChurn
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              pool: ducklake_runtime
+              service: leapview
+              severity: warning
+            exp_annotations:
+              summary: "LeapView PostgreSQL pool ducklake_runtime on app:8080 is constructing connections"
+              description: "The ducklake_runtime PostgreSQL pool on app:8080 has continuously had connections under construction for more than 10 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-connection-churn-alert-fires"

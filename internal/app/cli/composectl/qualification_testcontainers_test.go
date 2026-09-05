@@ -56,6 +56,7 @@ func (runtime *testcontainersQualificationRuntime) Start(
 			}
 		},
 		HostConfigModifier: func(config *dockercontainer.HostConfig) {
+			config.ReadonlyRootfs = request.ReadOnly
 			config.Binds = append(config.Binds, binds...)
 			if len(request.Tmpfs) > 0 {
 				if config.Tmpfs == nil {

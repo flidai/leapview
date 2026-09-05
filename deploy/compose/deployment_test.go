@@ -233,6 +233,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 		"cp -R deploy/compose/qualification",
 		`cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"`,
 		"args=(qualify installed-candidate",
+		"--multi-node-process",
 		"gh release create",
 		"needs: [image, qualify, minio-conformance, plan-gc-conformance]",
 	} {
@@ -257,7 +258,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	if gate < 0 || gate > strings.Index(release, "gh release create") || gate > strings.Index(release, "Publish qualified image tags") {
 		t.Fatal("installed-candidate qualification must precede all publication")
 	}
-	for _, required := range []string{"workflow_dispatch:", "schedule:", "ubuntu-24.04-arm", "sha256sum --check", "args=(qualify installed-candidate", "Create qualification incident"} {
+	for _, required := range []string{"workflow_dispatch:", "schedule:", "ubuntu-24.04-arm", "sha256sum --check", "args=(qualify installed-candidate", "--multi-node-process", "Create qualification incident"} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("installed-candidate workflow missing %q", required)
 		}

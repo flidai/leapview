@@ -90,6 +90,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"go vet ./...",
 		"go test -race ./pkg/...",
 		"- task: quality:critical:race",
+		"- task: test:go:postgres-multinode-qualification",
 		"- task: qa:ui-framework",
 		"- task: deploy:check",
 	} {

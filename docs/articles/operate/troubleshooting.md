@@ -44,6 +44,103 @@ Preserve the alert onset, image and deployment digests, active serving state and
 
 Stop admitting affected analytical work through the normal traffic-management path and follow the approved service or release recovery procedure. Fatal health is sticky for the affected DuckDB environment, so do not attempt to clear it by editing catalogs, deleting analytical files, forcing lease cleanup, or repeatedly restarting without diagnosis. Recovery requires replacement with a validated environment, `leapview_duckdb_fatal_health` to report zero, readiness to pass, one bounded representative analytical request to succeed, and the alert to resolve without another fatal transition.
 
+## PostgreSQL pool saturation alert fires
+
+`LeapViewPostgresPoolSaturation` means the named PostgreSQL pool has remained at
+or above 90% acquired capacity for more than 10 minutes. Confirm the affected
+`job`, `instance`, and bounded `pool` labels, then compare
+`leapview_postgres_pool_acquired_connections` with
+`leapview_postgres_pool_max_connections`. Inspect idle connections, empty and
+canceled acquire rates, provider connection limits, CPU, and lock or long-
+transaction evidence before changing pool sizing. The alert excludes a pool
+whose maximum is zero and never carries request, principal, project, or
+resource labels.
+
+Drain or reduce the affected workload through its normal owner workflow when
+the provider is also constrained. Do not increase `max_connections` blindly or
+terminate unknown sessions. Recovery requires acquired/max to remain below
+0.90, the alert to resolve after the next evaluation, and representative
+requests or maintenance work to succeed.
+
+## PostgreSQL pool critical saturation alert fires
+
+`LeapViewPostgresPoolCriticalSaturation` means the named PostgreSQL pool has
+remained at or above 98% acquired capacity for more than five minutes. Preserve
+the alert's `job`, `instance`, and `pool` labels, then inspect idle and
+acquired-capacity gauges together with empty-acquire rate, provider connection
+limits, CPU, lock waits, and long transactions. Check the warning saturation
+alert and the no-headroom alert for the same pool; they are related bounded
+signals, not proof of a single root cause.
+
+Protect interactive traffic and maintenance ownership with the approved drain
+or capacity workflow. Do not disable the alert, edit metadata, or raise pool or
+provider limits without a reviewed capacity decision. Recovery requires
+acquired/max to remain below 0.98, the alert to resolve after the next
+evaluation, and a representative bounded operation to succeed.
+
+## PostgreSQL pool no-headroom alert fires
+
+`LeapViewPostgresPoolNoHeadroom` means the named pool has had no idle capacity
+at at least 95% acquired utilization, or successful acquisitions have waited
+for an empty pool, for more than five minutes. Confirm
+`leapview_postgres_pool_idle_connections`, acquired/max, and
+`rate(leapview_postgres_pool_empty_acquire_count_total[5m])` for the same
+`job`, `instance`, and `pool`. Correlate with canceled acquires, acquire
+latency, request errors, provider connection limits, lock waits, and long
+transactions. A zero maximum is treated as disabled and does not fire this
+alert.
+
+Drain the affected workload or resolve the provider-side constraint through
+the normal change workflow. Do not treat a larger application pool as a fix for
+database CPU, connection, or lock pressure. Recovery requires idle headroom or
+zero empty-acquire rate, successful representative work, and alert resolution
+after the next evaluation.
+
+## PostgreSQL pool canceled-acquire alert fires
+
+`LeapViewPostgresPoolCanceledAcquire` means the named pool has recorded a
+positive five-minute rate of context-canceled acquisitions continuously for
+more than 10 minutes. Confirm
+`rate(leapview_postgres_pool_canceled_acquire_count_total[5m])` after grouping
+by `job`, `instance`, and `pool`, then correlate with empty-acquire rate,
+acquire latency, upstream deadlines, request timeouts, and provider health.
+Canceled acquisitions commonly indicate upstream cancellation or a bounded
+queue timeout; this metric does not identify a user, request, or root cause.
+
+Correct the first constrained boundary through its normal owner workflow and
+preserve the restricted request evidence needed for correlation. Do not retry
+unboundedly or suppress cancellation metrics. Recovery requires the five-minute
+canceled-acquire rate to return to zero, representative work to complete, and
+the alert to resolve after the next evaluation.
+
+## PostgreSQL pool acquire-latency alert fires
+
+`LeapViewPostgresPoolAcquireLatency` means the ten-minute average successful
+acquisition wait, derived from
+`rate(leapview_postgres_pool_acquire_duration_seconds_total[10m]) / rate(leapview_postgres_pool_acquire_count_total[10m])`, has remained above two seconds for more than 10 minutes. Confirm both counters and their positive acquisition rate after grouping by `job`, `instance`, and `pool`. This is a pool-wait signal, not SQL execution latency; inspect empty acquires, saturation, lock waits, provider CPU, and long transactions separately.
+
+Reduce or drain the affected workload when the evidence shows queue pressure,
+or follow the provider operation when database capacity is constrained. Do not
+change the threshold or infer query latency from this alert. Recovery requires
+the ten-minute average to return to two seconds or below, representative work
+to succeed, and alert resolution after the next evaluation.
+
+## PostgreSQL pool connection-churn alert fires
+
+`LeapViewPostgresPoolConnectionChurn` means the named pool has continuously had
+connections under construction for more than 10 minutes. Confirm
+`leapview_postgres_pool_constructing_connections` for the bounded `job`,
+`instance`, and `pool`, then inspect total/idle connections, provider
+reachability, TLS and credentials, connection limits, and recent deployment or
+failover activity. Construction is a pool lifecycle signal; it does not prove
+that a particular query or customer caused the condition.
+
+Resolve the provider, network, credential, or capacity boundary through the
+normal deployment or database-owner workflow. Do not repeatedly restart or
+raise pool limits without preserving evidence. Recovery requires constructing
+connections to remain zero, successful representative acquisition, and alert
+resolution after the next evaluation.
+
 ## Authentication fails
 
 For browser auth, confirm exact public issuer and callback URLs, secure cookies, allowed hosts, clock synchronization, provider client credentials, and proxy scheme/host preservation. Test with a fresh private browser session to separate provider failure from a stale cookie.
@@ -145,7 +242,7 @@ the incident is closed.
 
 ## Correlated incident investigation workflow
 
-Use this workflow with the specific response for [target unavailability](#target-unavailable-alert-fires), [sustained HTTP 5xx responses](#sustained-http-5xx-alert-fires), [DuckDB fatal health](#duckdb-fatal-health-alert-fires), [dashboard refresh outcome fast burn](#dashboard-refresh-fast-burn-alert-fires), [dashboard refresh latency fast burn](#dashboard-refresh-latency-fast-burn-alert-fires), [dashboard refresh latency slow burn](#dashboard-refresh-latency-slow-burn-alert-fires), [dashboard refresh slow burn](#dashboard-refresh-slow-burn-alert-fires), or [provider recovery or catalog drift](#provider-recovery-or-catalog-drift). It defines evidence pivots and recovery records; it does not authorize remediation.
+Use this workflow with the specific response for [target unavailability](#target-unavailable-alert-fires), [sustained HTTP 5xx responses](#sustained-http-5xx-alert-fires), [DuckDB fatal health](#duckdb-fatal-health-alert-fires), [PostgreSQL pool saturation](#postgresql-pool-saturation-alert-fires), [critical PostgreSQL pool saturation](#postgresql-pool-critical-saturation-alert-fires), [PostgreSQL pool no headroom](#postgresql-pool-no-headroom-alert-fires), [canceled PostgreSQL pool acquires](#postgresql-pool-canceled-acquire-alert-fires), [PostgreSQL pool acquire latency](#postgresql-pool-acquire-latency-alert-fires), [PostgreSQL pool connection churn](#postgresql-pool-connection-churn-alert-fires), [dashboard refresh outcome fast burn](#dashboard-refresh-fast-burn-alert-fires), [dashboard refresh latency fast burn](#dashboard-refresh-latency-fast-burn-alert-fires), [dashboard refresh latency slow burn](#dashboard-refresh-latency-slow-burn-alert-fires), [dashboard refresh slow burn](#dashboard-refresh-slow-burn-alert-fires), or [provider recovery or catalog drift](#provider-recovery-or-catalog-drift). It defines evidence pivots and recovery records; it does not authorize remediation.
 
 ### 1. Record alert intake
 

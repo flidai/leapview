@@ -19,6 +19,7 @@ func TestDockerCLIRuntimeStartsContainerWithDeterministicArguments(t *testing.T)
 		Name:        "qualification-browser",
 		Image:       "browser:stable",
 		NetworkMode: "host",
+		ReadOnly:    true,
 		Volumes: []qualificationContainerVolume{
 			{Source: "/host/read-only", Target: "/qualification", ReadOnly: true},
 			{Source: "/host/evidence", Target: "/evidence"},
@@ -36,6 +37,7 @@ func TestDockerCLIRuntimeStartsContainerWithDeterministicArguments(t *testing.T)
 	}
 	want := []string{
 		"run", "--detach", "--name", "qualification-browser",
+		"--read-only",
 		"--network", "host",
 		"--volume", "/host/read-only:/qualification:ro",
 		"--volume", "/host/evidence:/evidence",

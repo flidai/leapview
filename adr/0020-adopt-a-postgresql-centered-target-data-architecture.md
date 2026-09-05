@@ -950,70 +950,19 @@ Linear; this ADR records the destination and its invariants.
 
 ## Confirmation
 
-- PostgreSQL repository conformance suites cover constraints, foreign keys,
-  compare-and-swap transitions, concurrent claims, lease fencing, idempotency,
-  restart, and transaction rollback for every durable capability currently
-  backed by SQLite.
-- Audit and domain-event tests prove source mutation/event atomicity, owner
-  projection synchronicity, UUIDv7 identity, aggregate ordering, idempotent
-  replay, canonical payload handling, and absence of an event transport.
-  A future consumer must bring its own delivery and recovery acceptance suite.
-- Multi-node lease/takeover tests must prove that durable workers do not execute
-  one lease concurrently, stale owners cannot publish, and active serving
-  transitions converge after a missed notification or node restart. Managed-HA
-  failover, backup/PITR restore, and operator-runbook drills remain required
-  qualification gates for each supported topology; passing a local test or
-  startup check does not claim those gates complete.
-- Framework conformance currently runs the adapter and canonical envelope
-  invariants without admitting a production event consumer. A future consumer
-  must additionally pass the event runtime gates. River execution conformance
-  remains a qualification gate, one admitted job kind at a time, against the
-  [FAI-595 gates](specifications/fai-595-river-job-admission.md): caller-owned
-  enqueue/completion rollback, stable identity and digest, admission/fairness,
-  cancellation and stale-worker fencing, retry/recovery, restart, and
-  multi-node takeover. Evidence must prove that no second jobs authority is
-  written after cutover.
-- Lineage conformance reconstructs the canonical `ProjectGraph` from persisted
-  nodes and edges, verifies its digest, tests upstream and downstream closure,
-  rejects cycles where the resource contract requires a DAG, and binds the
-  active graph to the exact admitted artifact.
-- Query-cache tests prove that dashboard-only changes reuse compatible results;
-  semantic, relation, binding, policy, execution and format changes miss; cache
-  invalidation or event absence cannot make an obsolete result match; and
-  authorization is evaluated before lookup. They also cover identical query
-  text with distinct typed parameter values, two authorized principals with
-  distinct row filters or masks, and volatile-query bypass unless every
-  volatile input is represented.
-- Cache storage tests prove L1 loss is rebuildable and PostgreSQL contains no
-  bulk Arrow payloads. Any future L2 cache must bring separate qualification
-  evidence before it is admitted.
-- DuckLake qualification tests exercise a PostgreSQL-backed catalog with
-  concurrent remote clients while preserving exact snapshot seals, relation
-  closure, retention and active-query leases. Lost-commit-acknowledgement tests
-  reconcile exactly zero or one persistent build marker and quarantine
-  duplicates or digest mismatches. They prove that control fencing alone cannot
-  authorize same-attempt retry, that positive termination permits it, and that
-  an unprovable transaction produces a disjoint successor whose late predecessor
-  commit is non-admissible. Namespace tests prove every execution includes its
-  candidate, attempt, and fencing identity. Retirement races prove the
-  transition fails while any non-draining candidate, generation, rollback,
-  recovery, or other durable root exists; after transition no new root or query
-  lease is granted, while only existing query leases drain before expiration.
-- Retention tests prove an immutable snapshot seal survives physical expiration
-  as historical evidence without keeping that snapshot reachable.
-- Pool conformance proves the catalog isolation unit and split thresholds, pins
-  and records the exact DuckDB/DuckLake runtime tuple as evidence, verifies the
-  declared compatibility digest independently, rejects runtime automatic
-  migration, and requalifies retained seals after any runtime-tuple or explicit
-  catalog migration.
-- Backup, point-in-time recovery and failover exercises restore PostgreSQL and
-  object storage to a state whose active pointers, lineage digests, catalog
-  snapshot seals, immutable artifacts and retention roots all verify before
-  readiness. PostgreSQL conformance runs against every admitted major rather
-  than assuming forward compatibility from 18.x.
-- Architecture checks reject production SQLite control composition, mutable
-  dual-write authority, shared application/DuckLake ownership, legacy delivery
-  projections, catalog-file generation artifacts, and direct application
-  writes of analytical or cache payload data to control tables. Persistence
-  tests reject oversized bounded JSON documents and verify typed object
-  references for intentionally externalized content.
+The matrix records the evidence currently checked into the repository. A local
+container or startup check is not provider evidence; `Pending` rows require an
+operator-produced artifact for every supported topology and PostgreSQL major.
+
+| Area | Required proof | Repository evidence | Status |
+| --- | --- | --- | --- |
+| PostgreSQL control authority | Constraints, CAS transitions, concurrent claims, lease fencing, idempotency, restart, and rollback. | Source-derived [`postgres-conformance-tests.sh`](../scripts/postgres-conformance-tests.sh) inventory and native capability suites. | Implemented (repository) |
+| Audit and canonical events | Atomic source mutation/event append, UUIDv7 identity, aggregate ordering, canonical payloads, replay, and no event transport. | [`internal/platform/events/postgres/repository_test.go`](../internal/platform/events/postgres/repository_test.go) and capability audit suites. | Implemented (repository) |
+| Multi-node workers and activation | No concurrent lease execution, stale-owner fencing, and convergence after a missed acknowledgement or notification. | [`river_multinode_qualification_test.go`](../internal/platform/jobs/module/river_multinode_qualification_test.go), [`activation_multinode_qualification_test.go`](../internal/deployment/postgres/activation_multinode_qualification_test.go), and `test:go:postgres-multinode-qualification`. | Implemented (local two-node qualification) |
+| Workload admission | Sustained bounded queue pressure, class/actor progress, resource limits, cancellation, and zero terminal accounting. | [`pkg/workload/sustained_test.go`](../pkg/workload/sustained_test.go) and the rest of [`pkg/workload`](../pkg/workload), plus `test:workload:qualify`. | Implemented (bounded package qualification) |
+| River execution boundary | Caller-owned transaction, stable identity, retry/recovery, cancellation, stale-worker fencing, cleanup, and takeover for each admitted job kind. | [`FAI-595 specification`](specifications/fai-595-river-job-admission.md), River module suites, and the multi-node lane. | Partial (production gate remains evidence-gated) |
+| Lineage and query cache | Canonical graph digest/closure and dependency-, policy-, parameter-, and format-safe cache reuse; L1 loss remains rebuildable. | Lineage, result-cache, query-runtime, and architecture suites. | Implemented (repository; no L2 durability claim) |
+| DuckLake pool, snapshot, and retention safety | Exact seals, relation/object closure, lost-ack reconciliation, namespace fencing, runtime compatibility, and drain-safe retirement. | PostgreSQL DuckLake, deployment, retention, and pool qualification suites. | Partial (local qualification evidence) |
+| External provider drills | Managed-HA failover, PostgreSQL backup/PITR restore, object-store restore, and provider-native runbook recovery. | Provider operation IDs, recovery frontiers, object versions, and redacted operator records; LeapView intentionally does not run these probes. | Pending (external provider drills) |
+| Recovery admission | A restored control/physical state must verify before readiness against the exact recovery set and immutable evidence. | Recovery CLI, startup, ledger, and validation-envelope tests. | Partial (provider observations pending) |
+| Architecture and persistence boundaries | No production SQLite/dual-write authority, shared role ownership, catalog-file artifact, bulk analytical payload, or unbounded document. | Architecture checks, schema constraints, and persistence boundary tests. | Implemented (repository) |

@@ -229,7 +229,7 @@ func TestInstalledQualificationAcceptsExplicitReleaseBundle(t *testing.T) {
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "--bundle") {
+	if !strings.Contains(output.String(), "--bundle") || !strings.Contains(output.String(), "--multi-node-process") {
 		t.Fatalf("installed-candidate help = %s", output.String())
 	}
 }

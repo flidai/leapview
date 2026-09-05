@@ -22,6 +22,7 @@ type qualificationContainerRequest struct {
 	Name        string
 	Image       string
 	NetworkMode string
+	ReadOnly    bool
 	Volumes     []qualificationContainerVolume
 	Tmpfs       []string
 	Environment map[string]string
@@ -142,6 +143,9 @@ func (runtime *dockerCLIQualificationRuntime) Start(
 		return nil, fmt.Errorf("qualification container entrypoint must be a single executable")
 	}
 	arguments := []string{"run", "--detach", "--name", request.Name}
+	if request.ReadOnly {
+		arguments = append(arguments, "--read-only")
+	}
 	if network := strings.TrimSpace(request.NetworkMode); network != "" {
 		arguments = append(arguments, "--network", network)
 	}

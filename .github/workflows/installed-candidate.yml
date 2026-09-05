@@ -61,7 +61,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
+    timeout-minutes: 270
     permissions:
       contents: read
       packages: read
@@ -149,7 +149,7 @@ jobs:
           PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
           EVIDENCE_ROOT: ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}
         run: |
-          args=(qualify installed-candidate --bundle "$PACKAGE_ROOT" --evidence-dir "$EVIDENCE_ROOT")
+          args=(qualify installed-candidate --bundle "$PACKAGE_ROOT" --evidence-dir "$EVIDENCE_ROOT" --multi-node-process)
           env -u GH_TOKEN -u GITHUB_TOKEN \
             "$PACKAGE_ROOT/leapviewctl" "${args[@]}"
 

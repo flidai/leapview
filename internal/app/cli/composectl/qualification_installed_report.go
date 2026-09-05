@@ -17,7 +17,9 @@ type qualificationInstalledReport struct {
 		AuditedDenial        bool `json:"auditedDenial"`
 		InterruptionRecovery bool `json:"interruptionRecovery"`
 		RestartPersistence   bool `json:"restartPersistence"`
+		MultiNodeProcess     bool `json:"multiNodeProcess"`
 		UpgradePersistence   bool `json:"upgradePersistence"`
 		NativePostgresOnly   bool `json:"nativePostgresOnly"`
 	} `json:"assertions"`
+	MultiNode *qualificationMultiNodeReport `json:"multiNode,omitempty"`
 }

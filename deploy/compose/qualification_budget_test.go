@@ -33,6 +33,7 @@ func TestInstalledQualificationBudgetAndWorkflowTimeout(t *testing.T) {
 		"governance":            10,
 		"interruption recovery": 60,
 		"restart persistence":   15,
+		"multi-node process":    20,
 	}
 	phasePattern := regexp.MustCompile(`phases\.Begin\(rootContext,\s*"([^"]+)",\s*(\d+)\*time\.Minute\)`)
 	phaseMatches := phasePattern.FindAllStringSubmatch(entrypoint, -1)
@@ -55,14 +56,14 @@ func TestInstalledQualificationBudgetAndWorkflowTimeout(t *testing.T) {
 		}
 		totalMinutes += minutes
 	}
-	if totalMinutes != 210 {
-		t.Fatalf("installed qualification sequential phase budget = %d minutes, want 210", totalMinutes)
+	if totalMinutes != 230 {
+		t.Fatalf("installed qualification sequential phase budget = %d minutes, want 230", totalMinutes)
 	}
 
 	// Setup (toolchain/download), cleanup (Compose teardown), and bounded
 	// evidence upload get an explicit 20-minute allowance. The workflow job
 	// must exceed the phase budget plus that allowance; phase evidence remains
-	// the complete eight-phase journey above.
+	// the complete nine-phase journey above.
 	const setupCleanupArtifactHeadroomMinutes = 20
 	minimumTimeout := totalMinutes + setupCleanupArtifactHeadroomMinutes
 	for _, workflowName := range []string{"release.yml", "installed-candidate.yml"} {

@@ -430,7 +430,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
+    timeout-minutes: 270
     permissions:
       contents: read
       packages: read
@@ -501,7 +501,7 @@ jobs:
       - name: Run installed-candidate journey
         run: |
           cd "$PACKAGE_ROOT"
-          args=(qualify installed-candidate --bundle "$PACKAGE_ROOT" --evidence-dir "$RUNNER_TEMP/installed-candidate-evidence")
+          args=(qualify installed-candidate --bundle "$PACKAGE_ROOT" --evidence-dir "$RUNNER_TEMP/installed-candidate-evidence" --multi-node-process)
           ./leapviewctl "${args[@]}"
 
       - name: Upload bounded qualification evidence

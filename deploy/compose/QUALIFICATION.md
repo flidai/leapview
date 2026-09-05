@@ -14,6 +14,7 @@ executable form of the same journey.
 | Governed access | Execute a governed semantic query, verify an unauthenticated query is denied, then use the deliberately restricted bootstrap publisher token against the project grants endpoint and require the denial to appear as `authorization.denied` in the project audit stream. | Inspect the access/query audit surfaces for the successful and denied attempts and retain only IDs/timestamps. |
 | Performance and resources | Against the exact installed digest, collect three restart-cold dashboard samples, five warm dashboard samples, eight filter interactions, six governed table-sort interactions, ten governed queries, three refresh runs, and an eight-reader concurrency wave. Enforce p95 latency, zero-error, CPU, RSS, temporary-disk, goroutine, and DuckDB-connection budgets from `qualification/performance-policy.json`. | Compare `performance-report.json` with the last accepted candidate. Investigate any material regression even when it remains under the absolute ceiling. |
 | Interruption recovery | At API-observed boundaries, send `SIGKILL` to the exact candidate during a resumable managed upload, release finalization, deployment activation, refresh/materialization claim, and active query/SSE traffic. Require each durable operation to resume or end in an explicit recoverable state; require the prior revision/generation to remain visible until atomic activation; then repeat query/SSE reconnects and verify bounded goroutines, temporary files, and disk growth. Provider-native PostgreSQL/DuckLake recovery is outside this qualification. | While following the same managed upload, deployment activation, refresh, and query/SSE sequence, confirm the UI and event history name the attempted, interrupted, resumed, failed, and completed states without exposing credentials. |
+| Multi-node process | Start two independent application containers against the same native PostgreSQL control and DuckLake authority, verify their durable instance identity and active pointer, kill the primary with `SIGKILL`, recover it, then roll both nodes one at a time while the peer remains ready. | Confirm the report records two nodes, abrupt loss, recovery, rolling restart, and durable convergence. This local topology does not replace a managed-provider HA/failover drill. |
 | Operations | Verify readiness, authenticated metrics, bounded structured logs, candidate identity, and restart persistence using the original separately managed secret configuration. Production backup/PITR and DuckLake/object-store recovery follow the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore). | Inspect the running dashboard and confirm the active serving state and managed data are unchanged. |
 
 ## Run from an extracted release
@@ -22,7 +23,7 @@ Install Docker Engine with the Compose plugin, `curl`, `jq`, `openssl`, and
 `sha256sum`. From the extracted archive:
 
 ```sh
-./leapviewctl qualify installed-candidate
+./leapviewctl qualify installed-candidate --multi-node-process
 ```
 
 The controller uses only files in the archive plus public container registries. It
@@ -82,9 +83,11 @@ supersession, table delivery, and browser/network correctness against the same
 dashboard runtime, while the installed Olist gate owns shipped-artifact and
 process-resource budgets.
 
-The installed-candidate workflow runs this fresh-install journey independently
-on every release architecture. Pass `--evidence-dir` to redirect the bounded
-report and failure screenshot.
+The installed-candidate workflow runs this fresh-install journey, including
+the multi-node process drill, independently on every release architecture.
+Pass `--evidence-dir` to redirect the bounded report and failure screenshot.
+The `multiNode` object in `qualification-report.json` records the process-drill
+result without credentials or connection URLs.
 
 ## Evidence and timing
 

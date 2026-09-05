@@ -1415,6 +1415,7 @@ tasks:
       - go test -race ./pkg/...
       - task: quality:critical:race
       - task: test:workload:qualify
+      - task: test:go:postgres-multinode-qualification
       - task: qa:ui-framework
       - task: deploy:check
       - task: test:go:minio-conformance

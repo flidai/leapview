@@ -557,6 +557,31 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	report.Assertions.RestartPersistence = true
+	if options.MultiNodeProcess {
+		if err := phases.Finish(nil); err != nil {
+			return err
+		}
+		ctx = phases.Begin(rootContext, "multi-node process", 20*time.Minute)
+		multiNodeReport, multiNodeErr := c.runQualificationMultiNode(ctx, qualificationMultiNodeOptions{
+			Image:          imageReference,
+			ComposeProject: primaryProject,
+			ComposeNetwork: primaryProject + "_default",
+			TargetID:       authoringReport.Target,
+			GenerationID:   authoringReport.GenerationID,
+			Topology:       nativeTopology,
+			Primary:        c.qualificationContainers.Existing(containerID),
+		})
+		if multiNodeErr != nil {
+			return multiNodeErr
+		}
+		if multiNodeReport.NodeCount != 2 || !multiNodeReport.AbruptNodeLoss ||
+			!multiNodeReport.Recovery || !multiNodeReport.RollingRestart ||
+			!multiNodeReport.DurableConvergence {
+			return errors.New("multi-node process qualification report is incomplete")
+		}
+		report.Assertions.MultiNodeProcess = true
+		report.MultiNode = &multiNodeReport
+	}
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
