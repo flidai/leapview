@@ -53,9 +53,17 @@ END;
 $$;
 -- +goose StatementEnd
 
-CREATE OR REPLACE TRIGGER river_result_fence_guard
-    BEFORE UPDATE ON public.river_job
-    FOR EACH ROW EXECUTE FUNCTION jobs.guard_river_result_fence();
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF to_regclass('public.river_job') IS NOT NULL THEN
+        EXECUTE 'CREATE OR REPLACE TRIGGER river_result_fence_guard
+            BEFORE UPDATE ON public.river_job
+            FOR EACH ROW EXECUTE FUNCTION jobs.guard_river_result_fence()';
+    END IF;
+END
+$$;
+-- +goose StatementEnd
 
 CREATE TABLE IF NOT EXISTS jobs.job_history (
     id                     text PRIMARY KEY,

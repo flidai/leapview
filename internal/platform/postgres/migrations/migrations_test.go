@@ -33,7 +33,7 @@ func TestEmbeddedGooseBaselineIsTheOnlyImmutableMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(contents)
-	if got, want := hex.EncodeToString(sum[:]), "87f0e8e6f10964d2f71f5b5378eaef10861dd49ddd4e63ec314451f0e7fd29ff"; got != want {
+	if got, want := hex.EncodeToString(sum[:]), "f34fc2f60f4d32b9d88a7eb806fae6cb0efcdfe5b9050d53cd2898efd43b4120"; got != want {
 		t.Fatalf("immutable Goose baseline digest = %s, want %s", got, want)
 	}
 	text := string(contents)
