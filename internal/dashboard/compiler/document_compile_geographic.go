@@ -119,53 +119,53 @@ func canonicalGeographicLayers(value *document.GeographicDashboardPresentation, 
 	result := make([]visualizationir.VisualizationGeographicLayer, 0, len(*value.Layers))
 	for index, authored := range *value.Layers {
 		if authored.Value == nil {
-			return nil, fmt.Errorf("map layer %d is required", index)
+			return nil, fmt.Errorf("presentation.layers[%d] is required", index)
 		}
 		var layer visualizationir.VisualizationGeographicLayer
 		var err error
 		switch variant := authored.Value.(type) {
 		case *document.DashboardPointGeographicLayer:
 			if variant == nil {
-				return nil, fmt.Errorf("map layer %d variant is nil", index)
+				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
 			layer, err = canonicalPointGeographicLayer(variant, query)
 		case *document.DashboardChoroplethGeographicLayer:
 			if variant == nil {
-				return nil, fmt.Errorf("map layer %d variant is nil", index)
+				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
 			layer, err = canonicalChoroplethGeographicLayer(variant, query)
 		case *document.DashboardReferenceGeographicLayer:
 			if variant == nil {
-				return nil, fmt.Errorf("map layer %d variant is nil", index)
+				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
 			layer, err = canonicalReferenceGeographicLayer(variant, query)
 		case *document.DashboardHeatGeographicLayer:
 			if variant == nil {
-				return nil, fmt.Errorf("map layer %d variant is nil", index)
+				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
 			layer, err = canonicalHeatGeographicLayer(variant, query)
 		case *document.DashboardDensityGeographicLayer:
 			if variant == nil {
-				return nil, fmt.Errorf("map layer %d variant is nil", index)
+				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
 			layer, err = canonicalDensityGeographicLayer(variant, query)
 		case *document.DashboardPathGeographicLayer:
 			if variant == nil {
-				return nil, fmt.Errorf("map layer %d variant is nil", index)
+				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
 			layer, err = canonicalPathGeographicLayer(variant, query)
 		default:
-			return nil, fmt.Errorf("map layer %d uses unsupported variant %T", index, authored.Value)
+			return nil, fmt.Errorf("presentation.layers[%d] uses unsupported variant %T", index, authored.Value)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("map layer %d: %w", index, err)
+			return nil, fmt.Errorf("presentation.layers[%d]: %w", index, err)
 		}
 		result = append(result, layer)
 	}
 	return result, nil
 }
 
-func canonicalMapLayerBase(base *document.DashboardGeographicLayerBase, kind string, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayerBase, error) {
+func canonicalMapLayerBase(base *document.DashboardGeographicLayerBase, kind string, label *string, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayerBase, error) {
 	if base == nil {
 		return visualizationir.VisualizationGeographicLayerBase{}, fmt.Errorf("map layer base is required")
 	}
@@ -184,12 +184,12 @@ func canonicalMapLayerBase(base *document.DashboardGeographicLayerBase, kind str
 		Position:   visualizationir.VisualizationMapLayerPositionBelowLabels,
 		Visibility: visualizationir.VisualizationMapVisibility{MinimumZoom: 0, MaximumZoom: 24},
 	}
-	if base.Label != nil {
-		label, err := canonicalResultRef(query, "primary", *base.Label)
+	if label != nil {
+		labelRef, err := canonicalResultRef(query, "primary", *label)
 		if err != nil {
 			return visualizationir.VisualizationGeographicLayerBase{}, fmt.Errorf("label: %w", err)
 		}
-		out.Label = &label
+		out.Label = &labelRef
 	}
 	if base.Tooltip != nil {
 		out.Tooltip = make([]visualizationir.VisualizationFieldRef, 0, len(*base.Tooltip))
@@ -378,7 +378,7 @@ func canonicalMapOpacity(value *float64) (float64, error) {
 }
 
 func canonicalPointGeographicLayer(layer *document.DashboardPointGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
-	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, query)
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, layer.Label, query)
 	if err != nil {
 		return visualizationir.VisualizationGeographicLayer{}, err
 	}
@@ -418,7 +418,7 @@ func canonicalPointGeographicLayer(layer *document.DashboardPointGeographicLayer
 }
 
 func canonicalChoroplethGeographicLayer(layer *document.DashboardChoroplethGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
-	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, query)
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, layer.Label, query)
 	if err != nil {
 		return visualizationir.VisualizationGeographicLayer{}, err
 	}
@@ -450,7 +450,7 @@ func canonicalChoroplethGeographicLayer(layer *document.DashboardChoroplethGeogr
 }
 
 func canonicalReferenceGeographicLayer(layer *document.DashboardReferenceGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
-	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, query)
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, nil, query)
 	if err != nil {
 		return visualizationir.VisualizationGeographicLayer{}, err
 	}
@@ -478,7 +478,7 @@ func canonicalDensityGeographicLayer(layer *document.DashboardDensityGeographicL
 }
 
 func canonicalHeatOrDensityGeographicLayer(kind, latitudeName, longitudeName string, valueName *string, color *document.DashboardMapColorScale, heatStyle *document.DashboardMapHeatStyle, opacityValue *float64, query LoweredDashboardQuery, heat bool, baseValue *document.DashboardGeographicLayerBase) (visualizationir.VisualizationGeographicLayer, error) {
-	base, err := canonicalMapLayerBase(baseValue, kind, query)
+	base, err := canonicalMapLayerBase(baseValue, kind, nil, query)
 	if err != nil {
 		return visualizationir.VisualizationGeographicLayer{}, err
 	}
@@ -509,7 +509,7 @@ func canonicalHeatOrDensityGeographicLayer(kind, latitudeName, longitudeName str
 }
 
 func canonicalPathGeographicLayer(layer *document.DashboardPathGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
-	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, query)
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, nil, query)
 	if err != nil {
 		return visualizationir.VisualizationGeographicLayer{}, err
 	}

@@ -145,7 +145,7 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 			value: document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{Type: "geographic"}},
 			check: func(t *testing.T, value any) {
 				got := value.(visualizationir.GeographicVisualizationPresentation)
-				if !got.Roam || got.Theme != visualizationir.VisualizationMapThemeAuto || got.LabelDensity != visualizationir.VisualizationMapLabelDensityNormal || got.Camera.Mode != visualizationir.VisualizationMapCameraModeFitData || got.Camera.Padding != 32 || got.Camera.MaximumZoom != 14 || !got.Controls.Zoom || !got.Controls.Reset || !got.Controls.Compass {
+				if !got.Roam || got.Theme != visualizationir.VisualizationMapThemeAuto || got.LabelDensity != visualizationir.VisualizationMapLabelDensityNormal || got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityHidden || len(got.LabelPolicy.Priority) != 0 || got.LabelPolicy.MaxCharacters != 24 || got.LabelPolicy.MinimumSpacing != 0 || !got.LabelPolicy.TooltipFallback || got.Camera.Mode != visualizationir.VisualizationMapCameraModeFitData || got.Camera.Padding != 32 || got.Camera.MaximumZoom != 14 || !got.Controls.Zoom || !got.Controls.Reset || !got.Controls.Compass {
 					t.Fatalf("geographic = %#v", got)
 				}
 			},

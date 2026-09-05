@@ -74,9 +74,6 @@ visuals:
         mode: fit_data
         padding: 32
         maximumZoom: 9
-      labels:
-        density: automatic
-        tooltipFallback: true
       layers:
       - kind: point
         id: orders

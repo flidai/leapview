@@ -400,6 +400,11 @@
           ],
           "type": "string"
         },
+        "label": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "opacity": {
           "format": "double",
           "type": "number"
@@ -1052,11 +1057,6 @@
           "maxLength": 128,
           "minLength": 1,
           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-          "type": "string"
-        },
-        "label": {
-          "minLength": 1,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "maximumZoom": {
@@ -1952,6 +1952,11 @@
           ],
           "type": "string"
         },
+        "label": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "latitude": {
           "minLength": 1,
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -2801,9 +2806,6 @@
         },
         "labelDensity": {
           "$ref": "#/$defs/VisualizationMapLabelDensity"
-        },
-        "labels": {
-          "$ref": "#/$defs/DashboardLabelPolicy"
         },
         "layers": {
           "items": {

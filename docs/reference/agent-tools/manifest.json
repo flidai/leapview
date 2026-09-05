@@ -11721,44 +11721,6 @@
                         ],
                         "type": "string"
                       },
-                      "labels": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "density": {
-                            "enum": [
-                              "hidden",
-                              "automatic",
-                              "dense",
-                              "always"
-                            ],
-                            "type": "string"
-                          },
-                          "maxCharacters": {
-                            "type": "integer"
-                          },
-                          "minimumSpacing": {
-                            "type": "integer"
-                          },
-                          "priority": {
-                            "items": {
-                              "enum": [
-                                "selected",
-                                "anomaly",
-                                "threshold"
-                              ],
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "tooltipFallback": {
-                            "type": "boolean"
-                          }
-                        },
-                        "required": [
-                          "density"
-                        ],
-                        "type": "object"
-                      },
                       "layers": {
                         "items": {
                           "oneOf": [
@@ -11773,11 +11735,6 @@
                                           "maxLength": 128,
                                           "minLength": 1,
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-                                          "type": "string"
-                                        },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                           "type": "string"
                                         },
                                         "maximumZoom": {
@@ -11884,6 +11841,11 @@
                                   ],
                                   "type": "string"
                                 },
+                                "label": {
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                  "type": "string"
+                                },
                                 "latitude": {
                                   "minLength": 1,
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -11954,11 +11916,6 @@
                                           "maxLength": 128,
                                           "minLength": 1,
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-                                          "type": "string"
-                                        },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                           "type": "string"
                                         },
                                         "maximumZoom": {
@@ -12052,6 +12009,11 @@
                                   ],
                                   "type": "string"
                                 },
+                                "label": {
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                  "type": "string"
+                                },
                                 "opacity": {
                                   "type": "number"
                                 },
@@ -12094,11 +12056,6 @@
                                           "maxLength": 128,
                                           "minLength": 1,
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-                                          "type": "string"
-                                        },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                           "type": "string"
                                         },
                                         "maximumZoom": {
@@ -12218,11 +12175,6 @@
                                           "maxLength": 128,
                                           "minLength": 1,
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-                                          "type": "string"
-                                        },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                           "type": "string"
                                         },
                                         "maximumZoom": {
@@ -12354,11 +12306,6 @@
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                                           "type": "string"
                                         },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                          "type": "string"
-                                        },
                                         "maximumZoom": {
                                           "type": "number"
                                         },
@@ -12486,11 +12433,6 @@
                                           "maxLength": 128,
                                           "minLength": 1,
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-                                          "type": "string"
-                                        },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                           "type": "string"
                                         },
                                         "maximumZoom": {

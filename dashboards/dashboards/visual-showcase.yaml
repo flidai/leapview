@@ -1734,7 +1734,6 @@ spec:
           path: route_id
           order: point_order
           value: route_revenue
-          label: route_label
           tooltip: [route_label, route_revenue]
           stroke:
             color: "#0969da"
