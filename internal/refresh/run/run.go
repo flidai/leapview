@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
 var (
@@ -83,6 +84,10 @@ type RunRecord struct {
 }
 
 type RunInput struct {
+	// RunID is an optional caller-owned command identity. PostgreSQL adapters
+	// require it (or another explicit invocation identity) for exact replay;
+	// they never collapse two otherwise-identical manual requests.
+	RunID                string
 	Identity             projectgraph.ServingIdentity
 	SemanticModelID      projectgraph.ResourceID
 	PipelineID           projectgraph.ResourceID
@@ -91,6 +96,7 @@ type RunInput struct {
 	MatchingScheduleIDs  []string
 	TriggerID            string
 	NominalTime          string
+	OccurrenceID         string
 	ConcurrencyPolicy    string
 	PrincipalID          string
 	GroupIDs             []string
@@ -177,6 +183,29 @@ type RunRepository interface {
 	MarkRunFailed(ctx context.Context, identity projectgraph.ServingIdentity, runID, message string) (RunRecord, error)
 }
 
+// RunTreeInput describes one refresh pipeline root and all dependency
+// provenance rows that must be admitted with it. The optional occurrence is
+// the scheduler's already-claimed fence; adapters close that claim in the
+// same transaction as the root, children, and canonical job enqueue.
+type RunTreeInput struct {
+	Root              RunInput
+	DependencyTargets []projectgraph.ResourceID
+	Occurrence        *refreshschedule.Occurrence
+	// IdempotencyKey and RequestDigest are populated only by an explicitly
+	// keyed manual command. Persistence adapters may use them to reserve the
+	// native operation and replay the original run tree; empty values preserve
+	// fresh scheduled/UI behaviour.
+	IdempotencyKey string
+	RequestDigest  string
+}
+
+// RunTreeRepository is the mandatory atomic batch/tree creation capability. A
+// successful call commits exactly one root, zero or more dependency rows, and
+// the linked queue/workflow authority records as one unit.
+type RunTreeRepository interface {
+	CreateRunTree(context.Context, RunTreeInput) (RunRecord, []RunRecord, error)
+}
+
 // LeaseFencedRunRepository contains worker-owned terminal transitions. The
 // claim (owner, revision, and expiry) is carried with the job so a reclaimed
 // or expired worker cannot mutate the authoritative run/job pair.
@@ -199,6 +228,16 @@ type RunPage struct {
 // generation is part of the identity and is never inferred from a container
 // or a mutable serving-state alias.
 func (input RunInput) Validate() error {
+	if input.RunID != "" {
+		if err := validateOperational(input.RunID, "run id", true); err != nil {
+			return err
+		}
+	}
+	if input.OccurrenceID != "" {
+		if err := validateOperational(input.OccurrenceID, "occurrence id", true); err != nil {
+			return err
+		}
+	}
 	if input.TriggerType == "" {
 		if _, ok := validTriggerTypes[input.InvocationSource]; ok {
 			input.TriggerType = input.InvocationSource

@@ -11,8 +11,9 @@ import (
 )
 
 type ArtifactReference struct {
-	Path   string
-	Digest string
+	Path      string
+	Digest    string
+	SizeBytes int64
 }
 
 type SynchronizationPlanRequest struct {
@@ -21,25 +22,34 @@ type SynchronizationPlanRequest struct {
 	ArtifactDigest string
 	// SourceOnly asks the target to retain bytes without candidate preparation.
 	// It is used by canonical delivery plan before Build performs physical work.
-	SourceOnly             bool
-	CandidateKey           string
-	ExpectedCandidateID    string
-	ExpectedArtifactDigest string
-	Artifacts              []ArtifactReference
-	SourceRevision         *SourceRevision
+	SourceOnly     bool
+	CandidateKey   string
+	PlanID         string
+	IdempotencyKey string
+	Artifacts      []ArtifactReference
+	SourceRevision *SourceRevision
 }
 
 type SynchronizationPlan struct {
+	PlanID         string
 	MissingDigests []string
 }
 
-// SynchronizationTransport is the target-facing protocol port. Plan transfers
-// only the immutable source manifest, Upload transfers target-requested blobs,
-// and Commit atomically advances the owned private candidate.
+// SynchronizationTransport is the target-facing source protocol port. Plan
+// transfers only the immutable source manifest and Upload transfers the blobs
+// requested by the target. Candidate synchronization is exposed separately
+// through NativeSynchronizationTransport.
 type SynchronizationTransport interface {
 	Plan(context.Context, SynchronizationPlanRequest) (SynchronizationPlan, error)
 	Upload(context.Context, SynchronizationPlanRequest, Artifact) error
-	Commit(context.Context, SynchronizationPlanRequest) (Candidate, error)
+}
+
+// NativeSynchronizationTransport is the canonical PostgreSQL delivery seam.
+// Implementations own source retention, delivery-plan creation, and build
+// requests. The upload limit is supplied by TransportRemote so the transport
+// preserves the caller's bounded concurrency policy.
+type NativeSynchronizationTransport interface {
+	SynchronizeNative(context.Context, SyncRequest, int) (Candidate, error)
 }
 
 // RetainedSource is the target-verified identity returned by the source-only
@@ -74,53 +84,18 @@ func (remote *TransportRemote) Synchronize(ctx context.Context, request SyncRequ
 	if remote == nil || remote.transport == nil {
 		return Candidate{}, fmt.Errorf("project synchronization transport is not configured")
 	}
+	native, ok := remote.transport.(NativeSynchronizationTransport)
+	if !ok {
+		return Candidate{}, fmt.Errorf("target does not implement native project synchronization")
+	}
 	snapshot, err := normalizeSnapshot(request.Snapshot)
 	if err != nil {
 		return Candidate{}, err
 	}
-	planRequest := SynchronizationPlanRequest{
-		ProjectID:              snapshot.ProjectID,
-		ProjectFile:            snapshot.ProjectFile,
-		ArtifactDigest:         snapshot.Digest,
-		SourceOnly:             request.SourceOnly,
-		CandidateKey:           snapshot.CandidateKey,
-		ExpectedCandidateID:    strings.TrimSpace(request.ExpectedCandidateID),
-		ExpectedArtifactDigest: strings.TrimSpace(request.ExpectedArtifactDigest),
-		Artifacts:              make([]ArtifactReference, len(snapshot.Artifacts)),
-		SourceRevision:         snapshot.SourceRevision,
-	}
-	artifactsByDigest := make(map[string]Artifact, len(snapshot.Artifacts))
-	for index, artifact := range snapshot.Artifacts {
-		planRequest.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest}
-		if _, exists := artifactsByDigest[artifact.Digest]; !exists {
-			artifactsByDigest[artifact.Digest] = artifact
-		}
-	}
-	plan, err := remote.transport.Plan(ctx, clonePlanRequest(planRequest))
-	if err != nil {
-		return Candidate{}, fmt.Errorf("plan project synchronization: %w", err)
-	}
-	missing, err := missingArtifacts(plan.MissingDigests, artifactsByDigest)
-	if err != nil {
-		return Candidate{}, err
-	}
-	group, uploadContext := errgroup.WithContext(ctx)
-	group.SetLimit(remote.maxParallelUploads)
-	for _, artifact := range missing {
-		artifact := artifact
-		group.Go(func() error {
-			if err := remote.transport.Upload(uploadContext, clonePlanRequest(planRequest), artifact); err != nil {
-				return fmt.Errorf("upload project artifact %q: %w", artifact.Path, err)
-			}
-			return nil
-		})
-	}
-	if err := group.Wait(); err != nil {
-		return Candidate{}, err
-	}
-	candidate, err := remote.transport.Commit(ctx, clonePlanRequest(planRequest))
-	if err != nil {
-		return Candidate{}, fmt.Errorf("commit project synchronization: %w", err)
+	request.Snapshot = cloneSnapshot(snapshot)
+	candidate, nativeErr := native.SynchronizeNative(ctx, request, remote.maxParallelUploads)
+	if nativeErr != nil {
+		return Candidate{}, fmt.Errorf("synchronize project delivery: %w", nativeErr)
 	}
 	return candidate, nil
 }
@@ -140,7 +115,7 @@ func (remote *TransportRemote) RetainSource(ctx context.Context, snapshot Snapsh
 		planRequest := SynchronizationPlanRequest{ProjectID: snapshot.ProjectID, ProjectFile: snapshot.ProjectFile, ArtifactDigest: snapshot.Digest, SourceOnly: true, CandidateKey: snapshot.CandidateKey, Artifacts: make([]ArtifactReference, len(snapshot.Artifacts)), SourceRevision: snapshot.SourceRevision}
 		artifactsByDigest := make(map[string]Artifact, len(snapshot.Artifacts))
 		for index, artifact := range snapshot.Artifacts {
-			planRequest.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest}
+			planRequest.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes}
 			if _, exists := artifactsByDigest[artifact.Digest]; !exists {
 				artifactsByDigest[artifact.Digest] = artifact
 			}
@@ -149,14 +124,27 @@ func (remote *TransportRemote) RetainSource(ctx context.Context, snapshot Snapsh
 		if err != nil {
 			return RetainedSource{}, fmt.Errorf("plan project source retention: %w", err)
 		}
+		if strings.TrimSpace(plan.PlanID) == "" {
+			return RetainedSource{}, fmt.Errorf("target source retention plan did not return a plan id")
+		}
+		planRequest.PlanID = strings.TrimSpace(plan.PlanID)
 		missing, err := missingArtifacts(plan.MissingDigests, artifactsByDigest)
 		if err != nil {
 			return RetainedSource{}, err
 		}
+		group, uploadContext := errgroup.WithContext(ctx)
+		group.SetLimit(remote.maxParallelUploads)
 		for _, artifact := range missing {
-			if err := remote.transport.Upload(ctx, clonePlanRequest(planRequest), artifact); err != nil {
-				return RetainedSource{}, fmt.Errorf("upload project source %q: %w", artifact.Path, err)
-			}
+			artifact := artifact
+			group.Go(func() error {
+				if err := remote.transport.Upload(uploadContext, clonePlanRequest(planRequest), artifact); err != nil {
+					return fmt.Errorf("upload project source %q: %w", artifact.Path, err)
+				}
+				return nil
+			})
+		}
+		if err := group.Wait(); err != nil {
+			return RetainedSource{}, err
 		}
 		return retainer.RetainSource(ctx, clonePlanRequest(planRequest))
 	}

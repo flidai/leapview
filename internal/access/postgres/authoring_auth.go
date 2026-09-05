@@ -337,10 +337,47 @@ func (r *Repository) RotateAuthoringCredential(ctx context.Context, rotation acc
 	}
 	dbNow := dbEpochMicros(nowEpoch)
 	if !active {
-		if parsedReplayPrincipal, parseErr := pgUUID(principalID); parseErr == nil {
-			_, _ = accessdb.New(tx).RevokeAuthoringSession(ctx, accessdb.RevokeAuthoringSessionParams{ID: sessionID, PrincipalID: parsedReplayPrincipal})
+		// A completed containment is an exact replay: the family is already
+		// revoked and the first transaction owns the single security audit.
+		if sessionRevoked != nil {
+			return access.AuthoringCredential{}, access.ErrAuthoringRefreshReplay
 		}
-		_ = tx.Commit(ctx)
+		parsedReplayPrincipal, err := pgUUID(principalID)
+		if err != nil {
+			return access.AuthoringCredential{}, access.ErrInvalidAuthoringCredential
+		}
+		tag, err := accessdb.New(tx).RevokeAuthoringSession(ctx, accessdb.RevokeAuthoringSessionParams{ID: sessionID, PrincipalID: parsedReplayPrincipal})
+		if err != nil {
+			return access.AuthoringCredential{}, err
+		}
+		if tag.RowsAffected() != 1 {
+			return access.AuthoringCredential{}, access.ErrInvalidAuthoringCredential
+		}
+		project, err := graph.NewResourceID(projectID)
+		if err != nil {
+			return access.AuthoringCredential{}, err
+		}
+		var capabilities []access.Capability
+		if err := json.Unmarshal([]byte(capsJSON), &capabilities); err != nil {
+			return access.AuthoringCredential{}, err
+		}
+		metadata, err := json.Marshal(map[string]any{
+			"kind": kind, "clientId": clientID, "targetId": targetID,
+			"projectId": project.String(), "capabilities": capabilities,
+		})
+		if err != nil {
+			return access.AuthoringCredential{}, err
+		}
+		auditRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
+		if err := auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{
+			PrincipalID: principalID, Action: "authoring.refresh.replay", ResourceKind: "authoring_session",
+			ResourceID: sessionID, Status: "security_event", MetadataJSON: string(metadata),
+		}); err != nil {
+			return access.AuthoringCredential{}, fmt.Errorf("%w: record authoring refresh replay audit: %v", access.ErrAuditTransaction, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return access.AuthoringCredential{}, err
+		}
 		return access.AuthoringCredential{}, access.ErrAuthoringRefreshReplay
 	}
 	if sessionRevoked != nil || !dbNow.Before(refreshExp) || !dbNow.Before(sessionExpires) || !dbNow.Before(rotation.AccessExpiresAt) || !dbNow.Before(rotation.RefreshExpiresAt) || !rotation.AccessExpiresAt.Before(rotation.RefreshExpiresAt) {

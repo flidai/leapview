@@ -86,6 +86,6 @@ Lit components read signal paths through the shared bridge. Components may show 
 
 ## Background and maintenance work
 
-Deployment candidates, managed uploads, refresh jobs, agent runs, backup/restore, retention maintenance, and analytical cleanup each have explicit lifecycle state. Background work must be restart-aware, bounded, attributable, and unable to overwrite a newer generation.
+Deployment candidates, managed uploads, refresh jobs, agent runs, and retention maintenance each have explicit lifecycle state. Background work must be restart-aware, bounded, attributable, and unable to overwrite a newer generation. PostgreSQL backup/PITR and DuckLake/object-store recovery are external operational workflows, not application background jobs.
 
 Package direction should remain: transport calls application/domain services; services enforce authorization and lifecycle; repositories and adapters implement persistence/external systems. Tests should fail when a new shortcut violates that direction.

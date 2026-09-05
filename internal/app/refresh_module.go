@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/http"
 
@@ -16,7 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
-func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, database *sql.DB, persistence persistenceInputs, workflow workflowInputs, storage storageInputs) error {
+func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, persistence persistenceInputs, workflow workflowInputs, storage storageInputs) error {
 	if routes == nil || routes.refreshModule != nil {
 		return nil
 	}
@@ -24,14 +23,14 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		ctx = context.Background()
 	}
 	service, err := projectRefreshService(persistence, workflow, func() *dashboardmodule.Module { return routes.dashboardModule })
-	if err != nil && database != nil {
+	if err != nil && (persistence.refreshPersistence != nil || persistence.requireNativePersistence) {
 		return fmt.Errorf("configure refresh service: %w", err)
 	}
-	if workflow.refreshMaterializer != nil {
-		service.Materializer = workflow.refreshMaterializer
-	}
 	service.ResolveSourceDigest = workflow.refreshSourceDigest
+	service.ResolveTargetRevision = workflow.refreshTargetRevision
 	service.CanonicalExecutor = workflow.canonicalRefreshExecutor
+	service.CanonicalCompletionCoordinator = workflow.canonicalCompletionCoordinator
+	service.CanonicalResultReconciler = workflow.canonicalResultReconciler
 	service.ResolveActive = func(ctx context.Context, identity projectgraph.ServingIdentity) (refreshrun.ServingState, error) {
 		if runtime.runtimeHostModule == nil {
 			return refreshrun.ServingState{}, fmt.Errorf("active project runtime is unavailable")
@@ -70,13 +69,13 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		return identity, nil
 	}
 	recoveryLifecycle := workflow.recoveryLifecycle
-	if recoveryLifecycle != nil && recoveryLifecycle.Repository == nil && database != nil {
-		recoveryLifecycle = refreshmodule.NewRecoveryLifecycle(database, *recoveryLifecycle)
+	refreshPersistence := persistence.refreshPersistence
+	if refreshPersistence == nil && persistence.requireNativePersistence {
+		return fmt.Errorf("configure refresh persistence: native composition requires an injected persistence bundle")
 	}
 	config := refreshmodule.Config{
-		Database: database, Service: service,
-		Analytics: runtime.analyticsModule.ProjectMaterializer(), ManagedData: workflow.managedDataResolver,
-		Artifacts: appruntimefactory.NewRefreshArtifactLoader(),
+		Persistence: refreshPersistence, Production: persistence.requireNativePersistence, Service: service,
+		Artifacts: appruntimefactory.NewRefreshArtifactLoader(workflow.servingArtifacts),
 		HTTP: refreshmodule.HTTPConfig{
 			RunnerConfigured: func() bool { return runtime.metrics != nil },
 			CurrentPrincipal: func(r *http.Request) (refreshmodule.HTTPPrincipal, bool) {
@@ -114,22 +113,19 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		Admission: workloadController(&runtime.workloads), LeaseTimeout: storage.jobLeaseTimeout,
 		Clock: workflow.refreshPipelineClock, ResolveIdentity: resolveRefreshIdentity,
 		PublishedVersion:  workflow.publishedVersion,
-		EnableDispatcher:  workflow.enableRefreshDispatcher,
 		EnableScheduler:   false,
 		RecoveryLifecycle: recoveryLifecycle,
 		RecoveryInterval:  workflow.recoveryInterval,
-		Logger:            platform.logger, Events: platform.asyncJobs, Workflow: platform.jobModule,
+		RecoveryEnvironment: func() string {
+			if runtime.runtimeHostModule == nil {
+				return ""
+			}
+			return string(runtime.runtimeHostModule.Environment())
+		}(),
+		Logger: platform.logger, Events: platform.asyncJobs,
 		WorkloadStats: func() refreshmodule.WorkloadStats {
 			return workloadController(&runtime.workloads).Stats()
 		},
-		RunFinished: func(ctx context.Context, run refreshmodule.RunRecord) {
-			if run.Status == refreshmodule.RunStatusSucceeded && runtime.storageRetention != nil {
-				_ = runtime.storageRetention.Run(ctx, false)
-			}
-		},
-	}
-	if database != nil {
-		config.AuditIntentRecorder = persistence.auditRecorder
 	}
 	module, err := refreshmodule.Build(ctx, config)
 	if err != nil {

@@ -11,10 +11,8 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
-	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
 	projectapi "github.com/flidai/leapview/internal/project/api"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
@@ -22,7 +20,6 @@ import (
 	"github.com/flidai/leapview/internal/release"
 	releaseapi "github.com/flidai/leapview/internal/release/api"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
-	releasefilesystem "github.com/flidai/leapview/internal/release/filesystem"
 	releasehttp "github.com/flidai/leapview/internal/release/http"
 	"github.com/flidai/leapview/pkg/jobs"
 )
@@ -220,7 +217,6 @@ type APIConfig struct {
 	ProjectSearchCatalog projectcatalogSearcher
 	AuthorizeConnection  func(context.Context, string, string, string, access.Capability) (bool, error)
 	Jobs                 JobStore
-	Workflow             jobplatform.WorkflowRecorder
 }
 
 // SetProjectSearchCatalog binds the one active-lease catalog assembled by application
@@ -361,60 +357,6 @@ func (m *Module) GetRelease(w http.ResponseWriter, r *http.Request, project, rel
 	apitransport.WriteJSON(w, http.StatusOK, response(row))
 }
 
-func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, project, releaseID, contentType, contentDigest string) {
-	if contentType != "application/octet-stream" {
-		apitransport.WriteProblem(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Release artifacts require application/octet-stream", nil)
-		return
-	}
-	ctx := r.Context()
-	if m.auditIntentConfigured {
-		principal, ok := m.currentPrincipal(r)
-		if !ok {
-			m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), apigenfailure.New("authentication_required", "Bearer authentication is required"))
-			return
-		}
-		projectID, projectErr := projectgraph.NewResourceID(project)
-		if projectErr != nil {
-			m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), projectErr)
-			return
-		}
-		current, getErr := m.service.Get(ctx, projectID, releaseID)
-		if getErr != nil {
-			m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), getErr)
-			return
-		}
-		requestID, correlationID := releaseAuditRequestIdentity(r)
-		intent, intentErr := buildReleaseCreatedAuditIntent(releaseAuditCommandInput{
-			OperationID: string(releasegen.GenOperationUploadReleaseArtifact), ProjectID: projectID, ReleaseID: releaseID,
-			GenerationID: current.ServingIdentity.GenerationID, ArtifactDigest: current.ArtifactDigest,
-			IdempotencyKey: "artifact:" + releaseID + ":" + contentDigest, PrincipalID: principal.ID,
-			RequestID: requestID, CorrelationID: correlationID, Status: string(current.Status),
-		})
-		if intentErr != nil {
-			m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), intentErr)
-			return
-		}
-		ctx = release.WithAuditIntent(ctx, intent)
-	}
-	artifact, err := m.service.UploadArtifact(ctx, project, releaseID, contentDigest, http.MaxBytesReader(w, r.Body, releasefilesystem.MaxUploadBytes))
-	if err != nil {
-		m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), err)
-		return
-	}
-	identity, identityErr := artifact.Identity()
-	if identityErr != nil {
-		m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), identityErr)
-		return
-	}
-	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, GenerationID: identity.GenerationID, Digest: artifact.ExpectedDigest, ActualDigest: artifact.ActualDigest, SizeBytes: artifact.SizeBytes}
-	if err := m.completeCommand(ctx, string(releasegen.GenOperationUploadReleaseArtifact)); err != nil {
-		m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), err)
-		return
-	}
-	w.Header().Set("Location", location(project, releaseID)+"/artifact")
-	apitransport.WriteJSON(w, http.StatusCreated, result)
-}
-
 func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project, releaseID, idempotencyKey string) {
 	principal, ok := m.currentPrincipal(r)
 	if !ok {
@@ -432,10 +374,6 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 	})
 	if err != nil {
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), err)
-		return
-	}
-	if m.api.Workflow == nil {
-		m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), apigenfailure.New("queue_unavailable", "release workflow is unavailable"))
 		return
 	}
 	ctx := r.Context()
@@ -475,6 +413,7 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 					Job: jobs.EnqueueInput{
 						ID: "release:" + releaseID + ":finalize", Kind: execution.JobKind,
 						WorkloadClass: "control", PrincipalID: principal.ID, GroupIDs: nil, EstimatedMemoryBytes: 16 << 20,
+						PartitionKey: "release:" + project,
 						ResourceKind: execution.ResourceKind, ResourceID: releaseID, Payload: payload,
 					},
 				})
@@ -581,8 +520,6 @@ func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
 		switch operationID {
 		case string(releasegen.GenOperationCreateRelease):
 			return releasegen.EncodeGenCreateReleaseAuditPayload(releasegen.GenSchemaReleaseCreatedAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), ProjectId: str("projectId"), ProjectDigest: str("projectDigest"), Status: str("status"), CreatedBy: str("createdBy")})
-		case string(releasegen.GenOperationUploadReleaseArtifact):
-			return "", fmt.Errorf("release artifact audit contract is not generation-scoped")
 		case string(releasegen.GenOperationFinalizeRelease):
 			return releasegen.EncodeGenFinalizeReleaseAuditPayload(releasegen.GenSchemaReleaseValidatingAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), ProjectId: str("projectId"), Status: str("status")})
 		}
@@ -594,8 +531,6 @@ func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
 			return "", fmt.Errorf("release create audit payload has type %T", data)
 		}
 		return releasegen.EncodeGenCreateReleaseAuditPayload(payload)
-	case string(releasegen.GenOperationUploadReleaseArtifact):
-		return "", fmt.Errorf("release artifact audit contract is not generation-scoped")
 	case string(releasegen.GenOperationFinalizeRelease):
 		payload, ok := data.(releasegen.GenSchemaReleaseValidatingAuditPayload)
 		if !ok {

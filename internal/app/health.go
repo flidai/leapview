@@ -111,9 +111,13 @@ func (h *health) runtimeReady(ctx context.Context, checks map[string]string) boo
 		checks["runtime"] = "failed"
 		return false
 	}
-	if err := projectID.Validate(); err != nil {
+	if projectID == "" {
 		checks["runtime"] = "no_active_deployments"
 		return !h.config.RequireActiveDeployment
+	}
+	if err := projectID.Validate(); err != nil {
+		checks["runtime"] = "failed"
+		return false
 	}
 	if err := h.config.RuntimeReady(ctx); err != nil {
 		if errors.Is(err, errNoActiveDeployment) {
@@ -163,7 +167,26 @@ func stableDeliveryStartupDiagnostic(code deployment.DeliveryStartupDiagnosticCo
 		deployment.DeliveryStartupMixedServingPaths,
 		deployment.DeliveryStartupMissingTargetRevision,
 		deployment.DeliveryStartupMissingServingGeneration,
-		deployment.DeliveryStartupIndeterminatePublication:
+		deployment.DeliveryStartupIndeterminatePublication,
+		deployment.DeliveryStartupClaimTargetPartial,
+		deployment.DeliveryStartupTargetIdentityMismatch,
+		deployment.DeliveryStartupActivePointerMismatch,
+		deployment.DeliveryStartupMissingPublication,
+		deployment.DeliveryStartupMissingServingState,
+		deployment.DeliveryStartupServingEvidenceMismatch,
+		deployment.DeliveryStartupMissingSeal,
+		deployment.DeliveryStartupSealEvidenceMismatch,
+		deployment.DeliveryStartupRecoverySetMissing,
+		deployment.DeliveryStartupRecoverySetNotPublished,
+		deployment.DeliveryStartupRecoverySetPointerMismatch,
+		deployment.DeliveryStartupRecoverySetSealMismatch,
+		deployment.DeliveryStartupRecoverySetCatalogMismatch,
+		deployment.DeliveryStartupRecoverySetCompatibilityMismatch,
+		deployment.DeliveryStartupRecoverySetArtifactMismatch,
+		deployment.DeliveryStartupRecoverySetValidationMissing,
+		deployment.DeliveryStartupRecoverySetValidationNotPassed,
+		deployment.DeliveryStartupRecoverySetValidationMismatch,
+		deployment.DeliveryStartupRecoverySetInvalid:
 		return true
 	default:
 		return false

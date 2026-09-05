@@ -72,6 +72,34 @@ func TestCandidateOwnershipCompatibilityAndRetireDrain(t *testing.T) {
 	if err := registry.PrepareAndRegisterCandidate(t.Context(), CandidatePreparation{Registration: registration, Identity: projectgraph.ServingIdentity{ProjectID: "project_demo", Environment: "prod", GenerationID: "generation_1"}}); err != nil {
 		t.Fatal(err)
 	}
+	view, err := registry.ResolveOwnedCandidate(registration.CandidateID, registration.OwnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.CandidateID != registration.CandidateID || view.ProjectID != registration.ProjectID || view.AuthorizationFingerprint != registration.Compatibility.AuthorizationFingerprint {
+		t.Fatalf("owned candidate view = %+v", view)
+	}
+	providerLease, err := view.Provider.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerLease.Runtime() == nil {
+		t.Fatal("owned candidate provider returned a lease without a runtime")
+	}
+	if got := providerLease.Identity(); got.ProjectID != registration.ProjectID || got.GenerationID != "generation_1" {
+		t.Fatalf("owned candidate lease identity = %+v", got)
+	}
+	ownedLease, ok := providerLease.(*candidateRuntimeLease)
+	if !ok {
+		t.Fatalf("owned candidate lease type = %T", providerLease)
+	}
+	if got := ownedLease.DuckLakeSnapshotID(); got != 42 {
+		t.Fatalf("owned candidate lease snapshot = %d, want 42", got)
+	}
+	if got := ownedLease.AuthorizationSnapshot().Identity(); got.GenerationID != "generation_1" {
+		t.Fatalf("owned candidate authorization identity = %+v", got)
+	}
+	providerLease.Release()
 	wrong := registration
 	wrong.Compatibility.AuthorizationFingerprint = "other"
 	if _, err := registry.AcquireCandidate(t.Context(), CandidateLeaseRequest{CandidateID: registration.CandidateID, OwnerID: registration.OwnerID, ProjectID: registration.ProjectID, Compatibility: wrong.Compatibility}); !errors.Is(err, ErrCandidateRuntimeIncompatible) {

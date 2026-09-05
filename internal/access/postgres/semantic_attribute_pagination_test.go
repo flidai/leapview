@@ -10,9 +10,6 @@ import (
 func TestSemanticAttributeSearchOwnerCursorPaginatesCompleteFilteredResult(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	ctx := t.Context()
-	if _, err := db.admin.Exec(ctx, AttributeRegistryMigrationSQL()); err != nil {
-		t.Fatalf("apply attribute registry migration: %v", err)
-	}
 	if _, err := db.admin.Exec(ctx, `
 		INSERT INTO access.principal (id, principal_type, status)
 		VALUES ($1::uuid, 'user', 'active')`, auditActorID); err != nil {

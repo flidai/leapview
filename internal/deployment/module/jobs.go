@@ -3,15 +3,15 @@ package module
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/deployment"
-	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
@@ -33,22 +33,101 @@ type DeploymentCoordinator interface {
 	Create(context.Context, apiadapter.CreateRequest) (apiadapter.Deployment, error)
 	Get(context.Context, apiadapter.Scope) (apiadapter.Deployment, error)
 	Activate(context.Context, apiadapter.ActivateRequest) (apiadapter.Deployment, error)
-	Cancel(context.Context, apiadapter.Scope) (apiadapter.Deployment, error)
+	CancelRequest(context.Context, apiadapter.CancelRequest) (apiadapter.Deployment, error)
 }
 
 // JobConfig contains deployment-owned workflow ports. Authorization is a
 // consumer-defined port; schedule reconciliation is an explicit downstream
 // notification rather than repository reach-through.
 type JobConfig struct {
-	Coordinator DeploymentCoordinator
-	Authorize   func(context.Context, string, string, string) error
-	Reconcile   func(context.Context) error
-	Events      jobs.EventAppender
-	Logger      *slog.Logger
+	Coordinator         DeploymentCoordinator
+	Authorize           func(context.Context, string, string, string) error
+	Reconcile           func(context.Context) error
+	ReconcileActivation func(context.Context, apiadapter.Deployment) error
+	Events              jobs.EventAppender
+	Logger              *slog.Logger
 }
 
+// Native activation is continuously renewed while it runs. Keeping the
+// individual lease bounded to one minute limits failover delay after a worker
+// is lost without imposing a one-minute execution deadline.
+const activationJobLeaseTimeout = time.Minute
+
 func (m *Module) JobHandlers() []jobs.Handler {
-	return []jobs.Handler{jobs.HandlerFunc{JobKind: m.activationExecution().JobKind, Run: m.activate, ExecutionLeaseTimeout: 5 * time.Minute}}
+	return []jobs.Handler{
+		jobs.HandlerFunc{JobKind: m.activationExecution().JobKind, Run: m.activate, ExecutionLeaseTimeout: activationJobLeaseTimeout},
+		jobs.HandlerFunc{JobKind: "delivery.approval.activate", Run: m.activateApprovedPublication, ExecutionLeaseTimeout: activationJobLeaseTimeout},
+	}
+}
+
+type approvedPublicationActivator interface {
+	ActivateApprovedPublication(context.Context, string, string, string) (apiadapter.Deployment, error)
+}
+
+// activateApprovedPublication is the dedicated approval worker. The durable
+// job is untrusted input: it reloads effective approval and verifies the full
+// immutable publication scope before the coordinator performs its atomic
+// lease/CAS activation transaction.
+func (m *Module) activateApprovedPublication(ctx context.Context, job jobs.Job) error {
+	if m == nil || m.persistence == nil || m.persistence.Repository == nil || m.persistence.Approval == nil || m.jobs.Coordinator == nil {
+		return fmt.Errorf("native approval activation worker is unavailable")
+	}
+	var payload ApprovalActivationJob
+	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+		return fmt.Errorf("decode approval activation payload: %w", err)
+	}
+	if payload.RequestID == "" || payload.PublicationID == "" || payload.TargetID == "" || payload.GenerationID == "" || payload.CandidateID == "" || payload.RequestDigest == "" || payload.DecisionID == "" || payload.PublicationActorID == "" || payload.RequestedBy == "" || payload.DecidedBy == "" || payload.IdempotencyKey == "" || payload.ExpectedTargetRevision <= 0 || payload.PolicyRevision <= 0 || payload.DecisionRevision <= 0 {
+		return fmt.Errorf("invalid approval activation payload")
+	}
+	publication, err := m.persistence.Repository.Publication(ctx, payload.PublicationID)
+	if err != nil {
+		return err
+	}
+	if publication.ActorID != payload.PublicationActorID || publication.TargetID != payload.TargetID || publication.GenerationID != payload.GenerationID || publication.CandidateID != payload.CandidateID || publication.RequestDigest != payload.RequestDigest || publication.ExpectedTargetRevision != payload.ExpectedTargetRevision {
+		return deployment.ErrApprovalConflict
+	}
+	approval, err := m.persistence.Approval.Effective(ctx, payload.RequestID)
+	if err != nil && publication.State == "committed" && (errors.Is(err, nativepostgres.ErrApprovalRequired) || errors.Is(err, nativepostgres.ErrApprovalExpired)) {
+		// A previous activation may have committed before runtime reconciliation
+		// failed. Replay uses the immutable request/decision row (the effective
+		// query intentionally excludes committed publications), then Activate
+		// verifies the exact terminal operation without a second CAS advance.
+		approval, err = m.persistence.Approval.RequestByID(ctx, payload.RequestID)
+	}
+	if err != nil {
+		return err
+	}
+	decision := approval.LatestDecision
+	if decision == nil || decision.Decision != nativepostgres.ApprovalActionApprove || decision.DecisionID != payload.DecisionID || decision.Revision != payload.DecisionRevision {
+		return deployment.ErrApprovalRequired
+	}
+	if approval.PublicationID != payload.PublicationID || approval.TargetID != payload.TargetID || approval.GenerationID != payload.GenerationID || approval.CandidateID != payload.CandidateID || approval.RequestDigest != payload.RequestDigest || approval.ExpectedTargetRevision != payload.ExpectedTargetRevision || approval.PolicyRevision != payload.PolicyRevision || approval.RequestedBy.PrincipalID != payload.RequestedBy || decision.DecidedBy.PrincipalID != payload.DecidedBy {
+		return deployment.ErrApprovalConflict
+	}
+	activator, ok := m.jobs.Coordinator.(approvedPublicationActivator)
+	if !ok {
+		return fmt.Errorf("native approval activation coordinator is unavailable")
+	}
+	row, err := activator.ActivateApprovedPublication(ctx, payload.PublicationID, payload.PublicationActorID, payload.IdempotencyKey)
+	if err != nil {
+		return err
+	}
+	if m.jobs.ReconcileActivation != nil {
+		if err := m.jobs.ReconcileActivation(ctx, row); err != nil {
+			return jobs.Retryable(err, time.Second)
+		}
+	}
+	if m.jobs.Reconcile != nil {
+		if err := m.jobs.Reconcile(ctx); err != nil {
+			logger := m.jobs.Logger
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.WarnContext(ctx, "reconcile refresh pipelines after approval activation failed", "error", err)
+			return jobs.Retryable(err, time.Second)
+		}
+	}
+	return nil
 }
 
 func (m *Module) execution(operationID string) (apigencommand.AsyncExecutionContract, error) {
@@ -70,8 +149,7 @@ func (m *Module) execution(operationID string) (apigencommand.AsyncExecutionCont
 }
 
 func (m *Module) activationExecution() apigencommand.AsyncExecutionContract {
-	execution, _ := m.execution(string(deploymentgen.GenOperationActivateDeployment))
-	return execution
+	return apigencommand.AsyncExecutionContract{Mode: "async", Guarantee: "transactional", JobKind: "deployment.activate", ResourceKind: "deployment", InitialEvent: "deployment.activation_requested", InitialState: "queued", StatusOperation: "deliveryGenerationStatus", EventsOperation: "deliveryGenerationStatus", Cancellation: "supported"}
 }
 
 func (m *Module) activate(ctx context.Context, job jobs.Job) error {
@@ -93,13 +171,6 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	}
 	logger.InfoContext(ctx, "deployment activation loaded pending row", "deployment", payload.Deployment, "status", pending.Status, "generation", pending.GenerationID)
 	releaseID := ""
-	if m.sealedCoordinator != nil && m.api.Releases != nil {
-		resolved, _, resolveErr := m.api.Releases.DeploymentRelease(ctx, payload.Project, payload.Deployment)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		releaseID = resolved
-	}
 	if payload.Bootstrap {
 		if !m.protected || m.bootstrapPolicies == nil || m.authorizeBootstrap == nil || payload.Credential.CredentialClass != deployment.CredentialClassAPIToken || payload.Credential.PrincipalID != payload.Actor {
 			return deployment.ErrApprovalRequired
@@ -156,70 +227,18 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 		}
 	}
 	var row apiadapter.Deployment
-	if m.sealedCoordinator != nil {
-		if m.sealedPublishRequest == nil || m.sealedRollbackRequest == nil || m.sealedActivationMarker == nil {
-			return fmt.Errorf("sealed publication lifecycle is incomplete")
+	row, err = m.jobs.Coordinator.Activate(ctx, apiadapter.ActivateRequest{
+		Scope: apiadapter.Scope{Project: payload.Project, DeploymentID: payload.Deployment},
+		Actor: payload.Actor, IdempotencyKey: payload.IdempotencyKey,
+	})
+	if err == nil && m.jobs.ReconcileActivation != nil {
+		if reconcileErr := m.jobs.ReconcileActivation(ctx, row); reconcileErr != nil {
+			// The native activation CAS commits before runtime/dashboard
+			// reconciliation. Keep the durable job retryable so a transient
+			// cutover failure does not mark an already-active publication as
+			// terminally failed; coordinator replay is idempotent.
+			return jobs.Retryable(reconcileErr, time.Second)
 		}
-		if payload.Rollback {
-			request, resolveErr := m.sealedRollbackRequest(ctx, pending, releaseID, payload.Credential, payload.ExpectedBaseGenerationID, payload.ExpectedTargetRevision)
-			if resolveErr != nil {
-				return resolveErr
-			}
-			result, publishErr := m.sealedCoordinator.Rollback(ctx, request)
-			if publishErr != nil {
-				m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
-				return publishErr
-			}
-			activation := sealedActivationInput(pending, payload.Actor, result.CatalogDigest)
-			activated, markErr := m.sealedActivationMarker(ctx, activation)
-			if markErr != nil {
-				return markErr
-			}
-			if m.sealedReconcile != nil {
-				if reconcileErr := m.sealedReconcile(ctx, pending.GenerationID); reconcileErr != nil {
-					return reconcileErr
-				}
-			}
-			row = mapSealedDeployment(activated)
-		} else {
-			logger.InfoContext(ctx, "deployment activation sealed publish starting", "deployment", payload.Deployment, "bootstrap", payload.Bootstrap)
-			request, resolveErr := m.sealedPublishRequest(ctx, pending, releaseID, payload.Credential, payload.Bootstrap)
-			if resolveErr != nil {
-				return resolveErr
-			}
-			_, publishErr := m.sealedCoordinator.Publish(ctx, request)
-			if publishErr != nil {
-				logger.ErrorContext(ctx, "deployment activation sealed publish failed", "deployment", payload.Deployment, "error", publishErr)
-				m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
-				return publishErr
-			}
-			logger.InfoContext(ctx, "deployment activation sealed publish committed", "deployment", payload.Deployment)
-			activation := sealedActivationInput(pending, payload.Actor, request.Seal.CatalogDigest)
-			logger.InfoContext(ctx, "deployment activation sealed marker starting", "deployment", payload.Deployment)
-			activated, markErr := m.sealedActivationMarker(ctx, activation)
-			if markErr != nil {
-				logger.ErrorContext(ctx, "deployment activation sealed marker failed", "deployment", payload.Deployment, "error", markErr)
-				return markErr
-			}
-			logger.InfoContext(ctx, "deployment activation sealed marker committed", "deployment", payload.Deployment)
-			if m.sealedReconcile != nil {
-				logger.InfoContext(ctx, "deployment activation sealed reconcile starting", "deployment", payload.Deployment)
-				if reconcileErr := m.sealedReconcile(ctx, pending.GenerationID); reconcileErr != nil {
-					logger.ErrorContext(ctx, "deployment activation sealed reconcile failed", "deployment", payload.Deployment, "error", reconcileErr)
-					return reconcileErr
-				}
-				logger.InfoContext(ctx, "deployment activation sealed reconcile completed", "deployment", payload.Deployment)
-			}
-			row = mapSealedDeployment(activated)
-		}
-	} else {
-		if m.requireSealedCoordinator {
-			return fmt.Errorf("sealed publication coordinator is unavailable")
-		}
-		row, err = m.jobs.Coordinator.Activate(ctx, apiadapter.ActivateRequest{
-			Scope: apiadapter.Scope{Project: payload.Project, DeploymentID: payload.Deployment},
-			Actor: payload.Actor, IdempotencyKey: payload.IdempotencyKey,
-		})
 	}
 	if err == nil && m.jobs.Reconcile != nil {
 		if reconcileErr := m.jobs.Reconcile(ctx); reconcileErr != nil {
@@ -233,6 +252,7 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	event := "deployment.active"
 	if err != nil {
 		event = "deployment.failed"
+		logger.ErrorContext(ctx, "deployment activation failed", "deployment", payload.Deployment, "error", err)
 	}
 	m.appendActivationEvent(
 		ctx,
@@ -242,134 +262,6 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 		row,
 	)
 	return err
-}
-
-func sealedActivationInput(pending apiadapter.Deployment, actor, verificationDigest string) deployment.ActivationInput {
-	identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(pending.Project), Environment: pending.Environment, GenerationID: pending.GenerationID}
-	return deployment.ActivationInput{
-		DeploymentID: pending.ID, ServingIdentity: identity, ArtifactDigest: pending.ArtifactDigest,
-		PriorGenerationID: pending.PriorGenerationID, ActivationPrincipal: actor, VerificationDigest: verificationDigest,
-	}
-}
-
-func mapSealedDeployment(row deployment.Deployment) apiadapter.Deployment {
-	return apiadapter.Deployment{
-		ID: row.ID, Project: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment,
-		GenerationID: row.ServingIdentity.GenerationID, ArtifactDigest: row.ArtifactDigest,
-		PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest, Status: apiadapter.Status(row.Status),
-		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt,
-		ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt, Error: row.Error,
-	}
-}
-
-func activationWorkflow(
-	execution apigencommand.AsyncExecutionContract,
-	enqueue bool,
-	project,
-	deploymentID,
-	releaseID string,
-	actor deployment.ApprovalActor,
-	approval deployment.Approval,
-	idempotencyKey string,
-) jobs.WorkflowIntent {
-	workflow, _ := activationWorkflowForOperation(string(deploymentgen.GenOperationCreateDeployment), execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey)
-	return workflow
-}
-
-func activationWorkflowForOperation(
-	operationID string,
-	execution apigencommand.AsyncExecutionContract,
-	enqueue bool,
-	project,
-	deploymentID,
-	releaseID string,
-	actor deployment.ApprovalActor,
-	approval deployment.Approval,
-	idempotencyKey string,
-) (jobs.WorkflowIntent, error) {
-	return activationWorkflowForOperationWithBootstrap(operationID, execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, false)
-}
-
-func activationWorkflowForOperationWithBootstrap(
-	operationID string,
-	execution apigencommand.AsyncExecutionContract,
-	enqueue bool,
-	project,
-	deploymentID,
-	releaseID string,
-	actor deployment.ApprovalActor,
-	approval deployment.Approval,
-	idempotencyKey string,
-	bootstrap bool,
-) (jobs.WorkflowIntent, error) {
-	return activationWorkflowForOperationWithRollbackFence(operationID, execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, bootstrap, "", 0, false)
-}
-
-func activationWorkflowForOperationWithRollbackFence(
-	operationID string,
-	execution apigencommand.AsyncExecutionContract,
-	enqueue bool,
-	project,
-	deploymentID,
-	releaseID string,
-	actor deployment.ApprovalActor,
-	approval deployment.Approval,
-	idempotencyKey string,
-	bootstrap bool,
-	expectedBaseGenerationID string,
-	expectedTargetRevision int64,
-	rollbackIntent bool,
-) (jobs.WorkflowIntent, error) {
-	payload, _ := json.Marshal(ActivateJob{
-		Project: project, Deployment: deploymentID,
-		Actor: actor.PrincipalID, Credential: actor,
-		ApprovalID:       approval.ID,
-		ApprovalRevision: approval.Revision,
-		IdempotencyKey:   idempotencyKey, Bootstrap: bootstrap,
-		Rollback:                 operationID == string(deploymentgen.GenOperationRollbackDeployment) || rollbackIntent,
-		ExpectedBaseGenerationID: expectedBaseGenerationID,
-		ExpectedTargetRevision:   expectedTargetRevision,
-	})
-	queuedPayload := deploymentgen.GenSchemaDeploymentQueuedAuditPayload{
-		DeploymentId: deploymentID, ProjectId: project, ReleaseId: releaseID, Status: execution.InitialState,
-	}
-	var eventString string
-	var eventErr error
-	switch operationID {
-	case string(deploymentgen.GenOperationCreateDeployment):
-		eventString, eventErr = deploymentgen.EncodeGenCreateDeploymentAuditPayload(queuedPayload)
-	case string(deploymentgen.GenOperationRetryDeployment):
-		eventString, eventErr = deploymentgen.EncodeGenRetryDeploymentAuditPayload(queuedPayload)
-	case string(deploymentgen.GenOperationRollbackDeployment):
-		eventString, eventErr = deploymentgen.EncodeGenRollbackDeploymentAuditPayload(queuedPayload)
-	case string(deploymentgen.GenOperationActivateDeployment):
-		eventString, eventErr = deploymentgen.EncodeGenActivateDeploymentAuditPayload(queuedPayload)
-	case string(deploymentgen.GenOperationPublishProjectCandidate):
-		eventString, eventErr = deploymentgen.EncodeGenPublishProjectCandidateAuditPayload(queuedPayload)
-	default:
-		return jobs.WorkflowIntent{}, fmt.Errorf("deployment operation %q has no queued audit payload encoder", operationID)
-	}
-	if eventErr != nil {
-		return jobs.WorkflowIntent{}, eventErr
-	}
-	event := []byte(eventString)
-	workflow := jobs.WorkflowIntent{
-		Event: jobs.EventInput{
-			Key:          execution.InitialEvent,
-			ResourceKind: execution.ResourceKind, ResourceID: deploymentID,
-			EventType: execution.InitialEvent, Data: event,
-		},
-	}
-	if enqueue {
-		workflow.Job = jobs.EnqueueInput{
-			ID:            execution.ResourceKind + ":" + deploymentID + ":activate",
-			Kind:          execution.JobKind,
-			WorkloadClass: "control", PrincipalID: actor.PrincipalID, GroupIDs: nil, EstimatedMemoryBytes: 16 << 20,
-			ResourceKind: execution.ResourceKind, ResourceID: deploymentID,
-			Payload: payload,
-		}
-	}
-	return workflow, nil
 }
 
 func (m *Module) appendEvent(ctx context.Context, deploymentID, event, status string) {
@@ -406,52 +298,41 @@ func (m *Module) appendActivationEvent(
 }
 
 func loadDeploymentExecutionContracts() (map[string]apigencommand.AsyncExecutionContract, error) {
-	operationIDs := []string{
-		string(deploymentgen.GenOperationCreateDeployment),
-		string(deploymentgen.GenOperationRetryDeployment),
-		string(deploymentgen.GenOperationRollbackDeployment),
-		string(deploymentgen.GenOperationActivateDeployment),
-		string(deploymentgen.GenOperationPublishProjectCandidate),
-	}
+	operationIDs := []string{"delivery.activate"}
 	executions := make(map[string]apigencommand.AsyncExecutionContract, len(operationIDs))
 	for _, operationID := range operationIDs {
-		contract, ok := deploymentgen.GetAPIGenCommandRuntimeContract(operationID)
-		if !ok {
-			return nil, fmt.Errorf("deployment command contract %q is unavailable", operationID)
-		}
-		if err := contract.Validate(); err != nil {
-			return nil, fmt.Errorf("validate deployment command contract %q: %w", operationID, err)
-		}
-		if contract.Execution == nil {
-			return nil, fmt.Errorf("deployment command %q async execution contract is unavailable", operationID)
-		}
-		execution := *contract.Execution
-		if execution.Guarantee != "transactional" {
-			return nil, fmt.Errorf("deployment command %q requires transactional execution, got %q", operationID, execution.Guarantee)
-		}
-		if execution.ResourceKind != "deployment" || execution.InitialState != "queued" {
-			return nil, fmt.Errorf("deployment command %q has incompatible initial lifecycle %q/%q", operationID, execution.ResourceKind, execution.InitialState)
-		}
-		if execution.StatusOperation != string(deploymentgen.GenOperationGetDeployment) || execution.EventsOperation != string(deploymentgen.GenOperationListDeploymentEvents) {
-			return nil, fmt.Errorf("deployment command %q has incompatible lifecycle operations", operationID)
-		}
-		if execution.Cancellation != "supported" {
-			return nil, fmt.Errorf("deployment command %q cancellation policy %q is not implemented", operationID, execution.Cancellation)
-		}
+		execution := mActivationExecutionContract(operationID)
 		executions[operationID] = execution
 	}
 	return executions, nil
 }
 
-func validateDeploymentJobHandlers(executions map[string]apigencommand.AsyncExecutionContract, handlers []jobs.Handler) error {
-	if len(handlers) != 1 {
-		return fmt.Errorf("deployment execution requires exactly one job handler, got %d", len(handlers))
+func mActivationExecutionContract(operationID string) apigencommand.AsyncExecutionContract {
+	initialEvent := "deployment.queued"
+	if operationID == "delivery.activate" {
+		initialEvent = "deployment.activation_requested"
 	}
-	kind := handlers[0].Kind()
-	for operationID, execution := range executions {
-		if execution.JobKind != kind {
-			return fmt.Errorf("deployment command %q job kind %q does not match registered handler %q", operationID, execution.JobKind, kind)
+	return apigencommand.AsyncExecutionContract{Mode: "async", Guarantee: "transactional", JobKind: "deployment.activate", ResourceKind: "deployment", InitialEvent: initialEvent, InitialState: "queued", StatusOperation: "deliveryGenerationStatus", EventsOperation: "deliveryGenerationStatus", Cancellation: "supported"}
+}
+
+func validateDeploymentJobHandlers(executions map[string]apigencommand.AsyncExecutionContract, handlers []jobs.Handler) error {
+	if len(handlers) != 2 {
+		return fmt.Errorf("deployment execution requires activation and approval job handlers, got %d", len(handlers))
+	}
+	kinds := make(map[string]struct{}, len(handlers))
+	for _, handler := range handlers {
+		if handler == nil || handler.Kind() == "" {
+			return fmt.Errorf("deployment job handler kind is required")
 		}
+		kinds[handler.Kind()] = struct{}{}
+	}
+	for operationID, execution := range executions {
+		if _, ok := kinds[execution.JobKind]; !ok {
+			return fmt.Errorf("deployment command %q job kind %q does not match registered handlers", operationID, execution.JobKind)
+		}
+	}
+	if _, ok := kinds["delivery.approval.activate"]; !ok {
+		return fmt.Errorf("approval activation job handler is not registered")
 	}
 	return nil
 }

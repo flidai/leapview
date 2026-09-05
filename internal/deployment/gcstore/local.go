@@ -14,8 +14,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/flidai/leapview/internal/deployment/gc"
 )
 
 type LocalStore struct {
@@ -43,11 +41,11 @@ func (s *LocalStore) path(key string) (string, error) {
 	}
 	key = filepath.Clean(filepath.FromSlash(strings.TrimSpace(key)))
 	if key == "." || filepath.IsAbs(key) || key == ".." || strings.HasPrefix(key, ".."+string(filepath.Separator)) {
-		return "", gc.ErrObjectOutsidePool
+		return "", ErrObjectOutsidePool
 	}
 	path := filepath.Join(s.Root, key)
 	if path != s.Root && !strings.HasPrefix(path, s.Root+string(filepath.Separator)) {
-		return "", gc.ErrObjectOutsidePool
+		return "", ErrObjectOutsidePool
 	}
 	return path, nil
 }
@@ -75,24 +73,24 @@ func version(info os.FileInfo) string {
 	return fmt.Sprintf("%d:%d", info.ModTime().UTC().UnixNano(), info.Size())
 }
 
-func (s *LocalStore) Open(_ context.Context, key string) (gc.CatalogObject, error) {
+func (s *LocalStore) Open(_ context.Context, key string) (ObjectBody, error) {
 	path, err := s.path(key)
 	if err != nil {
-		return gc.CatalogObject{}, err
+		return ObjectBody{}, err
 	}
 	digest, size, _, err := digestFile(path)
 	if err != nil {
-		return gc.CatalogObject{}, err
+		return ObjectBody{}, err
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return gc.CatalogObject{}, err
+		return ObjectBody{}, err
 	}
-	return gc.CatalogObject{Body: file, Size: size, Metadata: map[string]string{"sha256": digest, "size": fmt.Sprintf("%d", size)}}, nil
+	return ObjectBody{Body: file, Size: size, Metadata: map[string]string{"sha256": digest, "size": fmt.Sprintf("%d", size)}}, nil
 }
 
-func (s *LocalStore) ListPoolObjects(_ context.Context, _ string) ([]gc.Object, error) {
-	var objects []gc.Object
+func (s *LocalStore) ListPoolObjects(_ context.Context, _ string) ([]Object, error) {
+	var objects []Object
 	err := filepath.Walk(s.Root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -111,7 +109,7 @@ func (s *LocalStore) ListPoolObjects(_ context.Context, _ string) ([]gc.Object, 
 		if err != nil {
 			return err
 		}
-		objects = append(objects, gc.Object{Key: filepath.ToSlash(key), Digest: digest, Size: size, Version: version(stat), CreatedAt: stat.ModTime().UTC(), LastModified: stat.ModTime().UTC()})
+		objects = append(objects, Object{Key: filepath.ToSlash(key), Digest: digest, Size: size, Version: version(stat), CreatedAt: stat.ModTime().UTC(), LastModified: stat.ModTime().UTC()})
 		return nil
 	})
 	if err != nil {
@@ -121,37 +119,37 @@ func (s *LocalStore) ListPoolObjects(_ context.Context, _ string) ([]gc.Object, 
 	return objects, nil
 }
 
-func (s *LocalStore) Stat(_ context.Context, _ string, key string) (gc.Object, error) {
+func (s *LocalStore) Stat(_ context.Context, _ string, key string) (Object, error) {
 	path, err := s.path(key)
 	if err != nil {
-		return gc.Object{}, err
+		return Object{}, err
 	}
 	digest, size, info, err := digestFile(path)
 	if err != nil {
-		return gc.Object{}, err
+		return Object{}, err
 	}
-	return gc.Object{Key: filepath.ToSlash(strings.TrimSpace(key)), Digest: digest, Size: size, Version: version(info), CreatedAt: info.ModTime().UTC(), LastModified: info.ModTime().UTC()}, nil
+	return Object{Key: filepath.ToSlash(strings.TrimSpace(key)), Digest: digest, Size: size, Version: version(info), CreatedAt: info.ModTime().UTC(), LastModified: info.ModTime().UTC()}, nil
 }
 
-func (s *LocalStore) DeleteConditional(_ context.Context, req gc.DeleteRequest) (gc.DeleteResponse, error) {
+func (s *LocalStore) DeleteConditional(_ context.Context, req DeleteRequest) (DeleteResponse, error) {
 	object, err := s.Stat(context.Background(), req.PhysicalPoolID, req.Key)
 	if errors.Is(err, os.ErrNotExist) {
-		return gc.DeleteResponse{NotFound: true}, nil
+		return DeleteResponse{NotFound: true}, nil
 	}
 	if err != nil {
-		return gc.DeleteResponse{}, err
+		return DeleteResponse{}, err
 	}
 	if object.Digest != req.Digest || (req.Version != "" && object.Version != req.Version) {
-		return gc.DeleteResponse{}, fmt.Errorf("conditional object identity mismatch")
+		return DeleteResponse{}, fmt.Errorf("conditional object identity mismatch")
 	}
 	path, err := s.path(req.Key)
 	if err != nil {
-		return gc.DeleteResponse{}, err
+		return DeleteResponse{}, err
 	}
 	if err := os.Remove(path); errors.Is(err, os.ErrNotExist) {
-		return gc.DeleteResponse{NotFound: true}, nil
+		return DeleteResponse{NotFound: true}, nil
 	} else if err != nil {
-		return gc.DeleteResponse{}, err
+		return DeleteResponse{}, err
 	}
-	return gc.DeleteResponse{Deleted: true}, nil
+	return DeleteResponse{Deleted: true}, nil
 }

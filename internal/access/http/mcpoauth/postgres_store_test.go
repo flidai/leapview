@@ -3,15 +3,11 @@ package mcpoauth
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,7 +23,7 @@ type oauthPostgresDatabase struct {
 // by the migration role; PostgresStore receives only the native runtime pool.
 func newOAuthPostgresDatabase(t *testing.T) oauthPostgresDatabase {
 	t.Helper()
-	h := postgrestest.Start(t, postgrestest.Required(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED")))
+	h := postgrestest.Start(t)
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "leapview-conformance-secret", Login: true})
@@ -74,41 +70,14 @@ func newOAuthPostgresDatabase(t *testing.T) oauthPostgresDatabase {
 
 type noBeginOAuthDB struct{ accesspostgres.DBTX }
 
-type selfLabelingOAuthStore struct{ *Store }
-
-func (selfLabelingOAuthStore) IsPostgresBacked() bool { return true }
-
-func TestNewWithStoreCannotSelfLabelPostgres(t *testing.T) {
-	db, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "oauth.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	repo := accesssqlite.NewRepository(db.SQLDB())
-	store := selfLabelingOAuthStore{Store: NewStore(db.SQLDB())}
-	service, err := NewWithStore(store, repo, Config{
-		IssuerURL: "https://leapview.example", ResourceURL: "https://leapview.example/mcp",
-		Secret: []byte("0123456789abcdef0123456789abcdef"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if service.IsPostgresBacked() {
-		t.Fatal("self-labeling StoreBackend minted PostgreSQL-backed Service")
-	}
-}
-
 func TestPostgresStoreRequiresNativeTransactions(t *testing.T) {
 	db := newOAuthPostgresDatabase(t)
 	if _, err := NewPostgresStore(noBeginOAuthDB{DBTX: db.runtime}); err == nil {
 		t.Fatal("NewPostgresStore accepted a DBTX without Begin")
 	}
-	store, err := NewPostgresStore(db.runtime)
+	_, err := NewPostgresStore(db.runtime)
 	if err != nil {
 		t.Fatalf("NewPostgresStore(native pool): %v", err)
-	}
-	if !store.IsPostgresBacked() {
-		t.Fatal("PostgresStore did not report PostgreSQL backing")
 	}
 }
 

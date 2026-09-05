@@ -3,27 +3,59 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	stdhttp "net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
-	"github.com/flidai/leapview/internal/platform"
 	apigenapi "github.com/flidai/leapview/internal/platform/http/api/gen"
-	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func eventRepository(t *testing.T) jobs.Repository {
 	t.Helper()
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
-	if err != nil {
-		t.Fatal(err)
+	return &memoryEventRepository{}
+}
+
+type memoryEventRepository struct {
+	mu   sync.Mutex
+	rows []jobs.Event
+}
+
+func (*memoryEventRepository) Enqueue(context.Context, jobs.EnqueueInput) (jobs.Job, error) {
+	return jobs.Job{}, errors.New("test queue execution is unavailable")
+}
+func (*memoryEventRepository) Get(context.Context, string) (jobs.Job, error) {
+	return jobs.Job{}, jobs.ErrNotFound
+}
+func (*memoryEventRepository) Cancel(context.Context, string) error { return jobs.ErrNotFound }
+func (r *memoryEventRepository) AppendEvent(_ context.Context, kind, id, event string, data []byte) (jobs.Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var next int64 = 1
+	for _, existing := range r.rows {
+		if existing.ResourceKind == kind && existing.ResourceID == id && existing.ID >= next {
+			next = existing.ID + 1
+		}
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	return jobsqlite.NewRepository(store.SQLDB())
+	row := jobs.Event{ID: next, ResourceKind: kind, ResourceID: id, EventType: event, Data: append([]byte(nil), data...), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	r.rows = append(r.rows, row)
+	return row, nil
+}
+func (r *memoryEventRepository) ListEvents(_ context.Context, kind, id string, after int64, limit int) ([]jobs.Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]jobs.Event, 0, limit)
+	for _, row := range r.rows {
+		if row.ResourceKind == kind && row.ResourceID == id && row.ID > after && len(out) < limit {
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 func appendEvent(t *testing.T, repo jobs.Repository, kind, id, event string, sequence int) jobs.Event {
@@ -50,6 +82,53 @@ func TestEventSSEReplaysAfterLastEventIDAndClosesAtTerminalEvent(t *testing.T) {
 	body := rec.Body.String()
 	if rec.Code != stdhttp.StatusOK || strings.Contains(body, "release.created") || !strings.Contains(body, "release.artifact_uploaded") || !strings.Contains(body, "release.ready") {
 		t.Fatalf("status=%d body=%s", rec.Code, body)
+	}
+}
+
+func TestEventHistoryUsesResourceScopedDomainIDsForJSONAndSSE(t *testing.T) {
+	repo := eventRepository(t)
+	a1 := appendEvent(t, repo, "release", "rel-a", "release.a.created", 1)
+	b1 := appendEvent(t, repo, "release", "rel-b", "release.b.created", 1)
+	a2 := appendEvent(t, repo, "release", "rel-a", "release.a.ready", 2)
+	b2 := appendEvent(t, repo, "release", "rel-b", "release.b.ready", 2)
+	if a1.ID != b1.ID || a2.ID != b2.ID {
+		t.Fatalf("fixture must have resource-scoped IDs: a=(%d,%d) b=(%d,%d)", a1.ID, a2.ID, b1.ID, b2.ID)
+	}
+
+	jsonRec := httptest.NewRecorder()
+	WriteEventPage(jsonRec, httptest.NewRequest(stdhttp.MethodGet, "/events", nil), repo, "release", "rel-a", nil, nil, "release:project-a:rel-a")
+	var history eventListResponse
+	if err := json.Unmarshal(jsonRec.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Items) != 2 || history.Items[0].ID != fmt.Sprintf("%020d", a1.ID) || history.Items[1].ID != fmt.Sprintf("%020d", a2.ID) || history.Items[0].ResourceID != "rel-a" || history.Items[1].ResourceID != "rel-a" {
+		t.Fatalf("JSON history = %#v", history.Items)
+	}
+	for _, item := range history.Items {
+		encoded, err := json.Marshal(item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, transportField := range []string{"event_id", "eventId", "offset", "claim", "attempt"} {
+			if strings.Contains(strings.ToLower(string(encoded)), strings.ToLower(transportField)) {
+				t.Fatalf("JSON event leaked transport metadata %q: %s", transportField, encoded)
+			}
+		}
+	}
+
+	sseReq := httptest.NewRequest(stdhttp.MethodGet, "/events", nil)
+	sseReq.Header.Set("Accept", "text/event-stream")
+	sseReq.Header.Set("Last-Event-ID", fmt.Sprintf("%020d", a1.ID))
+	sseRec := httptest.NewRecorder()
+	WriteEventPage(sseRec, sseReq, repo, "release", "rel-a", nil, nil, "release:project-a:rel-a")
+	body := sseRec.Body.String()
+	if !strings.Contains(body, fmt.Sprintf("id: %020d", a2.ID)) || !strings.Contains(body, "event: release.a.ready") || strings.Contains(body, "release.b.") {
+		t.Fatalf("SSE resume crossed resource boundary: %s", body)
+	}
+	for _, transportField := range []string{"event_id", "eventId", "offset", "claim", "attempt"} {
+		if strings.Contains(strings.ToLower(body), strings.ToLower(transportField)) {
+			t.Fatalf("SSE event leaked transport metadata %q: %s", transportField, body)
+		}
 	}
 }
 

@@ -12,9 +12,10 @@ import (
 )
 
 // Pinger is the small health dependency needed to render the runtime status.
-// Keeping it narrow makes the projection usable with *sql.DB and test fakes.
+// It deliberately follows the product storage capability instead of either
+// database/sql or pgx so the projection stays storage neutral.
 type Pinger interface {
-	PingContext(context.Context) error
+	Ping(context.Context) error
 }
 
 type ReadModel struct {
@@ -44,7 +45,7 @@ func (m ReadModel) Data(ctx context.Context, active string, canManage bool) (Dat
 	}
 	if m.ControlPlane != nil {
 		status.System.ControlPlane = "available"
-		if err := m.ControlPlane.PingContext(ctx); err != nil {
+		if err := m.ControlPlane.Ping(ctx); err != nil {
 			status.System.ControlPlane = "unavailable"
 		}
 	}

@@ -1156,7 +1156,9 @@ func mergeProjectAssetPayload(asset projectview.DevelopAssetView, payload map[st
 	}
 	// Preserve graph identity/metadata keys while replacing the resource's
 	// generic payload fields with the typed detail projection.
-	merged := make(map[string]any, len(asset.Payload)+len(payload))
+	// Avoid adding attacker-influenced collection lengths for a capacity hint:
+	// the sum can overflow even though the map itself would never be that large.
+	merged := make(map[string]any)
 	for key, value := range asset.Payload {
 		merged[key] = value
 	}

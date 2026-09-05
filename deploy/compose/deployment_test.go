@@ -10,7 +10,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/mod/semver"
 )
@@ -54,7 +53,6 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 		"size: 536870912",
 		"mode: 01777",
 		"LEAPVIEW_IMAGE: ${LEAPVIEW_IMAGE:?set LEAPVIEW_IMAGE in deployment.env}",
-		"./release-transition-policy.json:/run/leapview/release-transition-policy.json:ro",
 	} {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("compose.yaml missing %q", required)
@@ -75,6 +73,18 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 		"LEAPVIEW_PUBLIC_URL=https://dash.example.com",
 		"LEAPVIEW_ALLOWED_HOSTS=dash.example.com",
 		"LEAPVIEW_TRUST_PROXY_HEADERS=true",
+		"LEAPVIEW_POSTGRES_CONTROL_URL=",
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=",
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE=leapview_control_migrator",
+		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=leapview_control_runtime",
+		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=",
+		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE=leapview_control_maintenance",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_URL=",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE=leapview_ducklake_runtime",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE=leapview_ducklake_maintenance",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=",
 	} {
 		if !strings.Contains(appEnvironment, required) {
 			t.Fatalf("leapview.env.example missing %q", required)
@@ -100,67 +110,6 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 	}
 	if strings.Contains(https, "/tmp:rw,noexec") {
 		t.Fatal("Caddy tmpfs short syntax is rejected by Docker Desktop when its options are interpreted as mount paths")
-	}
-}
-
-func TestPublicImageIsPrimaryOnboardingContract(t *testing.T) {
-	publicReleaseImage := readPublicReleaseImage(t)
-	release := read(t, filepath.Join("..", "..", ".github", "workflows", "release.yml"))
-	for _, required := range []string{
-		"IMAGE_NAME: ghcr.io/flidai/leapview",
-		"runner: ubuntu-24.04",
-		"runner: ubuntu-24.04-arm",
-		"platforms: linux/${{ matrix.arch }}",
-		`--tag "${IMAGE_NAME}:latest"`,
-		"docker buildx imagetools create",
-		"Verify anonymous image pull",
-		"docker logout ghcr.io",
-		"docker buildx imagetools inspect",
-	} {
-		if !strings.Contains(release, required) {
-			t.Fatalf("release workflow missing public image contract %q", required)
-		}
-	}
-	if strings.Contains(release, "docker/setup-qemu-action@") {
-		t.Fatal("release workflow must build each public architecture on its native runner")
-	}
-
-	documents := []struct {
-		name     string
-		image    string
-		required []string
-	}{
-		{
-			name:  filepath.Join("..", "..", "README.md"),
-			image: "ghcr.io/flidai/leapview:latest",
-			required: []string{
-				"ghcr.io/flidai/leapview:latest",
-				"docker pull",
-			},
-		},
-		{
-			name:  filepath.Join("..", "..", "docs", "articles", "start", "installation.md"),
-			image: publicReleaseImage,
-			required: []string{
-				publicReleaseImage,
-				"docker pull",
-				"admin initialize --format json",
-			},
-		},
-	}
-	for _, contract := range documents {
-		name := contract.name
-		document := read(t, name)
-		for _, required := range contract.required {
-			if !strings.Contains(document, required) {
-				t.Errorf("%s does not document public image onboarding contract %q", name, required)
-			}
-		}
-		image := strings.Index(document, contract.image)
-		controller := strings.Index(document, "./leapviewctl init")
-		if controller >= 0 && image > controller {
-			t.Errorf("%s presents the operations controller before the public image", name)
-		}
 	}
 }
 
@@ -193,109 +142,6 @@ func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 			t.Fatalf("release qualification missing extension supply check %q", required)
 		}
 	}
-}
-
-func TestFiveMinuteEvaluationContract(t *testing.T) {
-	root := filepath.Join("..", "..")
-	publicReleaseImage := readPublicReleaseImage(t)
-	dockerfile := read(t, filepath.Join(root, "Dockerfile"))
-	if !strings.Contains(dockerfile, "COPY evaluation ./evaluation") {
-		t.Fatal("runtime image does not include the self-contained evaluation project and data")
-	}
-	dashboard := read(t, filepath.Join(root, "evaluation", "project", "dashboards", "sales-overview.yaml"))
-	for _, required := range []string{
-		"type: static",
-		"value: {type: string, value: SP}",
-		"value: {type: string, value: RJ}",
-		"value: {type: string, value: MG}",
-		"value: {type: string, value: PR}",
-	} {
-		if !strings.Contains(dashboard, required) {
-			t.Errorf("five-minute evaluation dashboard missing deterministic state option %q", required)
-		}
-	}
-	ordersModel := read(t, filepath.Join(root, "evaluation", "project", "models", "orders.yaml"))
-	if !strings.Contains(ordersModel, "try_cast(revenue AS DECIMAL(18, 2)) AS revenue") {
-		t.Fatal("five-minute evaluation revenue transform must produce the authored Decimal physical type")
-	}
-	for _, contract := range []struct {
-		name       string
-		imageRun   string
-		imageSetup string
-	}{
-		{
-			name:     filepath.Join(root, "README.md"),
-			imageRun: "ghcr.io/flidai/leapview:latest evaluate",
-		},
-		{
-			name:       filepath.Join(root, "docs", "articles", "start", "installation.md"),
-			imageSetup: "IMAGE='" + publicReleaseImage + "'",
-			imageRun:   `"$IMAGE" evaluate`,
-		},
-	} {
-		document := read(t, contract.name)
-		for _, required := range []string{
-			contract.imageSetup,
-			"--name leapview-evaluate",
-			"--publish 127.0.0.1:8080:8080",
-			"--volume leapview-evaluate:/var/lib/leapview",
-			contract.imageRun,
-			"docker exec leapview-evaluate leapview evaluate first-login",
-			"docker rm --force leapview-evaluate",
-			"docker volume rm leapview-evaluate",
-			"Five-minute Sales Evaluation",
-			"no source checkout",
-		} {
-			if required == "" {
-				continue
-			}
-			if !strings.Contains(document, required) {
-				t.Errorf("%s missing five-minute evaluation contract %q", contract.name, required)
-			}
-		}
-	}
-	installation := read(
-		t,
-		filepath.Join(
-			root,
-			"docs",
-			"articles",
-			"start",
-			"installation.md",
-		),
-	)
-	for _, required := range []string{
-		"--name leapview-evaluate-2",
-		"--publish 127.0.0.1:8081:8081",
-		"--volume leapview-evaluate-2:/var/lib/leapview",
-		"evaluate --port 8081",
-		"leapview login http://localhost:8080",
-		"leapview dev --once",
-		"leapview publish",
-	} {
-		if !strings.Contains(installation, required) {
-			t.Errorf(
-				"installation guide missing isolated evaluation target contract %q",
-				required,
-			)
-		}
-	}
-}
-
-func readPublicReleaseImage(t *testing.T) string {
-	t.Helper()
-
-	manifest := read(t, filepath.Join("..", "..", "docs", "public-release.json"))
-	var release struct {
-		Image string `json:"image"`
-	}
-	if err := json.Unmarshal([]byte(manifest), &release); err != nil {
-		t.Fatalf("parse public release manifest: %v", err)
-	}
-	if release.Image == "" {
-		t.Fatal("public release manifest has no image")
-	}
-	return release.Image
 }
 
 func TestQualificationRunbookMatchesExecutablePerformancePolicy(t *testing.T) {
@@ -378,50 +224,66 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	browser := read(t, filepath.Join(root, "deploy", "compose", "qualification", "browser.mjs"))
 	authoringWorker := read(t, filepath.Join(root, "deploy", "compose", "qualification", "authoring-worker.mjs"))
 	performance := read(t, filepath.Join(root, "deploy", "compose", "qualification", "performance.mjs"))
+	reportTable := read(t, filepath.Join(root, "web", "components", "dashboard", "table", "report-table.ts"))
 	performancePolicy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_performance.go"))
 	runtimeQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image_runtime.go"))
 	runbook := read(t, filepath.Join(root, "deploy", "compose", "QUALIFICATION.md"))
 
-	for _, required := range []string{"cp -R deploy/compose/qualification", "args=(qualify installed-candidate", "--require-release-transition", "test -n \"$previous_image\"", "transition-qualification.json", "gh release create", "needs: [image, qualify, minio-conformance, plan-gc-conformance]"} {
+	for _, required := range []string{
+		"cp -R deploy/compose/qualification",
+		`cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"`,
+		"args=(qualify installed-candidate",
+		"--multi-node-process",
+		"gh release create",
+		"needs: [image, qualify, minio-conformance, plan-gc-conformance]",
+	} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing %q", required)
+		}
+	}
+	canonicalInit := filepath.Join(root, "deploy", "postgres", "init.sh")
+	if info, err := os.Stat(canonicalInit); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("canonical PostgreSQL init script is not a regular file: %s", canonicalInit)
+	}
+	for _, required := range []string{
+		`filepath.Join(c.root, "..", "postgres", "init.sh")`,
+		`filepath.Join(bundleRoot, "qualification", "postgres-init.sh")`,
+		"copy canonical PostgreSQL qualification init script",
+	} {
+		if !strings.Contains(imageQualification, required) {
+			t.Errorf("production-image qualification missing canonical PostgreSQL init asset contract %q", required)
 		}
 	}
 	gate := strings.Index(release, "args=(qualify installed-candidate")
 	if gate < 0 || gate > strings.Index(release, "gh release create") || gate > strings.Index(release, "Publish qualified image tags") {
 		t.Fatal("installed-candidate qualification must precede all publication")
 	}
-	for _, required := range []string{"workflow_dispatch:", "schedule:", "ubuntu-24.04-arm", "sha256sum --check", "args=(qualify installed-candidate", "--require-release-transition", "test -n \"$previous_image\"", "--previous-image", "transition-qualification.json", "Create qualification incident"} {
+	for _, required := range []string{"workflow_dispatch:", "schedule:", "ubuntu-24.04-arm", "sha256sum --check", "args=(qualify installed-candidate", "--multi-node-process", "Create qualification incident"} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("installed-candidate workflow missing %q", required)
 		}
 	}
-	for _, required := range []string{"func (c *Controller) QualifyInstalledCandidate", "runQualificationAuthoring", "runQualificationRecovery", "qualification-report.json", "runtime-identity.json", "performance-report.json", "recovery-report.json", "verifyQualificationLegacyPolicy", "restoreQualificationBackup"} {
+	for _, required := range []string{"func (c *Controller) QualifyInstalledCandidate", "runQualificationAuthoring", "runQualificationRecovery", "qualification-report.json", "runtime-identity.json", "performance-report.json", "recovery-report.json"} {
 		if !strings.Contains(installed, required) {
 			t.Errorf("typed installed-candidate controller missing %q", required)
 		}
 	}
-	for _, required := range []string{"bootstrapQualificationLocalPhysicalPool", `"pool", "qualify"`, "startQualificationBootstrap", "waitQualificationBootstrapLiveness", `"up", "-d", "--no-deps", "caddy"`, "waitQualificationReadiness"} {
+	for _, required := range []string{"prepareQualificationNativePostgresNetwork", "startQualificationNativePostgresTopology", "prepareQualificationNativePhysicalPool", "applyQualificationNativePhysicalPool", "AssertBootstrapOpen", "startQualificationBootstrap", "waitQualificationBootstrapLiveness", `"up", "-d", "--no-deps", "caddy"`, "waitQualificationReadiness"} {
 		if !strings.Contains(installed, required) {
 			t.Errorf("installed qualification missing sealed-delivery bootstrap contract %q", required)
 		}
 	}
-	for _, required := range []string{"bootstrapQualificationLocalPhysicalPool", "startQualificationBootstrap", "waitQualificationReadiness"} {
+	for _, required := range []string{"prepareQualificationNativePostgresNetwork", "startQualificationNativePostgresTopology", "prepareQualificationNativePhysicalPool", "applyQualificationNativePhysicalPool", "AssertBootstrapOpen", "startQualificationBootstrap", "waitQualificationReadiness"} {
 		if !strings.Contains(imageQualification, required) {
 			t.Errorf("production-image qualification missing sealed-delivery bootstrap contract %q", required)
 		}
 	}
-	restoreStart := strings.LastIndex(installed, "restoreController.Start(ctx)")
-	restoreApply := strings.LastIndex(installed, "restoreController.Restore(")
-	if restoreStart < 0 || restoreApply < 0 || restoreStart < restoreApply {
-		t.Error("isolated restore must apply admitted pool and target state before readiness-gated start")
-	}
-	for _, required := range []string{"missing_physical_pool_admission", "target_revision_missing", `"unhealthy"`} {
+	for _, required := range []string{"production serve requires LEAPVIEW_POSTGRES_CONTROL_URL", "{{.State.Status}}", `"exited"`} {
 		if !strings.Contains(runtimeQualification, required) {
-			t.Errorf("bare production-image smoke missing fail-closed startup assertion %q", required)
+			t.Errorf("bare native production-image smoke missing fail-closed startup assertion %q", required)
 		}
 	}
-	for _, required := range []string{"ManagedUpload", "ReleaseFinalization", "DeploymentActivation", "RefreshRecovery", "QueryStreamReconnect", "BackupInterruption", "RestorePreflight", "BoundedDisk", "waitForQualificationEvents", "/events?limit=100"} {
+	for _, required := range []string{"ManagedUpload", "ReleaseFinalization", "DeploymentActivation", "RefreshRecovery", "QueryStreamReconnect", "BoundedDisk", "waitForQualificationEvents", "/events?limit=100"} {
 		if !strings.Contains(recovery, required) {
 			t.Errorf("typed recovery controller missing %q", required)
 		}
@@ -450,18 +312,42 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	for _, required := range []string{
 		`table.evaluate((element) => element.scrollIntoView({ block: 'center' }))`,
-		`rows.first().waitFor({ state: 'visible', timeout: 30_000 })`,
-		`stateCells.first().waitFor({ state: 'visible', timeout: 30_000 })`,
+		`interactiveCells.first().waitFor({ state: 'visible', timeout: 30_000 })`,
+		`stateActions.first().waitFor({ state: 'visible', timeout: 30_000 })`,
 	} {
 		if !strings.Contains(browser, required) {
 			t.Errorf("browser qualification must wait for asynchronous governed table rendering %q", required)
 		}
 	}
-	if !strings.Contains(browser, `name: 'State: SP'`) || !strings.Contains(performance, "name: `State: ${value}`") {
-		t.Error("browser qualification must assert the table cell accessibility label")
+	for name, script := range map[string]string{"browser": browser, "performance": performance} {
+		for _, required := range []string{
+			`getByRole('button', { name: /^State:/ })`,
+			`getByRole('dialog', { name: 'State filter options', exact: true })`,
+		} {
+			if !strings.Contains(script, required) {
+				t.Errorf("%s qualification must use the current State multi-select contract %q", name, required)
+			}
+		}
+		if strings.Contains(script, `getByRole('combobox', { name: 'State' })`) {
+			t.Errorf("%s qualification still uses the retired State select contract", name)
+		}
 	}
-	if !strings.Contains(performance, `name: /^Order(?: [↑↓])?$/`) {
-		t.Error("performance qualification must select only the sortable Order header")
+	if !strings.Contains(browser, `getByRole('checkbox', { name: 'SP', exact: true })`) ||
+		!strings.Contains(performance, `getByRole('checkbox', { name: value, exact: true })`) ||
+		!strings.Contains(performance, `getByRole('checkbox', { name: 'All State', exact: true })`) {
+		t.Error("browser qualification must exercise deterministic State multi-select values")
+	}
+	if !strings.Contains(browser, `button.cell-action[aria-label="state: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="state: ${value}"]`) {
+		t.Error("browser qualification must assert the compiled result-frame cell accessibility label")
+	}
+	if !strings.Contains(performance, `button.header-button[data-column-key="order_id"]`) {
+		t.Error("performance qualification must select the sortable order_id result-frame header by its stable column key")
+	}
+	if !strings.Contains(reportTable, `data-column-key=${column.key}`) {
+		t.Error("report table sortable headers must expose their stable column key to qualification and browser automation")
+	}
+	if !strings.Contains(browser, "table diagnostics=") || !strings.Contains(browser, ".slice(0, 24)") {
+		t.Error("browser qualification failures must include bounded table diagnostics")
 	}
 	if strings.Contains(browser, "encodeURIComponent(process.env.QUALIFICATION_PROJECT_ID") ||
 		!strings.Contains(browser, "Authorization: `Bearer ${credentials.auditToken}`") {
@@ -487,7 +373,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	if strings.Contains(performance, "measures:") || !strings.Contains(performance, "metrics: [{ field: 'order_count' }, { field: 'revenue' }]") {
 		t.Error("performance governed query must use semantic metrics")
 	}
-	for _, required := range []string{"Automated step", "Human check", "Interruption recovery", "fresh-install-only", "./leapviewctl qualify installed-candidate"} {
+	for _, required := range []string{"Automated step", "Human check", "Interruption recovery", "./leapviewctl qualify installed-candidate"} {
 		if !strings.Contains(runbook, required) {
 			t.Errorf("qualification runbook missing %q", required)
 		}
@@ -529,7 +415,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 			t.Errorf("typed authoring controller missing %q", required)
 		}
 	}
-	for _, required := range []string{"approval-requests", "/activate"} {
+	for _, required := range []string{"approval-requests", "/delivery/candidates/{candidate}/publish"} {
 		if !strings.Contains(deploymentClient, required) {
 			t.Errorf("generated deployment client missing %q", required)
 		}
@@ -540,9 +426,30 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(authoring, "PLATFORM_ADMIN") {
 		t.Error("authoring credentials must not claim the durable platform-admin role")
 	}
-	for _, required := range []string{"Authorize LeapView CLI", "CLI authorized", "/candidates/", "Governed order rows", "check({ force: true })"} {
+	for _, required := range []string{"Authorize LeapView CLI", "CLI authorized", "/candidates/", "candidate preview returned HTTP", "Governed order rows"} {
 		if !strings.Contains(worker, required) {
 			t.Errorf("browser worker missing %q", required)
+		}
+	}
+	for _, required := range []string{"lv-personal-token-command", "new CustomEvent", "capabilities: params.capabilities"} {
+		if !strings.Contains(worker, required) {
+			t.Errorf("browser worker must create exact-scope API tokens through the stable UI command contract: missing %q", required)
+		}
+	}
+	if strings.Contains(worker, `input[type="checkbox"][value="${capability}"]`) {
+		t.Error("browser worker must not couple exact token scopes to grouped permission-picker checkbox values")
+	}
+	for _, required := range []string{"resolvePrincipalFromDirectory", "tr.entity-list-table-row", "a.entity-list-identity", "'/admin/principals/'"} {
+		if !strings.Contains(worker, required) {
+			t.Errorf("browser worker must resolve durable principal IDs from the authenticated directory: missing %q", required)
+		}
+	}
+	if strings.Contains(worker, "params.principalId") || strings.Contains(worker, "new URL('/api/v1/me'") || strings.Contains(worker, "/api/v1/principals?email=") {
+		t.Error("browser worker must not fabricate identities or send browser sessions to bearer-only API routes")
+	}
+	for _, required := range []string{"page.waitForResponse", "'/auth/local/password'", "getByLabel('Password').fill(password)"} {
+		if !strings.Contains(worker, required) {
+			t.Errorf("browser worker must complete a fresh sign-in after temporary-password rotation: missing %q", required)
 		}
 	}
 	if !strings.Contains(worker, "new URL(administratorPage.url())") || strings.Contains(worker, "/dashboards/sales-overview") {
@@ -562,7 +469,7 @@ func TestControllerBuildAndLifecycleCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("leapviewctl help: %v\n%s", err, output)
 	}
-	for _, command := range []string{"version", "init", "start", "status", "logs", "first-login", "backup", "restore", "upgrade", "rollback"} {
+	for _, command := range []string{"version", "init", "start", "status", "logs", "first-login"} {
 		if !strings.Contains(string(output), command) {
 			t.Fatalf("controller help missing %s:\n%s", command, output)
 		}
@@ -633,78 +540,6 @@ func TestReleaseIdentityContract(t *testing.T) {
 	}
 }
 
-func TestRepositoryReleaseTransitionValuesBindRealCandidate(t *testing.T) {
-	root := filepath.Join("..", "..")
-	version := strings.TrimSpace(read(t, filepath.Join(root, "VERSION")))
-	base, err := compatibility.EmbeddedPolicy()
-	require.NoError(t, err)
-	template, err := compatibility.ParseCandidateTransitionTemplate([]byte(read(t, filepath.Join(
-		root,
-		"internal", "platform", "compatibility", "release-transition-template.json",
-	))))
-	require.NoError(t, err)
-	if base.CandidateRelease != template.PredecessorRelease {
-		t.Fatalf("embedded candidate %q does not match reviewed predecessor %q", base.CandidateRelease, template.PredecessorRelease)
-	}
-
-	releaseWorkflow := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
-	for _, required := range []string{
-		`canonical_version="$(tr -d '[:space:]' < VERSION)"`,
-		`version="$canonical_version"`,
-		`BUILD_VERSION: ${{ needs.identity.outputs.version }}`,
-		`"version": os.environ["BUILD_VERSION"]`,
-		`--candidate-admission assembled-image-admission.json`,
-	} {
-		if !strings.Contains(releaseWorkflow, required) {
-			t.Fatalf("release workflow does not bind repository VERSION through admission: missing %q", required)
-		}
-	}
-
-	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("e", 64)
-	bound, err := base.BindCandidateWithTemplate(compatibility.ReleaseIdentity{
-		Version: version, SourceRevision: strings.Repeat("d", 40),
-		Image: image, Distribution: "public",
-	}, template.Platforms, template)
-	require.NoError(t, err)
-
-	predecessor, ok := bound.ReleaseByID(template.PredecessorRelease)
-	if !ok {
-		t.Fatalf("bound policy omits reviewed predecessor %q", template.PredecessorRelease)
-	}
-	candidateID := "v" + version
-	candidate, ok := bound.ReleaseByID(candidateID)
-	if !ok || bound.CandidateRelease != candidateID {
-		t.Fatalf("bound candidate = %#v, present=%v, policy candidate=%q", candidate, ok, bound.CandidateRelease)
-	}
-	for _, platform := range template.Platforms {
-		previousIdentity := predecessor.IdentityForPlatform(platform)
-		candidateIdentity := candidate.IdentityForPlatform(platform)
-		if previousIdentity.ReleaseID != template.PredecessorRelease || previousIdentity.Image == "" {
-			t.Fatalf("predecessor identity for %s = %#v", platform, previousIdentity)
-		}
-		if candidateIdentity.ReleaseID != candidateID || candidateIdentity.Version != version || candidateIdentity.Image != image {
-			t.Fatalf("candidate identity for %s = %#v", platform, candidateIdentity)
-		}
-		for _, transition := range []struct {
-			operation compatibility.Operation
-			current   compatibility.ReleaseIdentity
-			next      compatibility.ReleaseIdentity
-		}{
-			{operation: compatibility.OperationUpgrade, current: previousIdentity, next: candidateIdentity},
-			{operation: compatibility.OperationRollback, current: candidateIdentity, next: previousIdentity},
-		} {
-			decision := bound.Evaluate(compatibility.Request{
-				Operation: transition.operation,
-				Current:   transition.current,
-				Next:      transition.next,
-			})
-			if err := decision.Err(); err != nil {
-				t.Fatalf("%s %s decision = %#v: %v", platform, transition.operation, decision, err)
-			}
-		}
-	}
-}
-
 func TestControllerInitializationGeneratesValidPublicOrigin(t *testing.T) {
 	binaryDir := t.TempDir()
 	validator := buildConfigValidator(t, binaryDir)
@@ -722,6 +557,7 @@ func TestControllerInitializationGeneratesValidPublicOrigin(t *testing.T) {
 			root := t.TempDir()
 			buildController(t, root)
 			copyDeploymentFile(t, root, "deployment.env.example", 0o600)
+			copyConfiguredApplicationFile(t, root)
 			fakeDocker := filepath.Join(root, "fake-docker")
 			script := fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
@@ -786,269 +622,14 @@ func TestControllerReleasePackagingContract(t *testing.T) {
 	if generation < 0 || packaging < 0 || generation > packaging {
 		t.Fatal("release workflow must generate every ignored build input before compiling Compose archives")
 	}
-	admission := strings.Index(release, "- name: Admit exact assembled release image")
-	binding := strings.Index(release, "--bind-release release-identity.json")
-	if admission < 0 || binding < 0 || admission > binding {
-		t.Fatal("release workflow must admit the candidate image identity before binding its transition policy")
-	}
 	upload := strings.Index(release[packaging:], "- name: Upload unpublished candidate")
 	if upload < 0 {
 		t.Fatal("release workflow is missing candidate upload")
-	}
-	packagingBlock := release[packaging : packaging+upload]
-	for _, required := range []string{
-		"IMAGE_REFERENCE: ${{ steps.assembled_admission.outputs.image }}",
-		"--candidate-admission assembled-image-admission.json",
-		"--predecessor-evidence-output predecessor-verification.json",
-	} {
-		if !strings.Contains(packagingBlock, required) {
-			t.Fatalf("release policy generation does not consume admission contract %q", required)
-		}
-	}
-	if strings.Contains(packagingBlock, "steps.assemble.outputs.digest") {
-		t.Fatal("release policy generation must not consume the unadmitted assembly digest")
-	}
-	for _, required := range []string{"release-transition-policy.json predecessor-verification.json \"dist/$package/\"", "candidate/release-transition-policy.json"} {
-		if !strings.Contains(release, required) {
-			t.Fatalf("release workflow does not distribute candidate-bound policy %q", required)
-		}
 	}
 	dockerfile := read(t, filepath.Join("..", "..", "Dockerfile"))
 	if !strings.Contains(dockerfile, "/usr/local/libexec/leapviewctl") {
 		t.Fatal("application image must carry the matching Linux controller for provider extraction")
 	}
-}
-
-func TestV010ReleaseWorkflowInvokesPolicyBoundPreservationQualification(t *testing.T) {
-	workflow := read(t, filepath.Join("..", "..", ".github", "workflows", "release.yml"))
-	require.NoError(t, validateV010ReleaseWorkflow(workflow))
-}
-
-func TestV010ReleaseWorkflowRejectsIncompleteOrUnboundWiring(t *testing.T) {
-	workflow := read(t, filepath.Join("..", "..", ".github", "workflows", "release.yml"))
-	for _, test := range []struct {
-		name        string
-		old         string
-		replacement string
-	}{
-		{
-			name: "missing restored historical authentication",
-			old:  `- name: Restore least-privilege GHCR access for historical qualification`,
-		},
-		{
-			name: "missing admission artifact",
-			old:  `candidate_admission="$GITHUB_WORKSPACE/candidate/assembled-image-admission.json"`,
-		},
-		{
-			name: "missing predecessor evidence",
-			old:  `--predecessor-evidence "$predecessor_evidence"`,
-		},
-		{
-			name:        "wrong policy digest",
-			old:         `policy_sha256="$(sha256sum "$policy" | awk '{print $1}')"`,
-			replacement: `policy_sha256="0000000000000000000000000000000000000000000000000000000000000000"`,
-		},
-		{
-			name: "missing evidence artifact",
-			old:  `${{ runner.temp }}/installed-candidate-evidence/v0.1-preservation-qualification.json`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			mutated := strings.Replace(workflow, test.old, test.replacement, 1)
-			require.NotEqual(t, workflow, mutated, "contract mutation did not match workflow")
-			require.Error(t, validateV010ReleaseWorkflow(mutated))
-		})
-	}
-}
-
-func validateV010ReleaseWorkflow(workflow string) error {
-	required := []string{
-		"- name: Restore least-privilege GHCR access for historical qualification",
-		"- name: Run exact v0.1 preservation qualification",
-		"if: matrix.arch == 'amd64'",
-		"- name: Set up exact OCI resolver",
-		`candidate_admission="$GITHUB_WORKSPACE/candidate/assembled-image-admission.json"`,
-		`policy="$PACKAGE_ROOT/release-transition-policy.json"`,
-		`policy_sha256="$(sha256sum "$policy" | awk '{print $1}')"`,
-		`./leapviewctl qualify v0.1-artifact-review`,
-		`--policy-sha256 "$policy_sha256"`,
-		`--evidence "$predecessor_evidence"`,
-		`test -s "$predecessor_evidence"`,
-		`./leapviewctl qualify v0.1-preservation`,
-		`--candidate-admission "$candidate_admission"`,
-		`--predecessor-evidence "$predecessor_evidence"`,
-		`test -s "$qualification_evidence"`,
-		`${{ runner.temp }}/installed-candidate-evidence/v0.1-reviewed-identity.json`,
-		`${{ runner.temp }}/installed-candidate-evidence/v0.1-preservation-qualification.json`,
-		"needs: [image, qualify, minio-conformance, plan-gc-conformance]",
-	}
-	for _, contract := range required {
-		if !strings.Contains(workflow, contract) {
-			return fmt.Errorf("release workflow missing v0.1 qualification contract %q", contract)
-		}
-	}
-	review := strings.Index(workflow, "./leapviewctl qualify v0.1-artifact-review")
-	authenticated := strings.Index(workflow, "- name: Log in to GHCR for admission")
-	installed := strings.Index(workflow, "- name: Run installed-candidate journey")
-	reauthenticated := strings.Index(workflow, "- name: Restore least-privilege GHCR access for historical qualification")
-	qualification := strings.Index(workflow, "./leapviewctl qualify v0.1-preservation")
-	upload := strings.Index(workflow, "- name: Upload bounded qualification evidence")
-	if authenticated < 0 || installed < 0 || reauthenticated < 0 || review < 0 || qualification < 0 || upload < 0 ||
-		authenticated >= installed || installed >= reauthenticated || reauthenticated >= review || review >= qualification || qualification >= upload {
-		return fmt.Errorf("release workflow must authenticate, qualify the installed candidate, restore authentication, review v0.1 identity, qualify preservation, then upload evidence")
-	}
-	reauthenticationBlock := workflow[reauthenticated:review]
-	for _, contract := range []string{
-		"if: matrix.arch == 'amd64'",
-		"uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4",
-		"registry: ghcr.io",
-		"username: ${{ github.actor }}",
-		"password: ${{ secrets.GITHUB_TOKEN }}",
-	} {
-		if !strings.Contains(reauthenticationBlock, contract) {
-			return fmt.Errorf("historical qualification authentication is incomplete: missing %q", contract)
-		}
-	}
-	return nil
-}
-
-func TestControllerLifecycleWithStateAwareUpgradeRollback(t *testing.T) {
-	root := t.TempDir()
-	buildController(t, root)
-	buildConfigValidator(t, root)
-	copyDeploymentFile(t, root, "deployment.env.example", 0o600)
-	fakeDocker := filepath.Join(root, "fake-docker")
-	if err := os.WriteFile(fakeDocker, []byte(`#!/usr/bin/env bash
-set -euo pipefail
-root="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-printf '%s\n' "$*" >>"$root/docker.log"
-if [[ -n "${FAKE_DOCKER_FAIL_COMMAND:-}" && " $* " == *" ${FAKE_DOCKER_FAIL_COMMAND} "* ]]; then exit 42; fi
-if [[ "${FAKE_DOCKER_FAIL_RESTORE_ONCE:-}" == 1 && " $* " == *' admin restore '* && ! -e "$root/restore-failed-once" ]]; then
-  touch "$root/restore-failed-once"
-  exit 42
-fi
-if [[ "${1:-}" == inspect ]]; then
-  template="${3:-}"
-  if [[ "$template" == *Running* ]]; then printf 'true\n'; exit 0; fi
-  image="$(awk -F= '$1=="LEAPVIEW_IMAGE" {sub(/^[^=]*=/, ""); print; exit}' "$root/deployment.env")"
-  if [[ -n "${FAKE_DOCKER_FAIL_IMAGE:-}" && "$image" == "$FAKE_DOCKER_FAIL_IMAGE" ]]; then printf 'unhealthy\n'; else printf 'healthy\n'; fi
-  exit 0
-fi
-[[ "${1:-}" == compose ]] || exit 0
-shift
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --project-directory|--env-file|-f) shift 2 ;;
-    *) command="$1"; shift; break ;;
-  esac
-done
-case "${command:-}" in
-  ps) [[ " $* " == *' -q '* ]] && printf 'fake-container\n' ;;
-  run)
-    if [[ " $* " == *' config validate --production '* ]]; then
-      set -a
-      source "$root/leapview.env"
-      set +a
-      exec "$root/config-validator"
-    elif [[ " $* " == *' admin initialize --format json '* ]]; then
-      printf '{"email":"admin@example.com","temporaryPassword":"temporary","publisherToken":"publisher","publisherTokenExpiresAt":"2026-07-19T00:00:00Z"}\n'
-    elif [[ " $* " == *' admin backup '* ]]; then
-      output=""
-      while [[ $# -gt 0 ]]; do
-        if [[ "$1" == --out ]]; then output="$2"; break; fi
-        shift
-      done
-      if [[ "$output" == - ]]; then
-        printf 'validated archive\n'
-      else
-        output="$root/${output#/}"
-        mkdir -p "$(dirname -- "$output")"
-        printf 'validated archive\n' >"$output"
-      fi
-    fi
-    ;;
-esac
-`), 0o700); err != nil {
-		t.Fatal(err)
-	}
-
-	oldImage := "example.com/leapview@sha256:" + strings.Repeat("a", 64)
-	newImage := "example.com/leapview@sha256:" + strings.Repeat("b", 64)
-	transitionPolicy := filepath.Join(root, "release-transition-policy.json")
-	writeReleaseTransitionPolicy(t, transitionPolicy, oldImage, newImage)
-	runController(t, root, fakeDocker, "", "init", "--admin-email", "admin@example.com", "--domain", "dash.example.com", "--image", oldImage)
-	for _, name := range []string{"deployment.env", "leapview.env", "initial-credentials.json"} {
-		info, err := os.Stat(filepath.Join(root, name))
-		if err != nil || info.Mode().Perm() != 0o600 {
-			t.Fatalf("%s permissions = %v, %v", name, info.Mode().Perm(), err)
-		}
-	}
-	if output := runController(t, root, fakeDocker, "", "first-login"); !strings.Contains(output, `"temporaryPassword":"temporary"`) {
-		t.Fatalf("first-login output = %s", output)
-	}
-	if _, err := os.Stat(filepath.Join(root, "initial-credentials.json")); !os.IsNotExist(err) {
-		t.Fatalf("one-time credentials were not deleted: %v", err)
-	}
-	runController(t, root, fakeDocker, "", "start")
-	t.Setenv("FAKE_DOCKER_FAIL_COMMAND", "admin backup")
-	if output, err := runControllerResult(root, fakeDocker, "", "backup"); err == nil || !strings.Contains(output, "previous service state was restored") {
-		t.Fatalf("failed backup result = %v, %s", err, output)
-	}
-	t.Setenv("FAKE_DOCKER_FAIL_COMMAND", "")
-	backupOutput := runController(t, root, fakeDocker, "", "backup")
-	backupPath := strings.TrimSpace(backupOutput)
-	if _, err := os.Stat(backupPath); err != nil {
-		t.Fatalf("backup missing: %v (%s)", err, backupOutput)
-	}
-	runController(t, root, fakeDocker, "", "restore", backupPath)
-	t.Setenv("FAKE_DOCKER_FAIL_COMMAND", "pull leapview")
-	if output, err := runControllerResult(root, fakeDocker, "", "upgrade", "--transition-policy", transitionPolicy, newImage); err == nil || !strings.Contains(output, "previous image and service state were restored") {
-		t.Fatalf("failed pull result = %v, %s", err, output)
-	}
-	requireDeploymentImage(t, root, oldImage)
-	t.Setenv("FAKE_DOCKER_FAIL_COMMAND", "")
-
-	output, err := runControllerResult(root, fakeDocker, newImage, "upgrade", "--transition-policy", transitionPolicy, newImage)
-	if err == nil || !strings.Contains(output, "previous image and state were restored") {
-		t.Fatalf("failed upgrade result = %v, %s", err, output)
-	}
-	requireDeploymentImage(t, root, oldImage)
-	runController(t, root, fakeDocker, "", "upgrade", "--transition-policy", transitionPolicy, newImage)
-	requireDeploymentImage(t, root, newImage)
-	t.Setenv("FAKE_DOCKER_FAIL_RESTORE_ONCE", "1")
-	if output, err := runControllerResult(root, fakeDocker, "", "rollback", "--transition-policy", transitionPolicy, "--confirm"); err == nil || !strings.Contains(output, "pre-rollback image and state were reinstated") {
-		t.Fatalf("failed rollback result = %v, %s", err, output)
-	}
-	requireDeploymentImage(t, root, newImage)
-	t.Setenv("FAKE_DOCKER_FAIL_RESTORE_ONCE", "")
-	runController(t, root, fakeDocker, "", "rollback", "--transition-policy", transitionPolicy, "--confirm")
-	requireDeploymentImage(t, root, oldImage)
-	log, err := os.ReadFile(filepath.Join(root, "docker.log"))
-	if err != nil || !strings.Contains(string(log), "admin restore") {
-		t.Fatalf("controller did not restore paired state: %v\n%s", err, log)
-	}
-}
-
-func writeReleaseTransitionPolicy(t *testing.T, path, previousImage, candidateImage string) {
-	t.Helper()
-	denied := compatibility.Rule{
-		ReasonCode: compatibility.ReasonDeniedNoExplicitRule, Remediation: "use an explicit transition", Requirements: []string{},
-	}
-	requirements := []string{compatibility.RequirementBackupBeforeMutation, compatibility.RequirementStoppedInstance}
-	policy := &compatibility.Policy{
-		SchemaVersion: compatibility.CurrentSchemaVersion, PolicyVersion: "test/release-v2", CandidateRelease: "v2.0.0",
-		Releases: []compatibility.Release{
-			{ID: "v1.0.0", Version: "1.0.0", SourceRevision: strings.Repeat("a", 40), Distribution: "public", LegacyMarkers: []string{}, LegacyBackupVersions: []int{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: previousImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
-			{ID: "v2.0.0", Version: "2.0.0", SourceRevision: strings.Repeat("b", 40), Distribution: "public", LegacyMarkers: []string{}, LegacyBackupVersions: []int{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: candidateImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
-		},
-		Transitions: []compatibility.Transition{
-			{Operation: compatibility.OperationUpgrade, From: "v1.0.0", To: "v2.0.0", Platforms: []string{"linux/amd64"}, Decision: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedExplicitTransition, Requirements: requirements}},
-			{Operation: compatibility.OperationRollback, From: "v2.0.0", To: "v1.0.0", Platforms: []string{"linux/amd64"}, Decision: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedExplicitTransition, Requirements: requirements}},
-		},
-	}
-	contents, err := compatibility.MarshalPolicy(policy)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, contents, 0o600))
 }
 
 func TestControllerInitializationIsRetryableAndRequiresPinnedProxy(t *testing.T) {
@@ -1059,6 +640,7 @@ func TestControllerInitializationIsRetryableAndRequiresPinnedProxy(t *testing.T)
 		buildController(t, root)
 		buildConfigValidator(t, root)
 		copyDeploymentFile(t, root, "deployment.env.example", 0o600)
+		copyConfiguredApplicationFile(t, root)
 		fakeDocker := filepath.Join(root, "fake-docker")
 		if err := os.WriteFile(fakeDocker, []byte(`#!/usr/bin/env bash
 set -euo pipefail
@@ -1086,10 +668,11 @@ fi
 		if output, err := runControllerResult(root, fakeDocker, "", "init", "--admin-email", "admin@example.com", "--domain", "dash.example.com", "--image", image); err == nil || !strings.Contains(output, "initialization can be retried") {
 			t.Fatalf("failed initialization = %v, %s", err, output)
 		}
-		for _, name := range []string{"leapview.env", "initial-credentials.json"} {
-			if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
-				t.Fatalf("partial initialization retained %s: %v", name, err)
-			}
+		if contents, err := os.ReadFile(filepath.Join(root, "leapview.env")); err != nil || !strings.Contains(string(contents), "LEAPVIEW_POSTGRES_CONTROL_URL=postgres://runtime:secret@control/leapview?sslmode=verify-full\n") {
+			t.Fatalf("operator application environment was not preserved after validation failure: %v\n%s", err, contents)
+		}
+		if _, err := os.Stat(filepath.Join(root, "initial-credentials.json")); !os.IsNotExist(err) {
+			t.Fatalf("partial initialization retained initial credentials: %v", err)
 		}
 		if err := os.Remove(filepath.Join(root, "fail-validation")); err != nil {
 			t.Fatal(err)
@@ -1126,11 +709,37 @@ func copyDeploymentFile(t *testing.T, targetDir, name string, mode os.FileMode) 
 	}
 }
 
+func copyConfiguredApplicationFile(t *testing.T, targetDir string) {
+	t.Helper()
+	contents, err := os.ReadFile("leapview.env.example")
+	require.NoError(t, err)
+	replacements := map[string]string{
+		"LEAPVIEW_POSTGRES_CONTROL_URL=":                        "LEAPVIEW_POSTGRES_CONTROL_URL=postgres://runtime:secret@control/leapview?sslmode=verify-full",
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=":               "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=postgres://migrator:secret@control/leapview?sslmode=verify-full",
+		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=":            "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=postgres://maintenance:secret@control/leapview?sslmode=verify-full",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_URL=":                       "LEAPVIEW_POSTGRES_DUCKLAKE_URL=postgres://ducklake:secret@ducklake/leapview?sslmode=verify-full",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=":           "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=postgres://ducklake-maintenance:secret@ducklake/leapview?sslmode=verify-full",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=":                   "LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=pool-prod",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=": "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=sha256:" + strings.Repeat("a", 64),
+	}
+	text := string(contents)
+	for from, to := range replacements {
+		text = strings.Replace(text, from, to, 1)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "leapview.env"), []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func buildController(t *testing.T, targetDir string) string {
 	t.Helper()
 	target := filepath.Join(targetDir, "leapviewctl")
 	command := exec.Command("go", "build", "-o", target, "./cmd/leapviewctl")
 	command.Dir = filepath.Join("..", "..")
+	// Release archives cross-compile this controller without CGO. Keep the
+	// lifecycle test on that exact dependency boundary so an accidental import
+	// of the server's DuckDB graph fails before the release workflow.
+	command.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build leapviewctl: %v\n%s", err, output)
 	}

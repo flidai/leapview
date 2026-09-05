@@ -233,9 +233,14 @@ type CountRequest struct {
 }
 
 type Plan struct {
-	SQL                  string
-	Args                 []any
-	Columns              []string
+	SQL     string
+	Args    []any
+	Columns []string
+	// Deterministic is planner-produced positive evidence that this plan was
+	// lowered through the closed PlanIR expression algebra. Plans assembled
+	// outside the planner (for example opaque Model SQL) leave it false
+	// so result-cache admission can fail closed.
+	Deterministic        bool
 	Mode                 string
 	Datasets             []string
 	StitchDimensions     []string
@@ -308,11 +313,15 @@ type BundlePlan struct {
 }
 
 type BundleBranch struct {
-	ID                   string
-	Ordinal              int
-	Columns              []BundleColumn
-	Fingerprint          string
-	DependencyProjection DependencyProjection
+	ID          string
+	Ordinal     int
+	Columns     []BundleColumn
+	Fingerprint string
+	// ResultEquivalenceDigest is the planner-owned, target-independent result
+	// identity for this branch. It is distinct from Fingerprint, which remains
+	// the executable graph fingerprint used for diagnostics.
+	ResultEquivalenceDigest string
+	DependencyProjection    DependencyProjection
 }
 
 type BundleColumn struct {

@@ -167,7 +167,14 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 	if err != nil {
 		return nil, err
 	}
-	if err := validateCandidateDataMode(state, normalized.Compatibility, managedData); err != nil {
+	// Candidate source refreshes in the local/evaluation file-catalog path are
+	// sealed only after the physical build has produced its catalog seal. Their
+	// serving-state row therefore intentionally has no legacy snapshot pointer
+	// at this preparation boundary. PostgreSQL's sealed runtime, by contrast,
+	// opts into the exact SNAPSHOT_VERSION contract through
+	// PinnedSnapshotSealedFactory and must retain the positive snapshot check.
+	requirePinnedSnapshot := candidateRequiresPinnedSnapshot(r.manager.factory, r.manager.requireSealedCatalog)
+	if err := validateCandidateDataMode(state, normalized.Compatibility, managedData, requirePinnedSnapshot); err != nil {
 		return nil, errors.Join(err, releaseManaged(managedData.Lifetime))
 	}
 	candidate := &candidatePreparationContext{runtime: CandidateRuntimeContext{
@@ -183,11 +190,24 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 	// Ownership transfers to the prepared candidate; manager preparation closes
 	// it on every subsequent failure path.
 	ownedLifetime = nil
-	prepared, err := r.manager.prepareResolvedWithCandidate(ctx, state, artifact, managedData, candidate)
+	prepared, err := r.manager.prepareResolvedWithCandidate(ctx, state, artifact, managedData, candidate, nil)
 	if err != nil {
 		return nil, err
 	}
 	return prepared, nil
+}
+
+// candidateRequiresPinnedSnapshot scopes the positive snapshot requirement to
+// targets whose sealed runtime explicitly implements the PostgreSQL-style
+// SNAPSHOT_VERSION contract. Local sealed file catalogs remain immutable, but
+// their candidate serving-state rows intentionally carry no legacy snapshot
+// pointer until physical materialization has completed.
+func candidateRequiresPinnedSnapshot(factory RuntimeFactory, requireSealedCatalog bool) bool {
+	if !requireSealedCatalog {
+		return false
+	}
+	_, ok := factory.(PinnedSnapshotSealedFactory)
+	return ok
 }
 
 func candidateBindingKinds(value CandidateCompatibility) map[string]string {
@@ -438,7 +458,7 @@ func fingerprintCandidateBindings(bindings []CandidateBindingVersion) string {
 	return "sha256:" + fmt.Sprintf("%x", sum)
 }
 
-func validateCandidateDataMode(state servingstate.State, compatibility CandidateCompatibility, data ManagedDataResolution) error {
+func validateCandidateDataMode(state servingstate.State, compatibility CandidateCompatibility, data ManagedDataResolution, requireSealedCatalog bool) error {
 	// ManagedDataResolution.RevisionID is an aggregate content binding digest
 	// owned by the managed-data resolver. CandidateCompatibility.DataRevision
 	// is release provenance (for example, sources:<digest> or snapshot:<id>).
@@ -451,8 +471,19 @@ func validateCandidateDataMode(state servingstate.State, compatibility Candidate
 			return fmt.Errorf("%w: sealed-base reuse requires an exact serving-state identity and no authored refresh connections", ErrCandidateRuntimeIncompatible)
 		}
 	case CandidateDataRefreshSources:
-		if state.DuckLakeSnapshotID != 0 || (len(compatibility.Bindings) == 0 && len(compatibility.ManagedDataConnections) == 0 && len(compatibility.AuthoredConnections) == 0) {
-			return fmt.Errorf("%w: source refresh requires an unmaterialized state and declared connections", ErrCandidateRuntimeIncompatible)
+		if len(compatibility.Bindings) == 0 && len(compatibility.ManagedDataConnections) == 0 && len(compatibility.AuthoredConnections) == 0 {
+			return fmt.Errorf("%w: source refresh requires declared connections", ErrCandidateRuntimeIncompatible)
+		}
+		// In a sealed target, refresh_sources records how the candidate was
+		// built; serving attaches the exact materialized snapshot admitted by
+		// delivery. Unsealed targets still perform that preparation locally and
+		// therefore require an unmaterialized state at this boundary.
+		if requireSealedCatalog {
+			if state.DuckLakeSnapshotID <= 0 {
+				return fmt.Errorf("%w: sealed source refresh requires a positive serving-state snapshot", ErrCandidateRuntimeIncompatible)
+			}
+		} else if state.DuckLakeSnapshotID != 0 {
+			return fmt.Errorf("%w: source refresh requires an unmaterialized state", ErrCandidateRuntimeIncompatible)
 		}
 	default:
 		return ErrCandidateRuntimeInvalid

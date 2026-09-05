@@ -110,15 +110,12 @@ func New(t testing.TB, names ...string) Fixture {
 		}
 		digest := sha256.Sum256(contents)
 		digestValue := "sha256:" + hex.EncodeToString(digest[:])
-		pathName := name
-		if name == "sqlite" {
-			pathName = "sqlite_scanner"
-		}
+		pathName := extension.ArtifactFilenameStem(name)
 		path := filepath.Join(root, pathName+".duckdb_extension")
 		if err := os.WriteFile(path, contents, 0o600); err != nil {
 			t.Fatalf("stage test extension %q: %v", name, err)
 		}
-		originPath := filepath.Join(root, name+"-test-fixture-"+platform+".duckdb_extension")
+		originPath := filepath.Join(root, pathName+"-test-fixture-"+platform+".duckdb_extension")
 		if err := os.WriteFile(originPath, contents, 0o600); err != nil {
 			t.Fatalf("stage packaged test extension %q: %v", name, err)
 		}
@@ -189,10 +186,7 @@ func runtimeTarget(t testing.TB) (string, string) {
 }
 
 func extensionFilename(name string) string {
-	if name == "sqlite" {
-		return "sqlite_scanner.duckdb_extension"
-	}
-	return name + ".duckdb_extension"
+	return extension.ArtifactFilenameStem(name) + ".duckdb_extension"
 }
 
 func findExtension(name, version, platform string) string {

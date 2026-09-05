@@ -15,6 +15,18 @@ func deliveryTestDigest(char byte) string {
 	return "sha256:" + strings.Repeat(string(char), 64)
 }
 
+func TestResolveDeliveryReuseDecisionRequiresExactCandidateOrAggregatesRelations(t *testing.T) {
+	plan := &DeliveryPlan{Evidence: DeliveryPlanEvidence{Reuse: []DeliveryReuseDecision{{ResourceID: "model:orders", Reusable: true}}}}
+	if _, ok := ResolveDeliveryReuseDecision(plan, "candidate-1"); ok {
+		t.Fatal("single relation decision was accepted as candidate evidence")
+	}
+	plan.Evidence.Reuse = append(plan.Evidence.Reuse, DeliveryReuseDecision{ResourceID: "model:customers", Reusable: false, RetainBase: true})
+	decision, ok := ResolveDeliveryReuseDecision(plan, "candidate-1")
+	if !ok || decision.Reusable || !decision.RetainBase {
+		t.Fatalf("partial relation decisions = %#v, found=%v", decision, ok)
+	}
+}
+
 func deliveryTestPlan(t *testing.T) DeliveryPlan {
 	t.Helper()
 	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
@@ -31,7 +43,7 @@ func deliveryTestPlan(t *testing.T) DeliveryPlan {
 		Provenance: DeliveryProvenance{Repository: "https://example.invalid/repo", SourceRevision: "rev-1", Builder: "ci"},
 		Governance: DeliveryGovernance{
 			PolicyDigest: deliveryTestDigest('2'), AuthorizationDigest: deliveryTestDigest('3'),
-			QualificationDigest: deliveryTestDigest('4'), ExpiresAt: now.Add(time.Hour), RequiresApproval: true,
+			QualificationDigest: deliveryTestDigest('4'), ExpiresAt: now.Add(time.Hour), RequiresApproval: true, ApprovalPolicyRevision: 1,
 		},
 		Evidence: DeliveryPlanEvidence{
 			ImpactStatement:       "direct model change with downstream dashboard impact",
@@ -46,6 +58,24 @@ func deliveryTestPlan(t *testing.T) DeliveryPlan {
 		t.Fatalf("new plan: %v", err)
 	}
 	return plan
+}
+
+func TestNewDeliveryPlanDefaultsSourceOwnerBeforeDigest(t *testing.T) {
+	plan := deliveryTestPlan(t)
+	if plan.SourceOwnerID != plan.Provenance.Builder {
+		t.Fatalf("source owner = %q, want provenance builder %q", plan.SourceOwnerID, plan.Provenance.Builder)
+	}
+
+	replay := plan
+	replay.SourceOwnerID = ""
+	replay.Digest = ""
+	replay, err := NewDeliveryPlan(replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.SourceOwnerID != plan.SourceOwnerID || replay.Digest != plan.Digest {
+		t.Fatalf("defaulted replay identity = owner %q digest %q, want owner %q digest %q", replay.SourceOwnerID, replay.Digest, plan.SourceOwnerID, plan.Digest)
+	}
 }
 
 func deliveryTestGateEvidence(t *testing.T, plan DeliveryPlan, outcome release.GateOutcome) *release.GateEvidence {
@@ -184,7 +214,7 @@ func TestDeliveryGovernanceAndCredentialRotationPreserveExecutionReuseIdentity(t
 func TestDeliveryReusePolicyRequiresExactPhysicalIdentity(t *testing.T) {
 	base := DeliveryReuseInput{
 		ResourceID: "orders", ExecutionDigest: deliveryTestDigest('a'), BaseExecutionDigest: deliveryTestDigest('a'),
-		CatalogDigest: deliveryTestDigest('b'), BaseCatalogDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
+		ClosureDigest: deliveryTestDigest('b'), BaseClosureDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
 		CompatibilityDigest: deliveryTestDigest('c'), BaseCompatibilityDigest: deliveryTestDigest('c'), Deterministic: true,
 	}
 	decision, err := EvaluateDeliveryReuse(base)
@@ -196,7 +226,7 @@ func TestDeliveryReusePolicyRequiresExactPhysicalIdentity(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*DeliveryReuseInput){
 		"execution":     func(input *DeliveryReuseInput) { input.ExecutionDigest = deliveryTestDigest('d') },
-		"catalog":       func(input *DeliveryReuseInput) { input.CatalogDigest = deliveryTestDigest('e') },
+		"closure":       func(input *DeliveryReuseInput) { input.ClosureDigest = deliveryTestDigest('e') },
 		"pool":          func(input *DeliveryReuseInput) { input.PhysicalPoolID = "pool-2" },
 		"compatibility": func(input *DeliveryReuseInput) { input.CompatibilityDigest = deliveryTestDigest('f') },
 	} {
@@ -216,7 +246,7 @@ func TestDeliveryReuseRelationContextFailsClosedWhenIncomplete(t *testing.T) {
 	base := DeliveryReuseInput{
 		ResourceID: "orders", RelationScoped: true,
 		ExecutionDigest: deliveryTestDigest('a'), BaseExecutionDigest: deliveryTestDigest('a'),
-		CatalogDigest: deliveryTestDigest('b'), BaseCatalogDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
+		ClosureDigest: deliveryTestDigest('b'), BaseClosureDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
 		CompatibilityDigest: deliveryTestDigest('c'), BaseCompatibilityDigest: deliveryTestDigest('c'), Deterministic: true,
 	}
 	if _, err := EvaluateDeliveryReuse(base); err == nil {
@@ -237,7 +267,7 @@ func TestDeliveryReuseRelationContextFailsClosedWhenIncomplete(t *testing.T) {
 func TestDeliveryReusePolicyDisablesUndeclaredNondeterminism(t *testing.T) {
 	base := DeliveryReuseInput{
 		ResourceID: "events", ExecutionDigest: deliveryTestDigest('a'), BaseExecutionDigest: deliveryTestDigest('a'),
-		CatalogDigest: deliveryTestDigest('b'), BaseCatalogDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
+		ClosureDigest: deliveryTestDigest('b'), BaseClosureDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
 		CompatibilityDigest: deliveryTestDigest('c'), BaseCompatibilityDigest: deliveryTestDigest('c'), Deterministic: false,
 	}
 	decision, err := EvaluateDeliveryReuse(base)
@@ -481,143 +511,5 @@ func TestDeliveryCanonicalTimeAndCatalogKeyValidation(t *testing.T) {
 		if err := validateCatalogObjectKey("catalog", key); err == nil {
 			t.Fatalf("unsafe object key %q unexpectedly accepted", key)
 		}
-	}
-}
-
-func TestDeliveryBuildSealAndCandidateTransitionsAreChecked(t *testing.T) {
-	plan := deliveryTestPlan(t)
-	now := plan.CreatedAt
-	attempt, err := NewDeliveryBuildAttempt(DeliveryBuildAttempt{
-		ID: "attempt-1", PlanID: plan.ID, PlanDigest: plan.Digest, SourceDigest: plan.SourceDigest,
-		ExecutionDigest: plan.ExecutionDigest, BaseGenerationID: plan.BaseGenerationID,
-		BaseCatalogDigest: deliveryTestDigest('5'), BasePhysicalPoolID: "pool-1", PhysicalPoolID: "pool-1", WriterLeaseID: "writer-1", CreatedAt: now,
-	})
-	if err != nil {
-		t.Fatalf("new build attempt: %v", err)
-	}
-	if _, err := attempt.SealCandidate("seal-1", "candidate-1", now.Add(time.Minute)); !errors.Is(err, ErrDeliveryTransition) {
-		t.Fatalf("sealing before validation error = %v, want transition", err)
-	}
-	attempt, _ = attempt.BeginNormalize(now.Add(time.Minute))
-	attempt, _ = attempt.BeginValidation(now.Add(2 * time.Minute))
-	attempt, _ = attempt.PrepareSeal(now.Add(3 * time.Minute))
-	attempt, err = attempt.SealCandidate("seal-1", "candidate-1", now.Add(4*time.Minute))
-	if err != nil {
-		t.Fatalf("seal candidate: %v", err)
-	}
-	if _, err := attempt.PrepareSeal(now.Add(5 * time.Minute)); !errors.Is(err, ErrDeliveryTransition) {
-		t.Fatalf("sealed build transition error = %v, want transition", err)
-	}
-
-	seal, err := NewCatalogSeal(CatalogSeal{
-		ID: "seal-1", AttemptID: attempt.ID, PlanID: plan.ID, PlanDigest: plan.Digest, ExecutionDigest: plan.ExecutionDigest,
-		PhysicalPoolID: "pool-1", CatalogDigest: deliveryTestDigest('6'), CompatibilityDigest: deliveryTestDigest('9'),
-		ServingArtifactID: "artifact-contract-1", ServingArtifactDigest: deliveryTestDigest('a'), ServingStateID: "state-contract-1", ObjectKey: "catalogs/seal-1", ObjectSize: 12, CreatedAt: now,
-	})
-	if err != nil {
-		t.Fatalf("new seal: %v", err)
-	}
-	seal, _ = seal.MarkUploaded()
-	seal, err = seal.MarkVerified(deliveryTestDigest('7'), deliveryTestDigest('8'), now.Add(5*time.Minute))
-	if err != nil {
-		t.Fatalf("verify seal: %v", err)
-	}
-	candidate, err := NewDeliveryCandidate(DeliveryCandidate{
-		ID: "candidate-1", PlanID: plan.ID, PlanDigest: plan.Digest, TargetID: plan.TargetID,
-		ProjectID: plan.ProjectID, Environment: plan.Environment, SourceDigest: plan.SourceDigest,
-		ExecutionDigest: plan.ExecutionDigest, BaseGenerationID: plan.BaseGenerationID,
-		BaseTargetRevision: plan.BaseTargetRevision, SealID: seal.ID, CatalogDigest: seal.CatalogDigest,
-		CompatibilityDigest: seal.CompatibilityDigest, CatalogObjectKey: seal.ObjectKey, PhysicalPoolID: seal.PhysicalPoolID, ServingArtifactID: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest, ServingStateID: "state-contract-1", CreatedAt: now,
-		ResolvedInputs: DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, GateEvidence: deliveryTestGateEvidence(t, plan, release.GateSuccess)},
-	})
-	if err != nil {
-		t.Fatalf("new candidate: %v", err)
-	}
-	candidate, err = candidate.MarkReady(seal, now.Add(6*time.Minute))
-	if err != nil {
-		t.Fatalf("ready candidate: %v", err)
-	}
-	if err := candidate.PublicationEligible(plan, plan.BaseGenerationID, plan.BaseTargetRevision, now); err != nil {
-		t.Fatalf("eligible candidate rejected: %v", err)
-	}
-	if err := candidate.PublicationEligible(plan, plan.BaseGenerationID, plan.BaseTargetRevision+1, now); !errors.Is(err, ErrDeliveryStale) {
-		t.Fatalf("stale candidate error = %v, want stale", err)
-	}
-	expiredPlan, err := plan.Expire(now.Add(2 * time.Hour))
-	if err != nil {
-		t.Fatalf("expire plan: %v", err)
-	}
-	if err := candidate.PublicationEligible(expiredPlan, expiredPlan.BaseGenerationID, expiredPlan.BaseTargetRevision, now.Add(2*time.Hour)); !errors.Is(err, ErrDeliveryPlanExpired) || errors.Is(err, ErrDeliveryStale) {
-		t.Fatalf("expired candidate error = %v, want plan-expired only", err)
-	}
-}
-
-func TestDeliveryBuildAttemptAllowsGenerationFenceWithoutRetainedCatalog(t *testing.T) {
-	plan := deliveryTestPlan(t)
-	attempt, err := NewDeliveryBuildAttempt(DeliveryBuildAttempt{
-		ID: "attempt-full-refresh", PlanID: plan.ID, PlanDigest: plan.Digest,
-		SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest,
-		BaseGenerationID: plan.BaseGenerationID, PhysicalPoolID: "pool-1",
-		WriterLeaseID: "writer-full-refresh", CreatedAt: plan.CreatedAt,
-	})
-	if err != nil {
-		t.Fatalf("generation fence without retained catalog should be valid: %v", err)
-	}
-	if attempt.BaseCatalogDigest != "" || attempt.BasePhysicalPoolID != "" {
-		t.Fatalf("full-refresh attempt unexpectedly retained base identities: %#v", attempt)
-	}
-
-	invalid := attempt
-	invalid.BasePhysicalPoolID = "pool-1"
-	if err := invalid.Validate(); !errors.Is(err, ErrDeliveryInvalid) {
-		t.Fatalf("half-specified retained base error = %v, want ErrDeliveryInvalid", err)
-	}
-}
-
-func TestDeliveryPublicationLeaseAndGCFencesAreIdempotent(t *testing.T) {
-	plan := deliveryTestPlan(t)
-	now := plan.CreatedAt
-	publication, err := NewDeliveryPublication(DeliveryPublication{
-		ID: "publication-1", RequestDigest: deliveryTestDigest('9'), TargetID: plan.TargetID,
-		ProjectID: plan.ProjectID, Environment: plan.Environment, PlanID: plan.ID, PlanDigest: plan.Digest,
-		CandidateID: "candidate-1", GenerationID: "generation-2", ExpectedBaseGenerationID: plan.BaseGenerationID,
-		ExpectedTargetRevision: plan.BaseTargetRevision, CreatedAt: now,
-	})
-	if err != nil {
-		t.Fatalf("new publication: %v", err)
-	}
-	publication, err = publication.Commit(plan.BaseGenerationID, plan.BaseTargetRevision, now.Add(time.Minute))
-	if err != nil {
-		t.Fatalf("commit publication: %v", err)
-	}
-	if retry, err := publication.Commit(plan.BaseGenerationID, plan.BaseTargetRevision, now.Add(2*time.Minute)); err != nil || retry != publication {
-		t.Fatalf("idempotent publication retry = %#v, %v", retry, err)
-	}
-	lease, err := NewDeliveryQueryLease(DeliveryQueryLease{
-		ID: "lease-1", HolderID: "reader-1", GenerationID: "generation-2", CatalogDigest: deliveryTestDigest('6'),
-		PhysicalPoolID: "pool-1", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("new query lease: %v", err)
-	}
-	lease, err = lease.Release(now.Add(time.Minute))
-	if err != nil {
-		t.Fatalf("release query lease: %v", err)
-	}
-	if _, err := lease.Heartbeat(now.Add(2*time.Minute), now.Add(2*time.Hour)); !errors.Is(err, ErrDeliveryTransition) {
-		t.Fatalf("heartbeat released lease error = %v, want transition", err)
-	}
-	cycle, err := NewDeliveryGCCycle(DeliveryGCCycle{ID: "gc-1", PhysicalPoolID: "pool-1", Epoch: 1, RootRevision: 4, CreatedAt: now})
-	if err != nil {
-		t.Fatalf("new GC cycle: %v", err)
-	}
-	cycle, _ = cycle.Mark(deliveryTestDigest('a'))
-	cycle, _ = cycle.BeginDelete()
-	cycle, err = cycle.Complete(now.Add(3 * time.Minute))
-	if err != nil {
-		t.Fatalf("complete GC cycle: %v", err)
-	}
-	if _, err := cycle.Abort("late", now.Add(4*time.Minute)); !errors.Is(err, ErrDeliveryConflict) {
-		t.Fatalf("abort completed cycle error = %v, want conflict", err)
 	}
 }

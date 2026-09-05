@@ -15,15 +15,15 @@ type serviceRepository struct {
 func (r *serviceRepository) GetByPublicID(context.Context, string) (Publication, error) {
 	return r.row, nil
 }
-func (r *serviceRepository) Suspend(context.Context, projectgraph.ResourceID, string, string) (Publication, error) {
+func (r *serviceRepository) Suspend(context.Context, projectgraph.ResourceID, string, string, int64) (Publication, error) {
 	r.action = ActionSuspend
 	return r.row, nil
 }
-func (r *serviceRepository) Resume(context.Context, projectgraph.ResourceID, string, string) (Publication, error) {
+func (r *serviceRepository) Resume(context.Context, projectgraph.ResourceID, string, string, int64) (Publication, error) {
 	r.action = ActionResume
 	return r.row, nil
 }
-func (r *serviceRepository) Rotate(context.Context, projectgraph.ResourceID, string, string) (Publication, error) {
+func (r *serviceRepository) Rotate(context.Context, projectgraph.ResourceID, string, string, int64) (Publication, error) {
 	r.action = ActionRotate
 	return r.row, nil
 }
@@ -39,7 +39,7 @@ func TestServiceMutationsRevokeOnlyInvalidatingActions(t *testing.T) {
 				}
 				revocations++
 			})
-			if _, err := service.Mutate(context.Background(), "workspace", "name", "actor", action); err != nil {
+			if _, err := service.Mutate(context.Background(), "workspace", "name", "actor", action, 1); err != nil {
 				t.Fatal(err)
 			}
 			want := 0

@@ -16,65 +16,39 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/flidai/leapview/internal/platform/compatibility"
 )
 
-type qualificationInstalledReport struct {
-	SchemaVersion  int                          `json:"schemaVersion"`
-	Result         string                       `json:"result"`
-	Image          string                       `json:"image"`
-	Architecture   string                       `json:"architecture"`
-	StartedAt      string                       `json:"startedAt"`
-	CompletedAt    string                       `json:"completedAt"`
-	ElapsedSeconds int64                        `json:"elapsedSeconds"`
-	PolicyVersion  string                       `json:"transitionPolicyVersion"`
-	Phases         []qualificationPhaseEvidence `json:"phases"`
-	Assertions     struct {
-		OneTimeCredentials     bool `json:"oneTimeCredentials"`
-		BrowserJourney         bool `json:"browserJourney"`
-		PerformanceBudgets     bool `json:"performanceBudgets"`
-		GovernedQuery          bool `json:"governedQuery"`
-		AuditedDenial          bool `json:"auditedDenial"`
-		InterruptionRecovery   bool `json:"interruptionRecovery"`
-		V010FreshInstallPolicy bool `json:"v010FreshInstallPolicy"`
-		RestartPersistence     bool `json:"restartPersistence"`
-		BackupRestore          bool `json:"backupRestore"`
-		ReleaseTransition      bool `json:"releaseTransition"`
-	} `json:"assertions"`
-}
-
-type qualificationTransitionEvidence = compatibility.TransitionQualificationEvidence
-type qualificationTransitionState = compatibility.TransitionQualificationState
-
-type qualificationReleaseIdentity struct {
-	Version     string `json:"version"`
-	Revision    string `json:"revision"`
-	Image       string `json:"image"`
-	Dirty       *bool  `json:"dirty"`
-	Development *bool  `json:"development"`
-}
-
-func (identity qualificationReleaseIdentity) transitionIdentity(image, platform string) (compatibility.ReleaseIdentity, error) {
-	if identity.Dirty == nil || identity.Development == nil || *identity.Dirty || *identity.Development {
-		return compatibility.ReleaseIdentity{}, fmt.Errorf("release identity has unknown or non-release provenance")
+// configureInstalledQualificationDeployment keeps the bundled HTTPS proxy
+// private to the qualification host. The shipped Compose defaults intentionally
+// expose Caddy on all interfaces (80/443), which is appropriate for an
+// installation but can collide with host services bound to another interface
+// and unnecessarily exposes the disposable test instance. The application
+// service remains on its existing loopback bind from deployment.env.example
+// (127.0.0.1:8080). It returns the exact HTTPS origin for browser and CLI
+// qualification clients.
+func configureInstalledQualificationDeployment(path, project, image string) (string, error) {
+	loopbackPorts, err := qualificationLoopbackPorts(2)
+	if err != nil {
+		return "", err
 	}
-	if strings.TrimSpace(identity.Image) != image {
-		return compatibility.ReleaseIdentity{}, fmt.Errorf("release identity image does not match admitted candidate")
+	httpPort, httpsPort := loopbackPorts[0], loopbackPorts[1]
+	if err := updateEnvFile(path, map[string]string{
+		"COMPOSE_PROJECT_NAME": project,
+		"LEAPVIEW_IMAGE":       image,
+		"CADDY_DOMAIN":         "localhost",
+		"CADDY_HTTP_BIND":      "127.0.0.1:" + httpPort,
+		"CADDY_HTTPS_BIND":     "127.0.0.1:" + httpsPort,
+		"CADDY_HTTPS_UDP_BIND": "127.0.0.1:" + httpsPort,
+	}); err != nil {
+		return "", err
 	}
-	return compatibility.ReleaseIdentity{
-		Version: identity.Version, SourceRevision: identity.Revision,
-		Image: image, Distribution: "public", Platform: platform,
-	}, nil
+	return "https://localhost:" + httpsPort, nil
 }
 
 func (c *Controller) QualifyInstalledCandidate(
 	ctx context.Context,
 	options QualificationInstalledOptions,
 ) (runErr error) {
-	if options.RequireReleaseTransition && strings.TrimSpace(options.PreviousImage) == "" {
-		return fmt.Errorf("release qualification requires a reviewed predecessor transition and --previous-image")
-	}
 	if bundle := strings.TrimSpace(options.Bundle); bundle != "" {
 		bundleRoot, err := filepath.Abs(bundle)
 		if err != nil {
@@ -82,12 +56,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		}
 		options.Bundle = ""
 		if bundleRoot != c.root {
-			bundleController, err := New(Options{
-				Root: bundleRoot, DockerBin: c.dockerBin,
-				Stdin: c.stdin, Stdout: c.stdout, Stderr: c.stderr,
-				Now: c.now, Sleep: c.sleep,
-				qualificationExecutor: c.qualificationExecutor,
-			})
+			bundleController, err := c.scoped(bundleRoot, c.stdout)
 			if err != nil {
 				return err
 			}
@@ -128,7 +97,6 @@ func (c *Controller) QualifyInstalledCandidate(
 		"qualification-report.json",
 		"recovery-events.json",
 		"recovery-report.json",
-		"restore-compose.log",
 		"runtime-identity.json",
 	} {
 		_ = os.Remove(filepath.Join(evidenceDir, pattern))
@@ -139,11 +107,11 @@ func (c *Controller) QualifyInstalledCandidate(
 	}
 
 	cleanup := qualificationCleanup{}
-	var primaryStarted bool
 	var primaryProject string
-	var restoreRoot string
+	var target string
+	var nativeTopology *qualificationNativePostgresTopology
+	var nativeComposeLifecycle bool
 	var browserContainer string
-	var legacyVolume string
 	credentialsPath := filepath.Join(c.root, ".qualification-credentials.json")
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), qualificationCleanupTimeout)
@@ -167,9 +135,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		for _, path := range []string{
 			c.path(deploymentEnvName),
 			c.path(appEnvName),
-			c.path(rollbackEnvName),
 			c.path(credentialsName),
-			c.path("backups"),
 			credentialsPath,
 		} {
 			if err := os.RemoveAll(path); err != nil {
@@ -178,30 +144,19 @@ func (c *Controller) QualifyInstalledCandidate(
 		}
 		return nil
 	})
-	cleanup.Add(func(context.Context) error {
-		if restoreRoot == "" {
-			return nil
-		}
-		return os.RemoveAll(restoreRoot)
-	})
 	cleanup.Add(func(cleanupCtx context.Context) error {
-		if legacyVolume == "" {
-			return nil
-		}
-		_, err := c.qualificationDocker(cleanupCtx, nil, "volume", "rm", "--force", legacyVolume)
-		return ignoreQualificationNotFound(err)
+		return removeQualificationNamedContainerHandle(cleanupCtx, c.qualificationContainers, &browserContainer)
 	})
+	// Native PostgreSQL cleanup is deliberately one sequential step.  The
+	// application and Caddy containers must be removed before the sidecar, and
+	// the Compose project (including its network and volumes) is torn down last.
+	// Registering this as one closure also runs the ordering on failures before
+	// the primary application has been started.
 	cleanup.Add(func(cleanupCtx context.Context) error {
-		if browserContainer == "" {
+		if !nativeComposeLifecycle && nativeTopology == nil {
 			return nil
 		}
-		_, err := c.qualificationContainers.Existing(browserContainer).Remove(cleanupCtx)
-		return ignoreQualificationNotFound(err)
-	})
-	cleanup.Add(func(cleanupCtx context.Context) error {
-		if !primaryStarted {
-			return nil
-		}
+		var result error
 		logs, _ := c.qualificationCompose(
 			cleanupCtx, c.root, "logs", "--no-color", "--tail", "500",
 		)
@@ -210,17 +165,38 @@ func (c *Controller) QualifyInstalledCandidate(
 			redactQualificationLog(logs, 500),
 			0o600,
 		)
-		_, err := c.qualificationCompose(
-			cleanupCtx, c.root, "down", "--volumes", "--remove-orphans",
-		)
-		return ignoreQualificationNotFound(err)
+		if nativeComposeLifecycle {
+			_, removeErr := c.qualificationCompose(
+				cleanupCtx, c.root, "rm", "--force", "--stop", "leapview", "caddy",
+			)
+			result = errors.Join(result, ignoreQualificationNotFound(removeErr))
+		}
+		if nativeTopology != nil {
+			removeErr := nativeTopology.Remove(cleanupCtx)
+			result = errors.Join(result, removeErr)
+			if nativeTopology.Container != nil {
+				// The Compose network must remain until the sidecar is gone.
+				// Preserve the failed topology for operator-visible cleanup
+				// evidence instead of detaching a still-running database.
+				return result
+			}
+			if removeErr == nil {
+				nativeTopology = nil
+			}
+		}
+		if nativeComposeLifecycle {
+			_, downErr := c.qualificationCompose(
+				cleanupCtx, c.root, "down", "--volumes", "--remove-orphans",
+			)
+			result = errors.Join(result, ignoreQualificationNotFound(downErr))
+		}
+		return result
 	})
 
 	for _, path := range []string{
 		c.path(deploymentEnvName),
 		c.path(appEnvName),
 		c.path(credentialsName),
-		c.path(rollbackEnvName),
 	} {
 		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 			return fmt.Errorf("qualification requires a fresh extracted bundle; found %s", filepath.Base(path))
@@ -229,46 +205,12 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := verifyQualificationChecksums(c.root); err != nil {
 		return err
 	}
-	policy, _, err := compatibility.LoadPolicy(c.path("release-transition-policy.json"))
-	if err != nil {
-		return err
-	}
-	c.transitionPolicy = policy
-	var transitionEvidence *qualificationTransitionEvidence
 	imageReferenceBytes, err := os.ReadFile(c.path("image-reference.txt"))
 	if err != nil {
 		return err
 	}
 	imageReference := strings.TrimSpace(string(imageReferenceBytes))
 	report.Image = imageReference
-	initialImage := imageReference
-	if previous := strings.TrimSpace(options.PreviousImage); previous != "" {
-		if err := requireDigest(previous); err != nil {
-			return fmt.Errorf("previous release image: %w", err)
-		}
-		platform, err := c.targetDockerPlatform(ctx)
-		if err != nil {
-			return err
-		}
-		decision := policy.EvaluateImages(compatibility.OperationUpgrade, previous, imageReference, platform)
-		if err := enforceTransitionRequirements(decision); err != nil {
-			return fmt.Errorf("qualify previous release transition: %w", err)
-		}
-		policyDocument, err := os.ReadFile(c.path("release-transition-policy.json"))
-		if err != nil {
-			return err
-		}
-		policyDigest := sha256.Sum256(policyDocument)
-		transitionEvidence = &qualificationTransitionEvidence{
-			SchemaVersion: 1, PolicyVersion: decision.PolicyVersion,
-			Predecessor: decision.Current, Candidate: decision.Next,
-			PolicySHA256: hex.EncodeToString(policyDigest[:]), UpgradeResult: "not-run", RollbackResult: "not-run",
-		}
-		defer func() {
-			_ = writeQualificationJSON(filepath.Join(evidenceDir, "transition-qualification.json"), transitionEvidence)
-		}()
-		initialImage = previous
-	}
 	if !options.AllowLocal &&
 		(!strings.HasPrefix(imageReference, "ghcr.io/flidai/leapview@sha256:") ||
 			len(strings.TrimPrefix(imageReference, "ghcr.io/flidai/leapview@sha256:")) != 64) {
@@ -290,19 +232,6 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := c.verifyQualificationRuntimeIdentity(ctx, imageReference, evidenceDir); err != nil {
 		return err
 	}
-	if transitionEvidence != nil {
-		if err := c.verifyQualificationPredecessorRuntimeIdentity(ctx, transitionEvidence.Predecessor, evidenceDir); err != nil {
-			return err
-		}
-	}
-	policyDecision, err := c.verifyQualificationLegacyPolicy(
-		ctx, imageReference, evidenceDir, &legacyVolume,
-	)
-	if err != nil {
-		return err
-	}
-	report.PolicyVersion = policyDecision.PolicyVersion
-	report.Assertions.V010FreshInstallPolicy = true
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
@@ -324,47 +253,50 @@ func (c *Controller) QualifyInstalledCandidate(
 	); err != nil {
 		return err
 	}
-	if err := updateEnvFile(c.path(deploymentEnvName), map[string]string{
-		"COMPOSE_PROJECT_NAME": primaryProject,
-		"LEAPVIEW_IMAGE":       initialImage,
-		"CADDY_DOMAIN":         "localhost",
-	}); err != nil {
+	target, err = configureInstalledQualificationDeployment(
+		c.path(deploymentEnvName), primaryProject, imageReference,
+	)
+	if err != nil {
+		return err
+	}
+	if err := c.seedQualificationNativePostgresEnvironment(); err != nil {
+		return err
+	}
+	nativeComposeLifecycle = true
+	nativeNetwork, err := c.prepareQualificationNativePostgresNetwork(ctx)
+	if err != nil {
+		return err
+	}
+	nativeTopology, err = c.startQualificationNativePostgresTopology(ctx, qualificationNativePostgresTopologyOptions{
+		ComposeProject: primaryProject,
+		ComposeNetwork: nativeNetwork,
+		BundleRoot:     c.root,
+	})
+	if err != nil {
+		return err
+	}
+	if err := c.writeQualificationNativePostgresEnvironment(nativeTopology); err != nil {
+		return err
+	}
+	artifacts, err := c.prepareQualificationNativePhysicalPool(ctx, evidenceDir)
+	if err != nil {
 		return err
 	}
 	if err := c.Initialize(ctx, InitOptions{
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
 		Environment: "evaluation",
-		Image:       initialImage,
+		Image:       imageReference,
 	}); err != nil {
 		return err
 	}
-	if transitionEvidence != nil {
-		primaryStarted = true
-		if err := c.startQualificationBootstrap(ctx); err != nil {
-			return err
-		}
-		var transitionCredentials qualificationCredentials
-		if err := readQualificationJSON(c.path(credentialsName), &transitionCredentials); err != nil {
-			return err
-		}
-		transitionEvidence.InventoryBefore, transitionEvidence.StateBeforeUpgrade, err = c.qualificationTransitionState(ctx, transitionCredentials.PublisherToken)
-		if err != nil {
-			return err
-		}
-		transitionEvidence.RecoveryPointAt = c.now().UTC()
-		if err := c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json")); err != nil {
-			transitionEvidence.UpgradeResult = "failure"
-			return err
-		}
-		transitionEvidence.UpgradeResult = "success"
-		transitionEvidence.InventoryAfterUpgrade, transitionEvidence.StateAfterUpgrade, err = c.qualificationTransitionState(ctx, transitionCredentials.PublisherToken)
-		if err != nil {
-			return err
-		}
-		if err := verifyQualificationTransitionState(transitionEvidence.InventoryBefore, transitionEvidence.InventoryAfterUpgrade); err != nil {
-			return fmt.Errorf("upgrade did not preserve deterministic application state: %w", err)
-		}
+	if err := appendOrReplaceQualificationEnv(
+		c.path(appEnvName), "LEAPVIEW_PUBLIC_URL", target,
+	); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "instance initialization"); err != nil {
+		return err
 	}
 	if options.MinFreeBytes > 0 {
 		if err := appendOrReplaceQualificationEnv(
@@ -382,14 +314,27 @@ func (c *Controller) QualifyInstalledCandidate(
 	); err != nil {
 		return err
 	}
-	if err := c.bootstrapQualificationLocalPhysicalPool(ctx); err != nil {
+	if err := c.applyQualificationNativePhysicalPool(ctx, nativeTopology, artifacts); err != nil {
 		return err
 	}
-	if !primaryStarted {
-		primaryStarted = true
-		if err := c.startQualificationBootstrap(ctx); err != nil {
-			return err
-		}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "physical-pool bootstrap"); err != nil {
+		return err
+	}
+	if err := c.startQualificationBootstrap(ctx); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "application startup"); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertNativeDeliveryReads(ctx); err != nil {
+		return err
+	}
+	containerID, err := c.containerID(ctx)
+	if err != nil {
+		return err
+	}
+	if err := assertQualificationNativePostgresOnly(ctx, c.qualificationContainers.Existing(containerID)); err != nil {
+		return err
 	}
 	var credentialsOutput bytes.Buffer
 	originalOutput := c.stdout
@@ -420,11 +365,10 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	report.Assertions.OneTimeCredentials = true
-
-	containerID, err := c.containerID(ctx)
-	if err != nil {
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "one-time credential delivery"); err != nil {
 		return err
 	}
+
 	syncOutput, err := c.qualificationContainers.Existing(containerID).Exec(
 		ctx, nil,
 		"env",
@@ -447,15 +391,20 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	ctx = phases.Begin(rootContext, "enterprise authoring", 30*time.Minute)
-	if _, err := c.runQualificationAuthoring(ctx, qualificationAuthoringOptions{
+	authoringReport, err := c.runQualificationAuthoring(ctx, qualificationAuthoringOptions{
 		BundleRoot:      c.root,
 		Image:           imageReference,
 		CredentialsFile: credentialsPath,
 		ComposeProject:  primaryProject,
 		EvidenceDir:     evidenceDir,
 		SourceRevision:  sourceRevision,
-	}); err != nil {
+		Target:          target,
+	})
+	if err != nil {
 		return err
+	}
+	if authoringReport.Result != "success" || authoringReport.Candidate == "" || authoringReport.GenerationID == "" {
+		return errors.New("installed authoring report is incomplete")
 	}
 	if err := c.waitQualificationReadiness(ctx); err != nil {
 		return fmt.Errorf("installed candidate did not become ready after sealed publication: %w", err)
@@ -479,6 +428,18 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
+	ctx = phases.Begin(rootContext, "application upgrade", 15*time.Minute)
+	containerID, err = c.runQualificationApplicationUpgrade(
+		ctx, containerID, projectDataToken, authoringReport,
+	)
+	if err != nil {
+		return err
+	}
+	report.Assertions.UpgradePersistence = true
+	report.Assertions.NativePostgresOnly = true
+	if err := phases.Finish(nil); err != nil {
+		return err
+	}
 	ctx = phases.Begin(rootContext, "performance", 45*time.Minute)
 
 	metricsToken, err := envFileValue(c.path(appEnvName), "LEAPVIEW_METRICS_BEARER_TOKEN")
@@ -490,6 +451,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		primaryProject,
 		credentialsPath,
 		evidenceDir,
+		target,
 	)
 	if err != nil {
 		return err
@@ -505,8 +467,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	report.Assertions.PerformanceBudgets = true
-	_, _ = c.qualificationContainers.Existing(browserContainer).Remove(ctx)
-	browserContainer = ""
+	_ = removeQualificationNamedContainerHandle(ctx, c.qualificationContainers, &browserContainer)
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
@@ -551,10 +512,13 @@ func (c *Controller) QualifyInstalledCandidate(
 		ProjectDataToken:     projectDataToken,
 		RecoveryControlToken: recoveryControlToken,
 		MetricsToken:         metricsToken,
+		AuthorPrincipalID:    credentials.AuthorPrincipalID,
+		ReviewerPrincipalID:  credentials.ReviewerPrincipalID,
 		ContainerID:          containerID,
 		ComposeProject:       primaryProject,
 		ProjectID:            "project:leapview-evaluation",
 		Image:                imageReference,
+		Target:               target,
 	})
 	if err != nil {
 		return err
@@ -586,59 +550,42 @@ func (c *Controller) QualifyInstalledCandidate(
 	); err != nil {
 		return err
 	}
+	if err := nativeTopology.AssertNativeDeliveryReads(ctx); err != nil {
+		return err
+	}
+	if err := assertQualificationNativePostgresOnly(ctx, c.qualificationContainers.Existing(containerID)); err != nil {
+		return err
+	}
 	report.Assertions.RestartPersistence = true
+	if options.MultiNodeProcess {
+		if err := phases.Finish(nil); err != nil {
+			return err
+		}
+		ctx = phases.Begin(rootContext, "multi-node process", 20*time.Minute)
+		multiNodeReport, multiNodeErr := c.runQualificationMultiNode(ctx, qualificationMultiNodeOptions{
+			Image:          imageReference,
+			ComposeProject: primaryProject,
+			ComposeNetwork: primaryProject + "_default",
+			TargetID:       authoringReport.Target,
+			GenerationID:   authoringReport.GenerationID,
+			Topology:       nativeTopology,
+			Primary:        c.qualificationContainers.Existing(containerID),
+		})
+		if multiNodeErr != nil {
+			return multiNodeErr
+		}
+		if multiNodeReport.NodeCount != 2 || !multiNodeReport.AbruptNodeLoss ||
+			!multiNodeReport.Recovery || !multiNodeReport.RollingRestart ||
+			!multiNodeReport.DurableConvergence {
+			return errors.New("multi-node process qualification report is incomplete")
+		}
+		report.Assertions.MultiNodeProcess = true
+		report.MultiNode = &multiNodeReport
+	}
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
-	ctx = phases.Begin(rootContext, "backup restore", 45*time.Minute)
 
-	if err := c.Backup(ctx, "qualification.tar.gz"); err != nil {
-		return err
-	}
-	backupPath := c.path(filepath.Join("backups", "qualification.tar.gz"))
-	if err := requireNonEmptyFile(backupPath); err != nil {
-		return err
-	}
-	if err := requireNonEmptyFile(backupPath + ".sha256"); err != nil {
-		return err
-	}
-	if options.PreviousImage != "" {
-		if err := c.RollbackWithPolicy(ctx, true, c.path("release-transition-policy.json")); err != nil {
-			transitionEvidence.RollbackResult = "failure"
-			return err
-		}
-		transitionEvidence.RollbackResult = "success"
-		transitionEvidence.InventoryAfterRollback, transitionEvidence.StateAfterRollback, err = c.qualificationTransitionState(ctx, credentials.PublisherToken)
-		if err != nil {
-			return err
-		}
-		if err := verifyQualificationTransitionState(transitionEvidence.InventoryBefore, transitionEvidence.InventoryAfterRollback); err != nil {
-			return fmt.Errorf("rollback did not restore deterministic predecessor application state: %w", err)
-		}
-		transitionEvidence.PreservationVerified = true
-		if err := c.withoutQualificationPhases(func() error {
-			return c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json"))
-		}); err != nil {
-			return err
-		}
-		report.Assertions.ReleaseTransition = true
-	}
-	restoreRoot, err = c.restoreQualificationBackup(
-		ctx,
-		primaryProject,
-		imageReference,
-		backupPath,
-		credentials.PublisherToken,
-		options.MinFreeBytes,
-		evidenceDir,
-	)
-	if err != nil {
-		return err
-	}
-	report.Assertions.BackupRestore = true
-	if err := phases.Finish(nil); err != nil {
-		return err
-	}
 	report.Phases = phases.Evidence()
 
 	report.Result = "success"
@@ -658,68 +605,6 @@ func (c *Controller) QualifyInstalledCandidate(
 	return err
 }
 
-func (c *Controller) qualificationTransitionState(ctx context.Context, publisherToken string) (qualificationTransitionState, string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-	var instance struct {
-		ID              string `json:"id"`
-		Environment     string `json:"environment"`
-		CanonicalOrigin string `json:"canonicalOrigin"`
-	}
-	if err := qualificationAPI(ctx, client, http.MethodGet, "http://127.0.0.1:8080/api/v1/instance", publisherToken, nil, "", &instance); err != nil {
-		return qualificationTransitionState{}, "", fmt.Errorf("read qualification instance state: %w", err)
-	}
-	var principal struct {
-		ID          string `json:"id"`
-		Kind        string `json:"kind"`
-		Email       string `json:"email"`
-		DisplayName string `json:"displayName"`
-	}
-	if err := qualificationAPI(ctx, client, http.MethodGet, "http://127.0.0.1:8080/api/v1/me", publisherToken, nil, "", &principal); err != nil {
-		return qualificationTransitionState{}, "", fmt.Errorf("read qualification principal state: %w", err)
-	}
-	state := qualificationTransitionState{
-		InstanceID: instance.ID, Environment: instance.Environment, CanonicalOrigin: instance.CanonicalOrigin,
-		PrincipalID: principal.ID, PrincipalKind: principal.Kind, PrincipalEmail: principal.Email, PrincipalName: principal.DisplayName,
-	}
-	for field, value := range map[string]string{
-		"instance id": state.InstanceID, "environment": state.Environment, "canonical origin": state.CanonicalOrigin,
-		"principal id": state.PrincipalID, "principal kind": state.PrincipalKind, "principal email": state.PrincipalEmail,
-	} {
-		if strings.TrimSpace(value) == "" {
-			return qualificationTransitionState{}, "", fmt.Errorf("qualification transition %s is empty", field)
-		}
-	}
-	checksum, err := qualificationTransitionStateChecksum(state)
-	if err != nil {
-		return qualificationTransitionState{}, "", err
-	}
-	return state, checksum, nil
-}
-
-func qualificationTransitionStateChecksum(state qualificationTransitionState) (string, error) {
-	document, err := json.Marshal(state)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(document)
-	return hex.EncodeToString(digest[:]), nil
-}
-
-func verifyQualificationTransitionState(expected, actual qualificationTransitionState) error {
-	expectedChecksum, err := qualificationTransitionStateChecksum(expected)
-	if err != nil {
-		return err
-	}
-	actualChecksum, err := qualificationTransitionStateChecksum(actual)
-	if err != nil {
-		return err
-	}
-	if actualChecksum != expectedChecksum {
-		return fmt.Errorf("application state checksum %s does not match predecessor checksum %s", actualChecksum, expectedChecksum)
-	}
-	return nil
-}
-
 func isQualificationLowerHex(value string) bool {
 	for _, character := range value {
 		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
@@ -727,58 +612,6 @@ func isQualificationLowerHex(value string) bool {
 		}
 	}
 	return true
-}
-
-func (c *Controller) bootstrapQualificationLocalPhysicalPool(ctx context.Context) error {
-	output, err := c.qualificationCompose(
-		ctx,
-		c.root,
-		"run", "--rm", "--no-deps", "leapview",
-		"admin", "delivery", "pool", "qualify", "--apply",
-	)
-	if err != nil {
-		return fmt.Errorf("bootstrap installed-candidate physical pool: %w", err)
-	}
-	poolID, compatibilityDigest, err := parseQualificationPoolBootstrapResult(output)
-	if err != nil {
-		return err
-	}
-	for _, entry := range []struct {
-		key   string
-		value string
-	}{
-		{key: "LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID", value: poolID},
-		{key: "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST", value: compatibilityDigest},
-	} {
-		if err := appendOrReplaceQualificationEnv(c.path(appEnvName), entry.key, entry.value); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func parseQualificationPoolBootstrapResult(output []byte) (string, string, error) {
-	values := make(map[string]string)
-	for _, line := range strings.Split(string(output), "\n") {
-		key, value, ok := strings.Cut(strings.TrimSpace(line), ": ")
-		if ok {
-			values[key] = strings.TrimSpace(value)
-		}
-	}
-	poolID := values["pool_id"]
-	compatibilityDigest := values["compatibility_digest"]
-	validDigest := func(value string) bool {
-		raw := strings.TrimPrefix(value, "sha256:")
-		if len(raw) != 64 || raw == value {
-			return false
-		}
-		_, err := hex.DecodeString(raw)
-		return err == nil
-	}
-	if values["applied"] != "true" || !validDigest(poolID) || !validDigest(compatibilityDigest) {
-		return "", "", fmt.Errorf("qualification physical-pool bootstrap returned incomplete durable evidence")
-	}
-	return poolID, compatibilityDigest, nil
 }
 
 func (c *Controller) startQualificationBootstrap(ctx context.Context) error {
@@ -795,62 +628,110 @@ func (c *Controller) startQualificationBootstrap(ctx context.Context) error {
 }
 
 func (c *Controller) waitQualificationBootstrapLiveness(ctx context.Context) error {
-	containerOutput, err := c.qualificationCompose(ctx, c.root, "ps", "--quiet", "leapview")
+	container, err := c.qualificationApplicationContainer(ctx)
 	if err != nil {
 		return err
 	}
-	containerID := strings.TrimSpace(string(containerOutput))
-	if containerID == "" {
-		return fmt.Errorf("qualification application container is missing")
-	}
-	healthCtx, cancel := qualificationContext(ctx, 2*time.Minute)
-	defer cancel()
-	err = qualificationWait(healthCtx, time.Second, func(waitCtx context.Context) (bool, error) {
-		_, checkErr := c.qualificationDocker(
-			waitCtx,
-			nil,
-			"exec", containerID,
-			"leapview", "healthcheck",
-			"--url", "http://127.0.0.1:8080/healthz",
-			"--timeout", "5s",
-		)
-		return checkErr == nil, nil
-	})
-	if err != nil {
+	if err := waitQualificationHealthcheck(
+		ctx,
+		container,
+		"http://127.0.0.1:8080/healthz",
+		2*time.Minute,
+	); err != nil {
 		return fmt.Errorf("wait for qualification bootstrap liveness: %w", err)
 	}
 	return nil
 }
 
 func (c *Controller) waitQualificationReadiness(ctx context.Context) error {
-	containerOutput, err := c.qualificationCompose(ctx, c.root, "ps", "--quiet", "leapview")
+	container, err := c.qualificationApplicationContainer(ctx)
 	if err != nil {
 		return err
 	}
+	if err := waitQualificationHealthcheck(
+		ctx,
+		container,
+		"http://127.0.0.1:8080/readyz",
+		3*time.Minute,
+	); err != nil {
+		return fmt.Errorf("wait for qualification readiness: %w", err)
+	}
+	if err := waitQualificationContainerValue(
+		ctx,
+		container,
+		"{{.State.Health.Status}}",
+		"healthy",
+		time.Minute,
+	); err != nil {
+		err = qualificationContainerOperationError(
+			ctx,
+			container,
+			"wait for container state healthy",
+			err,
+		)
+		return fmt.Errorf("wait for Docker qualification health: %w", err)
+	}
+	return nil
+}
+
+// qualificationApplicationContainer resolves the service container created by
+// the qualification Compose project through the injected container runtime.
+// Keeping the lookup and container handle together lets qualification health
+// checks use the same runtime seam as all other container operations.
+func (c *Controller) qualificationApplicationContainer(ctx context.Context) (qualificationContainer, error) {
+	return c.qualificationApplicationContainerState(ctx, false)
+}
+
+func (c *Controller) qualificationApplicationContainerIncludingStopped(ctx context.Context) (qualificationContainer, error) {
+	return c.qualificationApplicationContainerState(ctx, true)
+}
+
+func (c *Controller) qualificationApplicationContainerState(ctx context.Context, includeStopped bool) (qualificationContainer, error) {
+	arguments := []string{"ps"}
+	if includeStopped {
+		arguments = append(arguments, "--all")
+	}
+	arguments = append(arguments, "--quiet", "leapview")
+	containerOutput, err := c.qualificationCompose(ctx, c.root, arguments...)
+	if err != nil {
+		return nil, err
+	}
 	containerID := strings.TrimSpace(string(containerOutput))
 	if containerID == "" {
-		return fmt.Errorf("qualification application container is missing")
+		return nil, fmt.Errorf("qualification application container is missing")
 	}
-	readyCtx, cancel := qualificationContext(ctx, 3*time.Minute)
+	container := c.qualificationContainers.Existing(containerID)
+	if container == nil {
+		return nil, fmt.Errorf("qualification application container is missing")
+	}
+	return container, nil
+}
+
+// waitQualificationHealthcheck retries the in-container healthcheck command
+// until it succeeds or the supplied qualification timeout expires. The
+// command intentionally retains the explicit URL and five-second request
+// timeout used by qualification's bootstrap/readiness stages.
+func waitQualificationHealthcheck(
+	ctx context.Context,
+	container qualificationContainer,
+	endpoint string,
+	timeout time.Duration,
+) error {
+	if container == nil {
+		return fmt.Errorf("qualification container is missing")
+	}
+	healthCtx, cancel := qualificationContext(ctx, timeout)
 	defer cancel()
-	err = qualificationWait(readyCtx, time.Second, func(waitCtx context.Context) (bool, error) {
-		_, checkErr := c.qualificationDocker(
+	return qualificationWait(healthCtx, time.Second, func(waitCtx context.Context) (bool, error) {
+		_, checkErr := container.Exec(
 			waitCtx,
 			nil,
-			"exec", containerID,
 			"leapview", "healthcheck",
-			"--url", "http://127.0.0.1:8080/readyz",
+			"--url", endpoint,
 			"--timeout", "5s",
 		)
 		return checkErr == nil, nil
 	})
-	if err != nil {
-		return fmt.Errorf("wait for qualification readiness: %w", err)
-	}
-	if err := c.waitQualificationContainerValue(ctx, containerID, "{{.State.Health.Status}}", "healthy", time.Minute); err != nil {
-		return fmt.Errorf("wait for Docker qualification health: %w", err)
-	}
-	return nil
 }
 
 func verifyQualificationChecksums(root string) error {
@@ -903,6 +784,24 @@ func (c *Controller) verifyQualificationRuntimeIdentity(
 	imageReference string,
 	evidenceDir string,
 ) error {
+	var expected struct {
+		Version     string `json:"version"`
+		Revision    string `json:"revision"`
+		BuildTime   string `json:"buildTime"`
+		Dirty       bool   `json:"dirty"`
+		Development bool   `json:"development"`
+		Image       string `json:"image"`
+	}
+	if err := readQualificationJSON(c.path("release-identity.json"), &expected); err != nil {
+		return err
+	}
+	if expected.Image != imageReference {
+		return fmt.Errorf(
+			"release identity image %q does not match image-reference.txt %q",
+			expected.Image,
+			imageReference,
+		)
+	}
 	runtimeOutput, err := c.qualificationDocker(
 		ctx, nil, "run", "--rm", imageReference, "version", "--json",
 	)
@@ -913,158 +812,25 @@ func (c *Controller) verifyQualificationRuntimeIdentity(
 	if err := os.WriteFile(runtimePath, runtimeOutput, 0o600); err != nil {
 		return err
 	}
-	var expected, actual struct {
+	var actual struct {
 		Version     string `json:"version"`
 		Revision    string `json:"revision"`
 		BuildTime   string `json:"buildTime"`
 		Dirty       bool   `json:"dirty"`
 		Development bool   `json:"development"`
 	}
-	if err := readQualificationJSON(c.path("release-identity.json"), &expected); err != nil {
-		return err
-	}
 	if err := json.Unmarshal(runtimeOutput, &actual); err != nil {
 		return err
 	}
-	if expected != actual || actual.Dirty || actual.Development {
+	if expected.Version != actual.Version ||
+		expected.Revision != actual.Revision ||
+		expected.BuildTime != actual.BuildTime ||
+		expected.Dirty != actual.Dirty ||
+		expected.Development != actual.Development ||
+		actual.Dirty || actual.Development {
 		return fmt.Errorf("runtime identity disagrees with release identity")
 	}
 	return nil
-}
-
-func (c *Controller) verifyQualificationPredecessorRuntimeIdentity(
-	ctx context.Context,
-	expected compatibility.ReleaseIdentity,
-	evidenceDir string,
-) error {
-	runtimeOutput, err := c.qualificationDocker(
-		ctx, nil, "run", "--rm", expected.Image, "version", "--json",
-	)
-	if err != nil {
-		return fmt.Errorf("resolve predecessor runtime identity %s: %w", expected.Image, err)
-	}
-	var actual qualificationReleaseIdentity
-	if err := json.Unmarshal(runtimeOutput, &actual); err != nil {
-		return fmt.Errorf("decode predecessor runtime identity: %w", err)
-	}
-	if err := verifyQualificationPredecessorIdentity(expected, actual); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(evidenceDir, "predecessor-runtime-identity.json"), runtimeOutput, 0o600)
-}
-
-func verifyQualificationPredecessorIdentity(expected compatibility.ReleaseIdentity, actual qualificationReleaseIdentity) error {
-	if actual.Dirty == nil || actual.Development == nil || *actual.Dirty || *actual.Development ||
-		strings.TrimPrefix(actual.Version, "v") != strings.TrimPrefix(expected.Version, "v") || actual.Revision != expected.SourceRevision {
-		return fmt.Errorf("predecessor runtime identity disagrees with reviewed release provenance")
-	}
-	return nil
-}
-
-func (c *Controller) verifyQualificationLegacyPolicy(
-	ctx context.Context,
-	imageReference string,
-	evidenceDir string,
-	legacyVolume *string,
-) (compatibility.Decision, error) {
-	policy := c.transitionPolicy
-	legacyRelease, ok := policy.ReleaseByID("v0.1.0")
-	if !ok || !containsQualificationString(legacyRelease.LegacyMarkers, compatibility.LegacyV010Database) {
-		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 compatibility policy is invalid")
-	}
-	legacyIdentity := legacyRelease.IdentityForPlatform("linux/amd64")
-	if legacyIdentity.Image != compatibility.ReleasedV010Image {
-		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 compatibility image is invalid")
-	}
-	var candidate qualificationReleaseIdentity
-	if err := readQualificationJSON(c.path("release-identity.json"), &candidate); err != nil {
-		return compatibility.Decision{}, err
-	}
-	candidateIdentity, err := candidate.transitionIdentity(imageReference, "linux/"+runtime.GOARCH)
-	if err != nil {
-		return compatibility.Decision{}, err
-	}
-	decision := policy.Evaluate(compatibility.Request{
-		Operation: compatibility.OperationUpgrade,
-		Current:   legacyIdentity,
-		Next:      candidateIdentity,
-	})
-	if !errors.Is(decision.Err(), compatibility.ErrV010FreshInstallOnly) ||
-		decision.ReasonCode != compatibility.ReasonDeniedFreshInstallOnly {
-		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 transition policy did not fail closed")
-	}
-	policyDocument, err := os.ReadFile(c.path("release-transition-policy.json"))
-	if err != nil {
-		return compatibility.Decision{}, err
-	}
-	policyDigest := sha256.Sum256(policyDocument)
-	schemaDigest := sha256.Sum256(compatibility.EmbeddedPolicySchema())
-	if err := writeQualificationJSON(filepath.Join(evidenceDir, "policy-validation.json"), map[string]any{
-		"schemaVersion": policy.SchemaVersion,
-		"policyVersion": policy.PolicyVersion,
-		"valid":         true,
-		"policySha256":  hex.EncodeToString(policyDigest[:]),
-		"schemaSha256":  hex.EncodeToString(schemaDigest[:]),
-	}); err != nil {
-		return compatibility.Decision{}, err
-	}
-	if err := writeQualificationJSON(filepath.Join(evidenceDir, "decision.json"), decision); err != nil {
-		return compatibility.Decision{}, err
-	}
-	*legacyVolume = normalizedQualificationName(
-		fmt.Sprintf("leapview-v010-policy-%s-%d", runtime.GOARCH, os.Getpid()),
-	)
-	if _, err := c.qualificationDocker(ctx, nil, "volume", "create", *legacyVolume); err != nil {
-		return compatibility.Decision{}, err
-	}
-	if _, err := c.qualificationDocker(
-		ctx,
-		strings.NewReader("released v0.1.0 state marker\n"),
-		"run", "--rm", "--interactive",
-		"--entrypoint", "tee",
-		"--volume", *legacyVolume+":/var/lib/leapview",
-		imageReference,
-		"/var/lib/leapview/"+compatibility.LegacyV010Database,
-	); err != nil {
-		return compatibility.Decision{}, err
-	}
-	output, initializeErr := c.qualificationDocker(
-		ctx, nil,
-		"run", "--rm",
-		"--env", "LEAPVIEW_HOME=/var/lib/leapview",
-		"--env", "LEAPVIEW_PRODUCTION=1",
-		"--env", "LEAPVIEW_ENVIRONMENT=qualification",
-		"--env", "LEAPVIEW_BOOTSTRAP_ADMIN_EMAIL=admin@localhost",
-		"--volume", *legacyVolume+":/var/lib/leapview",
-		imageReference,
-		"admin", "initialize", "--format", "json",
-	)
-	if initializeErr == nil ||
-		!strings.Contains(string(output), compatibility.ErrV010FreshInstallOnly.Error()) {
-		return compatibility.Decision{}, fmt.Errorf("candidate did not reject released v0.1.0 state")
-	}
-	for _, check := range [][]string{
-		{"test", "-f", "/var/lib/leapview/" + compatibility.LegacyV010Database},
-		{"test", "!", "-e", "/var/lib/leapview/leapview.db"},
-	} {
-		arguments := []string{
-			"run", "--rm",
-			"--entrypoint", check[0],
-			"--volume", *legacyVolume + ":/var/lib/leapview",
-			imageReference,
-		}
-		arguments = append(arguments, check[1:]...)
-		if _, err := c.qualificationDocker(
-			ctx, nil, arguments...,
-		); err != nil {
-			return compatibility.Decision{}, err
-		}
-	}
-	if _, err := c.qualificationDocker(ctx, nil, "volume", "rm", *legacyVolume); err != nil {
-		return compatibility.Decision{}, err
-	}
-	*legacyVolume = ""
-	return decision, nil
 }
 
 func (c *Controller) startQualificationPerformanceBrowser(
@@ -1072,6 +838,7 @@ func (c *Controller) startQualificationPerformanceBrowser(
 	composeProject string,
 	credentialsPath string,
 	evidenceDir string,
+	target string,
 ) (string, error) {
 	if _, err := c.qualificationDocker(ctx, nil, "pull", qualificationBrowserImage); err != nil {
 		return "", err
@@ -1088,7 +855,7 @@ func (c *Controller) startQualificationPerformanceBrowser(
 			{Source: evidenceDir, Target: "/evidence"},
 		},
 		Environment: map[string]string{
-			"QUALIFICATION_URL":         "https://localhost",
+			"QUALIFICATION_URL":         target,
 			"QUALIFICATION_CREDENTIALS": "/run/secrets/credentials.json",
 			"QUALIFICATION_SCREENSHOT":  "/evidence/browser-failure.png",
 		},
@@ -1293,17 +1060,17 @@ func verifyQualificationDenialsAndMetrics(
 	metricsToken string,
 ) error {
 	client := &http.Client{Timeout: 30 * time.Second}
-	request, err := http.NewRequestWithContext(
+	request, err := newQualificationLoopbackRequest(
 		ctx,
 		http.MethodPost,
-		"https://localhost/api/v1/semantic-models/semantic-model:sales/query",
+		"http://127.0.0.1:8080/api/v1/semantic-models/semantic-model:sales/query",
 		strings.NewReader(queryBody),
 	)
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := qualificationHTTPSClient().Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}
@@ -1335,162 +1102,6 @@ func verifyQualificationDenialsAndMetrics(
 		return fmt.Errorf("authenticated metrics omit request duration histogram")
 	}
 	return nil
-}
-
-func (c *Controller) restoreQualificationBackup(
-	ctx context.Context,
-	primaryProject string,
-	imageReference string,
-	backupPath string,
-	publisherToken string,
-	minFreeBytes int64,
-	evidenceDir string,
-) (string, error) {
-	restoreRoot, err := os.MkdirTemp("", "leapview-qualification-restore-*")
-	if err != nil {
-		return "", err
-	}
-	required := []string{
-		"Caddyfile",
-		"README.md",
-		"QUALIFICATION.md",
-		"compose.https.yaml",
-		"compose.yaml",
-		"deployment.env.example",
-		"image-reference.txt",
-		"leapview.env.example",
-		"leapviewctl",
-		"release-identity.json",
-		"release-transition-policy.json",
-		"SHA256SUMS",
-	}
-	for _, name := range required {
-		info, statErr := os.Stat(c.path(name))
-		if statErr != nil {
-			_ = os.RemoveAll(restoreRoot)
-			return "", statErr
-		}
-		if err := copyQualificationFile(c.path(name), filepath.Join(restoreRoot, name), info.Mode().Perm()); err != nil {
-			_ = os.RemoveAll(restoreRoot)
-			return "", err
-		}
-	}
-	if err := copyQualificationTree(c.path("qualification"), filepath.Join(restoreRoot, "qualification")); err != nil {
-		_ = os.RemoveAll(restoreRoot)
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Join(restoreRoot, "backups"), 0o700); err != nil {
-		_ = os.RemoveAll(restoreRoot)
-		return "", err
-	}
-	for _, source := range []string{backupPath, backupPath + ".sha256"} {
-		if err := copyQualificationFile(
-			source,
-			filepath.Join(restoreRoot, "backups", filepath.Base(source)),
-			0o600,
-		); err != nil {
-			_ = os.RemoveAll(restoreRoot)
-			return "", err
-		}
-	}
-	if err := copyQualificationFile(
-		filepath.Join(restoreRoot, "deployment.env.example"),
-		filepath.Join(restoreRoot, deploymentEnvName),
-		0o600,
-	); err != nil {
-		return "", err
-	}
-	if err := updateEnvFile(filepath.Join(restoreRoot, deploymentEnvName), map[string]string{
-		"COMPOSE_PROJECT_NAME": primaryProject + "-restore",
-		"LEAPVIEW_IMAGE":       imageReference,
-		"COMPOSE_APP_BIND":     "127.0.0.1:18081",
-		"CADDY_DOMAIN":         "localhost",
-		"COMPOSE_HTTPS":        "0",
-	}); err != nil {
-		return "", err
-	}
-	restoreController, err := New(Options{
-		Root:                  restoreRoot,
-		DockerBin:             c.dockerBin,
-		Stdout:                io.Discard,
-		Stderr:                c.stderr,
-		Now:                   c.now,
-		Sleep:                 c.sleep,
-		qualificationExecutor: c.qualificationExecutor,
-	})
-	if err != nil {
-		return "", err
-	}
-	restoreStarted := false
-	defer func() {
-		if restoreStarted {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), qualificationCleanupTimeout)
-			defer cancel()
-			logs, _ := c.qualificationCompose(
-				cleanupCtx, restoreRoot, "logs", "--no-color", "--tail", "500",
-			)
-			_ = os.WriteFile(
-				filepath.Join(evidenceDir, "restore-compose.log"),
-				redactQualificationLog(logs, 500),
-				0o600,
-			)
-			_, _ = c.qualificationCompose(
-				cleanupCtx, restoreRoot, "down", "--volumes", "--remove-orphans",
-			)
-		}
-	}()
-	if err := restoreController.Initialize(ctx, InitOptions{
-		AdminEmail:  "restore@localhost",
-		Domain:      "localhost",
-		Environment: "evaluation",
-		Image:       imageReference,
-		NoHTTPS:     true,
-	}); err != nil {
-		return "", err
-	}
-	restoreStarted = true
-	if err := copyQualificationFile(
-		c.path(appEnvName),
-		filepath.Join(restoreRoot, appEnvName),
-		0o600,
-	); err != nil {
-		return "", err
-	}
-	if minFreeBytes > 0 {
-		if err := appendOrReplaceQualificationEnv(
-			filepath.Join(restoreRoot, appEnvName),
-			"LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES",
-			strconv.FormatInt(minFreeBytes, 10),
-		); err != nil {
-			return "", err
-		}
-	}
-	restoreController.stdout = io.Discard
-	if err := restoreController.FirstLogin(); err != nil {
-		return "", err
-	}
-	if err := restoreController.Restore(
-		ctx,
-		"backups/"+filepath.Base(backupPath),
-	); err != nil {
-		return "", err
-	}
-	if err := restoreController.Start(ctx); err != nil {
-		return "", err
-	}
-	if err := restoreController.Status(ctx); err != nil {
-		return "", err
-	}
-	client := &http.Client{Timeout: 30 * time.Second}
-	var instance json.RawMessage
-	if err := qualificationAPI(
-		ctx, client, http.MethodGet,
-		"http://127.0.0.1:18081/api/v1/instance",
-		publisherToken, nil, "", &instance,
-	); err != nil {
-		return "", err
-	}
-	return restoreRoot, nil
 }
 
 func firstQualificationInteger(output []byte, label string) (int64, error) {

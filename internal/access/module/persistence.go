@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 
@@ -11,33 +10,29 @@ import (
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // Persistence is the access module's complete authority bundle.  The module
 // consumes this typed capability aggregate instead of discovering a database
-// or selecting a dialect at runtime.  Production composition must inject the
-// PostgreSQL repository; SQLite is available only through NewSQLitePersistence
-// for local development and tests.
+// or selecting a dialect at runtime. Production composition injects the
+// PostgreSQL repository.
 type Persistence struct {
-	Repository  access.Repository
-	OAuth       *mcpoauth.Service
-	Avatar      avatar.Repository
-	Authoring   access.AuthoringAuthRepository
-	Desktop     access.DesktopSessionRepository
-	Snapshot    SnapshotInstaller
-	Publication DashboardPublicationActivator
-	backend     persistenceBackend
+	Repository       access.Repository
+	OAuth            *mcpoauth.Service
+	Avatar           avatar.Repository
+	Authoring        access.AuthoringAuthRepository
+	Desktop          access.DesktopSessionRepository
+	Snapshot         SnapshotInstaller
+	Publication      DashboardPublicationActivator
+	backend          persistenceBackend
+	nativeRepository *accesspostgres.Repository
 }
 
 type persistenceBackend uint8
 
 const (
-	backendUnknown persistenceBackend = iota
-	backendPostgres
-	backendSQLiteLegacy
+	backendPostgres persistenceBackend = iota + 1
 )
 
 // SnapshotInstaller and DashboardPublicationActivator are transaction-bound
@@ -49,24 +44,6 @@ type SnapshotInstaller interface {
 
 type DashboardPublicationActivator interface {
 	ActivateDashboardPublicationPrincipal(context.Context, any, projectgraph.ResourceID, string) error
-}
-
-type sqliteActivationPorts struct{}
-
-func (sqliteActivationPorts) InstallSnapshot(ctx context.Context, tx any, snapshot accesssnapshot.AuthorizationSnapshot) error {
-	sqlTx, ok := tx.(transaction.Transaction)
-	if !ok {
-		return errors.New("SQLite snapshot activation requires database/sql transaction")
-	}
-	return accesssqlite.InstallAuthorizationSnapshotTx(ctx, sqlTx, snapshot)
-}
-
-func (sqliteActivationPorts) ActivateDashboardPublicationPrincipal(ctx context.Context, tx any, projectID projectgraph.ResourceID, name string) error {
-	sqlTx, ok := tx.(transaction.Transaction)
-	if !ok {
-		return errors.New("SQLite publication activation requires database/sql transaction")
-	}
-	return accesssqlite.ActivateDashboardPublicationPrincipalTx(ctx, sqlTx, projectID, name)
 }
 
 type postgresActivationPorts struct{}
@@ -93,6 +70,20 @@ func (postgresActivationPorts) ActivateDashboardPublicationPrincipal(ctx context
 func (p Persistence) Validate() error {
 	if p.Repository == nil {
 		return errors.New("access repository is required")
+	}
+	if p.backend != backendPostgres {
+		return errors.New("access persistence backend is not configured")
+	}
+	if p.backend == backendPostgres && (p.nativeRepository == nil || p.Repository != p.nativeRepository || !p.nativeRepository.Configured()) {
+		return errors.New("PostgreSQL access repository does not match the configured native authority")
+	}
+	if p.backend == backendPostgres {
+		if _, ok := p.Snapshot.(postgresActivationPorts); !ok {
+			return errors.New("PostgreSQL access snapshot authority does not match the configured backend")
+		}
+		if _, ok := p.Publication.(postgresActivationPorts); !ok {
+			return errors.New("PostgreSQL access publication authority does not match the configured backend")
+		}
 	}
 	if _, ok := p.Repository.(access.AuthoringAuthRepository); !ok {
 		return errors.New("access repository does not implement authoring authentication")
@@ -125,44 +116,16 @@ func NewPostgresPersistence(repository *accesspostgres.Repository, oauth *mcpoau
 	if repository == nil {
 		return Persistence{}, errors.New("PostgreSQL access repository is required")
 	}
-	if oauth != nil && !oauth.IsPostgresBacked() {
-		return Persistence{}, errors.New("PostgreSQL access persistence requires PostgreSQL-backed MCP OAuth state")
+	if !repository.Configured() {
+		return Persistence{}, errors.New("PostgreSQL access repository is not configured")
 	}
-	p := Persistence{Repository: repository, OAuth: oauth, backend: backendPostgres}
+	p := Persistence{Repository: repository, OAuth: oauth, backend: backendPostgres, nativeRepository: repository}
 	p.Snapshot, p.Publication = postgresActivationPorts{}, postgresActivationPorts{}
 	p.Authoring, _ = any(repository).(access.AuthoringAuthRepository)
 	p.Desktop, _ = any(repository).(access.DesktopSessionRepository)
 	p.Avatar, _ = any(repository).(avatar.Repository)
 	if err := p.Validate(); err != nil {
 		return Persistence{}, fmt.Errorf("validate PostgreSQL access persistence: %w", err)
-	}
-	return p, nil
-}
-
-// SQLitePersistenceConfig is intentionally named and constructor-scoped so
-// selecting SQLite remains an explicit legacy/dev/test decision.
-type SQLitePersistenceConfig struct {
-	Database *sql.DB
-}
-
-// NewSQLitePersistence is the legacy adapter for existing local tests.  It is
-// not used by the PostgreSQL constructor and must not be used for production
-// composition.
-func NewSQLitePersistence(ctx context.Context, config SQLitePersistenceConfig) (Persistence, error) {
-	if config.Database == nil {
-		return Persistence{}, errors.New("SQLite access database is required")
-	}
-	if err := accesssqlite.Initialize(ctx, config.Database); err != nil {
-		return Persistence{}, err
-	}
-	repository := accesssqlite.NewRepository(config.Database)
-	p := Persistence{Repository: repository, backend: backendSQLiteLegacy}
-	p.Snapshot, p.Publication = sqliteActivationPorts{}, sqliteActivationPorts{}
-	p.Authoring, _ = any(repository).(access.AuthoringAuthRepository)
-	p.Desktop, _ = any(repository).(access.DesktopSessionRepository)
-	p.Avatar, _ = any(repository).(avatar.Repository)
-	if err := p.Validate(); err != nil {
-		return Persistence{}, fmt.Errorf("validate SQLite access persistence: %w", err)
 	}
 	return p, nil
 }

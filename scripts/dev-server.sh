@@ -8,8 +8,24 @@ PORT_FILE="$TMP_DIR/dev-server.port"
 LOG_FILE="$TMP_DIR/dev-server.log"
 PORT_START="${LEAPVIEW_DEV_PORT_START:-8100}"
 PORT_COUNT="${LEAPVIEW_DEV_PORT_COUNT:-100}"
+POSTGRES_ENV_FILE="${LEAPVIEW_POSTGRES_DEV_ENV_FILE:-$TMP_DIR/postgres-dev.env}"
 
 mkdir -p "$TMP_DIR"
+
+# The PostgreSQL helper writes a mode-0600, line-oriented environment file.
+# Parse only shell-assignment names here instead of sourcing arbitrary code;
+# this keeps a worktree-local credential file data-only while making its
+# values available to the child server and CLI commands. Explicit caller
+# values win so QA and developers can select a non-default development token.
+load_postgres_dev_env() {
+  [[ -f "$POSTGRES_ENV_FILE" ]] || return 0
+  while IFS='=' read -r name value; do
+    [[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue
+    if [[ -z "${!name:-}" ]]; then
+      export "$name=$value"
+    fi
+  done < "$POSTGRES_ENV_FILE"
+}
 
 usage() {
 	echo "Usage: $0 start [project [connection source-root]]|once [project [connection source-root]]|publish [project [connection source-root]]|stop|status|logs"
@@ -246,7 +262,10 @@ mcp_call() {
   local port="$1"
   local body="$2"
   local token="${LEAPVIEW_DEV_API_TOKEN:-dev}"
-  curl --fail --silent --show-error --max-time 15 \
+  # Keep JSON error bodies for the bounded smoke retries. During a fresh
+  # development start, the MCP transport can briefly return HTTP 400 while
+  # the activation worker has not installed an active serving generation yet.
+  curl --silent --show-error --max-time 15 \
     --config <(printf 'header = "Authorization: Bearer %s"\n' "$token") \
     --header 'Content-Type: application/json' \
     --header 'Accept: application/json, text/event-stream' \
@@ -262,18 +281,32 @@ mcp_smoke() {
     return 1
   }
 
-  local listed
-  listed="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-tools","method":"tools/list","params":{}}')" || return 1
-  jq -e '
-    (.error == null) and
-    ([.result.tools[].name] | contains(["catalog_list", "catalog_search", "query_semantic_model"]))
-  ' <<<"$listed" >/dev/null || {
-    echo "Development MCP smoke check could not list the required tools" >&2
-    return 1
-  }
-
   local attempts="${LEAPVIEW_DEV_MCP_ATTEMPTS:-20}"
   local interval="${LEAPVIEW_DEV_MCP_INTERVAL:-0.5}"
+  local listed=""
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    listed="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-tools","method":"tools/list","params":{}}')" || {
+      if (( attempt == attempts )); then
+        echo "Development MCP smoke check could not list the required tools" >&2
+        return 1
+      fi
+      sleep "$interval"
+      continue
+    }
+    if jq -e '
+      (.error == null) and
+      ([.result.tools[].name] | contains(["catalog_list", "catalog_search", "query_semantic_model"]))
+    ' <<<"$listed" >/dev/null; then
+      break
+    fi
+    if (( attempt == attempts )); then
+      echo "Development MCP smoke check could not list the required tools" >&2
+      printf '%s\n' "$listed" >&2
+      return 1
+    fi
+    sleep "$interval"
+  done
+
   local catalog metric query_arguments
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     catalog="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-catalog","method":"tools/call","params":{"name":"catalog_list","arguments":{}}}')" || return 1
@@ -339,6 +372,48 @@ canonical_source_root() {
 	)
 }
 
+bootstrap_local_physical_pool() {
+  command -v jq >/dev/null 2>&1 || {
+    echo "jq is required to bootstrap the local PostgreSQL physical pool" >&2
+    return 1
+  }
+  [[ -f "$POSTGRES_ENV_FILE" ]] || {
+    echo "PostgreSQL development environment file is missing: $POSTGRES_ENV_FILE" >&2
+    echo "Run task postgres:dev:up first." >&2
+    return 1
+  }
+
+  local envelope="$TMP_DIR/postgres-dev-qualification.json"
+  local pool_file="$TMP_DIR/postgres-dev-pool.json"
+  local evidence_file="$TMP_DIR/postgres-dev-evidence.json"
+  local bootstrap_output pool_id compatibility_digest
+  echo "Bootstrapping the local PostgreSQL physical pool..."
+  go run ./cmd/leapview admin delivery pool qualify >"$envelope"
+  jq -e '.pool and .evidence' "$envelope" >/dev/null || {
+    echo "local PostgreSQL qualification did not return a valid artifact envelope" >&2
+    return 1
+  }
+  jq -c '.pool' "$envelope" >"$pool_file"
+  jq -c '.evidence' "$envelope" >"$evidence_file"
+  bootstrap_output="$(go run ./cmd/leapview admin delivery pool bootstrap --pool "$pool_file" --evidence "$evidence_file" --apply)"
+  printf '%s\n' "$bootstrap_output"
+  pool_id="$(printf '%s\n' "$bootstrap_output" | awk '$1 == "pool_id:" {print $2; exit}')"
+  compatibility_digest="$(printf '%s\n' "$bootstrap_output" | awk '$1 == "compatibility_digest:" {print $2; exit}')"
+  [[ "$pool_id" =~ ^sha256:[0-9a-f]{64}$ && "$compatibility_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "local PostgreSQL physical-pool bootstrap returned non-canonical identity" >&2
+    return 1
+  }
+
+  local updated="${POSTGRES_ENV_FILE}.tmp.$$"
+  awk '!/^LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=/{if (!/^LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=/) print}' "$POSTGRES_ENV_FILE" >"$updated"
+  printf 'LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=%s\n' "$pool_id" >>"$updated"
+  printf 'LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=%s\n' "$compatibility_digest" >>"$updated"
+  chmod 600 "$updated"
+  mv "$updated" "$POSTGRES_ENV_FILE"
+  export LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID="$pool_id"
+  export LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST="$compatibility_digest"
+}
+
 publish_project() {
 	local port="$1"
 	local project="${2:-${LEAPVIEW_DEV_PROJECT:-dashboards/leapview.yaml}}"
@@ -372,7 +447,7 @@ publish_project() {
 	dev_output="$(go run ./cmd/leapview dev --once --no-browser --project "$project" --target "http://localhost:${port}" --token "$token")" || return 1
 	printf '%s\n' "$dev_output"
 	candidate_id="$(awk '$1 == "candidate" { print $2; exit }' <<<"$dev_output")"
-	[[ "$candidate_id" =~ ^cand_[A-Za-z0-9_-]+$ ]] || {
+	[[ "$candidate_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || {
 		echo "Development candidate publication did not return a canonical candidate ID." >&2
 		return 1
 	}
@@ -428,6 +503,7 @@ start() {
 	local project="${1:-${LEAPVIEW_DEV_PROJECT:-dashboards/leapview.yaml}}"
 	local connection="${2:-}"
 	local from="${3:-}"
+  load_postgres_dev_env
   if [[ "${LEAPVIEW_DEV_RESTART:-}" != "1" ]]; then
     local existing_pid
     existing_pid="$(running_server_pid || true)"
@@ -456,8 +532,11 @@ start() {
   preferred="$(worktree_port)"
   local port
   port="$(ensure_port "$preferred")"
-  echo "$port" > "$PORT_FILE"
-  rm -f "$PID_FILE"
+  # Keep readiness files absent while the migration-only process is running.
+  # External QA uses PORT_FILE/PID_FILE as the final-server contract; exposing
+  # them before pool bootstrap creates a race where it publishes against the
+  # process that is about to be stopped for admin bootstrap.
+  rm -f "$PORT_FILE" "$PID_FILE"
 
   local runner
   runner="$(runner_name)"
@@ -476,7 +555,7 @@ start() {
   cd "$ROOT"
   ensure_dev_extension_supply
   export PORT="$port"
-  export LEAPVIEW_ADDR=":$port"
+  export LEAPVIEW_ADDR="127.0.0.1:$port"
   export LEAPVIEW_DEV_WORKTREE="$ROOT"
   export LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES="${LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES:-67108864}"
   if [[ -z "${LEAPVIEW_AGENT_API_KEY:-}" && -n "${DEEPSEEK_API_KEY:-}" ]]; then
@@ -493,12 +572,41 @@ start() {
     "$TMP_DIR/leapview-dev" >> "$LOG_FILE" 2>&1 &
   fi
   local pid="$!"
-  echo "$pid" > "$PID_FILE"
 
   if ! wait_ready "$port" "$pid"; then
     stop_pid "$pid" "LeapView dev server"
     exit 1
   fi
+
+  # A fresh worktree has no admitted pool identity in its environment file.
+  # Bootstrap it through the explicit native Admin path after the server's
+  # control migrations have run, then restart once so serving binds the exact
+  # persisted pool ID and compatibility digest before candidate publication.
+  if [[ -z "${LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID:-}" || -z "${LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST:-}" ]]; then
+    # runServe holds the instance lock for its entire lifetime; release it
+    # before the Admin bootstrap acquires the same lock for its transaction.
+    stop_pid "$pid" "LeapView dev server (migration bootstrap)"
+    if ! bootstrap_local_physical_pool; then
+      exit 1
+    fi
+    load_postgres_dev_env
+    : > "$LOG_FILE"
+    if [[ "$runner" == "air" ]]; then
+      air -c .air.toml >> "$LOG_FILE" 2>&1 &
+    else
+      "$TMP_DIR/leapview-dev" >> "$LOG_FILE" 2>&1 &
+    fi
+    pid="$!"
+    if ! wait_ready "$port" "$pid"; then
+      stop_pid "$pid" "LeapView dev server"
+      exit 1
+    fi
+  fi
+
+  # Publish the readiness contract only after the final server (with its
+  # admitted physical-pool identity) has passed health checks.
+  echo "$port" > "$PORT_FILE"
+  echo "$pid" > "$PID_FILE"
 
 	if ! publish_project "$port" "$project" "$connection" "$from"; then
     stop_pid "$pid" "LeapView dev server"

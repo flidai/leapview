@@ -23,6 +23,12 @@ updates:
     groups:
       qualification-image: {patterns: ["*"]}
   - package-ecosystem: docker
+    directory: /deploy/postgres/ha
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      postgres-ha-image: {patterns: ["*"]}
+  - package-ecosystem: docker
     directory: /internal/app/testing/maliciousinstance/electron
     schedule: {interval: weekly}
     open-pull-requests-limit: 5

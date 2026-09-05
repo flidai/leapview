@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
@@ -16,7 +16,7 @@ type runtimeReloader interface {
 }
 
 type servingStateRepository interface {
-	refreshmodule.ServingStateRepository
+	refreshrun.ServingStateReader
 	ListActiveScopes(context.Context) ([]servingstatemodule.ActiveScope, error)
 }
 

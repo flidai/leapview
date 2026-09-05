@@ -133,7 +133,7 @@ func (s *Store) Open(ctx context.Context, digest string) (io.ReadCloser, error) 
 	if _, err := s.Stat(ctx, digest); err != nil {
 		return nil, err
 	}
-	file, err := os.Open(s.blobPath(digest))
+	file, err := s.openStoreFile(s.blobPath(digest))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, storage.ErrNotFound
 	}
@@ -335,7 +335,7 @@ func filesystemInventoryError(ctx context.Context, operation string, err error) 
 }
 
 func (s *Store) verifyPath(ctx context.Context, filePath string, expected storage.Blob) (storage.Blob, error) {
-	file, err := os.Open(filePath)
+	file, err := s.openStoreFile(filePath)
 	if errors.Is(err, os.ErrNotExist) {
 		return storage.Blob{}, storage.ErrNotFound
 	}
@@ -359,6 +359,22 @@ func (s *Store) verifyPath(ctx context.Context, filePath string, expected storag
 		return storage.Blob{}, fmt.Errorf("%w: filesystem blob does not match its content address", storage.ErrIntegrity)
 	}
 	return storage.Blob{SHA256: actualDigest, Size: info.Size(), URI: (&url.URL{Scheme: "file", Path: filePath}).String()}, nil
+}
+
+// openStoreFile resolves an already-validated content address beneath the
+// directory handle for this store. os.Root rejects symlink and traversal
+// escapes even if an on-disk shard is replaced between validation and open.
+func (s *Store) openStoreFile(filePath string) (*os.File, error) {
+	relative, err := filepath.Rel(s.root, filePath)
+	if err != nil || relative == "." || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("%w: filesystem path escapes the blob store", storage.ErrIntegrity)
+	}
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.Open(relative)
 }
 
 func (s *Store) verifyRevision(ctx context.Context, revisionPath string, files []manageddata.File) error {

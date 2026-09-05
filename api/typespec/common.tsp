@@ -49,6 +49,11 @@ scalar PageToken extends string;
 @maxLength(200)
 scalar IdempotencyKey extends string;
 
+@minLength(36)
+@maxLength(36)
+@pattern("^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+scalar UUIDv7IdempotencyKey extends string;
+
 model EmptyResponse {
   @statusCode statusCode: 204;
 }

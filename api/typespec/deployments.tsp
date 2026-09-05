@@ -4,23 +4,6 @@ using LeapViewAPI.Protocol;
 
 namespace LeapViewAPI.Deployment;
 
-enum DeploymentStatus {
-  queued;
-  running;
-  active;
-  failed;
-  cancelled;
-  superseded;
-}
-
-enum CandidateStatus {
-  preparing;
-  ready;
-  failed;
-  cancelled;
-  expired;
-}
-
 enum DeliveryPlanStatus {
   planned;
   expired;
@@ -97,20 +80,6 @@ enum DeliveryLeaseStatus {
   expired;
 }
 
-enum DeliveryGCStatus {
-  running;
-  marked;
-  deleting;
-  complete;
-  aborted;
-}
-
-enum DeliveryGCDeleteStatus {
-  pending;
-  deleted;
-  ambiguous;
-}
-
 enum DeliveryAuditStatus {
   accepted;
   rejected;
@@ -136,28 +105,10 @@ enum DeploymentApprovalStatus {
   expired;
 }
 
-model CandidateStartRequest {
-  artifactDigest: string;
-  candidateKey?: string;
-}
-
-model CandidateArtifactRequest {
-  expectedArtifactDigest: string;
-  artifactDigest: string;
-}
-
-model CandidatePublishRequest {
-  expectedRevision: int64;
-  provenanceDigest: string;
-  targetId: string;
-  // Explicit one-shot first protected activation. Omission and false always
-  // use the normal protected publication/approval path.
-  bootstrap?: boolean;
-}
-
 model CandidateSourceArtifact {
   path: string;
   digest: string;
+  sizeBytes: int64;
 }
 
 model CandidateSourceRevision {
@@ -174,12 +125,11 @@ model CandidateSynchronizationRequest {
   sourceOnly?: boolean;
   candidateKey?: string;
   sourceRevision?: CandidateSourceRevision;
-  expectedCandidateId?: string;
-  expectedArtifactDigest?: string;
   artifacts: CandidateSourceArtifact[];
 }
 
 model CandidateSynchronizationPlanResponse {
+  planId: string;
   artifactDigest: string;
   missingDigests: string[];
 }
@@ -198,30 +148,6 @@ model CandidateSourceSnapshotResponse {
 model CandidateSourceBlobResponse {
   digest: string;
   sizeBytes: int64;
-}
-
-model CandidateResponse {
-  id: string;
-  projectId: ResourceId;
-  candidateKey: string;
-  targetId: string;
-  environment: string;
-  ownerId: string;
-  baseGeneration: string;
-  artifactDigest: string;
-  provenanceDigest?: string;
-  status: CandidateStatus;
-  failureReason?: string;
-  previewUrl: url;
-  expiresAt: utcDateTime;
-  createdAt: utcDateTime;
-  updatedAt: utcDateTime;
-  revision: int64;
-  resumed?: boolean;
-}
-
-model DeploymentCreateRequest {
-  releaseId: string;
 }
 
 model DeploymentApprovalDecisionRequest {
@@ -246,53 +172,6 @@ model DeploymentApprovalResponse {
   revokedAt?: utcDateTime;
   expiresAt: utcDateTime;
   revision: int64;
-}
-
-model DeploymentPublishEvidence {
-  releaseDigest: string;
-  artifactContentDigest: string;
-  artifactProvenanceDigest: string;
-  planDigest: string;
-  candidateId: string;
-  candidateRevision: int64;
-  targetId: string;
-  environment: string;
-  generationId: string;
-  baseGenerationId?: string;
-  runtimeVersion: string;
-  policyDigest: string;
-  sourceRevision?: CandidateSourceRevision;
-}
-
-model DeploymentVerification {
-  digest: string;
-  verifiedAt: utcDateTime;
-}
-
-model DeploymentResponse {
-  id: string;
-  projectId: ResourceId;
-  releaseId: string;
-  environment: string;
-  generationId: string;
-  artifactDigest: string;
-  priorGenerationId?: string;
-  requestDigest: string;
-  evidence: DeploymentPublishEvidence;
-  status: DeploymentStatus;
-  createdBy: string;
-  activationPrincipal?: string;
-  verification?: DeploymentVerification;
-  createdAt: utcDateTime;
-  startedAt?: utcDateTime;
-  finishedAt?: utcDateTime;
-  error?: string;
-  approval?: DeploymentApprovalResponse;
-}
-
-model DeploymentListResponse {
-  items: DeploymentResponse[];
-  page: PageInfo;
 }
 
 // Plan-driven delivery read models intentionally expose immutable identities
@@ -386,36 +265,39 @@ model DeliveryBuildStatusResponse {
   sourceDigest: string;
   executionDigest: string;
   baseGenerationId?: string;
-  baseCatalogDigest?: string;
   basePhysicalPoolId?: string;
   physicalPoolId: string;
   writerLeaseId: string;
   status: DeliveryBuildStatus;
-  sealId?: string;
+  // Populated once the build has committed a qualified DuckLake snapshot.
+  snapshotSealId?: string;
+  ducklakeSnapshotId?: int64;
+  relationManifestDigest?: string;
+  closureDigest?: string;
+  qualificationDigest?: string;
   candidateId?: string;
   failureCode?: string;
   revision: int64;
+  candidateRevision?: int64;
   createdAt: utcDateTime;
   updatedAt: utcDateTime;
   terminalAt?: utcDateTime;
 }
 
 model DeliverySealStatusResponse {
-  id: string;
+  snapshotSealId: string;
   attemptId: string;
   planId: string;
   planDigest: string;
   executionDigest: string;
   physicalPoolId: string;
-  catalogDigest: string;
-  baseCatalogDigest?: string;
-  basePhysicalPoolId?: string;
+  ducklakeSnapshotId: int64;
+  relationManifestDigest: string;
+  closureDigest: string;
   compatibilityDigest: string;
   servingArtifactId: string;
   servingArtifactDigest: string;
   servingStateId: string;
-  objectSize: int64;
-  closureDigest?: string;
   qualificationDigest?: string;
   status: DeliverySealStatus;
   createdAt: utcDateTime;
@@ -434,9 +316,10 @@ model DeliveryCandidateStatusResponse {
   executionDigest: string;
   baseGenerationId?: string;
   baseTargetRevision: int64;
-  sealId: string;
-  catalogDigest: string;
-  baseCatalogDigest?: string;
+  snapshotSealId?: string;
+  ducklakeSnapshotId?: int64;
+  relationManifestDigest?: string;
+  closureDigest?: string;
   basePhysicalPoolId?: string;
   compatibilityDigest: string;
   physicalPoolId: string;
@@ -461,7 +344,10 @@ model DeliveryGenerationStatusResponse {
   targetId: string;
   projectId: ResourceId;
   environment: string;
-  catalogDigest: string;
+  snapshotSealId: string;
+  ducklakeSnapshotId: int64;
+  relationManifestDigest: string;
+  closureDigest: string;
   physicalPoolId: string;
   servingArtifactId: string;
   servingArtifactDigest: string;
@@ -515,7 +401,7 @@ model DeliveryRootView {
   candidateId?: string;
   generationId?: string;
   leaseId?: string;
-  catalogDigest: string;
+  snapshotSealId?: string;
   status: DeliveryRootStatus;
   createdAt: utcDateTime;
   expiresAt?: utcDateTime;
@@ -527,7 +413,7 @@ model DeliveryQueryLeaseView {
   candidateId?: string;
   generationId?: string;
   poolId: string;
-  catalogDigest: string;
+  snapshotSealId?: string;
   status: DeliveryLeaseStatus;
   createdAt: utcDateTime;
   expiresAt: utcDateTime;
@@ -545,29 +431,6 @@ model DeliveryWriterLeaseView {
   releasedAt?: utcDateTime;
 }
 
-model DeliveryGCCycleView {
-  id: string;
-  poolId: string;
-  epoch: int64;
-  rootRevision: int64;
-  markDigest?: string;
-  status: DeliveryGCStatus;
-  createdAt: utcDateTime;
-  completedAt?: utcDateTime;
-  abortReason?: string;
-}
-
-model DeliveryGCDeleteIntentView {
-  id: string;
-  cycleId: string;
-  poolId: string;
-  objectDigest: string;
-  objectVersion?: string;
-  status: DeliveryGCDeleteStatus;
-  createdAt: utcDateTime;
-  completedAt?: utcDateTime;
-}
-
 model DeliveryOperatorSnapshotResponse {
   projectId: ResourceId;
   environment: string;
@@ -580,8 +443,6 @@ model DeliveryOperatorSnapshotResponse {
   roots: DeliveryRootView[];
   queryLeases: DeliveryQueryLeaseView[];
   writerLeases: DeliveryWriterLeaseView[];
-  gcCycles: DeliveryGCCycleView[];
-  gcDeleteIntents: DeliveryGCDeleteIntentView[];
 }
 
 model DeliveryPlanRequest {
@@ -607,26 +468,6 @@ model DeliveryCommandAuditPayload {
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
-model DeploymentQueuedAuditPayload {
-  @apigen.auditInternal
-  deploymentId: string;
-  @apigen.auditInternal
-  projectId: ResourceId;
-  @apigen.auditInternal
-  releaseId: string;
-  @apigen.auditPublic
-  status: string;
-}
-
-@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
-model DeploymentCancelledAuditPayload {
-  @apigen.auditInternal
-  deploymentId: string;
-  @apigen.auditPublic
-  status: string;
-}
-
-@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model DeploymentApprovalRequestedAuditPayload {
   @apigen.auditInternal
   deploymentId: string;
@@ -645,28 +486,6 @@ model DeploymentApprovalDecisionAuditPayload {
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
-model CandidateAuditPayload {
-  @apigen.auditInternal
-  operationId: string;
-  @apigen.auditInternal
-  candidateId: string;
-  @apigen.auditInternal
-  projectId: ResourceId;
-  @apigen.auditInternal
-  targetId: string;
-  @apigen.auditInternal
-  environment: string;
-  @apigen.auditInternal
-  baseGeneration: string;
-  @apigen.auditInternal
-  candidateKey: string;
-  @apigen.auditPublic
-  status: string;
-  @apigen.auditPublic
-  resumed: boolean;
-}
-
-@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model CandidateSourceBlobAuditPayload {
   @apigen.auditInternal
   operationId: string;
@@ -676,6 +495,20 @@ model CandidateSourceBlobAuditPayload {
   digest: string;
   @apigen.auditInternal
   sizeBytes: int64;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model CandidateSourceSyncPlannedAuditPayload {
+  @apigen.auditInternal
+  operationId: string;
+  @apigen.auditPublic
+  surface: string;
+  @apigen.auditInternal
+  projectId: ResourceId;
+  @apigen.auditInternal
+  sourceDigest: string;
+  @apigen.auditInternal
+  planId: string;
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
@@ -728,7 +561,7 @@ model ApprovalForbiddenFailure {}
   kind: "audit_unavailable",
   statusCode: 503,
   code: "AUDIT_UNAVAILABLE",
-  publicDetail: "Candidate source blob audit is temporarily unavailable.",
+  publicDetail: "Candidate source audit is temporarily unavailable.",
 })
 model AuditUnavailableFailure {}
 
@@ -759,10 +592,10 @@ model CandidateQuotaExceededFailure {}
 @apigen.failureDefinition(#{
   kind: "candidate_unavailable",
   statusCode: 503,
-  code: "CANDIDATE_SERVICE_UNAVAILABLE",
-  publicDetail: "Candidate service is unavailable.",
+  code: "CANDIDATE_UNAVAILABLE",
+  publicDetail: "Candidate is unavailable.",
 })
-model CandidateServiceUnavailableFailure {}
+model CandidateUnavailableFailure {}
 
 @apigen.failureDefinition(#{
   kind: "approval_conflict",
@@ -868,406 +701,21 @@ model ReleaseNotReadyFailure {}
 })
 model SeparationOfDutyRequiredFailure {}
 
-@route("/projects/{project}/deployments")
-@tag("Deployments")
-@apigen.commandDefaults(#{ guarantee: "best-effort" })
-interface Deployments {
-  @summary("List project deployments")
-  @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
-  listDeployments(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeploymentListResponse> | CommonErrors;
-
-  @summary("Deploy a ready project release")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.asyncExecution(Deployments.getDeployment, Deployments.listDeploymentEvents, #{
-    guarantee: "transactional",
-    jobKind: "deployment.activate",
-    resourceKind: "deployment",
-    initialEvent: "deployment.queued",
-    initialState: "queued",
-    cancellation: "supported",
-  })
-  @apigen.failsWith(DeploymentNotFoundFailure)
-  @apigen.failsWith(DeploymentConflictFailure)
-  @apigen.failsWith(ReleaseNotReadyFailure)
-  @apigen.failsWith(ReleaseIncompleteFailure)
-  @apigen.failsWith(PublicationManagementRequiredFailure)
-  @apigen.failsWith(DeploymentServiceUnavailableFailure)
-  @apigen.failsWith(DeploymentApprovalUnavailableFailure)
-  @apigen.failsWith(ApprovalCredentialExpiredFailure)
-  @apigen.failsWith(DeploymentApprovalConflictFailure)
-  @apigen.failsWith(InvalidDeploymentFailure)
-  @apigen.command(#{
-    auditAction: "deployment.queued",
-    guarantee: "transactional",
-    failures: #[
-      #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Publication activation authorization could not be evaluated." },
-      #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded publication credential is required." },
-      #{ kind: "approval_invalid", statusCode: 422, code: "INVALID_DEPLOYMENT_APPROVAL", publicDetail: "The deployment approval request is invalid." },
-    ],
-  })
-  @apigen.auditPayload(DeploymentQueuedAuditPayload)
-  createDeployment(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentCreateRequest): AcceptedJson<DeploymentResponse> | CommonErrors;
-
-  @summary("Get a project deployment")
-  @route("/{deployment}")
-  @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
-  getDeployment(@path project: ResourceId, @path deployment: string): OkJson<DeploymentResponse> | CommonErrors;
-
-  @summary("List or stream deployment events")
-  @route("/{deployment}/events")
-  @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
-  listDeploymentEvents(@path project: ResourceId, @path deployment: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
-
-  @summary("Cancel a deployment before cutover")
-  @route("/{deployment}/cancel")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(DeploymentNotFoundFailure)
-  @apigen.failsWith(DeploymentConflictFailure)
-  @apigen.failsWith(DeploymentServiceUnavailableFailure)
-  @apigen.failsWith(InvalidDeploymentFailure)
-  @apigen.command(#{
-    auditAction: "deployment.cancelled",
-    guarantee: "transactional",
-    failures: #[
-      #{ kind: "queue_unavailable", statusCode: 503, code: "ASYNC_QUEUE_UNAVAILABLE", publicDetail: "Deployment cancellation could not be persisted." },
-    ],
-  })
-  @apigen.auditPayload(DeploymentCancelledAuditPayload)
-  cancelDeployment(@path @apigen.target project: ResourceId, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
-
-  @summary("Retry a terminal publication request without changing its immutable release")
-  @route("/{deployment}/retry")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.asyncExecution(Deployments.getDeployment, Deployments.listDeploymentEvents, #{
-    guarantee: "transactional",
-    jobKind: "deployment.activate",
-    resourceKind: "deployment",
-    initialEvent: "deployment.queued",
-    initialState: "queued",
-    cancellation: "supported",
-  })
-  @apigen.failsWith(DeploymentNotFoundFailure)
-  @apigen.failsWith(DeploymentConflictFailure)
-  @apigen.failsWith(ReleaseNotReadyFailure)
-  @apigen.failsWith(ReleaseIncompleteFailure)
-  @apigen.failsWith(PublicationManagementRequiredFailure)
-  @apigen.failsWith(DeploymentServiceUnavailableFailure)
-  @apigen.failsWith(InvalidDeploymentFailure)
-  @apigen.command(#{
-    auditAction: "deployment.queued",
-    guarantee: "transactional",
-    failures: #[
-      #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Publication activation authorization could not be evaluated." },
-      #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded publication credential is required." },
-    ],
-  })
-  @apigen.auditPayload(DeploymentQueuedAuditPayload)
-  retryDeployment(@path @apigen.target project: ResourceId, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
-
-  @summary("Roll back by creating a deployment of the prior release")
-  @route("/{deployment}/rollback")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.asyncExecution(Deployments.getDeployment, Deployments.listDeploymentEvents, #{
-    guarantee: "transactional",
-    jobKind: "deployment.activate",
-    resourceKind: "deployment",
-    initialEvent: "deployment.queued",
-    initialState: "queued",
-    cancellation: "supported",
-  })
-  @apigen.failsWith(DeploymentNotFoundFailure)
-  @apigen.failsWith(DeploymentConflictFailure)
-  @apigen.failsWith(ReleaseNotReadyFailure)
-  @apigen.failsWith(ReleaseIncompleteFailure)
-  @apigen.failsWith(PublicationManagementRequiredFailure)
-  @apigen.failsWith(DeploymentServiceUnavailableFailure)
-  @apigen.failsWith(InvalidDeploymentFailure)
-  @apigen.command(#{
-    auditAction: "deployment.queued",
-    guarantee: "transactional",
-    failures: #[
-      #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Publication activation authorization could not be evaluated." },
-      #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded publication credential is required." },
-    ],
-  })
-  @apigen.auditPayload(DeploymentQueuedAuditPayload)
-  rollbackDeployment(@path @apigen.target project: ResourceId, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
-
-  @summary("Request approval for an immutable deployment plan")
-  @route("/{deployment}/approval-requests")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(DeploymentApprovalUnavailableFailure)
-  @apigen.failsWith(DeploymentApprovalNotFoundFailure)
-  @apigen.failsWith(ApprovalCredentialExpiredFailure)
-  @apigen.failsWith(DeploymentConflictFailure)
-  @apigen.failsWith(DeploymentNotFoundFailure)
-  @apigen.failsWith(InvalidDeploymentFailure)
-  @apigen.command(#{
-    auditAction: "deployment.approval_requested",
-    guarantee: "transactional",
-    failures: #[
-      #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded publication credential is required." },
-      #{ kind: "approval_conflict", statusCode: 409, code: "DEPLOYMENT_APPROVAL_REQUIRED", publicDetail: "The deployment approval is not valid for this action." },
-    ],
-  })
-  @apigen.auditPayload(DeploymentApprovalRequestedAuditPayload)
-  requestDeploymentApproval(@path @apigen.target project: ResourceId, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): CreatedJson<DeploymentApprovalResponse> | CommonErrors;
-
-  @summary("Approve an immutable deployment plan")
-  @route("/{deployment}/approval-requests/{approval}/approve")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(DeploymentApprovalUnavailableFailure)
-  @apigen.failsWith(DeploymentApprovalNotFoundFailure)
-  @apigen.failsWith(ApprovalCredentialExpiredFailure)
-  @apigen.failsWith(SeparationOfDutyRequiredFailure)
-  @apigen.failsWith(DeploymentNotFoundFailure)
-  @apigen.command(#{
-    auditAction: "deployment.approved",
-    guarantee: "transactional",
-    failures: #[
-      #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded approval credential is required." },
-      #{ kind: "approval_conflict", statusCode: 409, code: "DEPLOYMENT_APPROVAL_REQUIRED", publicDetail: "The deployment approval is not valid for this action." },
-      #{ kind: "approval_invalid", statusCode: 422, code: "INVALID_DEPLOYMENT_APPROVAL", publicDetail: "The deployment approval request is invalid." },
-    ],
-  })
-  @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload)
-  approveDeployment(@path @apigen.target project: ResourceId, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
-
-  @summary("Deny an immutable deployment plan")
-  @route("/{deployment}/approval-requests/{approval}/deny")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(DeploymentApprovalUnavailableFailure)
-  @apigen.failsWith(DeploymentApprovalNotFoundFailure)
-  @apigen.failsWith(ApprovalCredentialExpiredFailure)
-  @apigen.failsWith(SeparationOfDutyRequiredFailure)
-  @apigen.failsWith(DeploymentNotFoundFailure)
-  @apigen.command(#{
-    auditAction: "deployment.denied",
-    guarantee: "transactional",
-    failures: #[
-      #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded approval credential is required." },
-      #{ kind: "approval_conflict", statusCode: 409, code: "DEPLOYMENT_APPROVAL_REQUIRED", publicDetail: "The deployment approval is not valid for this action." },
-      #{ kind: "approval_invalid", statusCode: 422, code: "INVALID_DEPLOYMENT_APPROVAL", publicDetail: "The deployment approval request is invalid." },
-    ],
-  })
-  @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload)
-  denyDeploymentApproval(@path @apigen.target project: ResourceId, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
-
-  @summary("Revoke a pending or approved deployment decision")
-  @route("/{deployment}/approval-requests/{approval}/revoke")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(DeploymentApprovalUnavailableFailure)
-  @apigen.failsWith(DeploymentApprovalNotFoundFailure)
-  @apigen.failsWith(ApprovalCredentialExpiredFailure)
-  @apigen.failsWith(SeparationOfDutyRequiredFailure)
-  @apigen.failsWith(DeploymentNotFoundFailure)
-  @apigen.command(#{
-    auditAction: "deployment.approval_revoked",
-    guarantee: "transactional",
-    failures: #[
-      #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded approval credential is required." },
-      #{ kind: "approval_conflict", statusCode: 409, code: "DEPLOYMENT_APPROVAL_REQUIRED", publicDetail: "The deployment approval is not valid for this action." },
-      #{ kind: "approval_invalid", statusCode: 422, code: "INVALID_DEPLOYMENT_APPROVAL", publicDetail: "The deployment approval request is invalid." },
-    ],
-  })
-  @apigen.auditPayload(DeploymentApprovalDecisionAuditPayload)
-  revokeDeploymentApproval(@path @apigen.target project: ResourceId, @path deployment: string, @path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DeploymentApprovalDecisionRequest): OkJson<DeploymentApprovalResponse> | CommonErrors;
-
-  @summary("Activate an approved immutable deployment plan")
-  @route("/{deployment}/activate")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.asyncExecution(Deployments.getDeployment, Deployments.listDeploymentEvents, #{
-    guarantee: "transactional",
-    jobKind: "deployment.activate",
-    resourceKind: "deployment",
-    initialEvent: "deployment.activation_requested",
-    initialState: "queued",
-    cancellation: "supported",
-  })
-  @apigen.failsWith(ActivationCredentialRequiredFailure)
-  @apigen.failsWith(DeploymentApprovalUnavailableFailure)
-  @apigen.failsWith(DeploymentApprovalNotFoundFailure)
-  @apigen.failsWith(ApprovalCredentialExpiredFailure)
-  @apigen.failsWith(ActivationForbiddenFailure)
-  @apigen.failsWith(ApprovalForbiddenFailure)
-  @apigen.failsWith(DeploymentNotFoundFailure)
-  @apigen.failsWith(DeploymentConflictFailure)
-  @apigen.command(#{
-    auditAction: "deployment.activation_requested",
-    guarantee: "transactional",
-    failures: #[
-      #{ kind: "approval_conflict", statusCode: 409, code: "DEPLOYMENT_APPROVAL_REQUIRED", publicDetail: "An approved deployment is required for activation." },
-      #{ kind: "approval_invalid", statusCode: 422, code: "INVALID_DEPLOYMENT_APPROVAL", publicDetail: "The deployment approval is invalid." },
-      #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Deployment activation authorization could not be evaluated." },
-      #{ kind: "queue_unavailable", statusCode: 503, code: "ASYNC_QUEUE_UNAVAILABLE", publicDetail: "Deployment activation could not be persisted." },
-    ],
-  })
-  @apigen.auditPayload(DeploymentQueuedAuditPayload)
-  activateDeployment(@path @apigen.target project: ResourceId, @path deployment: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeploymentResponse> | CommonErrors;
-}
-
-@route("/projects/{project}/candidates")
-@tag("Deployments")
-@apigen.commandDefaults(#{ guarantee: "best-effort" })
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
-interface ProjectCandidates {
-  @summary("Create or resume the current author's private project candidate")
-  @post
-  @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(CandidateServiceUnavailableFailure)
-  @apigen.failsWith(CandidateNotFoundFailure)
-  @apigen.failsWith(CandidateConflictFailure)
-  @apigen.failsWith(CandidateQuotaExceededFailure)
-  @apigen.failsWith(InvalidCandidateFailure)
-  @apigen.command(#{
-    auditAction: "candidate.started",
-  })
-  @apigen.auditPayload(CandidateAuditPayload)
-  startProjectCandidate(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateStartRequest): CreatedJson<CandidateResponse> | CommonErrors;
-
-  @summary("Get an owned private project candidate")
-  @route("/{candidate}")
-  @get
-  @extension("x-leapview-object-scope", "project")
-  getProjectCandidate(@path project: ResourceId, @path candidate: string): OkJson<CandidateResponse> | CommonErrors;
-
-  @summary("Replace a private candidate artifact with optimistic concurrency")
-  @route("/{candidate}/artifact")
-  @put
-  @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(CandidateServiceUnavailableFailure)
-  @apigen.failsWith(CandidateNotFoundFailure)
-  @apigen.failsWith(CandidateConflictFailure)
-  @apigen.failsWith(InvalidCandidateFailure)
-  @apigen.command(#{
-    auditAction: "candidate.artifact_replaced",
-  })
-  @apigen.auditPayload(CandidateAuditPayload)
-  replaceProjectCandidateArtifact(@path @apigen.target project: ResourceId, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateArtifactRequest): OkJson<CandidateResponse> | CommonErrors;
-
-  @summary("Retry preparation of a failed private candidate")
-  @route("/{candidate}/retry")
-  @post
-  @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(CandidateServiceUnavailableFailure)
-  @apigen.failsWith(CandidateNotFoundFailure)
-  @apigen.failsWith(CandidateConflictFailure)
-  @apigen.failsWith(InvalidCandidateFailure)
-  @apigen.command(#{
-    auditAction: "candidate.retried",
-  })
-  @apigen.auditPayload(CandidateAuditPayload)
-  retryProjectCandidate(@path @apigen.target project: ResourceId, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
-
-  @summary("Cancel an owned private project candidate")
-  @route("/{candidate}/cancel")
-  @post
-  @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(CandidateServiceUnavailableFailure)
-  @apigen.failsWith(CandidateNotFoundFailure)
-  @apigen.failsWith(CandidateConflictFailure)
-  @apigen.failsWith(InvalidCandidateFailure)
-  @apigen.command(#{
-    auditAction: "candidate.cancelled",
-  })
-  @apigen.auditPayload(CandidateAuditPayload)
-  cancelProjectCandidate(@path @apigen.target project: ResourceId, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
-
-  @summary("Publish the exact ready candidate through target policy")
-  @route("/{candidate}/publish")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.asyncExecution(Deployments.getDeployment, Deployments.listDeploymentEvents, #{
-    guarantee: "transactional",
-    jobKind: "deployment.activate",
-    resourceKind: "deployment",
-    initialEvent: "deployment.queued",
-    initialState: "queued",
-    cancellation: "supported",
-  })
-  @apigen.failsWith(CandidateServiceUnavailableFailure)
-  @apigen.failsWith(CandidateNotFoundFailure)
-  @apigen.failsWith(CandidateConflictFailure)
-  @apigen.failsWith(InvalidCandidateFailure)
-  @apigen.failsWith(DeploymentNotFoundFailure)
-  @apigen.failsWith(DeploymentConflictFailure)
-  @apigen.failsWith(ReleaseNotReadyFailure)
-  @apigen.failsWith(ReleaseIncompleteFailure)
-  @apigen.failsWith(PublicationManagementRequiredFailure)
-  @apigen.failsWith(DeploymentServiceUnavailableFailure)
-  @apigen.failsWith(InvalidDeploymentFailure)
-  @apigen.command(#{
-    auditAction: "deployment.queued",
-    failures: #[
-      #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Publication activation authorization could not be evaluated." },
-      #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded publication credential is required." },
-    ],
-  })
-  @apigen.auditPayload(DeploymentQueuedAuditPayload)
-  publishProjectCandidate(@path @apigen.target project: ResourceId, @path candidate: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidatePublishRequest): AcceptedJson<DeploymentResponse> | CommonErrors;
-}
-
-@tag("Deployments")
-@summary("Review a private candidate without acquiring its data credentials")
-@route("/projects/{project}/candidate-reviews/{candidate}")
-@get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
-@extension("x-leapview-object-scope", "project")
-op reviewProjectCandidate(@path project: ResourceId, @path candidate: string): OkJson<CandidateResponse> | CommonErrors;
-
-@tag("Deployments")
-@summary("Cancel the current principal's active candidate by stable authoring key")
-@route("/projects/{project}/candidate-sessions/{candidateKey}/cancel")
-@post
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
-@extension("x-leapview-object-scope", "project")
-@apigen.failsWith(CandidateServiceUnavailableFailure)
-@apigen.failsWith(CandidateNotFoundFailure)
-@apigen.failsWith(CandidateConflictFailure)
-@apigen.failsWith(InvalidCandidateFailure)
-@apigen.command(#{
-  auditAction: "candidate.cancelled",
-  guarantee: "best-effort",
-})
-@apigen.auditPayload(CandidateAuditPayload)
-op cancelProjectCandidateByKey(@path @apigen.target project: ResourceId, @path candidateKey: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<CandidateResponse> | CommonErrors;
-
 @route("/projects/{project}/candidate-sync")
 @tag("Deployments")
 @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 interface CandidateSynchronization {
   @summary("Plan content-addressed synchronization for the current author's private candidate")
-  @doc("Query classification: reports missing immutable blobs without uploading or committing source state.")
   @route("/plan")
   @post
   @extension("x-leapview-object-scope", "project")
-  @apigen.query
+  @apigen.command(#{ auditAction: "candidate.source_sync_planned" })
+  @apigen.auditPayload(CandidateSourceSyncPlannedAuditPayload)
+  @apigen.failsWith(CandidateUnavailableFailure)
+  @apigen.failsWith(CandidateConflictFailure)
+  @apigen.failsWith(InvalidCandidateFailure)
+  @apigen.failsWith(AuditUnavailableFailure)
   planProjectCandidateSynchronization(
     @path project: ResourceId,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
@@ -1279,18 +727,18 @@ interface CandidateSynchronization {
   @route("/source")
   @post
   @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(CandidateServiceUnavailableFailure)
+  @apigen.failsWith(CandidateUnavailableFailure)
   @apigen.failsWith(CandidateConflictFailure)
   @apigen.failsWith(InvalidCandidateFailure)
   @apigen.command(#{ auditAction: "candidate.source_retained" })
   @apigen.auditPayload(CandidateSourceRetainedAuditPayload)
-  retainProjectCandidateSource(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateSynchronizationRequest): CreatedJson<CandidateSourceSnapshotResponse> | CommonErrors;
+  retainProjectCandidateSource(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("Source-Synchronization-Plan") sourceSynchronizationPlan: string, @body body: CandidateSynchronizationRequest): OkJson<CandidateSourceSnapshotResponse> | CommonErrors;
 
   @summary("Upload a missing immutable private-candidate source blob")
   @route("/blobs/{digest}")
   @put
   @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(CandidateServiceUnavailableFailure)
+  @apigen.failsWith(CandidateUnavailableFailure)
   @apigen.failsWith(CandidateConflictFailure)
   @apigen.failsWith(InvalidCandidateFailure)
   @apigen.failsWith(InvalidCandidateSourceBlobFailure)
@@ -1300,21 +748,8 @@ interface CandidateSynchronization {
   })
   @apigen.auditPayload(CandidateSourceBlobAuditPayload)
   @apigen.manual
-  uploadProjectCandidateSourceBlob(@path @apigen.target project: ResourceId, @path digest: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<CandidateSourceBlobResponse> | CommonErrors;
+  uploadProjectCandidateSourceBlob(@path @apigen.target project: ResourceId, @path digest: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @header("Source-Synchronization-Plan") sourceSynchronizationPlan: string, @body body: bytes): CreatedJson<CandidateSourceBlobResponse> | CommonErrors;
 
-  @summary("Atomically commit a complete source snapshot to the current author's private candidate")
-  @route("/commit")
-  @post
-  @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(CandidateServiceUnavailableFailure)
-  @apigen.failsWith(CandidateNotFoundFailure)
-  @apigen.failsWith(CandidateConflictFailure)
-  @apigen.failsWith(InvalidCandidateFailure)
-  @apigen.command(#{
-    auditAction: "candidate.ready",
-  })
-  @apigen.auditPayload(CandidateAuditPayload)
-  commitProjectCandidateSynchronization(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateSynchronizationRequest): OkJson<CandidateResponse> | CommonErrors;
 }
 
 @apigen.failureDefinition(#{
@@ -1573,7 +1008,7 @@ interface DeliveryStatus {
   @apigen.failsWith(DeliveryReadInvalidFailure)
   getDeliveryBuildStatus(@path project: ResourceId, @path build: string): OkJson<DeliveryBuildStatusResponse> | CommonErrors;
 
-  @summary("Get catalog-seal verification status and evidence digests")
+  @summary("Get snapshot-seal verification status and relation evidence digests")
   @route("/seals/{seal}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
@@ -1617,7 +1052,7 @@ interface DeliveryStatus {
   @apigen.failsWith(DeliveryReadInvalidFailure)
   getDeliveryPublicationEvidence(@path project: ResourceId, @path publication: string): OkJson<DeliveryPublicationEvidenceResponse> | CommonErrors;
 
-  @summary("Inspect physical-pool admissions, roots, leases, GC, and degraded state")
+  @summary("Inspect target snapshot state and degraded status")
   @route("/operator")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })

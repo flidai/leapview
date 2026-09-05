@@ -80,6 +80,9 @@ func hasActiveBootstrapServingState(
 		if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, deployment.ErrNotFound) {
 			return false, fmt.Errorf("read active delivery target: %w", err)
 		}
+		// A configured canonical target authority is definitive. A missing row
+		// means bootstrap is still open; never resurrect stale legacy scope state.
+		return false, nil
 	}
 	if states == nil {
 		return false, errors.New("serving-state repository is unavailable")
@@ -105,9 +108,8 @@ func hasActiveBootstrapServingState(
 	if activeCount > 0 {
 		return true, nil
 	}
-	// The legacy scope table is only a compatibility fallback when no canonical
-	// target row exists. A runtime host may still be warming up (or be nil in a
-	// fresh process) while the durable stores have no active generation.
+	// A focused test/profile assembly may omit the canonical target authority;
+	// runnable application composition never reaches this fallback.
 	return false, nil
 }
 
@@ -195,8 +197,7 @@ func bootstrapAPIGenDecision(
 
 func bootstrapControlPlaneOperation(operationID string) bool {
 	switch operationID {
-	case "listDeployments", "getDeployment", "listDeploymentEvents",
-		"planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization",
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
 		"getDeliveryCandidateStatus", "getDeliveryPlanPreview":
 		return true
 	default:
@@ -206,10 +207,9 @@ func bootstrapControlPlaneOperation(operationID string) bool {
 
 func bootstrapOperationAllowed(operationID string) bool {
 	switch operationID {
-	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview",
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
-		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
-		"listDeployments", "getDeployment", "listDeploymentEvents":
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
 		return true
 	case "managedDataTusTransport":
 		return true
@@ -220,7 +220,7 @@ func bootstrapOperationAllowed(operationID string) bool {
 
 func bootstrapOperationAllowedWithoutClaim(operationID string) bool {
 	switch operationID {
-	case "startProjectCandidate", "planProjectCandidateSynchronization",
+	case "planProjectCandidateSynchronization",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
 		"managedDataTusTransport":
@@ -268,54 +268,6 @@ func deliveryProjectAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjec
 		}
 	}
 	return false, nil
-}
-
-func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
-	if strings.TrimSpace(objectID) == "" {
-		return deployment.DeliveryPlan{}, sql.ErrNoRows
-	}
-	loadPlan := func(planID string) (deployment.DeliveryPlan, error) {
-		if strings.TrimSpace(planID) == "" {
-			return deployment.DeliveryPlan{}, sql.ErrNoRows
-		}
-		return reader.PlanByID(ctx, planID)
-	}
-	switch operationID {
-	case "buildDeliveryPlan", "getDeliveryPlanPreview":
-		return loadPlan(objectID)
-	case "publishDeliveryCandidate", "getDeliveryCandidateStatus":
-		candidate, err := reader.DeliveryCandidateByID(ctx, objectID)
-		if err != nil {
-			return deployment.DeliveryPlan{}, err
-		}
-		return loadPlan(candidate.PlanID)
-	case "rollbackDeliveryGeneration", "getDeliveryGenerationStatus":
-		generation, err := reader.DeliveryGenerationByID(ctx, objectID)
-		if err != nil {
-			return deployment.DeliveryPlan{}, err
-		}
-		return loadPlan(generation.PlanID)
-	case "getDeliveryBuildStatus":
-		attempt, err := reader.DeliveryBuildAttemptByID(ctx, objectID)
-		if err != nil {
-			return deployment.DeliveryPlan{}, err
-		}
-		return loadPlan(attempt.PlanID)
-	case "getDeliverySealStatus":
-		seal, err := reader.DeliveryCatalogSealByID(ctx, objectID)
-		if err != nil {
-			return deployment.DeliveryPlan{}, err
-		}
-		return loadPlan(seal.PlanID)
-	case "getDeliveryPublicationEvidence", "requestDeliveryPublicationApproval", "getDeliveryPublicationApproval", "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
-		publication, err := reader.DeliveryPublicationByID(ctx, objectID)
-		if err != nil {
-			return deployment.DeliveryPlan{}, err
-		}
-		return loadPlan(publication.PlanID)
-	default:
-		return deployment.DeliveryPlan{}, fmt.Errorf("unsupported delivery authorization operation %q", operationID)
-	}
 }
 
 func deliveryApprovalDecisionOperation(operationID string) bool {
@@ -404,4 +356,73 @@ func deliveryResourceCapability(resource access.ResourceRef, capability access.C
 		return access.CapabilityResourceEdit
 	}
 	return capability
+}
+
+// nativeDeliveryAuthorizationPlan resolves the canonical PostgreSQL delivery
+// graph used by production authorization.
+func nativeDeliveryAuthorizationPlan(ctx context.Context, reader deploymentmodule.NativeDeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
+	if strings.TrimSpace(objectID) == "" {
+		return deployment.DeliveryPlan{}, sql.ErrNoRows
+	}
+	loadPlan := func(planID string) (deployment.DeliveryPlan, error) {
+		if strings.TrimSpace(planID) == "" {
+			return deployment.DeliveryPlan{}, sql.ErrNoRows
+		}
+		plan, err := reader.Plan(ctx, planID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return plan.RichPlan()
+	}
+	switch operationID {
+	case "buildDeliveryPlan", "getDeliveryPlanPreview":
+		return loadPlan(objectID)
+	case "publishDeliveryCandidate", "getDeliveryCandidateStatus":
+		candidate, err := reader.Candidate(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return loadPlan(candidate.PlanID)
+	case "rollbackDeliveryGeneration", "getDeliveryGenerationStatus":
+		generation, err := reader.Generation(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return loadPlan(generation.PlanID)
+	case "getDeliveryBuildStatus":
+		attempt, err := reader.BuildAttempt(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return loadPlan(attempt.PlanID)
+	case "getDeliverySealStatus":
+		seal, err := reader.SnapshotSeal(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		attempt, err := reader.BuildAttempt(ctx, seal.AttemptID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return loadPlan(attempt.PlanID)
+	case "getDeliveryPublicationEvidence", "requestDeliveryPublicationApproval", "getDeliveryPublicationApproval", "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
+		publication, err := reader.Publication(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		generation, err := reader.Generation(ctx, publication.GenerationID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return loadPlan(generation.PlanID)
+	default:
+		return deployment.DeliveryPlan{}, fmt.Errorf("unsupported delivery authorization operation %q", operationID)
+	}
+}
+
+func nativeDeliveryAuthorizationError(err error) error {
+	if deploymentmodule.IsNativeDeliveryMissing(err) {
+		return sql.ErrNoRows
+	}
+	return err
 }

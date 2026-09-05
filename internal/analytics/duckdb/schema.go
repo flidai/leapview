@@ -17,6 +17,10 @@ type queryContext interface {
 }
 
 func discoverSchemas(ctx context.Context, provider analyticsresource.SessionProvider, model *semanticmodel.Model) error {
+	return discoverSchemasInNamespace(ctx, provider, model, "model")
+}
+
+func discoverSchemasInNamespace(ctx context.Context, provider analyticsresource.SessionProvider, model *semanticmodel.Model, relationNamespace string) error {
 	if provider == nil {
 		return fmt.Errorf("schema discovery requires a DuckDB database")
 	}
@@ -27,15 +31,28 @@ func discoverSchemas(ctx context.Context, provider analyticsresource.SessionProv
 	if model == nil {
 		return fmt.Errorf("schema discovery requires a semantic model")
 	}
+	if err := validateRelationNamespace(relationNamespace); err != nil {
+		return fmt.Errorf("relation namespace: %w", err)
+	}
 	var databaseName string
 	if err := db.QueryRowContext(ctx, `SELECT current_database()`).Scan(&databaseName); err != nil {
 		return err
 	}
-	rows, err := db.QueryContext(ctx, `
+	query := `
 SELECT schema_name, table_name, column_name, column_index, data_type, is_nullable, column_default, comment
 FROM duckdb_columns()
 WHERE database_name = ? AND schema_name IN ('source', 'model')
-ORDER BY schema_name, table_name, column_index`, databaseName)
+ORDER BY schema_name, table_name, column_index`
+	args := []any{databaseName}
+	if relationNamespace != "model" {
+		query = `
+SELECT schema_name, table_name, column_name, column_index, data_type, is_nullable, column_default, comment
+FROM duckdb_columns()
+WHERE database_name = ? AND (schema_name = 'source' OR schema_name = ?)
+ORDER BY schema_name, table_name, column_index`
+		args = append(args, relationNamespace)
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -67,7 +84,7 @@ ORDER BY schema_name, table_name, column_index`, databaseName)
 		switch schemaName {
 		case "source":
 			sourceColumns[tableName] = append(sourceColumns[tableName], column)
-		case "model":
+		case relationNamespace:
 			tableColumns[tableName] = append(tableColumns[tableName], column)
 		}
 	}

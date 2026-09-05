@@ -193,9 +193,7 @@ func TestCandidateRuntimeServiceRejectsInvalidRestrictionBeforeAcquisition(t *te
 
 func candidateRuntimeTestCandidate(t *testing.T, now time.Time) Candidate {
 	t.Helper()
-	candidate, err := NewCandidate(CandidateStartInput{ID: "cand_1", TargetID: "target_1", OwnerID: "author_1", Scope: CandidateScope{ProjectID: "project_1", Environment: "prod", BaseGenerationID: "generation_1"}, ArtifactDigest: "sha256:" + strings.Repeat("a", 64), ExpiresAt: now.Add(time.Hour), Now: now})
-	require.NoError(t, err)
-	return candidate
+	return Candidate{ID: "cand_1", TargetID: "target_1", OwnerID: "author_1", Scope: CandidateScope{ProjectID: "project_1", Environment: "prod", BaseGenerationID: "generation_1"}, ArtifactDigest: "sha256:" + strings.Repeat("a", 64), Status: CandidatePreparing, ExpiresAt: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now, Revision: 1}
 }
 
 type candidateRuntimeConnections struct {

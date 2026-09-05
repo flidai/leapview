@@ -34,6 +34,17 @@ type SQLRunRepository struct {
 	execution RunWorkflowConfig
 }
 
+type sqliteTransactionContextKey struct{}
+
+func withSQLiteTransaction(ctx context.Context, tx *sql.Tx) context.Context {
+	return context.WithValue(ctx, sqliteTransactionContextKey{}, tx)
+}
+
+func sqliteTransactionFromContext(ctx context.Context) (*sql.Tx, bool) {
+	tx, ok := ctx.Value(sqliteTransactionContextKey{}).(*sql.Tx)
+	return tx, ok && tx != nil
+}
+
 type RunWorkflowConfig struct {
 	ResourceKind string
 	InitialEvent string
@@ -75,7 +86,7 @@ func (r *SQLRunRepository) recordAuditIntent(ctx context.Context, tx transaction
 	}
 	// Resource identity remains the generated project target. The run ID is
 	// still the durable aggregate and event identity, so independent runs do
-	// not collide in the audit outbox.
+	// not collide in the audit record.
 	hash := sha256.Sum256([]byte(copy.Operation + "\x00" + copy.PrincipalID + "\x00" + runID + "\x00" + copy.RequestID))
 	copy.EventID = "sha256:" + hex.EncodeToString(hash[:])
 	return r.audit.RecordAuditIntent(ctx, tx, copy)
@@ -87,6 +98,65 @@ func (r *SQLRunRepository) CreateRun(ctx context.Context, input refreshrun.RunIn
 
 func (r *SQLRunRepository) CreateScheduledRun(ctx context.Context, input refreshrun.RunInput, occurrence refreshschedule.Occurrence) (refreshrun.RunRecord, error) {
 	return r.createRun(ctx, input, &occurrence)
+}
+
+// CreateRunTree admits a root and all dependency provenance rows in one
+// SQLite transaction. It mirrors the PostgreSQL tree capability while
+// retaining the development adapter's existing per-run job/workflow rows.
+func (r *SQLRunRepository) CreateRunTree(ctx context.Context, tree refreshrun.RunTreeInput) (refreshrun.RunRecord, []refreshrun.RunRecord, error) {
+	if r == nil || r.db == nil {
+		return refreshrun.RunRecord{}, nil, fmt.Errorf("refresh run database is required")
+	}
+	if tree.Root.ParentRunID != "" || tree.Root.TargetType != refreshrun.TargetRefreshPipeline {
+		return refreshrun.RunRecord{}, nil, fmt.Errorf("refresh run tree requires a root pipeline input")
+	}
+	seen := make(map[string]struct{}, len(tree.DependencyTargets))
+	for _, targetID := range tree.DependencyTargets {
+		if err := targetID.Validate(); err != nil {
+			return refreshrun.RunRecord{}, nil, err
+		}
+		if _, ok := seen[targetID.String()]; ok {
+			return refreshrun.RunRecord{}, nil, fmt.Errorf("duplicate refresh dependency target %q", targetID)
+		}
+		seen[targetID.String()] = struct{}{}
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return refreshrun.RunRecord{}, nil, err
+	}
+	defer tx.Rollback()
+	treeCtx := withSQLiteTransaction(ctx, tx)
+	root, err := r.createRun(treeCtx, tree.Root, tree.Occurrence)
+	if err != nil {
+		return refreshrun.RunRecord{}, nil, err
+	}
+	if root.Status == refreshrun.RunStatusSkipped {
+		if err := tx.Commit(); err != nil {
+			return refreshrun.RunRecord{}, nil, err
+		}
+		return root, []refreshrun.RunRecord{}, nil
+	}
+	children := make([]refreshrun.RunRecord, 0, len(tree.DependencyTargets))
+	for _, targetID := range tree.DependencyTargets {
+		childInput := tree.Root
+		childInput.RunID = ""
+		childInput.Identity = root.Identity
+		childInput.TargetType = refreshrun.TargetModel
+		childInput.TargetID = targetID
+		childInput.TriggerType = refreshrun.TriggerDependency
+		childInput.JobKind = refreshrun.JobKindChildRun
+		childInput.ParentRunID = root.ID
+		childInput.AuditIntent = nil
+		child, childErr := r.createRun(treeCtx, childInput, nil)
+		if childErr != nil {
+			return refreshrun.RunRecord{}, nil, childErr
+		}
+		children = append(children, child)
+	}
+	if err := tx.Commit(); err != nil {
+		return refreshrun.RunRecord{}, nil, err
+	}
+	return root, children, nil
 }
 
 // CheckInvocationAdmission is a non-mutating early guard for externally
@@ -112,7 +182,7 @@ func (r *SQLRunRepository) CheckInvocationAdmission(ctx context.Context, identit
 	if err != nil {
 		return err
 	}
-	if active != 0 {
+	if active {
 		return refreshrun.ErrInvocationConflict
 	}
 	return nil
@@ -141,7 +211,7 @@ func (r *SQLRunRepository) CheckScheduledInvocationAdmission(ctx context.Context
 	if err != nil {
 		return err
 	}
-	if active == 0 {
+	if !active {
 		return tx.Commit()
 	}
 	affected, err := q.SkipRefreshPipelineOccurrence(ctx, platformdb.SkipRefreshPipelineOccurrenceParams{
@@ -179,11 +249,16 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 			return refreshrun.RunRecord{}, fmt.Errorf("scheduled refresh run does not match occurrence schedule evidence")
 		}
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return refreshrun.RunRecord{}, err
+	tx, inTx := sqliteTransactionFromContext(ctx)
+	if !inTx {
+		tx, err = r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return refreshrun.RunRecord{}, err
+		}
 	}
-	defer tx.Rollback()
+	if !inTx {
+		defer tx.Rollback()
+	}
 	q := r.q.WithTx(tx)
 	admissionSkipped := false
 	rootPipeline := normalized.ParentRunID == "" && normalized.TargetType == refreshrun.TargetRefreshPipeline
@@ -199,7 +274,7 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 		if err != nil {
 			return refreshrun.RunRecord{}, err
 		}
-		if activeExternal != 0 {
+		if activeExternal {
 			return refreshrun.RunRecord{}, refreshrun.ErrInvocationConflict
 		}
 	}
@@ -211,7 +286,7 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 		if err != nil {
 			return refreshrun.RunRecord{}, err
 		}
-		if activeExternal != 0 {
+		if activeExternal {
 			if occurrence == nil {
 				return refreshrun.RunRecord{}, refreshrun.ErrAdmissionDeniedExternalActive
 			}
@@ -226,8 +301,10 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 			if affected != 1 {
 				return refreshrun.RunRecord{}, fmt.Errorf("scheduled refresh occurrence is not claimable")
 			}
-			if err := tx.Commit(); err != nil {
-				return refreshrun.RunRecord{}, err
+			if !inTx {
+				if err := tx.Commit(); err != nil {
+					return refreshrun.RunRecord{}, err
+				}
 			}
 			return refreshrun.RunRecord{Status: refreshrun.RunStatusSkipped, Error: refreshrun.AdmissionDeniedExternalActive}, errors.Join(refreshschedule.ErrOccurrenceSkipped, refreshrun.ErrAdmissionDeniedExternalActive)
 		}
@@ -241,7 +318,7 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 		if err != nil {
 			return refreshrun.RunRecord{}, err
 		}
-		admissionSkipped = active != 0
+		admissionSkipped = active
 	}
 	if rootPipeline && source == refreshrun.TriggerSchedule && policy == refreshschedule.ConcurrencyReplace {
 		target := platformdb.SupersedeRefreshTargetJobsParams{
@@ -363,10 +440,17 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 			return refreshrun.RunRecord{}, err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if !inTx {
+		if err := tx.Commit(); err != nil {
+			return refreshrun.RunRecord{}, err
+		}
+		return r.getRunForIdentity(ctx, normalized.Identity, runID)
+	}
+	row, err := q.GetMaterializationRun(ctx, platformdb.GetMaterializationRunParams{RunID: runID, ProjectID: normalized.Identity.ProjectID.String(), Environment: normalized.Identity.Environment})
+	if err != nil {
 		return refreshrun.RunRecord{}, err
 	}
-	return r.getRunForIdentity(ctx, normalized.Identity, runID)
+	return materializationRunFromGetRow(row)
 }
 
 func (r *SQLRunRepository) ClaimNextExecutableJob(ctx context.Context, identity projectgraph.ServingIdentity, owner string, lease time.Duration) (refreshrun.JobRecord, bool, error) {
@@ -593,7 +677,7 @@ func (r *SQLRunRepository) RunMayPublish(ctx context.Context, job refreshrun.Job
 		RunID: job.RunID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID, Environment: job.Identity.Environment, TargetRevision: job.TargetRevision,
 		LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision,
 	})
-	return allowed == 1, err
+	return allowed, err
 }
 
 func (r *SQLRunRepository) JobQueueStats(ctx context.Context, scope refreshrun.ReadScope) (refreshrun.JobQueueStats, error) {

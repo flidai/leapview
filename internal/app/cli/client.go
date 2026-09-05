@@ -205,9 +205,18 @@ func (client capabilityAPIClient) validateAuthoringTarget(
 			capabilitiesEnvironment,
 		)
 	}
+	deliveryMode := cliapi.DeliveryMode(strings.TrimSpace(string(capabilities.DeliveryMode)))
+	if deliveryMode != cliapi.DeliveryModeNativePostgres {
+		return cliapi.Credentials{}, fmt.Errorf(
+			"incompatible client/server delivery mode at %q: target reports %q",
+			target,
+			deliveryMode,
+		)
+	}
 	return cliapi.Credentials{
 		Target: target, Token: token,
 		CanonicalOrigin: instance.CanonicalOrigin,
+		DeliveryMode:    deliveryMode,
 	}, nil
 }
 

@@ -8,10 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	apigenaudit "github.com/Yacobolo/toolbelt/apigen/runtime/audit"
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
+	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
+	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
+	"github.com/flidai/leapview/internal/platform/http/idempotency"
+	"github.com/go-chi/chi/v5"
 )
 
 type testAuthorizer struct{}
@@ -99,6 +105,51 @@ func TestGeneratedCommandBoundaryAppliesGeneratedIdempotencyPolicy(t *testing.T)
 	handler.HandleAPIGen("createWidget", recorder, httptest.NewRequest(http.MethodPost, "/widgets", nil))
 	if called || recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "IDEMPOTENCY_KEY_REQUIRED") {
 		t.Fatalf("called=%v status=%d body=%s", called, recorder.Code, recorder.Body.String())
+	}
+}
+
+type protocolBypassAuthorizer struct{ calls atomic.Int32 }
+
+func (a *protocolBypassAuthorizer) Protect(_ string, next http.Handler) (http.Handler, bool) {
+	a.calls.Add(1)
+	return next, true
+}
+
+func TestProtocolBypassStillRunsGeneratedCommandBoundary(t *testing.T) {
+	authorizer := &protocolBypassAuthorizer{}
+	dispatchCalls := atomic.Int32{}
+	generated, err := Build(authorizer, func(_ string, w http.ResponseWriter, _ *http.Request) bool {
+		dispatchCalls.Add(1)
+		w.WriteHeader(http.StatusAccepted)
+		return true
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protocol, err := apiprotocol.Build(t.Context(), apiprotocol.Config{
+		Store: idempotency.NewMemoryStore(), CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		BypassDurableIdempotency: map[string]struct{}{"createRefreshRun": {}},
+		BearerToken:              func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		generated.HandleAPIGen("createRefreshRun", w, r)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project/refresh-runs", strings.NewReader(`{"pipelineId":"pipeline:sales"}`))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("project", "project")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+	request.Header.Set("Authorization", "Bearer credential")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	protocol.Middleware(next).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "IDEMPOTENCY_KEY_REQUIRED") {
+		t.Fatalf("missing key response = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if authorizer.calls.Load() != 1 || dispatchCalls.Load() != 0 {
+		t.Fatalf("generated boundary calls: protect=%d dispatch=%d", authorizer.calls.Load(), dispatchCalls.Load())
 	}
 }
 

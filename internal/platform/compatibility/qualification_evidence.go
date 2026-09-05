@@ -13,6 +13,18 @@ import (
 	"github.com/flidai/leapview/internal/platform/ociref"
 )
 
+// ReleaseIdentity is the immutable build identity shared by qualification
+// evidence and release provenance. It carries normalized metadata, not mutable
+// tags or runtime state.
+type ReleaseIdentity struct {
+	ReleaseID      string `json:"releaseId,omitempty"`
+	Version        string `json:"version,omitempty"`
+	SourceRevision string `json:"sourceRevision,omitempty"`
+	Image          string `json:"image"`
+	Distribution   string `json:"distribution,omitempty"`
+	Platform       string `json:"platform"`
+}
+
 // TransitionQualificationEvidence is the owner-produced proof that an exact
 // predecessor and candidate completed both transition directions without
 // changing deterministic application state.

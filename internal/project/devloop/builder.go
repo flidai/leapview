@@ -115,7 +115,7 @@ func equalSourceSets(left, right map[string][]byte) bool {
 
 func contentArtifact(path string, content []byte) Artifact {
 	sum := sha256.Sum256(content)
-	return Artifact{Path: path, Digest: "sha256:" + hex.EncodeToString(sum[:]), Content: append([]byte(nil), content...)}
+	return Artifact{Path: path, Digest: "sha256:" + hex.EncodeToString(sum[:]), SizeBytes: int64(len(content)), Content: append([]byte(nil), content...)}
 }
 
 func candidateSetDigest(projectID projectgraph.ResourceID, projectFile string, artifacts []Artifact) string {
@@ -125,7 +125,7 @@ func candidateSetDigest(projectID projectgraph.ResourceID, projectFile string, a
 	projectIDValue := projectID.String()
 	_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:", len(projectIDValue), projectIDValue, len(projectFile), projectFile)
 	for _, artifact := range ordered {
-		_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:", len(artifact.Path), artifact.Path, len(artifact.Digest), artifact.Digest)
+		_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:%d:", len(artifact.Path), artifact.Path, len(artifact.Digest), artifact.Digest, artifact.SizeBytes)
 	}
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
 }

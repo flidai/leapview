@@ -80,50 +80,7 @@ jobs:
         run: |
           leapview publish "$LEAPVIEW_CANDIDATE_ID"
 
-  reconcile-closed:
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.action == 'closed' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    environment: leapview-authoring
-    env:
-      LEAPVIEW_WORKLOAD_CLIENT_ID: ${{ secrets.LEAPVIEW_WORKLOAD_CLIENT_ID }}
-      LEAPVIEW_WORKLOAD_CLIENT_SECRET: ${{ secrets.LEAPVIEW_WORKLOAD_CLIENT_SECRET }}
-      CHANGE_KEY: github:pull/${{ github.event.pull_request.number }}
-    steps:
-      - name: Cancel abandoned candidate idempotently
-        run: |
-          leapview api call cancelProjectCandidateByKey \
-            --path project="$LEAPVIEW_WORKLOAD_PROJECT" \
-            --path candidateKey="$CHANGE_KEY" \
-            --idempotency-key "candidate-close:${{ github.event.pull_request.id }}"
 
-  reconcile-missed-close:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    environment: leapview-authoring
-    env:
-      GH_TOKEN: ${{ github.token }}
-      LEAPVIEW_WORKLOAD_CLIENT_ID: ${{ secrets.LEAPVIEW_WORKLOAD_CLIENT_ID }}
-      LEAPVIEW_WORKLOAD_CLIENT_SECRET: ${{ secrets.LEAPVIEW_WORKLOAD_CLIENT_SECRET }}
-    steps:
-      - name: Reconcile recently closed pull requests
-        shell: bash
-        run: |
-          while read -r number; do
-            key="github:pull/$number"
-            evidence="$(mktemp)"
-            if leapview api call cancelProjectCandidateByKey \
-              --path project="$LEAPVIEW_WORKLOAD_PROJECT" \
-              --path candidateKey="$key" \
-              --idempotency-key "candidate-reconcile:$key" \
-              >"$evidence" 2>&1; then
-              cat "$evidence"
-            elif grep -q "CANDIDATE_NOT_FOUND" "$evidence"; then
-              echo "candidate already absent: $key"
-            else
-              cat "$evidence" >&2
-              exit 1
-            fi
-          done < <(gh pr list --state closed --limit 100 --json number --jq '.[].number')
+  # Closed candidates are retained only for their target-defined lifetime and
+  # expire automatically; the canonical Delivery API has no cancellation
+  # operation to call from a workflow.

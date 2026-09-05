@@ -42,6 +42,7 @@ func (m *Module) beginFinalize(ctx context.Context, request control.UploadReques
 		Job: jobs.EnqueueInput{
 			ID: m.finalizeExecution.ResourceKind + ":" + request.UploadID + ":finalize", Kind: m.finalizeExecution.JobKind,
 			WorkloadClass: "control", PrincipalID: principal, GroupIDs: nil, EstimatedMemoryBytes: 16 << 20,
+			PartitionKey: "manageddata:" + request.Project,
 			ResourceKind: m.finalizeExecution.ResourceKind, ResourceID: request.UploadID, Payload: payload,
 		},
 	}
@@ -52,12 +53,10 @@ func (m *Module) beginFinalize(ctx context.Context, request control.UploadReques
 }
 
 func (m *Module) abortUpload(ctx context.Context, request control.UploadRequest) (control.UploadResult, error) {
-	if m == nil || m.workflow == nil {
+	if m == nil || m.atomicTransitions == nil {
 		result, err := m.uploads.AbortUpload(ctx, request)
 		if err == nil && result.Status == manageddata.UploadStatusAborted {
-			// Non-production adapters may not provide the atomic SQLite workflow
-			// capability. Keep their event history correct, while production uses
-			// the transactional path below.
+			// Keep event history correct when no workflow recorder is configured.
 			err = m.recordUploadCancelled(ctx, result)
 		}
 		return result, err

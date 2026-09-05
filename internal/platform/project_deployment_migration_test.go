@@ -98,6 +98,53 @@ func TestDeliveryMigrationUpgradeFrom072(t *testing.T) {
 	assertDeliveryMigrationTail(t, ctx, store)
 }
 
+// TestDashboardPublicationRelayMigrationUpgradeFromPredecessor proves the
+// narrow FAI-596 forward migration removes only the legacy relay after the
+// migration-094 predecessor. The publication history and stream registry
+// tables/indexes remain available for the SQLite compatibility path.
+func TestDashboardPublicationRelayMigrationUpgradeFromPredecessor(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "dashboard-publication-relay-upgrade.db")
+	legacy, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		t.Fatalf("open migration predecessor: %v", err)
+	}
+	legacy.SetMaxOpenConns(1)
+	goose.SetBaseFS(migrationsFS)
+	goose.SetLogger(goose.NopLogger())
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		legacy.Close()
+		t.Fatalf("set migration dialect: %v", err)
+	}
+	if err := goose.UpToContext(ctx, legacy, "migrations", 94); err != nil {
+		legacy.Close()
+		t.Fatalf("seed migration-094 predecessor: %v", err)
+	}
+	seedDashboardPublicationRelayPredecessor(t, ctx, legacy)
+	assertDashboardPublicationRelayPresent(t, ctx, legacy)
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close migration predecessor: %v", err)
+	}
+
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("upgrade migration-094 predecessor: %v", err)
+	}
+	assertDashboardPublicationRelayRemoved(t, ctx, store)
+	assertDashboardPublicationRows(t, ctx, store)
+	if err := store.Close(); err != nil {
+		t.Fatalf("close upgraded store: %v", err)
+	}
+
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen upgraded store: %v", err)
+	}
+	defer reopened.Close()
+	assertDashboardPublicationRelayRemoved(t, ctx, reopened)
+	assertDashboardPublicationRows(t, ctx, reopened)
+}
+
 func TestRefreshPipelineContractMigrationDropsLegacyExecutionState(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "occurrence-identity-upgrade.db")
@@ -262,8 +309,8 @@ func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate applied delivery migration sequence: %v", err)
 	}
+	assertDashboardPublicationRelayRemoved(t, ctx, store)
 	for _, field := range []struct{ table, column string }{
-		{table: "physical_pools", column: "encryption_domain"},
 		{table: "delivery_gc_cycles", column: "actor_id"},
 		{table: "delivery_build_attempts", column: "idempotency_key"},
 		{table: "delivery_plans", column: "actor_id"},
@@ -303,6 +350,150 @@ func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store
 		defer rows.Close()
 		if rows.Next() {
 			t.Fatal("delivery migration leaves a foreign-key violation")
+		}
+	}
+}
+
+func assertDashboardPublicationRelayPresent(t *testing.T, ctx context.Context, database *sql.DB) {
+	t.Helper()
+	for _, object := range []struct {
+		typeName string
+		name     string
+	}{
+		{typeName: "table", name: "dashboard_publication_stream_events"},
+		{typeName: "index", name: "dashboard_publication_stream_events_stream_idx"},
+	} {
+		var count int
+		if err := database.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = ? AND name = ?`, object.typeName, object.name).Scan(&count); err != nil {
+			t.Fatalf("inspect predecessor %s %s: %v", object.typeName, object.name, err)
+		}
+		if count != 1 {
+			t.Fatalf("predecessor %s %s count = %d, want 1", object.typeName, object.name, count)
+		}
+	}
+}
+
+func seedDashboardPublicationRelayPredecessor(t *testing.T, ctx context.Context, database *sql.DB) {
+	t.Helper()
+	for _, statement := range []string{
+		`INSERT INTO projects (id, title) VALUES ('fai596-project', 'FAI-596')`,
+		`INSERT INTO serving_states (id, project_id, environment, status, source) VALUES ('fai596-state', 'fai596-project', 'prod', 'active', 'publish')`,
+		`INSERT INTO dashboard_publications (
+  id, project_id, name, public_id, dashboard, default_page, configuration_digest,
+  allowed_origins_json, dependency_asset_ids_json, revision, configured,
+  active_serving_state_id, configured_at
+) VALUES (
+  'fai596-publication', 'fai596-project', 'website', 'fai596-public-id',
+  'sales', 'overview', 'sha256:fai596', '["https://example.test"]',
+  '["dashboard:sales"]', 7, 1, 'fai596-state', '2026-08-31T00:00:00Z'
+)`,
+		`INSERT INTO dashboard_publication_events (publication_id, event_type, actor_id, serving_state_id, created_at)
+VALUES ('fai596-publication', 'configured', 'fai596-actor', 'fai596-state', '2026-08-31T00:00:01Z')`,
+		`INSERT INTO dashboard_publication_streams (
+  publication_id, stream_id, public_id, serving_state_id, registration_id,
+  filters_json, generation, expires_at, updated_at
+) VALUES (
+  'fai596-publication', 'fai596-stream', 'fai596-public-id', 'fai596-state',
+  'fai596-registration', '{"controls":{"region":"west"},"selections":[]}',
+  4, '2999-01-01T00:00:00Z', '2026-08-31T00:00:02Z'
+)`,
+		`INSERT INTO dashboard_publication_stream_events (stream_id, envelope_json, created_at)
+VALUES ('fai596-stream', '{"signals":{"status":{"generation":4}}}', '2026-08-31T00:00:03Z')`,
+	} {
+		if _, err := database.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("seed dashboard publication predecessor: %v", err)
+		}
+	}
+}
+
+func assertDashboardPublicationRows(t *testing.T, ctx context.Context, store *Store) {
+	t.Helper()
+	var publicationID, publicID, dashboard, servingStateID string
+	var revision int
+	if err := store.SQLDB().QueryRowContext(ctx, `
+SELECT id, public_id, dashboard, active_serving_state_id, revision
+FROM dashboard_publications WHERE id = 'fai596-publication'`).Scan(
+		&publicationID, &publicID, &dashboard, &servingStateID, &revision,
+	); err != nil {
+		t.Fatalf("read retained dashboard publication: %v", err)
+	}
+	if publicationID != "fai596-publication" || publicID != "fai596-public-id" || dashboard != "sales" || servingStateID != "fai596-state" || revision != 7 {
+		t.Fatalf("retained dashboard publication = id %q public_id %q dashboard %q state %q revision %d", publicationID, publicID, dashboard, servingStateID, revision)
+	}
+
+	var eventCount int
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM dashboard_publication_events WHERE publication_id = 'fai596-publication'`).Scan(&eventCount); err != nil {
+		t.Fatalf("count retained dashboard publication events: %v", err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("retained dashboard publication event count = %d, want 1", eventCount)
+	}
+	var eventType, actorID, eventServingState string
+	if err := store.SQLDB().QueryRowContext(ctx, `
+SELECT event_type, actor_id, serving_state_id
+FROM dashboard_publication_events WHERE publication_id = 'fai596-publication'`).Scan(&eventType, &actorID, &eventServingState); err != nil {
+		t.Fatalf("read retained dashboard publication event: %v", err)
+	}
+	if eventType != "configured" || actorID != "fai596-actor" || eventServingState != "fai596-state" {
+		t.Fatalf("retained dashboard publication event = type %q actor %q state %q", eventType, actorID, eventServingState)
+	}
+
+	var streamCount int
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM dashboard_publication_streams WHERE publication_id = 'fai596-publication' AND stream_id = 'fai596-stream'`).Scan(&streamCount); err != nil {
+		t.Fatalf("count retained dashboard publication streams: %v", err)
+	}
+	if streamCount != 1 {
+		t.Fatalf("retained dashboard publication stream count = %d, want 1", streamCount)
+	}
+	var streamPublicID, streamStateID, registrationID, filtersJSON string
+	var generation int
+	if err := store.SQLDB().QueryRowContext(ctx, `
+SELECT public_id, serving_state_id, registration_id, filters_json, generation
+FROM dashboard_publication_streams
+WHERE publication_id = 'fai596-publication' AND stream_id = 'fai596-stream'`).Scan(
+		&streamPublicID, &streamStateID, &registrationID, &filtersJSON, &generation,
+	); err != nil {
+		t.Fatalf("read retained dashboard publication stream: %v", err)
+	}
+	if streamPublicID != "fai596-public-id" || streamStateID != "fai596-state" || registrationID != "fai596-registration" || filtersJSON != `{"controls":{"region":"west"},"selections":[]}` || generation != 4 {
+		t.Fatalf("retained dashboard publication stream = public_id %q state %q registration %q filters %q generation %d", streamPublicID, streamStateID, registrationID, filtersJSON, generation)
+	}
+}
+
+func assertDashboardPublicationRelayRemoved(t *testing.T, ctx context.Context, store *Store) {
+	t.Helper()
+	for _, object := range []struct {
+		typeName string
+		name     string
+	}{
+		{typeName: "table", name: "dashboard_publication_stream_events"},
+		{typeName: "index", name: "dashboard_publication_stream_events_stream_idx"},
+	} {
+		var count int
+		if err := store.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = ? AND name = ?`, object.typeName, object.name).Scan(&count); err != nil {
+			t.Fatalf("inspect removed relay %s %s: %v", object.typeName, object.name, err)
+		}
+		if count != 0 {
+			t.Fatalf("removed relay %s %s count = %d, want 0", object.typeName, object.name, count)
+		}
+	}
+	for _, object := range []struct {
+		typeName string
+		name     string
+	}{
+		{typeName: "table", name: "dashboard_publications"},
+		{typeName: "table", name: "dashboard_publication_events"},
+		{typeName: "table", name: "dashboard_publication_streams"},
+		{typeName: "index", name: "dashboard_publications_project_idx"},
+		{typeName: "index", name: "dashboard_publication_events_publication_idx"},
+		{typeName: "index", name: "dashboard_publication_streams_expiry_idx"},
+	} {
+		var count int
+		if err := store.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = ? AND name = ?`, object.typeName, object.name).Scan(&count); err != nil {
+			t.Fatalf("inspect retained publication object %s %s: %v", object.typeName, object.name, err)
+		}
+		if count != 1 {
+			t.Fatalf("retained publication %s %s count = %d, want 1", object.typeName, object.name, count)
 		}
 	}
 }

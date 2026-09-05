@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	admincli "github.com/flidai/leapview/internal/admin/cli"
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
@@ -34,6 +35,29 @@ func testNativePoolBootstrapRequest(t *testing.T, apply bool) adminoffline.Physi
 	}}
 }
 
+func testCatalogUpgradeRequest(t *testing.T, apply bool) admincli.CatalogUpgradeRequest {
+	t.Helper()
+	bootstrap := testNativePoolBootstrapRequest(t, apply)
+	return admincli.CatalogUpgradeRequest{
+		Pool: bootstrap.Pool, Evidence: bootstrap.Evidence,
+		MigrationID: "0198f2c0-7c7a-7f00-8a11-000000000001", CatalogSchemaVersion: "ducklake-schema-v2",
+		RecoveryDecision: admincli.CatalogUpgradeRecoveryForwardRecovery,
+		DrainVerified:    true, BackupVerified: true, Apply: apply,
+	}
+}
+
+func testCatalogUpgradeConfig(t *testing.T) config.Config {
+	t.Helper()
+	return config.Config{
+		Production: true, HomeDir: t.TempDir(), PostgresExpectedMajor: 18, PostgresRequireTLS: true,
+		PostgresControlURL:                   "postgres://runtime:secret@db/control?sslmode=verify-full",
+		PostgresControlMigratorURL:           "postgres://migrator:secret@db/control?sslmode=verify-full",
+		PostgresDuckLakeURL:                  "postgres://ducklake:secret@db/ducklake?sslmode=verify-full",
+		PostgresControlUpgradeCoordinatorURL: "postgres://coordinator:secret@db/control?sslmode=verify-full",
+		PostgresDuckLakeMigratorURL:          "postgres://catalog-migrator:secret@db/ducklake?sslmode=verify-full",
+	}
+}
+
 func TestProductionPhysicalPoolBootstrapDryRunStaysReadOnly(t *testing.T) {
 	request := testNativePoolBootstrapRequest(t, false)
 	called, locked := false, false
@@ -57,6 +81,23 @@ func TestProductionPhysicalPoolBootstrapDryRunStaysReadOnly(t *testing.T) {
 	}
 }
 
+func TestProductionPhysicalPoolBootstrapRejectsIncompleteDeliveryOwnership(t *testing.T) {
+	for _, field := range []string{"tenant", "region"} {
+		t.Run(field, func(t *testing.T) {
+			request := testNativePoolBootstrapRequest(t, false)
+			switch field {
+			case "tenant":
+				request.Pool.Tenant = ""
+			case "region":
+				request.Pool.Region = ""
+			}
+			if _, _, err := validatePhysicalPoolBootstrap(request); err == nil {
+				t.Fatalf("missing %s unexpectedly accepted", field)
+			}
+		})
+	}
+}
+
 func TestProductionPhysicalPoolBootstrapApplyUsesNativeOwner(t *testing.T) {
 	request := testNativePoolBootstrapRequest(t, true)
 	pool, compatibilityDigest, err := validatePhysicalPoolBootstrap(request)
@@ -69,6 +110,9 @@ func TestProductionPhysicalPoolBootstrapApplyUsesNativeOwner(t *testing.T) {
 		AcquireLock: func(string) (adminoffline.Lock, error) { locked = true; return &testAdminLock{}, nil },
 		BootstrapPool: func(_ context.Context, _ config.Config, got adminoffline.PhysicalPoolBootstrapRequest) (adminoffline.PhysicalPoolBootstrapResult, error) {
 			called = true
+			if !got.Apply || got.Evidence.Digest != request.Evidence.Digest {
+				t.Fatalf("native bootstrap request = %#v", got)
+			}
 			return adminoffline.PhysicalPoolBootstrapResult{PoolID: pool.ID.String(), CompatibilityDigest: compatibilityDigest, EvidenceDigest: got.Evidence.Digest, ConformanceVersion: got.Evidence.ConformanceVersion, Applied: true}, nil
 		},
 	})
@@ -81,16 +125,77 @@ func TestProductionPhysicalPoolBootstrapApplyUsesNativeOwner(t *testing.T) {
 	}
 }
 
-func TestProductionPhysicalPoolBootstrapRejectsReturnedIdentityDrift(t *testing.T) {
-	request := testNativePoolBootstrapRequest(t, true)
+func TestProductionCatalogUpgradeDryRunStaysReadOnly(t *testing.T) {
+	request := testCatalogUpgradeRequest(t, false)
+	called, locked := false, false
 	ops := New(Dependencies{
-		LoadConfig:  func() (config.Config, error) { return config.Config{Production: true, HomeDir: t.TempDir()}, nil },
-		AcquireLock: func(string) (adminoffline.Lock, error) { return &testAdminLock{}, nil },
-		BootstrapPool: func(context.Context, config.Config, adminoffline.PhysicalPoolBootstrapRequest) (adminoffline.PhysicalPoolBootstrapResult, error) {
-			return adminoffline.PhysicalPoolBootstrapResult{PoolID: "sha256:" + strings.Repeat("f", 64), Applied: true}, nil
+		LoadConfig: func() (config.Config, error) { return config.Config{Production: true, HomeDir: t.TempDir()}, nil },
+		AcquireLock: func(string) (adminoffline.Lock, error) {
+			locked = true
+			return &testAdminLock{}, nil
+		},
+		UpgradePool: func(context.Context, config.Config, admincli.CatalogUpgradeRequest) (admincli.CatalogUpgradeResult, error) {
+			called = true
+			return admincli.CatalogUpgradeResult{}, nil
 		},
 	})
-	if err := ops.BootstrapPhysicalPool(t.Context(), request, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "different identity evidence") {
-		t.Fatalf("identity drift error = %v", err)
+	var out bytes.Buffer
+	if err := ops.UpgradePhysicalPoolCatalog(t.Context(), request, &out); err != nil {
+		t.Fatal(err)
+	}
+	if called || locked {
+		t.Fatalf("dry-run called native mutation=%t lock=%t", called, locked)
+	}
+	if !strings.Contains(out.String(), "migration_id: "+request.MigrationID) || !strings.Contains(out.String(), "applied: false") || strings.Contains(out.String(), "secret") {
+		t.Fatalf("dry-run output = %q", out.String())
+	}
+}
+
+func TestProductionCatalogUpgradeApplyUsesFencedNativeOwner(t *testing.T) {
+	request := testCatalogUpgradeRequest(t, true)
+	pool, _, err := validateCatalogUpgradeRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := testCatalogUpgradeConfig(t)
+	called, locked := false, false
+	ops := New(Dependencies{
+		LoadConfig: func() (config.Config, error) { return cfg, nil },
+		AcquireLock: func(string) (adminoffline.Lock, error) {
+			locked = true
+			return &testAdminLock{}, nil
+		},
+		UpgradePool: func(_ context.Context, _ config.Config, got admincli.CatalogUpgradeRequest) (admincli.CatalogUpgradeResult, error) {
+			called = true
+			if got.MigrationID != request.MigrationID || got.Evidence.Digest != request.Evidence.Digest || !got.Apply {
+				t.Fatalf("native catalog upgrade request = %#v", got)
+			}
+			return admincli.CatalogUpgradeResult{
+				MigrationID: got.MigrationID, PhysicalPoolID: pool.ID.String(), CatalogID: "ducklake:" + pool.ID.String(),
+				CatalogSchemaVersion: got.CatalogSchemaVersion, RecoveryDecision: got.RecoveryDecision, Applied: true,
+			}, nil
+		},
+	})
+	var out bytes.Buffer
+	if err := ops.UpgradePhysicalPoolCatalog(t.Context(), request, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !called || !locked || !strings.Contains(out.String(), "applied: true") {
+		t.Fatalf("native apply called=%t locked=%t output=%q", called, locked, out.String())
+	}
+}
+
+func TestProductionCatalogUpgradeRejectsDifferentCompletionEvidence(t *testing.T) {
+	request := testCatalogUpgradeRequest(t, true)
+	cfg := testCatalogUpgradeConfig(t)
+	ops := New(Dependencies{
+		LoadConfig:  func() (config.Config, error) { return cfg, nil },
+		AcquireLock: func(string) (adminoffline.Lock, error) { return &testAdminLock{}, nil },
+		UpgradePool: func(context.Context, config.Config, admincli.CatalogUpgradeRequest) (admincli.CatalogUpgradeResult, error) {
+			return admincli.CatalogUpgradeResult{MigrationID: request.MigrationID, PhysicalPoolID: "sha256:" + strings.Repeat("f", 64), CatalogID: "ducklake:different", CatalogSchemaVersion: request.CatalogSchemaVersion, RecoveryDecision: request.RecoveryDecision, Applied: true}, nil
+		},
+	})
+	if err := ops.UpgradePhysicalPoolCatalog(t.Context(), request, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "different identity evidence") {
+		t.Fatalf("different completion evidence error = %v", err)
 	}
 }

@@ -68,6 +68,21 @@ func (r dashboardRuntimeWithGraph) ProjectManifest() projectmanifest.Project {
 	if err := json.Unmarshal(encoded, &cloned); err != nil {
 		return projectmanifest.Project{}
 	}
+	for modelID, model := range cloned.SemanticModels {
+		compiled, ok := r.CompiledSemanticModel(modelID)
+		if !ok || compiled == nil {
+			continue
+		}
+		source := compiled.SourceModel()
+		runtimeSafe, err := model.RuntimeSnapshot()
+		if source == nil || err != nil || runtimeSafe == nil {
+			return projectmanifest.Project{}
+		}
+		source.Connections = runtimeSafe.Connections
+		source.Sources = runtimeSafe.Sources
+		source.DefaultConnection = runtimeSafe.DefaultConnection
+		cloned.SemanticModels[modelID] = source
+	}
 	return cloned
 }
 

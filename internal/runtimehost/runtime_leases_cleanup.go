@@ -44,12 +44,23 @@ func (m *Manager) closeWithoutReleaseQueue() error {
 }
 
 func (m *Manager) close(skipReleaseQueue bool) error {
+	// Activation holds this same fence from its stale check through durable
+	// completion and process-local publication.  Marking the manager closed
+	// before draining prevents an activation that began before Registry.Close
+	// from publishing a new runtime after the release queue has shut down.
+	m.cutoverMu.Lock()
 	m.mu.Lock()
+	m.closed = true
 	current := m.current
 	m.current = nil
 	targets := m.retireLocked(current)
 	waiting := m.scheduledCleanupLocked()
 	m.mu.Unlock()
+	// Do not hold the cutover fence while waiting for readers to drain. Any
+	// activation that starts after this point will observe closed and abort its
+	// prepared resources instead of waiting behind potentially long-lived
+	// readers.
+	m.cutoverMu.Unlock()
 	m.cleanupRetired(targets)
 	cleanupErr := m.waitForCleanup(waiting)
 	if cleanupErr != nil {

@@ -3,7 +3,6 @@ package module
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -15,21 +14,23 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/api"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	appearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
 	dashboardauthoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
+	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardhttp "github.com/flidai/leapview/internal/dashboard/http"
 	"github.com/flidai/leapview/internal/dashboard/publication"
-	publicationsqlite "github.com/flidai/leapview/internal/dashboard/publication/sqlite"
+	publicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	semanticapi "github.com/flidai/leapview/internal/dashboard/semanticapi"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
-	dashboardsessionsqlite "github.com/flidai/leapview/internal/dashboard/session/sqlite"
+	sessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	dashboardui "github.com/flidai/leapview/internal/dashboard/ui"
 	dashboardsignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/flidai/leapview/internal/dashboard/usage"
-	dashboardusagesqlite "github.com/flidai/leapview/internal/dashboard/usage/sqlite"
+	usagepostgres "github.com/flidai/leapview/internal/dashboard/usage/postgres"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
@@ -43,7 +44,7 @@ type Module struct {
 	authoring                  *dashboardauthoringapplication.Application
 	semantic                   semanticapi.Handler
 	snapshot                   func(context.Context) (string, error)
-	publications               *publicationsqlite.Repository
+	publications               PublicationRepository
 	publicationService         *publication.Service
 	publicURL                  string
 	currentActor               func(*http.Request) string
@@ -56,6 +57,7 @@ type Module struct {
 	runtimeMetrics             queryruntime.Metrics
 	coordinators               *dashboardstream.Registry
 	usageReader                usage.Reader
+	appearanceStore            dashboardappearance.Store
 	usageNow                   func() time.Time
 	lifecycleMu                sync.Mutex
 	lifecycleCancel            context.CancelFunc
@@ -63,7 +65,20 @@ type Module struct {
 }
 
 type Config struct {
-	Database *sql.DB
+	// NativePersistence is the only accepted source of dashboard persistence
+	// when RequireNativePersistence is enabled. Its constructor checks that all
+	// authorities are the concrete PostgreSQL implementations, so callers cannot
+	// accidentally label a non-native store as production state.
+	NativePersistence *NativePersistence
+	// SessionStore, UsageRecorder/UsageReader, and AppearanceStore are the
+	// product-owned persistence seams. Native production composition supplies
+	// PostgreSQL implementations. Sessions use the concurrency-safe in-process
+	// MemoryStore when no native store is supplied.
+	SessionStore             dashboardsession.Store
+	AppearanceStore          dashboardappearance.Store
+	RequireNativePersistence bool
+	RequireAuthoring         bool
+	RequirePublication       bool
 	// Authoring is supplied by production composition. It remains optional at
 	// this module boundary so focused dashboard-module tests can exercise the
 	// read/render surface without constructing runtime-backed authoring ports.
@@ -75,13 +90,109 @@ type Config struct {
 	Logger          *slog.Logger
 	PublicURL       string
 	CurrentActor    func(*http.Request) string
-	// AuditIntentRecorder is the narrow Access-owned port used by publication
-	// SQLite transactions. It must be supplied whenever Database is configured.
-	AuditIntentRecorder access.AuditIntentRecorder
-	UsageRecorder       usage.Recorder
-	UsageReader         usage.Reader
-	UsageNow            func() time.Time
-	RuntimeMetrics      queryruntime.Metrics
+	UsageRecorder   usage.Recorder
+	UsageReader     usage.Reader
+	UsageNow        func() time.Time
+	RuntimeMetrics  queryruntime.Metrics
+}
+
+// NativePersistence is an opaque, validated bundle of dashboard PostgreSQL
+// authorities. Fields remain private so a partial or forged bundle cannot be
+// supplied to production module composition.
+type NativePersistence struct {
+	session     *sessionpostgres.Store
+	usage       *usagepostgres.Repository
+	appearance  *appearancepostgres.Repository
+	authoring   *dashboardauthoringpostgres.Repository
+	publication *publicationpostgres.Repository
+	streams     publication.StreamRegistry
+	broker      SignalBroker
+}
+
+// NativePersistenceOptions is the typed constructor input for the complete
+// dashboard PostgreSQL authority bundle. Keeping every authority as a named
+// field prevents order-dependent variadic wiring and rejects partial bundles.
+type NativePersistenceOptions struct {
+	Session     *sessionpostgres.Store
+	Usage       *usagepostgres.Repository
+	Appearance  *appearancepostgres.Repository
+	Authoring   *dashboardauthoringpostgres.Repository
+	Publication *publicationpostgres.Repository
+	Streams     *publicationpostgres.StreamRegistry
+	Broker      *publicationpostgres.Broker
+}
+
+func (p *NativePersistence) valid() bool {
+	if p == nil {
+		return false
+	}
+	nativeStreams, streamsOK := p.streams.(*publicationpostgres.StreamRegistry)
+	registryOK := streamsOK && nativeStreams != nil && nativeStreams.IsNative()
+	nativeBroker, brokerOK := p.broker.(*publicationpostgres.Broker)
+	return p.session != nil && p.session.IsNative() && p.usage != nil && p.usage.IsNative() && p.appearance != nil && p.appearance.IsNative() && p.authoring != nil && p.authoring.IsNative() && p.publication != nil && p.publication.IsNative() && registryOK && brokerOK && nativeBroker != nil && nativeBroker.IsNative() && nativeBroker.Configured()
+}
+
+// Matches reports whether options contains the exact authorities owned by p.
+// The identity check lets application composition verify that a bundle was
+// built from the same stores it intends to install without exposing any of
+// the bundle's opaque fields.
+func (p *NativePersistence) Matches(options NativePersistenceOptions) bool {
+	if !p.valid() {
+		return false
+	}
+	nativeStreams, streamsOK := p.streams.(*publicationpostgres.StreamRegistry)
+	nativeBroker, brokerOK := p.broker.(*publicationpostgres.Broker)
+	return streamsOK && nativeStreams != nil && nativeBroker != nil && brokerOK &&
+		p.session == options.Session &&
+		p.usage == options.Usage &&
+		p.appearance == options.Appearance &&
+		p.authoring == options.Authoring &&
+		p.publication == options.Publication &&
+		nativeStreams == options.Streams &&
+		nativeBroker == options.Broker
+}
+
+// MatchesAuthoringRepository reports whether p owns the exact native
+// authoring repository supplied by application composition. The repository
+// remains opaque; callers can validate identity without reading p's private
+// authority fields.
+func (p *NativePersistence) MatchesAuthoringRepository(repository *dashboardauthoringpostgres.Repository) bool {
+	return p.valid() && repository != nil && p.authoring == repository
+}
+
+// MatchesAuthoringApplication reports whether the supplied transport-facing
+// authoring application was composed with p's exact native repository.
+func (p *NativePersistence) MatchesAuthoringApplication(application *AuthoringApplication) bool {
+	return p.valid() && application != nil && application.MatchesRepository(p.authoring)
+}
+
+// NewNativePersistence validates the complete dashboard persistence bundle.
+// Production composition should construct this only from native PostgreSQL
+// repositories.
+func NewNativePersistence(options NativePersistenceOptions) (*NativePersistence, error) {
+	if options.Session == nil || !options.Session.IsNative() {
+		return nil, fmt.Errorf("dashboard native persistence requires a constructed PostgreSQL session store")
+	}
+	if options.Usage == nil || !options.Usage.IsNative() {
+		return nil, fmt.Errorf("dashboard native persistence requires a constructed PostgreSQL usage repository")
+	}
+	if options.Appearance == nil || !options.Appearance.IsNative() {
+		return nil, fmt.Errorf("dashboard native persistence requires a constructed PostgreSQL appearance repository")
+	}
+	if options.Authoring == nil || !options.Authoring.IsNative() {
+		return nil, fmt.Errorf("dashboard native persistence requires a constructed PostgreSQL authoring repository")
+	}
+	if options.Publication == nil || !options.Publication.IsNative() {
+		return nil, fmt.Errorf("dashboard native persistence requires a constructed PostgreSQL publication repository")
+	}
+	if options.Streams == nil || options.Streams.IsNative() == false {
+		return nil, fmt.Errorf("dashboard native persistence requires a constructed PostgreSQL stream registry")
+	}
+	if options.Broker == nil || !options.Broker.IsNative() || !options.Broker.Configured() {
+		return nil, fmt.Errorf("dashboard native persistence requires a configured scoped PostgreSQL publication broker")
+	}
+	bundle := &NativePersistence{session: options.Session, usage: options.Usage, appearance: options.Appearance, authoring: options.Authoring, publication: options.Publication, streams: options.Streams, broker: options.Broker}
+	return bundle, nil
 }
 
 type HTTPConfig struct {
@@ -122,6 +233,19 @@ type SignalBroker interface {
 
 type DeliveryBroker = dashboardstream.DeliveryBroker
 
+// PublicationRepository is the capability-neutral dashboard publication
+// authority. Module code never depends on a concrete storage package.
+type PublicationRepository interface {
+	publication.ServiceRepository
+	Get(context.Context, projectgraph.ResourceID, string) (publication.Publication, error)
+	GetByPublicID(context.Context, string) (publication.Publication, error)
+	List(context.Context, projectgraph.ResourceID) ([]publication.Publication, error)
+	ListAll(context.Context) ([]publication.Publication, error)
+	ListEvents(context.Context, string) ([]publication.Event, error)
+}
+
+var _ PublicationRepository = (*publicationpostgres.Repository)(nil)
+
 func NewDeliveryBroker() *DeliveryBroker {
 	return dashboardstream.NewDeliveryBroker()
 }
@@ -160,34 +284,59 @@ type Telemetry interface {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
-	publicationAuditConfigured := false
-	if config.Database != nil {
-		if config.AuditIntentRecorder == nil {
-			return nil, errPublicationCommandAuditUnavailable
+	if config.RequireNativePersistence {
+		if config.NativePersistence == nil {
+			return nil, fmt.Errorf("dashboard native persistence bundle is required")
 		}
+		if !config.NativePersistence.valid() {
+			return nil, fmt.Errorf("dashboard native persistence bundle is incomplete")
+		}
+		if config.SessionStore != nil || config.UsageRecorder != nil || config.UsageReader != nil || config.AppearanceStore != nil {
+			return nil, fmt.Errorf("dashboard native persistence rejects partial or legacy authority injection")
+		}
+	} else if config.NativePersistence != nil {
+		return nil, fmt.Errorf("dashboard native persistence bundle requires RequireNativePersistence")
+	}
+	if config.RequireAuthoring && config.Authoring == nil {
+		return nil, fmt.Errorf("dashboard authoring authority is required")
+	}
+	if config.RequirePublication {
+		if config.NativePersistence == nil || config.NativePersistence.publication == nil || !config.NativePersistence.publication.IsNative() {
+			return nil, fmt.Errorf("dashboard native publication authority is required")
+		}
+	}
+	publicationAuditConfigured := false
+	if config.RequireNativePersistence {
+		// Native repositories own their transaction-scoped audit port.
 		if err := validatePublicationCommandAuditContracts(); err != nil {
 			return nil, err
 		}
 		publicationAuditConfigured = true
+	}
+	if config.RequireNativePersistence && config.RequireAuthoring && (config.NativePersistence.authoring == nil || !config.NativePersistence.authoring.IsNative()) {
+		return nil, fmt.Errorf("dashboard native authoring authority is required")
+	}
+	// Keep one process-local broker for the legacy/memory path when callers do
+	// not supply an application-owned broker. The same instance is installed on
+	// the handler and module so SSE and command refreshes share delivery state.
+	if config.HTTP.Broker == nil {
+		config.HTTP.Broker = dashboardstream.NewDeliveryBroker()
 	}
 	coordinators := dashboardstream.NewRegistry()
 	optionCursorSecret := make([]byte, 32)
 	if _, err := rand.Read(optionCursorSecret); err != nil {
 		return nil, fmt.Errorf("generate dashboard option cursor secret: %w", err)
 	}
-	var sessionStore dashboardsession.Store = dashboardsession.NewMemoryStore()
-	if config.Database != nil {
-		sessionStore = dashboardsessionsqlite.NewStore(config.Database)
-	}
+	var sessionStore dashboardsession.Store = config.SessionStore
 	usageRecorder, usageReader := config.UsageRecorder, config.UsageReader
-	if config.Database != nil && (usageRecorder == nil || usageReader == nil) {
-		repository := dashboardusagesqlite.NewRepository(config.Database)
-		if usageRecorder == nil {
-			usageRecorder = repository
-		}
-		if usageReader == nil {
-			usageReader = repository
-		}
+	var appearanceStore dashboardappearance.Store = config.AppearanceStore
+	if config.RequireNativePersistence {
+		sessionStore = config.NativePersistence.session
+		usageRecorder, usageReader = config.NativePersistence.usage, config.NativePersistence.usage
+		appearanceStore = config.NativePersistence.appearance
+	}
+	if sessionStore == nil {
+		sessionStore = dashboardsession.NewMemoryStore()
 	}
 	usageNow := config.UsageNow
 	if usageNow == nil {
@@ -308,11 +457,18 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		runtimeMetrics: config.RuntimeMetrics,
 		coordinators:   coordinators,
 		usageReader:    usageReader, usageNow: usageNow,
+		appearanceStore: appearanceStore,
 	}
-	if config.Database != nil {
-		module.publications = publicationsqlite.NewRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
-		module.streams = publicationsqlite.NewStreamRegistry(config.Database)
-		module.publicBroker = publicationsqlite.NewBroker(config.Database, config.Logger)
+	if config.RequireNativePersistence {
+		if config.NativePersistence.streams != nil {
+			module.streams = config.NativePersistence.streams
+		}
+		if config.NativePersistence.broker != nil {
+			module.publicBroker = config.NativePersistence.broker
+		}
+		// Streams and broker must be installed before constructing the service so
+		// revocation closes the durable native registry, never the memory default.
+		module.publications = config.NativePersistence.publication
 		module.publicationService = publication.NewService(module.publications, module.streams.ClosePublication)
 	}
 	return module, nil
@@ -352,6 +508,12 @@ func observeVisualizationFrame(telemetry DashboardTelemetry, event dashboardstre
 
 func (m *Module) HTTP() dashboardhttp.Handler      { return m.handler }
 func (m *Module) SemanticAPI() semanticapi.Handler { return m.semantic }
+func (m *Module) AppearanceStore() dashboardappearance.Store {
+	if m == nil {
+		return nil
+	}
+	return m.appearanceStore
+}
 func (m *Module) Authoring() *dashboardauthoringapplication.Application {
 	if m == nil {
 		return nil

@@ -289,7 +289,9 @@ func TestAssembleRuntimeRejectsCapabilityBuildFailure(t *testing.T) {
 	options := testStoreOptions(store, assemblyConfig{
 
 		DeploymentConfig: deploymentmodule.Config{
-			Database: store.SQLDB(),
+			// An empty native bundle is an intentionally invalid capability. The
+			// assembly must reject it before mounting deployment routes.
+			Persistence: &deploymentmodule.Persistence{},
 		},
 	})
 

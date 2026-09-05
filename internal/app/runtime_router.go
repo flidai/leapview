@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -27,9 +26,12 @@ import (
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
+	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
+	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
+	"github.com/flidai/leapview/internal/platform/http/idempotency"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	platformlifecycle "github.com/flidai/leapview/internal/platform/lifecycle"
@@ -37,6 +39,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
+	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
@@ -73,20 +76,20 @@ type capabilityRoutes struct {
 }
 
 type runtimeServices struct {
-	analyticsModule       *analyticsmodule.Module
-	metrics               QueryMetrics
-	workloads             workloadControl
-	broker                *pagestream.Broker
-	dashboardBroker       *dashboardmodule.DeliveryBroker
-	pageStreams           *uitransport.PageStream
-	persistenceConfigured bool
-	platformHealth        platformHealth
-	storageRetention      *servingstatemodule.Retention
-	queryAuditProvider    adminmodule.QueryAuditReaderProvider
-	candidateMetrics      func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
-	runtimeHostModule     *runtimehostmodule.Module
-	projectID             projectgraph.ResourceID
-	projectIDResolver     func(context.Context) (projectgraph.ResourceID, error)
+	analyticsModule                *analyticsmodule.Module
+	metrics                        QueryMetrics
+	workloads                      workloadControl
+	broker                         *pagestream.Broker
+	dashboardBroker                *dashboardmodule.DeliveryBroker
+	pageStreams                    *uitransport.PageStream
+	persistenceConfigured          bool
+	platformHealth                 platformHealth
+	queryAuditProvider             adminmodule.QueryAuditReaderProvider
+	dashboardPublicationReconciler dashboardPublicationActivationReconciler
+	candidateMetrics               func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
+	runtimeHostModule              *runtimehostmodule.Module
+	projectID                      projectgraph.ResourceID
+	projectIDResolver              func(context.Context) (projectgraph.ResourceID, error)
 }
 
 type dashboardAppearanceReader interface {
@@ -155,8 +158,6 @@ func (r *runtimeServices) resolveProjectID(ctx context.Context) (projectgraph.Re
 type platformServices struct {
 	asyncJobs               jobs.Repository
 	jobModule               *jobsmodule.Module
-	auditDispatcher         *access.AuditDispatcher
-	auditOutbox             access.AuditOutboxStatsReader
 	auth                    *accessmodule.Auth
 	assets                  staticasset.Resolver
 	buildIdentity           buildinfo.Identity
@@ -167,6 +168,9 @@ type platformServices struct {
 	apiProtocol             *apiprotocol.Protocol
 	apiGenServers           apiaggregate.Servers
 	requireActiveDeployment bool
+	// nativeDelivery is derived from the composed deployment mutation port and
+	// is surfaced through /capabilities for authoring transport negotiation.
+	nativeDelivery bool
 }
 
 type httpPolicy struct {
@@ -185,37 +189,42 @@ type httpPolicy struct {
 
 type persistenceInputs struct {
 	agentSettings    agentmodule.Settings
-	adminDatabase    *sql.DB
+	agentPersistence *agentmodule.Persistence
 	servingStateRepo servingStateRepository
 	accessRepo       access.Repository
-	auditRecorder    access.AuditIntentRecorder
-	product          *adminmodule.ProductService
-	productStatus    adminmodule.ProductStatus
+	// refreshPersistence is the complete capability-owned refresh authority.
+	// Native composition injects this opaque bundle.
+	refreshPersistence *refreshmodule.Persistence
+	// requireNativePersistence makes partial native graphs fail closed.
+	requireNativePersistence bool
+	product                  *adminmodule.ProductService
+	productStatus            adminmodule.ProductStatus
+	dashboardPersistence     *dashboardmodule.NativePersistence
+	requireNativeDashboard   bool
 }
 
 type workflowInputs struct {
-	managedDataValidation    refreshmodule.CandidateValidationHook
-	managedDataResolver      runtimehostmodule.ManagedDataResolver
-	refreshPipelineClock     refreshmodule.Clock
-	refreshMaterializer      refreshrun.Materializer
-	refreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
-	canonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
-	publishedVersion         refreshmodule.PublishedDataVersionResolver
-	enableRefreshDispatcher  bool
-	recoveryLifecycle        *refreshmodule.RecoveryLifecycle
-	recoveryInterval         time.Duration
-	agent                    *agentmodule.Service
-	agentConfig              agentmodule.ModelConfig
-	reloader                 runtimeReloader
-	deploymentConfig         deploymentmodule.Config
+	managedDataResolver            runtimehostmodule.ManagedDataResolver
+	refreshPipelineClock           refreshmodule.Clock
+	refreshTargetRevision          func(context.Context, projectgraph.ServingIdentity) (int64, error)
+	refreshSourceDigest            func(context.Context, projectgraph.ServingIdentity) (string, error)
+	canonicalRefreshExecutor       func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
+	canonicalCompletionCoordinator refreshrun.CanonicalCompletionCoordinator
+	canonicalResultReconciler      refreshrun.CanonicalResultReconciler
+	publishedVersion               refreshmodule.PublishedDataVersionResolver
+	recoveryLifecycle              *refreshmodule.RecoveryLifecycle
+	recoveryInterval               time.Duration
+	agent                          *agentmodule.Service
+	agentConfig                    agentmodule.ModelConfig
+	reloader                       runtimeReloader
+	deploymentConfig               deploymentmodule.Config
+	servingArtifacts               projectbundle.ArtifactObjectReader
 }
 
 type storageInputs struct {
-	instanceID          string
-	duckLakeCatalogPath string
-	duckLakeDataPath    string
-	jobLeaseTimeout     time.Duration
-	publicURL           string
+	instanceID      string
+	jobLeaseTimeout time.Duration
+	publicURL       string
 }
 
 func newCompositionSurfaces(
@@ -244,18 +253,48 @@ func newCompositionSurfaces(
 }
 
 type dataAssemblyInputs struct {
-	Database         *sql.DB
-	AuditRuntime     *auditRuntime
 	PlatformHealth   platformHealth
-	AdminDatabase    *sql.DB
 	ServingStateRepo servingStateRepository
-	StorageRetention *servingstatemodule.Retention
 	AccessRepo       access.Repository
+	APIIdempotency   idempotency.Store
+	CursorSigning    cursorsigning.Initializer
+	// BypassDurableIdempotency is an explicit production composition escape
+	// hatch for commands whose domain transaction owns exact replay semantics.
+	// Development composition leaves this unset.
+	BypassDurableIdempotency map[string]struct{}
+	// ReclaimExpiredIdempotency is the explicit operation-ID allowlist for
+	// commands whose complete mutation path is durably reentrant. It must stay
+	// narrower than the ordinary required-idempotency command inventory.
+	ReclaimExpiredIdempotency map[string]struct{}
+	// DashboardPublicationReconciler is the explicit activation projection for
+	// the selected dashboard authority.
+	DashboardPublicationReconciler dashboardPublicationActivationReconciler
+	// DashboardPersistence is the complete native PostgreSQL dashboard
+	// authority bundle.
+	DashboardPersistence *dashboardmodule.NativePersistence
+	// RefreshPersistence is the complete native PostgreSQL refresh authority.
+	// It is opaque at this composition boundary so the router cannot assemble
+	// a partial run/schedule/publication bundle.
+	RefreshPersistence *refreshmodule.Persistence
+	// RequireNativeDashboard selects the fail-closed native dashboard path.
+	// When enabled, the persistence bundle, authoring repository/application,
+	// and publication reconciler must all be supplied.
+	RequireNativeDashboard bool
+	// RequireExplicitAPIProtocol prevents a production assembly from silently
+	// selecting process-local protocol implementations.
+	RequireExplicitAPIProtocol bool
+	// AdditionalWorkers are optional capability-owned lifecycle workers. They
+	// join the same bounded worker group and stop before runtime/resources.
+	AdditionalWorkers []platformlifecycle.Component
 }
 
 type capabilityAssemblyInputs struct {
-	ReleaseModule     *releasemodule.Module
-	JobModule         *jobsmodule.Module
+	ReleaseModule *releasemodule.Module
+	JobModule     *jobsmodule.Module
+	// AgentPersistence is the graph-owned native agent authority. The router
+	// passes it through opaquely to agentmodule.Build; production must provide
+	// the complete native authority.
+	AgentPersistence  *agentmodule.Persistence
 	AccessModule      *accessmodule.Module
 	Agent             *agentmodule.Service
 	ManagedDataModule *manageddatamodule.Module
@@ -269,27 +308,32 @@ type capabilityAssemblyInputs struct {
 }
 
 type workflowAssemblyInputs struct {
-	AgentSettings            agentmodule.Settings
-	ManagedDataValidation    refreshmodule.CandidateValidationHook
-	ManagedDataResolver      runtimehostmodule.ManagedDataResolver
-	AgentConfig              agentmodule.ModelConfig
-	Auth                     *accessmodule.Auth
-	Reloader                 runtimeReloader
-	Workload                 workloadControl
-	DeploymentConfig         deploymentmodule.Config
-	RefreshPipelineClock     refreshmodule.Clock
-	RefreshMaterializer      refreshrun.Materializer
-	RefreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
-	CanonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
-	PublishedVersion         refreshmodule.PublishedDataVersionResolver
-	EnableRefreshDispatcher  bool
-	RecoveryLifecycle        *refreshmodule.RecoveryLifecycle
-	RecoveryInterval         time.Duration
-	QueryAudit               *analyticsmodule.QueryAuditSurface
+	AgentSettings                  agentmodule.Settings
+	ManagedDataResolver            runtimehostmodule.ManagedDataResolver
+	AgentConfig                    agentmodule.ModelConfig
+	Auth                           *accessmodule.Auth
+	Reloader                       runtimeReloader
+	Workload                       workloadControl
+	DeploymentConfig               deploymentmodule.Config
+	ServingArtifacts               projectbundle.ArtifactObjectReader
+	RefreshPipelineClock           refreshmodule.Clock
+	RefreshTargetRevision          func(context.Context, projectgraph.ServingIdentity) (int64, error)
+	RefreshSourceDigest            func(context.Context, projectgraph.ServingIdentity) (string, error)
+	CanonicalRefreshExecutor       func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
+	CanonicalCompletionCoordinator refreshrun.CanonicalCompletionCoordinator
+	CanonicalResultReconciler      refreshrun.CanonicalResultReconciler
+	PublishedVersion               refreshmodule.PublishedDataVersionResolver
+	RecoveryLifecycle              *refreshmodule.RecoveryLifecycle
+	RecoveryInterval               time.Duration
+	QueryAudit                     *analyticsmodule.QueryAuditSurface
 }
 
 type runtimeAssemblyInputs struct {
 	RuntimeHost *runtimehostmodule.Module
+	// Production selects the fail-closed native module admission path. It is
+	// intentionally separate from SealedServing, which is also used by local
+	// evaluation fixtures to exercise sealed-runtime behavior.
+	Production bool
 	// DeliveryTargetReader is the durable target-owned active-generation
 	// pointer. Sealed production serving must consult it before the legacy
 	// serving-state scope table when deciding whether bootstrap is still open.
@@ -299,8 +343,6 @@ type runtimeAssemblyInputs struct {
 	ServingSnapshotResolver func(context.Context) (string, error)
 	InstanceID              string
 	DuckDBDir               string
-	DuckLakeCatalogPath     string
-	DuckLakeDataPath        string
 	DefaultEnvironment      string
 	SCIMBearerToken         string
 	MetricsBearerToken      string
@@ -319,77 +361,6 @@ type runtimeAssemblyInputs struct {
 	// fails closed until an operator admits a physical pool and repairs any
 	// legacy serving rows.
 	DeliveryStartup func(context.Context) error
-}
-
-// reconcileActivatedDashboardPublications projects the immutable publication
-// definitions carried by a serving generation into the durable admin/public
-// publication table. Deployment activation deliberately commits its serving
-// CAS first; this observer then uses a fresh transaction so a reconciliation
-// failure cannot make a successfully activated generation look failed.
-func reconcileActivatedDashboardPublications(
-	ctx context.Context,
-	database *sql.DB,
-	states interface {
-		ByID(context.Context, servingstate.ID) (servingstate.State, error)
-	},
-	activated deployment.Deployment,
-) error {
-	if database == nil || states == nil {
-		return nil
-	}
-	state, err := states.ByID(ctx, servingstate.ID(activated.ServingIdentity.GenerationID))
-	if err != nil {
-		return fmt.Errorf("load activated serving state %q for dashboard publications: %w", activated.ServingIdentity.GenerationID, err)
-	}
-	if state.ProjectID != activated.ServingIdentity.ProjectID {
-		return fmt.Errorf("activated serving state project %q does not match deployment project %q", state.ProjectID, activated.ServingIdentity.ProjectID)
-	}
-	// AfterActivated is intentionally non-transactional and may overlap a
-	// subsequent cutover. If the durable active pointer has already advanced,
-	// this callback is stale and must not roll the admin projection backward.
-	if activeReader, ok := states.(interface {
-		ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
-	}); ok {
-		current, _, currentErr := activeReader.ActiveArtifact(ctx, activated.ServingIdentity.ProjectID, servingstate.Environment(activated.ServingIdentity.Environment))
-		if currentErr == nil && current.ID != state.ID {
-			return nil
-		}
-		if currentErr != nil && !errors.Is(currentErr, servingstate.ErrNotFound) && !errors.Is(currentErr, sql.ErrNoRows) {
-			return fmt.Errorf("check active serving state before dashboard publication reconciliation: %w", currentErr)
-		}
-	}
-	raw := strings.TrimSpace(state.DashboardPublicationsJSON)
-	// Older and test-authored serving states predate the compiled publication
-	// snapshot. An absent snapshot is not an authoritative empty definition and
-	// must not erase publication rows owned by those activation paths. Modern
-	// compilation writes an explicit JSON object (including "{}" for none).
-	if raw == "" || raw == "null" {
-		return nil
-	}
-	publications := make(map[string]json.RawMessage)
-	if err := json.Unmarshal([]byte(raw), &publications); err != nil {
-		return fmt.Errorf("decode activated dashboard publications for serving state %q: %w", state.ID, err)
-	}
-	if err := projectmodule.EnsureIdentity(ctx, database, activated.ServingIdentity.ProjectID); err != nil {
-		return fmt.Errorf("ensure project identity for dashboard publications: %w", err)
-	}
-	tx, err := database.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin dashboard publication reconciliation: %w", err)
-	}
-	defer tx.Rollback()
-	if err := dashboardmodule.ReconcilePublications(ctx, tx, dashboardmodule.PublicationActivationInput{
-		ProjectID:      activated.ServingIdentity.ProjectID.String(),
-		ServingStateID: string(state.ID),
-		ActorID:        activated.ActivationPrincipal,
-		Publications:   publications,
-	}, accessmodule.ActivateDashboardPublicationPrincipal); err != nil {
-		return fmt.Errorf("reconcile dashboard publications for serving state %q: %w", state.ID, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit dashboard publication reconciliation for serving state %q: %w", state.ID, err)
-	}
-	return nil
 }
 
 func logDashboardPublicationReconciliationFailure(logger *slog.Logger, err error, generationID string) {
@@ -475,6 +446,36 @@ type workloadControl interface {
 	Drain(context.Context) error
 }
 
+// authorizationSnapshotFromProvider keeps query authorization on the same
+// runtime boundary as the metrics it governs. This matters for candidate
+// previews: their immutable runtime exists before any generation is active.
+func authorizationSnapshotFromProvider(provider runtimehostmodule.Provider) func(context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
+	if provider == nil {
+		return nil
+	}
+	return func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
+		lease, err := provider.Acquire(ctx)
+		if err != nil {
+			return accesssnapshot.AuthorizationSnapshot{}, err
+		}
+		if lease == nil {
+			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("runtime provider returned an empty lease")
+		}
+		defer lease.Release()
+		authorizedLease, ok := lease.(interface {
+			AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+		})
+		if !ok {
+			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("runtime lease does not expose authorization snapshot")
+		}
+		snapshot := authorizedLease.AuthorizationSnapshot()
+		if err := snapshot.ValidateBound(); err != nil {
+			return accesssnapshot.AuthorizationSnapshot{}, err
+		}
+		return snapshot, nil
+	}
+}
+
 // validateQueryAuthorizationDependencies is the production composition gate
 // for governed queries. The query decorator itself deliberately remains
 // reusable in persistence-free fixtures; production must reject an incomplete
@@ -492,6 +493,76 @@ func validateQueryAuthorizationDependencies(metrics QueryMetrics, required bool,
 	return nil
 }
 
+func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capabilityAssemblyInputs, runtimeConfig runtimeAssemblyInputs) error {
+	if !runtimeConfig.Production {
+		return nil
+	}
+	if !data.RequireNativeDashboard {
+		return errors.New("production runtime composition requires native dashboard persistence")
+	}
+	if !data.RequireExplicitAPIProtocol {
+		return errors.New("production runtime composition requires explicit durable API protocol authorities")
+	}
+	if capabilities.JobModule == nil {
+		return errors.New("production runtime composition requires a platform jobs module")
+	}
+	if capabilities.AgentPersistence == nil {
+		return errors.New("production runtime composition requires native agent persistence")
+	}
+	if data.RefreshPersistence == nil {
+		return errors.New("production runtime composition requires native refresh persistence")
+	}
+	if runtimeConfig.DeliveryTargetReader == nil {
+		return errors.New("production runtime composition requires the canonical delivery target reader")
+	}
+	return nil
+}
+
+// validateDashboardAssemblyInputs is the runtime-router admission gate for
+// native dashboard composition. The native path is deliberately all-or-
+// nothing: it requires the complete opaque persistence bundle, the exact
+// authoring repository/application pair, and the native activation reconciler.
+func validateDashboardAssemblyInputs(data dataAssemblyInputs, capabilities capabilityAssemblyInputs) error {
+	if !data.RequireNativeDashboard {
+		return nil
+	}
+	if data.DashboardPersistence == nil {
+		return errors.New("native dashboard composition requires a dashboard persistence bundle")
+	}
+	if data.DashboardPublicationReconciler == nil {
+		return errors.New("native dashboard composition requires a dashboard publication reconciler")
+	}
+	if capabilities.Authoring == nil {
+		return errors.New("native dashboard composition requires a dashboard authoring application")
+	}
+	if !data.DashboardPersistence.MatchesAuthoringApplication(capabilities.Authoring) {
+		return errors.New("native dashboard composition authoring application does not match persistence bundle")
+	}
+	return nil
+}
+
+// nativeDeliveryComposition reports whether deployment delivery is composed.
+// The module is native-only; production assemblies must provide the canonical
+// PostgreSQL reader and mutation ports as one authority.
+func nativeDeliveryComposition(config deploymentmodule.Config, production bool) bool {
+	return production || config.Persistence != nil || config.NativeDeliveryMutations != nil || config.NativeDeliveryPublication != nil ||
+		config.NativeDeliveryApproval != nil || config.NativeDeliveryReader != nil || config.NativeDeliveryEvents != nil ||
+		config.NativeDeliveryAudit != nil || config.NativeDeliveryWorkflow != nil || config.NativeOperationAuthority != nil
+}
+
+// validateDeliveryAssemblyInputs keeps native production routing fail-closed.
+// A native authority must expose its own reader and may not carry legacy
+// delivery/release projections that could be consulted on an error path.
+func validateDeliveryAssemblyInputs(config deploymentmodule.Config, production bool) error {
+	if !nativeDeliveryComposition(config, production) {
+		return nil
+	}
+	if config.NativeDeliveryReader == nil {
+		return errors.New("native delivery composition requires a native delivery authorization reader")
+	}
+	return nil
+}
+
 func buildApplicationSurfaces(
 	ctx context.Context,
 	metrics QueryMetrics,
@@ -504,6 +575,16 @@ func buildApplicationSurfaces(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := validateDashboardAssemblyInputs(data, capabilities); err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if err := validateProductionRuntimeInputs(data, capabilities, runtimeConfig); err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if data.RequireNativeDashboard && data.RefreshPersistence == nil {
+		return nil, nil, nil, nil, errors.New("native composition requires refresh persistence")
+	}
+	requireNativeDashboard := data.RequireNativeDashboard
 	telemetry := observability.New()
 	dashboardTelemetry := dashboardmodule.NewTelemetry(telemetry.Registry())
 	if capabilities.AnalyticsModule != nil {
@@ -523,24 +604,7 @@ func buildApplicationSurfaces(
 	}
 	var authorizationSnapshot func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
 	if runtimeConfig.RuntimeHost != nil {
-		authorizationSnapshot = func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
-			lease, err := runtimeConfig.RuntimeHost.Acquire(ctx)
-			if err != nil {
-				return accesssnapshot.AuthorizationSnapshot{}, err
-			}
-			defer lease.Release()
-			authorizedLease, ok := lease.(interface {
-				AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
-			})
-			if !ok {
-				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("active runtime lease does not expose authorization snapshot")
-			}
-			snapshot := authorizedLease.AuthorizationSnapshot()
-			if err := snapshot.ValidateBound(); err != nil {
-				return accesssnapshot.AuthorizationSnapshot{}, err
-			}
-			return snapshot, nil
-		}
+		authorizationSnapshot = authorizationSnapshotFromProvider(runtimeConfig.RuntimeHost)
 	}
 	canonicalAuditRecorder, _ := data.AccessRepo.(access.CanonicalAuditRecorder)
 	if err := validateQueryAuthorizationDependencies(metrics, runtimeConfig.RequireQueryAuthorization, authorizationSnapshot, capabilities.AccessModule); err != nil {
@@ -584,43 +648,41 @@ func buildApplicationSurfaces(
 	}
 	servingStateRepo := data.ServingStateRepo
 	routes, runtime, platform, policy := newCompositionSurfaces(metrics, runtimeConfig.Assets, telemetry, dashboardTelemetry)
-	audit := data.AuditRuntime
-	if data.Database != nil && audit == nil {
-		var err error
-		audit, err = newAuditRuntime(data.Database)
-		if err != nil {
-			return fail(fmt.Errorf("build access audit runtime: %w", err))
-		}
-	}
-	if data.Database != nil && (audit == nil || audit.recorder == nil || audit.delivery == nil || audit.stats == nil || audit.operator == nil) {
-		return fail(errors.New("durable audit runtime facets are unavailable"))
-	}
 	runtime.runtimeHostModule = runtimeConfig.RuntimeHost
+	runtime.dashboardPublicationReconciler = data.DashboardPublicationReconciler
 	platform.requireActiveDeployment = runtimeConfig.RequireActiveDeployment
 	persistence := persistenceInputs{}
+	persistence.agentPersistence = capabilities.AgentPersistence
+	persistence.dashboardPersistence = data.DashboardPersistence
+	persistence.refreshPersistence = data.RefreshPersistence
+	persistence.requireNativeDashboard = requireNativeDashboard
+	persistence.requireNativePersistence = runtimeConfig.Production || data.RequireNativeDashboard
 	moduleWorkflow := workflowInputs{}
 	storage := storageInputs{}
 	moduleWorkflow.refreshPipelineClock = workflow.RefreshPipelineClock
-	moduleWorkflow.refreshMaterializer = workflow.RefreshMaterializer
 	moduleWorkflow.refreshSourceDigest = workflow.RefreshSourceDigest
+	moduleWorkflow.refreshTargetRevision = workflow.RefreshTargetRevision
 	moduleWorkflow.canonicalRefreshExecutor = workflow.CanonicalRefreshExecutor
+	moduleWorkflow.canonicalCompletionCoordinator = workflow.CanonicalCompletionCoordinator
+	moduleWorkflow.canonicalResultReconciler = workflow.CanonicalResultReconciler
 	moduleWorkflow.publishedVersion = workflow.PublishedVersion
-	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
 	moduleWorkflow.recoveryLifecycle = workflow.RecoveryLifecycle
 	moduleWorkflow.recoveryInterval = workflow.RecoveryInterval
+	moduleWorkflow.servingArtifacts = workflow.ServingArtifacts
 	runtime.queryAuditProvider = queryAuditProvider
 	runtime.candidateMetrics = func(provider runtimehostmodule.Provider, projectID projectgraph.ResourceID) QueryMetrics {
 		if provider == nil || projectID == "" {
 			return nil
 		}
+		candidateAuthorizationSnapshot := authorizationSnapshotFromProvider(provider)
 		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, ProjectID: projectID})
 		candidate = dashboardmodule.WithAdmission(candidate, controller)
-		if err := validateQueryAuthorizationDependencies(candidate, runtimeConfig.RequireQueryAuthorization, authorizationSnapshot, capabilities.AccessModule); err != nil {
+		if err := validateQueryAuthorizationDependencies(candidate, runtimeConfig.RequireQueryAuthorization, candidateAuthorizationSnapshot, capabilities.AccessModule); err != nil {
 			return nil
 		}
-		if authorizationSnapshot != nil && capabilities.AccessModule != nil {
+		if candidateAuthorizationSnapshot != nil && capabilities.AccessModule != nil {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{
-				SnapshotFromContext: authorizationSnapshot,
+				SnapshotFromContext: candidateAuthorizationSnapshot,
 				SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
 				PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 					principal, ok := accessmodule.PrincipalFromContext(ctx)
@@ -648,67 +710,35 @@ func buildApplicationSurfaces(
 	runtime.workloads = controller
 	runtime.projectID = runtimeConfig.ProjectID
 	runtime.projectIDResolver = runtimeConfig.ProjectIDResolver
-	runtime.persistenceConfigured = data.Database != nil
+	// Persistence is capability-owned in production. Native graph bundles and
+	// pre-built job modules are durable authorities too.
+	runtime.persistenceConfigured = data.AccessRepo != nil || data.RefreshPersistence != nil ||
+		capabilities.JobModule != nil || requireNativeDashboard
 	runtime.platformHealth = data.PlatformHealth
 	persistence.agentSettings = workflow.AgentSettings
-	persistence.adminDatabase = data.AdminDatabase
-	if audit != nil {
-		persistence.auditRecorder = audit.recorder
-	}
 	persistence.product = capabilities.Product
 	routes.product = capabilities.Product
 	persistence.productStatus = capabilities.ProductStatus
-	if data.Database != nil {
-		telemetry.Register(refreshmodule.NewRecoveryMetricsCollector(data.Database, nil))
-		platform.jobModule = capabilities.JobModule
-		var err error
-		if platform.jobModule == nil {
-			platform.jobModule, err = jobsmodule.Build(ctx, jobsmodule.Config{
-				Database: data.Database, Admission: workloadmodule.JobAdmitter(runtime.workloads),
-				LeaseTimeout: httpConfig.JobLeaseTimeout, Logger: httpConfig.Logger,
-			})
-			if err != nil {
-				return fail(fmt.Errorf("build platform jobs module: %w", err))
-			}
-		}
+	// The composition root owns persistence selection and supplies the complete
+	// jobs module. Runtime routing never infers a persistence implementation.
+	platform.jobModule = capabilities.JobModule
+	if platform.jobModule != nil {
+		// Avoid storing a typed nil *jobsmodule.Module in the jobs.Repository
+		// interface. Persistence-free development and test compositions rely on
+		// a genuinely nil queue to skip durable handler registration.
 		platform.asyncJobs = platform.jobModule
-		// Access audit intents share the platform SQL database. Inject the narrow
-		// delivery and observability facets into lifecycle consumers.
-		platform.auditOutbox = audit.stats
-		platform.auditDispatcher, err = access.NewAuditDispatcher(access.AuditDispatcherConfig{
-			Store:  audit.delivery,
-			Logger: platform.logger,
-		})
-		if err != nil {
-			return fail(fmt.Errorf("build access audit dispatcher: %w", err))
-		}
-		platform.telemetry.Register(newAuditOutboxCollector(platform.auditOutbox))
-		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, data.Database); err != nil {
-			return fail(fmt.Errorf("build API protocol: %w", err))
-		}
 	}
 	if platform.apiProtocol == nil {
-		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, nil); err != nil {
+		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, apiProtocolPersistence{
+			Idempotency: data.APIIdempotency, CursorSigning: data.CursorSigning,
+			BypassDurableIdempotency:  data.BypassDurableIdempotency,
+			ReclaimExpiredIdempotency: data.ReclaimExpiredIdempotency,
+			RequireExplicit:           data.RequireExplicitAPIProtocol,
+		}); err != nil {
 			return fail(fmt.Errorf("build API protocol: %w", err))
 		}
 	}
 	persistence.servingStateRepo = servingStateRepo
-	retentionStates, _ := servingStateRepo.(servingstatemodule.RetentionRepository)
-	runtime.storageRetention = data.StorageRetention
-	if runtime.storageRetention == nil && !runtimeConfig.SealedServing {
-		runtime.storageRetention = servingstatemodule.NewRetention(servingstatemodule.RetentionConfig{
-			States: retentionStates, Snapshots: capabilities.AnalyticsModule.RetentionSnapshots(),
-			Admission: controller, Environment: runtimeConfig.DefaultEnvironment,
-			CatalogPath: runtimeConfig.DuckLakeCatalogPath, DataPath: runtimeConfig.DuckLakeDataPath,
-			ProtectedSnapshots: func() []int64 {
-				if provider, ok := workflow.Reloader.(interface{ LeasedSnapshots() []int64 }); ok {
-					return provider.LeasedSnapshots()
-				}
-				return nil
-			},
-		})
-	}
-	moduleWorkflow.managedDataValidation = workflow.ManagedDataValidation
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
 	routes.dashboardAssets = capabilities.DashboardAssets
@@ -720,8 +750,6 @@ func buildApplicationSurfaces(
 	platform.auth = workflow.Auth
 	routes.accessModule = capabilities.AccessModule
 	moduleWorkflow.reloader = workflow.Reloader
-	storage.duckLakeCatalogPath = runtimeConfig.DuckLakeCatalogPath
-	storage.duckLakeDataPath = runtimeConfig.DuckLakeDataPath
 	storage.instanceID = runtimeConfig.InstanceID
 	policy.defaultEnvironment = string(servingstatemodule.NormalizeEnvironment(servingstatemodule.Environment(runtimeConfig.DefaultEnvironment)))
 	storage.publicURL = strings.TrimSuffix(strings.TrimSpace(httpConfig.PublicURL), "/")
@@ -756,11 +784,12 @@ func buildApplicationSurfaces(
 	if reader, ok := any(servingStateRepo).(projecthttp.AssetVersionsReader); ok {
 		projectAssetVersions = reader
 	}
+	var dashboardAppearances projecthttp.DashboardAppearanceStore
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
-		DashboardAppearances: dashboardmodule.NewAppearanceStore(data.Database),
+		DashboardAppearances: dashboardAppearances,
 		ResolveProjectID:     runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
@@ -829,6 +858,10 @@ func buildApplicationSurfaces(
 		}
 	}
 	moduleWorkflow.deploymentConfig = workflow.DeploymentConfig
+	if err := validateDeliveryAssemblyInputs(moduleWorkflow.deploymentConfig, runtimeConfig.Production); err != nil {
+		return fail(err)
+	}
+	platform.nativeDelivery = nativeDeliveryComposition(moduleWorkflow.deploymentConfig, runtimeConfig.Production)
 	policy.managedDataTus = httpConfig.ManagedDataTus
 	storage.jobLeaseTimeout = httpConfig.JobLeaseTimeout
 	if storage.jobLeaseTimeout <= 0 {
@@ -837,13 +870,13 @@ func buildApplicationSurfaces(
 	if httpConfig.Logger != nil {
 		platform.logger = httpConfig.Logger
 	}
-	if err := configureRefreshModule(routes, runtime, platform, policy, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
+	if err := configureRefreshModule(routes, runtime, platform, policy, ctx, persistence, moduleWorkflow, storage); err != nil {
 		return fail(err)
 	}
 	if routes.projectBrowser != nil {
 		routes.projectBrowser.RefreshState = routes.refreshModule
 	}
-	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
+	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, persistence, moduleWorkflow, storage, data.AdditionalWorkers); err != nil {
 		return fail(err)
 	}
 	if platform.asyncJobs != nil {
@@ -860,6 +893,9 @@ func buildApplicationSurfaces(
 		if routes.agentModule != nil {
 			handlers = append(handlers, routes.agentModule.JobHandlers(platform.asyncJobs)...)
 		}
+		if routes.refreshModule != nil {
+			handlers = append(handlers, routes.refreshModule.JobHandlers()...)
+		}
 		if err := platform.jobModule.RegisterHandlers(handlers); err != nil {
 			return fail(fmt.Errorf("register async job handlers: %w", err))
 		}
@@ -867,18 +903,28 @@ func buildApplicationSurfaces(
 	return routes, runtime, platform, policy, nil
 }
 
-func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, runtimeConfig runtimeAssemblyInputs, ctx context.Context, database *sql.DB, persistence persistenceInputs, moduleWorkflow workflowInputs, storage storageInputs) error {
+func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, runtimeConfig runtimeAssemblyInputs, ctx context.Context, persistence persistenceInputs, moduleWorkflow workflowInputs, storage storageInputs, additionalWorkers []platformlifecycle.Component) error {
 	if routes == nil || runtime == nil || platform == nil || policy == nil {
 		return errors.New("runtime router is required")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if persistence.requireNativeDashboard {
+		if persistence.dashboardPersistence == nil {
+			return errors.New("native dashboard composition requires a dashboard persistence bundle")
+		}
+		if runtime.dashboardPublicationReconciler == nil {
+			return errors.New("native dashboard composition requires a dashboard publication reconciler")
+		}
+		if routes.dashboardAuthoring == nil || !persistence.dashboardPersistence.MatchesAuthoringApplication(routes.dashboardAuthoring) {
+			return errors.New("native dashboard composition authoring application does not match persistence bundle")
+		}
+	}
 	var connectionAdministration analyticsmodule.ConnectionBindingAdministration
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
-				AuditIntentRecorder: persistence.auditRecorder, RequireAuditIntent: database != nil,
 				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
 					projectID, err := runtime.resolveProjectID(ctx)
 					if err != nil {
@@ -1054,20 +1100,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {
-		var err error
-		routes.accessModule, err = accessmodule.Build(ctx, accessmodule.Config{
-			Database: database, ExistingAuth: platform.auth,
-			InstanceID:       storage.instanceID,
-			PublicURL:        storage.publicURL,
-			CurrentProjectID: runtime.resolveProjectID,
-			Presentation:     webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
-			Assets:           platform.assets,
-		})
-		if err != nil {
-			return fmt.Errorf("build access module: %w", err)
-		}
+		return errors.New("application composition requires an explicit access module")
 	}
-	if routes.deploymentModule == nil {
+	// Focused/profile assemblies may intentionally omit the deployment
+	// capability. Real local and production roots always inject an explicit
+	// persistence bundle; the router never manufactures one from a database.
+	if routes.deploymentModule == nil && moduleWorkflow.deploymentConfig.Persistence != nil {
 		config := moduleWorkflow.deploymentConfig
 		config.Logger = platform.logger
 		config.InstanceID = storage.instanceID
@@ -1076,13 +1114,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		config.CurrentPrincipal = func(r *http.Request) (deploymentmodule.Principal, bool) {
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			return deploymentmodule.Principal{ID: principal.ID}, ok
-		}
-		config.CandidateAudit = func(ctx context.Context, event deploymentmodule.CandidateEvent) error {
-			return recordAccessAudit(ctx, routes.accessModule, access.AuditEventInput{
-				PrincipalID: event.PrincipalID,
-				Action:      event.Action, ResourceKind: "project", ResourceID: event.ProjectID.String(),
-				Capability: access.CapabilityProjectAdmin, Status: string(event.Status), MetadataJSON: event.MetadataJSON,
-			})
 		}
 		config.CandidateSourceAudit = candidateSourceAuditRecorder(routes.accessModule)
 		config.CandidateSourceBlobAudit = candidateSourceAuditRecorder(routes.accessModule)
@@ -1096,7 +1127,14 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Events: platform.asyncJobs,
 			Logger: platform.logger,
 		}
-		config.API = deploymentmodule.APIConfig{Releases: routes.releaseModule.DeploymentLinkage(), Jobs: platform.asyncJobs, Workflow: platform.jobModule, Committer: platform.jobModule}
+		apiConfig := deploymentmodule.APIConfig{Jobs: platform.asyncJobs, Committer: platform.jobModule}
+		// Release linkage remains an independent job-domain input for activation
+		// qualification. Delivery mutations and reads are native-only, but sealed
+		// activation workers may still resolve their release identity here.
+		if routes.releaseModule != nil {
+			apiConfig.Releases = routes.releaseModule.DeploymentLinkage()
+		}
+		config.API = apiConfig
 		config.PublicationAuthorization = deploymentmodule.PublicationAuthorizationConfig{
 			States: persistence.servingStateRepo, AuthorizeResource: func(ctx context.Context, actor string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 				return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, actor, projectID, []access.ResourceRef{resource}, capability)
@@ -1105,14 +1143,34 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return (platform.auth == nil || platform.auth.DevBypass()) && actor == accessmodule.LocalDeveloperPrincipal().ID
 			},
 		}
-		priorAfterActivated := config.AfterActivated
-		config.AfterActivated = func(ctx context.Context, activated deployment.Deployment) {
-			if priorAfterActivated != nil {
-				priorAfterActivated(ctx, activated)
+		// Native activation commits the durable PostgreSQL pointer first. The
+		// job is not complete until the exact sealed generation is attached and
+		// dashboard projections are reconciled. A failure is retried; coordinator
+		// replay makes the control transition idempotent.
+		config.Jobs.ReconcileActivation = func(ctx context.Context, row apiadapter.Deployment) error {
+			projectID, err := projectgraph.NewResourceID(row.Project)
+			if err != nil || strings.TrimSpace(row.GenerationID) == "" {
+				return errors.New("native activation returned an invalid serving identity")
 			}
-			if err := reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated); err != nil {
-				logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
+			activated := deployment.Deployment{
+				ID: row.ID, ServingIdentity: projectgraph.ServingIdentity{ProjectID: projectID, Environment: row.Environment, GenerationID: row.GenerationID},
+				ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest,
+				Status: deployment.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt,
+				ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt, Error: row.Error,
 			}
+			if runtime.runtimeHostModule == nil {
+				return errors.New("native activation runtime host is unavailable")
+			}
+			if err := runtime.runtimeHostModule.ReconcileSealed(ctx, servingstate.ID(row.GenerationID)); err != nil {
+				return fmt.Errorf("reconcile native activated runtime: %w", err)
+			}
+			if runtime.dashboardPublicationReconciler == nil {
+				return errors.New("native dashboard publication reconciler is unavailable")
+			}
+			if err := runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated); err != nil {
+				return fmt.Errorf("reconcile native dashboard publications: %w", err)
+			}
+			return nil
 		}
 		var err error
 		routes.deploymentModule, err = deploymentmodule.Build(ctx, config)
@@ -1122,18 +1180,30 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	if routes.dashboardModule == nil {
 		agentUICommands := routes.agentModule.UICommandBindings()
+		var appearanceStore dashboardAppearanceReader
 		var resolveDashboardAppearance func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardmodule.Appearance, error)
-		if database != nil && runtime.runtimeHostModule != nil {
-			resolveDashboardAppearance = dashboardAppearanceResolver(
-				projectmodule.NewActiveProjectDefinitionReader(runtime.runtimeHostModule.Provider()),
-				dashboardmodule.NewAppearanceStore(database),
-			)
+		if runtime.runtimeHostModule != nil {
+			definitionReader := projectmodule.NewActiveProjectDefinitionReader(runtime.runtimeHostModule.Provider())
+			if persistence.requireNativeDashboard {
+				// Build installs the validated PostgreSQL appearance authority below.
+				// The resolver executes only after composition has completed, so its
+				// closure observes the assigned native store without exposing the
+				// opaque persistence bundle's internals.
+				resolveDashboardAppearance = func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID) (dashboardmodule.Appearance, error) {
+					if appearanceStore == nil {
+						return dashboardmodule.Appearance{}, errors.New("native dashboard appearance store is unavailable")
+					}
+					return dashboardAppearanceResolver(definitionReader, appearanceStore)(ctx, projectID, dashboardID)
+				}
+			}
 		}
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
-			Database:            database,
-			Authoring:           routes.dashboardAuthoring,
-			AuditIntentRecorder: persistence.auditRecorder,
+			NativePersistence:        persistence.dashboardPersistence,
+			RequireNativePersistence: persistence.requireNativeDashboard,
+			RequireAuthoring:         persistence.requireNativeDashboard,
+			RequirePublication:       persistence.requireNativeDashboard,
+			Authoring:                routes.dashboardAuthoring,
 			HTTP: dashboardmodule.HTTPConfig{
 				Metrics:                    runtime.metrics,
 				ProjectID:                  runtime.projectID,
@@ -1266,10 +1336,21 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		if err != nil {
 			return fmt.Errorf("build dashboard module: %w", err)
 		}
+		if persistence.requireNativeDashboard {
+			appearanceStore = routes.dashboardModule.AppearanceStore()
+		}
 	}
-	if database != nil && routes.dashboardModule != nil {
+	if routes.projectBrowser != nil && persistence.requireNativeDashboard {
+		// Native dashboard Build selects the opaque PostgreSQL appearance
+		// authority. Project Browser must consume that same store.
+		if routes.dashboardModule == nil || routes.dashboardModule.AppearanceStore() == nil {
+			return errors.New("native dashboard composition requires a dashboard appearance store")
+		}
+		routes.projectBrowser.DashboardAppearances = routes.dashboardModule.AppearanceStore()
+	}
+	if routes.dashboardModule != nil && runtime.dashboardPublicationReconciler != nil {
 		if activated, err := startupDashboardPublicationActivation(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, runtimeConfig.DeliveryTargetReader, runtimeConfig.SealedServing, runtimeConfig.InstanceID); err == nil {
-			if err := reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated); err != nil {
+			if err := runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated); err != nil {
 				logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
 			}
 		} else if !errors.Is(err, servingstate.ErrNotFound) && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, deployment.ErrNotFound) {
@@ -1282,7 +1363,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return err
 		}
 		agentConfig := agentmodule.Config{
-			Database: database, Model: moduleWorkflow.agentConfig,
+			Persistence: persistence.agentPersistence, Production: runtimeConfig.Production, Model: moduleWorkflow.agentConfig,
 			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
 			AllowDevAuthBypass: runtimeConfig.AllowDevAuthBypass,
 			ProductName:        brand.Name,
@@ -1473,16 +1554,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				},
 			},
 		}
-		if database != nil {
-			agentConfig.AuditIntentRecorder = persistence.auditRecorder
-		}
 		routes.agentModule, err = agentmodule.Build(ctx, agentConfig)
 		if err != nil {
 			return fmt.Errorf("build agent module: %w", err)
 		}
 	}
 	if routes.refreshModule == nil {
-		if err := configureRefreshModule(routes, runtime, platform, policy, ctx, nil, persistence, moduleWorkflow, storage); err != nil {
+		if err := configureRefreshModule(routes, runtime, platform, policy, ctx, persistence, moduleWorkflow, storage); err != nil {
 			return err
 		}
 	}
@@ -1502,6 +1580,14 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		productCommands, commandErr := apigencommand.NewExecutor(apiaggregate.GetAPIGenCommandRuntimeContract, nil)
 		if commandErr != nil {
 			return fmt.Errorf("build product command executor: %w", commandErr)
+		}
+		var activeRuntime runtimehostmodule.Provider
+		if runtimeConfig.RuntimeHost != nil {
+			activeRuntime = runtimeConfig.RuntimeHost.Provider()
+		}
+		storageConfig := adminmodule.StorageConfig{
+			Runtime:      activeRuntime,
+			ControlPlane: persistence.product,
 		}
 		var err error
 		routes.adminModule, err = adminmodule.Build(ctx, adminmodule.Config{
@@ -1525,11 +1611,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			AuthConfigured:               platform.auth != nil,
 			LocalPasswordEnabled:         localPasswordEnabled,
 			AccessConfigured:             accessReader != nil,
-			Storage: adminmodule.StorageConfig{
-				CatalogPath: storage.duckLakeCatalogPath, DataPath: storage.duckLakeDataPath,
-				Environment: policy.defaultEnvironment, ControlPlane: persistence.adminDatabase,
-				Analytics: runtime.analyticsModule.AdminResources(), Admitter: workloadController(&runtime.workloads),
-			},
+			Storage:                      storageConfig,
 			Layout: func(r *http.Request) webpage.Provider {
 				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 			},
@@ -1570,6 +1652,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		managedDataModule:  routes.managedDataModule,
 		productAPI:         routes.adminModule,
 		arrowQueries:       supportsNativeArrow(runtime.metrics),
+		nativeDelivery:     platform.nativeDelivery,
 		defaultEnvironment: policy.defaultEnvironment, managedDataTus: policy.managedDataTus,
 		instanceID: storage.instanceID, canonicalOrigin: storage.publicURL, buildIdentity: platform.buildIdentity,
 	}
@@ -1644,9 +1727,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if snapshot.Identity() != lease.Identity() {
 				return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
 			}
-			reader := moduleWorkflow.deploymentConfig.DeliveryReader
-			if reader == nil {
-				return false, fmt.Errorf("delivery authorization reader is unavailable")
+			nativeReader := moduleWorkflow.deploymentConfig.NativeDeliveryReader
+			if nativeReader == nil {
+				return false, fmt.Errorf("native delivery authorization reader is unavailable")
 			}
 			if operationID == "createDeliveryPlan" || operationID == "getDeliveryOperatorSnapshot" {
 				// Local development skips authored snapshot grants only after the
@@ -1660,7 +1743,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return deliveryRoleAllows(snapshot, subjects, capability), nil
 			}
-			plan, err := deliveryAuthorizationPlan(ctx, reader, operationID, objectID)
+			plan, err := nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					return false, nil
@@ -1705,11 +1788,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if err != nil {
 		return fmt.Errorf("build APIGen authorizer: %w", err)
 	}
-	if bootstrapPolicies := moduleWorkflow.deploymentConfig.BootstrapPolicies; bootstrapPolicies != nil {
-		claimReader, ok := bootstrapPolicies.(deploymentmodule.ProjectClaimReader)
-		if !ok {
-			return fmt.Errorf("bootstrap policy store does not expose the durable project claim")
-		}
+	if claimReader := moduleWorkflow.deploymentConfig.ProjectClaims; claimReader != nil {
 		bootstrapAuthorizer := func(ctx context.Context, _ *http.Request, operationID string, projectID projectgraph.ResourceID, _ access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
 			return bootstrapAPIGenDecision(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, claimReader, policy.defaultEnvironment, operationID, projectID, runtimeConfig.DeliveryTargetReader, runtimeConfig.InstanceID)
 		}
@@ -1721,10 +1800,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		apigencommand.DependencyIdempotency:   platform.apiProtocol != nil,
 		apigencommand.DependencyConcurrency:   true,
 		apigencommand.DependencyAudit:         true,
-		// The persistence-free developer/test composition does not activate
-		// durable async commands. Once persistence is enabled, their generated
-		// dependency must be present and startup fails closed if it is not.
-		apigencommand.DependencyJobQueue: platform.asyncJobs != nil || !runtime.persistenceConfigured,
+		// Production always requires the canonical jobs module for generated
+		// async commands. Profile/test assemblies may expose durable read/auth
+		// surfaces without composing the PostgreSQL job authority; those
+		// commands remain unavailable at dispatch time rather than preventing
+		// unrelated API surfaces from starting.
+		apigencommand.DependencyJobQueue: platform.asyncJobs != nil || !runtimeConfig.Production,
 	}); err != nil {
 		return fmt.Errorf("validate generated command dependencies: %w", err)
 	}
@@ -1809,11 +1890,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		},
 		"deliveryStartup": runtimeConfig.DeliveryStartup,
 	}
-	if platform.auditOutbox != nil {
-		healthChecks["auditOutbox"] = func(ctx context.Context) error {
-			return auditOutboxReadiness(ctx, platform.auditOutbox)
-		}
-	}
 	platform.health = newHealth(healthConfig{
 		Platform: func(ctx context.Context) error {
 			if runtime.platformHealth == nil {
@@ -1838,11 +1914,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if runtime.runtimeHostModule == nil {
 				return "", errors.New("runtime host is missing")
 			}
-			projectID := runtime.runtimeHostModule.ProjectID()
-			if err := projectID.Validate(); err != nil {
-				return "", err
-			}
-			return projectID, nil
+			// An empty project is the normal fresh-target state. health.runtimeReady
+			// classifies it as no_active_deployments and applies the configured
+			// readiness policy; the adapter must not turn it into an opaque failure.
+			return runtime.runtimeHostModule.ProjectID(), nil
 		},
 		RuntimeReady: func(ctx context.Context) error {
 			if runtime.runtimeHostModule == nil {
@@ -1870,12 +1945,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		},
 		RequireActiveDeployment: platform.requireActiveDeployment,
 	})
-	workerComponents := make([]platformlifecycle.Component, 0, 5)
-	if platform.auditDispatcher != nil {
-		// Start the dispatcher before audit producers and stop it after them, so
-		// shutdown does not strand intents emitted while workers are draining.
-		workerComponents = append(workerComponents, platformlifecycle.Component{Start: platform.auditDispatcher.Start, Stop: platform.auditDispatcher.Stop})
-	}
+	workerComponents := make([]platformlifecycle.Component, 0, 5+len(additionalWorkers))
 	workerComponents = append(workerComponents,
 		platformlifecycle.Component{Start: routes.refreshModule.Start, Stop: routes.refreshModule.Stop},
 		platformlifecycle.Component{
@@ -1885,6 +1955,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		platformlifecycle.Component{Start: routes.dashboardModule.Start, Stop: routes.dashboardModule.Stop},
 		platformlifecycle.Component{Start: platform.jobModule.Start, Stop: platform.jobModule.Stop},
 	)
+	workerComponents = append(workerComponents, additionalWorkers...)
 	platform.workers = platformlifecycle.New(workerComponents...)
 	return nil
 }

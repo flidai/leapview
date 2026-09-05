@@ -14,6 +14,8 @@ type candidateConnectionLeaser struct {
 	module *analyticsmodule.Module
 }
 
+var _ deploymentmodule.CandidateConnectionEvidenceResolver = candidateConnectionLeaser{}
+
 func (adapter candidateConnectionLeaser) Acquire(
 	ctx context.Context,
 	request deploymentmodule.CandidateConnectionRequest,
@@ -42,6 +44,29 @@ func (adapter candidateConnectionLeaser) Acquire(
 		return nil, err
 	}
 	return candidateConnectionLeases{RuntimeBindingRegistration: registration}, nil
+}
+
+// Resolve returns durable, non-secret binding evidence for a candidate
+// request. It deliberately bypasses pool acquisition and candidate-runtime
+// registration; callers use it only for compatibility or fingerprint checks.
+func (adapter candidateConnectionLeaser) Resolve(
+	ctx context.Context,
+	request deploymentmodule.CandidateConnectionRequest,
+) ([]deploymentmodule.CandidateConnectionEvidence, error) {
+	requirements := make([]analyticsmodule.ConnectionRequirement, 0, len(request.Requirements))
+	for _, requirement := range request.Requirements {
+		requirements = append(requirements, analyticsmodule.ConnectionRequirement{
+			ConnectionID: requirement.ConnectionID, ConnectorKind: requirement.ConnectorKind, Access: requirement.Access,
+		})
+	}
+	evidence, err := adapter.leaser.Inspect(ctx, analyticsmodule.RuntimeBindingRequest{
+		Actor:    request.Actor,
+		Identity: request.Identity, TargetID: connectionbinding.TargetID(request.TargetID), Requirements: requirements,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return candidateRuntimeConnectionEvidence(evidence), nil
 }
 
 func candidateAuthoredConnections(
@@ -96,6 +121,10 @@ type candidateConnectionLeases struct {
 
 func (leases candidateConnectionLeases) Evidence() []deploymentmodule.CandidateConnectionEvidence {
 	source := leases.RuntimeBindingRegistration.Evidence()
+	return candidateConnectionEvidence(source)
+}
+
+func candidateConnectionEvidence(source []analyticsmodule.ConnectionBindingEvidence) []deploymentmodule.CandidateConnectionEvidence {
 	result := make([]deploymentmodule.CandidateConnectionEvidence, 0, len(source))
 	for _, evidence := range source {
 		result = append(result, deploymentmodule.CandidateConnectionEvidence{
@@ -105,4 +134,12 @@ func (leases candidateConnectionLeases) Evidence() []deploymentmodule.CandidateC
 		})
 	}
 	return result
+}
+
+func candidateRuntimeConnectionEvidence(source []connectionbinding.RuntimeBindingEvidence) []deploymentmodule.CandidateConnectionEvidence {
+	values := make([]analyticsmodule.ConnectionBindingEvidence, 0, len(source))
+	for _, evidence := range source {
+		values = append(values, evidence.BindingEvidence)
+	}
+	return candidateConnectionEvidence(values)
 }

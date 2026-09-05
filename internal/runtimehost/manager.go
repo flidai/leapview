@@ -93,12 +93,26 @@ type RuntimeFactory interface {
 }
 
 // SealedRuntimeFactory is the production serving seam. Implementations must
-// resolve the exact active candidate/generation root from durable delivery
-// state, acquire its fenced query lease, and attach a read-only immutable
-// catalog before returning. A manager configured with RequireSealedCatalog
-// refuses to call the legacy Prepare method when this capability is absent.
+// resolve the exact active candidate/generation root (or the explicit
+// SealedActivationCandidate supplied while a target is still on its base)
+// from durable delivery state, acquire its fenced query lease, and attach a
+// read-only immutable catalog before returning. A manager configured with
+// RequireSealedCatalog refuses to call the legacy Prepare method when this
+// capability is absent.
 type SealedRuntimeFactory interface {
 	PrepareSealed(context.Context, RuntimeInput) (PreparedRuntime, error)
+}
+
+// PinnedSnapshotSealedFactory explicitly opts into a target whose sealed root
+// is qualified by an exact DuckLake SNAPSHOT_VERSION. Legacy object/file
+// factories intentionally do not implement this capability and continue to
+// reject state rows that still carry a mutable snapshot pointer.
+type PinnedSnapshotSealedFactory interface {
+	SealedRuntimeFactory
+	// PinnedSnapshotSealed is a marker method: a target either implements the
+	// exact SNAPSHOT_VERSION serving contract or it does not. There is no
+	// runtime boolean that callers could accidentally leave false.
+	PinnedSnapshotSealed()
 }
 
 type ManagedDataResolution struct {
@@ -130,6 +144,12 @@ type RuntimeInput struct {
 	DuckDBDir   string
 	RuntimeDir  string
 	Candidate   *CandidateRuntimeContext
+	// Candidate carries candidate identity/evidence to runtime factories. It is
+	// normally supplied for private candidate preparation; when
+	// SealedActivationCandidate is also set, the same candidate is an explicit
+	// durable-generation preparation for native refresh completion and the
+	// resulting Prepared remains publishable by ActivatePrepared.
+	SealedActivationCandidate *CandidateRuntimeContext
 	// OnLeaseRenewalFailure is a runtime-owned health signal. Factories that
 	// hold durable query roots invoke it promptly when their heartbeat fails;
 	// nil clears the generation's transient renewal error.
@@ -183,8 +203,13 @@ type ManagerOptions struct {
 }
 
 type Manager struct {
-	mu                     sync.RWMutex
-	cutoverMu              sync.RWMutex
+	mu        sync.RWMutex
+	cutoverMu sync.RWMutex
+	// closed is guarded by cutoverMu (and read under mu while the cutover
+	// lock is held).  Close takes the same fence as activation so an
+	// in-flight prepared runtime cannot publish after resources have been
+	// drained.
+	closed                 bool
 	repo                   ServingStateRepository
 	projectID              projectgraph.ResourceID
 	environment            servingstate.Environment
@@ -293,6 +318,22 @@ func (m *Manager) ProjectID() projectgraph.ResourceID {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.projectID
+}
+
+// CurrentServingStateID reports the process-local generation currently
+// serving this manager. It is intentionally only a convergence optimization:
+// durable delivery state remains the authority and callers must re-read that
+// state before relying on this value.
+func (m *Manager) CurrentServingStateID() servingstate.ID {
+	if m == nil {
+		return ""
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.current == nil {
+		return ""
+	}
+	return m.current.servingStateID
 }
 
 // ActiveArtifact reports the exact active serving generation for this
@@ -409,10 +450,9 @@ func (m *Manager) Reload(ctx context.Context) error {
 }
 
 // ReconcileSealed activates the exact durable serving-state generation named
-// by the sealed delivery commit. It performs only read-only catalog attach and
-// runtime cutover; delivery metadata has already been committed by the
-// sealed-control coordinator, so no legacy activation callback or snapshot
-// pinning is reachable here.
+// by the delivery commit. It performs only a read-only attach to the exact
+// DuckLake snapshot and runtime cutover; delivery metadata and the active
+// pointer have already been committed by the PostgreSQL delivery authority.
 func (m *Manager) ReconcileSealed(ctx context.Context, id servingstate.ID) error {
 	if m == nil || id == "" {
 		return errors.New("sealed serving generation is required")
@@ -428,11 +468,72 @@ func (m *Manager) ReconcileSealed(ctx context.Context, id servingstate.ID) error
 	if err := m.validateGeneration(state, artifact); err != nil {
 		return err
 	}
-	prepared, err := m.prepare(ctx, state, artifact, nil)
+	// Reconciliation is intentionally active-only.  Do not use prepare's
+	// no-change fast path here: that path is appropriate for Reload and can
+	// otherwise bypass the sealed resolver's durable active-pointer check when
+	// a replay names the process-local generation after the target has moved.
+	prepared, err := m.prepareActiveSealed(ctx, state, artifact)
 	if err != nil {
 		return err
 	}
 	return m.activatePreparedContext(ctx, prepared, func() error { return nil })
+}
+
+// ReconcileNoActive retires the process-local generation only after a second
+// authoritative pointer read serialized with cutover. This prevents a stale
+// not-found observation from racing a concurrent delivery activation.
+func (m *Manager) ReconcileNoActive(ctx context.Context, resolve func(context.Context) (servingstate.ID, error)) error {
+	if m == nil || resolve == nil {
+		return errors.New("sealed active-state resolver is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.cutoverMu.Lock()
+	// The confirmation read is part of the cutover fence, but a broken or
+	// wedged durable reader must not hold that fence through shutdown. Keep the
+	// result channel buffered so the resolver goroutine can always finish its
+	// send after cancellation releases the lock.
+	confirmation := make(chan error, 1)
+	go func() {
+		_, err := resolve(ctx)
+		confirmation <- err
+	}()
+	var err error
+	select {
+	case err = <-confirmation:
+	case <-ctx.Done():
+		m.cutoverMu.Unlock()
+		return ctx.Err()
+	}
+	if err == nil {
+		m.cutoverMu.Unlock()
+		return errReloadReadRace
+	}
+	if !errors.Is(err, servingstate.ErrNotFound) {
+		m.cutoverMu.Unlock()
+		return err
+	}
+	m.mu.Lock()
+	current := m.current
+	m.current = nil
+	retired := m.retireLocked(current)
+	m.mu.Unlock()
+	m.cutoverMu.Unlock()
+	m.cleanupRetired(retired)
+	return nil
+}
+
+func (m *Manager) prepareActiveSealed(ctx context.Context, state servingstate.State, artifact servingstate.Artifact) (*Prepared, error) {
+	var data ManagedDataResolution
+	var err error
+	if m.managedData != nil {
+		data, err = m.resolveManagedData(ctx, state)
+		if err != nil {
+			return nil, errors.Join(err, releaseManaged(data.Lifetime))
+		}
+	}
+	return m.prepareResolvedWithCandidate(ctx, state, artifact, data, nil, nil)
 }
 
 func (m *Manager) reloadOnce(ctx context.Context) error {
@@ -564,9 +665,50 @@ func (m *Manager) PrepareServingState(ctx context.Context, id string) (*Prepared
 	return m.prepare(ctx, state, artifact, nil)
 }
 
+// PrepareSealedActivation prepares one exact, qualified delivery generation
+// before its target pointer is advanced. Unlike PrepareServingState, which
+// resolves the active delivery pointer, this explicit seam supplies the
+// candidate identity to a sealed resolver. The resulting Prepared is still
+// an ordinary activatable runtime (it is not an owned private candidate).
+func (m *Manager) PrepareSealedActivation(ctx context.Context, id, candidateID string) (*Prepared, error) {
+	if m == nil || !m.requireSealedCatalog {
+		return nil, errors.New("sealed activation preparation requires a sealed runtime host")
+	}
+	if strings.TrimSpace(id) == "" || id != strings.TrimSpace(id) {
+		return nil, errors.New("sealed activation serving state id must be canonical")
+	}
+	if strings.TrimSpace(candidateID) == "" || candidateID != strings.TrimSpace(candidateID) {
+		return nil, errors.New("sealed activation candidate id must be canonical")
+	}
+	state, err := m.repo.ByID(ctx, servingstate.ID(id))
+	if err != nil {
+		return nil, err
+	}
+	artifact, err := m.repo.ArtifactByServingState(ctx, state.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.validateGeneration(state, artifact); err != nil {
+		return nil, err
+	}
+	var data ManagedDataResolution
+	if m.managedData != nil {
+		data, err = m.resolveManagedData(ctx, state)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return m.prepareResolvedWithCandidate(ctx, state, artifact, data, nil, &CandidateRuntimeContext{CandidateID: candidateID})
+}
+
 func (m *Manager) validateGeneration(state servingstate.State, artifact servingstate.Artifact) error {
 	if m.requireSealedCatalog && state.DuckLakeSnapshotID > 0 {
-		return fmt.Errorf("sealed serving migration is incomplete: generation %s still pins DuckLake snapshot %d; rebuild and publish a verified catalog seal before startup", state.ID, state.DuckLakeSnapshotID)
+		if _, ok := m.factory.(PinnedSnapshotSealedFactory); ok {
+			// PostgreSQL-backed sealed roots pin SNAPSHOT_VERSION in the
+			// attachment and verify the same value against durable qualification.
+		} else {
+			return fmt.Errorf("sealed serving migration is incomplete: generation %s still pins DuckLake snapshot %d; rebuild and publish a verified catalog seal before startup", state.ID, state.DuckLakeSnapshotID)
+		}
 	}
 	boundProjectID := m.ProjectID()
 	if boundProjectID != "" && state.ProjectID != boundProjectID {
@@ -636,10 +778,10 @@ func (m *Manager) prepare(ctx context.Context, state servingstate.State, artifac
 			return nil, err
 		}
 	}
-	return m.prepareResolvedWithCandidate(ctx, state, artifact, data, candidate)
+	return m.prepareResolvedWithCandidate(ctx, state, artifact, data, candidate, nil)
 }
 
-func (m *Manager) prepareResolvedWithCandidate(ctx context.Context, state servingstate.State, artifact servingstate.Artifact, data ManagedDataResolution, candidate *candidatePreparationContext) (*Prepared, error) {
+func (m *Manager) prepareResolvedWithCandidate(ctx context.Context, state servingstate.State, artifact servingstate.Artifact, data ManagedDataResolution, candidate *candidatePreparationContext, sealedActivationCandidate *CandidateRuntimeContext) (*Prepared, error) {
 	if err := m.validateGeneration(state, artifact); err != nil {
 		return nil, errors.Join(err, releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
 	}
@@ -652,6 +794,9 @@ func (m *Manager) prepareResolvedWithCandidate(ctx context.Context, state servin
 	if candidate != nil {
 		copy := candidate.runtime
 		candidateInput = &copy
+	} else if sealedActivationCandidate != nil {
+		copy := *sealedActivationCandidate
+		candidateInput = &copy
 	}
 	leaseHealthID := "sealed:" + string(state.ID)
 	input := RuntimeInput{State: state, Artifact: artifact, ManagedData: factoryData, Candidate: candidateInput,
@@ -661,6 +806,14 @@ func (m *Manager) prepareResolvedWithCandidate(ctx context.Context, state servin
 				m.onLeaseRenewalFailure(renewalErr)
 			}
 		},
+	}
+	if sealedActivationCandidate != nil {
+		// Keep activation candidate evidence in its dedicated field. The regular
+		// Candidate field selects candidate-specific dependency evidence in
+		// factories; native activation must instead use the persisted generation's
+		// release provenance while the target pointer is still on its base.
+		input.Candidate = nil
+		input.SealedActivationCandidate = candidateInput
 	}
 	sealed := false
 	var runtime PreparedRuntime
@@ -740,12 +893,16 @@ func (m *Manager) activatePreparedContext(ctx context.Context, candidate *Prepar
 	m.cutoverMu.Lock()
 	defer m.cutoverMu.Unlock()
 	m.mu.RLock()
+	closed := m.closed
 	currentID := servingstate.ID("")
 	boundProjectID := m.projectID
 	if m.current != nil {
 		currentID = m.current.servingStateID
 	}
 	m.mu.RUnlock()
+	if closed {
+		return errors.Join(errors.New("runtime host is closed"), sealed.abort())
+	}
 	if currentID != sealed.baseActiveID {
 		return errors.Join(ErrPreparedStale, sealed.abort())
 	}

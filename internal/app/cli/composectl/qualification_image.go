@@ -20,16 +20,31 @@ const qualificationRegistryImage = "registry:2.8.3@sha256:a3d8aaa63ed8681a604f1d
 var qualificationPushedDigestPattern = regexp.MustCompile(`digest: (sha256:[0-9a-f]{64})`)
 var qualificationImmutableImagePattern = regexp.MustCompile(`^.+@sha256:[0-9a-f]{64}$`)
 
-func qualificationLoopbackPort() (string, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", fmt.Errorf("allocate qualification loopback port: %w", err)
+func qualificationLoopbackPorts(count int) ([]string, error) {
+	if count < 1 {
+		return nil, errors.New("qualification loopback port count must be positive")
 	}
-	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
-	if err := listener.Close(); err != nil {
-		return "", fmt.Errorf("release qualification loopback port: %w", err)
+	listeners := make([]net.Listener, 0, count)
+	ports := make([]string, 0, count)
+	for range count {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			for _, opened := range listeners {
+				_ = opened.Close()
+			}
+			return nil, fmt.Errorf("allocate qualification loopback port: %w", err)
+		}
+		listeners = append(listeners, listener)
+		ports = append(ports, strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
 	}
-	return port, nil
+	var closeErr error
+	for _, listener := range listeners {
+		closeErr = errors.Join(closeErr, listener.Close())
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("release qualification loopback ports: %w", closeErr)
+	}
+	return ports, nil
 }
 
 func retryQualificationRegistryPush(
@@ -84,7 +99,7 @@ func (c *Controller) QualifyImage(
 	if options.RequireImmutable && !qualificationImmutableImagePattern.MatchString(options.Image) {
 		return errors.New("production qualification requires an immutable repository@sha256 digest")
 	}
-	if _, err := c.qualifyProductionImageRuntime(ctx, options.Image); err != nil {
+	if err := c.qualifyProductionImageRuntime(ctx, options.Image); err != nil {
 		return err
 	}
 	if options.EvidenceDir == "" {
@@ -234,6 +249,13 @@ func (c *Controller) QualifyImage(
 	); err != nil {
 		return err
 	}
+	if err := copyQualificationFile(
+		filepath.Join(c.root, "..", "postgres", "init.sh"),
+		filepath.Join(bundleRoot, "qualification", "postgres-init.sh"),
+		0o755,
+	); err != nil {
+		return fmt.Errorf("copy canonical PostgreSQL qualification init script: %w", err)
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return err
@@ -252,14 +274,11 @@ func (c *Controller) QualifyImage(
 	); err != nil {
 		return err
 	}
-	httpPort, err := qualificationLoopbackPort()
+	loopbackPorts, err := qualificationLoopbackPorts(2)
 	if err != nil {
 		return err
 	}
-	httpsPort, err := qualificationLoopbackPort()
-	if err != nil {
-		return err
-	}
+	httpPort, httpsPort := loopbackPorts[0], loopbackPorts[1]
 	if err := updateEnvFile(filepath.Join(bundleRoot, deploymentEnvName), map[string]string{
 		"COMPOSE_PROJECT_NAME": composeProject,
 		"LEAPVIEW_IMAGE":       imageReference,
@@ -272,24 +291,18 @@ func (c *Controller) QualifyImage(
 	}
 
 	var controllerOutput bytes.Buffer
-	instanceController, err := New(Options{
-		Root:                  bundleRoot,
-		DockerBin:             c.dockerBin,
-		Stdin:                 c.stdin,
-		Stdout:                &controllerOutput,
-		Stderr:                c.stderr,
-		Now:                   c.now,
-		Sleep:                 c.sleep,
-		qualificationExecutor: c.qualificationExecutor,
-	})
+	instanceController, err := c.scoped(bundleRoot, &controllerOutput)
 	if err != nil {
 		return err
 	}
-	instanceStarted := false
+	var nativeTopology *qualificationNativePostgresTopology
+	var nativeComposeLifecycle bool
+	var browserContainer string
 	cleanup.Add(func(cleanupCtx context.Context) error {
-		if !instanceStarted {
+		if !nativeComposeLifecycle && nativeTopology == nil {
 			return nil
 		}
+		var result error
 		logOutput, _ := c.qualificationCompose(
 			cleanupCtx,
 			bundleRoot,
@@ -300,17 +313,81 @@ func (c *Controller) QualifyImage(
 			redactQualificationLog(logOutput, 500),
 			0o600,
 		)
-		_, downErr := c.qualificationCompose(
+		// Remove the application and Caddy before detaching the native
+		// PostgreSQL sidecar.  Compose owns the network, so it is torn down
+		// only after the sidecar has been removed.
+		if nativeComposeLifecycle {
+			_, removeErr := c.qualificationCompose(
+				cleanupCtx,
+				bundleRoot,
+				"rm", "--force", "--stop", "leapview", "caddy",
+			)
+			result = errors.Join(result, ignoreQualificationNotFound(removeErr))
+		}
+		if nativeTopology != nil {
+			if nativeTopology.Container != nil {
+				postgresOutput, _ := nativeTopology.Container.Logs(cleanupCtx, 500)
+				_ = os.WriteFile(
+					filepath.Join(evidenceDir, "postgres.log"),
+					redactQualificationLog(postgresOutput, 500),
+					0o600,
+				)
+			}
+			removeErr := nativeTopology.Remove(cleanupCtx)
+			result = errors.Join(result, removeErr)
+			if nativeTopology.Container != nil {
+				// Compose owns the network, so it cannot be torn down while a
+				// failed sidecar removal still holds an endpoint on it.
+				return result
+			}
+			if removeErr == nil {
+				nativeTopology = nil
+			}
+		}
+		if nativeComposeLifecycle {
+			_, downErr := c.qualificationCompose(
+				cleanupCtx,
+				bundleRoot,
+				"down", "--volumes", "--remove-orphans",
+			)
+			result = errors.Join(result, ignoreQualificationNotFound(downErr))
+		}
+		return result
+	})
+	cleanup.Add(func(cleanupCtx context.Context) error {
+		return removeQualificationNamedContainerHandle(
 			cleanupCtx,
-			bundleRoot,
-			"down", "--volumes", "--remove-orphans",
+			instanceController.qualificationContainers,
+			&browserContainer,
 		)
-		return ignoreQualificationNotFound(downErr)
 	})
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
 	ctx = phases.Begin(rootContext, "target bootstrap", 20*time.Minute)
+	if err := instanceController.seedQualificationNativePostgresEnvironment(); err != nil {
+		return err
+	}
+	nativeComposeLifecycle = true
+	nativeNetwork, err := instanceController.prepareQualificationNativePostgresNetwork(ctx)
+	if err != nil {
+		return err
+	}
+	nativeTopology, err = instanceController.startQualificationNativePostgresTopology(ctx, qualificationNativePostgresTopologyOptions{
+		ComposeProject: composeProject,
+		ComposeNetwork: nativeNetwork,
+		BundleRoot:     bundleRoot,
+	})
+	if err != nil {
+		return err
+	}
+	if err := instanceController.writeQualificationNativePostgresEnvironment(nativeTopology); err != nil {
+		return err
+	}
+	artifacts, err := instanceController.prepareQualificationNativePhysicalPool(ctx, evidenceDir)
+	if err != nil {
+		return err
+	}
 	if err := instanceController.Initialize(ctx, InitOptions{
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
@@ -319,17 +396,28 @@ func (c *Controller) QualifyImage(
 	}); err != nil {
 		return err
 	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "instance initialization"); err != nil {
+		return err
+	}
 	target := "https://localhost:" + httpsPort
 	if err := updateEnvFile(filepath.Join(bundleRoot, appEnvName), map[string]string{
 		"LEAPVIEW_PUBLIC_URL": target,
 	}); err != nil {
 		return err
 	}
-	instanceStarted = true
-	if err := instanceController.bootstrapQualificationLocalPhysicalPool(ctx); err != nil {
+	if err := instanceController.applyQualificationNativePhysicalPool(ctx, nativeTopology, artifacts); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "physical-pool bootstrap"); err != nil {
 		return err
 	}
 	if err := instanceController.startQualificationBootstrap(ctx); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "application startup"); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertNativeDeliveryReads(ctx); err != nil {
 		return err
 	}
 	credentialsPath := filepath.Join(bundleRoot, ".qualification-credentials.json")
@@ -350,6 +438,9 @@ func (c *Controller) QualifyImage(
 		return err
 	}
 	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "one-time credential delivery"); err != nil {
 		return err
 	}
 
@@ -391,7 +482,10 @@ func (c *Controller) QualifyImage(
 		Target:          target,
 	})
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return err
+		}
+		return errors.Join(err, nativeTopology.AssertNativeDeliveryReads(ctx))
 	}
 	if err := instanceController.waitQualificationReadiness(ctx); err != nil {
 		return fmt.Errorf("production image did not become ready after sealed publication: %w", err)
@@ -406,9 +500,54 @@ func (c *Controller) QualifyImage(
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
+	ctx = phases.Begin(rootContext, "performance", 45*time.Minute)
+	metricsToken, err := envFileValue(
+		instanceController.path(appEnvName),
+		"LEAPVIEW_METRICS_BEARER_TOKEN",
+	)
+	if err != nil {
+		return err
+	}
+	browserContainer, err = instanceController.startQualificationPerformanceBrowser(
+		ctx,
+		composeProject,
+		credentialsPath,
+		evidenceDir,
+		target,
+	)
+	if err != nil {
+		return err
+	}
+	containerID, err = instanceController.containerID(ctx)
+	if err != nil {
+		return err
+	}
+	if err := instanceController.runQualificationPerformance(
+		ctx,
+		browserContainer,
+		containerID,
+		evidenceDir,
+		imageReference,
+		metricsToken,
+	); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertNativeDeliveryReads(ctx); err != nil {
+		return err
+	}
+	if err := removeQualificationNamedContainerHandle(
+		ctx,
+		instanceController.qualificationContainers,
+		&browserContainer,
+	); err != nil {
+		return err
+	}
+	if err := phases.Finish(nil); err != nil {
+		return err
+	}
 	report.Result = "success"
 	report.Phases = phases.Evidence()
-	_, err = fmt.Fprintln(c.stdout, "production image passed enterprise authoring qualification")
+	_, err = fmt.Fprintln(c.stdout, "production image passed enterprise qualification")
 	return err
 }
 

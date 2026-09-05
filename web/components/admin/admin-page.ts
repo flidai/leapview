@@ -905,7 +905,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     this.dispatchEvent(new CustomEvent('lv-publication-command', {
       bubbles: true,
       composed: true,
-      detail: { projectId: publication.projectId, publication: publication.name, action },
+      detail: { projectId: publication.projectId, publication: publication.name, action, expectedRevision: publication.revision },
     }))
   }
 

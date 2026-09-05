@@ -15,8 +15,9 @@ var (
 )
 
 type CandidateSourceArtifact struct {
-	Path   string
-	Digest string
+	Path      string
+	Digest    string
+	SizeBytes int64
 }
 
 type CandidateSourceRevision struct {
@@ -32,12 +33,12 @@ type CandidateSynchronizationRequest struct {
 	// SourceOnly retains the immutable source snapshot without invoking
 	// candidate preparation or any physical writer. Delivery plan callers set
 	// this explicitly so Build remains the first physical operation.
-	SourceOnly             bool
-	CandidateKey           string
-	ExpectedCandidateID    string
-	ExpectedArtifactDigest string
-	Artifacts              []CandidateSourceArtifact
-	SourceRevision         *CandidateSourceRevision
+	SourceOnly     bool
+	CandidateKey   string
+	PlanID         string
+	IdempotencyKey string
+	Artifacts      []CandidateSourceArtifact
+	SourceRevision *CandidateSourceRevision
 }
 
 type CandidateSourceScope struct {
@@ -50,18 +51,53 @@ type CandidateSourceSnapshot struct {
 	ProjectID               projectgraph.ResourceID
 	ArtifactDigest          string
 	SourceAttestationDigest string
-	ProjectPath             string
-	ProjectDigest           string
-	ProjectArtifactPath     string
-	SourceRevision          *CandidateSourceRevision
+	// ProjectFile is the logical authored manifest path. It is never a host
+	// filesystem path and is safe to carry across native object-backed ports.
+	ProjectFile              string
+	ProjectArtifactObjectKey string
+	ManifestObjectKey        string
+	ProjectPath              string
+	ProjectDigest            string
+	ProjectArtifactPath      string
+	SourceRevision           *CandidateSourceRevision
+}
+
+// CandidateSourceObjectRef is an immutable object-store reference. ObjectKey
+// is opaque to callers; it must never be interpreted as a local filesystem
+// path.
+type CandidateSourceObjectRef struct {
+	Path                  string
+	Digest                string
+	SizeBytes             int64
+	ObjectKey             string
+	ContentType           string
+	MetadataDigest        string
+	StorageSecurityDomain string
+}
+
+// CandidateSourceObjectReader exposes retained source bytes through exact
+// object-backed readers. Implementations must not return worktree paths.
+type CandidateSourceObjectReader interface {
+	SourceObjectRefs(context.Context, CandidateSourceScope, string) ([]CandidateSourceObjectRef, error)
+	OpenSourceObject(context.Context, CandidateSourceScope, CandidateSourceObjectRef) (io.ReadCloser, error)
+	OpenProjectArtifact(context.Context, CandidateSourceScope, string) (io.ReadCloser, error)
 }
 
 // CandidateSourceSynchronizer owns target-side retention and compiler
 // validation for environment-neutral project sources.
 type CandidateSourceSynchronizer interface {
-	Plan(context.Context, CandidateSourceScope, CandidateSynchronizationRequest) ([]string, error)
-	Upload(context.Context, CandidateSourceScope, string, io.Reader) error
+	Plan(context.Context, CandidateSourceScope, CandidateSynchronizationRequest) (CandidateSynchronizationPlan, error)
+	Upload(context.Context, CandidateSourceScope, string, string, io.Reader) error
 	Commit(context.Context, CandidateSourceScope, CandidateSynchronizationRequest) (CandidateSourceSnapshot, error)
+}
+
+// CandidateSynchronizationPlan is the durable target-owned synchronization
+// command result. PlanID is opaque and must be presented on every subsequent
+// upload, retention, or commit operation.
+type CandidateSynchronizationPlan struct {
+	PlanID         string
+	ArtifactDigest string
+	MissingDigests []string
 }
 
 // CandidateSourceSnapshotReader resolves one already-retained immutable

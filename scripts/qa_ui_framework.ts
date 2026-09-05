@@ -72,7 +72,7 @@ async function resolveBaseURL(): Promise<string> {
 
   const started = await waitForManagedServer()
   await deployManagedProject()
-  await waitForReachable(started)
+  await waitForProjectReady(started)
   return started
 }
 
@@ -114,12 +114,16 @@ async function waitForManagedServer(): Promise<string> {
   throw new Error('managed dev server did not become reachable')
 }
 
-async function waitForReachable(baseURL: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (await reachable(baseURL)) return
+async function waitForProjectReady(baseURL: string): Promise<void> {
+  const exploreURL = new URL('/explore', baseURL).toString()
+  for (let attempt = 0; attempt < managedServerReadyAttempts; attempt++) {
+    if (await reachable(exploreURL)) return
+    if (devTaskExitCode !== null) {
+      throw new Error(`task dev exited before the published project became reachable with status ${devTaskExitCode}`)
+    }
     await sleep(200)
   }
-  throw new Error(`managed dev server did not become reachable after deployment at ${baseURL}`)
+  throw new Error('published project did not become reachable')
 }
 
 async function managedBaseURL(): Promise<string | null> {

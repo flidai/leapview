@@ -1,10 +1,10 @@
 package compiler
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -77,10 +77,24 @@ func PlanProjectAgainstGraph(projectPath string, active projectgraph.ProjectGrap
 	if err != nil {
 		return ProjectPlan{}, err
 	}
+	return planProjectAgainstGraph(project, active), nil
+}
+
+// PlanProjectFilesAgainstGraph is the in-memory counterpart to
+// PlanProjectAgainstGraph.
+func PlanProjectFilesAgainstGraph(files map[string][]byte, projectFile string, active projectgraph.ProjectGraph) (ProjectPlan, error) {
+	project, err := LoadProjectFiles(files, projectFile)
+	if err != nil {
+		return ProjectPlan{}, err
+	}
+	return planProjectAgainstGraph(project, active), nil
+}
+
+func planProjectAgainstGraph(project Project, active projectgraph.ProjectGraph) ProjectPlan {
 	plan := planForProject(project)
 	changes, dependencyChanges, summary := diffProjectGraphs(project.Graph, active)
 	plan.Changes, plan.DependencyChanges, plan.Summary = changes, dependencyChanges, summary
-	return plan, nil
+	return plan
 }
 
 // PlanProjectAgainstArtifact compares authored definitions with the exact
@@ -92,9 +106,27 @@ func PlanProjectAgainstArtifact(projectPath string, active projectartifact.Proje
 	if err != nil {
 		return ProjectPlan{}, err
 	}
+	return planProjectAgainstArtifact(project, active)
+}
+
+// PlanProjectFilesAgainstArtifact is the in-memory counterpart to
+// PlanProjectAgainstArtifact.
+func PlanProjectFilesAgainstArtifact(files map[string][]byte, projectFile string, active projectartifact.Project) (ProjectPlan, error) {
+	project, err := LoadProjectFiles(files, projectFile)
+	if err != nil {
+		return ProjectPlan{}, err
+	}
+	return planProjectAgainstArtifact(project, active)
+}
+
+func planProjectAgainstArtifact(project Project, active projectartifact.Project) (ProjectPlan, error) {
 	plan := planForProject(project)
 	changes, dependencyChanges, summary := diffProjectGraphs(project.Graph, active.Graph())
-	for _, materialization := range diffCompiledMaterialization(project, active) {
+	materializationChanges, err := diffCompiledMaterialization(project, active)
+	if err != nil {
+		return ProjectPlan{}, err
+	}
+	for _, materialization := range materializationChanges {
 		merged := false
 		for i := range changes {
 			if changes[i].ID == materialization.ID && changes[i].Action == materialization.Action {
@@ -133,16 +165,24 @@ func PlanProjectAgainstArtifact(projectPath string, active projectartifact.Proje
 	return plan, nil
 }
 
-func diffCompiledMaterialization(project Project, active projectartifact.Project) []ProjectPlanChange {
+func diffCompiledMaterialization(project Project, active projectartifact.Project) ([]ProjectPlanChange, error) {
 	changes := make([]ProjectPlanChange, 0)
 	activeTables := active.ModelTables()
-	authoredTables := make(map[string]semanticmodel.Table, len(project.Models))
-	for name, table := range project.Models {
-		if id := project.ModelIDs[name]; id != "" {
-			authoredTables[id] = table
-		}
+	// Compare the canonical manifest projection rather than compiler.Project's
+	// authored-name runtime maps. The latter intentionally use symbolic source
+	// and model names, while the artifact manifest uses stable resource IDs and
+	// canonical references; comparing them directly reports every unchanged
+	// model as a materialization change after artifact serialization.
+	authoredArtifact, err := projectartifact.NewProject(project.Graph, project.Manifest)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize authored project materialization: %w", err)
 	}
-	seen := make(map[string]struct{}, len(activeTables)+len(authoredTables))
+	authoredTables := authoredArtifact.ModelTables()
+	capacity, err := checkedCapacitySum(len(activeTables), len(authoredTables))
+	if err != nil {
+		return nil, fmt.Errorf("compiled materialization table set: %w", err)
+	}
+	seen := make(map[string]struct{}, capacity)
 	for id := range authoredTables {
 		seen[id] = struct{}{}
 	}
@@ -169,13 +209,12 @@ func diffCompiledMaterialization(project Project, active projectartifact.Project
 		changes = append(changes, ProjectPlanChange{Action: action, ID: id, Type: string(projectgraph.KindModel), Key: resource.Name, Reason: reason, Breaking: breaking, MaterializationImpact: true})
 	}
 	activeSources := active.Manifest().Sources
-	authoredSources := make(map[string]semanticmodel.Source, len(project.Sources))
-	for name, source := range project.Sources {
-		if id := project.SourceIDs[name]; id != "" {
-			authoredSources[id] = source
-		}
+	authoredSources := authoredArtifact.Manifest().Sources
+	capacity, err = checkedCapacitySum(len(activeSources), len(authoredSources))
+	if err != nil {
+		return nil, fmt.Errorf("compiled materialization source set: %w", err)
 	}
-	seen = make(map[string]struct{}, len(activeSources)+len(authoredSources))
+	seen = make(map[string]struct{}, capacity)
 	for id := range authoredSources {
 		seen[id] = struct{}{}
 	}
@@ -198,7 +237,18 @@ func diffCompiledMaterialization(project Project, active projectartifact.Project
 		}
 		changes = append(changes, ProjectPlanChange{Action: action, ID: id, Type: string(projectgraph.KindSource), Key: resource.Name, Reason: "compiled source definition changed", MaterializationImpact: true})
 	}
-	return changes
+	return changes, nil
+}
+
+func checkedCapacitySum(left, right int) (int, error) {
+	if left < 0 || right < 0 {
+		return 0, fmt.Errorf("capacity cannot be negative")
+	}
+	maximumInt := int(^uint(0) >> 1)
+	if left > maximumInt-right {
+		return 0, fmt.Errorf("capacity overflows platform int")
+	}
+	return left + right, nil
 }
 
 func planForProject(project Project) ProjectPlan {

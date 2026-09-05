@@ -141,7 +141,7 @@ func NormalizeAuditLogFilters(filters AuditLogFilters) AuditLogFilters {
 
 // AuditPageToken encodes the stable createdAt/id cursor used by the access
 // repository and API. It is exported so command handlers can produce the same
-// cursor as the REST endpoint without reaching into sqlite implementation.
+// cursor as the REST endpoint without reaching into persistence implementation.
 func AuditPageToken(createdAt, id string) string {
 	if strings.TrimSpace(createdAt) == "" || strings.TrimSpace(id) == "" {
 		return ""

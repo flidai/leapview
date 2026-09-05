@@ -56,10 +56,22 @@ type Project struct {
 	// ResourceSources is keyed by canonical resource ID and contains validated
 	// authored YAML for definition views. Connections are never inserted.
 	ResourceSources map[string]string
+	reader          projectFileReader
 }
 
 func CompileProject(projectPath string) (projectartifact.Project, error) {
 	project, err := LoadProject(projectPath)
+	if err != nil {
+		return projectartifact.Project{}, err
+	}
+	return projectartifact.NewProject(project.Graph, project.Manifest)
+}
+
+// CompileProjectFiles compiles a project from logical source paths and bytes.
+// It is the in-memory counterpart to CompileProject and produces the same
+// canonical artifact for the same source set.
+func CompileProjectFiles(files map[string][]byte, projectFile string) (projectartifact.Project, error) {
+	project, err := LoadProjectFiles(files, projectFile)
 	if err != nil {
 		return projectartifact.Project{}, err
 	}

@@ -1,111 +1,165 @@
-// Package module owns construction of serving-state persistence and exposes
-// capability contracts without leaking its SQLite adapter.
+// Package module owns serving-state composition. PostgreSQL is the immutable
+// production authority.
 package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"time"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
-	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 )
 
-type Config struct{ Database *sql.DB }
+// NativePersistence is the immutable production reader/lease seam. Admission
+// is exposed by the concrete PostgreSQL package with caller-owned pgx Tx.
+type NativePersistence interface {
+	ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
+	ByID(context.Context, servingstate.ID) (servingstate.State, error)
+	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
+	ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error)
+	ListActiveScopes(context.Context) ([]servingstate.ActiveScope, error)
+	CreateQuerySnapshotLease(context.Context, servingstate.SnapshotLeaseInput) (string, error)
+	ReleaseQuerySnapshotLease(context.Context, string) error
+	ExtendQuerySnapshotLease(context.Context, string, time.Time) error
+	ActiveServingStateGraph(context.Context, projectgraph.ResourceID, string) (servingstate.AssetGraph, bool, error)
+	ServingStateGraph(context.Context, projectgraph.ResourceID, string, servingstate.ID) (servingstate.AssetGraph, bool, error)
+	AssetVersions(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID) ([]servingstate.AssetVersion, error)
+	NativePersistence()
+	Configured() bool
+}
+
+// Persistence is the typed serving-state storage selection passed into Build.
+// Callers choose NewPostgresPersistence for production; Build never infers an
+// adapter from a raw database handle.
+type Persistence struct {
+	native NativePersistence
+}
+
+// NewPostgresPersistence wraps the configured immutable production authority.
+func NewPostgresPersistence(native NativePersistence) (Persistence, error) {
+	if native == nil {
+		return Persistence{}, errors.New("PostgreSQL serving-state persistence is required")
+	}
+	if !native.Configured() {
+		return Persistence{}, errors.New("PostgreSQL serving-state persistence is not configured")
+	}
+	return Persistence{native: native}, nil
+}
+
+func (p Persistence) isPostgres() bool {
+	return p.native != nil
+}
+
+func (p Persistence) validate() error {
+	if !p.isPostgres() || !p.native.Configured() {
+		return errors.New("PostgreSQL serving-state persistence is not configured")
+	}
+	return nil
+}
 
 type Module struct {
-	states *servingstatesqlite.Repository
+	native NativePersistence
+}
+type Config struct {
+	Persistence *Persistence
+	Production  bool
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
-	if config.Database == nil {
-		return nil, errors.New("serving-state database is required")
+	if config.Persistence == nil {
+		return nil, errors.New("serving-state persistence is required")
 	}
-	return &Module{states: servingstatesqlite.NewRepository(config.Database)}, nil
+	if err := config.Persistence.validate(); err != nil {
+		return nil, err
+	}
+	if !config.Production || !config.Persistence.isPostgres() {
+		return nil, errors.New("native PostgreSQL persistence requires production serving-state mode")
+	}
+	return &Module{native: config.Persistence.native}, nil
 }
 
-func (m *Module) Create(ctx context.Context, input servingstate.CreateInput) (servingstate.State, error) {
-	return m.states.Create(ctx, input)
+func (m *Module) ByID(c context.Context, id servingstate.ID) (servingstate.State, error) {
+	native, err := m.nativeOrErr()
+	if err != nil {
+		return servingstate.State{}, err
+	}
+	return native.ByID(c, id)
 }
-func (m *Module) ByID(ctx context.Context, id servingstate.ID) (servingstate.State, error) {
-	return m.states.ByID(ctx, id)
+func (m *Module) RecordDuckLakeSnapshot(c context.Context, id servingstate.ID, s int64) error {
+	native, err := m.nativeOrErr()
+	if err != nil {
+		return err
+	}
+	return native.RecordDuckLakeSnapshot(c, id, s)
 }
-func (m *Module) MarkFailed(ctx context.Context, id servingstate.ID, cause error) error {
-	return m.states.MarkFailed(ctx, id, cause)
+func (m *Module) CreateQuerySnapshotLease(c context.Context, i servingstate.SnapshotLeaseInput) (string, error) {
+	native, err := m.nativeOrErr()
+	if err != nil {
+		return "", err
+	}
+	return native.CreateQuerySnapshotLease(c, i)
 }
-func (m *Module) RecordDuckLakeSnapshot(ctx context.Context, id servingstate.ID, snapshotID int64) error {
-	return m.states.RecordDuckLakeSnapshot(ctx, id, snapshotID)
+func (m *Module) ReleaseQuerySnapshotLease(c context.Context, id string) error {
+	native, err := m.nativeOrErr()
+	if err != nil {
+		return err
+	}
+	return native.ReleaseQuerySnapshotLease(c, id)
 }
-func (m *Module) ReferencedDuckLakeSnapshots(ctx context.Context, environment string) ([]int64, error) {
-	return m.states.ReferencedDuckLakeSnapshots(ctx, environment)
+func (m *Module) ExtendQuerySnapshotLease(c context.Context, id string, t time.Time) error {
+	native, err := m.nativeOrErr()
+	if err != nil {
+		return err
+	}
+	return native.ExtendQuerySnapshotLease(c, id, t)
 }
-func (m *Module) ActiveDuckLakeSnapshots(ctx context.Context, environment string) ([]int64, error) {
-	return m.states.ActiveDuckLakeSnapshots(ctx, environment)
+func (m *Module) ActiveArtifact(c context.Context, p projectgraph.ResourceID, e servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
+	native, err := m.nativeOrErr()
+	if err != nil {
+		return servingstate.State{}, servingstate.Artifact{}, err
+	}
+	return native.ActiveArtifact(c, p, e)
 }
-func (m *Module) LeasedDuckLakeSnapshots(ctx context.Context, environment string) ([]int64, error) {
-	return m.states.LeasedDuckLakeSnapshots(ctx, environment)
+func (m *Module) ListActiveScopes(c context.Context) ([]servingstate.ActiveScope, error) {
+	native, err := m.nativeOrErr()
+	if err != nil {
+		return nil, err
+	}
+	return native.ListActiveScopes(c)
 }
-func (m *Module) ForeignEnvironmentDuckLakeSnapshots(ctx context.Context, environment string) ([]int64, error) {
-	return m.states.ForeignEnvironmentDuckLakeSnapshots(ctx, environment)
+func (m *Module) ArtifactByServingState(c context.Context, id servingstate.ID) (servingstate.Artifact, error) {
+	native, err := m.nativeOrErr()
+	if err != nil {
+		return servingstate.Artifact{}, err
+	}
+	return native.ArtifactByServingState(c, id)
 }
-func (m *Module) CreateQuerySnapshotLease(ctx context.Context, input servingstate.SnapshotLeaseInput) (string, error) {
-	return m.states.CreateQuerySnapshotLease(ctx, input)
+func (m *Module) ActiveServingStateGraph(c context.Context, p projectgraph.ResourceID, e string) (servingstate.AssetGraph, bool, error) {
+	native, err := m.nativeOrErr()
+	if err != nil {
+		return servingstate.AssetGraph{}, false, err
+	}
+	return native.ActiveServingStateGraph(c, p, e)
 }
-func (m *Module) ReleaseQuerySnapshotLease(ctx context.Context, id string) error {
-	return m.states.ReleaseQuerySnapshotLease(ctx, id)
+func (m *Module) ServingStateGraph(c context.Context, p projectgraph.ResourceID, e string, id servingstate.ID) (servingstate.AssetGraph, bool, error) {
+	native, err := m.nativeOrErr()
+	if err != nil {
+		return servingstate.AssetGraph{}, false, err
+	}
+	return native.ServingStateGraph(c, p, e, id)
 }
-func (m *Module) ExtendQuerySnapshotLease(ctx context.Context, id string, expiresAt time.Time) error {
-	return m.states.ExtendQuerySnapshotLease(ctx, id, expiresAt)
-}
-func (m *Module) ReleaseExpiredQuerySnapshotLeases(ctx context.Context, environment string) error {
-	return m.states.ReleaseExpiredQuerySnapshotLeases(ctx, environment)
-}
-func (m *Module) ExpireInactiveServingStates(ctx context.Context, environment string) error {
-	return m.states.ExpireInactiveServingStates(ctx, environment)
-}
-func (m *Module) ScheduleExpiredServingStateDeletion(ctx context.Context, environment string) error {
-	return m.states.ScheduleExpiredServingStateDeletion(ctx, environment)
-}
-func (m *Module) MarkDeleteScheduledServingStatesDeleted(ctx context.Context, environment string) error {
-	return m.states.MarkDeleteScheduledServingStatesDeleted(ctx, environment)
-}
-func (m *Module) ReconcileRetention(ctx context.Context, environment string, now time.Time) error {
-	return m.states.ReconcileRetention(ctx, environment, now)
-}
-func (m *Module) SaveValidated(ctx context.Context, id servingstate.ID, validation servingstate.Validation, artifact servingstate.Artifact) (servingstate.State, error) {
-	return m.states.SaveValidated(ctx, id, validation, artifact)
-}
-func (m *Module) Activate(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment, id, expectedActiveID servingstate.ID) (servingstate.State, error) {
-	return m.states.Activate(ctx, projectID, environment, id, expectedActiveID)
-}
-func (m *Module) ActiveArtifact(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
-	return m.states.ActiveArtifact(ctx, projectID, environment)
-}
-func (m *Module) ListActiveScopes(ctx context.Context) ([]servingstate.ActiveScope, error) {
-	return m.states.ListActiveScopes(ctx)
-}
-func (m *Module) ArtifactByServingState(ctx context.Context, id servingstate.ID) (servingstate.Artifact, error) {
-	return m.states.ArtifactByServingState(ctx, id)
+func (m *Module) AssetVersions(c context.Context, p projectgraph.ResourceID, e string, a projectgraph.ResourceID) ([]servingstate.AssetVersion, error) {
+	native, err := m.nativeOrErr()
+	if err != nil {
+		return nil, err
+	}
+	return native.AssetVersions(c, p, e, a)
 }
 
-// ActiveServingStateGraph returns the project-owned asset projection for the
-// exact active serving generation. It is a read-only browser composition port;
-// callers still bind project identity through the runtime host.
-func (m *Module) ActiveServingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment string) (servingstate.AssetGraph, bool, error) {
-	return m.states.ActiveServingStateGraph(ctx, projectID, environment)
-}
-
-// ServingStateGraph returns the project-owned asset projection for one exact
-// serving generation. Callers bind the ID to an active runtime lease rather
-// than consulting a legacy active-scope pointer.
-func (m *Module) ServingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment string, servingStateID servingstate.ID) (servingstate.AssetGraph, bool, error) {
-	return m.states.ServingStateGraph(ctx, projectID, environment, servingStateID)
-}
-
-// AssetVersions returns the distinct published configuration history for one
-// logical project asset.
-func (m *Module) AssetVersions(ctx context.Context, projectID projectgraph.ResourceID, environment string, assetID projectgraph.ResourceID) ([]servingstate.AssetVersion, error) {
-	return m.states.AssetVersions(ctx, projectID, environment, assetID)
+func (m *Module) nativeOrErr() (NativePersistence, error) {
+	if m == nil || m.native == nil {
+		return nil, errors.New("serving-state persistence is unavailable")
+	}
+	return m.native, nil
 }

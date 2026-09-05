@@ -56,7 +56,21 @@ func (runtime *testcontainersQualificationRuntime) Start(
 			}
 		},
 		HostConfigModifier: func(config *dockercontainer.HostConfig) {
+			config.ReadonlyRootfs = request.ReadOnly
 			config.Binds = append(config.Binds, binds...)
+			if len(request.Tmpfs) > 0 {
+				if config.Tmpfs == nil {
+					config.Tmpfs = make(map[string]string, len(request.Tmpfs))
+				}
+				for _, mount := range request.Tmpfs {
+					parts := strings.SplitN(strings.TrimSpace(mount), ":", 2)
+					if len(parts) == 1 {
+						config.Tmpfs[parts[0]] = ""
+					} else {
+						config.Tmpfs[parts[0]] = parts[1]
+					}
+				}
+			}
 			if request.NetworkMode != "" {
 				config.NetworkMode = dockercontainer.NetworkMode(request.NetworkMode)
 			}

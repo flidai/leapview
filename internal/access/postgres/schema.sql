@@ -11,7 +11,13 @@ CREATE TABLE IF NOT EXISTS access.platform_setting (
 
 CREATE TABLE IF NOT EXISTS audit.audit_event (
     audit_id uuid PRIMARY KEY,
-    scope_id text,
+    -- Delivery activation uses the same immutable identity for its durable
+    -- domain event and audit record.  Keep that relationship on the
+    -- access-owned audit authority rather than introducing a second audit
+    -- table in the deployment capability.
+    event_id uuid UNIQUE,
+    actor_id text CHECK (actor_id IS NULL OR (actor_id = btrim(actor_id) AND length(actor_id) BETWEEN 1 AND 255)),
+    scope_id text CHECK (scope_id IS NULL OR (scope_id = btrim(scope_id) AND length(scope_id) BETWEEN 1 AND 255)),
     principal_id uuid,
     source text NOT NULL CHECK (length(source)<=128),
     operation text NOT NULL CHECK (length(operation)<=255),
@@ -23,17 +29,472 @@ CREATE TABLE IF NOT EXISTS audit.audit_event (
     generation_id text CHECK (generation_id IS NULL OR (generation_id = btrim(generation_id) AND length(generation_id) BETWEEN 1 AND 255)),
     capability text NOT NULL DEFAULT '',
     outcome text NOT NULL DEFAULT 'success',
-    request_id uuid,
-    correlation_id uuid,
+    request_digest text CHECK (request_digest IS NULL OR request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    request_id text CHECK (request_id IS NULL OR (request_id = btrim(request_id) AND length(request_id) BETWEEN 1 AND 256)),
+    correlation_id text CHECK (correlation_id IS NULL OR (correlation_id = btrim(correlation_id) AND length(correlation_id) BETWEEN 1 AND 256)),
     aggregate_key text NOT NULL DEFAULT '',
     aggregate_sequence bigint NOT NULL DEFAULT 0,
     intent_digest text NOT NULL DEFAULT '',
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(metadata)='object' AND octet_length(metadata::text)<=32768),
     occurred_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-CREATE OR REPLACE FUNCTION audit.reject_audit_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit history is immutable'; END; $$;
+CREATE INDEX IF NOT EXISTS audit_event_retention_order_idx
+    ON audit.audit_event (occurred_at, audit_id);
+
+-- The floor is durable evidence of the policy boundary used by the last
+-- bounded retention batch.  It is a cursor, not an authorization shortcut:
+-- append-only producers continue to write audit_event directly.
+CREATE TABLE IF NOT EXISTS audit.audit_retention_floor (
+    retention_class text PRIMARY KEY CHECK (retention_class IN ('short', 'standard', 'security')),
+    floor_at timestamptz NOT NULL DEFAULT '1970-01-01 00:00:00+00'::timestamptz,
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+INSERT INTO audit.audit_retention_floor (retention_class)
+VALUES ('short'), ('standard'), ('security')
+ON CONFLICT (retention_class) DO NOTHING;
+
+-- Operational auth state has one monotonic floor. Audit events are final
+-- immutable inserts on PostgreSQL (there is no same-database outbox).
+CREATE TABLE IF NOT EXISTS access.access_retention_floor (
+    retention_class text PRIMARY KEY CHECK (retention_class = 'auth_state'),
+    floor_at timestamptz NOT NULL DEFAULT '1970-01-01 00:00:00+00'::timestamptz,
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+INSERT INTO access.access_retention_floor (retention_class)
+VALUES ('auth_state')
+ON CONFLICT (retention_class) DO NOTHING;
+
+-- Audit history is immutable to runtime callers.  A deletion can only be
+-- reached through the bounded SECURITY DEFINER function below, which sets a
+-- transaction-local marker and is itself executable only by maintenance.
+CREATE OR REPLACE FUNCTION audit.reject_audit_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        -- The database owns evidence time.  Even an owner or runtime caller
+        -- supplying an explicit age cannot make a fresh event look old.
+        NEW.occurred_at := statement_timestamp();
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE'
+       AND current_setting('audit.maintenance', true) = 'on'
+       AND session_user = 'leapview_control_maintenance' THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'audit history is immutable';
+END;
+$$;
 DROP TRIGGER IF EXISTS audit_event_immutable ON audit.audit_event;
-CREATE TRIGGER audit_event_immutable BEFORE UPDATE OR DELETE ON audit.audit_event FOR EACH ROW EXECUTE FUNCTION audit.reject_audit_mutation();
+CREATE TRIGGER audit_event_immutable BEFORE INSERT OR UPDATE OR DELETE ON audit.audit_event FOR EACH ROW EXECUTE FUNCTION audit.reject_audit_mutation();
+
+-- Retention is a maintenance capability, never a runtime table privilege.
+-- Every invocation is capped by the database clock and one bounded candidate
+-- batch.  Candidate rows are inspected and locked before eligibility is
+-- decided; malformed retention envelopes are retained for operator review
+-- rather than silently discarded.  Valid envelopes (short, standard, or
+-- security) follow the explicitly supplied policy cutoff.
+CREATE OR REPLACE FUNCTION audit.prune_audit_events(
+    p_retention_class text,
+    p_requested_cutoff timestamptz,
+    p_batch_limit integer
+)
+RETURNS TABLE (
+    retention_class text,
+    requested_cutoff timestamptz,
+    cutoff timestamptz,
+    requested_limit integer,
+    removed_count bigint,
+    retained_floor timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, audit
+AS $$
+DECLARE
+    v_floor timestamptz;
+    v_target timestamptz;
+    v_remaining timestamptz;
+    v_removed bigint := 0;
+BEGIN
+    IF session_user <> 'leapview_control_maintenance' THEN
+        RAISE EXCEPTION 'audit retention requires the maintenance capability';
+    END IF;
+    IF p_retention_class IS NULL OR p_retention_class NOT IN ('short', 'standard', 'security') THEN
+        RAISE EXCEPTION 'audit retention class must be short, standard, or security';
+    END IF;
+    IF p_requested_cutoff IS NULL THEN
+        RAISE EXCEPTION 'audit retention cutoff is required';
+    END IF;
+    IF p_batch_limit IS NULL OR p_batch_limit < 1 OR p_batch_limit > 1000 THEN
+        RAISE EXCEPTION 'audit retention batch limit must be between 1 and 1000';
+    END IF;
+
+    SELECT f.floor_at INTO STRICT v_floor
+      FROM audit.audit_retention_floor f
+     WHERE f.retention_class = p_retention_class
+     FOR UPDATE;
+
+    retention_class := p_retention_class;
+    requested_cutoff := p_requested_cutoff;
+    requested_limit := p_batch_limit;
+    -- Never let an operator-provided future cutoff delete newly-written rows.
+    v_target := GREATEST(v_floor, LEAST(p_requested_cutoff, clock_timestamp()));
+
+    cutoff := v_target;
+
+    -- The CTE first locks and inspects the exact rows to be removed.  The
+    -- trigger marker is transaction-local and cannot be used by runtime SQL,
+    -- which has neither DELETE nor EXECUTE privilege.
+    PERFORM set_config('audit.maintenance', 'on', true);
+    WITH candidates AS (
+        SELECT e.audit_id, e.occurred_at, e.source, e.operation,
+               e.action, e.outcome, e.metadata
+         FROM audit.audit_event e
+         WHERE e.occurred_at < v_target
+           AND CASE
+                 WHEN e.metadata ? 'retention' THEN e.metadata->>'retention' = p_retention_class
+                 ELSE p_retention_class = 'standard'
+               END
+         ORDER BY e.occurred_at, e.audit_id
+         FOR UPDATE SKIP LOCKED
+         LIMIT p_batch_limit
+    ), deleted AS (
+        DELETE FROM audit.audit_event e
+         USING candidates c
+         WHERE e.audit_id = c.audit_id
+         RETURNING e.audit_id
+    )
+    SELECT count(*) INTO v_removed FROM deleted;
+
+    -- Derive the floor from the rows still visible after the bounded delete.
+    -- This keeps a full backlog, or a row skipped by a concurrent lock, from
+    -- being represented as already retained past the actual evidence.
+    SELECT min(e.occurred_at) INTO v_remaining
+      FROM audit.audit_event e
+     WHERE e.occurred_at < v_target
+       AND CASE
+             WHEN e.metadata ? 'retention' THEN e.metadata->>'retention' = p_retention_class
+             ELSE p_retention_class = 'standard'
+           END;
+    IF v_remaining IS NULL THEN
+        v_remaining := v_target;
+    END IF;
+    IF v_remaining > v_floor THEN
+        UPDATE audit.audit_retention_floor
+           SET floor_at = v_remaining, updated_at = clock_timestamp()
+         WHERE audit_retention_floor.retention_class = p_retention_class;
+        v_floor := v_remaining;
+    END IF;
+    cutoff := v_target;
+    removed_count := v_removed;
+    retained_floor := v_floor;
+    RETURN NEXT;
+END;
+$$;
+REVOKE ALL ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) FROM PUBLIC;
+
+-- Remove expired or explicitly revoked access credentials in one bounded
+-- batch. Every candidate is locked before deletion, so concurrent maintenance
+-- workers do not double-delete and a locked backlog keeps the durable floor
+-- below the requested boundary. Final audit events use their independent
+-- class-based retention function above; PostgreSQL has no audit outbox.
+CREATE OR REPLACE FUNCTION access.prune_auth_state(
+    p_requested_cutoff timestamptz,
+    p_batch_limit integer
+)
+RETURNS TABLE (
+    requested_cutoff timestamptz,
+    cutoff timestamptz,
+    requested_limit integer,
+    sessions_removed bigint,
+    oauth_sessions_removed bigint,
+    oauth_assertions_removed bigint,
+    desktop_codes_removed bigint,
+    device_authorizations_removed bigint,
+    api_tokens_removed bigint,
+    service_secrets_removed bigint,
+    authoring_sessions_removed bigint,
+    authoring_credentials_removed bigint,
+    auth_state_floor timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, access, audit
+AS $$
+DECLARE
+    v_auth_floor timestamptz;
+    v_target timestamptz;
+    v_total bigint := 0;
+    v_removed bigint := 0;
+    v_remaining integer;
+    v_auth_remaining boolean;
+BEGIN
+    IF session_user <> 'leapview_control_maintenance' THEN
+        RAISE EXCEPTION 'access retention requires the maintenance capability';
+    END IF;
+    IF p_requested_cutoff IS NULL THEN
+        RAISE EXCEPTION 'access retention cutoff is required';
+    END IF;
+    IF p_batch_limit IS NULL OR p_batch_limit < 1 OR p_batch_limit > 1000 THEN
+        RAISE EXCEPTION 'access retention batch limit must be between 1 and 1000';
+    END IF;
+
+    SELECT floor_at INTO STRICT v_auth_floor
+      FROM access.access_retention_floor
+     WHERE retention_class = 'auth_state'
+     FOR UPDATE;
+    requested_cutoff := p_requested_cutoff;
+    requested_limit := p_batch_limit;
+    -- Database time is authoritative. A replay with an older requested
+    -- cutoff must not widen the deletion predicate to the already-advanced
+    -- floor; the floor itself remains monotonic as durable evidence.
+    v_target := LEAST(p_requested_cutoff, clock_timestamp());
+    cutoff := v_target;
+    PERFORM set_config('access.maintenance', 'on', true);
+
+    -- Inactive OAuth request state is opaque but no longer usable. Active
+    -- sessions are retained even when old so token replay evidence remains
+    -- available to the runtime verifier.
+    v_remaining := p_batch_limit;
+    WITH candidates AS (
+        SELECT s.kind, s.signature
+          FROM access.oauth_session s
+         WHERE s.created_at < v_target AND s.active = false
+         ORDER BY s.created_at, s.kind, s.signature
+         FOR UPDATE SKIP LOCKED
+         LIMIT v_remaining
+    ), deleted AS (
+        DELETE FROM access.oauth_session s USING candidates c
+         WHERE s.kind = c.kind AND s.signature = c.signature
+         RETURNING s.signature
+    )
+    SELECT count(*) INTO v_removed FROM deleted;
+    oauth_sessions_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT a.jti
+              FROM access.oauth_client_assertion a
+             WHERE a.expires_at < v_target
+             ORDER BY a.expires_at, a.jti
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.oauth_client_assertion a USING candidates c
+             WHERE a.jti = c.jti
+             RETURNING a.jti
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    oauth_assertions_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT c.code_hash
+              FROM access.desktop_authorization_code c
+             WHERE c.expires_at < v_target
+                OR (c.consumed_at IS NOT NULL AND c.consumed_at < v_target)
+             ORDER BY c.expires_at, c.code_hash
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.desktop_authorization_code c USING candidates d
+             WHERE c.code_hash = d.code_hash
+             RETURNING c.code_hash
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    desktop_codes_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT d.id
+              FROM access.device_authorization d
+             WHERE d.expires_at < v_target
+                OR (d.status = 'denied' AND d.denied_at IS NOT NULL AND d.denied_at < v_target)
+                OR (d.status = 'consumed' AND d.consumed_at IS NOT NULL AND d.consumed_at < v_target)
+             ORDER BY d.expires_at, d.id
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.device_authorization d USING candidates c
+             WHERE d.id = c.id
+             RETURNING d.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    device_authorizations_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT t.id
+              FROM access.api_token t
+             WHERE (t.expires_at < v_target)
+                OR (t.revoked_at IS NOT NULL AND t.revoked_at < v_target)
+             ORDER BY LEAST(t.expires_at, COALESCE(t.revoked_at, t.expires_at)), t.id
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.api_token t USING candidates c
+             WHERE t.id = c.id
+             RETURNING t.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    api_tokens_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT s.id
+              FROM access.service_principal_secret s
+             WHERE (s.expires_at < v_target)
+                OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+             ORDER BY LEAST(s.expires_at, COALESCE(s.revoked_at, s.expires_at)), s.id
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.service_principal_secret s USING candidates c
+             WHERE s.id = c.id
+             RETURNING s.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    service_secrets_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT s.id
+              FROM access.session s
+             WHERE (s.expires_at < v_target)
+                OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+             ORDER BY LEAST(s.expires_at, COALESCE(s.revoked_at, s.expires_at)), s.id
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.session s USING candidates c
+             WHERE s.id = c.id
+             RETURNING s.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    sessions_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    -- Credentials are children of authoring sessions and must drain first;
+    -- a revoked parent invalidates its credentials even when their refresh
+    -- expiry is still in the future.
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT c.id
+              FROM access.authoring_credential c
+              JOIN access.authoring_session s ON s.id = c.session_id
+             WHERE (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+                OR (c.replaced_at IS NOT NULL AND c.replaced_at < v_target)
+                OR (c.refresh_expires_at IS NOT NULL AND c.refresh_expires_at < v_target)
+                OR (c.refresh_expires_at IS NULL AND c.access_expires_at < v_target)
+             ORDER BY c.created_at, c.id
+             FOR UPDATE OF c SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.authoring_credential c USING candidates d
+             WHERE c.id = d.id
+             RETURNING c.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    authoring_credentials_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT s.id
+              FROM access.authoring_session s
+             WHERE (s.expires_at < v_target)
+                OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+             ORDER BY LEAST(s.expires_at, COALESCE(s.revoked_at, s.expires_at)), s.id
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.authoring_session s USING candidates c
+             WHERE s.id = c.id
+               AND NOT EXISTS (SELECT 1 FROM access.authoring_credential x WHERE x.session_id = s.id)
+             RETURNING s.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    authoring_sessions_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    -- Floors only advance when no eligible row remains. This is deliberately
+    -- checked after the batch so a smaller limit or SKIP LOCKED row remains
+    -- visible as backlog evidence to the next invocation.
+    SELECT EXISTS (
+        SELECT 1 FROM access.session s
+         WHERE (s.expires_at < v_target) OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+        UNION ALL SELECT 1 FROM access.oauth_session s WHERE s.created_at < v_target AND s.active = false
+        UNION ALL SELECT 1 FROM access.oauth_client_assertion a WHERE a.expires_at < v_target
+        UNION ALL SELECT 1 FROM access.desktop_authorization_code c WHERE c.expires_at < v_target OR (c.consumed_at IS NOT NULL AND c.consumed_at < v_target)
+        UNION ALL SELECT 1 FROM access.device_authorization d WHERE d.expires_at < v_target OR (d.status='denied' AND d.denied_at IS NOT NULL AND d.denied_at < v_target) OR (d.status='consumed' AND d.consumed_at IS NOT NULL AND d.consumed_at < v_target)
+        UNION ALL SELECT 1 FROM access.api_token t WHERE t.expires_at < v_target OR (t.revoked_at IS NOT NULL AND t.revoked_at < v_target)
+        UNION ALL SELECT 1 FROM access.service_principal_secret s WHERE s.expires_at < v_target OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+        UNION ALL SELECT 1 FROM access.authoring_credential c JOIN access.authoring_session s ON s.id=c.session_id WHERE (s.revoked_at IS NOT NULL AND s.revoked_at < v_target) OR (c.replaced_at IS NOT NULL AND c.replaced_at < v_target) OR (c.refresh_expires_at IS NOT NULL AND c.refresh_expires_at < v_target) OR (c.refresh_expires_at IS NULL AND c.access_expires_at < v_target)
+        UNION ALL SELECT 1 FROM access.authoring_session s WHERE (s.expires_at < v_target OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)) AND NOT EXISTS (SELECT 1 FROM access.authoring_credential c WHERE c.session_id=s.id)
+    ) INTO v_auth_remaining;
+    IF NOT v_auth_remaining AND v_target > v_auth_floor THEN
+        UPDATE access.access_retention_floor
+           SET floor_at = v_target, updated_at = clock_timestamp()
+         WHERE retention_class = 'auth_state';
+        v_auth_floor := v_target;
+    END IF;
+
+    cutoff := v_target;
+    sessions_removed := COALESCE(sessions_removed, 0);
+    oauth_sessions_removed := COALESCE(oauth_sessions_removed, 0);
+    oauth_assertions_removed := COALESCE(oauth_assertions_removed, 0);
+    desktop_codes_removed := COALESCE(desktop_codes_removed, 0);
+    device_authorizations_removed := COALESCE(device_authorizations_removed, 0);
+    api_tokens_removed := COALESCE(api_tokens_removed, 0);
+    service_secrets_removed := COALESCE(service_secrets_removed, 0);
+    authoring_sessions_removed := COALESCE(authoring_sessions_removed, 0);
+    authoring_credentials_removed := COALESCE(authoring_credentials_removed, 0);
+    auth_state_floor := v_auth_floor;
+    RETURN NEXT;
+END;
+$$;
+REVOKE ALL ON FUNCTION access.prune_auth_state(timestamptz, integer) FROM PUBLIC;
 
 CREATE TABLE access.principal (
     id uuid PRIMARY KEY,
@@ -185,6 +646,18 @@ CREATE INDEX service_secret_principal_idx ON access.service_principal_secret(ser
 
 CREATE OR REPLACE FUNCTION access.reject_access_delete() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'access history is append-only; revoke instead of delete'; END; $$;
+CREATE OR REPLACE FUNCTION access.allow_maintenance_delete() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+    IF current_setting('access.maintenance', true) = 'on'
+       AND session_user = 'leapview_control_maintenance' THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'access state deletion requires bounded maintenance';
+END;
+$$;
 CREATE OR REPLACE FUNCTION access.reject_revocation_clear() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN IF OLD.revoked_at IS NOT NULL AND (NEW.revoked_at IS NULL OR NEW.revoked_at < OLD.revoked_at) THEN RAISE EXCEPTION 'revocation is monotonic'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_principal_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -284,13 +757,13 @@ CREATE TRIGGER membership_revocation_monotonic BEFORE UPDATE ON access.principal
 CREATE TRIGGER role_no_delete BEFORE DELETE ON access.platform_role_binding FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 CREATE TRIGGER role_identity_immutable BEFORE UPDATE ON access.platform_role_binding FOR EACH ROW EXECUTE FUNCTION access.reject_role_identity_rewrite();
 CREATE TRIGGER role_revocation_monotonic BEFORE UPDATE ON access.platform_role_binding FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
-CREATE TRIGGER session_no_delete BEFORE DELETE ON access.session FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER session_no_delete BEFORE DELETE ON access.session FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
 CREATE TRIGGER session_identity_immutable BEFORE UPDATE ON access.session FOR EACH ROW EXECUTE FUNCTION access.reject_session_identity_rewrite();
 CREATE TRIGGER session_revocation_monotonic BEFORE UPDATE ON access.session FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
-CREATE TRIGGER api_token_no_delete BEFORE DELETE ON access.api_token FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER api_token_no_delete BEFORE DELETE ON access.api_token FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
 CREATE TRIGGER api_token_identity_immutable BEFORE UPDATE ON access.api_token FOR EACH ROW EXECUTE FUNCTION access.reject_token_identity_rewrite();
 CREATE TRIGGER api_token_revocation_monotonic BEFORE UPDATE ON access.api_token FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
-CREATE TRIGGER service_secret_no_delete BEFORE DELETE ON access.service_principal_secret FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER service_secret_no_delete BEFORE DELETE ON access.service_principal_secret FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
 CREATE TRIGGER service_secret_identity_immutable BEFORE UPDATE ON access.service_principal_secret FOR EACH ROW EXECUTE FUNCTION access.reject_service_secret_identity_rewrite();
 CREATE TRIGGER service_secret_revocation_monotonic BEFORE UPDATE ON access.service_principal_secret FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
 CREATE TRIGGER local_credential_no_delete BEFORE DELETE ON access.local_credential FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
@@ -561,9 +1034,9 @@ CREATE TRIGGER principal_preferences_no_delete BEFORE DELETE ON access.principal
 CREATE TRIGGER principal_preferences_revocation_monotonic BEFORE UPDATE ON access.principal_preferences FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
 CREATE TRIGGER principal_avatar_no_delete BEFORE DELETE ON access.principal_avatar FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 CREATE TRIGGER principal_avatar_revocation_monotonic BEFORE UPDATE ON access.principal_avatar FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
-CREATE TRIGGER desktop_authorization_code_no_delete BEFORE DELETE ON access.desktop_authorization_code FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
-CREATE TRIGGER device_authorization_no_delete BEFORE DELETE ON access.device_authorization FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
-CREATE TRIGGER authoring_session_no_delete BEFORE DELETE ON access.authoring_session FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER desktop_authorization_code_no_delete BEFORE DELETE ON access.desktop_authorization_code FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
+CREATE TRIGGER device_authorization_no_delete BEFORE DELETE ON access.device_authorization FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
+CREATE TRIGGER authoring_session_no_delete BEFORE DELETE ON access.authoring_session FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
 CREATE OR REPLACE FUNCTION access.reject_authoring_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_TABLE_NAME='desktop_authorization_code' THEN
@@ -580,7 +1053,7 @@ CREATE TRIGGER desktop_authorization_code_consumption_monotonic BEFORE UPDATE ON
 CREATE TRIGGER device_authorization_immutable BEFORE UPDATE ON access.device_authorization FOR EACH ROW EXECUTE FUNCTION access.reject_device_authorization_rewrite();
 CREATE TRIGGER authoring_session_immutable BEFORE UPDATE ON access.authoring_session FOR EACH ROW EXECUTE FUNCTION access.reject_authoring_identity_rewrite();
 CREATE TRIGGER authoring_session_revocation_monotonic BEFORE UPDATE ON access.authoring_session FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
-CREATE TRIGGER authoring_credential_no_delete BEFORE DELETE ON access.authoring_credential FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER authoring_credential_no_delete BEFORE DELETE ON access.authoring_credential FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
 CREATE TRIGGER authoring_credential_immutable BEFORE UPDATE ON access.authoring_credential FOR EACH ROW EXECUTE FUNCTION access.reject_authoring_identity_rewrite();
 CREATE TRIGGER authoring_credential_transition BEFORE UPDATE ON access.authoring_credential FOR EACH ROW EXECUTE FUNCTION access.reject_authoring_credential_transition();
 
@@ -589,6 +1062,11 @@ BEGIN
     REVOKE ALL ON SCHEMA access FROM PUBLIC;
     REVOKE ALL ON ALL TABLES IN SCHEMA access FROM PUBLIC;
     REVOKE ALL ON ALL FUNCTIONS IN SCHEMA access FROM PUBLIC;
+    REVOKE ALL ON SCHEMA audit FROM PUBLIC;
+    REVOKE ALL ON TABLE audit.audit_event, audit.audit_retention_floor FROM PUBLIC;
+    REVOKE ALL ON FUNCTION audit.reject_audit_mutation() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION access.prune_auth_state(timestamptz, integer) FROM PUBLIC;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA access TO leapview_control_runtime';
@@ -596,12 +1074,452 @@ BEGIN
         EXECUTE 'GRANT EXECUTE ON FUNCTION access.valid_capabilities(jsonb) TO leapview_control_runtime';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON audit.audit_event TO leapview_control_runtime';
+        EXECUTE 'REVOKE DELETE ON audit.audit_event, audit.audit_retention_floor FROM leapview_control_runtime';
+        EXECUTE 'REVOKE EXECUTE ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) FROM leapview_control_runtime';
+        EXECUTE 'REVOKE EXECUTE ON FUNCTION access.prune_auth_state(timestamptz, integer) FROM leapview_control_runtime';
+        EXECUTE 'REVOKE DELETE ON access.session, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_session, access.authoring_credential FROM leapview_control_runtime';
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON access.access_retention_floor FROM leapview_control_runtime';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_maintenance') THEN
+        EXECUTE 'GRANT USAGE ON SCHEMA access, audit TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION access.prune_auth_state(timestamptz, integer) TO leapview_control_maintenance';
+        EXECUTE 'REVOKE ALL ON audit.audit_event, audit.audit_retention_floor FROM leapview_control_maintenance';
+        EXECUTE 'REVOKE ALL ON access.access_retention_floor FROM leapview_control_maintenance';
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA access TO leapview_control_readonly';
         EXECUTE 'REVOKE SELECT ON access.session, access.local_credential, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_credential, access.oauth_client, access.oauth_session, access.oauth_client_assertion FROM leapview_control_readonly';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_readonly';
-        EXECUTE 'GRANT SELECT ON audit.audit_event TO leapview_control_readonly';
+        EXECUTE 'GRANT SELECT ON audit.audit_event, audit.audit_retention_floor TO leapview_control_readonly';
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON access.access_retention_floor FROM leapview_control_readonly';
     END IF;
 END $$;
+
+-- FAI-636: typed semantic-access attribute registry.
+--
+-- This schema is part of the clean pre-live PostgreSQL baseline. Principal assignments and trusted claim mappings deliberately
+-- remain outside this registry migration.
+
+CREATE TABLE access.semantic_attribute_registry (
+    singleton          boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    profile            text NOT NULL CHECK (profile = 'leapview.semantic-access/v1'),
+    registry_revision  bigint NOT NULL DEFAULT 0 CHECK (registry_revision >= 0),
+    registry_digest    text NOT NULL CHECK (registry_digest ~ '^sha256:[0-9a-f]{64}$'),
+    updated_at         timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+INSERT INTO access.semantic_attribute_registry
+    (singleton, profile, registry_revision, registry_digest)
+VALUES
+    (true, 'leapview.semantic-access/v1', 0,
+     'sha256:9362dbdb62923a10f67bc1da04b02e2bbad74dce5b5442aaa3fb5e0cc5851b9d')
+ON CONFLICT (singleton) DO NOTHING;
+
+CREATE TABLE access.semantic_attribute_definition (
+    definition_id      uuid PRIMARY KEY DEFAULT uuidv7(),
+    name               text NOT NULL UNIQUE
+                       CHECK (name ~ '^[A-Za-z_][A-Za-z0-9_]*$'),
+    value_type         text NOT NULL
+                       CHECK (value_type IN ('String','Boolean','Integer','Decimal','Date','Timestamp')),
+    value_shape        text NOT NULL CHECK (value_shape IN ('scalar','list')),
+    profile            text NOT NULL CHECK (profile = 'leapview.semantic-access/v1'),
+    definition_version bigint NOT NULL DEFAULT 1 CHECK (definition_version > 0),
+    owner_kind         text NOT NULL DEFAULT 'instance'
+                       CHECK (owner_kind IN ('instance','principal','group')),
+    owner_id           uuid,
+    display_name       text NOT NULL DEFAULT '' CHECK (length(display_name) <= 255),
+    description        text NOT NULL DEFAULT '' CHECK (length(description) <= 4096),
+    documentation_url  text NOT NULL DEFAULT '' CHECK (length(documentation_url) <= 2048),
+    enabled            boolean NOT NULL DEFAULT true,
+    disabled_at        timestamptz,
+    created_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK ((owner_kind = 'instance' AND owner_id IS NULL) OR
+           (owner_kind <> 'instance' AND owner_id IS NOT NULL)),
+    CHECK ((enabled AND disabled_at IS NULL) OR (NOT enabled AND disabled_at IS NOT NULL))
+);
+CREATE INDEX semantic_attribute_definition_owner_idx
+    ON access.semantic_attribute_definition(owner_kind, owner_id, name);
+
+CREATE OR REPLACE FUNCTION access.reject_semantic_attribute_registry_rewrite()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, access
+AS $$
+BEGIN
+    IF OLD.singleton <> NEW.singleton OR OLD.profile <> NEW.profile THEN
+        RAISE EXCEPTION 'semantic attribute registry identity is immutable';
+    END IF;
+    IF NEW.registry_revision <> OLD.registry_revision + 1 OR
+       NEW.registry_digest = OLD.registry_digest THEN
+        RAISE EXCEPTION 'semantic attribute registry revision must advance with a new digest';
+    END IF;
+    NEW.updated_at := GREATEST(clock_timestamp(), OLD.updated_at + interval '1 microsecond');
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION access.reject_semantic_attribute_definition_rewrite()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, access
+AS $$
+BEGIN
+    IF OLD.definition_id <> NEW.definition_id OR
+       OLD.name <> NEW.name OR
+       OLD.value_type <> NEW.value_type OR
+       OLD.value_shape <> NEW.value_shape OR
+       OLD.profile <> NEW.profile OR
+       OLD.created_at <> NEW.created_at THEN
+        RAISE EXCEPTION 'semantic attribute identity and type are immutable';
+    END IF;
+    IF NEW.definition_version <> OLD.definition_version + 1 THEN
+        RAISE EXCEPTION 'semantic attribute definition version must advance exactly once';
+    END IF;
+    IF OLD.owner_kind = NEW.owner_kind AND
+       OLD.owner_id IS NOT DISTINCT FROM NEW.owner_id AND
+       OLD.display_name = NEW.display_name AND
+       OLD.description = NEW.description AND
+       OLD.documentation_url = NEW.documentation_url AND
+       OLD.enabled = NEW.enabled AND
+       OLD.disabled_at IS NOT DISTINCT FROM NEW.disabled_at THEN
+        RAISE EXCEPTION 'semantic attribute update did not change mutable state';
+    END IF;
+    IF OLD.enabled = NEW.enabled AND OLD.disabled_at IS DISTINCT FROM NEW.disabled_at THEN
+        RAISE EXCEPTION 'semantic attribute disable timestamp is database-owned';
+    END IF;
+    IF OLD.enabled <> NEW.enabled THEN
+        NEW.disabled_at := CASE WHEN NEW.enabled THEN NULL ELSE clock_timestamp() END;
+    END IF;
+    NEW.updated_at := GREATEST(clock_timestamp(), OLD.updated_at + interval '1 microsecond');
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER semantic_attribute_registry_no_delete
+    BEFORE DELETE ON access.semantic_attribute_registry
+    FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER semantic_attribute_registry_immutable
+    BEFORE UPDATE ON access.semantic_attribute_registry
+    FOR EACH ROW EXECUTE FUNCTION access.reject_semantic_attribute_registry_rewrite();
+CREATE TRIGGER semantic_attribute_definition_no_delete
+    BEFORE DELETE ON access.semantic_attribute_definition
+    FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER semantic_attribute_definition_immutable
+    BEFORE UPDATE ON access.semantic_attribute_definition
+    FOR EACH ROW EXECUTE FUNCTION access.reject_semantic_attribute_definition_rewrite();
+
+REVOKE ALL ON TABLE access.semantic_attribute_registry,
+    access.semantic_attribute_definition FROM PUBLIC;
+REVOKE ALL ON FUNCTION access.reject_semantic_attribute_registry_rewrite(),
+    access.reject_semantic_attribute_definition_rewrite() FROM PUBLIC;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+        GRANT SELECT, INSERT, UPDATE ON access.semantic_attribute_registry,
+            access.semantic_attribute_definition TO leapview_control_runtime;
+        REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER ON access.semantic_attribute_registry,
+            access.semantic_attribute_definition FROM leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
+        GRANT SELECT ON access.semantic_attribute_registry,
+            access.semantic_attribute_definition TO leapview_control_readonly;
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+            ON access.semantic_attribute_registry,
+               access.semantic_attribute_definition FROM leapview_control_readonly;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
+        GRANT SELECT ON access.semantic_attribute_registry,
+            access.semantic_attribute_definition TO leapview_control_backup;
+    END IF;
+END
+$$;
+-- FAI-637: durable semantic-access assignments and trusted claim mappings.
+--
+-- Revision 002 is intentionally not edited.  This migration owns only the
+-- control-plane rows which reference the immutable definition registry.
+
+CREATE TABLE access.semantic_attribute_control_state (
+    singleton         boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    profile           text NOT NULL CHECK (profile = 'leapview.semantic-access/v1'),
+    control_revision  bigint NOT NULL DEFAULT 0 CHECK (control_revision >= 0),
+    control_digest    text NOT NULL CHECK (control_digest ~ '^sha256:[0-9a-f]{64}$'),
+    updated_at        timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+INSERT INTO access.semantic_attribute_control_state
+    (singleton, profile, control_revision, control_digest)
+VALUES
+    (true, 'leapview.semantic-access/v1', 0,
+     'sha256:e05005cdeee20cc98d9e8de8f32ed4b8da34a95f82872dc3b65a451ce7de4e37')
+ON CONFLICT (singleton) DO NOTHING;
+
+-- A row is one assignment incarnation.  Tombstones remain in place forever;
+-- restoring a subject/definition pair creates a new immutable assignment id.
+CREATE TABLE access.semantic_attribute_assignment (
+    assignment_id       uuid PRIMARY KEY DEFAULT uuidv7(),
+    definition_id       uuid NOT NULL REFERENCES access.semantic_attribute_definition(definition_id),
+    subject_kind        text NOT NULL CHECK (subject_kind IN ('principal','group')),
+    subject_id          uuid NOT NULL,
+    definition_version  bigint NOT NULL CHECK (definition_version > 0),
+    value_type          text NOT NULL CHECK (value_type IN ('String','Boolean','Integer','Decimal','Date','Timestamp')),
+    value_shape         text NOT NULL CHECK (value_shape IN ('scalar','list')),
+    canonical_values    text[] NOT NULL,
+    value_digest        text NOT NULL CHECK (value_digest ~ '^sha256:[0-9a-f]{64}$'),
+    assignment_version  bigint NOT NULL DEFAULT 1 CHECK (assignment_version > 0),
+    tombstoned_at       timestamptz,
+    created_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK (array_ndims(canonical_values) = 1),
+    CHECK (cardinality(canonical_values) BETWEEN 1 AND 1024),
+    CHECK ((value_shape = 'scalar' AND cardinality(canonical_values) = 1) OR value_shape = 'list')
+);
+CREATE UNIQUE INDEX semantic_attribute_assignment_active_key
+    ON access.semantic_attribute_assignment(definition_id, subject_kind, subject_id)
+    WHERE tombstoned_at IS NULL;
+CREATE INDEX semantic_attribute_assignment_subject_idx
+    ON access.semantic_attribute_assignment(subject_kind, subject_id, definition_id, assignment_id);
+
+-- A mapping has no value payload: it names the trusted provider claim which
+-- will be canonicalized at authentication/evaluation time.
+CREATE TABLE access.semantic_attribute_claim_mapping (
+    mapping_id          uuid PRIMARY KEY DEFAULT uuidv7(),
+    source_kind        text NOT NULL CHECK (source_kind IN ('saml','oidc','embed','service_token')),
+    provider            text NOT NULL CHECK (provider = btrim(provider) AND octet_length(provider) BETWEEN 1 AND 128 AND provider !~ '[[:cntrl:]]'),
+    issuer              text NOT NULL CHECK (issuer = btrim(issuer) AND octet_length(issuer) BETWEEN 1 AND 1024 AND issuer !~ '[[:cntrl:]]'),
+    audience            text NOT NULL CHECK (audience = btrim(audience) AND octet_length(audience) BETWEEN 1 AND 512 AND audience !~ '[[:cntrl:]]'),
+    claim               text NOT NULL CHECK (claim = btrim(claim) AND octet_length(claim) BETWEEN 1 AND 1024 AND claim !~ '[[:cntrl:]]'),
+    definition_id       uuid NOT NULL REFERENCES access.semantic_attribute_definition(definition_id),
+    definition_version  bigint NOT NULL CHECK (definition_version > 0),
+    value_type          text NOT NULL CHECK (value_type IN ('String','Boolean','Integer','Decimal','Date','Timestamp')),
+    value_shape         text NOT NULL CHECK (value_shape IN ('scalar','list')),
+    mapping_version     bigint NOT NULL DEFAULT 1 CHECK (mapping_version > 0),
+    tombstoned_at       timestamptz,
+    created_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at          timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE UNIQUE INDEX semantic_attribute_claim_mapping_active_key
+    ON access.semantic_attribute_claim_mapping(source_kind, provider, issuer, audience, claim, definition_id)
+    WHERE tombstoned_at IS NULL;
+CREATE INDEX semantic_attribute_claim_mapping_lookup_idx
+    ON access.semantic_attribute_claim_mapping(source_kind, provider, issuer, audience, claim, mapping_id);
+
+CREATE OR REPLACE FUNCTION access.validate_semantic_attribute_owner_exists()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, access
+AS $$
+BEGIN
+    -- An already-owned definition may still be edited after its owner is
+    -- revoked. Requiring the owner to remain active on every metadata update
+    -- would strand the definition and prevent its lifecycle from completing.
+    IF TG_OP = 'UPDATE' AND OLD.owner_kind = NEW.owner_kind AND OLD.owner_id IS NOT DISTINCT FROM NEW.owner_id THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.owner_kind = 'principal' AND NOT EXISTS (
+        SELECT 1 FROM access.principal WHERE id = NEW.owner_id AND revoked_at IS NULL
+    ) THEN
+        RAISE EXCEPTION 'semantic attribute owner principal does not exist';
+    ELSIF NEW.owner_kind = 'group' AND NOT EXISTS (
+        SELECT 1 FROM access.access_group WHERE id = NEW.owner_id AND revoked_at IS NULL
+    ) THEN
+        RAISE EXCEPTION 'semantic attribute owner group does not exist';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER semantic_attribute_definition_owner_exists
+    BEFORE INSERT OR UPDATE ON access.semantic_attribute_definition
+    FOR EACH ROW EXECUTE FUNCTION access.validate_semantic_attribute_owner_exists();
+
+CREATE OR REPLACE FUNCTION access.validate_semantic_attribute_assignment()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, access
+AS $$
+DECLARE definition_type text; definition_shape text; definition_enabled boolean; tombstone_transition boolean := false;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        tombstone_transition := OLD.tombstoned_at IS NULL AND NEW.tombstoned_at IS NOT NULL;
+    END IF;
+    SELECT value_type, value_shape, enabled
+      INTO definition_type, definition_shape, definition_enabled
+      FROM access.semantic_attribute_definition
+     WHERE definition_id = NEW.definition_id;
+    IF NOT FOUND OR (NOT definition_enabled AND NOT tombstone_transition) THEN
+        RAISE EXCEPTION 'semantic attribute definition is missing or disabled';
+    END IF;
+    IF definition_type <> NEW.value_type OR definition_shape <> NEW.value_shape THEN
+        RAISE EXCEPTION 'semantic attribute assignment type is not the definition type';
+    END IF;
+    IF TG_OP = 'INSERT' OR NOT tombstone_transition THEN
+        IF NEW.subject_kind = 'principal' AND NOT EXISTS (
+            SELECT 1 FROM access.principal WHERE id = NEW.subject_id AND revoked_at IS NULL
+        ) THEN
+            RAISE EXCEPTION 'semantic attribute assignment principal does not exist';
+        ELSIF NEW.subject_kind = 'group' AND NOT EXISTS (
+            SELECT 1 FROM access.access_group WHERE id = NEW.subject_id AND revoked_at IS NULL
+        ) THEN
+            RAISE EXCEPTION 'semantic attribute assignment group does not exist';
+        END IF;
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD.assignment_id <> NEW.assignment_id OR OLD.definition_id <> NEW.definition_id OR
+           OLD.subject_kind <> NEW.subject_kind OR OLD.subject_id <> NEW.subject_id OR
+           OLD.definition_version <> NEW.definition_version OR OLD.value_type <> NEW.value_type OR
+           OLD.value_shape <> NEW.value_shape OR OLD.created_at <> NEW.created_at THEN
+            RAISE EXCEPTION 'semantic attribute assignment identity and type are immutable';
+        END IF;
+        IF OLD.tombstoned_at IS NOT NULL AND NEW.tombstoned_at IS NULL THEN
+            RAISE EXCEPTION 'semantic attribute assignment tombstone is immutable';
+        END IF;
+        IF OLD.tombstoned_at IS NOT NULL THEN
+            RAISE EXCEPTION 'semantic attribute assignment tombstone is immutable';
+        END IF;
+        IF OLD.tombstoned_at IS NULL AND NEW.tombstoned_at IS NOT NULL AND
+           (OLD.canonical_values IS DISTINCT FROM NEW.canonical_values OR OLD.value_digest <> NEW.value_digest) THEN
+            RAISE EXCEPTION 'semantic attribute assignment tombstone cannot rewrite its value';
+        END IF;
+        IF NEW.assignment_version <> OLD.assignment_version + 1 THEN
+            RAISE EXCEPTION 'semantic attribute assignment version must advance exactly once';
+        END IF;
+        IF OLD.canonical_values = NEW.canonical_values AND OLD.value_digest = NEW.value_digest AND
+           OLD.tombstoned_at IS NOT DISTINCT FROM NEW.tombstoned_at THEN
+            RAISE EXCEPTION 'semantic attribute assignment update did not change mutable state';
+        END IF;
+        IF OLD.tombstoned_at IS DISTINCT FROM NEW.tombstoned_at AND NEW.tombstoned_at IS NULL THEN
+            RAISE EXCEPTION 'semantic attribute assignment tombstone is database-owned';
+        END IF;
+    END IF;
+    NEW.updated_at := CASE WHEN TG_OP = 'UPDATE'
+        THEN GREATEST(clock_timestamp(), OLD.updated_at + interval '1 microsecond')
+        ELSE clock_timestamp() END;
+    IF TG_OP = 'UPDATE' AND OLD.tombstoned_at IS NULL AND NEW.tombstoned_at IS NOT NULL THEN
+        NEW.tombstoned_at := clock_timestamp();
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION access.validate_semantic_attribute_claim_mapping()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, access
+AS $$
+DECLARE definition_type text; definition_shape text; definition_enabled boolean; tombstone_transition boolean := false;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        tombstone_transition := OLD.tombstoned_at IS NULL AND NEW.tombstoned_at IS NOT NULL;
+    END IF;
+    SELECT value_type, value_shape, enabled
+      INTO definition_type, definition_shape, definition_enabled
+      FROM access.semantic_attribute_definition
+     WHERE definition_id = NEW.definition_id;
+    IF NOT FOUND OR (NOT definition_enabled AND NOT tombstone_transition) THEN
+        RAISE EXCEPTION 'semantic attribute mapping definition is missing or disabled';
+    END IF;
+    IF definition_type <> NEW.value_type OR definition_shape <> NEW.value_shape THEN
+        RAISE EXCEPTION 'semantic attribute mapping type is not the definition type';
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD.mapping_id <> NEW.mapping_id OR OLD.source_kind <> NEW.source_kind OR
+           OLD.provider <> NEW.provider OR OLD.issuer <> NEW.issuer OR OLD.audience <> NEW.audience OR
+           OLD.claim <> NEW.claim OR OLD.definition_id <> NEW.definition_id OR
+           OLD.definition_version <> NEW.definition_version OR
+           OLD.value_type <> NEW.value_type OR OLD.value_shape <> NEW.value_shape OR OLD.created_at <> NEW.created_at THEN
+            RAISE EXCEPTION 'semantic attribute mapping identity and type are immutable';
+        END IF;
+        IF OLD.tombstoned_at IS NOT NULL AND NEW.tombstoned_at IS NULL THEN
+            RAISE EXCEPTION 'semantic attribute mapping tombstone is immutable';
+        END IF;
+        IF OLD.tombstoned_at IS NOT NULL THEN
+            RAISE EXCEPTION 'semantic attribute mapping tombstone is immutable';
+        END IF;
+        IF NEW.mapping_version <> OLD.mapping_version + 1 THEN
+            RAISE EXCEPTION 'semantic attribute mapping version must advance exactly once';
+        END IF;
+        IF OLD.tombstoned_at IS NOT DISTINCT FROM NEW.tombstoned_at THEN
+            RAISE EXCEPTION 'semantic attribute mapping update did not change mutable state';
+        END IF;
+    END IF;
+    NEW.updated_at := CASE WHEN TG_OP = 'UPDATE'
+        THEN GREATEST(clock_timestamp(), OLD.updated_at + interval '1 microsecond')
+        ELSE clock_timestamp() END;
+    IF TG_OP = 'UPDATE' AND OLD.tombstoned_at IS NULL AND NEW.tombstoned_at IS NOT NULL THEN
+        NEW.tombstoned_at := clock_timestamp();
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION access.reject_semantic_attribute_control_state_rewrite()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, access
+AS $$
+BEGIN
+    IF OLD.singleton <> NEW.singleton OR OLD.profile <> NEW.profile OR
+       NEW.control_revision <> OLD.control_revision + 1 OR NEW.control_digest = OLD.control_digest THEN
+        RAISE EXCEPTION 'semantic attribute control revision must advance with a new digest';
+    END IF;
+    NEW.updated_at := GREATEST(clock_timestamp(), OLD.updated_at + interval '1 microsecond');
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER semantic_attribute_control_state_no_delete
+    BEFORE DELETE ON access.semantic_attribute_control_state
+    FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER semantic_attribute_control_state_immutable
+    BEFORE UPDATE ON access.semantic_attribute_control_state
+    FOR EACH ROW EXECUTE FUNCTION access.reject_semantic_attribute_control_state_rewrite();
+CREATE TRIGGER semantic_attribute_assignment_no_delete
+    BEFORE DELETE ON access.semantic_attribute_assignment
+    FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER semantic_attribute_assignment_immutable
+    BEFORE INSERT OR UPDATE ON access.semantic_attribute_assignment
+    FOR EACH ROW EXECUTE FUNCTION access.validate_semantic_attribute_assignment();
+CREATE TRIGGER semantic_attribute_claim_mapping_no_delete
+    BEFORE DELETE ON access.semantic_attribute_claim_mapping
+    FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER semantic_attribute_claim_mapping_immutable
+    BEFORE INSERT OR UPDATE ON access.semantic_attribute_claim_mapping
+    FOR EACH ROW EXECUTE FUNCTION access.validate_semantic_attribute_claim_mapping();
+
+REVOKE ALL ON TABLE access.semantic_attribute_control_state,
+    access.semantic_attribute_assignment,
+    access.semantic_attribute_claim_mapping FROM PUBLIC;
+REVOKE ALL ON FUNCTION access.validate_semantic_attribute_owner_exists(),
+    access.validate_semantic_attribute_assignment(),
+    access.validate_semantic_attribute_claim_mapping(),
+    access.reject_semantic_attribute_control_state_rewrite() FROM PUBLIC;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+        GRANT SELECT, INSERT, UPDATE ON access.semantic_attribute_control_state,
+            access.semantic_attribute_assignment,
+            access.semantic_attribute_claim_mapping TO leapview_control_runtime;
+        REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER ON access.semantic_attribute_control_state,
+            access.semantic_attribute_assignment,
+            access.semantic_attribute_claim_mapping FROM leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
+        GRANT SELECT ON access.semantic_attribute_control_state,
+            access.semantic_attribute_assignment,
+            access.semantic_attribute_claim_mapping TO leapview_control_readonly;
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+            ON access.semantic_attribute_control_state,
+               access.semantic_attribute_assignment,
+               access.semantic_attribute_claim_mapping FROM leapview_control_readonly;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
+        GRANT SELECT ON access.semantic_attribute_control_state,
+            access.semantic_attribute_assignment,
+            access.semantic_attribute_claim_mapping TO leapview_control_backup;
+    END IF;
+END
+$$;

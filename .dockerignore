@@ -42,11 +42,12 @@ internal/platform/db/db.go
 internal/platform/db/models.go
 internal/platform/db/*.sql.go
 internal/*/internal/db/
+internal/**/internal/db/
 internal/platform/**/sqlite/*db/
 web/generated
 
 docs/catalog.json
-docs/search-index.sqlite3
+docs/search-index.json
 docs/configuration.md
 docs/api/*.md
 docs/api/operations.json

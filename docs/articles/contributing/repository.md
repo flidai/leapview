@@ -72,7 +72,29 @@ It produces database code, configuration surfaces, API and UI-signal contracts, 
 
 Do not manually edit a file marked generated. Change TypeSpec, CUE/config contracts, Cobra commands, configuration specs, or the owning generator. Agent provider schemas are generated from `internal/agent/contracts/typespec/main.tsp`; their readable and machine-readable presentation under `docs/reference/agent-tools/` is generated from the canonical runtime catalog. Generated implementation code, catalogs, and search indexes are build inputs and stay out of Git unless they are intentional public contract snapshots.
 
-Use `task docs:check` and `task config:check` to validate generated output. `task generated:check` detects drift in the public snapshots. CI generates build-only inputs once, verifies deterministic output, and shares them with downstream jobs.
+For PostgreSQL persistence, author every static DML/query leaf in the
+capability-owned SQL files consumed by sqlc with `sql_package: pgx/v5`.
+sqlc is typed SQL code generation, not an ORM: repositories and domain
+services retain invariants, caller-owned transaction boundaries, state
+machines, and error mapping. Raw SQL is limited to embedded schema/migrations,
+validated dynamic identifier or result-shape SQL, and explicitly
+analyzer-incompatible statements. Mark each exception adjacent to the call
+with `sqlc-exception:<class>` or record it in a maintained capability
+inventory, with its rationale and verification. Generation is local and
+deterministic; sqlc Cloud is not used. Run `task db:generate` while iterating;
+`task db:check` runs pinned generation twice, rejects nondeterministic or tracked
+generated output, runs offline `sqlc vet` and `sqlc diff`, compiles generated PostgreSQL
+consumers, and audits raw SQL with the AST-based `sqlcaudit` tool. It then
+applies the clean product baseline to a disposable PostgreSQL 18 database and
+runs the `sqlc/db-prepare` rule for every PostgreSQL query package. The derived
+prepare config receives its short-lived database URI through an environment
+variable; credentials and sqlc Cloud are not used. The audit enforces zero
+static handwritten PostgreSQL SQL: every static `Exec`, `Query`, or `QueryRow`
+call must be a generated sqlc method. Dynamic SQL is allowed only for a
+narrowly justified ADR-0020 exception, marked adjacent to the call or recorded
+in an exact capability inventory with rationale and verification.
+
+Use `task docs:check` and `task config:check` to validate generated output. `task generated:check` detects drift in the public snapshots. CI verifies deterministic build-only inputs and shares them with downstream jobs.
 
 ## Browser assets
 

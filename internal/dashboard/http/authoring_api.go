@@ -26,6 +26,7 @@ import (
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 // HeadlessAuthoringApplication is the narrow transport-facing dashboard authoring
@@ -917,17 +918,22 @@ func validDashboardTimeGrain(value document.DashboardTimeGrain) bool {
 }
 
 func idempotencyKey(w nethttp.ResponseWriter, r *nethttp.Request) (string, bool) {
-	if key := strings.TrimSpace(r.Header.Get("Idempotency-Key")); key != "" && len(key) <= 200 {
+	if key := strings.TrimSpace(r.Header.Get("Idempotency-Key")); canonicalUUIDv7(key) {
 		return key, true
 	}
-	httptransport.WriteProblem(w, r, nethttp.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key must contain 1 to 200 characters", nil)
+	httptransport.WriteProblem(w, r, nethttp.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key must be a canonical UUIDv7", nil)
 	return "", false
+}
+
+func canonicalUUIDv7(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id.Version() == 7 && id.String() == value
 }
 
 // executeAuthoringMutation applies the generated transactional command policy
 // around the source-owned authoring mutation. The repository receives the
-// intent through context and records it in the same SQLite transaction as the
-// lifecycle/revision write; no post-commit audit callback is involved.
+// intent through context and records it in the same repository transaction as
+// the lifecycle/revision write; no post-commit audit callback is involved.
 type authoringAuditTarget struct {
 	dashboardID string
 	draftID     string
@@ -1019,9 +1025,13 @@ func buildAuthoringAuditIntent(contract apigencommand.Contract, project, idempot
 	if err != nil {
 		return access.AuditIntent{}, err
 	}
+	key := strings.TrimSpace(idempotencyKey)
+	if !canonicalUUIDv7(key) {
+		return access.AuditIntent{}, fmt.Errorf("dashboard authoring idempotency key must be a canonical UUIDv7")
+	}
 	return access.AuditIntent{
-		EventID: "dashboard-authoring:pending", Source: "dashboard.authoring", Operation: contract.OperationID,
-		PrincipalID: strings.TrimSpace(actor), Action: contract.AuditAction, ResourceKind: "dashboard", ResourceID: strings.TrimSpace(dashboardID), Capability: capability,
+		EventID: key, Source: "dashboard.authoring", Operation: contract.OperationID,
+		ActorID: strings.TrimSpace(actor), PrincipalID: strings.TrimSpace(actor), Action: contract.AuditAction, ResourceKind: "dashboard", ResourceID: strings.TrimSpace(dashboardID), Capability: capability,
 		Outcome: "success", RequestID: strings.TrimSpace(requestID), CorrelationID: strings.TrimSpace(correlationID), MetadataJSON: metadata,
 	}, nil
 }

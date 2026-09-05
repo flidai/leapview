@@ -46,7 +46,7 @@ func TestSkipInitialRefreshPropagatesToProjectRequest(t *testing.T) {
 			request = got
 			return nil, nil
 		}),
-		ProjectID: projectID, CandidateID: "candidate-1", AuthorizationFingerprint: "auth-1", BindingFingerprint: "binding-1", SkipInitialRefresh: true,
+		ProjectID: projectID, TargetID: "target-1", SnapshotSealID: "seal-1", CandidateID: "candidate-1", AuthorizationFingerprint: "auth-1", BindingFingerprint: "binding-1", RelationNamespace: "_candidate_namespace", SkipInitialRefresh: true,
 		DependencyEvidence: map[string]resultidentity.Evidence{"semantic:sales": evidence},
 	})
 	if _, err := factory.OpenDashboardProjectDataRuntimes(context.Background(), dashboardruntime.ProjectDataRuntimeConfig{Definition: definition}); err != nil {
@@ -58,8 +58,49 @@ func TestSkipInitialRefreshPropagatesToProjectRequest(t *testing.T) {
 	if request.CandidateID != "candidate-1" || request.AuthorizationFingerprint != "auth-1" || request.BindingFingerprint != "binding-1" {
 		t.Fatalf("project request lost candidate cache/auth identity: %#v", request)
 	}
+	if request.TargetID != "target-1" || request.SnapshotSealID != "seal-1" {
+		t.Fatalf("project request lost target/seal provenance: %#v", request)
+	}
+	if request.RelationNamespace != "_candidate_namespace" {
+		t.Fatalf("project request lost relation namespace: %q", request.RelationNamespace)
+	}
 	if !request.DependencyEvidence["semantic:sales"].Available() {
 		t.Fatal("project request lost dependency evidence")
+	}
+}
+
+func TestDashboardRuntimeFactoryRequiresCacheAdmissionProvenance(t *testing.T) {
+	projectID, err := projectgraph.NewResourceID("project-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, err := dashboardruntime.NewProjectDefinition(projectID, "", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	projects := analyticscontract.ProjectFactoryFunc(func(context.Context, analyticscontract.ProjectRequest) (analyticscontract.Project, error) {
+		called = true
+		return nil, nil
+	})
+	for name, options := range map[string]Options{
+		"missing target":      {Projects: projects, SnapshotSealID: "seal-1"},
+		"noncanonical target": {Projects: projects, TargetID: " target-1", SnapshotSealID: "seal-1"},
+		"control target":      {Projects: projects, TargetID: "target\x00one", SnapshotSealID: "seal-1"},
+		"missing seal":        {Projects: projects, TargetID: "target-1"},
+		"noncanonical seal":   {Projects: projects, TargetID: "target-1", SnapshotSealID: " seal-1"},
+		"control seal":        {Projects: projects, TargetID: "target-1", SnapshotSealID: "seal\none"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			called = false
+			_, err := NewFactory(options).OpenDashboardProjectDataRuntimes(t.Context(), dashboardruntime.ProjectDataRuntimeConfig{Definition: definition})
+			if err == nil {
+				t.Fatal("dashboard runtime factory accepted incomplete cache-admission provenance")
+			}
+			if called {
+				t.Fatal("analytical project factory was called before cache-admission validation")
+			}
+		})
 	}
 }
 

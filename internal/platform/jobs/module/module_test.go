@@ -3,47 +3,417 @@ package module
 import (
 	"context"
 	"errors"
-	"path/filepath"
-	"sync/atomic"
+	"io"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/platform"
-	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
-	"github.com/flidai/leapview/internal/workload"
+	jobpostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/migrations"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver"
+	"github.com/riverqueue/river/rivertype"
 )
 
-func testAdmission(controller workload.Admitter) jobs.Admitter {
-	return jobs.AdmitterFunc(func(ctx context.Context, request jobs.AdmissionRequest) (jobs.AdmissionLease, error) {
-		return controller.Acquire(ctx, workload.Request{
-			Class: workload.Class(request.Class), PrincipalID: request.PrincipalID, GroupIDs: request.GroupIDs,
-			EstimatedMemoryBytes: request.EstimatedMemoryBytes, Operation: request.Operation,
-		})
-	})
+type testAdmissionLease struct{ ctx context.Context }
+
+func (l testAdmissionLease) Context() context.Context { return l.ctx }
+func (testAdmissionLease) Release()                   {}
+
+func allowJobs(ctx context.Context, _ jobs.AdmissionRequest) (jobs.AdmissionLease, error) {
+	return testAdmissionLease{ctx: ctx}, nil
 }
 
-func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
+func TestBuildRejectsMissingProductionAuthority(t *testing.T) {
+	admission := jobs.AdmitterFunc(allowJobs)
+	if _, err := Build(t.Context(), Config{Admission: admission}); err == nil || !strings.Contains(err.Error(), "persistence") {
+		t.Fatalf("missing persistence error = %v", err)
 	}
-	defer store.Close()
-	admission, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
+	if _, err := Build(t.Context(), Config{Persistence: &Persistence{}, Production: true, Admission: admission}); err == nil || !strings.Contains(err.Error(), "PostgreSQL") {
+		t.Fatalf("unmarked production persistence error = %v", err)
 	}
-	defer admission.Close()
+}
 
-	first, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Admission: testAdmission(admission),
-		LeaseTimeout: time.Minute, PollInterval: time.Millisecond,
+func TestRiverPostgreSQL18ExecutionAndProductHistory(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_jobs_module")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	repository := jobpostgres.NewRepository(pool)
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := Build(t.Context(), Config{
+		Persistence:  &persistence,
+		Production:   true,
+		Admission:    jobs.AdmitterFunc(allowJobs),
+		OwnerID:      "river-jobs-module-test",
+		PollInterval: 5 * time.Millisecond,
+		LeaseTimeout: 10 * time.Second,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attempts sync.Map
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
+		JobKind: "release.finalize",
+		Run: func(_ context.Context, job jobs.Job) error {
+			value, _ := attempts.LoadOrStore(job.ID, 0)
+			attempt := value.(int) + 1
+			attempts.Store(job.ID, attempt)
+			switch job.ResourceID {
+			case "retry":
+				if attempt == 1 {
+					return jobs.Retryable(errors.New("sensitive transient detail"), 10*time.Millisecond)
+				}
+			case "failure":
+				return errors.New("sensitive terminal detail")
+			}
+			return nil
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = module.Stop(context.Background()) })
+
+	success := enqueueTestJob(t, module, "job-success", "success")
+	duplicate := enqueueTestJob(t, module, "job-success", "success")
+	if duplicate.ID != success.ID {
+		t.Fatalf("idempotent enqueue ID = %q, want %q", duplicate.ID, success.ID)
+	}
+	if _, err := module.Enqueue(t.Context(), testJobInput("job-success", "different")); !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("conflicting enqueue error = %v, want conflict", err)
+	}
+	retry := enqueueTestJob(t, module, "job-retry", "retry")
+	failure := enqueueTestJob(t, module, "job-failure", "failure")
+
+	waitForProductStatus(t, module, success.ID, jobs.StatusSucceeded)
+	waitForProductStatus(t, module, retry.ID, jobs.StatusSucceeded)
+	failed := waitForProductStatus(t, module, failure.ID, jobs.StatusFailed)
+	if failed.ErrorJSON != `{"code": "ASYNC_JOB_FAILED"}` && failed.ErrorJSON != `{"code":"ASYNC_JOB_FAILED"}` {
+		t.Fatalf("failure evidence = %q", failed.ErrorJSON)
+	}
+	if strings.Contains(failed.ErrorJSON, "sensitive") {
+		t.Fatalf("failure evidence leaked handler text: %s", failed.ErrorJSON)
+	}
+	if retry.Attempts != 0 {
+		// The returned enqueue projection is expected to remain queued; the
+		// durable assertion below verifies the retried attempt count.
+		t.Fatalf("initial retry projection attempts = %d, want 0", retry.Attempts)
+	}
+	retried, err := module.Get(t.Context(), retry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.Attempts != 2 {
+		t.Fatalf("retried product attempts = %d, want 2", retried.Attempts)
+	}
+
+	assertRiverState(t, pool, success.ID, rivertype.JobStateCompleted, 1)
+	assertRiverState(t, pool, retry.ID, rivertype.JobStateCompleted, 2)
+	assertRiverState(t, pool, failure.ID, rivertype.JobStateCancelled, 1)
+	var riverRows int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM river_job WHERE kind='release.finalize'`).Scan(&riverRows); err != nil {
+		t.Fatal(err)
+	}
+	if riverRows != 3 {
+		t.Fatalf("River rows = %d, want 3 after idempotent enqueue", riverRows)
+	}
+
+	workflow := jobs.WorkflowIntent{
+		Event: jobs.EventInput{Key: "workflow.rollback", ResourceKind: "release", ResourceID: "workflow", EventType: "release.queued", Data: []byte(`{"state":"queued"}`)},
+		Job:   testJobInput("job-rollback", "workflow"),
+	}
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RecordWorkflowTx(t.Context(), tx, workflow); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := module.Get(t.Context(), workflow.Job.ID); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("rolled-back product job lookup = %v, want not found", err)
+	}
+	var rolledBackRiverRows int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM river_job WHERE args->>'product_job_id'=$1`, workflow.Job.ID).Scan(&rolledBackRiverRows); err != nil {
+		t.Fatal(err)
+	}
+	if rolledBackRiverRows != 0 {
+		t.Fatalf("rolled-back River rows = %d, want 0", rolledBackRiverRows)
+	}
+}
+
+func TestStaleRiverCancellationCannotInterruptSuccessorAttempt(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_stale_handoff")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	repository := jobpostgres.NewRepository(pool)
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan jobs.Job, 1)
+	handlerReturned := make(chan struct{})
+	module, err := Build(t.Context(), Config{
+		Persistence:  &persistence,
+		Production:   true,
+		Admission:    jobs.AdmitterFunc(allowJobs),
+		OwnerID:      "river-stale-handoff-test",
+		PollInterval: 5 * time.Millisecond,
+		LeaseTimeout: 10 * time.Second,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
+		JobKind: "release.finalize",
+		Run: func(ctx context.Context, job jobs.Job) error {
+			started <- job
+			<-ctx.Done()
+			close(handlerReturned)
+			return ctx.Err()
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := module.Enqueue(t.Context(), testJobInput("job-stale-handoff", "stale-handoff"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var riverID int64
+	if err := pool.QueryRow(t.Context(), `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, job.ID).Scan(&riverID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case invocation := <-started:
+		if invocation.Attempts != 1 {
+			t.Fatalf("first invocation attempt = %d, want 1", invocation.Attempts)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for first River invocation")
+	}
+
+	// Rescue and hand off the operational row atomically while the old worker
+	// is still inside its handler. This leaves no retryable window for the test
+	// worker to fetch; the resulting row is exactly the successor's live claim.
+	if _, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job
+		SET state='running', attempt=2, attempted_by=array_append(attempted_by, 'river-successor'), attempted_at=clock_timestamp()
+		WHERE id=$1 AND state='running' AND attempt=1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- module.Stop(context.Background()) }()
+
+	select {
+	case <-handlerReturned:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for stale handler result")
+	}
+	time.Sleep(250 * time.Millisecond)
+	var state string
+	if err := pool.QueryRow(t.Context(), `SELECT state::text FROM public.river_job WHERE id=$1`, riverID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(rivertype.JobStateRunning) {
+		t.Fatalf("stale attempt finalized successor River attempt before handoff: state=%s", state)
+	}
+	if _, err := pool.Exec(t.Context(), `UPDATE public.river_job SET state='retryable', scheduled_at=clock_timestamp()+interval '1 hour' WHERE id=$1 AND state='running' AND attempt=2`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-stopDone:
+		t.Fatalf("stale worker returned for retryable successor: %v", err)
+	case <-time.After(250 * time.Millisecond):
+	}
+	if _, err := pool.Exec(t.Context(), `UPDATE public.river_job SET state='completed', finalized_at=clock_timestamp() WHERE id=$1 AND state='retryable' AND attempt=2`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("jobs module stop after terminal successor: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for terminal successor")
+	}
+	if err := pool.QueryRow(t.Context(), `SELECT state::text FROM public.river_job WHERE id=$1`, riverID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(rivertype.JobStateCompleted) {
+		t.Fatalf("stale attempt changed terminal successor state: state=%s", state)
+	}
+
+	current, err := module.Get(t.Context(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != jobs.StatusRunning || current.Attempts != 1 {
+		t.Fatalf("stale handoff product history = status %q attempts %d, want running/1", current.Status, current.Attempts)
+	}
+}
+
+func TestStaleRiverWaitReleasesPartitionLock(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_stale_partition_release")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	repository := jobpostgres.NewRepository(pool)
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := Build(t.Context(), Config{
+		Persistence: &persistence, Production: true, Admission: jobs.AdmitterFunc(allowJobs),
+		OwnerID: "river-stale-partition-release-test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{JobKind: "release.finalize", Run: func(context.Context, jobs.Job) error { return nil }}}); err != nil {
+		t.Fatal(err)
+	}
+
+	job := enqueueTestJob(t, module, "job-stale-partition-release", "stale-partition-release")
+	var riverID int64
+	if err := pool.QueryRow(t.Context(), `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, job.ID).Scan(&riverID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job
+		SET state='running', attempt=2, attempted_by=ARRAY['river-successor'], attempted_at=clock_timestamp()
+		WHERE id=$1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+
+	waitStarted := make(chan struct{})
+	module.beforeStaleRiverWait = func() { close(waitStarted) }
+	staleJob := &river.Job[jobpostgres.ReleaseFinalizeArgs]{JobRow: &rivertype.JobRow{
+		ID: riverID, Attempt: 1, State: rivertype.JobStateRunning, AttemptedBy: []string{"river-stale"},
+	}}
+	workCtx := jobpostgres.ContextWithRiverExecution(t.Context(), staleJob, "river-stale", time.Minute)
+	workDone := make(chan error, 1)
+	go func() {
+		workDone <- module.workAndWait(workCtx, riverID, 1, jobpostgres.ExecutionArgs{ProductJobID: job.ID, RequestDigest: job.RequestDigest})
+	}()
+	select {
+	case <-waitStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for stale River terminalization wait")
+	}
+
+	probe, err := pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var acquired bool
+	if err := probe.QueryRow(t.Context(), `SELECT pg_try_advisory_lock(hashtextextended($1, 0))`, job.PartitionKey).Scan(&acquired); err != nil {
+		probe.Release()
+		t.Fatal(err)
+	}
+	if acquired {
+		_, _ = probe.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtextextended($1, 0))`, job.PartitionKey)
+	}
+	probe.Release()
+	if _, err := pool.Exec(t.Context(), `UPDATE public.river_job SET state='completed', finalized_at=clock_timestamp() WHERE id=$1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-workDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out draining stale River worker")
+	}
+	if !acquired {
+		t.Fatal("stale River terminalization wait retained the partition advisory lock")
+	}
+}
+
+func TestRiverResultFenceClosesPostValidationHandoff(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_post_validation_handoff")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	repository := jobpostgres.NewRepository(pool)
+	persistence, err := NewPostgresPersistence(repository)
 	if err != nil {
 		t.Fatal(err)
 	}
 	started := make(chan struct{})
-	if err := first.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
+	module, err := Build(t.Context(), Config{
+		Persistence:  &persistence,
+		Production:   true,
+		Admission:    jobs.AdmitterFunc(allowJobs),
+		OwnerID:      "river-post-validation-test",
+		PollInterval: 5 * time.Millisecond,
+		LeaseTimeout: 10 * time.Second,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
 		JobKind: "release.finalize",
 		Run: func(ctx context.Context, _ jobs.Job) error {
 			close(started)
@@ -53,348 +423,338 @@ func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := first.Start(t.Context()); err != nil {
+
+	var riverID int64
+	riverIDReady := make(chan struct{})
+	handoffDone := make(chan error, 1)
+	var handoffOnce sync.Once
+	module.afterRiverResultValidated = func() {
+		handoffOnce.Do(func() {
+			<-riverIDReady
+			_, handoffErr := pool.Exec(context.Background(), `
+				UPDATE public.river_job
+				SET attempt=2, attempted_by=array_append(attempted_by, 'river-successor'), attempted_at=clock_timestamp()
+				WHERE id=$1 AND state='running' AND attempt=1`, riverID)
+			handoffDone <- handoffErr
+		})
+	}
+	if err := module.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.Enqueue(t.Context(), jobs.EnqueueInput{
-		ID: "release:one:finalize", Kind: "release.finalize", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
-		ResourceKind: "release", ResourceID: "one", Payload: []byte(`{}`),
-	}); err != nil {
+	job, err := module.Enqueue(t.Context(), testJobInput("job-post-validation-handoff", "post-validation-handoff"))
+	if err != nil {
 		t.Fatal(err)
 	}
+	if err := pool.QueryRow(t.Context(), `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, job.ID).Scan(&riverID); err != nil {
+		t.Fatal(err)
+	}
+	close(riverIDReady)
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first worker did not claim the job")
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for River worker")
 	}
-	stopContext, cancelStop := context.WithTimeout(t.Context(), 2*time.Second)
-	defer cancelStop()
-	if err := first.Stop(stopContext); err != nil {
-		t.Fatalf("stop first module: %v", err)
+
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- module.Stop(context.Background()) }()
+	select {
+	case err := <-handoffDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for post-validation handoff")
 	}
-	interrupted, err := first.Get(t.Context(), "release:one:finalize")
+	assertRiverState := func(want rivertype.JobState, wantAttempt int) {
+		t.Helper()
+		var state rivertype.JobState
+		var attempt int
+		var hasFence bool
+		if err := pool.QueryRow(t.Context(), `
+			SELECT state, attempt, metadata ? 'leapview:river_result_fence'
+			FROM public.river_job WHERE id=$1`, riverID).Scan(&state, &attempt, &hasFence); err != nil {
+			t.Fatal(err)
+		}
+		if state != want || attempt != wantAttempt || hasFence {
+			t.Fatalf("River row = state %q attempt %d fence=%v, want %q/%d/false", state, attempt, hasFence, want, wantAttempt)
+		}
+	}
+	assertRiverState(rivertype.JobStateRunning, 2)
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for the isolated stale River finalizer to drain")
+	}
+	assertRiverState(rivertype.JobStateRunning, 2)
+	if _, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job SET state='completed', finalized_at=clock_timestamp()
+		WHERE id=$1 AND state='running' AND attempt=2`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	assertRiverState(rivertype.JobStateCompleted, 2)
+}
+
+func TestRiverResultFenceDoesNotPoisonUnrelatedBatchCompletion(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_result_fence_batch")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if interrupted.Status != jobs.StatusRunning || interrupted.FinishedAt != "" {
-		t.Fatalf("interrupted job = %#v, want recoverable running claim", interrupted)
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := store.SQLDB().ExecContext(t.Context(),
-		`UPDATE api_async_jobs SET lease_expires_at = datetime('now', '-1 second') WHERE id = ?`,
-		interrupted.ID,
-	); err != nil {
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
 		t.Fatal(err)
 	}
 
-	second, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Admission: testAdmission(admission),
-		LeaseTimeout: time.Minute, PollInterval: time.Millisecond,
+	driver := newResultFenceRiverDriver(pool)
+	client, err := river.NewClient(driver, &river.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	insert := func(productJobID string) int64 {
+		t.Helper()
+		result, err := client.Insert(t.Context(), jobpostgres.ReleaseFinalizeArgs{
+			ProductJobID:  productJobID,
+			RequestDigest: "sha256:" + strings.Repeat("0", 64),
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result.Job.ID
+	}
+	staleID := insert("stale-batch-result")
+	currentID := insert("current-batch-result")
+	if _, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job
+		SET state = 'running', attempt = 1, attempted_by = ARRAY['worker-a'], attempted_at = clock_timestamp()
+		WHERE id = ANY($1::bigint[])`, []int64{staleID, currentID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job
+		SET attempt = 2, attempted_by = array_append(attempted_by, 'worker-b')
+		WHERE id = $1`, staleID); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	rows, err := client.Pilot().JobSetStateIfRunningMany(t.Context(), driver.GetExecutor(), &riverdriver.JobSetStateIfRunningManyParams{
+		ID:              []int64{staleID, currentID},
+		Attempt:         []*int{nil, nil},
+		ErrData:         [][]byte{nil, nil},
+		FinalizedAt:     []*time.Time{&now, &now},
+		MetadataDoMerge: []bool{true, true},
+		MetadataUpdates: [][]byte{
+			[]byte(`{"leapview:river_result_fence":{"attempt":1,"owner":"worker-a"}}`),
+			[]byte(`{"leapview:river_result_fence":{"attempt":1,"owner":"worker-a"}}`),
+		},
+		ScheduledAt: []*time.Time{nil, nil},
+		State:       []rivertype.JobState{rivertype.JobStateCompleted, rivertype.JobStateCompleted},
+	})
+	if err != nil {
+		t.Fatalf("mixed stale/current River completion batch: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != currentID || rows[0].State != rivertype.JobStateCompleted {
+		t.Fatalf("mixed completion rows = %+v, want only completed current job %d", rows, currentID)
+	}
+	assertState := func(id int64, wantState rivertype.JobState, wantAttempt int) {
+		t.Helper()
+		var state rivertype.JobState
+		var attempt int
+		if err := pool.QueryRow(t.Context(), `SELECT state, attempt FROM public.river_job WHERE id=$1`, id).Scan(&state, &attempt); err != nil {
+			t.Fatal(err)
+		}
+		if state != wantState || attempt != wantAttempt {
+			t.Fatalf("River row %d = %s/%d, want %s/%d", id, state, attempt, wantState, wantAttempt)
+		}
+	}
+	assertState(staleID, rivertype.JobStateRunning, 2)
+	assertState(currentID, rivertype.JobStateCompleted, 1)
+}
+
+func TestWorkRetainsRiverRetryWhenRetryPersistenceFails(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_retry_persistence_failure")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	db := retryPersistenceFailureDB{Pool: pool}
+	repository := jobpostgres.NewRepository(db)
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := Build(t.Context(), Config{
+		Persistence: &persistence,
+		Production:  true,
+		Admission:   jobs.AdmitterFunc(allowJobs),
+		OwnerID:     "river-retry-persistence-failure-test",
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	handled := make(chan struct{})
-	if err := second.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
 		JobKind: "release.finalize",
 		Run: func(context.Context, jobs.Job) error {
-			close(handled)
-			return nil
+			return jobs.Retryable(errors.New("transient"), time.Millisecond)
 		},
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := second.Start(t.Context()); err != nil {
+	t.Cleanup(func() { _ = module.Stop(context.Background()) })
+
+	job, err := module.Enqueue(t.Context(), testJobInput("job-retry-persistence-failure", "retry"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer second.Stop(context.Background())
-	select {
-	case <-handled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("replacement worker did not reclaim the interrupted job")
+	var riverJobID int64
+	if err := pool.QueryRow(t.Context(), `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, job.ID).Scan(&riverJobID); err != nil {
+		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	err = module.work(t.Context(), riverJobID, 1, jobpostgres.ExecutionArgs{ProductJobID: job.ID, RequestDigest: job.RequestDigest})
+	if err == nil {
+		t.Fatal("work succeeded after retry persistence failure")
+	}
+	if !strings.Contains(err.Error(), "ASYNC_JOB_RETRY_PERSISTENCE_FAILED") {
+		t.Fatalf("work error = %v, want retry persistence code", err)
+	}
+	var cancelErr *river.JobCancelError
+	if errors.As(err, &cancelErr) {
+		t.Fatalf("work error = %v, want River to retain an automatic retry", err)
+	}
+	if _, ok := module.retryAt.Load(riverJobID); ok {
+		t.Fatal("retry persistence failure scheduled a normal River retry")
+	}
+	current, err := module.Get(t.Context(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != jobs.StatusRunning {
+		t.Fatalf("product status after retry persistence failure = %q, want running", current.Status)
+	}
+}
+
+func TestRequeueAfterFailureRejectsNonRunningRow(t *testing.T) {
+	repository := jobpostgres.NewRepository(zeroRowsDB{})
+	err := repository.RequeueAfterFailure(t.Context(), "job", 1, []byte(`{"code":"ASYNC_JOB_RETRY"}`))
+	if !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("RequeueAfterFailure() error = %v, want conflict when no row is requeued", err)
+	}
+}
+
+type zeroRowsDB struct{}
+
+func (zeroRowsDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.NewCommandTag("UPDATE 0"), nil
+}
+
+func (zeroRowsDB) Query(context.Context, string, ...any) (pgx.Rows, error) { return nil, nil }
+
+func (zeroRowsDB) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
+
+type retryPersistenceFailureDB struct{ Pool *pgxpool.Pool }
+
+func (db retryPersistenceFailureDB) NativePool() *pgxpool.Pool { return db.Pool }
+
+func (db retryPersistenceFailureDB) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return retryPersistenceFailureTx{Tx: tx}, nil
+}
+
+func (db retryPersistenceFailureDB) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "RequeueJobAfterFailure") {
+		return pgconn.CommandTag{}, errors.New("simulated retry persistence failure")
+	}
+	return db.Pool.Exec(ctx, query, args...)
+}
+
+func (db retryPersistenceFailureDB) Query(ctx context.Context, query string, args ...any) (pgx.Rows, error) {
+	return db.Pool.Query(ctx, query, args...)
+}
+
+func (db retryPersistenceFailureDB) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
+	return db.Pool.QueryRow(ctx, query, args...)
+}
+
+type retryPersistenceFailureTx struct{ pgx.Tx }
+
+func (tx retryPersistenceFailureTx) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "RequeueJobAfterFailure") {
+		return pgconn.CommandTag{}, errors.New("simulated retry persistence failure")
+	}
+	return tx.Tx.Exec(ctx, query, args...)
+}
+
+func testJobInput(id, resourceID string) jobs.EnqueueInput {
+	return jobs.EnqueueInput{
+		ID: id, Kind: "release.finalize", WorkloadClass: "control",
+		PrincipalID: "system", GroupIDs: []string{}, PartitionKey: "release:" + id,
+		ResourceKind: "release", ResourceID: resourceID, EstimatedMemoryBytes: 1,
+		Payload: []byte(`{"release_id":"` + resourceID + `"}`),
+	}
+}
+
+func enqueueTestJob(t *testing.T, module *Module, id, resourceID string) jobs.Job {
+	t.Helper()
+	job, err := module.Enqueue(t.Context(), testJobInput(id, resourceID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return job
+}
+
+func waitForProductStatus(t *testing.T, module *Module, id string, want jobs.Status) jobs.Job {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
 	for {
-		finished, getErr := second.Get(t.Context(), interrupted.ID)
-		if getErr != nil {
-			t.Fatal(getErr)
+		job, err := module.Get(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if finished.Status == jobs.StatusSucceeded {
-			if finished.Attempts != 2 {
-				t.Fatalf("recovered job attempts = %d, want 2", finished.Attempts)
-			}
-			break
+		if job.Status == want {
+			return job
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("recovered job status = %q, want succeeded", finished.Status)
+			t.Fatalf("job %s status = %q, want %q", id, job.Status, want)
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
-func TestModuleRejectsDuplicateKindsBeforeStarting(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	admission, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := jobs.HandlerFunc{JobKind: "duplicate", Run: func(context.Context, jobs.Job) error { return nil }}
-	if err := module.RegisterHandlers([]jobs.Handler{handler, handler}); err == nil {
-		t.Fatal("duplicate handler kinds were accepted")
-	}
-}
-
-func TestModuleLifecycleIsIdempotent(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	admission, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := module.RegisterHandlers(nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := module.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := module.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := module.Stop(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := module.Stop(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestModuleCanRestartAfterTimedOutStopEventuallyFinishes(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	admission, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer admission.Close()
-	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Admission: testAdmission(admission), PollInterval: time.Millisecond,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstStarted := make(chan struct{})
-	releaseFirst := make(chan struct{})
-	secondHandled := make(chan struct{})
-	var calls atomic.Int32
-	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
-		JobKind: "restartable",
-		Run: func(context.Context, jobs.Job) error {
-			switch calls.Add(1) {
-			case 1:
-				close(firstStarted)
-				<-releaseFirst
-			case 2:
-				close(secondHandled)
-			}
-			return nil
-		},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := module.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := module.Enqueue(t.Context(), jobs.EnqueueInput{
-		ID: "restartable-one", Kind: "restartable", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
-		ResourceKind: "test", ResourceID: "one", Payload: []byte(`{}`),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-firstStarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first job did not start")
-	}
-	module.mu.Lock()
-	firstDone := module.done
-	module.mu.Unlock()
-	stopContext, cancelStop := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	err = module.Stop(stopContext)
-	cancelStop()
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("timed-out Stop() error = %v, want deadline exceeded", err)
-	}
-	close(releaseFirst)
-	select {
-	case <-firstDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("canceled runner did not eventually finish")
-	}
-
-	if err := module.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	defer module.Stop(context.Background())
-	if _, err := module.Enqueue(t.Context(), jobs.EnqueueInput{
-		ID: "restartable-two", Kind: "restartable", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
-		ResourceKind: "test", ResourceID: "two", Payload: []byte(`{}`),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-secondHandled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("module did not restart after the timed-out stop completed")
-	}
-}
-
-func TestModuleRecordsTerminalEventWithoutRegisteredFollowupKind(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	admission, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := module.RegisterHandlers(nil); err != nil {
-		t.Fatal(err)
-	}
-	tx, err := store.SQLDB().BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	err = module.RecordWorkflow(t.Context(), tx, jobs.WorkflowIntent{Event: jobs.EventInput{
-		Key: "release.ready", ResourceKind: "release", ResourceID: "release-1",
-		EventType: "release.ready", Data: []byte(`{"status":"ready"}`),
-	}})
-	if err != nil {
-		t.Fatalf("RecordWorkflow() terminal event error = %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	events, err := module.ListEvents(t.Context(), "release", "release-1", 0, 10)
-	if err != nil || len(events) != 1 || events[0].EventType != "release.ready" {
-		t.Fatalf("terminal events = %#v, %v", events, err)
-	}
-}
-
-func TestModuleCommitsWorkflowAtomically(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	admission, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{JobKind: "deployment.activate", Run: func(context.Context, jobs.Job) error { return nil }}}); err != nil {
-		t.Fatal(err)
-	}
-	intent := jobs.WorkflowIntent{
-		Event: jobs.EventInput{Key: "deployment.queued", ResourceKind: "deployment", ResourceID: "deployment-1", EventType: "deployment.queued", Data: []byte(`{"status":"queued"}`)},
-		Job:   jobs.EnqueueInput{ID: "deployment:deployment-1:activate", Kind: "deployment.activate", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "deployment", ResourceID: "deployment-1", Payload: []byte(`{}`)},
-	}
-	if err := module.CommitWorkflow(t.Context(), intent); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := module.Get(t.Context(), intent.Job.ID); err != nil {
-		t.Fatalf("committed job: %v", err)
-	}
-	events, err := module.ListEvents(t.Context(), "deployment", "deployment-1", 0, 10)
-	if err != nil || len(events) != 1 || events[0].EventType != "deployment.queued" {
-		t.Fatalf("committed events = %#v, %v", events, err)
-	}
-}
-
-func TestModuleCommitWorkflowRejectsUnknownKindWithoutPersistingEvent(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	admission, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := module.RegisterHandlers(nil); err != nil {
-		t.Fatal(err)
-	}
-	err = module.CommitWorkflow(t.Context(), jobs.WorkflowIntent{
-		Event: jobs.EventInput{Key: "deployment.queued", ResourceKind: "deployment", ResourceID: "deployment-1", EventType: "deployment.queued", Data: []byte(`{"status":"queued"}`)},
-		Job:   jobs.EnqueueInput{ID: "deployment:deployment-1:activate", Kind: "unknown", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, ResourceKind: "deployment", ResourceID: "deployment-1", Payload: []byte(`{}`)},
-	})
-	if !errors.Is(err, jobs.ErrUnknownKind) {
-		t.Fatalf("CommitWorkflow() error = %v, want unknown kind", err)
-	}
-	events, listErr := module.ListEvents(t.Context(), "deployment", "deployment-1", 0, 10)
-	if listErr != nil || len(events) != 0 {
-		t.Fatalf("rolled-back events = %#v, %v", events, listErr)
-	}
-}
-
-func TestModuleRejectsUnknownEnqueuedKind(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	admission, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := jobs.HandlerFunc{JobKind: "known", Run: func(context.Context, jobs.Job) error { return nil }}
-	if err := module.RegisterHandlers([]jobs.Handler{handler}); err != nil {
-		t.Fatal(err)
-	}
-	_, err = module.Enqueue(t.Context(), jobs.EnqueueInput{
-		ID: "unknown-1", Kind: "unknown", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
-		ResourceKind: "test", ResourceID: "unknown-1", Payload: []byte(`{}`),
-	})
-	if !errors.Is(err, jobs.ErrUnknownKind) {
-		t.Fatalf("Enqueue() error = %v, want ErrUnknownKind", err)
+func assertRiverState(t *testing.T, pool *pgxpool.Pool, productID string, state rivertype.JobState, attempts int) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		var gotState string
+		var gotAttempts int
+		if err := pool.QueryRow(t.Context(), `SELECT r.state,r.attempt FROM river_job r JOIN jobs.job_history h ON h.river_job_id=r.id WHERE h.id=$1`, productID).Scan(&gotState, &gotAttempts); err != nil {
+			t.Fatal(err)
+		}
+		if gotState == string(state) && gotAttempts == attempts {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("River state/attempt for %s = %s/%d, want %s/%d", productID, gotState, gotAttempts, state, attempts)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

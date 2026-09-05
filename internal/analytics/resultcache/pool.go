@@ -15,6 +15,10 @@ import (
 type Constraint string
 
 const (
+	ConstraintPartition Constraint = "partition"
+	// ConstraintRuntime is retained for the legacy class-specific metric label.
+	// Enforcement is partition-scoped; aggregate eviction metrics use
+	// ConstraintPartition.
 	ConstraintRuntime Constraint = "runtime"
 	ConstraintNode    Constraint = "node"
 )
@@ -73,26 +77,40 @@ const (
 )
 
 type Limits struct {
+	PartitionEntries int
+	PartitionBytes   int64
+	NodeEntries      int
+	NodeBytes        int64
+	// RuntimeEntries/RuntimeBytes are compatibility aliases for the former
+	// per-runtime limits. New callers should use PartitionEntries/Bytes.
 	RuntimeEntries int
 	RuntimeBytes   int64
-	NodeEntries    int
-	NodeBytes      int64
 }
 
 func (l Limits) Validate() error {
-	if l.RuntimeEntries <= 0 || l.NodeEntries <= 0 || l.RuntimeBytes <= 0 || l.NodeBytes <= 0 {
+	partitionEntries, partitionBytes := l.PartitionEntries, l.PartitionBytes
+	if partitionEntries == 0 {
+		partitionEntries = l.RuntimeEntries
+	}
+	if partitionBytes == 0 {
+		partitionBytes = l.RuntimeBytes
+	}
+	if partitionEntries <= 0 || l.NodeEntries <= 0 || partitionBytes <= 0 || l.NodeBytes <= 0 {
 		return fmt.Errorf("query cache limits must be positive")
 	}
-	if l.RuntimeEntries > l.NodeEntries {
-		return fmt.Errorf("query cache entry limits must satisfy runtime <= node")
+	if partitionEntries > l.NodeEntries {
+		return fmt.Errorf("query cache entry limits must satisfy partition <= node")
 	}
-	if l.RuntimeBytes > l.NodeBytes {
-		return fmt.Errorf("query cache byte limits must satisfy runtime <= node")
+	if partitionBytes > l.NodeBytes {
+		return fmt.Errorf("query cache byte limits must satisfy partition <= node")
 	}
 	return nil
 }
 
-type ScopeID struct{ RuntimeID string }
+type ScopeID struct {
+	RuntimeID   string
+	PartitionID string
+}
 type Token uint64
 
 // ScopeProvider is the cache capability required by runtime consumers.
@@ -107,6 +125,7 @@ type Pool struct {
 	entries             map[string]*list.Element
 	lru                 *list.List
 	scopes              map[string]*scopeState
+	partitions          map[string]*usage
 	bytes               int64
 	evictions           map[Constraint]uint64
 	stores              map[StoreOutcome]uint64
@@ -128,23 +147,24 @@ type Scope struct {
 	closed     atomic.Bool
 }
 type scopeState struct {
-	id              ScopeID
-	generation      Token
-	closed          bool
-	shared          bool
-	references      int
-	entries         map[string]struct{}
+	id         ScopeID
+	generation Token
+	closed     bool
+	shared     bool
+	references int
+	entries    map[string]struct{}
+	activation uint64
+}
+type usage struct {
+	entries         int
+	bytes           int64
 	queryFamilies   map[QueryFamily]int
 	everStoredArrow bool
 	activation      uint64
-	usage           usage
-}
-type usage struct {
-	entries int
-	bytes   int64
 }
 type entry struct {
 	composite, key, scope string
+	partition             string
 	arrowResult           *arrowresult.Result
 	arrowHold             *arrowresult.Lease
 	byteValue             []byte
@@ -269,7 +289,11 @@ func (s *Scope) Stats() UsageSnapshot {
 	s.pool.mu.Lock()
 	defer s.pool.mu.Unlock()
 	if state := s.openStateLocked(); state != nil {
-		return UsageSnapshot{Entries: state.usage.entries, Bytes: state.usage.bytes}
+		usage := s.pool.partitions[state.id.PartitionID]
+		if usage == nil {
+			return UsageSnapshot{}
+		}
+		return UsageSnapshot{Entries: usage.entries, Bytes: usage.bytes}
 	}
 	return UsageSnapshot{}
 }
@@ -306,9 +330,15 @@ func New(limits Limits) (*Pool, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
+	if limits.PartitionEntries == 0 {
+		limits.PartitionEntries = limits.RuntimeEntries
+	}
+	if limits.PartitionBytes == 0 {
+		limits.PartitionBytes = limits.RuntimeBytes
+	}
 	removalHistoryLimit := min(limits.NodeEntries, 4096)
 	return &Pool{
-		limits: limits, entries: map[string]*list.Element{}, lru: list.New(), scopes: map[string]*scopeState{},
+		limits: limits, entries: map[string]*list.Element{}, lru: list.New(), scopes: map[string]*scopeState{}, partitions: map[string]*usage{},
 		evictions: map[Constraint]uint64{}, stores: map[StoreOutcome]uint64{},
 		invalidations: map[CacheClass]uint64{}, invalidatedEntries: map[CacheClass]uint64{},
 		classEvictions: map[CacheClass]map[Constraint]uint64{}, scopeTransitions: map[ScopeTransition]uint64{},
@@ -323,6 +353,11 @@ func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
 	if id.RuntimeID == "" {
 		return nil, fmt.Errorf("result cache runtime ID is required")
 	}
+	if id.PartitionID == "" {
+		// Compatibility with pre-partition callers. New serving code supplies an
+		// explicit stable partition identity.
+		id.PartitionID = id.RuntimeID
+	}
 	key := id.RuntimeID
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -333,20 +368,26 @@ func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
 		return nil, fmt.Errorf("result cache scope already exists")
 	}
 	p.nextHandleID++
-	p.scopes[key] = &scopeState{id: id, references: 1, entries: map[string]struct{}{}, queryFamilies: map[QueryFamily]int{}, activation: 1}
-	return &Scope{pool: p, key: key, handleID: p.nextHandleID, activation: 1}, nil
+	partition := p.partitionUsageLocked(id.PartitionID)
+	partition.activation++
+	p.scopes[key] = &scopeState{id: id, references: 1, entries: map[string]struct{}{}, activation: partition.activation}
+	return &Scope{pool: p, key: key, handleID: p.nextHandleID, activation: partition.activation}, nil
 }
 
 // OpenSharedScope acquires one handle to a stable cache scope. All live
 // handles with the same identity share entries and invalidation generation.
 // Closing the final handle leaves retained state dormant so a compatible
-// serving generation can reactivate it. Empty dormant scopes are discarded.
+// serving generation can reactivate it. Generation runtimes that overlap at
+// cutover use distinct RuntimeID values with the same PartitionID instead.
 func (p *Pool) OpenSharedScope(id ScopeID) (*Scope, error) {
 	if p == nil {
 		return nil, fmt.Errorf("result cache pool is required")
 	}
 	if id.RuntimeID == "" {
 		return nil, fmt.Errorf("result cache runtime ID is required")
+	}
+	if id.PartitionID == "" {
+		id.PartitionID = id.RuntimeID
 	}
 	key := id.RuntimeID
 	p.mu.Lock()
@@ -355,12 +396,14 @@ func (p *Pool) OpenSharedScope(id ScopeID) (*Scope, error) {
 		return nil, fmt.Errorf("result cache pool is closed")
 	}
 	if existing := p.scopes[key]; existing != nil && !existing.closed {
-		if !existing.shared {
+		if !existing.shared || existing.id != id {
 			return nil, fmt.Errorf("result cache scope already exists")
 		}
 		cutover := existing.references == 0
 		if cutover {
 			existing.activation++
+			partition := p.partitionUsageLocked(id.PartitionID)
+			partition.activation = existing.activation
 		}
 		existing.references++
 		p.nextHandleID++
@@ -370,9 +413,11 @@ func (p *Pool) OpenSharedScope(id ScopeID) (*Scope, error) {
 		return &Scope{pool: p, key: key, handleID: p.nextHandleID, activation: existing.activation}, nil
 	}
 	p.nextHandleID++
-	p.scopes[key] = &scopeState{id: id, shared: true, references: 1, entries: map[string]struct{}{}, queryFamilies: map[QueryFamily]int{}, activation: 1}
+	partition := p.partitionUsageLocked(id.PartitionID)
+	partition.activation++
+	p.scopes[key] = &scopeState{id: id, shared: true, references: 1, entries: map[string]struct{}{}, activation: partition.activation}
 	p.scopeTransitions[ScopeTransitionCreated]++
-	return &Scope{pool: p, key: key, handleID: p.nextHandleID, activation: 1}, nil
+	return &Scope{pool: p, key: key, handleID: p.nextHandleID, activation: partition.activation}, nil
 }
 
 func (s *Scope) openStateLocked() *scopeState {
@@ -398,6 +443,10 @@ func (s *Scope) Generation() Token {
 	return 0
 }
 
+func entryCompositeLocked(state *scopeState, key string) string {
+	return state.id.PartitionID + "\x00" + key
+}
+
 // LookupArrow returns an independently retained lease. Eviction, invalidation,
 // or scope closure can remove the cache's reference without invalidating it.
 func (s *Scope) LookupArrow(key string) (*EntryLease, Token, bool, error) {
@@ -419,7 +468,7 @@ func (s *Scope) LookupArrowObserved(key string, family QueryFamily) (*EntryLease
 	if state == nil {
 		return nil, 0, false, LookupObservation{}, fmt.Errorf("result cache scope is closed")
 	}
-	composite := s.key + "\x00" + key
+	composite := entryCompositeLocked(state, key)
 	element := p.entries[composite]
 	if element == nil {
 		return nil, state.generation, false, LookupObservation{MissReason: p.lookupMissReasonLocked(state, composite, family)}, nil
@@ -456,7 +505,7 @@ func (s *Scope) LookupBytes(key string) ([]byte, Token, bool, error) {
 	if state == nil {
 		return nil, 0, false, fmt.Errorf("result cache scope is closed")
 	}
-	element := p.entries[s.key+"\x00"+key]
+	element := p.entries[entryCompositeLocked(state, key)]
 	if element == nil {
 		return nil, state.generation, false, nil
 	}
@@ -491,7 +540,7 @@ func (s *Scope) StoreArrowObserved(key string, family QueryFamily, token Token, 
 		return StoreStale
 	}
 	bytes := int64(len(key)) + result.Bytes() + metadataBytes(metadata)
-	if bytes > p.limits.RuntimeBytes || bytes > p.limits.NodeBytes {
+	if bytes > p.limits.PartitionBytes || bytes > p.limits.NodeBytes {
 		p.stores[StoreOversized]++
 		return StoreOversized
 	}
@@ -500,19 +549,21 @@ func (s *Scope) StoreArrowObserved(key string, family QueryFamily, token Token, 
 		p.stores[StoreClosed]++
 		return StoreClosed
 	}
-	composite := s.key + "\x00" + key
+	partition := state.id.PartitionID
+	composite := partition + "\x00" + key
 	if old := p.entries[composite]; old != nil {
 		p.removeLocked(old, "", "")
 	}
 	p.forgetRemovalLocked(composite)
-	e := entry{composite: composite, key: key, scope: s.key, arrowResult: result, arrowHold: hold, metadata: cloneMetadata(metadata), bytes: bytes, family: family, writerHandle: s.handleID, writerActivation: s.activation}
+	e := entry{composite: composite, key: key, scope: s.key, partition: partition, arrowResult: result, arrowHold: hold, metadata: cloneMetadata(metadata), bytes: bytes, family: family, writerHandle: s.handleID, writerActivation: s.activation}
 	element := p.lru.PushFront(e)
 	p.entries[composite] = element
 	state.entries[composite] = struct{}{}
-	state.queryFamilies[family]++
-	state.everStoredArrow = true
-	state.usage.entries++
-	state.usage.bytes += bytes
+	usage := p.partitionUsageLocked(partition)
+	usage.queryFamilies[family]++
+	usage.everStoredArrow = true
+	usage.entries++
+	usage.bytes += bytes
 	p.bytes += bytes
 	p.enforceLocked(state)
 	p.stores[StoreStored]++
@@ -538,22 +589,25 @@ func (s *Scope) StoreBytes(key string, token Token, value []byte) StoreOutcome {
 		return StoreStale
 	}
 	bytes := int64(len(key) + len(value))
-	if bytes > p.limits.RuntimeBytes || bytes > p.limits.NodeBytes {
+	if bytes > p.limits.PartitionBytes || bytes > p.limits.NodeBytes {
 		p.stores[StoreOversized]++
 		return StoreOversized
 	}
-	composite := s.key + "\x00" + key
+	partition := state.id.PartitionID
+	composite := partition + "\x00" + key
 	if old := p.entries[composite]; old != nil {
 		p.removeLocked(old, "", "")
 	}
 	stored := make([]byte, len(value))
 	copy(stored, value)
-	e := entry{composite: composite, key: key, scope: s.key, byteValue: stored, bytes: bytes}
+	p.forgetRemovalLocked(composite)
+	e := entry{composite: composite, key: key, scope: s.key, partition: partition, byteValue: stored, bytes: bytes}
 	element := p.lru.PushFront(e)
 	p.entries[composite] = element
 	state.entries[composite] = struct{}{}
-	state.usage.entries++
-	state.usage.bytes += bytes
+	usage := p.partitionUsageLocked(partition)
+	usage.entries++
+	usage.bytes += bytes
 	p.bytes += bytes
 	p.enforceLocked(state)
 	p.stores[StoreStored]++
@@ -571,12 +625,14 @@ func (s *Scope) Delete(key string) {
 	if state == nil {
 		return
 	}
-	p.removeLocked(p.entries[s.key+"\x00"+key], "", "")
+	p.removeLocked(p.entries[entryCompositeLocked(state, key)], "", "")
 }
 
 func (p *Pool) enforceLocked(state *scopeState) {
-	for state.usage.entries > p.limits.RuntimeEntries || state.usage.bytes > p.limits.RuntimeBytes {
-		p.removeLocked(p.oldestLocked(func(e entry) bool { return e.scope == scopeKey(state.id) }), ConstraintRuntime, LookupMissEvicted)
+	partition := state.id.PartitionID
+	usage := p.partitionUsageLocked(partition)
+	for usage.entries > p.limits.PartitionEntries || usage.bytes > p.limits.PartitionBytes {
+		p.removeLocked(p.oldestLocked(func(e entry) bool { return e.partition == partition }), ConstraintPartition, LookupMissEvicted)
 	}
 	for len(p.entries) > p.limits.NodeEntries || p.bytes > p.limits.NodeBytes {
 		p.removeLocked(p.lru.Back(), ConstraintNode, LookupMissEvicted)
@@ -605,23 +661,31 @@ func (p *Pool) removeLocked(element *list.Element, constraint Constraint, reason
 	p.bytes -= e.bytes
 	if state != nil {
 		delete(state.entries, e.composite)
+	}
+	if usage := p.partitions[e.partition]; usage != nil {
 		if e.arrowResult != nil {
-			state.queryFamilies[e.family]--
-			if state.queryFamilies[e.family] == 0 {
-				delete(state.queryFamilies, e.family)
+			usage.queryFamilies[e.family]--
+			if usage.queryFamilies[e.family] == 0 {
+				delete(usage.queryFamilies, e.family)
 			}
 		}
-		state.usage.entries--
-		state.usage.bytes -= e.bytes
+		usage.entries--
+		usage.bytes -= e.bytes
+	}
+	if state != nil {
 		p.removeEmptyDormantScopeLocked(state)
 	}
 	if constraint != "" {
 		p.evictions[constraint]++
-		class := cacheClassOf(state, e)
+		class := cacheClassOf(e)
+		classConstraint := constraint
+		if classConstraint == ConstraintPartition {
+			classConstraint = ConstraintRuntime
+		}
 		if p.classEvictions[class] == nil {
 			p.classEvictions[class] = map[Constraint]uint64{}
 		}
-		p.classEvictions[class][constraint]++
+		p.classEvictions[class][classConstraint]++
 	}
 	if e.arrowResult != nil && (reason == LookupMissEvicted || reason == LookupMissInvalidated) {
 		p.rememberRemovalLocked(e.composite, reason)
@@ -633,7 +697,7 @@ func (p *Pool) removeEmptyDormantScopeLocked(state *scopeState) {
 		return
 	}
 	state.closed = true
-	delete(p.scopes, scopeKey(state.id))
+	delete(p.scopes, state.id.RuntimeID)
 	p.scopeTransitions[ScopeTransitionRemoved]++
 }
 
@@ -643,10 +707,11 @@ func (p *Pool) lookupMissReasonLocked(state *scopeState, composite string, famil
 		p.removalOrder.MoveToFront(element)
 		return element.Value.(removalRecord).reason
 	}
-	if !state.everStoredArrow {
+	usage := p.partitions[state.id.PartitionID]
+	if usage == nil || !usage.everStoredArrow {
 		return LookupMissColdStart
 	}
-	if state.queryFamilies[family] > 0 {
+	if usage.queryFamilies[family] > 0 {
 		return LookupMissQueryMismatch
 	}
 	return LookupMissAbsentEntry
@@ -680,7 +745,7 @@ func (p *Pool) forgetRemovalLocked(composite string) {
 	}
 }
 
-func cacheClassOf(state *scopeState, e entry) CacheClass {
+func cacheClassOf(e entry) CacheClass {
 	if e.arrowResult != nil {
 		return CacheClassStableResult
 	}
@@ -699,9 +764,18 @@ func metadataBytes(metadata Metadata) int64 {
 	}
 	return bytes
 }
-func scopeKey(id ScopeID) string { return id.RuntimeID }
+func (p *Pool) partitionUsageLocked(partition string) *usage {
+	if value := p.partitions[partition]; value != nil {
+		return value
+	}
+	value := &usage{queryFamilies: map[QueryFamily]int{}}
+	p.partitions[partition] = value
+	return value
+}
 
-func (s *Scope) Invalidate() {
+// Fence advances this scope's write generation without evicting stable
+// partition entries. A subsequent store using the prior token is rejected.
+func (s *Scope) Fence() {
 	if s == nil || s.pool == nil {
 		return
 	}
@@ -712,27 +786,53 @@ func (s *Scope) Invalidate() {
 	if state == nil {
 		return
 	}
+	state.generation++
+}
+
+// Clear explicitly removes every retained entry in this stable partition and
+// advances its generation.
+func (s *Scope) Clear() {
+	if s == nil || s.pool == nil {
+		return
+	}
+	p := s.pool
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state := s.openStateLocked()
+	if state == nil {
+		return
+	}
+	partition := state.id.PartitionID
 	classes := map[CacheClass]uint64{}
-	if len(state.entries) == 0 {
+	for element := p.lru.Back(); element != nil; {
+		previous := element.Prev()
+		e := element.Value.(entry)
+		if e.partition == partition {
+			classes[cacheClassOf(e)]++
+			p.removeLocked(element, "", LookupMissInvalidated)
+		}
+		element = previous
+	}
+	if len(classes) == 0 {
 		class := CacheClassGenerationByte
-		if state.shared {
+		if state.shared || p.partitionUsageLocked(partition).everStoredArrow {
 			class = CacheClassStableResult
 		}
 		classes[class] = 0
-	}
-	for composite := range state.entries {
-		element := p.entries[composite]
-		if element != nil {
-			classes[cacheClassOf(state, element.Value.(entry))]++
-		}
-		p.removeLocked(element, "", LookupMissInvalidated)
 	}
 	for class, removed := range classes {
 		p.invalidations[class]++
 		p.invalidatedEntries[class] += removed
 	}
-	state.generation++
+	for _, candidate := range p.scopes {
+		if candidate.id.PartitionID == partition {
+			candidate.generation++
+		}
+	}
 }
+
+// Invalidate is the destructive legacy spelling of Clear.
+func (s *Scope) Invalidate() { s.Clear() }
 
 func (s *Scope) Close() error {
 	if s == nil || s.pool == nil {
@@ -758,8 +858,19 @@ func (s *Scope) Close() error {
 		p.removeEmptyDormantScopeLocked(state)
 		return nil
 	}
+	// The compatibility/default partition is generation-owned and is cleared
+	// on close. Arrow entries in an explicit stable partition survive so an
+	// overlapping or successor generation can reuse dependency-equivalent
+	// results; byte entries are always generation-owned.
 	for composite := range state.entries {
-		p.removeLocked(p.entries[composite], "", "")
+		element := p.entries[composite]
+		if element == nil {
+			continue
+		}
+		e := element.Value.(entry)
+		if state.id.PartitionID == state.id.RuntimeID || e.byteValue != nil {
+			p.removeLocked(element, "", "")
+		}
 	}
 	state.closed = true
 	state.generation++
@@ -780,32 +891,45 @@ func (p *Pool) Stats() Snapshot {
 		ClassEvictions: map[CacheClass]map[Constraint]uint64{}, ScopeTransitions: map[ScopeTransition]uint64{},
 	}
 	for key, state := range p.scopes {
-		result.Scopes[key] = ScopeSnapshot{ScopeID: state.id, Entries: state.usage.entries, Bytes: state.usage.bytes, Generation: state.generation}
+		usage := p.partitions[state.id.PartitionID]
+		var entries int
+		var bytes int64
+		if usage != nil {
+			entries, bytes = usage.entries, usage.bytes
+		}
+		result.Scopes[key] = ScopeSnapshot{ScopeID: state.id, Entries: entries, Bytes: bytes, Generation: state.generation}
+		hasArrow, hasBytes := false, false
+		for element := p.lru.Front(); element != nil; element = element.Next() {
+			e := element.Value.(entry)
+			if e.partition != state.id.PartitionID {
+				continue
+			}
+			hasArrow = hasArrow || e.arrowResult != nil
+			hasBytes = hasBytes || e.byteValue != nil
+		}
 		if state.shared {
 			if state.references > 0 {
 				result.Stable.ActiveScopes++
 			} else {
 				result.Stable.DormantScopes++
 			}
-		} else {
+		} else if hasArrow && state.id.PartitionID != state.id.RuntimeID {
+			result.Stable.ActiveScopes++
+		} else if hasBytes || state.id.PartitionID == state.id.RuntimeID {
 			result.Generation.Scopes++
 		}
-		for composite := range state.entries {
-			element := p.entries[composite]
-			if element == nil {
-				continue
+	}
+	for element := p.lru.Front(); element != nil; element = element.Next() {
+		e := element.Value.(entry)
+		if e.arrowResult != nil {
+			result.Stable.Entries++
+			result.Stable.Bytes += e.bytes
+			if e.arrowHold != nil {
+				result.Stable.ArrowHolds++
 			}
-			e := element.Value.(entry)
-			if state.shared && e.arrowResult != nil {
-				result.Stable.Entries++
-				result.Stable.Bytes += e.bytes
-				if e.arrowHold != nil {
-					result.Stable.ArrowHolds++
-				}
-			} else if !state.shared && e.byteValue != nil {
-				result.Generation.ByteEntries++
-				result.Generation.ByteBytes += e.bytes
-			}
+		} else if e.byteValue != nil {
+			result.Generation.ByteEntries++
+			result.Generation.ByteBytes += e.bytes
 		}
 	}
 	for key, value := range p.evictions {

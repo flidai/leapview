@@ -68,8 +68,8 @@ type ServiceOptions struct {
 }
 
 func NewService(options ServiceOptions) (*Service, error) {
-	if options.Releases == nil || options.Finalization == nil || options.Artifacts == nil || options.Validator == nil {
-		return nil, fmt.Errorf("release repository, finalization unit of work, artifact store, and validator are required")
+	if options.Releases == nil || options.Finalization == nil || options.Validator == nil {
+		return nil, fmt.Errorf("release repository, finalization unit of work, and validator are required")
 	}
 	if options.Environment == "" || string(options.Environment) != strings.TrimSpace(string(options.Environment)) {
 		return nil, fmt.Errorf("release environment must be canonical")
@@ -154,6 +154,12 @@ func (s *Service) List(ctx context.Context, projectID projectgraph.ResourceID) (
 // UploadArtifact streams the immutable generation artifact and records the
 // resulting size only after the canonical digest verifier succeeds.
 func (s *Service) UploadArtifact(ctx context.Context, projectID, releaseID, contentDigest string, source io.Reader) (Artifact, error) {
+	// Native persisted release authorities intentionally do not expose a
+	// mutable upload store. Keep this operation explicitly legacy-only rather
+	// than allowing a nil store to panic after the release row is read.
+	if s == nil || s.artifacts == nil {
+		return Artifact{}, ErrCandidateArtifactUnavailable
+	}
 	project, err := canonicalProjectID(projectID)
 	if err != nil || releaseID == "" || releaseID != strings.TrimSpace(releaseID) {
 		return Artifact{}, ErrInvalid
@@ -186,7 +192,7 @@ func (s *Service) UploadArtifact(ctx context.Context, projectID, releaseID, cont
 	}
 	item := Artifact{ReleaseID: current.ID, ServingIdentity: current.ServingIdentity, ExpectedDigest: current.ArtifactDigest, ActualDigest: current.ArtifactDigest, SizeBytes: size}
 	// The upload bytes are written to the external artifact store before the
-	// SQLite transition. Refresh the source-built audit handoff with the
+	// durable repository transition. Refresh the source-built audit handoff with the
 	// authoritative size observed by the verifier so RecordArtifact can commit
 	// the complete payload atomically with the release row update.
 	if intent, ok := AuditIntentFromContext(ctx); ok {
@@ -232,6 +238,9 @@ func (s *Service) ValidateFinalization(ctx context.Context, projectID, releaseID
 	}
 	if current.Status != StatusValidating {
 		return Release{}, ErrConflict
+	}
+	if s.validator == nil {
+		return s.failFinalization(ctx, current, ErrCandidateArtifactUnavailable)
 	}
 	if current.ArtifactUploadedAt == "" || current.ActualDigest == "" || current.ActualDigest != current.ArtifactDigest {
 		return s.failFinalization(ctx, current, ErrIncomplete)

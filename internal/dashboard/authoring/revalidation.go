@@ -2,8 +2,6 @@ package authoring
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -12,6 +10,7 @@ import (
 
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/google/uuid"
 )
 
 var (
@@ -24,24 +23,20 @@ var (
 // caller retries the same dashboard and generation with the same clock
 // value.
 func NewRevalidationAttemptID() (string, error) {
-	var entropy [16]byte
-	if _, err := rand.Read(entropy[:]); err != nil {
+	id, err := uuid.NewV7()
+	if err != nil {
 		return "", fmt.Errorf("generate revalidation attempt ID: %w", err)
 	}
-	return "attempt_" + hex.EncodeToString(entropy[:]), nil
+	return id.String(), nil
 }
 
 func ValidateRevalidationAttemptID(value string) error {
 	if value != strings.TrimSpace(value) {
-		return fmt.Errorf("revalidation attempt ID must be canonical attempt_<32 lowercase hex> token")
+		return fmt.Errorf("revalidation attempt ID must be a canonical lowercase UUIDv7")
 	}
-	if len(value) != len("attempt_")+32 || !strings.HasPrefix(value, "attempt_") {
-		return fmt.Errorf("revalidation attempt ID must be canonical attempt_<32 lowercase hex> token")
-	}
-	for _, r := range value[len("attempt_"):] {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return fmt.Errorf("revalidation attempt ID must be canonical attempt_<32 lowercase hex> token")
-		}
+	id, err := uuid.Parse(value)
+	if err != nil || id.Version() != 7 || id.String() != value {
+		return fmt.Errorf("revalidation attempt ID must be a canonical lowercase UUIDv7")
 	}
 	return nil
 }

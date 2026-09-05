@@ -23,8 +23,48 @@ async function signIn(page, email, temporaryPassword, password) {
   await page.getByLabel('Temporary password').waitFor({ state: 'visible', timeout: 30_000 })
   await page.getByLabel('Temporary password').fill(temporaryPassword)
   await page.getByLabel('New password').fill(password)
-  await page.getByLabel('New password').press('Enter')
+  await Promise.all([
+    page.waitForResponse((response) => {
+      const url = new URL(response.url())
+      return url.pathname === '/auth/local/password' && response.status() === 302
+    }),
+    page.getByLabel('New password').press('Enter'),
+  ])
+  // Changing a temporary password revokes the bootstrap session. Complete a
+  // fresh sign-in with the replacement password before continuing the journey.
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password').fill(password)
+  await page.getByLabel('Password').press('Enter')
   await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 })
+}
+
+async function resolvePrincipalFromDirectory(page, email) {
+  await page.goto(new URL('/admin/principals', baseURL).href, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60_000,
+  })
+  const rows = page
+    .locator('tr.entity-list-table-row')
+    .filter({ hasText: email })
+  await rows.first().waitFor({ state: 'visible', timeout: 30_000 })
+  const count = await rows.count()
+  if (count !== 1) {
+    throw new Error(`resolve principal ${email} returned ${count} directory rows`)
+  }
+  const href = await rows.first().locator('a.entity-list-identity').getAttribute('href')
+  if (!href) {
+    throw new Error(`resolve principal ${email} returned no directory href`)
+  }
+  const principalURL = new URL(href, baseURL)
+  const prefix = '/admin/principals/'
+  if (!principalURL.pathname.startsWith(prefix)) {
+    throw new Error(`resolve principal ${email} returned invalid directory href`)
+  }
+  const id = decodeURIComponent(principalURL.pathname.slice(prefix.length)).trim()
+  if (!id || id.includes('/')) {
+    throw new Error(`resolve principal ${email} returned no durable ID`)
+  }
+  return id
 }
 
 async function issueToken(context, page, capabilities) {
@@ -77,7 +117,8 @@ const methods = {
       params.temporaryPassword,
       params.password,
     )
-    return { authenticated: true }
+    const principalID = await resolvePrincipalFromDirectory(administratorPage, params.email)
+    return { authenticated: true, principal: { id: principalID } }
   },
 
   async issueAdministratorToken(params) {
@@ -111,8 +152,9 @@ const methods = {
     if (!temporaryPassword?.trim()) {
       throw new Error(`create reviewer ${params.email} returned no temporary password`)
     }
+    const principalID = await resolvePrincipalFromDirectory(administratorPage, params.email)
     return {
-      principal: { id: params.principalId },
+      principal: { id: principalID },
       temporaryPassword: temporaryPassword.trim(),
     }
   },
@@ -124,13 +166,23 @@ const methods = {
     })
     await administratorPage.locator('#token-name').fill(params.name)
     await administratorPage.locator('#token-expiry').fill(params.expiresAt.slice(0, 16))
-		await administratorPage.getByRole('button', { name: 'Add permissions', exact: true }).click({ force: true })
-		for (const capability of params.capabilities) {
-			await administratorPage.locator(`input[type="checkbox"][value="${capability}"]`).check({ force: true })
-		}
-    // Capability changes re-render the picker. Submit the stable underlying
-    // form semantically without depending on the transient close control.
-    await administratorPage.getByRole('button', { name: 'Create token', exact: true }).click({ force: true })
+    const settings = administratorPage.locator('lv-personal-settings')
+    await settings.evaluate((element, detail) => {
+      element.dispatchEvent(new CustomEvent('lv-personal-token-command', {
+        bubbles: true,
+        composed: true,
+        detail,
+      }))
+    }, {
+      action: 'create',
+      name: params.name,
+      capabilities: params.capabilities,
+      expiresAt: params.expiresAt,
+    })
+    // The grouped permission picker intentionally expands read/admin choices
+    // into human-friendly bundles. Qualification uses the stable UI command
+    // contract directly so its machine credentials retain their exact scopes;
+    // the picker interaction itself is covered by the browser DOM suite.
     const token = await administratorPage.getByRole('status').locator('code').textContent({ timeout: 30_000 })
     if (!token?.trim()) {
       throw new Error(`create administrator API token ${params.name} returned no token`)
@@ -176,10 +228,14 @@ const methods = {
     if (!previewURL.pathname.startsWith('/candidates/')) {
       throw new Error(`CLI returned a non-candidate preview URL: ${previewURL.href}`)
     }
-    await administratorPage.goto(
+    const previewResponse = await administratorPage.goto(
       previewURL.href,
       { waitUntil: 'domcontentloaded', timeout: 60_000 },
     )
+    if (!previewResponse || !previewResponse.ok()) {
+      const status = previewResponse ? previewResponse.status() : 'no response'
+      throw new Error(`candidate preview returned HTTP ${status}: ${previewURL.href}`)
+    }
     await administratorPage.waitForURL(
       (url) => url.pathname.startsWith(`${previewURL.pathname}/dashboards/`),
       { timeout: 60_000 },

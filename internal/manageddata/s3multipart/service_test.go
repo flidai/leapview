@@ -24,6 +24,39 @@ const (
 	nowText = "2026-07-14T10:00:00Z"
 )
 
+func TestStrictManifestAcceptsPostgresJSONBFormatting(t *testing.T) {
+	manifest, err := strictManifest(`{
+  "files": [
+    {"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "path":"z.csv", "size":7},
+    {"size":3, "path":"a.csv", "sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+  ]
+}`)
+	if err != nil {
+		t.Fatalf("strictManifest() error = %v", err)
+	}
+	want := manageddata.Manifest{Files: []manageddata.File{
+		{Path: "z.csv", Size: 7, SHA256: strings.Repeat("b", 64)},
+		{Path: "a.csv", Size: 3, SHA256: strings.Repeat("a", 64)},
+	}}
+	if got, want := manifest.RevisionID(), want.RevisionID(); got != want {
+		t.Fatalf("manifest revision digest = %q, want %q", got, want)
+	}
+}
+
+func TestStrictManifestRejectsCorruption(t *testing.T) {
+	for name, raw := range map[string]string{
+		"unknown field":  `{"files":[{"path":"a.csv","size":3,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],"unexpected":true}`,
+		"trailing value": `{"files":[{"path":"a.csv","size":3,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]} {"unexpected":true}`,
+		"invalid digest": `{"files":[{"path":"a.csv","size":3,"sha256":"not-a-sha256"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := strictManifest(raw); !errors.Is(err, control.ErrIntegrity) {
+				t.Fatalf("strictManifest() error = %v, want integrity", err)
+			}
+		})
+	}
+}
+
 func TestCoordinatorCreateSignCompleteIsStrictAndRetrySafe(t *testing.T) {
 	ctx, repo, session := coordinatorFixture(t, []manageddata.File{
 		{Path: "large.csv", Size: minPart + 3, SHA256: strings.Repeat("a", 64)},

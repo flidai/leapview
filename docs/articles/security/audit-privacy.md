@@ -35,7 +35,6 @@ operational categories:
 | Category | What it answers | Lifecycle owner |
 | --- | --- | --- |
 | Audit events | Which principal or service performed an administrative/security action? | Security and operations |
-| Delivered audit intents | Which durable handoff identities have already materialized? | Security and operations, aligned to audit-event retention |
 | Query events | Which governed analytical operation ran, with what status and context? | Data platform and operations |
 | Archived agent conversations | What was retained from an explicitly archived agent run? | Product owner and privacy/security |
 | Authentication state | Which expired or revoked sessions, OAuth states, API tokens, and service-principal secrets can be removed? | Identity/platform operations |
@@ -50,9 +49,10 @@ any preservation requirement, and only then apply deletion.
 
 ## Protection at rest is not encryption
 
-LeapView protects local platform state with private filesystem boundaries: the
-database and backup files are created with mode `0600`, private directories
-with mode `0700`, and SQLite WAL/SHM sidecars are tightened when present. These
+LeapView protects local fixture state with private filesystem boundaries: files
+are created with mode `0600`, private directories with mode `0700`, and SQLite
+WAL/SHM sidecars are tightened when present. Production PostgreSQL and
+object-store protection is owned by the corresponding provider. Filesystem
 permissions reduce accidental access by other local users; they do not encrypt
 the bytes. A host administrator, a compromised process with equivalent
 privileges, an unprotected snapshot, or a copied archive can still read them.
@@ -65,11 +65,15 @@ without broadening application access.
 
 ## Backups, exports, and operator duties
 
-The platform backup path creates a consistent SQLite copy and the instance
-backup command can package the configured local state. A database-only backup
-is not a substitute for a complete analytical recovery point. External source
-systems and S3-backed managed objects remain under their native backup,
-versioning, and retention controls.
+Production backup and recovery use PostgreSQL-native backup/PITR together with
+the native protection mechanisms for the DuckLake catalog, Parquet files, and
+managed-data objects. LeapView does not provide a local SQLite/file archive
+that substitutes for a PostgreSQL target recovery point. Development and
+evaluation fixtures may use their own SQLite harness; external source systems
+and S3-backed objects remain under native backup, versioning, and retention
+controls. Follow the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations)
+and [Backup and restore guide](/docs/guides/operate/backup-restore) for the
+complete production procedure.
 
 Operators are responsible for the destination and the policy around it:
 

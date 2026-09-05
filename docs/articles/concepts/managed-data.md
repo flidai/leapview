@@ -28,8 +28,14 @@ Managed source revisions and analytical serving snapshots solve different proble
 
 ## Storage responsibility
 
-With local managed-data storage, instance backup must preserve both LeapView control-plane metadata and the managed objects. With object storage, LeapView backup preserves its metadata and local runtime state, while bucket versioning, replication, and backup policies preserve authoritative objects.
-
-A recoverable deployment needs both sides of that ownership boundary. Metadata without the referenced objects is incomplete, and objects without the corresponding revision and deployment records are not a serving-state restore.
+Production recovery uses PostgreSQL-native backup/PITR for control-plane
+metadata and the configured object store's native versioning, replication, or
+backup mechanism for managed objects. A local SQLite/file archive is not a
+PostgreSQL target recovery point. A recoverable deployment needs both sides of
+the ownership boundary: metadata without referenced objects is incomplete, and
+objects without corresponding revision and deployment records are not a
+serving-state restore. Follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore) for the complete procedure.
 
 Follow [Data revisions and activation](/docs/guides/data/revisions) to stage and deploy a revision, [Materialization and refresh](/docs/guides/data/refresh) to rebuild analytical tables, or [Storage and recovery](/docs/guides/data/storage-recovery) to design the backup boundary.

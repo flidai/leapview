@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
-	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
@@ -141,37 +139,6 @@ func TestDeploymentCLIClientCreateReleaseUsesGeneratedCommandContract(t *testing
 	}
 }
 
-func TestDeploymentCLIClientStreamsReleaseArtifactThroughGeneratedCommandContract(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPut || request.URL.Path != "/api/v1/projects/project-1/releases/release-1/artifact" {
-			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
-		}
-		payload, err := io.ReadAll(request.Body)
-		if err != nil {
-			t.Fatalf("read request: %v", err)
-		}
-		if string(payload) != "artifact bytes" || request.Header.Get("Content-Digest") != "sha256:digest" ||
-			request.Header.Get("X-LeapView-Invocation-Surface") != "cli" {
-			t.Fatalf("payload = %q headers = %#v", payload, request.Header)
-		}
-		writer.Header().Set("Content-Type", "application/json")
-		writer.Header().Set("Location", "/artifact")
-		writer.WriteHeader(http.StatusCreated)
-		_, _ = writer.Write([]byte(`{"digest":"sha256:digest","releaseId":"release-1","sizeBytes":14}`))
-	}))
-	defer server.Close()
-
-	response, err := newDeploymentCLIClient(server.Client(), server.URL, "secret").uploadReleaseArtifact(
-		context.Background(), "project-1", "release-1", "sha256:digest", strings.NewReader("artifact bytes"),
-	)
-	if err != nil {
-		t.Fatalf("upload release artifact: %v", err)
-	}
-	if response.Digest != "sha256:digest" || response.SizeBytes != 14 {
-		t.Fatalf("response = %#v", response)
-	}
-}
-
 func TestDeploymentCLIClientCreateReleaseMapsDeclaredFailuresExhaustively(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -202,44 +169,4 @@ func TestDeploymentCLIClientCreateReleaseMapsDeclaredFailuresExhaustively(t *tes
 			}
 		})
 	}
-}
-
-func TestDeploymentCLIClientCreateDeploymentPreservesUnexpectedAndTransportFailures(t *testing.T) {
-	t.Run("unexpected problem", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-			writer.Header().Set("Content-Type", "application/problem+json")
-			writer.WriteHeader(http.StatusConflict)
-			_, _ = writer.Write([]byte(`{"status":409,"detail":"new failure","code":"NEW_DEPLOYMENT_FAILURE"}`))
-		}))
-		defer server.Close()
-
-		_, err := newDeploymentCLIClient(server.Client(), server.URL, "secret").createDeployment(
-			context.Background(), "project-1", "create-3", deploymentgen.DeploymentCreateRequest{ReleaseId: "release-1"},
-		)
-		var unexpected *apigenclient.UnexpectedProblemError
-		if !errors.As(err, &unexpected) {
-			t.Fatalf("error = %T %v", err, err)
-		}
-		var declared deploymentgen.GenCreateDeploymentFailure
-		if errors.As(err, &declared) {
-			t.Fatalf("unexpected problem classified as declared failure: %T", err)
-		}
-	})
-
-	t.Run("transport failure", func(t *testing.T) {
-		sentinel := errors.New("network unavailable")
-		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			return nil, sentinel
-		})}
-		_, err := newDeploymentCLIClient(client, "https://target.example", "secret").createDeployment(
-			context.Background(), "project-1", "create-4", deploymentgen.DeploymentCreateRequest{ReleaseId: "release-1"},
-		)
-		if !errors.Is(err, sentinel) {
-			t.Fatalf("error = %T %v", err, err)
-		}
-		var unexpected *apigenclient.UnexpectedProblemError
-		if errors.As(err, &unexpected) {
-			t.Fatalf("transport failure classified as unexpected problem: %T", err)
-		}
-	})
 }

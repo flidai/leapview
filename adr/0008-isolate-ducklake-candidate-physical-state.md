@@ -10,6 +10,11 @@ Deciders: LeapView maintainers
 
 Supersedes: none
 
+Superseded by: [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md),
+private file-backed catalog and catalog-object mechanics only; the
+candidate-isolation, immutable-publication, exact-identity, fencing, lease,
+retention, and reconciliation decisions remain accepted
+
 Related: [ADR-0007](0007-adopt-plan-driven-project-delivery.md),
 [ADR-0009](0009-separate-control-and-physical-transactions.md), the
 [project-delivery conformance specification](specifications/project-delivery-conformance.md),

@@ -144,6 +144,78 @@ func TestRuntimeBindingLeaserFailsClosedBeforePoolAcquisition(t *testing.T) {
 	}
 }
 
+func TestRuntimeBindingLeaserInspectsDurableEvidenceWithoutPoolAcquisition(t *testing.T) {
+	binding := validTargetBinding(t)
+	validated, err := binding.MarkValidated("provider-v1", binding.UpdatedAt.Add(time.Minute))
+	require.NoError(t, err)
+	directory := &recordingValidatedPoolDirectory{}
+	leaser, err := NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{
+		Bindings: &runtimeBindingCatalog{bindings: map[projectgraph.ResourceID]TargetBinding{binding.ConnectionID: validated}},
+		Pools:    directory,
+		Authorize: func(_ context.Context, actor string, got TargetBinding) error {
+			if actor != "principal:author_1" || got.ID != binding.ID {
+				t.Fatalf("authorization request = %q, %#v", actor, got)
+			}
+			return nil
+		},
+	})
+	require.NoError(t, err)
+
+	got, err := leaser.Inspect(t.Context(), RuntimeBindingRequest{
+		Actor: "principal:author_1", Identity: servingIdentity(binding.Scope.ProjectID.String(), binding.Scope.Environment, "generation-1"), TargetID: binding.TargetID,
+		Requirements: []Requirement{{ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind}},
+	})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, validated.ID, got[0].BindingID)
+	require.Equal(t, validated.Revision, got[0].BindingRevision)
+	require.Equal(t, validated.ValidatedVersion, got[0].ValidatedVersion)
+	require.Equal(t, validated.Evidence().EndpointConfigHash, got[0].EndpointConfigHash)
+	require.Equal(t, HealthHealthy, got[0].Health)
+	require.Equal(t, "generation-1", got[0].Identity.GenerationID)
+	require.Empty(t, directory.acquired)
+}
+
+func TestRuntimeBindingLeaserInspectFailsClosedForAuthorizationScopeAndCompatibility(t *testing.T) {
+	binding := validTargetBinding(t)
+	validated, err := binding.MarkValidated("provider-v1", binding.UpdatedAt.Add(time.Minute))
+	require.NoError(t, err)
+	newLeaser := func(authorize RuntimeBindingAuthorizer) *RuntimeBindingLeaser {
+		leaser, err := NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{
+			Bindings:  &runtimeBindingCatalog{bindings: map[projectgraph.ResourceID]TargetBinding{binding.ConnectionID: validated}},
+			Pools:     &recordingValidatedPoolDirectory{},
+			Authorize: authorize,
+		})
+		require.NoError(t, err)
+		return leaser
+	}
+	request := RuntimeBindingRequest{
+		Actor: "principal:author_1", Identity: servingIdentity(binding.Scope.ProjectID.String(), binding.Scope.Environment, "generation-1"), TargetID: binding.TargetID,
+		Requirements: []Requirement{{ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind}},
+	}
+	_, err = newLeaser(func(context.Context, string, TargetBinding) error { return ErrUnauthorizedBinding }).Inspect(t.Context(), request)
+	require.ErrorIs(t, err, ErrUnauthorizedBinding)
+
+	scopeRequest := request
+	scopeRequest.Identity = servingIdentity("other_project", binding.Scope.Environment, "generation-1")
+	_, err = newLeaser(func(context.Context, string, TargetBinding) error { return nil }).Inspect(t.Context(), scopeRequest)
+	require.ErrorIs(t, err, ErrBindingNotFound)
+
+	compatibilityRequest := request
+	compatibilityRequest.Requirements = []Requirement{{ConnectionID: binding.ConnectionID, ConnectorKind: "unknown"}}
+	_, err = newLeaser(func(context.Context, string, TargetBinding) error { return nil }).Inspect(t.Context(), compatibilityRequest)
+	require.ErrorIs(t, err, ErrIncompatibleBinding)
+
+	pendingLeaser, err := NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{
+		Bindings:  &runtimeBindingCatalog{bindings: map[projectgraph.ResourceID]TargetBinding{binding.ConnectionID: binding}},
+		Pools:     &recordingValidatedPoolDirectory{},
+		Authorize: func(context.Context, string, TargetBinding) error { return nil },
+	})
+	require.NoError(t, err)
+	_, err = pendingLeaser.Inspect(t.Context(), request)
+	require.ErrorIs(t, err, ErrIncompatibleBinding)
+}
+
 func TestRuntimeBindingLeasesExposeOnlyTheValidatedLogicalPool(t *testing.T) {
 	binding := validTargetBinding(t)
 	pool := &recordingRuntimePool{}

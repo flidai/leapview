@@ -34,15 +34,16 @@ type PackageRule struct {
 var PublicContractPrefixes = map[string][]string{
 	"access":        {"internal/access", "internal/access/api", "internal/access/policy", "internal/access/snapshot", "internal/access/ui/signals"},
 	"agent":         {"internal/agent/api", "internal/agent/ui/signals"},
-	"analytics":     {"pkg/arrowresult", "internal/analytics/model", "internal/analytics/modelsql", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery", "internal/analytics/physicalpool", "internal/analytics/catalogseal", "internal/analytics/catalogartifact", "internal/analytics/catalogstats", "internal/analytics/resultidentity", "internal/analytics/sourcedataidentity"},
+	"analytics":     {"pkg/arrowresult", "internal/analytics/model", "internal/analytics/modelsql", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery", "internal/analytics/physicalpool", "internal/analytics/catalogartifact", "internal/analytics/catalogstats", "internal/analytics/resultidentity", "internal/analytics/sourcedataidentity"},
 	"dashboard":     {"internal/dashboard", "internal/dashboard/api", "internal/dashboard/appearance", "internal/dashboard/authoring", "internal/dashboard/catalog", "internal/dashboard/compiler", "internal/dashboard/definition", "internal/dashboard/document", "internal/dashboard/filter", "internal/dashboard/layoutcontract", "internal/dashboard/publication", "internal/dashboard/report", "internal/dashboard/reportmodel", "internal/dashboard/queryruntime", "internal/dashboard/resolver", "internal/dashboard/ui/signals", "internal/dashboard/visualization/definition", "internal/dashboard/visualization/format", "internal/dashboard/visualization/geometry", "internal/dashboard/visualization/ir", "internal/dashboard/visualization/mapasset", "internal/dashboard/visualization/runtime"},
 	"manageddata":   {"internal/manageddata", "internal/manageddata/binding", "internal/manageddata/runtimebinding"},
 	"project":       {"internal/project", "internal/project/api", "internal/project/schema", "internal/project/contracts", "internal/project/artifact", "internal/project/bundle", "internal/project/catalog", "internal/project/compiler", "internal/project/manifest", "internal/project/runtime"},
 	"release":       {"internal/release"},
 	"semanticvalue": {"internal/semanticvalue"},
 	"deployment":    {"internal/deployment"},
-	"servingstate":  {"internal/servingstate", "internal/servingstate/validate", "internal/servingstate/retention"},
+	"servingstate":  {"internal/servingstate", "internal/servingstate/validate"},
 	"refresh":       {"internal/refresh/artifact", "internal/refresh/plan", "internal/refresh/presentation", "internal/refresh/run", "internal/refresh/schedule"},
+	"recoveryset":   {"internal/recoveryset"},
 	"runtimehost":   {"internal/runtimehost"},
 	"workload":      {"internal/workload"},
 }
@@ -86,6 +87,7 @@ var SharedContractPrefixes = map[string][]string{
 	"analytics":    {"internal/project/graph", "internal/project/contracts"},
 	"dashboard":    {"internal/project/graph", "internal/project/runtime", "internal/project/schema"},
 	"deployment":   {"internal/dashboard/publication", "internal/project/graph"},
+	"lineage":      {"internal/project/graph"},
 	"manageddata":  {"internal/access", "internal/project/graph"},
 	"refresh":      {"internal/project/graph", "internal/project/manifest", "internal/project/contracts/pipelineplan"},
 	"release":      {"internal/project/graph"},
@@ -99,36 +101,104 @@ var SharedContractPrefixes = map[string][]string{
 var CompositionContractPrefixes = map[string]struct{}{
 	// Process assembly is the explicit owner of these target adapters. Keep
 	// this list exact (rather than allowing capability roots) so a new app
-	// import still requires an architecture review while the sealed delivery
-	// wiring can construct its concrete physical/control-plane ports here.
-	"internal/analytics/candidatecatalog":    {},
-	"internal/analytics/catalogseal":         {},
-	"internal/analytics/ducklake":            {},
-	"internal/analytics/physicalpool":        {},
-	"internal/analytics/physicalpool/sqlite": {},
-	"internal/analytics/runtime":             {},
-	"internal/access":                        {},
-	"internal/access/snapshot":               {},
-	"internal/analytics/connectionbinding":   {},
-	"internal/analytics/gates":               {},
-	"internal/analytics/materialize":         {},
-	"internal/analytics/model":               {},
-	"internal/dashboard/authoring":           {},
-	"internal/deployment":                    {},
-	"internal/deployment/apiadapter":         {},
-	"internal/deployment/gcstore":            {},
-	"internal/deployment/sealedcontrol":      {},
-	"internal/deployment/extensionsupply":    {},
-	"internal/deployment/sqlite":             {},
-	"internal/manageddata":                   {},
-	"internal/manageddata/control":           {},
-	"internal/project/bundle":                {},
-	"internal/project/catalog":               {},
-	"internal/project/graph":                 {},
-	"internal/refresh/run":                   {},
-	"internal/runtimehost":                   {},
-	"internal/release":                       {},
-	"internal/servingstate":                  {},
+	// import still requires an architecture review while composition constructs
+	// its concrete physical/control-plane ports and evaluation seams here.
+	"internal/analytics/ducklake":          {},
+	"internal/analytics/physicalpool":      {},
+	"internal/analytics/runtime":           {},
+	"internal/access":                      {},
+	"internal/access/snapshot":             {},
+	"internal/analytics/connectionbinding": {},
+	"internal/analytics/gates":             {},
+	"internal/analytics/materialize":       {},
+	"internal/analytics/model":             {},
+	"internal/dashboard/authoring":         {},
+	"internal/deployment":                  {},
+	"internal/deployment/apiadapter":       {},
+	"internal/deployment/gcstore":          {},
+	"internal/deployment/extensionsupply":  {},
+	"internal/manageddata":                 {},
+	"internal/manageddata/control":         {},
+	"internal/project/bundle":              {},
+	"internal/project/catalog":             {},
+	"internal/project/graph":               {},
+	"internal/refresh/run":                 {},
+	"internal/runtimehost":                 {},
+	"internal/release":                     {},
+	"internal/recoveryset":                 {},
+	"internal/recoveryset/postgres":        {},
+	"internal/servingstate":                {},
+	"internal/servingstate/postgres":       {},
+	"internal/deployment/postgres":         {},
+}
+
+// SQLiteFixturePackagePrefixes enumerates the local/evaluation SQLite
+// adapters that remain in the tree solely to support tests and offline
+// tooling. They are deliberately not composition contracts: production code
+// must use the native PostgreSQL implementations instead.
+var SQLiteFixturePackagePrefixes = []string{
+	"internal/access/sqlite",
+	"internal/agent/sqlite",
+	"internal/servingstate/sqlite",
+	"internal/manageddata/sqlite",
+	"internal/refresh/sqlite",
+	"internal/dashboard/publication/sqlite",
+	"internal/platform/http/idempotency/sqlite",
+	"internal/platform/jobs/sqlite",
+}
+
+// SQLiteFixtureFilePaths contains the one retained SQLite implementation that
+// lives in the platform package rather than an explicit /sqlite subpackage.
+// The Store is only a local/evaluation fixture; production composition must
+// never construct it.
+var SQLiteFixtureFilePaths = []string{"internal/platform/store.go"}
+
+// PlatformRootImportPath is the legacy SQLite platform store package. It is
+// retained only as a shared test harness; production code must depend on the
+// explicit platform subpackages instead.
+const PlatformRootImportPath = "github.com/flidai/leapview/internal/platform"
+
+// IsPlatformRootImport reports whether an import targets the legacy platform
+// root package exactly. Subpackages remain valid platform dependencies.
+func IsPlatformRootImport(importPath string) bool {
+	return importPath == PlatformRootImportPath
+}
+
+// IsSQLitePackage reports whether path contains a path-segment named sqlite.
+// Checking segments avoids treating ordinary files such as catalog.sqlite as
+// package dependencies.
+func IsSQLitePackage(path string) bool {
+	path = strings.Trim(path, "/")
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "sqlite" {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSQLiteFixturePackage reports whether path belongs to one of the explicitly
+// retained local/evaluation SQLite adapters.
+func IsSQLiteFixturePackage(path string) bool {
+	path = strings.Trim(path, "/")
+	for _, prefix := range SQLiteFixturePackagePrefixes {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSQLiteFixtureFile reports whether path is an explicitly retained fixture
+// source file or belongs to one of the fixture adapter packages.
+func IsSQLiteFixtureFile(path string) bool {
+	path = strings.Trim(path, "/")
+	for _, fixturePath := range SQLiteFixtureFilePaths {
+		if path == fixturePath {
+			return true
+		}
+	}
+	return IsSQLiteFixturePackage(path)
 }
 
 func IsCompositionContractImport(packagePath string) bool {
@@ -179,6 +249,8 @@ var CapabilityDependencies = map[string]map[string]bool{
 	"servingstate":  {"access": true, "workload": true},
 	"refresh":       {"access": true, "servingstate": true, "manageddata": true, "analytics": true, "runtimehost": true, "workload": true},
 	"runtimehost":   {"manageddata": true, "servingstate": true},
+	"lineage":       {"project": true},
+	"recoveryset":   {"analytics": true},
 	"workload":      {},
 	"semanticvalue": {},
 	"platform":      {},
@@ -202,6 +274,9 @@ func IsPublicContractImport(capability, packagePath string) bool {
 // Module packages deliberately use the same rules as every other capability
 // package; only process composition is exempt.
 func CapabilityImportViolation(sourcePath string, source PackageRule, packagePath string, target PackageRule) string {
+	if IsSQLitePackage(packagePath) {
+		return fmt.Sprintf("SQLite adapter package %s is restricted to test fixtures", packagePath)
+	}
 	if source.Capability == target.Capability || source.Layer == LayerComposition {
 		return ""
 	}
@@ -251,22 +326,21 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/project/runtime", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/project/compiler", Capability: "project", Layer: LayerUseCase},
 	{Prefix: "internal/project/artifact", Capability: "project", Layer: LayerContract},
+	{Prefix: "internal/lineage/postgres", Capability: "lineage", Layer: LayerAdapter},
+	{Prefix: "internal/recoveryset/postgres", Capability: "recoveryset", Layer: LayerAdapter},
+	{Prefix: "internal/recoveryset", Capability: "recoveryset", Layer: LayerContract},
 	{Prefix: "internal/analytics/resultidentity", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/sourcedataidentity", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/runtime", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/modelsql", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/gates", Capability: "release", Layer: LayerUseCase},
 	{Prefix: "internal/analytics/physicalpool", Capability: "analytics", Layer: LayerContract},
-	{Prefix: "internal/analytics/catalogseal", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/catalogartifact", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/catalogstats", Capability: "analytics", Layer: LayerContract},
-	{Prefix: "internal/analytics/candidatecatalog", Capability: "analytics", Layer: LayerAdapter},
-	{Prefix: "internal/analytics/sealedcatalog", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/connectionadmin", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/infisical", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/environment", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/dashboard/analyticsruntime", Capability: "dashboard", Layer: LayerAdapter},
-	{Prefix: "internal/refresh/analyticsruntime", Capability: "refresh", Layer: LayerAdapter},
 	{Prefix: "internal/refresh/presentation", Capability: "refresh", Layer: LayerContract},
 	{Prefix: "internal/refresh/plan", Capability: "refresh", Layer: LayerUseCase},
 	{Prefix: "internal/refresh/run", Capability: "refresh", Layer: LayerUseCase},

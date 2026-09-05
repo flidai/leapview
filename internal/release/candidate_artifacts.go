@@ -2,6 +2,8 @@ package release
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -10,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/extension"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/project"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
@@ -35,6 +38,19 @@ type CandidateAuthoredConnection struct {
 	Access        semanticmodel.ConnectionAccess
 }
 
+// NativeArtifactObjectEvidence is the value-only immutable object metadata
+// retained for a native serving artifact. Locator is the provider object key
+// (and the serving-admission locator); it is never a host filesystem path.
+// Created-at and other provider/runtime handles intentionally do not cross
+// the release boundary.
+type NativeArtifactObjectEvidence struct {
+	Locator               string
+	StorageSecurityDomain string
+	ContentType           string
+	MetadataDigest        string
+	SizeBytes             int64
+}
+
 type CandidateRestriction struct {
 	ID             string
 	ObjectID       projectgraph.ResourceID
@@ -54,8 +70,23 @@ type CandidateGenerationArtifact struct {
 	// intentionally distinct from Identity.GenerationID/ServingStateID.
 	ServingArtifactID string
 	ArtifactDigest    string
-	DataRevision      string
-	DataMode          GenerationDataMode
+	// BundleManifestJSON is the canonical project-bundle container manifest
+	// retained with the immutable serving artifact. It is populated by native
+	// materialization/hydration from the bundle itself so serving admission can
+	// persist the exact manifest without re-deriving it from compiler evidence.
+	BundleManifestJSON string
+	// NativeArtifact is populated only by native materialization/hydration from
+	// the exact immutable object metadata returned by put/open. Legacy
+	// filesystem artifacts leave it zero-valued.
+	NativeArtifact NativeArtifactObjectEvidence
+	// These canonical policy documents are snapshots from the immutable
+	// compiled manifest. Native serving admission persists them verbatim;
+	// legacy artifact paths leave them zero-valued.
+	AccessPolicyJSON          string
+	DashboardPublicationsJSON string
+	DashboardAppearancesJSON  string
+	DataRevision              string
+	DataMode                  GenerationDataMode
 	// Deterministic is an explicit compiler/runtime declaration. Zero means
 	// unknown and therefore fail-closed for physical reuse.
 	Deterministic       bool
@@ -71,7 +102,11 @@ type CandidateGenerationArtifact struct {
 }
 
 type CandidateArtifactRequest struct {
-	CandidateID    string
+	CandidateID string
+	// GenerationID is the caller-owned serving-generation identity for native
+	// materialization/hydration. Read-only inspection may omit it; native
+	// materialization and hydration require a canonical UUIDv7 value.
+	GenerationID   string
 	Scope          projectgraph.CandidateScope
 	OwnerID        string
 	ArtifactDigest string
@@ -85,6 +120,23 @@ type CandidateArtifactIdentity struct {
 	ServingArtifactID     string
 	ServingArtifactDigest string
 	ServingStateID        string
+}
+
+// CandidateArtifactRecoveryRequest identifies one immutable serving artifact
+// that is being reloaded after a native physical-build outcome was lost. It
+// carries no source snapshot or target/base selector: recovery is value-only
+// and must use the exact serving identity and content-addressed artifact
+// identity supplied by the caller.
+type CandidateArtifactRecoveryRequest struct {
+	CandidateID     string
+	ServingIdentity projectgraph.ServingIdentity
+	SourceDigest    string
+	// ManagedDataPins is the exact immutable revision ledger selected by the
+	// durable delivery plan. Managed activations are not embedded in serving
+	// bundles, so native recovery must carry these pins explicitly rather than
+	// dropping managed-data bindings or consulting mutable source state.
+	ManagedDataPins []ManagedDataPin
+	Artifact        CandidateArtifactIdentity
 }
 
 type CandidateArtifactSet struct {
@@ -101,13 +153,48 @@ type CandidateArtifactSet struct {
 	Compiler CandidateCompilerEvidence
 }
 
+// CandidateSourcesDataRevision returns the canonical provenance identity for
+// a candidate that refreshes source data. The source artifact digest and the
+// complete managed-data pin set are the only inputs; pins are sorted before
+// hashing so map/loader order can never change the resulting identity.
+func CandidateSourcesDataRevision(artifactDigest string, pins []ManagedDataPin) (string, error) {
+	if artifactDigest != strings.TrimSpace(artifactDigest) || platformdigest.ValidateSHA256Identity(artifactDigest) != nil {
+		return "", fmt.Errorf("candidate source artifact digest is not a canonical SHA-256 identity")
+	}
+	canonicalPins := append([]ManagedDataPin(nil), pins...)
+	sort.Slice(canonicalPins, func(i, j int) bool {
+		if canonicalPins[i].ConnectionID != canonicalPins[j].ConnectionID {
+			return canonicalPins[i].ConnectionID < canonicalPins[j].ConnectionID
+		}
+		return canonicalPins[i].RevisionID < canonicalPins[j].RevisionID
+	})
+	for i, pin := range canonicalPins {
+		if pin.ConnectionID == "" || pin.ConnectionID != strings.TrimSpace(pin.ConnectionID) || pin.RevisionID == "" || pin.RevisionID != strings.TrimSpace(pin.RevisionID) {
+			return "", fmt.Errorf("candidate managed-data pin is incomplete")
+		}
+		if i > 0 && canonicalPins[i-1].ConnectionID == pin.ConnectionID {
+			return "", fmt.Errorf("candidate managed-data pins contain duplicate connection %q", pin.ConnectionID)
+		}
+	}
+	payload := struct {
+		ArtifactDigest  string           `json:"artifactDigest"`
+		ManagedDataPins []ManagedDataPin `json:"managedDataPins"`
+	}{ArtifactDigest: artifactDigest, ManagedDataPins: canonicalPins}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode candidate source data revision: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return "sources:sha256:" + fmt.Sprintf("%x", digest[:]), nil
+}
+
 type CandidateCompilerEvidence struct {
 	Graph    projectgraph.ProjectGraph
 	Manifest projectmanifest.Project
 	Plan     projectcompiler.ProjectPlan
 	// RelationExecution and BaseRelationExecution are per-materialization
 	// identities. They let delivery retain unchanged sealed relation refs while
-	// rebuilding only changed/removed relations from the same base catalog.
+	// rebuilding only changed/removed relations from the same base snapshot.
 	RelationExecution     map[string]string
 	BaseRelationExecution map[string]string
 	// Artifact is the decoded portable artifact whose digest is bound by
@@ -129,6 +216,14 @@ type CandidateArtifactPreparer interface {
 		string,
 		int64,
 	) (Provenance, error)
+}
+
+// CandidateArtifactRecovery is the value-only native recovery surface. It is
+// intentionally separate from CandidateArtifactPreparer so legacy/source
+// preparation implementations are not granted a recovery capability they
+// cannot safely provide.
+type CandidateArtifactRecovery interface {
+	RecoverCandidateArtifacts(context.Context, CandidateArtifactRecoveryRequest) (CandidateArtifactSet, error)
 }
 
 type PublishCandidateInput struct {

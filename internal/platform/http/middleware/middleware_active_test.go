@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -240,8 +241,9 @@ func TestRequestCorrelationGeneratesAndPropagatesIdentity(t *testing.T) {
 
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 
-	if !strings.HasPrefix(requestID, "req_") {
-		t.Fatalf("request ID = %q, want generated req_ identity", requestID)
+	parsed, err := uuid.Parse(requestID)
+	if err != nil || parsed.String() != requestID || parsed.Version() != 7 {
+		t.Fatalf("request ID = %q, want canonical UUIDv7 identity", requestID)
 	}
 	if correlationID != requestID {
 		t.Fatalf("correlation ID = %q, want request ID %q", correlationID, requestID)

@@ -16,10 +16,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/manageddata"
 	manageddataapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/localplan"
+	"github.com/flidai/leapview/internal/manageddata/qualificationbarrier"
 )
 
 func TestDataSyncDeduplicatesAndUsesStableIdempotencyKey(t *testing.T) {
@@ -140,6 +142,121 @@ func TestDataSyncResumesTusFromHEADOffset(t *testing.T) {
 	}
 	if got, want := string(patched), string(body[4:]); got != want {
 		t.Fatalf("patched = %q, want %q", got, want)
+	}
+}
+
+func TestDataSyncQualificationBarrierPausesAfterFirstTusChunk(t *testing.T) {
+	root := t.TempDir()
+	body := make([]byte, dataTusChunkSize+1)
+	for index := range body {
+		body[index] = byte(index)
+	}
+	file := writeSyncFile(t, root, "orders.csv", body)
+	plan := syncPlan(root, file)
+	barrierDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(barrierDir, qualificationbarrier.ArmedMarker), []byte("armed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(qualificationbarrier.EnabledEnv, qualificationbarrier.EnabledValue)
+	t.Setenv(qualificationbarrier.PathEnv, barrierDir)
+	t.Setenv(qualificationbarrier.ProjectIDEnv, qualificationbarrier.EvaluationProjectID)
+	var mu sync.Mutex
+	offset := int64(0)
+	patches := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeSession := func(status manageddataapi.ManagedDataUploadSessionStatus, files []manageddataapi.ManagedDataFileUploadResponse) {
+			response := uploadSessionResponse(plan, "upload-1", status, files)
+			response.Project = qualificationbarrier.EvaluationProjectID
+			writeJSONTest(t, w, http.StatusCreated, response)
+		}
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/upload-sessions"),
+			r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/upload-sessions/upload-1"):
+			writeSession(manageddataapi.ManagedDataUploadSessionStatusOpen, []manageddataapi.ManagedDataFileUploadResponse{{
+				File: wireFile(t, file), Status: manageddataapi.ManagedDataFileUploadStatusUploading,
+				Negotiation: uploadNegotiation(manageddataapi.ManagedDataUploadNegotiation{Protocol: manageddataapi.ManagedDataUploadProtocolTus, Tus: &manageddataapi.ManagedDataTusUploadNegotiation{Endpoint: "/tus", UploadId: "blob-1", Offset: 0, ExpiresAt: "2030-01-01T00:00:00Z"}}),
+			}})
+		case r.Method == http.MethodHead && r.URL.Path == "/tus/blob-1":
+			mu.Lock()
+			current := offset
+			mu.Unlock()
+			w.Header().Set("Upload-Offset", strconv.FormatInt(current, 10))
+			w.Header().Set("Upload-Length", strconv.Itoa(len(body)))
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPatch && r.URL.Path == "/tus/blob-1":
+			chunk, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read PATCH body: %v", err)
+				return
+			}
+			mu.Lock()
+			if got, want := r.Header.Get("Upload-Offset"), strconv.FormatInt(offset, 10); got != want {
+				mu.Unlock()
+				t.Errorf("PATCH Upload-Offset = %q, want %q", got, want)
+				return
+			}
+			offset += int64(len(chunk))
+			patches++
+			current := offset
+			mu.Unlock()
+			w.Header().Set("Upload-Offset", strconv.FormatInt(current, 10))
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/finalize"):
+			writeSession(manageddataapi.ManagedDataUploadSessionStatusCompleted, []manageddataapi.ManagedDataFileUploadResponse{{
+				File: wireFile(t, file), Status: manageddataapi.ManagedDataFileUploadStatusVerified,
+				Negotiation: uploadNegotiation(manageddataapi.ManagedDataUploadNegotiation{Protocol: manageddataapi.ManagedDataUploadProtocolAlreadyPresent}),
+			}})
+		default:
+			t.Errorf("unexpected request = %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		result <- runDataSync(ctx, dataSyncRequest{ProjectID: qualificationbarrier.EvaluationProjectID, Connection: "orders", Root: root, Target: server.URL, Token: "secret-token", Plan: plan, Out: io.Discard, HTTPClient: server.Client()})
+	}()
+	reached := filepath.Join(barrierDir, qualificationbarrier.ReachedMarker)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(reached); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("managed upload barrier was not reached")
+		}
+		select {
+		case err := <-result:
+			t.Fatalf("sync completed before barrier: %v", err)
+		default:
+		}
+		time.Sleep(time.Millisecond)
+	}
+	mu.Lock()
+	if patches != 1 || offset != dataTusChunkSize {
+		t.Fatalf("partial upload state = patches %d, offset %d; want one patch at %d", patches, offset, dataTusChunkSize)
+	}
+	mu.Unlock()
+	select {
+	case err := <-result:
+		t.Fatalf("sync completed while barrier was held: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := os.Remove(reached); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatalf("runDataSync() error = %v", err)
+	}
+	mu.Lock()
+	finalPatches, finalOffset := patches, offset
+	mu.Unlock()
+	if finalPatches != 2 || finalOffset != int64(len(body)) {
+		t.Fatalf("final upload state = patches %d, offset %d; want two patches at %d", finalPatches, finalOffset, len(body))
 	}
 }
 

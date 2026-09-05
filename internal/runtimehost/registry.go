@@ -75,6 +75,15 @@ func (r *Registry) ProjectID() projectgraph.ResourceID {
 	return r.manager.ProjectID()
 }
 
+// CurrentServingStateID exposes only the local convergence hint. Durable
+// delivery state is still re-read by the active reconciler before activation.
+func (r *Registry) CurrentServingStateID() servingstate.ID {
+	if r == nil || r.manager == nil {
+		return ""
+	}
+	return r.manager.CurrentServingStateID()
+}
+
 // BindClaimedProject binds the process host to the durable instance claim
 // before any generation is active. It does not create or load a serving state.
 func (r *Registry) BindClaimedProject(projectID projectgraph.ResourceID, environment servingstate.Environment) error {
@@ -138,6 +147,22 @@ func (r *Registry) ReconcileSealed(ctx context.Context, id servingstate.ID) erro
 	}
 	return r.manager.ReconcileSealed(ctx, id)
 }
+
+// ReconcileNoActive clears a local generation only after confirming that the
+// canonical sealed active pointer is still absent while serialized with
+// runtime cutover.
+func (r *Registry) ReconcileNoActive(ctx context.Context, resolve func(context.Context) (servingstate.ID, error)) error {
+	if r == nil || r.manager == nil {
+		return ErrRegistryClosed
+	}
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return ErrRegistryClosed
+	}
+	return r.manager.ReconcileNoActive(ctx, resolve)
+}
 func (r *Registry) PrepareServingState(ctx context.Context, id string) (*Prepared, error) {
 	if r == nil || r.manager == nil {
 		return nil, ErrRegistryClosed
@@ -153,6 +178,23 @@ func (r *Registry) PrepareServingState(ctx context.Context, id string) (*Prepare
 		return nil, err
 	}
 	return prepared, nil
+}
+
+// PrepareSealedActivation prepares an exact qualified delivery generation
+// before its target pointer is advanced. The candidate identity is supplied
+// explicitly so sealed resolvers do not fall back to the currently active
+// delivery pointer; the returned runtime remains activatable by this host.
+func (r *Registry) PrepareSealedActivation(ctx context.Context, id, candidateID string) (*Prepared, error) {
+	if r == nil || r.manager == nil {
+		return nil, ErrRegistryClosed
+	}
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return nil, ErrRegistryClosed
+	}
+	return r.manager.PrepareSealedActivation(ctx, id, candidateID)
 }
 
 func (r *Registry) PrepareServingStateCandidate(ctx context.Context, input ServingStateCandidate) (*Prepared, error) {
@@ -192,7 +234,7 @@ func (r *Registry) PrepareServingStateCandidate(ctx context.Context, input Servi
 }
 
 func (m *Manager) prepareResolved(ctx context.Context, state servingstate.State, artifact servingstate.Artifact, data ManagedDataResolution) (*Prepared, error) {
-	return m.prepareResolvedWithCandidate(ctx, state, artifact, data, nil)
+	return m.prepareResolvedWithCandidate(ctx, state, artifact, data, nil, nil)
 }
 
 func (r *Registry) VerifyPrepared(ctx context.Context, prepared *Prepared) (PreparedVerification, error) {

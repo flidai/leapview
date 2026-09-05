@@ -1,0 +1,74 @@
+# ADR-0020 exception inventory. Keep entries exact; static SQL is never allowlisted.
+entries:
+  - file: internal/platform/postgres/postgrestest/harness.go
+    line: 263
+    function: Harness.EnsureRole
+    method: Exec
+    fingerprint: sha256:b111c6e1d318f203063e5c16bab43c108326af0aa2f7b65760c95547a43dbe52
+    class: dynamic-identifier
+    rationale: Validated PostgreSQL test identifiers are interpolated because identifiers cannot be supplied as query parameters.
+    verification: PostgreSQL harness tests cover identifier quoting and role, database, and schema lifecycle.
+  - file: internal/platform/postgres/postgrestest/harness.go
+    line: 273
+    function: Harness.EnsureRole
+    method: Exec
+    fingerprint: sha256:177fdd8db3f5bd3563a8159d323e766937fdc97c10429dd3778e296db0fd6e55
+    class: dynamic-identifier
+    rationale: Validated PostgreSQL test identifiers are interpolated because identifiers cannot be supplied as query parameters.
+    verification: PostgreSQL harness tests cover identifier quoting and role, database, and schema lifecycle.
+  - file: internal/platform/postgres/postgrestest/harness.go
+    line: 292
+    function: Harness.GrantRole
+    method: Exec
+    fingerprint: sha256:0d35360d02035e80613a4fadbd95715c11214cbc824426e3dc44047dc2a936c2
+    class: dynamic-identifier
+    rationale: Validated PostgreSQL test identifiers are interpolated because identifiers cannot be supplied as query parameters.
+    verification: PostgreSQL harness tests cover identifier quoting and role, database, and schema lifecycle.
+  - file: internal/platform/postgres/postgrestest/harness.go
+    line: 323
+    function: Harness.GrantDatabase
+    method: Exec
+    fingerprint: sha256:e0a25600527d1d85dfda6b469e11cf139ade5c74a2f9d5ff8e2e052285109970
+    class: dynamic-identifier
+    rationale: Validated PostgreSQL test identifiers are interpolated because identifiers cannot be supplied as query parameters.
+    verification: PostgreSQL harness tests cover identifier quoting and role, database, and schema lifecycle.
+  - file: internal/platform/postgres/postgrestest/harness.go
+    line: 357
+    function: Harness.NewDatabase
+    method: Exec
+    fingerprint: sha256:b056bd229e1bdce3b40def3105527b32e323dc07df9781bc084c876fa669f9ec
+    class: dynamic-identifier
+    rationale: Validated PostgreSQL test identifiers are interpolated because identifiers cannot be supplied as query parameters.
+    verification: PostgreSQL harness tests cover identifier quoting and role, database, and schema lifecycle.
+  - file: internal/platform/postgres/postgrestest/harness.go
+    line: 372
+    function: Harness.NewDatabase
+    method: Exec
+    fingerprint: sha256:58ef9f17edb51a10d5d7873431bd5f5a566d1025f290759edf933fc5f46c3638
+    class: dynamic-identifier
+    rationale: Validated PostgreSQL test identifiers are interpolated because identifiers cannot be supplied as query parameters.
+    verification: PostgreSQL harness tests cover identifier quoting and role, database, and schema lifecycle.
+  - file: internal/platform/postgres/postgrestest/harness.go
+    line: 414
+    function: Database.CreateSchema
+    method: Exec
+    fingerprint: sha256:121c2618e4133f702b32f384dc00d76a2e108699d67f137b08e433727129ea75
+    class: dynamic-identifier
+    rationale: Validated PostgreSQL test identifiers are interpolated because identifiers cannot be supplied as query parameters.
+    verification: PostgreSQL harness tests cover identifier quoting and role, database, and schema lifecycle.
+  - file: internal/platform/postgres/postgrestest/harness.go
+    line: 421
+    function: Database.CreateSchema
+    method: Exec
+    fingerprint: sha256:bd35a4f0dc27d42a1137496adbf5673fa7347a3ad24ad2ec0581268837536ced
+    class: dynamic-identifier
+    rationale: Validated PostgreSQL test identifiers are interpolated because identifiers cannot be supplied as query parameters.
+    verification: PostgreSQL harness tests cover identifier quoting and role, database, and schema lifecycle.
+  - file: internal/platform/postgres/postgrestest/harness.go
+    line: 428
+    function: Database.CreateSchema
+    method: Exec
+    fingerprint: sha256:ad19f49ca24e899f24c06fc02ee1d98dc2d3ecf65486b5cde56d777e5cec5ef2
+    class: dynamic-identifier
+    rationale: Validated PostgreSQL test identifiers are interpolated because identifiers cannot be supplied as query parameters.
+    verification: PostgreSQL harness tests cover identifier quoting and role, database, and schema lifecycle.

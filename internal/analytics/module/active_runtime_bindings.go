@@ -71,6 +71,9 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 	case connectors.AuthoredActivation:
 		return logical, nil
 	case connectors.TargetBindingActivation:
+		if r.module.activeRuntimeBindingEvidence == nil || r.module.connectionBindings == nil || r.module.connectionFactory == nil {
+			return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
+		}
 	case connectors.ManagedActivation:
 		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	default:

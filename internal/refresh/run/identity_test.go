@@ -45,6 +45,32 @@ func TestScheduledRunAcceptsOpaqueAuthoredScheduleEvidence(t *testing.T) {
 	}
 }
 
+func TestCancelRequestDigestBindsActorScopeGenerationAndRun(t *testing.T) {
+	identity := projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}
+	first, err := CancelRequestDigest(identity, "user:test", "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, changed := range map[string]projectgraph.ServingIdentity{
+		"project":     {ProjectID: "project_other", Environment: identity.Environment, GenerationID: identity.GenerationID},
+		"environment": {ProjectID: identity.ProjectID, Environment: "staging", GenerationID: identity.GenerationID},
+		"generation":  {ProjectID: identity.ProjectID, Environment: identity.Environment, GenerationID: "generation_b"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, digestErr := CancelRequestDigest(changed, "user:test", "run-1")
+			if digestErr != nil || got == first {
+				t.Fatalf("digest=(%q,%v), want a distinct digest from %q", got, digestErr, first)
+			}
+		})
+	}
+	if got, err := CancelRequestDigest(identity, "other:user", "run-1"); err != nil || got == first {
+		t.Fatalf("actor-bound digest=(%q,%v), want distinct", got, err)
+	}
+	if got, err := CancelRequestDigest(identity, "user:test", "run-2"); err != nil || got == first {
+		t.Fatalf("run-bound digest=(%q,%v), want distinct", got, err)
+	}
+}
+
 func TestRunInputRejectsIdentityAndOperationalAliases(t *testing.T) {
 	base := RunInput{
 		Identity:        projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"},

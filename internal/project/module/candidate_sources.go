@@ -3,6 +3,7 @@ package module
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flidai/leapview/internal/platform/digest"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/project"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
@@ -22,7 +24,7 @@ import (
 )
 
 const candidateSourcePlanLifetime = 5 * time.Minute
-const candidateSourcePlanVersion = 1
+const candidateSourcePlanVersion = 2
 
 type candidateSourceSynchronizer struct {
 	store   *projectdevloop.TargetStore
@@ -37,11 +39,15 @@ type candidateSourcePlanKey struct {
 	ownerID        string
 	candidateKey   string
 	artifactDigest string
+	idempotencyKey string
 }
 
 type candidateSourcePlan struct {
-	expiresAt time.Time
-	missing   map[string]struct{}
+	planID        string
+	requestDigest string
+	expiresAt     time.Time
+	missing       map[string]struct{}
+	sizes         map[string]int64
 }
 
 type candidateSourcePlanRecord struct {
@@ -49,9 +55,13 @@ type candidateSourcePlanRecord struct {
 	ProjectID      projectgraph.ResourceID `json:"projectId"`
 	OwnerID        string                  `json:"ownerId"`
 	CandidateKey   string                  `json:"candidateKey,omitempty"`
+	IdempotencyKey string                  `json:"idempotencyKey,omitempty"`
 	ArtifactDigest string                  `json:"artifactDigest"`
+	PlanID         string                  `json:"planId"`
+	RequestDigest  string                  `json:"requestDigest"`
 	ExpiresAt      string                  `json:"expiresAt"`
 	Missing        []string                `json:"missing"`
+	Sizes          map[string]int64        `json:"sizes"`
 }
 
 func NewCandidateSourceSynchronizer(root string) (project.CandidateSourceSynchronizer, error) {
@@ -64,9 +74,11 @@ func NewCandidateSourceSynchronizer(root string) (project.CandidateSourceSynchro
 		now: time.Now, plans: make(map[candidateSourcePlanKey]candidateSourcePlan),
 	}
 	if err := os.MkdirAll(synchronizer.planDir, 0o700); err != nil {
+		_ = store.Close()
 		return nil, fmt.Errorf("%w: create source synchronization plan store: %v", project.ErrCandidateSourceUnavailable, err)
 	}
 	if err := synchronizer.loadPlans(); err != nil {
+		_ = store.Close()
 		return nil, fmt.Errorf("%w: load source synchronization plans: %v", project.ErrCandidateSourceUnavailable, err)
 	}
 	return synchronizer, nil
@@ -76,21 +88,33 @@ func (synchronizer *candidateSourceSynchronizer) Plan(
 	ctx context.Context,
 	scope project.CandidateSourceScope,
 	request project.CandidateSynchronizationRequest,
-) ([]string, error) {
+) (project.CandidateSynchronizationPlan, error) {
 	if synchronizer == nil || synchronizer.store == nil {
-		return nil, project.ErrCandidateSourceUnavailable
+		return project.CandidateSynchronizationPlan{}, project.ErrCandidateSourceUnavailable
 	}
 	if err := scope.ProjectID.Validate(); err != nil {
-		return nil, candidateSourceInvalid(fmt.Errorf("project identity: %w", err))
+		return project.CandidateSynchronizationPlan{}, candidateSourceInvalid(fmt.Errorf("project identity: %w", err))
+	}
+	scope.OwnerID = strings.TrimSpace(scope.OwnerID)
+	if scope.OwnerID == "" {
+		return project.CandidateSynchronizationPlan{}, candidateSourceInvalid(fmt.Errorf("owner identity is required"))
+	}
+	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
+	if request.IdempotencyKey == "" {
+		return project.CandidateSynchronizationPlan{}, fmt.Errorf("%w: synchronization plan requires an idempotency key", project.ErrCandidateSourceInvalid)
 	}
 	missing, err := synchronizer.store.Missing(ctx, synchronizationPlanRequest(scope, request))
 	if err != nil {
-		return nil, candidateSourceInvalid(err)
+		return project.CandidateSynchronizationPlan{}, candidateSourceInvalid(err)
 	}
 	synchronizer.mu.Lock()
 	defer synchronizer.mu.Unlock()
 	synchronizer.purgeExpiredLocked()
 	allowed := make(map[string]struct{}, len(missing))
+	sizes := make(map[string]int64, len(request.Artifacts))
+	for _, artifact := range request.Artifacts {
+		sizes[artifact.Digest] = artifact.SizeBytes
+	}
 	for _, identity := range missing {
 		allowed[identity] = struct{}{}
 	}
@@ -98,20 +122,36 @@ func (synchronizer *candidateSourceSynchronizer) Plan(
 		projectID: scope.ProjectID, ownerID: strings.TrimSpace(scope.OwnerID),
 		candidateKey:   normalizeCandidateSourceKey(scope.CandidateKey),
 		artifactDigest: strings.TrimSpace(request.ArtifactDigest),
+		idempotencyKey: strings.TrimSpace(request.IdempotencyKey),
 	}
-	plan := candidateSourcePlan{
-		expiresAt: synchronizer.now().UTC().Add(candidateSourcePlanLifetime), missing: allowed,
+	requestDigest := candidateSourceRequestDigest(request)
+	if requestDigest == "" {
+		return project.CandidateSynchronizationPlan{}, candidateSourceInvalid(fmt.Errorf("synchronization request identity is invalid"))
+	}
+	if existing, ok := synchronizer.plans[key]; ok {
+		if existing.requestDigest != requestDigest {
+			return project.CandidateSynchronizationPlan{}, fmt.Errorf("%w: idempotency key was reused for a different synchronization request", project.ErrCandidateSourceConflict)
+		}
+		return project.CandidateSynchronizationPlan{PlanID: existing.planID, ArtifactDigest: request.ArtifactDigest, MissingDigests: sortedPlanMissing(existing.missing)}, nil
+	}
+	planID, err := newCandidateSourcePlanID()
+	if err != nil {
+		return project.CandidateSynchronizationPlan{}, fmt.Errorf("%w: create source synchronization plan: %v", project.ErrCandidateSourceUnavailable, err)
+	}
+	plan := candidateSourcePlan{planID: planID, requestDigest: requestDigest,
+		expiresAt: synchronizer.now().UTC().Add(candidateSourcePlanLifetime), missing: allowed, sizes: sizes,
 	}
 	if err := synchronizer.savePlan(key, plan); err != nil {
-		return nil, fmt.Errorf("%w: persist source synchronization plan: %v", project.ErrCandidateSourceUnavailable, err)
+		return project.CandidateSynchronizationPlan{}, fmt.Errorf("%w: persist source synchronization plan: %v", project.ErrCandidateSourceUnavailable, err)
 	}
 	synchronizer.plans[key] = plan
-	return missing, nil
+	return project.CandidateSynchronizationPlan{PlanID: planID, ArtifactDigest: request.ArtifactDigest, MissingDigests: missing}, nil
 }
 
 func (synchronizer *candidateSourceSynchronizer) Upload(
 	ctx context.Context,
 	scope project.CandidateSourceScope,
+	planID string,
 	identity string,
 	source io.Reader,
 ) error {
@@ -123,16 +163,22 @@ func (synchronizer *candidateSourceSynchronizer) Upload(
 	}
 	projectID := scope.ProjectID
 	ownerID := strings.TrimSpace(scope.OwnerID)
+	if ownerID == "" {
+		return candidateSourceInvalid(fmt.Errorf("owner identity is required"))
+	}
+	planID = strings.TrimSpace(planID)
 	identity = strings.TrimSpace(identity)
 	synchronizer.mu.Lock()
 	synchronizer.purgeExpiredLocked()
 	authorized := false
+	var expectedSize int64
 	for key, plan := range synchronizer.plans {
-		if key.projectID != projectID || key.ownerID != ownerID {
+		if key.projectID != projectID || key.ownerID != ownerID || plan.planID != planID {
 			continue
 		}
 		if _, exists := plan.missing[identity]; exists {
 			authorized = true
+			expectedSize = plan.sizes[identity]
 			break
 		}
 	}
@@ -143,7 +189,14 @@ func (synchronizer *candidateSourceSynchronizer) Upload(
 			project.ErrCandidateSourceConflict,
 		)
 	}
-	if err := synchronizer.store.Put(ctx, identity, source); err != nil {
+	content, err := io.ReadAll(io.LimitReader(source, maxCandidateSourceUploadBytes+1))
+	if err != nil {
+		return candidateSourceInvalid(err)
+	}
+	if int64(len(content)) != expectedSize {
+		return fmt.Errorf("%w: source blob size does not match synchronization plan", project.ErrCandidateSourceConflict)
+	}
+	if err := synchronizer.store.Put(ctx, identity, bytes.NewReader(content)); err != nil {
 		return candidateSourceInvalid(err)
 	}
 	return nil
@@ -160,19 +213,34 @@ func (synchronizer *candidateSourceSynchronizer) Commit(
 	if err := scope.ProjectID.Validate(); err != nil {
 		return project.CandidateSourceSnapshot{}, candidateSourceInvalid(fmt.Errorf("project identity: %w", err))
 	}
+	if strings.TrimSpace(scope.OwnerID) == "" {
+		return project.CandidateSourceSnapshot{}, candidateSourceInvalid(fmt.Errorf("owner identity is required"))
+	}
+	request.PlanID = strings.TrimSpace(request.PlanID)
+	if request.PlanID == "" {
+		return project.CandidateSourceSnapshot{}, fmt.Errorf("%w: source synchronization plan id is required", project.ErrCandidateSourceConflict)
+	}
+	synchronizer.mu.Lock()
+	synchronizer.purgeExpiredLocked()
+	requestDigest := candidateSourceRequestDigest(request)
+	var plan candidateSourcePlan
+	ok := false
+	for candidateKey, candidatePlan := range synchronizer.plans {
+		if candidateKey.projectID == scope.ProjectID && candidateKey.ownerID == strings.TrimSpace(scope.OwnerID) &&
+			candidateKey.candidateKey == normalizeCandidateSourceKey(scope.CandidateKey) && candidateKey.artifactDigest == strings.TrimSpace(request.ArtifactDigest) &&
+			candidatePlan.planID == request.PlanID {
+			plan, ok = candidatePlan, true
+			break
+		}
+	}
+	synchronizer.mu.Unlock()
+	if !ok || plan.requestDigest != requestDigest {
+		return project.CandidateSourceSnapshot{}, fmt.Errorf("%w: source synchronization plan is missing or does not match request", project.ErrCandidateSourceConflict)
+	}
 	stored, err := synchronizer.store.Commit(ctx, synchronizationPlanRequest(scope, request))
 	if err != nil {
 		return project.CandidateSourceSnapshot{}, candidateSourceInvalid(err)
 	}
-	synchronizer.mu.Lock()
-	key := candidateSourcePlanKey{
-		projectID: scope.ProjectID, ownerID: strings.TrimSpace(scope.OwnerID),
-		candidateKey:   normalizeCandidateSourceKey(scope.CandidateKey),
-		artifactDigest: strings.TrimSpace(request.ArtifactDigest),
-	}
-	delete(synchronizer.plans, key)
-	_ = os.Remove(synchronizer.planPath(key))
-	synchronizer.mu.Unlock()
 	return project.CandidateSourceSnapshot{
 		ProjectID: stored.ProjectID, ArtifactDigest: stored.Digest,
 		SourceAttestationDigest: stored.SourceAttestationDigest,
@@ -248,6 +316,7 @@ func (synchronizer *candidateSourceSynchronizer) loadPlans() error {
 	if err != nil {
 		return err
 	}
+	planIDs := make(map[string]string, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
@@ -265,6 +334,9 @@ func (synchronizer *candidateSourceSynchronizer) loadPlans() error {
 		if record.Version != candidateSourcePlanVersion {
 			return fmt.Errorf("%s has unsupported version %d", entry.Name(), record.Version)
 		}
+		if err := validatePersistedPlanRecord(record); err != nil {
+			return fmt.Errorf("validate %s: %w", entry.Name(), err)
+		}
 		expiresAt, err := time.Parse(time.RFC3339Nano, record.ExpiresAt)
 		if err != nil {
 			return fmt.Errorf("decode %s expiry: %w", entry.Name(), err)
@@ -274,6 +346,7 @@ func (synchronizer *candidateSourceSynchronizer) loadPlans() error {
 			ownerID:        strings.TrimSpace(record.OwnerID),
 			candidateKey:   normalizeCandidateSourceKey(record.CandidateKey),
 			artifactDigest: strings.TrimSpace(record.ArtifactDigest),
+			idempotencyKey: strings.TrimSpace(record.IdempotencyKey),
 		}
 		if err := key.projectID.Validate(); err != nil {
 			return fmt.Errorf("decode %s project identity: %w", entry.Name(), err)
@@ -281,16 +354,65 @@ func (synchronizer *candidateSourceSynchronizer) loadPlans() error {
 		if entry.Name() != filepath.Base(synchronizer.planPath(key)) {
 			return fmt.Errorf("%s identity does not match filename", entry.Name())
 		}
+		if previous, exists := planIDs[record.PlanID]; exists {
+			return fmt.Errorf("plan id %q is duplicated by %s and %s", record.PlanID, previous, entry.Name())
+		}
+		planIDs[record.PlanID] = entry.Name()
 		missing := make(map[string]struct{}, len(record.Missing))
 		for _, identity := range record.Missing {
-			missing[strings.TrimSpace(identity)] = struct{}{}
+			missing[identity] = struct{}{}
 		}
 		synchronizer.plans[key] = candidateSourcePlan{
-			expiresAt: expiresAt.UTC(),
-			missing:   missing,
+			planID: record.PlanID, requestDigest: record.RequestDigest, expiresAt: expiresAt.UTC(),
+			missing: missing, sizes: record.Sizes,
 		}
 	}
 	synchronizer.purgeExpiredLocked()
+	return nil
+}
+
+func validatePersistedPlanRecord(record candidateSourcePlanRecord) error {
+	planID := strings.TrimSpace(record.PlanID)
+	if planID != record.PlanID || len(planID) != 32 || planID != strings.ToLower(planID) {
+		return fmt.Errorf("plan id must be canonical 32-character lowercase hex")
+	}
+	if _, err := hex.DecodeString(planID); err != nil {
+		return fmt.Errorf("plan id must be canonical 32-character lowercase hex: %w", err)
+	}
+	if strings.TrimSpace(record.OwnerID) == "" || record.OwnerID != strings.TrimSpace(record.OwnerID) {
+		return fmt.Errorf("owner id is required")
+	}
+	if strings.TrimSpace(record.IdempotencyKey) == "" || record.IdempotencyKey != strings.TrimSpace(record.IdempotencyKey) {
+		return fmt.Errorf("idempotency key is required")
+	}
+	if err := digest.ValidateSHA256Identity(record.ArtifactDigest); err != nil {
+		return fmt.Errorf("artifact digest is invalid: %w", err)
+	}
+	if err := digest.ValidateSHA256Identity(record.RequestDigest); err != nil {
+		return fmt.Errorf("request digest is invalid: %w", err)
+	}
+	for identity, size := range record.Sizes {
+		if err := digest.ValidateSHA256Identity(identity); err != nil {
+			return fmt.Errorf("size identity is invalid: %w", err)
+		}
+		if size < 0 || size > maxCandidateSourceUploadBytes {
+			return fmt.Errorf("size for %q is out of bounds", identity)
+		}
+	}
+	seen := make(map[string]struct{}, len(record.Missing))
+	for _, identity := range record.Missing {
+		if err := digest.ValidateSHA256Identity(identity); err != nil {
+			return fmt.Errorf("missing digest is invalid: %w", err)
+		}
+		if _, duplicate := seen[identity]; duplicate {
+			return fmt.Errorf("missing digest %q is duplicated", identity)
+		}
+		seen[identity] = struct{}{}
+		size, exists := record.Sizes[identity]
+		if !exists || size < 0 || size > maxCandidateSourceUploadBytes {
+			return fmt.Errorf("missing digest %q has no bounded size", identity)
+		}
+	}
 	return nil
 }
 
@@ -308,8 +430,11 @@ func (synchronizer *candidateSourceSynchronizer) savePlan(
 		ProjectID: key.projectID, OwnerID: key.ownerID,
 		CandidateKey:   key.candidateKey,
 		ArtifactDigest: key.artifactDigest,
+		IdempotencyKey: key.idempotencyKey,
+		PlanID:         plan.planID,
+		RequestDigest:  plan.requestDigest,
 		ExpiresAt:      plan.expiresAt.UTC().Format(time.RFC3339Nano),
-		Missing:        missing,
+		Missing:        missing, Sizes: plan.sizes,
 	})
 	if err != nil {
 		return err
@@ -319,7 +444,7 @@ func (synchronizer *candidateSourceSynchronizer) savePlan(
 
 func (synchronizer *candidateSourceSynchronizer) planPath(key candidateSourcePlanKey) string {
 	key.candidateKey = normalizeCandidateSourceKey(key.candidateKey)
-	identity := key.projectID.String() + "\x00" + key.ownerID + "\x00" + key.artifactDigest
+	identity := key.projectID.String() + "\x00" + key.ownerID + "\x00" + key.artifactDigest + "\x00" + key.idempotencyKey
 	if key.candidateKey != "default" {
 		identity += "\x00" + key.candidateKey
 	}
@@ -329,22 +454,55 @@ func (synchronizer *candidateSourceSynchronizer) planPath(key candidateSourcePla
 	return filepath.Join(synchronizer.planDir, hex.EncodeToString(sum[:])+".json")
 }
 
+const maxCandidateSourceUploadBytes = 16 << 20
+
+func newCandidateSourcePlanID() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value[:]), nil
+}
+
+func sortedPlanMissing(missing map[string]struct{}) []string {
+	values := make([]string, 0, len(missing))
+	for identity := range missing {
+		values = append(values, identity)
+	}
+	sort.Strings(values)
+	return values
+}
+
+func candidateSourceRequestDigest(request project.CandidateSynchronizationRequest) string {
+	request.PlanID = ""
+	request.IdempotencyKey = ""
+	request.Artifacts = append([]project.CandidateSourceArtifact(nil), request.Artifacts...)
+	sort.Slice(request.Artifacts, func(i, j int) bool { return request.Artifacts[i].Path < request.Artifacts[j].Path })
+	content, err := json.Marshal(request)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(content)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func synchronizationPlanRequest(
 	scope project.CandidateSourceScope,
 	request project.CandidateSynchronizationRequest,
 ) projectdevloop.SynchronizationPlanRequest {
 	result := projectdevloop.SynchronizationPlanRequest{
 		ProjectID: scope.ProjectID, ProjectFile: request.ProjectFile,
-		CandidateKey:           request.CandidateKey,
-		ArtifactDigest:         request.ArtifactDigest,
-		ExpectedCandidateID:    request.ExpectedCandidateID,
-		ExpectedArtifactDigest: request.ExpectedArtifactDigest,
-		Artifacts:              make([]projectdevloop.ArtifactReference, len(request.Artifacts)),
-		SourceRevision:         candidateSourceRevisionToDevloop(request.SourceRevision),
+		SourceOnly:     request.SourceOnly,
+		CandidateKey:   request.CandidateKey,
+		ArtifactDigest: request.ArtifactDigest,
+		Artifacts:      make([]projectdevloop.ArtifactReference, len(request.Artifacts)),
+		SourceRevision: candidateSourceRevisionToDevloop(request.SourceRevision),
+		PlanID:         request.PlanID,
+		IdempotencyKey: request.IdempotencyKey,
 	}
 	for index, artifact := range request.Artifacts {
 		result.Artifacts[index] = projectdevloop.ArtifactReference{
-			Path: artifact.Path, Digest: artifact.Digest,
+			Path: artifact.Path, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes,
 		}
 	}
 	return result

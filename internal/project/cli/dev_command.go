@@ -23,7 +23,6 @@ type DevOptions struct {
 	Credentials       cliapi.Credentials
 	UploadConcurrency int
 	Once              bool
-	Bootstrap         bool
 	NoBrowser         bool
 	CandidateKey      string
 	SourceRevision    devloop.SourceRevision
@@ -114,13 +113,6 @@ func DevCommand(
 		"synchronize one candidate and exit",
 	)
 	command.Flags().BoolVar(
-		&values.Bootstrap,
-		"bootstrap",
-		false,
-		"synchronize the initial serving candidate without resolving a delivery plan",
-	)
-	_ = command.Flags().MarkHidden("bootstrap")
-	command.Flags().BoolVar(
 		&values.NoBrowser,
 		"no-browser",
 		false,
@@ -182,8 +174,8 @@ type DevResult struct {
 }
 
 // RunDev executes the Project-owned candidate synchronization lifecycle. It is
-// shared by the public command and target bootstrap adapters that must exercise
-// the exact same candidate contract.
+// shared by the public command and application adapters that must exercise the
+// exact same candidate contract.
 func RunDev(
 	ctx context.Context,
 	client cliapi.Client,
@@ -268,7 +260,15 @@ func RunDev(
 			ProvenanceDigest:  candidate.ProvenanceDigest,
 		}
 		var planResult DeliveryPlanResult
-		if !options.Bootstrap && len(planOperations) > 0 && planOperations[0] != nil {
+		if candidate.PlanID != "" {
+			// Native delivery already created and built this exact plan while
+			// synchronizing the candidate. Reuse its evidence instead of asking
+			// the adapter to create a second plan for the same snapshot.
+			checkpoint.PlanID = candidate.PlanID
+			checkpoint.PlanDigest = candidate.PlanDigest
+			checkpoint.ExecutionDigest = candidate.ExecutionDigest
+			checkpoint.EvidenceDigest = candidate.EvidenceDigest
+		} else if len(planOperations) > 0 && planOperations[0] != nil {
 			planResult, err = planOperations[0].Create(ctx, DeliveryPlanOptions{
 				ProjectPath: options.ProjectPath, Credentials: credentials,
 				TargetID: candidate.TargetID, Operation: "code_change",

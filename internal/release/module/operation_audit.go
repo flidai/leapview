@@ -1,20 +1,18 @@
 package module
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
+	"github.com/google/uuid"
 )
 
 const (
-	releaseCreatedAuditAction          = "release.created"
-	releaseArtifactUploadedAuditAction = "release.artifact_uploaded"
-	releaseValidatingAuditAction       = "release.validating"
+	releaseCreatedAuditAction    = "release.created"
+	releaseValidatingAuditAction = "release.validating"
 )
 
 type releaseAuditCommandInput struct {
@@ -29,9 +27,6 @@ type releaseAuditCommandInput struct {
 	ProjectDigest  string
 	Status         string
 	CreatedBy      string
-	GenerationID   string
-	ArtifactDigest string
-	ArtifactSize   int64
 	Outcome        string
 }
 
@@ -54,11 +49,6 @@ func buildReleaseCreatedAuditIntent(input releaseAuditCommandInput) (access.Audi
 			OperationId: input.OperationID, ReleaseId: input.ReleaseID, ProjectId: input.ProjectID.String(),
 			ProjectDigest: input.ProjectDigest, Status: input.Status, CreatedBy: input.CreatedBy,
 		})
-	case string(releasegen.GenOperationUploadReleaseArtifact):
-		metadata, err = releasegen.EncodeGenUploadReleaseArtifactAuditPayload(releasegen.GenSchemaReleaseArtifactUploadedAuditPayload{
-			OperationId: input.OperationID, ReleaseId: input.ReleaseID, GenerationId: input.GenerationID,
-			Digest: input.ArtifactDigest, SizeBytes: input.ArtifactSize,
-		})
 	case string(releasegen.GenOperationFinalizeRelease):
 		metadata, err = releasegen.EncodeGenFinalizeReleaseAuditPayload(releasegen.GenSchemaReleaseValidatingAuditPayload{
 			OperationId: input.OperationID, ReleaseId: input.ReleaseID, ProjectId: input.ProjectID.String(), Status: input.Status,
@@ -74,20 +64,21 @@ func buildReleaseCreatedAuditIntent(input releaseAuditCommandInput) (access.Audi
 	if key == "" {
 		return access.AuditIntent{}, fmt.Errorf("release audit intent requires idempotency key")
 	}
-	sum := sha256.Sum256([]byte("release\x00" + input.OperationID + "\x00" + aggregateKey + "\x00" + key))
+	// Access PostgreSQL stores audit_id as uuid. UUIDv5 gives us a canonical,
+	// deterministic retry identity derived from the immutable operation and
+	// idempotency key, so replaying the command addresses the same audit row.
+	auditEventID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("release\x00"+input.OperationID+"\x00"+aggregateKey+"\x00"+key)).String()
 	sequence := int64(1)
 	switch input.OperationID {
-	case string(releasegen.GenOperationUploadReleaseArtifact):
-		sequence = 2
 	case string(releasegen.GenOperationFinalizeRelease):
-		sequence = 3
+		sequence = 2
 	}
 	outcome := strings.TrimSpace(input.Outcome)
 	if outcome == "" {
 		outcome = "success"
 	}
 	intent := access.AuditIntent{
-		EventID: "release:" + hex.EncodeToString(sum[:16]), Source: "release", Operation: input.OperationID,
+		EventID: auditEventID, Source: "release", Operation: input.OperationID,
 		PrincipalID: strings.TrimSpace(input.PrincipalID), Action: contract.Command.Audit.SuccessAction,
 		ResourceKind: "project", ResourceID: input.ProjectID.String(), Capability: access.CapabilityResourcePublish,
 		Outcome: outcome, RequestID: strings.TrimSpace(input.RequestID), CorrelationID: strings.TrimSpace(input.CorrelationID),

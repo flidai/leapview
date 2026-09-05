@@ -4,6 +4,7 @@
 package cursorsigning
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,6 +13,37 @@ import (
 	"strings"
 	"sync/atomic"
 )
+
+// Initializer loads or creates the durable process key ring before serving
+// requests. Implementations are owned by a storage capability (for example,
+// the PostgreSQL repository); the protocol depends only on this port.
+type Initializer interface {
+	Configure(context.Context) error
+}
+
+// InitializerFunc adapts a function to Initializer for tests and composition
+// roots that already own a repository lifecycle.
+type InitializerFunc func(context.Context) error
+
+func (f InitializerFunc) Configure(ctx context.Context) error {
+	if f == nil {
+		return fmt.Errorf("cursor signing initializer is nil")
+	}
+	return f(ctx)
+}
+
+// NewEphemeralInitializer returns an explicit process-local initializer for
+// profile-only assemblies. It intentionally creates a fresh random key ring
+// when configured; production composition should inject a durable authority.
+func NewEphemeralInitializer() Initializer {
+	return InitializerFunc(func(context.Context) error {
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			return fmt.Errorf("initialize ephemeral cursor signing key: %w", err)
+		}
+		return Configure("ephemeral", map[string][]byte{"ephemeral": secret})
+	})
+}
 
 type ring struct {
 	current string

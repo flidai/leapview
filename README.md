@@ -20,30 +20,11 @@ same trusted analytics through interactive dashboards and AI agents.
 - **Built for existing data stacks:** connect databases, object storage, and
   open lakehouse formats without moving dashboard definitions out of Git.
 
-## Try LeapView
+## Run LeapView
 
-The evaluation image is the quickest way to explore LeapView. It requires only
-Docker—no source checkout—and includes a disposable sample project.
-
-```sh
-docker pull ghcr.io/flidai/leapview:latest
-docker run --detach --name leapview-evaluate --init \
-  --publish 127.0.0.1:8080:8080 \
-  --volume leapview-evaluate:/var/lib/leapview \
-  ghcr.io/flidai/leapview:latest evaluate
-docker exec leapview-evaluate leapview evaluate first-login
-```
-
-Open <http://localhost:8080>, sign in with the one-time credentials, and choose
-**Five-minute Sales Evaluation**. The named volume preserves the evaluation
-across container restarts.
-
-Evaluation mode is not a production configuration. Follow the
-[installation guide](https://leapview.dev/docs/installation) to clean up the
-evaluation, work from source, or prepare a durable instance.
-
-To remove the evaluation, run `docker rm --force leapview-evaluate`. Also run
-`docker volume rm leapview-evaluate` when you want to delete its persisted data.
+LeapView uses PostgreSQL for its control plane and DuckLake catalog in every
+installation. Follow the [installation guide](https://leapview.dev/docs/installation)
+for the supported Compose deployment, database bootstrap, and first project.
 
 ## Documentation
 

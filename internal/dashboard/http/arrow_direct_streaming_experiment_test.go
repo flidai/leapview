@@ -764,7 +764,7 @@ func TestDashboardDirectArrowExperimentPinsExecutionForSlowConsumer(t *testing.T
 		t.Fatal(err)
 	}
 	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
-		Kind: resultidentity.PartitionProduction, ProjectID: dashboardBaselineProjectID, Environment: "test",
+		Kind: resultidentity.PartitionProduction, TargetID: "target_test", ProjectID: dashboardBaselineProjectID, Environment: "test",
 	})
 	if err != nil {
 		t.Fatal(err)

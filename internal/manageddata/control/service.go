@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -18,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/strictjson"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -33,6 +35,7 @@ type Service struct {
 	transport         Transport
 	now               func() time.Time
 	transitions       manageddata.UploadTransitionPort
+	cleanupAcker      CleanupAcker
 	finalizeMu        sync.Mutex
 	finalizers        map[string]*finalizeLock
 }
@@ -66,10 +69,15 @@ func New(repo Repository, blobs storage.BlobStore, config Config) (*Service, err
 	if clock == nil {
 		clock = time.Now
 	}
+	cleanupAcker := config.CleanupAcker
+	if cleanupAcker == nil {
+		cleanupAcker, _ = repo.(CleanupAcker)
+	}
 	return &Service{
 		repo: repo, blobs: blobs, limits: config.Limits, uploadTTL: config.UploadTTL,
 		verifyConcurrency: concurrency, transport: config.Transport, now: clock, transitions: config.Transitions,
-		finalizers: map[string]*finalizeLock{},
+		cleanupAcker: cleanupAcker,
+		finalizers:   map[string]*finalizeLock{},
 	}, nil
 }
 
@@ -510,19 +518,15 @@ func (s *Service) ExpireUploads(ctx context.Context) (ExpireResult, error) {
 
 // terminalUploadLister is intentionally optional: adapters used by tests and
 // non-SQL control planes can continue to implement the core Repository port.
-// The production SQLite repository supplies this bounded scan, keeping
+// The durable control-plane repository may supply this bounded scan, keeping
 // terminal sessions discoverable until their transport staging is reclaimed.
 type terminalUploadLister interface {
 	ListUploadSessionsForCleanup(context.Context, int64) ([]manageddata.UploadSession, error)
 }
 
-type terminalUploadAcker interface {
-	MarkUploadCleanupComplete(context.Context, manageddata.UploadID) error
-}
-
 func (s *Service) acknowledgeCleanup(ctx context.Context, uploadID manageddata.UploadID) error {
-	if acker, ok := s.repo.(terminalUploadAcker); ok {
-		return repositoryError(acker.MarkUploadCleanupComplete(ctx, uploadID))
+	if s.cleanupAcker != nil {
+		return repositoryError(s.cleanupAcker.MarkUploadCleanupComplete(ctx, uploadID))
 	}
 	return nil
 }
@@ -563,7 +567,7 @@ func (s *Service) CleanupTerminalUploads(ctx context.Context, limit int64) (Term
 		result.Backlog = 1 // at least one more row is known to remain
 		sessions = sessions[:limit]
 	}
-	acker, _ := s.repo.(terminalUploadAcker)
+	acker := s.cleanupAcker
 	for _, session := range sessions {
 		if !isTerminal(session.Status) {
 			continue
@@ -846,8 +850,21 @@ func decodeManifest(value string) (manageddata.Manifest, error) {
 
 func sameUpload(session manageddata.UploadSession, collectionID projectgraph.ResourceID, baseRevisionID manageddata.RevisionID, manifest manageddata.Manifest, backend string) bool {
 	canonical, err := manifest.CanonicalJSON()
+	if err != nil {
+		return false
+	}
+	// PostgreSQL stores manifests as jsonb, so the persisted representation may
+	// differ in object-key order and whitespace from the request's canonical
+	// bytes. Decode it strictly and compare canonical semantic bytes instead;
+	// this keeps unknown fields, trailing values, and invalid manifest entries
+	// on the integrity-failure path while making exact replays formatting-safe.
+	var stored manageddata.Manifest
+	if err := strictjson.Decode([]byte(session.ManifestJSON), &stored); err != nil {
+		return false
+	}
+	storedCanonical, err := stored.CanonicalJSON()
 	return err == nil && session.CollectionID == collectionID && session.BaseRevisionID == baseRevisionID &&
-		session.ManifestJSON == string(canonical) && session.StorageBackend == backend
+		bytes.Equal(storedCanonical, canonical) && session.StorageBackend == backend
 }
 
 func verifiedBlob(expected blobExpectation, actual storage.Blob) (storage.Blob, error) {
@@ -952,7 +969,7 @@ func repositoryError(err error) error {
 	case errors.Is(err, manageddata.ErrConflict):
 		return ErrConflict
 	default:
-		return ErrInternal
+		return fmt.Errorf("%w: repository operation: %w", ErrInternal, err)
 	}
 }
 

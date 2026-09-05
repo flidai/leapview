@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -98,13 +99,21 @@ func (c *Controller) qualificationDocker(
 	}.Run(ctx, stdin, c.qualificationExecutor, args...)
 }
 
-func qualificationComposeArguments(root string, args ...string) ([]string, error) {
+func composeArguments(root string, args ...string) ([]string, error) {
 	https, err := envFileValue(filepath.Join(root, deploymentEnvName), "COMPOSE_HTTPS")
 	if err != nil {
 		return nil, err
 	}
+	project, err := envFileValue(filepath.Join(root, deploymentEnvName), "COMPOSE_PROJECT_NAME")
+	if err != nil {
+		return nil, err
+	}
+	if project == "" || project != strings.TrimSpace(project) || normalizedQualificationName(project) != project {
+		return nil, errors.New("Compose project name must be a normalized identifier")
+	}
 	result := []string{
 		"compose",
+		"--project-name", project,
 		"--project-directory", root,
 		"--env-file", filepath.Join(root, deploymentEnvName),
 		"--file", filepath.Join(root, "compose.yaml"),
@@ -120,11 +129,85 @@ func (c *Controller) qualificationCompose(
 	root string,
 	args ...string,
 ) ([]byte, error) {
-	commandArgs, err := qualificationComposeArguments(root, args...)
+	commandArgs, err := composeArguments(root, args...)
 	if err != nil {
 		return nil, err
 	}
-	return c.qualificationDocker(ctx, nil, commandArgs...)
+	processEnvironment, err := composeProcessEnvironment(root, nil)
+	if err != nil {
+		return nil, err
+	}
+	return qualificationProcess{
+		dir: c.root, executable: c.dockerBin, environment: processEnvironment,
+	}.Run(ctx, nil, c.qualificationExecutor, commandArgs...)
+}
+
+// qualificationComposeEnvironment supplies operation-only credentials to the
+// Compose process without persisting them in leapview.env or rendering their
+// values in command arguments. Callers pass `run --env NAME` so Compose copies
+// only the named value into the one-shot container.
+func (c *Controller) qualificationComposeEnvironment(
+	ctx context.Context,
+	root string,
+	environment map[string]string,
+	args ...string,
+) ([]byte, error) {
+	commandArgs, err := composeArguments(root, args...)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(environment))
+	for name := range environment {
+		if strings.TrimSpace(name) == "" || strings.Contains(name, "=") {
+			return nil, fmt.Errorf("qualification operation environment name %q is invalid", name)
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	processEnvironment, err := composeProcessEnvironment(root, environment)
+	if err != nil {
+		return nil, err
+	}
+	return qualificationProcess{
+		dir: c.root, executable: c.dockerBin, environment: processEnvironment,
+	}.Run(ctx, nil, c.qualificationExecutor, commandArgs...)
+}
+
+// composeProcessEnvironment prevents host shell variables from
+// overriding the generated deployment contract. Docker daemon
+// settings remain inherited, while every Compose variable and every key owned
+// by deployment.env is resolved only from the explicit command arguments and
+// --env-file. Narrow operation-only values are then appended for named `run
+// --env NAME` forwarding.
+func composeProcessEnvironment(root string, overrides map[string]string) ([]string, error) {
+	contents, err := os.ReadFile(filepath.Join(root, deploymentEnvName))
+	if err != nil {
+		return nil, fmt.Errorf("read Compose deployment environment: %w", err)
+	}
+	owned := environmentValues(string(contents))
+	result := make([]string, 0, len(os.Environ())+len(overrides))
+	for _, entry := range os.Environ() {
+		name, _, present := strings.Cut(entry, "=")
+		if !present || strings.HasPrefix(name, "COMPOSE_") {
+			continue
+		}
+		if _, protected := owned[name]; protected {
+			continue
+		}
+		if _, overridden := overrides[name]; overridden {
+			continue
+		}
+		result = append(result, entry)
+	}
+	names := make([]string, 0, len(overrides))
+	for name := range overrides {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		result = append(result, name+"="+overrides[name])
+	}
+	return result, nil
 }
 
 type qualificationJSONWorker struct {
@@ -229,6 +312,15 @@ func (w *qualificationJSONWorker) CallContext(
 		return eventErr
 	}
 	if err != nil {
+		if w.stderr != nil {
+			diagnostics := strings.TrimSpace(string(redactQualificationLog(
+				[]byte(w.stderr.String()),
+				100,
+			)))
+			if diagnostics != "" {
+				return fmt.Errorf("%s worker: %w: %s", method, err, diagnostics)
+			}
+		}
 		return fmt.Errorf("%s worker: %w", method, err)
 	}
 	return nil
@@ -370,7 +462,13 @@ func copyQualificationFile(source, destination string, mode fs.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(destination, contents, mode)
+	if err := os.WriteFile(destination, contents, mode); err != nil {
+		return err
+	}
+	// Qualification is commonly launched from hardened CI shells with umask
+	// 0077. Enforce the caller's reviewed final mode so executable packaged
+	// assets remain readable by the non-root users in sidecar containers.
+	return os.Chmod(destination, mode)
 }
 
 func copyQualificationTree(source, destination string) error {

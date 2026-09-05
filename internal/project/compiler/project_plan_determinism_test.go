@@ -11,6 +11,22 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
+func TestCheckedCapacitySumRejectsOverflow(t *testing.T) {
+	maximumInt := int(^uint(0) >> 1)
+	if got, err := checkedCapacitySum(3, 4); err != nil || got != 7 {
+		t.Fatalf("checkedCapacitySum(3, 4) = %d, %v; want 7, nil", got, err)
+	}
+	if got, err := checkedCapacitySum(maximumInt-1, 1); err != nil || got != maximumInt {
+		t.Fatalf("checkedCapacitySum(max-1, 1) = %d, %v; want max, nil", got, err)
+	}
+	if got, err := checkedCapacitySum(maximumInt, 1); err == nil || got != 0 {
+		t.Fatalf("checkedCapacitySum(max, 1) = %d, %v; want 0, error", got, err)
+	}
+	if got, err := checkedCapacitySum(-1, 1); err == nil || got != 0 {
+		t.Fatalf("checkedCapacitySum(-1, 1) = %d, %v; want 0, error", got, err)
+	}
+}
+
 func TestProjectPlanCompilerDeclaresDeterminismFromVolatileExpressions(t *testing.T) {
 	deterministic := Project{ID: projectgraph.ResourceID("project"), Connections: map[string]semanticmodel.Connection{"files": {Kind: "managed"}}, Sources: map[string]semanticmodel.Source{"orders": {Connection: "files"}}, Models: map[string]semanticmodel.Table{
 		"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, SourceDependencies: []string{"orders"}},
@@ -41,6 +57,13 @@ func TestPlanProjectAgainstArtifactDetectsSQLChangeWithStableGraphIdentity(t *te
 	active, err := projectartifact.NewProject(retained.Graph, retained.Manifest)
 	if err != nil {
 		t.Fatal(err)
+	}
+	baseline, err := PlanProjectAgainstArtifact(projectPath, active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseline.Summary.MaterializationImpact {
+		t.Fatalf("identical authored project reported materialization impact: %#v", baseline)
 	}
 	modelPath := filepath.Join(filepath.Dir(projectPath), "models", "orders.yaml")
 	modelBytes, err := os.ReadFile(modelPath)

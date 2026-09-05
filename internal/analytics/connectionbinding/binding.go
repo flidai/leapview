@@ -208,6 +208,10 @@ func (binding TargetBinding) Validate() error {
 	if err != nil || connectionID != binding.ConnectionID {
 		return fmt.Errorf("%w: connection identity is invalid", ErrInvalidBinding)
 	}
+	targetID, err := ParseTargetID(binding.TargetID.String())
+	if err != nil || targetID != binding.TargetID {
+		return fmt.Errorf("%w: target identity is invalid", ErrInvalidBinding)
+	}
 	if _, err := ParseBindingID(binding.ID.String()); err != nil ||
 		!identifierPattern.MatchString(binding.ConnectorKind) || !binding.Scope.ProjectID.Valid() ||
 		!identifierPattern.MatchString(binding.Scope.Environment) {

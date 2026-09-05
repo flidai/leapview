@@ -10,30 +10,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 )
 
 func TestQualificationEvidenceRetentionIsContentBoundAndRejectsSymlinks(t *testing.T) {
-	plan := platform.InstanceRestorePreflightPlan{
-		SchemaVersion: 1, Allowed: true, ReasonCode: platform.RestorePreflightAllowed,
-		BackupID: "lvbackup_lifecycle", ManifestVersion: platform.InstanceBackupManifestVersion,
-		ManifestSHA256: strings.Repeat("a", 64), ArchiveSHA256: strings.Repeat("b", 64),
-		ExclusiveLockVerified: true,
-	}
-	encoded, err := json.Marshal(plan)
+	source, occurrence := writeTransitionEvidence(t)
+	validated, err := readUBDRArtifact(EvidenceTransitionQualification, source, occurrence)
 	if err != nil {
-		t.Fatal(err)
-	}
-	source := filepath.Join(t.TempDir(), "preflight.json")
-	if err := os.WriteFile(source, encoded, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	store := filepath.Join(t.TempDir(), "evidence")
-	validated, err := readUBDRArtifact(EvidenceRestorePreflight, source, Occurrence{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	reference, err := retainUBDRArtifact(validated, store)
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +32,7 @@ func TestQualificationEvidenceRetentionIsContentBoundAndRejectsSymlinks(t *testi
 	if err := os.Symlink(source, symlink); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ValidateUBDRArtifact(EvidenceRestorePreflight, symlink); err == nil {
+	if _, err := ValidateUBDRArtifact(EvidenceTransitionQualification, symlink); err == nil {
 		t.Fatal("symlink evidence was accepted")
 	}
 
@@ -99,7 +85,7 @@ func TestEvidenceGarbageCollectionPreservesSharedDigests(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	reference := EvidenceReference{Kind: EvidenceBackupManifestV2, URI: "artifact://qualification/backup/" + shared + ".json", SHA256: shared}
+	reference := EvidenceReference{Kind: EvidenceTransitionQualification, URI: "artifact://qualification/transition-qualification/" + shared + ".json", SHA256: shared}
 	if err := GarbageCollectEvidence(root, []Occurrence{{Evidence: []EvidenceReference{reference}}, {Evidence: []EvidenceReference{reference}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -170,35 +156,4 @@ func writeTransitionEvidence(t *testing.T) (string, Occurrence) {
 		t.Fatal(err)
 	}
 	return path, Occurrence{Operation: OperationUpgrade, ArtifactIdentity: candidate, PolicyVersion: "ubdr-v1", PolicySHA256: strings.Repeat("c", 64), TargetScope: "release:v0.3.0"}
-}
-
-func TestScenarioEvidenceMustBindScheduledArtifactAndCompleteRestoreSet(t *testing.T) {
-	scheduled := "oci://ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
-	manifest := platform.InstanceBackupManifestV2{
-		SchemaVersion: platform.InstanceBackupManifestVersion, Kind: "leapview-instance",
-		BackupID: "lvbackup_binding", InstanceID: "lvinst_binding",
-		ReleaseIdentity: compatibility.ReleaseIdentity{
-			Image: "oci://ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64),
-		},
-		InventorySHA256: strings.Repeat("c", 64),
-		Members:         []platform.InstanceBackupMember{{Path: "leapview.db", SHA256: strings.Repeat("d", 64)}},
-	}
-	encoded, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "leapview-backup.json")
-	if err := os.WriteFile(path, encoded, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := validateScenarioArtifacts(Occurrence{
-		Operation: OperationBackup, ArtifactIdentity: scheduled,
-	}, []EvidenceArtifact{{Kind: EvidenceBackupManifestV2, Path: path}}); err == nil {
-		t.Fatal("backup evidence for a different release artifact was accepted")
-	}
-	if _, err := validateScenarioArtifacts(Occurrence{
-		Operation: OperationRestore, ArtifactIdentity: scheduled,
-	}, []EvidenceArtifact{{Kind: EvidenceRestorePreflight, Path: path}}); err == nil {
-		t.Fatal("restore qualification without its bound backup manifest was accepted")
-	}
 }

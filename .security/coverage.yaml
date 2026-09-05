@@ -90,6 +90,12 @@ surfaces:
     updater: {ecosystem: docker, directory: /deploy/compose/qualification}
     scanners: [trivy]
     images: ["${LEAPVIEW_IMAGE}"]
+  - path: deploy/postgres/ha/Dockerfile
+    kind: dockerfile
+    updater: {ecosystem: docker, directory: /deploy/postgres/ha}
+    scanners: [trivy]
+    images:
+      - docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8
   - path: internal/app/testing/maliciousinstance/electron/Dockerfile.linux
     kind: dockerfile
     updater: {ecosystem: docker, directory: /internal/app/testing/maliciousinstance/electron}

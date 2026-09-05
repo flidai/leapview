@@ -49,6 +49,7 @@ type publicDashboardRouteDependencies struct {
 
 type authenticatedRouteDependencies struct {
 	access         *accessmodule.Module
+	apiProtocol    *apiprotocol.Protocol
 	projectBrowser *projecthttp.BrowserHandler
 	agent          *agentmodule.Module
 	admin          *adminmodule.Module
@@ -132,7 +133,7 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 			})).ServeHTTP)
 		}
 		candidateProjectGuard := func(next http.HandlerFunc) http.HandlerFunc {
-			return protectProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityProjectAdmin, activeProjectResource, next)
+			return protectCandidateProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityProjectAdmin, activeProjectResource, next)
 		}
 		candidateReviewGuard := func(next http.HandlerFunc) http.HandlerFunc {
 			return protectProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityResourceEdit, activeProjectResource, next)
@@ -152,11 +153,15 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 		r.With(dependencies.rateLimits.Updates()).Get("/candidates/{candidate}/updates", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardUpdates(dependencies.candidates, w, request)
 		}))
-		r.Post("/candidates/{candidate}/commands/{command}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
+		r.Post("/candidates/{candidate}/dashboards/{dashboard}/commands/{command}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardCommand(dependencies.candidates, w, request)
 		}))
 		dependencies.agent.MountAuthenticated(r, agentmodule.RouteGuard{Authenticate: dependencies.access.Authenticate, RequirePlatformAdmin: dependencies.access.RequirePlatformAdmin})
-		dependencies.admin.MountAuthenticated(r, adminmodule.RouteGuard{Authenticate: dependencies.access.Authenticate, RequirePlatformAdmin: dependencies.access.RequirePlatformAdmin})
+		adminGuard := adminmodule.RouteGuard{Authenticate: dependencies.access.Authenticate, RequirePlatformAdmin: dependencies.access.RequirePlatformAdmin}
+		if dependencies.apiProtocol != nil {
+			adminGuard.BrowserMutationMiddleware = dependencies.apiProtocol.BrowserMutationMiddleware
+		}
+		dependencies.admin.MountAuthenticated(r, adminGuard)
 		dependencies.dashboard.MountAuthenticated(r, dashboardmodule.RouteGuard{ProtectWithResources: func(capability access.Capability, resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
 			return protectProjectResources(dependencies.access, dependencies.runtimeHost, capability, resolve, next)
 		}, ProtectWithAuthoring: func(capability access.Capability, next http.HandlerFunc) http.HandlerFunc {

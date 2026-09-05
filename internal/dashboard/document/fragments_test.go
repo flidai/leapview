@@ -144,6 +144,19 @@ func TestExpandDashboardFragmentsRejectsUnsafePathsCyclesAndDuplicates(t *testin
 	if err == nil || !strings.Contains(err.Error(), "project resource envelope") {
 		t.Fatalf("fragment resource identity accepted: %v", err)
 	}
+
+	outside := t.TempDir()
+	outsideFragment := filepath.Join(outside, "outside.yaml")
+	if err := os.WriteFile(outsideFragment, []byte("visuals: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFragment, filepath.Join(root, "escaped.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ExpandDashboardFragments(fragmentTestDocument(&DashboardIncludes{Visuals: ptrSlice("escaped.yaml")}), dashboardPath, root)
+	if err == nil || !strings.Contains(err.Error(), "resolves outside the project boundary") {
+		t.Fatalf("symlink-escaped fragment accepted: %v", err)
+	}
 }
 
 func TestExpandDashboardFragmentsReportsFragmentLine(t *testing.T) {

@@ -76,6 +76,12 @@ func TestGeneratedConnectionBindingCommandsRequireBothAuditSinks(t *testing.T) {
 	if !errors.Is(err, connectionbinding.ErrRotationAuditUnavailable) {
 		t.Fatalf("missing rotation audit error = %v", err)
 	}
+	_, err = module.NewConnectionAdministration(ConnectionAdministrationConfig{
+		Audit: moduleRotationAuditNoop{}, AdministrationAudit: moduleAdministrationAuditNoop{},
+	})
+	if !errors.Is(err, connectionbinding.ErrInvalidBinding) {
+		t.Fatalf("missing administration authorizer error = %v", err)
+	}
 	_, err = module.NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{})
 	if !errors.Is(err, connectionbinding.ErrRotationAuditUnavailable) {
 		t.Fatalf("runtime missing rotation audit error = %v", err)

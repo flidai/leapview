@@ -79,87 +79,126 @@ func (c *BlobCollector) Run(ctx context.Context) (BlobGCResult, error) {
 	if err != nil {
 		return BlobGCResult{}, sanitizeMaintenanceError(ctx, "snapshot reachability", err)
 	}
-	reachable, err := digestSet(initial.SHA256s)
-	if err != nil {
+	if err := validateReachabilitySnapshot(initial); err != nil {
 		return BlobGCResult{}, err
 	}
+	sort.Strings(initial.SHA256s)
 	cutoff := c.now().UTC().Add(-c.graceAge)
-	candidates := make(map[string]storage.BlobMetadata)
+	// Keep only one bounded candidate batch at a time. Retaining every old blob
+	// in a process-sized map made GC memory grow with object history.
+	candidateBatch := make([]storage.BlobMetadata, 0, c.batchSize)
+	var lastInventoryBlob storage.BlobMetadata
+	seenInventoryDigest := false
+	deferred := false
+	stopWalk := errors.New("managed-data GC candidate batch limit reached")
+	var batchErr error
+	result := BlobGCResult{}
+	flush := func() error {
+		if len(candidateBatch) == 0 {
+			return nil
+		}
+		batch := append([]storage.BlobMetadata(nil), candidateBatch...)
+		candidateBatch = candidateBatch[:0]
+		result.Candidates += len(batch)
+		err := c.reachability.WithStableSnapshot(ctx, initial.Generation, func(current ReachabilitySnapshot) error {
+			if current.Generation != initial.Generation {
+				return ErrReachabilityChanged
+			}
+			if err := validateReachabilitySnapshot(current); err != nil {
+				return err
+			}
+			sort.Strings(current.SHA256s)
+			digests := make([]string, 0, len(batch))
+			var reclaimable int64
+			for _, blob := range batch {
+				if !isReachable(current.SHA256s, blob.SHA256) {
+					if blob.Size > math.MaxInt64-reclaimable {
+						return fmt.Errorf("%w: blob inventory size overflow", storage.ErrIntegrity)
+					}
+					reclaimable += blob.Size
+					digests = append(digests, blob.SHA256)
+				}
+			}
+			if len(digests) == 0 {
+				return nil
+			}
+			if err := c.inventory.DeleteBlobs(ctx, digests); err != nil {
+				return err
+			}
+			result.Deleted += len(digests)
+			if reclaimable > math.MaxInt64-result.ReclaimedBytes {
+				return fmt.Errorf("%w: reclaimed blob size overflow", storage.ErrIntegrity)
+			}
+			result.ReclaimedBytes += reclaimable
+			return nil
+		})
+		if errors.Is(err, ErrReachabilityChanged) {
+			deferred = true
+			return stopWalk
+		}
+		return err
+	}
 	err = c.inventory.WalkBlobs(ctx, func(blob storage.BlobMetadata) error {
 		if err := validateBlobMetadata(blob); err != nil {
 			return err
 		}
-		if previous, exists := candidates[blob.SHA256]; exists {
-			if previous != blob {
+		// The filesystem and S3 inventories enumerate canonical keys in stable
+		// lexicographic order. Adjacent duplicate detection preserves the
+		// integrity check without an unbounded global seen set.
+		if seenInventoryDigest && blob.SHA256 == lastInventoryBlob.SHA256 {
+			if blob != lastInventoryBlob {
 				return fmt.Errorf("%w: duplicate blob inventory metadata", storage.ErrIntegrity)
 			}
 			return nil
 		}
-		if _, keep := reachable[blob.SHA256]; !keep && !blob.LastModified.After(cutoff) {
-			candidates[blob.SHA256] = blob
+		seenInventoryDigest = true
+		lastInventoryBlob = blob
+		if !isReachable(initial.SHA256s, blob.SHA256) && !blob.LastModified.After(cutoff) {
+			candidateBatch = append(candidateBatch, blob)
+			if len(candidateBatch) == c.batchSize {
+				if err := flush(); err != nil {
+					batchErr = err
+					return stopWalk
+				}
+			}
 		}
 		return nil
 	})
+	if errors.Is(err, stopWalk) {
+		if deferred {
+			result.Deferred = true
+			return result, nil
+		}
+		if batchErr != nil {
+			return result, sanitizeMaintenanceError(ctx, "delete unreachable blobs", batchErr)
+		}
+		return result, nil
+	}
 	if err != nil {
 		return BlobGCResult{}, sanitizeMaintenanceError(ctx, "enumerate blobs", err)
 	}
-	result := BlobGCResult{Candidates: len(candidates)}
-	if len(candidates) == 0 {
-		return result, nil
-	}
-	err = c.reachability.WithStableSnapshot(ctx, initial.Generation, func(current ReachabilitySnapshot) error {
-		if current.Generation != initial.Generation {
-			return ErrReachabilityChanged
+	if err := flush(); err != nil {
+		if errors.Is(err, stopWalk) && deferred {
+			result.Deferred = true
+			return result, nil
 		}
-		currentReachable, setErr := digestSet(current.SHA256s)
-		if setErr != nil {
-			return setErr
-		}
-		digests := make([]string, 0, len(candidates))
-		var reclaimable int64
-		for digest := range candidates {
-			if _, keep := currentReachable[digest]; !keep {
-				if candidates[digest].Size > math.MaxInt64-reclaimable {
-					return fmt.Errorf("%w: blob inventory size overflow", storage.ErrIntegrity)
-				}
-				reclaimable += candidates[digest].Size
-				digests = append(digests, digest)
-			}
-		}
-		sort.Strings(digests)
-		for start := 0; start < len(digests); start += c.batchSize {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			end := min(start+c.batchSize, len(digests))
-			batch := digests[start:end]
-			if err := c.inventory.DeleteBlobs(ctx, batch); err != nil {
-				return err
-			}
-			result.Deleted += len(batch)
-		}
-		result.ReclaimedBytes = reclaimable
-		return nil
-	})
-	if errors.Is(err, ErrReachabilityChanged) {
-		result.Deferred = true
-		return result, nil
-	}
-	if err != nil {
 		return result, sanitizeMaintenanceError(ctx, "delete unreachable blobs", err)
 	}
 	return result, nil
 }
 
-func digestSet(digests []string) (map[string]struct{}, error) {
-	result := make(map[string]struct{}, len(digests))
-	for _, digest := range digests {
+func validateReachabilitySnapshot(snapshot ReachabilitySnapshot) error {
+	for _, digest := range snapshot.SHA256s {
 		if err := storage.ValidateSHA256(digest); err != nil {
-			return nil, fmt.Errorf("%w: reachability contains an invalid digest", storage.ErrIntegrity)
+			return fmt.Errorf("%w: reachability contains an invalid digest", storage.ErrIntegrity)
 		}
-		result[digest] = struct{}{}
 	}
-	return result, nil
+	return nil
+}
+
+func isReachable(digests []string, target string) bool {
+	index := sort.SearchStrings(digests, target)
+	return index < len(digests) && digests[index] == target
 }
 
 func validateBlobMetadata(blob storage.BlobMetadata) error {

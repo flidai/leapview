@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +27,7 @@ type auditDatabase struct {
 
 func newAuditDatabase(t *testing.T) auditDatabase {
 	t.Helper()
-	h := postgrestest.Start(t, postgrestest.Required(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED")))
+	h := postgrestest.Start(t)
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{
@@ -96,8 +95,8 @@ func auditIntent(id, action string) access.AuditIntent {
 		ResourceID:        auditActorID,
 		Capability:        access.CapabilityResourceEdit,
 		Outcome:           "success",
-		RequestID:         "30000000-0000-0000-0000-000000000001",
-		CorrelationID:     "40000000-0000-0000-0000-000000000001",
+		RequestID:         "req_30000000000000000000000000000001",
+		CorrelationID:     "corr_40000000000000000000000000000001",
 		AggregateKey:      "principal:" + auditActorID,
 		AggregateSequence: 1,
 		MetadataJSON:      `{"reason":"test"}`,
@@ -176,7 +175,7 @@ func TestRecordAuditEventPostgreSQL18AtomicImmutableAndCanonical(t *testing.T) {
 			t.Fatal(err)
 		}
 		if principal != auditActorID || action != "principal.updated" || kind != "principal" || resource != auditActorID ||
-			request != "30000000-0000-0000-0000-000000000001" || correlation != "40000000-0000-0000-0000-000000000001" {
+			request != "req_30000000000000000000000000000001" || correlation != "corr_40000000000000000000000000000001" {
 			t.Fatalf("audit identity = principal %q action %q resource %q/%q request %q correlation %q", principal, action, kind, resource, request, correlation)
 		}
 		var metadataObject map[string]any
@@ -266,6 +265,35 @@ func TestRecordAuditEventPostgreSQL18AtomicImmutableAndCanonical(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("duplicate row count = %d, want 1", count)
 		}
+	})
+
+	t.Run("domain event identity cannot link two audit rows", func(t *testing.T) {
+		const domainEventID = "60000000-0000-0000-0000-000000000001"
+		first := auditIntent("20000000-0000-0000-0000-000000000010", "principal.updated")
+		first.DomainEventID = domainEventID
+		tx, err := db.runtime.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.RecordAuditEvent(ctx, tx, first); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		second := auditIntent("20000000-0000-0000-0000-000000000011", "principal.updated")
+		second.DomainEventID = domainEventID
+		tx, err = db.runtime.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.RecordAuditEvent(ctx, tx, second); !errors.Is(err, access.ErrAuditIntentConflict) {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("duplicate domain event link = %v, want conflict", err)
+		}
+		_ = tx.Rollback(ctx)
 	})
 
 	t.Run("invalid metadata and required audit failure are fail closed", func(t *testing.T) {

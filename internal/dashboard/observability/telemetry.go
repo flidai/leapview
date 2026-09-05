@@ -392,7 +392,8 @@ func cacheAdmissionReasonLabel(value dataquery.CacheAdmissionReason) string {
 		dataquery.CacheAdmissionReasonDependencyUnavailable,
 		dataquery.CacheAdmissionReasonDependencyInvalid,
 		dataquery.CacheAdmissionReasonPolicyInvalid,
-		dataquery.CacheAdmissionReasonPartitionInvalid:
+		dataquery.CacheAdmissionReasonPartitionInvalid,
+		dataquery.CacheAdmissionReasonNonDeterministic:
 		return string(value)
 	default:
 		return "other"

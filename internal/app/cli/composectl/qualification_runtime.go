@@ -22,7 +22,9 @@ type qualificationContainerRequest struct {
 	Name        string
 	Image       string
 	NetworkMode string
+	ReadOnly    bool
 	Volumes     []qualificationContainerVolume
+	Tmpfs       []string
 	Environment map[string]string
 	Entrypoint  []string
 	Command     []string
@@ -45,6 +47,36 @@ type qualificationContainer interface {
 	Inspect(context.Context, string) ([]byte, error)
 	Logs(context.Context, int) ([]byte, error)
 	Remove(context.Context) ([]byte, error)
+}
+
+// removeQualificationNamedContainerHandle removes a disposable container and
+// clears its name only after Docker confirms removal. Keeping the name on
+// failure lets a later cleanup pass retry the same container instead of
+// silently leaking it.
+func removeQualificationNamedContainerHandle(
+	ctx context.Context,
+	runtime qualificationContainerRuntime,
+	name *string,
+) error {
+	if name == nil || strings.TrimSpace(*name) == "" {
+		return nil
+	}
+	if runtime == nil {
+		return fmt.Errorf("qualification container runtime is required")
+	}
+	container := runtime.Existing(*name)
+	if container == nil {
+		return fmt.Errorf("qualification container %q is unavailable", *name)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, err := container.Remove(ctx)
+	err = ignoreQualificationNotFound(err)
+	if err == nil {
+		*name = ""
+	}
+	return err
 }
 
 func qualificationContainerOperationError(
@@ -111,6 +143,9 @@ func (runtime *dockerCLIQualificationRuntime) Start(
 		return nil, fmt.Errorf("qualification container entrypoint must be a single executable")
 	}
 	arguments := []string{"run", "--detach", "--name", request.Name}
+	if request.ReadOnly {
+		arguments = append(arguments, "--read-only")
+	}
 	if network := strings.TrimSpace(request.NetworkMode); network != "" {
 		arguments = append(arguments, "--network", network)
 	}
@@ -125,6 +160,12 @@ func (runtime *dockerCLIQualificationRuntime) Start(
 			value += ":ro"
 		}
 		arguments = append(arguments, "--volume", value)
+	}
+	for _, mount := range request.Tmpfs {
+		if strings.TrimSpace(mount) == "" {
+			return nil, fmt.Errorf("qualification container tmpfs mount is required")
+		}
+		arguments = append(arguments, "--tmpfs", strings.TrimSpace(mount))
 	}
 	environment := make([]string, 0, len(request.Environment))
 	for name, value := range request.Environment {

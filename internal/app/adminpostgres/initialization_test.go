@@ -16,29 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	platformbootstrap "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
-
-type testMaintenancePool struct {
-	revision platformpostgres.SchemaRevision
-	closed   bool
-}
-
-func (p *testMaintenancePool) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
-	return pgconn.CommandTag{}, nil
-}
-func (p *testMaintenancePool) Query(context.Context, string, ...any) (pgx.Rows, error) {
-	return nil, nil
-}
-func (p *testMaintenancePool) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
-func (p *testMaintenancePool) Begin(context.Context) (pgx.Tx, error) {
-	return nil, errors.New("unused")
-}
-func (p *testMaintenancePool) SchemaRevision(context.Context, int64) (platformpostgres.SchemaRevision, error) {
-	return p.revision, nil
-}
-func (p *testMaintenancePool) Close() { p.closed = true }
 
 type testAccessInitializer struct {
 	initialized bool
@@ -88,31 +66,11 @@ func productionAdminConfig(home string) config.Config {
 	return config.Config{
 		HomeDir: home, Production: true, Environment: "prod", BootstrapEmail: "bootstrap@example.com",
 		TokenHashKey: strings.Repeat("k", 32), PostgresRequireTLS: true,
-		PostgresControlURL: "postgres://runtime/control?sslmode=require",
+		PostgresControlURL: "postgres://runtime/control?sslmode=verify-full",
 	}
 }
 
 func skipProductionBaseline(context.Context, config.Config) error { return nil }
-
-func TestProductionAccessConfigRejectsNonCanonicalPostgresSettings(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mutate func(*config.Config)
-		want   string
-	}{
-		{name: "control intent", mutate: func(cfg *config.Config) { cfg.PostgresControlIntent = "read-only" }, want: "LEAPVIEW_POSTGRES_CONTROL_INTENT"},
-		{name: "runtime role", mutate: func(cfg *config.Config) { cfg.PostgresControlRuntimeRole = "custom_runtime" }, want: "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE"},
-		{name: "migrator role", mutate: func(cfg *config.Config) { cfg.PostgresControlMigratorRole = "custom_migrator" }, want: "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			cfg := productionAdminConfig(t.TempDir())
-			test.mutate(&cfg)
-			if _, err := productionAccessConfig(cfg); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("productionAccessConfig() error = %v, want %s rejection", err, test.want)
-			}
-		})
-	}
-}
 
 func TestProductionInitializeUsesNativeAccessAndDurableRecovery(t *testing.T) {
 	home := t.TempDir()
@@ -132,7 +90,7 @@ func TestProductionInitializeUsesNativeAccessAndDurableRecovery(t *testing.T) {
 			openedConfig = openedCfg
 			return &testMaintenancePool{}, nil
 		},
-		VerifyBaseline: func(context.Context, postgresbaseline.RevisionReader) error { verified++; return nil },
+		VerifyBaseline: func(context.Context, postgresbaseline.SQLDBProvider) error { verified++; return nil },
 		NewAccess:      func(AccessPool, []byte) (AccessInitializer, error) { return initializer, nil },
 		NewBootstrap:   func(AccessPool) Bootstrap { return bootstrap },
 		AcquireLock: func(string) (adminoffline.Lock, error) {
@@ -178,7 +136,7 @@ func TestProductionInitializeReplayAndAcknowledgeRedactsRecovery(t *testing.T) {
 		LoadConfig:      func() (config.Config, error) { return cfg, nil },
 		PrepareBaseline: skipProductionBaseline,
 		OpenAccess:      func(context.Context, platformpostgres.Config) (AccessPool, error) { return &testMaintenancePool{}, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return nil },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return nil },
 		NewAccess:       func(AccessPool, []byte) (AccessInitializer, error) { return initializer, nil },
 		NewBootstrap:    func(AccessPool) Bootstrap { return bootstrap },
 		AcquireLock:     func(string) (adminoffline.Lock, error) { acquired++; return &testAdminLock{}, nil },
@@ -217,7 +175,7 @@ func TestProductionInitializeBaselineMismatchStopsBeforeNativeMutation(t *testin
 		LoadConfig:      func() (config.Config, error) { return cfg, nil },
 		PrepareBaseline: skipProductionBaseline,
 		OpenAccess:      func(context.Context, platformpostgres.Config) (AccessPool, error) { return p, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return errors.New("baseline mismatch") },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return errors.New("baseline mismatch") },
 		NewAccess: func(AccessPool, []byte) (AccessInitializer, error) {
 			constructed = true
 			return &testAccessInitializer{}, nil
@@ -242,7 +200,7 @@ func TestProductionInitializeEnvironmentConflictStopsBeforeNativeMutation(t *tes
 		LoadConfig:      func() (config.Config, error) { return cfg, nil },
 		PrepareBaseline: skipProductionBaseline,
 		OpenAccess:      func(context.Context, platformpostgres.Config) (AccessPool, error) { return &testMaintenancePool{}, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return nil },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return nil },
 		NewAccess:       func(AccessPool, []byte) (AccessInitializer, error) { return initializer, nil },
 		NewBootstrap:    func(AccessPool) Bootstrap { return bootstrap },
 		AcquireLock:     func(string) (adminoffline.Lock, error) { acquired = true; return &testAdminLock{}, nil },
@@ -301,7 +259,7 @@ func TestProductionAcknowledgeUninitializedDoesNotBindEnvironment(t *testing.T) 
 		LoadConfig:      func() (config.Config, error) { return cfg, nil },
 		PrepareBaseline: skipProductionBaseline,
 		OpenAccess:      func(context.Context, platformpostgres.Config) (AccessPool, error) { return &testMaintenancePool{}, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return nil },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return nil },
 		NewAccess:       func(AccessPool, []byte) (AccessInitializer, error) { return initializer, nil },
 		NewBootstrap:    func(AccessPool) Bootstrap { return bootstrap },
 		AcquireLock:     func(string) (adminoffline.Lock, error) { acquired = true; return &testAdminLock{}, nil },
@@ -322,7 +280,7 @@ func TestProductionInitializeRejectsTypedNilBootstrap(t *testing.T) {
 		LoadConfig:      func() (config.Config, error) { return cfg, nil },
 		PrepareBaseline: skipProductionBaseline,
 		OpenAccess:      func(context.Context, platformpostgres.Config) (AccessPool, error) { return &testMaintenancePool{}, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return nil },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return nil },
 		NewBootstrap:    func(AccessPool) Bootstrap { return bootstrap },
 	})
 	err := ops.Initialize(t.Context(), adminoffline.InitializeRequest{Format: "json"}, &bytes.Buffer{})

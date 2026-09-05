@@ -14,22 +14,8 @@ import (
 
 const projectDeploymentCandidateKey = "deploy"
 
-// projectDeploymentLifecycle is retained as a source-compatible seam for
-// downstream integrations. The public deploy command no longer invokes it:
-// deploy is a thin composition of the canonical plan, build, and publish
-// capabilities below.
-type projectDeploymentLifecycle interface {
-	Synchronize(context.Context, projectcli.DevOptions, io.Writer, io.Writer) error
-	Publish(context.Context, projectcli.PublishOptions, io.Writer) error
-}
-
 type projectDeployOperations struct {
-	client cliapi.Client
-	// lifecycle is deprecated and intentionally ignored by Deploy. Keep the
-	// field for source compatibility with integrations that construct this
-	// value directly; canonical callers must provide planner, builder, and
-	// publisher.
-	lifecycle   projectDeploymentLifecycle
+	client      cliapi.Client
 	planner     projectcli.DeliveryPlanOperations
 	builder     projectcli.DeliveryBuildOperations
 	publisher   projectcli.PublishOperations

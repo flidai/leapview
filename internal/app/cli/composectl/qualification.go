@@ -59,12 +59,15 @@ type QualificationSiteImageOptions struct {
 }
 
 type QualificationInstalledOptions struct {
-	Bundle                   string
-	EvidenceDir              string
-	PreviousImage            string
-	RequireReleaseTransition bool
-	AllowLocal               bool
-	MinFreeBytes             int64
+	Bundle       string
+	EvidenceDir  string
+	AllowLocal   bool
+	MinFreeBytes int64
+	// MultiNodeProcess enables the opt-in process-level PostgreSQL authority
+	// qualification. It starts a second independent application node against
+	// the same native PostgreSQL topology, then exercises abrupt loss and
+	// rolling recovery.
+	MultiNodeProcess bool
 }
 
 type QualificationCandidate struct {
@@ -103,6 +106,7 @@ type QualificationDeployment struct {
 	ArtifactDigest    string `json:"artifactDigest"`
 	ReleaseDigest     string `json:"releaseDigest"`
 	GenerationID      string `json:"generationId,omitempty"`
+	SnapshotSealID    string `json:"snapshotSealId,omitempty"`
 	PlanID            string `json:"planId,omitempty"`
 	PlanDigest        string `json:"planDigest,omitempty"`
 	Status            string `json:"status"`
@@ -228,8 +232,8 @@ func verifyExactAuthoringCandidate(
 	publication QualificationPublication,
 	deployment QualificationDeployment,
 ) error {
-	if publication.Status != "pending" {
-		return fmt.Errorf("publication status %q is not pending", publication.Status)
+	if publication.Status != "committed" {
+		return fmt.Errorf("publication status %q is not committed", publication.Status)
 	}
 	if deployment.Status != "active" {
 		return fmt.Errorf("generation status %q is not active", deployment.Status)

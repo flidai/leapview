@@ -40,6 +40,13 @@ type Repository interface {
 
 var _ Repository = (manageddata.Repository)(nil)
 
+// CleanupAcker records durable evidence that transport staging for a terminal
+// upload has been reclaimed. Production supplies this through the separately
+// authenticated PostgreSQL maintenance authority.
+type CleanupAcker interface {
+	MarkUploadCleanupComplete(context.Context, manageddata.UploadID) error
+}
+
 type Config struct {
 	Limits            manageddata.Limits
 	UploadTTL         time.Duration
@@ -50,7 +57,8 @@ type Config struct {
 	// It is required whenever a request carries workflow or audit intent. The
 	// historical Repository methods remain available for plain, non-audited
 	// transitions.
-	Transitions manageddata.UploadTransitionPort
+	Transitions  manageddata.UploadTransitionPort
+	CleanupAcker CleanupAcker
 }
 
 type EnsureCollectionRequest struct {

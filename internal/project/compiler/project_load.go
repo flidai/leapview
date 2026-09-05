@@ -11,6 +11,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -19,12 +20,48 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// projectFileReader is the narrow source boundary used by the compiler. The
+// filesystem implementation keeps the legacy LoadProject behaviour, while
+// the map implementation is used by native source admission and never
+// consults the host filesystem.
+type projectFileReader interface {
+	ReadFile(string) ([]byte, error)
+	ExpandIncludes(string, []string) ([]string, error)
+	document.FragmentReader
+}
+
+type osProjectReader struct{ document.OSFragmentReader }
+
+func (osProjectReader) ReadFile(path string) ([]byte, error) {
+	return securefs.ReadCanonicalFile(path)
+}
+func (osProjectReader) ExpandIncludes(baseDir string, includes []string) ([]string, error) {
+	return expandIncludes(baseDir, includes)
+}
+
 func IsProjectConfigFile(path string) bool {
 	return projectConfigFile(path)
 }
 
 func LoadProject(projectPath string) (Project, error) {
-	envelope, err := readEnvelope(projectPath)
+	return loadProject(osProjectReader{}, projectPath)
+}
+
+// LoadProjectFiles loads a project from logical source paths and bytes. Paths
+// are project-relative (slash separated); no host filesystem path is used.
+func LoadProjectFiles(files map[string][]byte, projectFile string) (Project, error) {
+	if projectFile == "" || projectFile == "." {
+		return Project{}, fmt.Errorf("project file %q is not a file path", projectFile)
+	}
+	reader, err := newMapProjectReader(files)
+	if err != nil {
+		return Project{}, err
+	}
+	return loadProject(reader, projectFile)
+}
+
+func loadProject(reader projectFileReader, projectPath string) (Project, error) {
+	envelope, err := readEnvelopeWithReader(reader, projectPath)
 	if err != nil {
 		return Project{}, err
 	}
@@ -74,6 +111,7 @@ func LoadProject(projectPath string) (Project, error) {
 		ResourcePaths:           map[string]string{},
 		ResourceMetadata:        map[string]projectgraph.Metadata{},
 		ResourceSources:         map[string]string{},
+		reader:                  reader,
 	}
 	if envelope.Metadata.ID == "" {
 		return Project{}, resourceError(projectPath, envelopeResourceID(envelope, ""), "metadata.id", "%s metadata.id is required", projectPath)
@@ -104,19 +142,19 @@ func LoadProject(projectPath string) (Project, error) {
 }
 
 func loadConnections(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
+	paths, err := project.reader.ExpandIncludes(project.BaseDir, includes)
 	if err != nil {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelopeWithReader(project.reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "Connection" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Connection", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := project.reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -152,19 +190,19 @@ func loadConnections(project *Project, includes []string) error {
 }
 
 func loadSources(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
+	paths, err := project.reader.ExpandIncludes(project.BaseDir, includes)
 	if err != nil {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelopeWithReader(project.reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "Source" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Source", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := project.reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -201,7 +239,11 @@ func loadSources(project *Project, includes []string) error {
 }
 
 func readEnvelope(path string) (resourceEnvelope, error) {
-	content, err := os.ReadFile(path)
+	return readEnvelopeWithReader(osProjectReader{}, path)
+}
+
+func readEnvelopeWithReader(reader projectFileReader, path string) (resourceEnvelope, error) {
+	content, err := reader.ReadFile(path)
 	if err != nil {
 		return resourceEnvelope{}, err
 	}
@@ -337,7 +379,7 @@ func expandIncludes(baseDir string, includes []string) ([]string, error) {
 			if _, duplicate := seen[canonical]; duplicate {
 				continue
 			}
-			info, err := os.Stat(match)
+			info, err := securefs.StatCanonicalFile(canonical)
 			if err != nil {
 				return nil, fmt.Errorf("include pattern %q match %q: %w", pattern, includeDisplayPath(baseDir, match), err)
 			}

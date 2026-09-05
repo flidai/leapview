@@ -44,7 +44,7 @@ func (service *Administration) recordMutation(
 	binding TargetBinding,
 ) error {
 	// Command producers carry a durable Access intent in the context. The
-	// source repository consumes it inside its own SQLite transaction, so the
+	// source repository consumes it inside its own transaction, so the
 	// legacy best-effort recorder must not emit a second event after commit.
 	if _, ok := AuditIntentFromContext(ctx); ok {
 		return nil

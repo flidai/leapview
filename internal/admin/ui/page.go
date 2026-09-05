@@ -54,6 +54,7 @@ type AdminProfile struct {
 
 type AdminPublication struct {
 	ProjectID, Name, Dashboard, DefaultPage, Status  string
+	Revision                                         int64
 	Origins                                          []string
 	History                                          []string
 	Generation, PublicURL, EmbedURL, IFrameSnippet   string
@@ -258,7 +259,7 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	}
 	if active == "publications" {
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-publication-command", "$adminPublicationCommand = evt.detail; "+uiactions.CommandPostSwitch("evt.detail.action", data.PublicationCommands, "/admin/publications/command", "adminPublicationCommand")),
+			g.Attr("data-on:lv-publication-command", "$adminPublicationCommand = evt.detail; "+uiactions.CommandPostSwitchWithRevision("evt.detail.action", data.PublicationCommands, "/admin/publications/command", `'"' + $adminPublicationCommand.expectedRevision + '"'`, "adminPublicationCommand")),
 		)
 	}
 	if active == "principals" || active == "groups" {
@@ -577,7 +578,7 @@ func adminPublicationSignals(rows []AdminPublication) []uisignals.AdminPublicati
 	for _, row := range rows {
 		out = append(out, uisignals.AdminPublicationSignal{
 			ProjectID: row.ProjectID, Name: row.Name, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage,
-			Status: row.Status, Origins: row.Origins, Generation: uisignals.Optional(row.Generation), PublicURL: row.PublicURL,
+			Status: row.Status, Revision: row.Revision, Origins: row.Origins, Generation: uisignals.Optional(row.Generation), PublicURL: row.PublicURL,
 			EmbedURL: row.EmbedURL, IframeSnippet: row.IFrameSnippet, ConfiguredAt: uisignals.Optional(row.ConfiguredAt),
 			SuspendedAt: uisignals.Optional(row.SuspendedAt), DisabledAt: uisignals.Optional(row.DisabledAt), RotatedAt: uisignals.Optional(row.RotatedAt),
 			History: append([]string(nil), row.History...),

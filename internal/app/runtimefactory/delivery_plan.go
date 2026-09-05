@@ -1,7 +1,6 @@
 package runtimefactory
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,54 +10,44 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	"github.com/flidai/leapview/internal/deployment"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 )
 
-// ExpectedRelations derives the physical relation contract from the compiled
-// semantic models rather than from a hand-maintained table list.
-func ExpectedRelations(artifacts release.CandidateArtifactSet) []candidatecatalog.LogicalRelation {
-	seen := map[string]struct{}{}
-	result := make([]candidatecatalog.LogicalRelation, 0)
-	for _, model := range artifacts.Compiler.Artifact.Models() {
-		if model == nil {
-			continue
-		}
-		for table := range model.Tables {
-			relation := candidatecatalog.LogicalRelation{Schema: "model", Table: table}
-			key := relation.Schema + "\x00" + relation.Table
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			result = append(result, relation)
-		}
-	}
-	return result
-}
-
-// VerifyExpectedRelations is the reuse-mode read-only relation assertion.
-func VerifyExpectedRelations(actual []candidatecatalog.CatalogTable, expected []candidatecatalog.LogicalRelation) error {
-	seen := make(map[string]struct{}, len(actual))
-	for _, relation := range actual {
-		seen[relation.Schema+"\x00"+relation.Table] = struct{}{}
-	}
-	if len(seen) != len(expected) {
-		return fmt.Errorf("reused catalog relation count %d does not match compiled contract %d", len(seen), len(expected))
-	}
-	for _, relation := range expected {
-		if _, ok := seen[relation.Schema+"\x00"+relation.Table]; !ok {
-			return fmt.Errorf("reused catalog is missing compiled relation %s.%s", relation.Schema, relation.Table)
-		}
-	}
-	return nil
-}
-
 func planDigest(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func candidateDataConfigDigest(targetID, environment string, mode release.GenerationDataMode, revision string) string {
+	return planDigest(strings.Join([]string{targetID, environment, string(mode), revision}, "\x00"))
+}
+
+// finalizeCandidatePlanExecution reconciles the hypothetical reuse contract
+// used to evaluate exact physical identity with the execution the persisted
+// plan will actually perform. A rejected reuse decision is a source refresh,
+// so its config digest and operator-facing evidence must not continue to claim
+// the retained snapshot even though that was the inspected starting point.
+func finalizeCandidatePlanExecution(request deployment.DeliveryPlanRequest, candidateID string, artifacts release.CandidateArtifactSet) (deployment.DeliveryPlanRequest, error) {
+	if artifacts.Generation.DataMode != release.GenerationDataReuseBase {
+		return request, nil
+	}
+	decision, found := deployment.ResolveDeliveryReuseDecision(&deployment.DeliveryPlan{Evidence: request.Evidence}, candidateID)
+	if found && decision.Reusable {
+		return request, nil
+	}
+	revision, err := release.CandidateSourcesDataRevision(artifacts.Artifact.SourceDigest, artifacts.Generation.ManagedDataPins)
+	if err != nil {
+		return deployment.DeliveryPlanRequest{}, fmt.Errorf("derive effective source-refresh revision: %w", err)
+	}
+	request.Execution.ConfigDigest = candidateDataConfigDigest(request.TargetID, request.Environment, release.GenerationDataRefreshSources, revision)
+	request.Evidence.Compatibility.SemanticChanges = append(request.Evidence.Compatibility.SemanticChanges, "effective data mode=refresh_sources")
+	if !found || !decision.RetainBase {
+		request.Evidence.PhysicalWorkStatement = "refreshes compiled project relations in a private DuckLake catalog"
+		request.Evidence.ReuseStatement = "does not reuse the retained base because exact execution or physical identities changed"
+	}
+	return request, nil
 }
 
 func finalizeReuseEvidence(evidence *deployment.DeliveryPlanEvidence, decisions []deployment.DeliveryReuseDecision) {
@@ -181,15 +170,28 @@ func materializationIdentity(artifacts release.CandidateArtifactSet) (string, er
 	return planDigest(string(encoded)), nil
 }
 
+// MaterializationIdentity exposes the canonical physical-projection identity
+// to the local candidate runner without exposing that runner's persistence
+// adapters through this package.
+func MaterializationIdentity(artifacts release.CandidateArtifactSet) (string, error) {
+	return materializationIdentity(artifacts)
+}
+
 // CandidateDeliveryPolicy is resolved by the target owner at composition
 // time. Planning must not invent approval, rollback, or retention claims.
 type CandidateDeliveryPolicy struct {
-	RequiresApproval bool
-	RollbackClass    deployment.DeliveryRollbackClass
-	RetentionWindow  string
+	RequiresApproval       bool
+	ApprovalPolicyRevision int64
+	RollbackClass          deployment.DeliveryRollbackClass
+	RetentionWindow        string
 }
 
+const CurrentApprovalPolicyRevision int64 = 1
+
 func (p CandidateDeliveryPolicy) normalized() (CandidateDeliveryPolicy, error) {
+	if p.ApprovalPolicyRevision < 1 {
+		return CandidateDeliveryPolicy{}, fmt.Errorf("approval policy revision must be positive")
+	}
 	if p.RollbackClass == "" {
 		p.RollbackClass = deployment.DeliveryServingSafe
 	}
@@ -209,7 +211,7 @@ func (p CandidateDeliveryPolicy) normalized() (CandidateDeliveryPolicy, error) {
 // compiler evidence retained in CandidateArtifactSet. It intentionally does
 // not inspect a worktree, credentials, or physical storage.
 func CandidatePlanRequest(input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, now time.Time) (deployment.DeliveryPlanRequest, error) {
-	return CandidatePlanRequestWithPolicyAndReuse(input, artifacts, runtimeVersion, CandidateDeliveryPolicy{}, now, nil)
+	return CandidatePlanRequestWithPolicyAndReuse(input, artifacts, runtimeVersion, CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, now, nil)
 }
 
 func CandidatePlanRequestWithPolicy(input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, policy CandidateDeliveryPolicy, now time.Time) (deployment.DeliveryPlanRequest, error) {
@@ -288,7 +290,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 	// ConfigDigest remains a complete plan identity (including data mode and
 	// revision). ContextDigest below deliberately excludes it when deciding
 	// per-relation retention so one table refresh does not invalidate siblings.
-	configDigest := planDigest(strings.Join([]string{input.Candidate.TargetID, input.Candidate.Scope.Environment, string(artifacts.Generation.DataMode), artifacts.Generation.DataRevision}, "\x00"))
+	configDigest := candidateDataConfigDigest(input.Candidate.TargetID, input.Candidate.Scope.Environment, artifacts.Generation.DataMode, artifacts.Generation.DataRevision)
 	// Planning is read-only and therefore has no serving-state/artifact row
 	// yet. Bind qualification to retained compiler/contract evidence only;
 	// materialized serving identities are checked and sealed during Build.
@@ -343,7 +345,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 				return input.Plan.Governance.ExpiresAt
 			}
 			return now.Add(time.Hour)
-		}(), RequiresApproval: policy.RequiresApproval, ObservedInputsAllowed: false},
+		}(), RequiresApproval: policy.RequiresApproval, ApprovalPolicyRevision: policy.ApprovalPolicyRevision, ObservedInputsAllowed: false},
 		Evidence:  evidence,
 		CreatedAt: now, Persist: true,
 	}
@@ -363,9 +365,11 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 				return deployment.DeliveryPlanRequest{}, err
 			}
 			candidateReuse := *reuse
-			if candidateReuse.BaseContextDigest != "" {
-				candidateReuse.ContextDigest = currentContextDigest
-			}
+			// Canonical target composition must compare the current execution
+			// context with the exact active-base context. Do not preserve an
+			// omitted context for compatibility callers; EvaluateDeliveryReuse
+			// rejects an incomplete identity before any relation can be reused.
+			candidateReuse.ContextDigest = currentContextDigest
 			candidateReuse.Deterministic = candidateReuse.Deterministic && artifacts.Generation.Deterministic
 			if candidateReuse.EquivalenceToken == "" {
 				candidateReuse.EquivalenceToken = artifacts.Generation.EquivalenceToken
@@ -414,18 +418,15 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 			}
 			request.Evidence.Reuse = decisions
 			finalizeReuseEvidence(&request.Evidence, decisions)
-			return request, nil
+			return finalizeCandidatePlanExecution(request, input.Candidate.ID, artifacts)
 		} else if operation != deployment.DeliveryOperationCodeChange {
 			decision.Reason = "operation requires explicit full materialization"
 		} else if reuse != nil && len(artifacts.Compiler.RelationExecution) > 0 {
 			candidateReuse := *reuse
-			// Production target composition supplies the active base context.
-			// Preserve an omitted context for legacy candidate-level callers so
-			// EvaluateDeliveryReuse can distinguish that case from the
-			// relation-scoped fail-closed contract below.
-			if candidateReuse.BaseContextDigest != "" {
-				candidateReuse.ContextDigest = currentContextDigest
-			}
+			// Canonical target composition supplies the active base context;
+			// omitted context identities must fail closed rather than selecting
+			// a compatibility path for candidate-level callers.
+			candidateReuse.ContextDigest = currentContextDigest
 			candidateReuse.Deterministic = candidateReuse.Deterministic && artifacts.Generation.Deterministic
 			if candidateReuse.EquivalenceToken == "" {
 				candidateReuse.EquivalenceToken = artifacts.Generation.EquivalenceToken
@@ -462,7 +463,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 				}
 				request.Evidence.Reuse = decisions
 				finalizeReuseEvidence(&request.Evidence, decisions)
-				return request, nil
+				return finalizeCandidatePlanExecution(request, input.Candidate.ID, artifacts)
 			}
 		}
 		if operation != deployment.DeliveryOperationCodeChange {
@@ -472,9 +473,10 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 			decision.Reason = "refresh mode requires private materialization"
 		} else if reuse != nil {
 			candidateReuse := *reuse
-			if candidateReuse.BaseContextDigest != "" {
-				candidateReuse.ContextDigest = currentContextDigest
-			}
+			// Canonical reuse always compares exact current/base execution
+			// context identities. An omitted base context is incomplete and is
+			// rejected by EvaluateDeliveryReuse.
+			candidateReuse.ContextDigest = currentContextDigest
 			candidateReuse.Deterministic = candidateReuse.Deterministic && artifacts.Generation.Deterministic
 			if candidateReuse.EquivalenceToken == "" {
 				candidateReuse.EquivalenceToken = artifacts.Generation.EquivalenceToken
@@ -500,42 +502,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 		request.Evidence.Reuse = []deployment.DeliveryReuseDecision{decision}
 		finalizeReuseEvidence(&request.Evidence, request.Evidence.Reuse)
 	}
-	return request, nil
-}
-
-// QualificationRequestForCandidate declares only checks with independent
-// evidence. candidatecatalog itself performs object probes, snapshot
-// normalization, and read-only attach; this policy adds exact relation
-// closure and compatibility admission. Publication approval and live access
-// authorization remain separate target-owned boundaries.
-func QualificationRequestForCandidate(artifacts release.CandidateArtifactSet) candidatecatalog.QualificationRequest {
-	expected := candidatecatalog.QualificationExpectations{}
-	for _, model := range artifacts.Compiler.Artifact.Models() {
-		if model == nil {
-			continue
-		}
-		for table := range model.Tables {
-			expected.Relations = append(expected.Relations, candidatecatalog.LogicalRelation{Schema: "model", Table: table})
-		}
-	}
-	return candidatecatalog.QualificationRequest{
-		CatalogID:            artifacts.Generation.Identity.GenerationID,
-		Expected:             expected,
-		PolicyDigest:         artifacts.AuthorizationFingerprint,
-		ReviewerPolicyDigest: artifacts.AuthorizationFingerprint,
-		Policy: func(_ context.Context, input candidatecatalog.QualificationInput) error {
-			if err := VerifyExpectedRelations(input.Record.Closure.Tables, input.Expectations.Relations); err != nil {
-				return err
-			}
-			if err := input.Record.Compatibility.Validate(); err != nil {
-				return fmt.Errorf("admitted compatibility evidence: %w", err)
-			}
-			if strings.TrimSpace(input.Record.Closure.Digest) == "" {
-				return fmt.Errorf("normalized closure digest is missing")
-			}
-			return nil
-		},
-	}
+	return finalizeCandidatePlanExecution(request, input.Candidate.ID, artifacts)
 }
 
 func qualificationSteps() []deployment.DeliveryQualificationStep {
@@ -561,54 +528,4 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// PlanCandidate persists one deterministic plan through the canonical
-// lifecycle and returns the exact durable row consumed by Build.
-func PlanCandidate(ctx context.Context, lifecycle *deployment.DeliveryLifecycle, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string) (deployment.DeliveryPlan, error) {
-	return PlanCandidateWithPolicy(ctx, lifecycle, input, artifacts, runtimeVersion, CandidateDeliveryPolicy{})
-}
-
-// PlanCandidateWithPolicy persists a plan after target-owned policy has been
-// resolved. The policy is part of the immutable plan digest and cannot be
-// changed by a later publish request.
-func PlanCandidateWithPolicy(ctx context.Context, lifecycle *deployment.DeliveryLifecycle, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, policy CandidateDeliveryPolicy) (deployment.DeliveryPlan, error) {
-	if lifecycle == nil {
-		return deployment.DeliveryPlan{}, fmt.Errorf("delivery lifecycle is unavailable")
-	}
-	request, err := CandidatePlanRequestWithPolicy(input, artifacts, runtimeVersion, policy, time.Now().UTC())
-	if err != nil {
-		return deployment.DeliveryPlan{}, err
-	}
-	result, err := lifecycle.Plan(ctx, request)
-	if err != nil {
-		return deployment.DeliveryPlan{}, err
-	}
-	return result.Plan, nil
-}
-
-// PreviewCandidatePlanWithPolicy computes the same canonical plan evidence as
-// PlanCandidateWithPolicy without persisting. Canonical delivery uses this
-// when the coordinator owns the single durable CreatePlan write and when
-// Build rechecks inspected evidence against that immutable row.
-func PreviewCandidatePlanWithPolicy(ctx context.Context, lifecycle *deployment.DeliveryLifecycle, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, policy CandidateDeliveryPolicy) (deployment.DeliveryPlan, error) {
-	return PreviewCandidatePlanWithPolicyAndReuse(ctx, lifecycle, input, artifacts, runtimeVersion, policy, nil)
-}
-
-// PreviewCandidatePlanWithPolicyAndReuse is the non-persisting counterpart
-// used by the canonical coordinator after resolving active sealed identity.
-func PreviewCandidatePlanWithPolicyAndReuse(ctx context.Context, lifecycle *deployment.DeliveryLifecycle, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, policy CandidateDeliveryPolicy, reuse *deployment.DeliveryReuseInput) (deployment.DeliveryPlan, error) {
-	if lifecycle == nil {
-		return deployment.DeliveryPlan{}, fmt.Errorf("delivery lifecycle is unavailable")
-	}
-	request, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, runtimeVersion, policy, time.Now().UTC(), reuse)
-	if err != nil {
-		return deployment.DeliveryPlan{}, err
-	}
-	request.Persist = false
-	result, err := lifecycle.Plan(ctx, request)
-	if err != nil {
-		return deployment.DeliveryPlan{}, err
-	}
-	return result.Plan, nil
 }

@@ -74,7 +74,7 @@ func TestDemoSharedLoginIsDashboardOnly(t *testing.T) {
 	}
 }
 
-func TestDemoDeploymentIsAutomaticAndDigestPinned(t *testing.T) {
+func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 	root := filepath.Join("..", "..")
 	workflow := read(t, filepath.Join(root, ".github", "workflows", "demo-deploy.yml"))
 	for _, required := range []string{
@@ -85,10 +85,9 @@ func TestDemoDeploymentIsAutomaticAndDigestPinned(t *testing.T) {
 		"github.event.workflow_run.head_branch == 'main'",
 		"environment: leapview-demo",
 		"id-token: write",
-		"packages: read",
 		"Infisical/secrets-action@",
 		"scripts/deploy_demo.sh",
-		"ghcr.io/flidai/leapview@sha256:",
+		"Publish the canonical Olist showcase",
 	} {
 		require.Contains(t, workflow, required)
 	}
@@ -99,16 +98,21 @@ func TestDemoDeploymentIsAutomaticAndDigestPinned(t *testing.T) {
 		"bootstrapolist",
 		"cd -P",
 		"data sync",
-		"dev --once",
+		"plan",
+		"build",
 		"publish",
-		"approveDeployment",
-		"activateDeployment",
-		"getDeployment",
+		"getDeliveryCandidateStatus",
+		"getCapabilities",
+		"native-postgres",
+		"buildRevision",
+		"requestDeliveryPublicationApproval",
+		"approveDeliveryPublicationApproval",
+		"getDeliveryPublicationApproval",
+		"getDeliveryPublicationEvidence",
+		"getDeliveryGenerationStatus",
 		"getProject",
 		"project:leapview-showcase",
-		"leapviewctl upgrade",
-		"StrictHostKeyChecking=yes",
-		"ssh-keygen -lf",
+		"go build -o",
 		"grant_type=client_credentials",
 		"DEMO_PUBLISHER_CLIENT_ID",
 		"DEMO_RELEASE_CLIENT_ID",
@@ -118,10 +122,18 @@ func TestDemoDeploymentIsAutomaticAndDigestPinned(t *testing.T) {
 		require.Contains(t, script, required)
 	}
 	for _, forbidden := range []string{
+		"demo_image",
+		"leapviewctl upgrade",
+		"stricthostkeychecking",
+		"ssh-keygen",
+		"ssh-host-key.sha256",
 		"--token dev",
-		"DEMO_PUBLISHER_TOKEN",
-		"DEMO_RELEASE_TOKEN",
+		"demo_publisher_token",
+		"demo_release_token",
 		"quack",
+		"getdeployment",
+		"approvedeployment",
+		"activatedeployment",
 	} {
 		require.NotContains(t, strings.ToLower(script), forbidden)
 	}
@@ -130,6 +142,9 @@ func TestDemoDeploymentIsAutomaticAndDigestPinned(t *testing.T) {
 	require.NotEqual(t, -1, configGeneration, "demo deployment must generate ignored config sources")
 	require.NotEqual(t, -1, olistBootstrap, "demo deployment must bootstrap Olist")
 	require.Less(t, configGeneration, olistBootstrap, "config generation must precede Olist compilation")
+	if _, err := os.Stat(filepath.Join(root, "deploy", "demo", "ssh-host-key.sha256")); !os.IsNotExist(err) {
+		t.Fatalf("stale demo SSH identity remains tracked: %v", err)
+	}
 }
 
 func TestDemoHumanCredentialsStayOutOfDeploymentAutomation(t *testing.T) {
@@ -152,39 +167,18 @@ func TestDemoHumanCredentialsStayOutOfDeploymentAutomation(t *testing.T) {
 	}
 }
 
-func TestDemoDeploymentRejectsMutableImagesBeforeChangingInfrastructure(t *testing.T) {
+func TestDemoDeploymentRequiresSourceRevisionBeforeChangingInfrastructure(t *testing.T) {
 	root := filepath.Join("..", "..")
 	command := exec.Command("bash", filepath.Join(root, "scripts", "deploy_demo.sh"))
 	command.Env = append(os.Environ(),
-		"DEMO_IMAGE=ghcr.io/flidai/leapview:latest",
-		"DEMO_HOST=192.0.2.1",
-		"DEMO_SOURCE_REVISION=0123456789012345678901234567890123456789",
 		"DEMO_PUBLISHER_CLIENT_ID=publisher-client",
 		"DEMO_PUBLISHER_CLIENT_SECRET=publisher-secret",
 		"DEMO_RELEASE_CLIENT_ID=release-client",
 		"DEMO_RELEASE_CLIENT_SECRET=release-secret",
-		"DEMO_FIREWALL_ID=123",
-		"HCLOUD_TOKEN=hcloud-test-token",
-		"DEMO_RUNNER_IP=192.0.2.2",
 	)
 	output, err := command.CombinedOutput()
 	require.Error(t, err)
-	require.Contains(t, string(output), "immutable sha256 digest")
-}
-
-func TestHetznerFirewallWaitsForEveryReturnedAction(t *testing.T) {
-	root := filepath.Join("..", "..")
-	helper := filepath.Join(root, "scripts", "lib", "hcloud_actions.sh")
-	command := exec.Command("bash", "-c", `
-set -euo pipefail
-source "$1"
-wait_hcloud_action() { printf '%s\n' "$1"; }
-wait_hcloud_actions '{"actions":[{"id":101,"status":"success"},{"id":102,"status":"running"}]}'
-`, "test-hcloud-actions", helper)
-
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, string(output))
-	require.Equal(t, "101\n102\n", string(output))
+	require.Contains(t, string(output), "DEMO_SOURCE_REVISION")
 }
 
 func read(t *testing.T, path string) string {

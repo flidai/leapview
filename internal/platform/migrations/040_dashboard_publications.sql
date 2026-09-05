@@ -12,6 +12,7 @@ CREATE TABLE dashboard_publications (
   configuration_digest TEXT NOT NULL DEFAULT '',
   allowed_origins_json TEXT NOT NULL DEFAULT '[]',
   dependency_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
   configured INTEGER NOT NULL DEFAULT 0 CHECK (configured IN (0, 1)),
   active_serving_state_id TEXT REFERENCES serving_states(id) ON DELETE SET NULL,
   suspended_at TEXT,

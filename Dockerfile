@@ -84,23 +84,34 @@ COPY --from=sourcegen /src/internal/release/api/gen ./internal/release/api/gen
 COPY --from=sourcegen /src/internal/app/cli/gen ./internal/app/cli/gen
 COPY --from=sourcegen /src/internal/app/config/config_gen.go ./internal/app/config/config_gen.go
 COPY --from=sourcegen /src/internal/app/config/spec/names_gen.go ./internal/app/config/spec/names_gen.go
-COPY --from=sourcegen /src/internal/access/internal/db ./internal/access/internal/db
-COPY --from=sourcegen /src/internal/admin/internal/db ./internal/admin/internal/db
-COPY --from=sourcegen /src/internal/agent/internal/db ./internal/agent/internal/db
-COPY --from=sourcegen /src/internal/analytics/internal/db ./internal/analytics/internal/db
-COPY --from=sourcegen /src/internal/dashboard/internal/db ./internal/dashboard/internal/db
-COPY --from=sourcegen /src/internal/deployment/internal/db ./internal/deployment/internal/db
-COPY --from=sourcegen /src/internal/manageddata/internal/db ./internal/manageddata/internal/db
-COPY --from=sourcegen /src/internal/refresh/internal/db ./internal/refresh/internal/db
-COPY --from=sourcegen /src/internal/release/internal/db ./internal/release/internal/db
-COPY --from=sourcegen /src/internal/servingstate/internal/db ./internal/servingstate/internal/db
-COPY --from=sourcegen /src/internal/project/internal/db ./internal/project/internal/db
-COPY --from=sourcegen /src/internal/platform/db/db.go ./internal/platform/db/db.go
-COPY --from=sourcegen /src/internal/platform/db/models.go ./internal/platform/db/models.go
-COPY --from=sourcegen /src/internal/platform/db/*.sql.go ./internal/platform/db/
-COPY --from=sourcegen /src/internal/platform/http/cursorsigning/sqlite/cursordb ./internal/platform/http/cursorsigning/sqlite/cursordb
-COPY --from=sourcegen /src/internal/platform/http/idempotency/sqlite/idempotencydb ./internal/platform/http/idempotency/sqlite/idempotencydb
-COPY --from=sourcegen /src/internal/platform/jobs/sqlite/jobdb ./internal/platform/jobs/sqlite/jobdb
+# Every PostgreSQL sqlc package is generated in sourcegen and excluded from the
+# build context, so copy each package into the build stage explicitly.
+COPY --from=sourcegen /src/internal/project/postgres/internal/db ./internal/project/postgres/internal/db
+COPY --from=sourcegen /src/internal/access/postgres/internal/db ./internal/access/postgres/internal/db
+COPY --from=sourcegen /src/internal/admin/product/postgres/internal/db ./internal/admin/product/postgres/internal/db
+COPY --from=sourcegen /src/internal/agent/postgres/internal/db ./internal/agent/postgres/internal/db
+COPY --from=sourcegen /src/internal/dashboard/session/postgres/internal/db ./internal/dashboard/session/postgres/internal/db
+COPY --from=sourcegen /src/internal/dashboard/usage/postgres/internal/db ./internal/dashboard/usage/postgres/internal/db
+COPY --from=sourcegen /src/internal/dashboard/appearance/postgres/internal/db ./internal/dashboard/appearance/postgres/internal/db
+COPY --from=sourcegen /src/internal/dashboard/authoring/postgres/internal/db ./internal/dashboard/authoring/postgres/internal/db
+COPY --from=sourcegen /src/internal/dashboard/publication/postgres/internal/db ./internal/dashboard/publication/postgres/internal/db
+COPY --from=sourcegen /src/internal/platform/operation/postgres/internal/db ./internal/platform/operation/postgres/internal/db
+COPY --from=sourcegen /src/internal/platform/postgres/internal/db ./internal/platform/postgres/internal/db
+COPY --from=sourcegen /src/internal/platform/bootstrap/postgres/internal/db ./internal/platform/bootstrap/postgres/internal/db
+COPY --from=sourcegen /src/internal/platform/http/cursorsigning/postgres/internal/db ./internal/platform/http/cursorsigning/postgres/internal/db
+COPY --from=sourcegen /src/internal/manageddata/postgres/internal/db ./internal/manageddata/postgres/internal/db
+COPY --from=sourcegen /src/internal/servingstate/postgres/internal/db ./internal/servingstate/postgres/internal/db
+COPY --from=sourcegen /src/internal/platform/events/postgres/internal/db ./internal/platform/events/postgres/internal/db
+COPY --from=sourcegen /src/internal/platform/jobs/postgres/internal/db ./internal/platform/jobs/postgres/internal/db
+COPY --from=sourcegen /src/internal/deployment/postgres/internal/db ./internal/deployment/postgres/internal/db
+COPY --from=sourcegen /src/internal/lineage/postgres/internal/db ./internal/lineage/postgres/internal/db
+COPY --from=sourcegen /src/internal/refresh/postgres/internal/db ./internal/refresh/postgres/internal/db
+COPY --from=sourcegen /src/internal/analytics/physicalpool/postgres/internal/db ./internal/analytics/physicalpool/postgres/internal/db
+COPY --from=sourcegen /src/internal/analytics/connectionbinding/postgres/internal/db ./internal/analytics/connectionbinding/postgres/internal/db
+COPY --from=sourcegen /src/internal/analytics/ducklake/postgres/internal/db ./internal/analytics/ducklake/postgres/internal/db
+COPY --from=sourcegen /src/internal/analytics/queryaudit/postgres/internal/db ./internal/analytics/queryaudit/postgres/internal/db
+COPY --from=sourcegen /src/internal/release/postgres/internal/db ./internal/release/postgres/internal/db
+COPY --from=sourcegen /src/internal/recoveryset/postgres/internal/db ./internal/recoveryset/postgres/internal/db
 COPY --from=sourcegen /src/internal/access/ui/signals/models.gen.go ./internal/access/ui/signals/models.gen.go
 COPY --from=sourcegen /src/internal/admin/ui/signals/models.gen.go ./internal/admin/ui/signals/models.gen.go
 COPY --from=sourcegen /src/internal/agent/ui/signals/models.gen.go ./internal/agent/ui/signals/models.gen.go
@@ -171,7 +182,6 @@ COPY --from=build /out/leapviewctl /usr/local/share/leapview/deployment/leapview
 COPY --from=extension-supply /out/extension-supply /usr/local/share/leapview/extensions
 COPY deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/deployment.env.example deploy/compose/leapview.env.example deploy/compose/README.md deploy/compose/QUALIFICATION.md /usr/local/share/leapview/deployment/
 COPY deploy/compose/qualification /usr/local/share/leapview/deployment/qualification
-COPY internal/platform/compatibility/release-transition-policy.json /usr/local/share/leapview/deployment/release-transition-policy.json
 COPY deploy/host/files/ /usr/local/share/leapview/deployment/
 COPY --from=web /src/static ./static
 COPY --from=build /src/schemas ./schemas
@@ -180,8 +190,7 @@ COPY dashboards ./dashboards
 COPY evaluation ./evaluation
 
 RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
-      /usr/local/share/leapview/deployment/leapviewctl-wrapper \
-      /usr/local/share/leapview/deployment/leapview-backup-hook && \
+      /usr/local/share/leapview/deployment/leapviewctl-wrapper && \
     find /usr/local/share/leapview/extensions -type d -exec chmod 0555 {} + && \
     find /usr/local/share/leapview/extensions -type f -exec chmod 0444 {} + && \
     chmod 0400 /usr/local/share/leapview/deployment/compose.yaml \
@@ -191,13 +200,7 @@ RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
       /usr/local/share/leapview/deployment/leapview.env.example \
       /usr/local/share/leapview/deployment/README.md \
       /usr/local/share/leapview/deployment/QUALIFICATION.md \
-      /usr/local/share/leapview/deployment/qualification/* \
-      /usr/local/share/leapview/deployment/leapview-backup.service \
-      /usr/local/share/leapview/deployment/leapview-backup.timer \
-      /usr/local/share/leapview/deployment/leapview-backup-maintenance.service \
-      /usr/local/share/leapview/deployment/leapview-backup-maintenance.timer \
-      /usr/local/share/leapview/deployment/leapview-recovery-qualification.service \
-      /usr/local/share/leapview/deployment/leapview-recovery-qualification.timer && \
+      /usr/local/share/leapview/deployment/qualification/* && \
     mkdir -p /var/lib/leapview && \
     chown -R leapview:leapview /var/lib/leapview /app
 

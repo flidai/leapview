@@ -91,6 +91,11 @@ type Input struct {
 	Bounds            Bounds
 	Sources           []SourceInput
 	Models            []ModelInput
+	// RelationNamespace binds model checks to an authority-derived DuckLake
+	// schema. Empty retains the historical model schema for callers which do
+	// not have a candidate namespace. Native qualification must provide the
+	// exact candidate namespace before evaluating checks.
+	RelationNamespace string
 	Query             Query
 	PreflightQueries  int
 	PreflightRows     int64
@@ -137,6 +142,9 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 	if strings.TrimSpace(input.CandidateID) == "" || strings.TrimSpace(input.SourceDigest) == "" || strings.TrimSpace(input.BindingGeneration) == "" || strings.TrimSpace(input.RuntimeVersion) == "" || strings.TrimSpace(input.DuckDBVersion) == "" || input.Query == nil {
 		return release.GateEvidence{}, fmt.Errorf("%w: candidate identity, source/runtime evidence, and query capability are required", ErrGateUnavailable)
 	}
+	if input.RelationNamespace != "" && !canonicalRelationNamespace(input.RelationNamespace) {
+		return release.GateEvidence{}, fmt.Errorf("%w: relation namespace is not canonical", ErrGateUnavailable)
+	}
 	if input.Now.IsZero() {
 		input.Now = time.Now().UTC()
 	}
@@ -153,7 +161,7 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 		err := gateError("preflight", outcome, ErrGateBounds, nil)
 		return finishFailure(evidence, nil, err)
 	}
-	remaining := time.Duration(bounds.MaxMillis-input.PreflightMillis) * time.Millisecond
+	remaining := durationFromMillis(bounds.MaxMillis - input.PreflightMillis)
 	ctx, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
 	evidence := release.GateEvidence{Version: evidenceVersion, CandidateID: input.CandidateID, SourceDigest: input.SourceDigest, BindingGeneration: input.BindingGeneration, RuntimeVersion: input.RuntimeVersion, DuckDBVersion: input.DuckDBVersion, EvaluatedAt: input.Now, Bounds: release.GateBounds{MaxRows: bounds.MaxRows, MaxQueries: bounds.MaxQueries, MaxMillis: bounds.MaxMillis}}
@@ -237,7 +245,7 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 			}
 		}
 		for _, check := range checks {
-			result, err := evaluateCheck(ctx, state, model.ID, model.Model, check, modelRefs)
+			result, err := evaluateCheck(ctx, state, model.ID, model.Model, check, modelRefs, input.RelationNamespace)
 			evidence.Checks = append(evidence.Checks, result)
 			if err != nil {
 				return finishFailure(evidence, state, err)
@@ -290,8 +298,12 @@ func finish(evidence release.GateEvidence, state *budget) (release.GateEvidence,
 	if state != nil {
 		evidence.Queries = state.Queries
 		evidence.ObservedRows = state.Rows
-		elapsed := state.PreflightMillis + time.Since(state.Started).Milliseconds()
-		if elapsed > state.Bounds.MaxMillis {
+		runtimeMillis := time.Since(state.Started).Milliseconds()
+		if runtimeMillis < 0 {
+			runtimeMillis = 0
+		}
+		elapsed, ok := addNonNegativeInt64(state.PreflightMillis, runtimeMillis)
+		if !ok || elapsed >= state.Bounds.MaxMillis {
 			evidence.DurationExceeded = true
 			elapsed = state.Bounds.MaxMillis
 		}
@@ -524,7 +536,7 @@ func evaluateFreshness(ctx context.Context, now time.Time, state *budget, source
 	}{Observed: observed.UTC(), AgeMillis: age.Milliseconds(), Revision: source.Revision}), nil
 }
 
-func evaluateCheck(ctx context.Context, state *budget, modelID string, table semanticmodel.Table, check semanticmodel.ModelCheck, modelRefs map[string]semanticmodel.Table) (result release.GateCheckEvidence, retErr error) {
+func evaluateCheck(ctx context.Context, state *budget, modelID string, table semanticmodel.Table, check semanticmodel.ModelCheck, modelRefs map[string]semanticmodel.Table, relationNamespace string) (result release.GateCheckEvidence, retErr error) {
 	identity := checkIdentity(modelID, check)
 	result = release.GateCheckEvidence{Identity: identity, Kind: check.Type, ResourceID: modelID, Severity: severity(check.Severity)}
 	queriesBefore := state.Queries
@@ -534,7 +546,7 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 			result.Outcome = outcomeOf(retErr)
 		}
 	}()
-	relation := modelRelation(table)
+	relation := modelRelation(table, relationNamespace)
 	var rows semanticquery.Rows
 	var err error
 	switch check.Type {
@@ -578,7 +590,7 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 		if !validField(toField) {
 			return result, gateError(identity, release.GateUnavailable, ErrGateUnavailable, nil)
 		}
-		where := fmt.Sprintf("child.%s IS NOT NULL AND NOT EXISTS (SELECT 1 FROM %s AS parent WHERE parent.%s = child.%s)", quoteIdent(check.Field), modelRelation(target), quoteIdent(toField), quoteIdent(check.Field))
+		where := fmt.Sprintf("child.%s IS NOT NULL AND NOT EXISTS (SELECT 1 FROM %s AS parent WHERE parent.%s = child.%s)", quoteIdent(check.Field), modelRelation(target, relationNamespace), quoteIdent(toField), quoteIdent(check.Field))
 		rows, err = runQualified(ctx, state, relation+" AS child", "1", where, nil)
 	case "row_count":
 		limit := check.Maximum
@@ -599,15 +611,21 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 			// itself returns one scalar row. Replace that scalar in the shared
 			// row budget with the bounded count so aggregate evidence accounts
 			// for the same rows as this check without double-counting it.
-			state.Rows += count - int64(len(rows))
-			if state.Rows < 0 {
-				state.Rows = 0
-			}
-			if state.Rows > state.Bounds.MaxRows {
+			scalarRows := int64(len(rows))
+			if state.Rows < scalarRows {
 				state.RowsExceeded = true
 				result.Outcome = release.GateUnavailable
 				return result, gateError(identity, release.GateUnavailable, ErrGateBounds, nil)
 			}
+			state.Rows -= scalarRows
+			totalRows, ok := addNonNegativeInt64(state.Rows, count)
+			if !ok || totalRows > state.Bounds.MaxRows {
+				state.Rows = state.Bounds.MaxRows
+				state.RowsExceeded = true
+				result.Outcome = release.GateUnavailable
+				return result, gateError(identity, release.GateUnavailable, ErrGateBounds, nil)
+			}
+			state.Rows = totalRows
 			result.ObservedRows = count
 			result.ObservationDigest = digest(rows)
 			if check.Minimum != nil && count < *check.Minimum {
@@ -693,12 +711,29 @@ func runPlan(ctx context.Context, state *budget, column, sql string, args []any)
 	if err != nil {
 		return nil, err
 	}
-	state.Rows += int64(len(rows))
-	if state.Rows > state.Bounds.MaxRows {
+	totalRows, ok := addNonNegativeInt64(state.Rows, int64(len(rows)))
+	if !ok || totalRows > state.Bounds.MaxRows {
+		state.Rows = state.Bounds.MaxRows
 		state.RowsExceeded = true
 		return nil, ErrGateBounds
 	}
+	state.Rows = totalRows
 	return rows, nil
+}
+
+func addNonNegativeInt64(total, delta int64) (int64, bool) {
+	if total < 0 || delta < 0 || delta > int64(1<<63-1)-total {
+		return int64(1<<63 - 1), false
+	}
+	return total + delta, true
+}
+
+func durationFromMillis(milliseconds int64) time.Duration {
+	const maxDurationMillis = int64(1<<63-1) / int64(time.Millisecond)
+	if milliseconds >= maxDurationMillis {
+		return time.Duration(1<<63 - 1)
+	}
+	return time.Duration(milliseconds) * time.Millisecond
 }
 
 func currentQuery(ctx context.Context, state *budget, column, sql string, args []any) (semanticquery.Rows, error) {
@@ -785,13 +820,20 @@ func checkIdentity(modelID string, check semanticmodel.ModelCheck) string {
 	fields := canonicalFields(check.Fields)
 	values := append([]string(nil), check.Values...)
 	sort.Strings(values)
-	return strings.Join([]string{modelID, check.Type, check.Field, strings.Join(fields, ","), check.To, strings.Join(values, "\x1f"), ptrInt(check.Minimum), ptrInt(check.Maximum)}, "\x00")
-}
-func ptrInt(value *int64) string {
-	if value == nil {
-		return ""
-	}
-	return strconv.FormatInt(*value, 10)
+	identity := digest(struct {
+		ModelID string   `json:"modelId"`
+		Type    string   `json:"type"`
+		Field   string   `json:"field"`
+		Fields  []string `json:"fields"`
+		To      string   `json:"to"`
+		Values  []string `json:"values"`
+		Minimum *int64   `json:"minimum"`
+		Maximum *int64   `json:"maximum"`
+	}{
+		ModelID: modelID, Type: check.Type, Field: check.Field, Fields: fields,
+		To: check.To, Values: values, Minimum: check.Minimum, Maximum: check.Maximum,
+	})
+	return "check:" + strings.TrimPrefix(identity, "sha256:")
 }
 func minInt64(a, b int64) int64 {
 	if a < b {
@@ -839,11 +881,33 @@ func normalizeCompilerRelation(value string) (string, bool) {
 	return strings.Join(quoted, "."), true
 }
 func quoteIdent(value string) string { return `"` + strings.ReplaceAll(value, `"`, `""`) + `"` }
-func modelRelation(table semanticmodel.Table) string {
-	return modelRelationName(strings.TrimSpace(table.ModelName))
+func modelRelation(table semanticmodel.Table, relationNamespace string) string {
+	return modelRelationName(strings.TrimSpace(table.ModelName), relationNamespace)
 }
-func modelRelationName(id string) string {
-	return `"model".` + quoteIdent(id)
+func modelRelationName(id string, relationNamespace string) string {
+	namespace := strings.TrimSpace(relationNamespace)
+	if namespace == "" {
+		namespace = "model"
+	}
+	return quoteIdent(namespace) + "." + quoteIdent(id)
+}
+
+func canonicalRelationNamespace(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || value != strings.ToLower(value) || len(value) > 63 {
+		return false
+	}
+	for index, r := range value {
+		if index == 0 {
+			if !(r == '_' || r >= 'a' && r <= 'z') {
+				return false
+			}
+			continue
+		}
+		if !(r == '_' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 func splitReference(value string) (string, string, bool) {
 	parts := strings.Split(strings.TrimSpace(value), ".")

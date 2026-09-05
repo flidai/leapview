@@ -24,6 +24,7 @@ model DashboardPublicationResponse {
   iframeSnippet: string;
   createdAt: utcDateTime;
   updatedAt: utcDateTime;
+  revision: int64;
   configuredAt?: utcDateTime;
   disabledAt?: utcDateTime;
   suspendedAt?: utcDateTime;
@@ -51,6 +52,9 @@ model DashboardPublicationNotFoundFailure {}
 @apigen.failureDefinition(#{ kind: "conflict", statusCode: 409, code: "PUBLICATION_NOT_CONFIGURED", publicDetail: "Dashboard publication is not present in the active configuration." })
 model DashboardPublicationNotConfiguredFailure {}
 
+@apigen.failureDefinition(#{ kind: "precondition", statusCode: 412, code: "PUBLICATION_PRECONDITION_FAILED", publicDetail: "Dashboard publication changed before this command was applied." })
+model DashboardPublicationPreconditionFailure {}
+
 @tag("Publications")
 @doc("Project-wide dashboard publication discovery and lifecycle commands. Publication mutations complete synchronously and return the updated publication; they do not create durable asynchronous executions.")
 @route("/projects/{project}/dashboard-publications")
@@ -72,10 +76,12 @@ interface DashboardPublications {
   @summary("Suspend a dashboard publication immediately")
   @route("/{publication}/suspend")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.ui("dashboard.publication.suspend")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
+  @apigen.failsWith(DashboardPublicationPreconditionFailure)
   @apigen.command(#{
     auditAction: "dashboard_publication.suspended",
     failures: #[
@@ -83,15 +89,17 @@ interface DashboardPublications {
       #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Dashboard authorization could not be evaluated." },
     ],
   })
-  suspendDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
+  suspendDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @header("If-Match") expectedRevision: string): OkJson<DashboardPublicationResponse> | CommonErrors;
 
   @summary("Resume a configured dashboard publication")
   @route("/{publication}/resume")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.ui("dashboard.publication.resume")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
+  @apigen.failsWith(DashboardPublicationPreconditionFailure)
   @apigen.command(#{
     auditAction: "dashboard_publication.resumed",
     failures: #[
@@ -99,21 +107,23 @@ interface DashboardPublications {
       #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Dashboard authorization could not be evaluated." },
     ],
   })
-  resumeDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
+  resumeDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @header("If-Match") expectedRevision: string): OkJson<DashboardPublicationResponse> | CommonErrors;
 
   @summary("Rotate a dashboard publication public ID")
   @route("/{publication}/rotate")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.ui("dashboard.publication.rotate")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
+  @apigen.failsWith(DashboardPublicationPreconditionFailure)
   @apigen.command(#{
-    auditAction: "dashboard_publication.public_id_rotated",
+    auditAction: "dashboard_publication.rotated",
     failures: #[
       #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
       #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Dashboard authorization could not be evaluated." },
     ],
   })
-  rotateDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
+  rotateDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @header("If-Match") expectedRevision: string): OkJson<DashboardPublicationResponse> | CommonErrors;
 }

@@ -1,42 +1,33 @@
 import { chromium } from '@playwright/test'
-import { existsSync, realpathSync } from 'node:fs'
-import { mkdir, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 
 const root = process.cwd()
 const captureRoot = join(root, '.tmp', 'site-product-capture')
 const home = join(captureRoot, 'home')
-const binary = join(captureRoot, 'leapview')
-const extensionSupplyPath = join(captureRoot, 'extension-supply.json')
-const olistData = realpathSync(join(root, '.data', 'olist'))
 const dashboardPath = '/dashboards/dashboard:visual-showcase/pages/overview'
 const viewport = { width: 1440, height: 900 }
 
 await removeCaptureRoot()
-await mkdir(join(home, 'managed-data'), { recursive: true })
-await mkdir(join(home, 'duckdb'), { recursive: true })
-await mkdir(join(home, 'ducklake'), { recursive: true })
-
-await run(['go', 'run', './internal/app/tools/ducklakeprepare', '--supply-out', extensionSupplyPath])
-const extensionSupplySHA256 = (await Bun.file(`${extensionSupplyPath}.sha256`).text()).trim().split(/\s+/)[0]
-if (!extensionSupplySHA256) throw new Error('DuckDB extension supply preparation did not return a digest')
-await run(['go', 'build', '-tags=duckdb_arrow', '-o', binary, './cmd/leapview'])
+await run(['task', 'postgres:dev:up'])
 
 const port = await availablePort()
 const origin = `http://127.0.0.1:${port}`
-const server = Bun.spawn([binary], {
+await rm(join(root, '.tmp', 'dev-server.port'), { force: true })
+await rm(join(root, '.tmp', 'dev-server.pid'), { force: true })
+const server = Bun.spawn(['./scripts/dev-server.sh', 'start', 'dashboards/leapview.yaml', 'olist', '.data/olist'], {
   cwd: root,
   env: {
     ...process.env,
+    PORT: String(port),
     LEAPVIEW_ADDR: `127.0.0.1:${port}`,
     LEAPVIEW_DEV_AUTH_BYPASS: 'true',
+    LEAPVIEW_DEV_RESTART: '1',
+    LEAPVIEW_ENVIRONMENT: 'dev',
+    LEAPVIEW_PRODUCTION: 'false',
     LEAPVIEW_HOME: home,
-    LEAPVIEW_MANAGED_DATA_DIR: join(home, 'managed-data'),
-    LEAPVIEW_DUCKDB_DIR: join(home, 'duckdb'),
-    LEAPVIEW_DUCKLAKE_CATALOG_PATH: join(home, 'ducklake', 'catalog.sqlite'),
-    LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH: extensionSupplyPath,
-    LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_SHA256: extensionSupplySHA256,
   },
   stdout: 'pipe',
   stderr: 'pipe',
@@ -46,45 +37,7 @@ const serverStderr = new Response(server.stderr).text()
 let captureFailure: unknown
 
 try {
-  await waitForServer(`${origin}/`, server)
-  const syncOutput = await run([
-    binary,
-    'data',
-    'sync',
-    '--project',
-    'dashboards/leapview.yaml',
-    '--connection',
-    'olist',
-    '--from',
-    olistData,
-    '--target',
-    origin,
-    '--token',
-    'dev',
-  ])
-  const revision = syncOutput.match(/^staged (sha256:[0-9a-f]{64})$/m)?.[1]
-  if (!revision) throw new Error(`managed data sync did not return a revision:\n${syncOutput}`)
-
-  const devOutput = await run([
-    binary,
-    'dev',
-    '--once',
-    '--project',
-    'dashboards/leapview.yaml',
-    '--target',
-    origin,
-    '--token',
-    'dev',
-  ])
-  const candidateID = devOutput.match(/^candidate (cand_[A-Za-z0-9_-]+)\b/m)?.[1]
-  if (!candidateID) throw new Error(`development sync did not return a candidate ID:\n${devOutput}`)
-  await run([
-    binary,
-    'publish',
-    candidateID,
-    '--token',
-    'dev',
-  ])
+  await waitForServer(`${origin}/`, server, port)
 
   const browser = await chromium.launch()
   try {
@@ -139,7 +92,8 @@ try {
   captureFailure = error
   throw error
 } finally {
-  server.kill()
+  await run(['./scripts/dev-server.sh', 'stop']).catch(() => undefined)
+  if (server.exitCode === null) server.kill()
   await server.exited
   const output = `${await serverStdout}\n${await serverStderr}`.trim()
   if ((captureFailure || (server.exitCode && server.exitCode !== 143)) && output) {
@@ -166,12 +120,15 @@ async function removeCaptureRoot(): Promise<void> {
   await rm(captureRoot, { recursive: true, force: true })
 }
 
-async function waitForServer(url: string, process: Bun.Subprocess): Promise<void> {
+async function waitForServer(url: string, process: Bun.Subprocess, port: number): Promise<void> {
   for (let attempt = 0; attempt < 300; attempt++) {
     if (process.exitCode !== null) throw new Error(`capture server exited with code ${process.exitCode}`)
     try {
-      const response = await fetch(url)
-      if (response.ok) return
+      const readyPort = (await readFile(join(root, '.tmp', 'dev-server.port'), 'utf8')).trim()
+      if (readyPort === String(port)) {
+        const response = await fetch(url)
+        if (response.ok) return
+      }
     } catch {
       // The server is still starting.
     }

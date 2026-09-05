@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -100,6 +101,7 @@ func TestCapabilityAPIClientPreservesTransportTargetAndCanonicalOrigin(t *testin
 				"apiVersion":"v1","buildVersion":"test","buildRevision":"test",
 				"buildTime":"2026-07-29T12:00:00Z","buildDirty":false,
 				"buildDevelopment":false,"environment":"production",
+				"deliveryMode":"native_postgres",
 				"authentication":["bearer"],"queryFormats":["application/json"],
 				"uploadProtocols":[],"visualization":{"schemaVersion":3,"renderers":[]}
 			}`))
@@ -116,8 +118,39 @@ func TestCapabilityAPIClientPreservesTransportTargetAndCanonicalOrigin(t *testin
 	})
 	require.NoError(t, err)
 	if credentials.Target != server.URL ||
-		credentials.CanonicalOrigin != canonicalOrigin {
+		credentials.CanonicalOrigin != canonicalOrigin ||
+		credentials.DeliveryMode != cliapi.DeliveryModeNativePostgres {
 		t.Fatalf("credentials = %+v", credentials)
+	}
+}
+
+func TestCapabilityAPIClientRejectsMissingOrUnknownDeliveryMode(t *testing.T) {
+	for _, mode := range []struct {
+		name, field string
+	}{
+		{name: "missing"},
+		{name: "legacy sqlite", field: `"deliveryMode":"legacy_sqlite",`},
+		{name: "unknown", field: `"deliveryMode":"future_transport",`},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			var server *httptest.Server
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/instance":
+					_, _ = fmt.Fprintf(w, `{"id":"lvinst_mode","canonicalOrigin":%q,"environment":"production"}`, server.URL)
+				case "/api/v1/capabilities":
+					_, _ = fmt.Fprintf(w, `{"apiVersion":"v1","buildVersion":"test","buildRevision":"test","buildTime":"2026-07-29T12:00:00Z","buildDirty":false,"buildDevelopment":false,"environment":"production",%s"authentication":["bearer"],"queryFormats":["application/json"],"uploadProtocols":[],"visualization":{"schemaVersion":7,"renderers":[]}}`, mode.field)
+				default:
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			_, err := (capabilityAPIClient{httpClient: server.Client(), validateAuthoring: true}).Resolve(t.Context(), cliapi.Credentials{Target: server.URL, Token: "token"})
+			if err == nil || !strings.Contains(err.Error(), "delivery mode") {
+				t.Fatalf("Resolve error = %v, want delivery mode rejection", err)
+			}
+		})
 	}
 }
 
@@ -204,6 +237,7 @@ func TestCapabilityAPIClientExchangesEphemeralWorkloadIdentity(t *testing.T) {
 				"apiVersion":"v1","buildVersion":"test","buildRevision":"test",
 				"buildTime":"2026-07-29T12:00:00Z","buildDirty":false,
 				"buildDevelopment":false,"environment":"production",
+				"deliveryMode":"native_postgres",
 				"authentication":["bearer"],"queryFormats":["application/json"],
 				"uploadProtocols":[],
 				"visualization":{"schemaVersion":3,"renderers":[]}
@@ -284,6 +318,7 @@ func authoringIdentityServerFor(
 					"buildTime":"2026-07-29T12:00:00Z",
 					"buildDirty":false,"buildDevelopment":false,
 					"environment":"production",
+					"deliveryMode":"native_postgres",
 					"authentication":["bearer"],
 					"queryFormats":["application/json"],
 					"uploadProtocols":[],

@@ -15,9 +15,10 @@ import (
 )
 
 type Artifact struct {
-	Path    string
-	Digest  string
-	Content []byte
+	Path      string
+	Digest    string
+	SizeBytes int64
+	Content   []byte
 }
 
 // SourceRevision is optional vendor-neutral change evidence. It deliberately
@@ -48,13 +49,17 @@ type Candidate struct {
 	Environment      string
 	ProvenanceDigest string
 	Revision         int64
+	// Native delivery transports return the plan that produced the sealed
+	// candidate and its immutable execution evidence.
+	PlanID          string
+	PlanDigest      string
+	ExecutionDigest string
+	EvidenceDigest  string
 }
 
 type SyncRequest struct {
-	Snapshot               Snapshot
-	ExpectedCandidateID    string
-	ExpectedArtifactDigest string
-	SourceOnly             bool
+	Snapshot   Snapshot
+	SourceOnly bool
 }
 
 type Builder interface {
@@ -100,7 +105,7 @@ func New(builder Builder, remote Remote) (*Service, error) {
 // Reconcile builds a coherent snapshot before performing any remote mutation.
 // Invalid or failed builds leave the last synchronized candidate untouched.
 // The mutex also makes concurrent worktree/editor events idempotent inside one
-// process; the remote port owns cross-process optimistic concurrency.
+// process; the remote source/plan protocol owns cross-process idempotency.
 func (service *Service) Reconcile(ctx context.Context) (Result, error) {
 	if service == nil {
 		return Result{}, fmt.Errorf("project dev loop is not configured")
@@ -123,11 +128,7 @@ func (service *Service) Reconcile(ctx context.Context) (Result, error) {
 		result.Snapshot = cloneSnapshot(snapshot)
 		return result, nil
 	}
-	request := SyncRequest{
-		Snapshot:               cloneSnapshot(snapshot),
-		ExpectedCandidateID:    service.candidate.ID,
-		ExpectedArtifactDigest: service.candidate.ArtifactDigest,
-	}
+	request := SyncRequest{Snapshot: cloneSnapshot(snapshot)}
 	candidate, err := service.remote.Synchronize(ctx, request)
 	if err != nil {
 		result := service.result(StatusRetryable)
@@ -168,8 +169,14 @@ func normalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
 		artifact := &snapshot.Artifacts[index]
 		artifact.Path = strings.TrimSpace(artifact.Path)
 		artifact.Digest = strings.TrimSpace(artifact.Digest)
-		if artifact.Path == "" || len(artifact.Content) == 0 {
-			return Snapshot{}, fmt.Errorf("project snapshot artifact requires path and content")
+		if artifact.SizeBytes == 0 {
+			artifact.SizeBytes = int64(len(artifact.Content))
+		}
+		if artifact.Path == "" {
+			return Snapshot{}, fmt.Errorf("project snapshot artifact requires path")
+		}
+		if artifact.SizeBytes != int64(len(artifact.Content)) {
+			return Snapshot{}, fmt.Errorf("project artifact %q size does not match content", artifact.Path)
 		}
 		if !canonicalArtifactPath(artifact.Path) {
 			return Snapshot{}, fmt.Errorf("project artifact path %q is not a canonical relative path", artifact.Path)
@@ -210,6 +217,10 @@ func normalizeCandidate(candidate Candidate, snapshot Snapshot) (Candidate, erro
 	candidate.TargetID = strings.TrimSpace(candidate.TargetID)
 	candidate.Environment = strings.TrimSpace(candidate.Environment)
 	candidate.ProvenanceDigest = strings.TrimSpace(candidate.ProvenanceDigest)
+	candidate.PlanID = strings.TrimSpace(candidate.PlanID)
+	candidate.PlanDigest = strings.TrimSpace(candidate.PlanDigest)
+	candidate.ExecutionDigest = strings.TrimSpace(candidate.ExecutionDigest)
+	candidate.EvidenceDigest = strings.TrimSpace(candidate.EvidenceDigest)
 	if err := candidate.ProjectID.Validate(); err != nil {
 		return Candidate{}, fmt.Errorf("remote candidate project identity is invalid: %w", err)
 	}
@@ -222,6 +233,22 @@ func normalizeCandidate(candidate Candidate, snapshot Snapshot) (Candidate, erro
 	}
 	if err := digest.ValidateSHA256Identity(candidate.ProvenanceDigest); err != nil {
 		return Candidate{}, fmt.Errorf("remote candidate provenance digest is invalid: %w", err)
+	}
+	hasPlanEvidence := candidate.PlanID != "" || candidate.PlanDigest != "" ||
+		candidate.ExecutionDigest != "" || candidate.EvidenceDigest != ""
+	if hasPlanEvidence {
+		if candidate.PlanID == "" {
+			return Candidate{}, fmt.Errorf("remote candidate plan evidence is missing plan identity")
+		}
+		for name, value := range map[string]string{
+			"plan":      candidate.PlanDigest,
+			"execution": candidate.ExecutionDigest,
+			"evidence":  candidate.EvidenceDigest,
+		} {
+			if err := digest.ValidateSHA256Identity(value); err != nil {
+				return Candidate{}, fmt.Errorf("remote candidate %s digest is invalid: %w", name, err)
+			}
+		}
 	}
 	return candidate, nil
 }
@@ -238,9 +265,9 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	}
 	for index, artifact := range snapshot.Artifacts {
 		out.Artifacts[index] = Artifact{
-			Path:    artifact.Path,
-			Digest:  artifact.Digest,
-			Content: append([]byte(nil), artifact.Content...),
+			Path: artifact.Path, Digest: artifact.Digest,
+			SizeBytes: artifact.SizeBytes,
+			Content:   append([]byte(nil), artifact.Content...),
 		}
 	}
 	return out

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -30,94 +29,63 @@ func TestLayoutUsesOneCatalogAndDataStore(t *testing.T) {
 	}
 }
 
-func TestOpenMigratesSiblingLegacySQLiteCatalog(t *testing.T) {
-	ctx := context.Background()
+func TestOpenDoesNotImportSiblingLegacySQLiteCatalog(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "ducklake")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	legacyPath := filepath.Join(root, "catalog.sqlite")
-	targetPath := filepath.Join(root, "catalog.duckdb")
-	dataPath := filepath.Join(root, "data")
-	createLegacySQLiteCatalog(t, ctx, legacyPath, dataPath)
+	legacyContents := []byte("SQLite format 3\x00legacy-catalog-must-not-be-imported")
+	if err := os.WriteFile(legacyPath, legacyContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-	env, err := Open(ctx, admittedConfig(t, Config{RootDir: root, CatalogPath: targetPath, DataPath: dataPath}, "ducklake", "sqlite"))
+	env, err := Open(t.Context(), admittedConfig(t, Config{RootDir: root}, "ducklake"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = env.Close() })
-	assertMigratedCatalogReadWrite(t, ctx, env)
-	if _, err := os.Stat(legacyPath); err != nil {
-		t.Fatalf("legacy catalog backup missing: %v", err)
+
+	got, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, legacyContents) {
+		t.Fatalf("legacy SQLite catalog was modified: got %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, "catalog.duckdb")); err != nil {
+		t.Fatalf("new local catalog missing: %v", err)
 	}
 }
 
-func TestOpenMigratesConfiguredSQLiteCatalogInPlace(t *testing.T) {
-	ctx := context.Background()
+func TestOpenRejectsConfiguredLegacySQLiteCatalog(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "ducklake")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	catalogPath := filepath.Join(root, "metadata.sqlite")
-	dataPath := filepath.Join(root, "data")
-	createLegacySQLiteCatalog(t, ctx, catalogPath, dataPath)
+	legacyContents := []byte("SQLite format 3\x00legacy-catalog-must-not-be-converted")
+	if err := os.WriteFile(catalogPath, legacyContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-	env, err := Open(ctx, admittedConfig(t, Config{RootDir: root, CatalogPath: catalogPath, DataPath: dataPath}, "ducklake", "sqlite"))
-	if err != nil {
-		t.Fatal(err)
+	env, err := Open(t.Context(), admittedConfig(t, Config{RootDir: root, CatalogPath: catalogPath}, "ducklake"))
+	if env != nil {
+		_ = env.Close()
+		t.Fatal("Open returned an environment for a legacy SQLite catalog")
 	}
-	t.Cleanup(func() { _ = env.Close() })
-	assertMigratedCatalogReadWrite(t, ctx, env)
-	if _, err := os.Stat(catalogPath + ".legacy.sqlite"); err != nil {
-		t.Fatalf("in-place legacy catalog backup missing: %v", err)
+	if err == nil {
+		t.Fatal("Open legacy SQLite catalog error = nil")
 	}
-	if sqlite, exists, err := sqliteCatalogFile(catalogPath); err != nil || !exists || sqlite {
-		t.Fatalf("migrated configured catalog: sqlite=%t exists=%t error=%v", sqlite, exists, err)
+	if _, statErr := os.Stat(catalogPath + ".legacy.sqlite"); !os.IsNotExist(statErr) {
+		t.Fatalf("legacy conversion backup exists or stat failed: %v", statErr)
 	}
-}
-
-func createLegacySQLiteCatalog(t *testing.T, ctx context.Context, catalogPath, dataPath string) {
-	t.Helper()
-	if err := os.MkdirAll(dataPath, 0o700); err != nil {
-		t.Fatal(err)
+	got, readErr := os.ReadFile(catalogPath)
+	if readErr != nil {
+		t.Fatal(readErr)
 	}
-	legacy, err := sql.Open("duckdb", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyAttach := fmt.Sprintf("ATTACH 'ducklake:sqlite:%s' AS legacy (DATA_PATH '%s')", sqlLiteral(catalogPath), sqlLiteral(dataPath))
-	for _, statement := range []string{
-		"LOAD ducklake",
-		"LOAD sqlite",
-		legacyAttach,
-		"CREATE SCHEMA legacy.model",
-		"CREATE TABLE legacy.model.orders(id BIGINT, amount DOUBLE)",
-		"INSERT INTO legacy.model.orders VALUES (1, 10.5), (2, 20.25)",
-	} {
-		if _, err := legacy.ExecContext(ctx, statement); err != nil {
-			_ = legacy.Close()
-			t.Fatalf("legacy statement %q: %v", statement, err)
-		}
-	}
-	if err := legacy.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func assertMigratedCatalogReadWrite(t *testing.T, ctx context.Context, env *Environment) {
-	t.Helper()
-	var count int
-	if err := env.db.QueryRowContext(ctx, "SELECT count(*) FROM lake.model.orders").Scan(&count); err != nil {
-		t.Fatalf("query migrated DuckLake table: %v", err)
-	}
-	if count != 2 {
-		t.Fatalf("migrated row count = %d, want 2", count)
-	}
-	if _, err := env.Commit(ctx, "post_migration", nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO model.orders VALUES (3, 30.75)")
-		return err
-	}); err != nil {
-		t.Fatalf("commit after catalog migration: %v", err)
-	}
-	if err := env.db.QueryRowContext(ctx, "SELECT count(*) FROM lake.model.orders").Scan(&count); err != nil {
-		t.Fatalf("query after post-migration commit: %v", err)
-	}
-	if count != 3 {
-		t.Fatalf("post-migration row count = %d, want 3", count)
+	if !reflect.DeepEqual(got, legacyContents) {
+		t.Fatalf("legacy SQLite catalog was modified: got %q", got)
 	}
 }
 

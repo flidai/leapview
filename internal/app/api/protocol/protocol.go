@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,46 +11,51 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
-	cursorsigningsqlite "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite"
-	apiidempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
+	"github.com/flidai/leapview/internal/platform/http/idempotency"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	"github.com/google/uuid"
 )
 
 type Config struct {
-	Database        *sql.DB
-	BearerToken     func(*http.Request) string
-	AcceptsBearer   func(*http.Request) bool
-	PrincipalID     func(*http.Request) (string, bool)
-	ReplayAuthorize func(*http.Request) bool
-	PublicRequest   func(*http.Request) bool
-	CursorSnapshot  func(*http.Request) string
-	ProductName     string
+	// Store is the durable idempotency capability. Production callers inject
+	// the PostgreSQL-backed implementation.
+	Store idempotency.Store
+	// BypassDurableIdempotency lists generated command operation IDs whose
+	// handlers own an exact transactional replay record. Requests for these
+	// operations still pass authentication, cursor handling, and the generated
+	// command boundary; only this protocol's durable Claim/renew/replay path is
+	// skipped.
+	BypassDurableIdempotency map[string]struct{}
+	// ReclaimExpiredIdempotency is an explicit operation-ID allowlist for
+	// endpoints whose mutation is durably reentrant. All other endpoints bind
+	// an external attempt and quarantine an expired lease as indeterminate.
+	ReclaimExpiredIdempotency map[string]struct{}
+	CursorSigning             cursorsigning.Initializer
+	BearerToken               func(*http.Request) string
+	AcceptsBearer             func(*http.Request) bool
+	PrincipalID               func(*http.Request) (string, bool)
+	ReplayAuthorize           func(*http.Request) bool
+	PublicRequest             func(*http.Request) bool
+	CursorSnapshot            func(*http.Request) string
+	ProductName               string
 }
 
 type Protocol struct {
 	config      Config
-	store       idempotencyStore
-	mu          sync.Mutex
-	idempotency map[string]*apiIdempotencyRecord
+	store       idempotency.Store
 	lease       time.Duration
 	renewEvery  time.Duration
 	leaseFailed atomic.Bool
 }
 
-type idempotencyStore interface {
-	Claim(context.Context, string, string, string, time.Duration, time.Duration) (apiidempotencysqlite.Record, bool, error)
-	Load(context.Context, string) (apiidempotencysqlite.Record, error)
-	Renew(context.Context, string, string, string, int64, time.Duration) (time.Time, error)
-	Complete(context.Context, string, string, string, int64, int, http.Header, []byte) error
-	Abandon(context.Context, string, string, string, int64) error
-	MarkIndeterminate(context.Context, string, string, string, int64) error
-}
+// idempotencyStore is retained as an unexported alias for package-local test
+// doubles; the protocol boundary itself is the neutral idempotency.Store.
+type idempotencyStore = idempotency.Store
 
 func (p *Protocol) SetReplayAuthorize(authorize func(*http.Request) bool) {
 	if p != nil {
@@ -60,14 +64,30 @@ func (p *Protocol) SetReplayAuthorize(authorize func(*http.Request) bool) {
 }
 
 func Build(ctx context.Context, config Config) (*Protocol, error) {
-	var store idempotencyStore
-	if config.Database != nil {
-		if err := cursorsigningsqlite.Configure(ctx, config.Database); err != nil {
-			return nil, err
-		}
-		store = apiidempotencysqlite.NewStore(config.Database)
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return &Protocol{config: config, store: store, idempotency: map[string]*apiIdempotencyRecord{}, lease: IdempotencyLease, renewEvery: IdempotencyLease / 3}, nil
+	if config.Store == nil {
+		return nil, errors.New("API protocol requires an idempotency capability")
+	}
+	if len(config.ReclaimExpiredIdempotency) > 0 {
+		if _, ok := config.Store.(idempotency.ReclaimableStore); !ok {
+			return nil, errors.New("API protocol reclaim allowlist requires a reclaimable idempotency capability")
+		}
+		for operationID := range config.ReclaimExpiredIdempotency {
+			contract, ok := apiaggregate.GetAPIGenOperationContract(operationID)
+			if operationID == "" || strings.TrimSpace(operationID) != operationID || !ok || contract.Command == nil || contract.Command.Idempotency != "required" {
+				return nil, fmt.Errorf("API protocol reclaim allowlist contains invalid operation %q", operationID)
+			}
+		}
+	}
+	if config.CursorSigning == nil {
+		return nil, errors.New("API protocol requires a cursor-signing initializer")
+	}
+	if err := config.CursorSigning.Configure(ctx); err != nil {
+		return nil, err
+	}
+	return &Protocol{config: config, store: config.Store, lease: IdempotencyLease, renewEvery: IdempotencyLease / 3}, nil
 }
 
 func (p *Protocol) LeaseRenewalError() error {
@@ -77,19 +97,9 @@ func (p *Protocol) LeaseRenewalError() error {
 	return nil
 }
 
-type apiIdempotencyRecord struct {
-	digest  string
-	ready   chan struct{}
-	expires time.Time
-	status  int
-	header  http.Header
-	body    []byte
-}
-
 const apiCursorLifetime = 15 * time.Minute
 const IdempotencyLifetime = 24 * time.Hour
 const IdempotencyLease = 30 * time.Second
-const maxInMemoryIdempotencyRecords = 4096
 
 type apiCursor struct {
 	Value    string `json:"value"`
@@ -118,12 +128,32 @@ func (p *Protocol) Middleware(next http.Handler) http.Handler {
 		if !unwrapAPIPageCursor(w, r) {
 			return
 		}
+		if p.bypassDurableIdempotency(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !requiresAPIIdempotency(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		p.serveIdempotent(w, r, next)
 	})
+}
+
+// bypassDurableIdempotency resolves the generated operation contract before
+// consulting the explicit composition-owned bypass set. Matching through the
+// generated registry keeps operation identity stable and avoids path
+// substring heuristics.
+func (p *Protocol) bypassDurableIdempotency(r *http.Request) bool {
+	if p == nil || r == nil || len(p.config.BypassDurableIdempotency) == 0 {
+		return false
+	}
+	contract, ok := apiaggregate.GetAPIGenOperationContractForRequest(r.Method, r.URL.Path)
+	if !ok || contract.Command == nil || contract.Command.Idempotency != "required" {
+		return false
+	}
+	_, bypass := p.config.BypassDurableIdempotency[contract.OperationID]
+	return bypass
 }
 
 // BrowserMutationMiddleware applies the same durable idempotency protocol as
@@ -139,13 +169,18 @@ func (p *Protocol) BrowserMutationMiddleware(replayAuthorize func(*http.Request)
 		}
 		requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 		key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-		if requestID == "" || key == "" || key != "ui:"+requestID {
-			apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key must equal ui:<X-Request-ID>", nil)
+		if !canonicalUUIDv7(requestID) || !canonicalUUIDv7(key) {
+			apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "X-Request-ID and Idempotency-Key must be canonical UUIDv7 values", nil)
 			return
 		}
 		PrepareRequest(w, r)
 		p.serveIdempotent(w, r, next, replayAuthorize)
 	})
+}
+
+func canonicalUUIDv7(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id.Version() == 7 && id.String() == value
 }
 
 func (p *Protocol) Authenticate(w http.ResponseWriter, r *http.Request) bool {
@@ -328,59 +363,16 @@ func (p *Protocol) serveIdempotent(w http.ResponseWriter, r *http.Request, next 
 	}
 	credentialHash := sha256.Sum256([]byte(credentialScope))
 	scope := callerScope + ":" + hex.EncodeToString(credentialHash[:]) + ":" + r.Method + ":" + r.URL.EscapedPath() + ":" + key
-	if p.store != nil {
-		p.serveDurableIdempotent(w, r, next, scope, digest, replayAuthorize)
+	if len(scope) > 4096 {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_SCOPE_TOO_LARGE", "The idempotency scope exceeds the configured size limit", nil)
 		return
 	}
-
-	p.mu.Lock()
-	p.pruneInMemoryIdempotency(time.Now())
-	if existing := p.idempotency[scope]; existing != nil {
-		if existing.digest != digest {
-			p.mu.Unlock()
-			apitransport.WriteProblem(w, r, http.StatusConflict, "IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was already used for a different request", nil)
-			return
-		}
-		ready := existing.ready
-		p.mu.Unlock()
-		if !replayAuthorized(r, replayAuthorize) {
-			apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
-			return
-		}
-		select {
-		case <-ready:
-			if !replayAuthorized(r, replayAuthorize) {
-				apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
-				return
-			}
-			replayIdempotentResponse(w, existing)
-		case <-r.Context().Done():
-			apitransport.WriteProblem(w, r, http.StatusRequestTimeout, "IDEMPOTENCY_WAIT_CANCELLED", "The original request did not finish before this request was cancelled", nil)
-		}
-		return
-	}
-	if len(p.idempotency) >= maxInMemoryIdempotencyRecords {
-		p.mu.Unlock()
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "IDEMPOTENCY_CAPACITY_EXHAUSTED", "Idempotency capacity is exhausted; configure durable platform storage", nil)
-		return
-	}
-	record := &apiIdempotencyRecord{digest: digest, ready: make(chan struct{}), expires: time.Now().Add(IdempotencyLifetime)}
-	p.idempotency[scope] = record
-	p.mu.Unlock()
-
-	capture := newProtocolResponseCapture()
-	next.ServeHTTP(capture, r)
-	record.status = capture.statusCode()
-	record.header = capture.header.Clone()
-	record.body = append([]byte(nil), capture.body.Bytes()...)
-	record.status, record.header, record.body = safeIdempotencyResponse(record.status, record.header, record.body)
-	close(record.ready)
-	capture.flush(w)
+	p.serveDurableIdempotent(w, r, next, scope, digest, replayAuthorize, p.reclaimsExpiredLease(r))
 }
 
-func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request, next http.Handler, scope, digest string, replayAuthorize func(*http.Request) bool) {
+func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request, next http.Handler, scope, digest string, replayAuthorize func(*http.Request) bool, reclaimExpired bool) {
 	owner := apitransport.NewRequestID()
-	record, execute, err := p.store.Claim(r.Context(), scope, digest, owner, p.lease, IdempotencyLifetime)
+	record, execute, err := claimAPIIdempotency(r.Context(), p.store, scope, digest, owner, p.lease, IdempotencyLifetime, reclaimExpired)
 	if err != nil {
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "IDEMPOTENCY_UNAVAILABLE", "Idempotency state is unavailable", nil)
 		return
@@ -399,7 +391,7 @@ func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if record.Status == 0 {
-			record, execute, err = waitForAPIIdempotency(r, p.store, scope, digest, owner)
+			record, execute, err = waitForAPIIdempotency(r, p.store, scope, digest, owner, p.lease, IdempotencyLifetime, reclaimExpired)
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					apitransport.WriteProblem(w, r, http.StatusRequestTimeout, "IDEMPOTENCY_WAIT_CANCELLED", "The original request did not finish before this request was cancelled", nil)
@@ -464,19 +456,21 @@ func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request
 	default:
 	}
 	if record.Status >= http.StatusInternalServerError {
-		if err := p.store.Abandon(persistCtx, scope, digest, owner, record.LeaseGeneration); err != nil {
-			if errors.Is(err, apiidempotencysqlite.ErrLeaseLost) {
+		// A 5xx response does not prove that the domain mutation failed. Keep
+		// the operation durable and quarantine it as indeterminate; retries must
+		// reconcile the exact external attempt before any repeat is allowed.
+		if err := p.store.MarkIndeterminate(persistCtx, scope, digest, owner, record.LeaseGeneration); err != nil {
+			if errors.Is(err, idempotency.ErrLeaseLost) {
 				p.leaseFailed.Store(true)
-				_ = p.store.MarkIndeterminate(persistCtx, scope, digest, owner, record.LeaseGeneration)
 			}
-			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "IDEMPOTENCY_UNAVAILABLE", "The failed request lease could not be released", nil)
+			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "IDEMPOTENCY_UNAVAILABLE", "The failed request outcome could not be quarantined", nil)
 			return
 		}
 		capture.flush(w)
 		return
 	}
 	if err := p.store.Complete(persistCtx, scope, digest, owner, record.LeaseGeneration, storedStatus, storedHeader, storedBody); err != nil {
-		if errors.Is(err, apiidempotencysqlite.ErrLeaseLost) {
+		if errors.Is(err, idempotency.ErrLeaseLost) {
 			p.leaseFailed.Store(true)
 		}
 		_ = p.store.MarkIndeterminate(persistCtx, scope, digest, owner, record.LeaseGeneration)
@@ -503,36 +497,63 @@ func replayAuthorized(r *http.Request, authorize func(*http.Request) bool) bool 
 	return authorize == nil || authorize(r)
 }
 
-func (p *Protocol) pruneInMemoryIdempotency(now time.Time) {
-	for scope, record := range p.idempotency {
-		if now.Before(record.expires) {
-			continue
-		}
-		select {
-		case <-record.ready:
-			delete(p.idempotency, scope)
-		default:
-		}
-	}
-}
-
-func waitForAPIIdempotency(r *http.Request, store idempotencyStore, scope, digest, owner string) (apiidempotencysqlite.Record, bool, error) {
+func waitForAPIIdempotency(r *http.Request, store idempotency.Store, scope, digest, owner string, lease, lifetime time.Duration, reclaimExpired bool) (idempotency.Record, bool, error) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		record, err := store.Load(r.Context(), scope)
 		if err != nil {
-			return apiidempotencysqlite.Record{}, false, err
+			return idempotency.Record{}, false, err
 		}
 		if record.Digest != digest || record.Status != 0 || record.State != "pending" {
 			return record, false, nil
 		}
+		// A duplicate waiter normally observes the owner's pending lease and
+		// polls for its terminal response. Once the lease has actually expired,
+		// retry Claim to let a durable store atomically advance the fence. A
+		// losing race returns another pending lease and continues polling; an
+		// acquired lease is returned to the caller so the handler runs under the
+		// new generation. Stores that retain an explicit external attempt may
+		// instead return an indeterminate terminal record, which is replayed
+		// without executing a duplicate mutation.
+		if !record.LeaseExpires.IsZero() && !time.Now().Before(record.LeaseExpires) {
+			reclaimed, reclaimedExecute, claimErr := claimAPIIdempotency(r.Context(), store, scope, digest, owner, lease, lifetime, reclaimExpired)
+			if claimErr != nil {
+				return idempotency.Record{}, false, claimErr
+			}
+			if reclaimed.Digest != digest || reclaimed.Status != 0 || reclaimed.State != "pending" || reclaimedExecute {
+				return reclaimed, reclaimedExecute, nil
+			}
+		}
 		select {
 		case <-r.Context().Done():
-			return apiidempotencysqlite.Record{}, false, r.Context().Err()
+			return idempotency.Record{}, false, r.Context().Err()
 		case <-ticker.C:
 		}
 	}
+}
+
+func claimAPIIdempotency(ctx context.Context, store idempotency.Store, scope, digest, owner string, lease, lifetime time.Duration, reclaimExpired bool) (idempotency.Record, bool, error) {
+	if reclaimExpired {
+		reclaimable, ok := store.(idempotency.ReclaimableStore)
+		if !ok {
+			return idempotency.Record{}, false, idempotency.ErrInvalid
+		}
+		return reclaimable.ClaimReclaimable(ctx, scope, digest, owner, lease, lifetime)
+	}
+	return store.Claim(ctx, scope, digest, owner, lease, lifetime)
+}
+
+func (p *Protocol) reclaimsExpiredLease(r *http.Request) bool {
+	if p == nil || r == nil || len(p.config.ReclaimExpiredIdempotency) == 0 {
+		return false
+	}
+	contract, ok := apiaggregate.GetAPIGenOperationContractForRequest(r.Method, r.URL.Path)
+	if !ok || contract.Command == nil || contract.Command.Idempotency != "required" {
+		return false
+	}
+	_, allowed := p.config.ReclaimExpiredIdempotency[contract.OperationID]
+	return allowed
 }
 
 func (p *Protocol) renewAPIIdempotencyLease(ctx context.Context, scope, digest, owner string, generation int64, deadline time.Time, lost func(error)) {
@@ -548,7 +569,7 @@ func (p *Protocol) renewAPIIdempotencyLease(ctx context.Context, scope, digest, 
 				deadline = expires
 				continue
 			}
-			if errors.Is(err, apiidempotencysqlite.ErrLeaseLost) || !time.Now().Before(deadline) {
+			if errors.Is(err, idempotency.ErrLeaseLost) || !time.Now().Before(deadline) {
 				lost(err)
 				return
 			}
@@ -561,10 +582,6 @@ func apiRequestDigest(r *http.Request, body []byte) string {
 	_, _ = fmt.Fprintf(digest, "%s\n%s\n%s\n%s\n", r.Method, r.URL.EscapedPath(), r.URL.Query().Encode(), strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))))
 	_, _ = digest.Write(body)
 	return hex.EncodeToString(digest.Sum(nil))
-}
-
-func replayIdempotentResponse(w http.ResponseWriter, record *apiIdempotencyRecord) {
-	replayStoredIdempotentResponse(w, record.status, record.header, record.body)
 }
 
 func replayStoredIdempotentResponse(w http.ResponseWriter, status int, header http.Header, body []byte) {

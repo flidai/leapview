@@ -28,18 +28,47 @@ func TestAPIGenDispatcherMapsRefreshEventPagination(t *testing.T) {
 	}
 }
 
+func TestAPIGenDispatcherMapsRefreshCreateIdempotency(t *testing.T) {
+	handler := &recordingRefreshHandler{}
+	NewAPIGenDispatcher(handler).CreateRefreshRun(
+		httptest.NewRecorder(),
+		httptest.NewRequest(stdhttp.MethodPost, "/api/v1/projects/p1/refresh-runs", nil),
+		"p1",
+		refreshgen.GenCreateRefreshRunHeaders{IdempotencyKey: "refresh-create-1"},
+	)
+	if got, want := handler.idempotencyKey, "refresh-create-1"; got != want {
+		t.Fatalf("idempotency key = %q, want %q", got, want)
+	}
+}
+
+func TestAPIGenDispatcherMapsRefreshCancelIdempotency(t *testing.T) {
+	handler := &recordingRefreshHandler{}
+	NewAPIGenDispatcher(handler).CancelRefreshRun(
+		httptest.NewRecorder(),
+		httptest.NewRequest(stdhttp.MethodPost, "/api/v1/projects/p1/refresh-runs/r1/cancel", nil),
+		"p1", "r1", refreshgen.GenCancelRefreshRunHeaders{IdempotencyKey: "refresh-cancel-1"},
+	)
+	if got, want := handler.cancelIdempotencyKey, "refresh-cancel-1"; got != want {
+		t.Fatalf("cancel idempotency key = %q, want %q", got, want)
+	}
+}
+
 type recordingRefreshHandler struct {
-	limit     *int32
-	pageToken *string
+	limit                *int32
+	pageToken            *string
+	idempotencyKey       string
+	cancelIdempotencyKey string
 }
 
 func (*recordingRefreshHandler) ListRefreshRuns(stdhttp.ResponseWriter, *stdhttp.Request, string) {
 }
-func (*recordingRefreshHandler) CreateRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string) {
+func (h *recordingRefreshHandler) CreateRefreshRun(_ stdhttp.ResponseWriter, _ *stdhttp.Request, _, key string) {
+	h.idempotencyKey = key
 }
 func (*recordingRefreshHandler) GetRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string, string) {
 }
-func (*recordingRefreshHandler) CancelRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string, string) {
+func (h *recordingRefreshHandler) CancelRefreshRun(_ stdhttp.ResponseWriter, _ *stdhttp.Request, _, _, key string) {
+	h.cancelIdempotencyKey = key
 }
 func (h *recordingRefreshHandler) ListRefreshRunEvents(_ stdhttp.ResponseWriter, _ *stdhttp.Request, _, _ string, limit *int32, pageToken *string) {
 	h.limit, h.pageToken = limit, pageToken

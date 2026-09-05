@@ -25,7 +25,7 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-const expectedAPIGenAggregateOperationCount = 213
+const expectedAPIGenAggregateOperationCount = 191
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -414,7 +414,7 @@ func TestAPIGenDeploymentCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenDeploymentCapabilityOwnsItsOperationSurface(t *testing.T) {
 	contracts := deploymentgen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 40; got != want {
+	if got, want := len(contracts), 19; got != want {
 		t.Fatalf("Deployment generated operations = %d, want %d", got, want)
 	}
 	appContracts := apigenapi.GetAPIGenOperationContracts()
@@ -461,7 +461,7 @@ func TestAPIGenReleaseCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenReleaseCapabilityOwnsItsOperationSurface(t *testing.T) {
 	contracts := releasegen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 6; got != want {
+	if got, want := len(contracts), 5; got != want {
 		t.Fatalf("Release generated operations = %d, want %d", got, want)
 	}
 	appContracts := apigenapi.GetAPIGenOperationContracts()
@@ -884,9 +884,26 @@ func TestAPIGenRoutesCoverHeadlessAPINotUITransports(t *testing.T) {
 		"/api/v1/semantic-models/{model}/query",
 		"/api/v1/semantic-models/{model}/query/explain",
 		"/api/v1/projects/{project}/releases",
-		"/api/v1/projects/{project}/releases/{release}/artifact",
 		"/api/v1/projects/{project}/releases/{release}/finalize",
-		"/api/v1/projects/{project}/deployments",
+		"/api/v1/projects/{project}/delivery",
+		"/api/v1/projects/{project}/delivery/plans/{plan}",
+		"/api/v1/projects/{project}/delivery/plans/{plan}/build",
+		"/api/v1/projects/{project}/delivery/builds/{build}",
+		"/api/v1/projects/{project}/delivery/seals/{seal}",
+		"/api/v1/projects/{project}/delivery/candidates/{candidate}",
+		"/api/v1/projects/{project}/delivery/candidates/{candidate}/publish",
+		"/api/v1/projects/{project}/delivery/generations/{generation}",
+		"/api/v1/projects/{project}/delivery/generations/{generation}/rollback",
+		"/api/v1/projects/{project}/delivery/publications/{publication}",
+		"/api/v1/projects/{project}/delivery/publications/{publication}/approval-requests",
+		"/api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}",
+		"/api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}/approve",
+		"/api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}/deny",
+		"/api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}/revoke",
+		"/api/v1/projects/{project}/delivery/operator",
+		"/api/v1/projects/{project}/candidate-sync/plan",
+		"/api/v1/projects/{project}/candidate-sync/source",
+		"/api/v1/projects/{project}/candidate-sync/blobs/{digest}",
 		"/api/v1/projects/{project}/refresh-runs",
 		"/api/v1/projects/{project}/refresh-runs/{run}",
 		"/api/v1/agent/config",
@@ -1003,15 +1020,12 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"removeGroupMember":                true,
 		"resetPrincipalPassword":           true,
 		"resetProductSettings":             true,
-		"resumeDashboardPublication":       true,
 		"revokeCurrentAPIToken":            true,
 		"revokeCurrentAuthoringSession":    true,
 		"revokeCurrentSession":             true,
 		"revokePrincipalSession":           true,
 		"revokeServicePrincipalSecret":     true,
-		"rotateDashboardPublication":       true,
 		"search":                           true,
-		"suspendDashboardPublication":      true,
 		"updateAgentConfig":                true,
 		"updateAgentConversation":          true,
 		"updateCurrentPrincipal":           true,
@@ -1258,17 +1272,12 @@ func TestAPIGenAsyncExecutionContractsAreGeneratedEndToEnd(t *testing.T) {
 	sort.Strings(starters)
 	sort.Strings(controls)
 	wantStarters := []string{
-		"activateDeployment",
 		"createAgentRun",
-		"createDeployment",
 		"createRefreshRun",
 		"finalizeManagedDataUploadSession",
 		"finalizeRelease",
-		"publishProjectCandidate",
-		"retryDeployment",
-		"rollbackDeployment",
 	}
-	wantControls := []string{"cancelAgentRun", "cancelDeployment", "cancelRefreshRun", "publishDeliveryCandidate", "rollbackDeliveryGeneration"}
+	wantControls := []string{"cancelAgentRun", "cancelRefreshRun", "publishDeliveryCandidate", "rollbackDeliveryGeneration"}
 	if !slices.Equal(starters, wantStarters) {
 		t.Errorf("async starters = %v, want %v", starters, wantStarters)
 	}
@@ -1277,7 +1286,7 @@ func TestAPIGenAsyncExecutionContractsAreGeneratedEndToEnd(t *testing.T) {
 	}
 }
 
-func TestAPIGenUploadArtifactUsesNativeOctetStreamBody(t *testing.T) {
+func TestAPIGenCandidateSourceBlobUsesNativeOctetStreamBody(t *testing.T) {
 	spec, err := apiaggregate.GetEmbeddedOpenAPISpec()
 	if err != nil {
 		t.Fatalf("embedded openapi: %v", err)
@@ -1286,7 +1295,7 @@ func TestAPIGenUploadArtifactUsesNativeOctetStreamBody(t *testing.T) {
 	if !ok {
 		t.Fatalf("openapi paths missing: %#v", spec["paths"])
 	}
-	operation := mustOpenAPIOperation(t, paths, "/api/v1/projects/{project}/releases/{release}/artifact", "put")
+	operation := mustOpenAPIOperation(t, paths, "/api/v1/projects/{project}/candidate-sync/blobs/{digest}", "put")
 	if _, ok := operation["x-leapview-dispatch"]; ok {
 		t.Fatalf("upload operation should not use x-leapview-dispatch: %#v", operation["x-leapview-dispatch"])
 	}
@@ -1327,7 +1336,7 @@ func TestAPIGenUploadArtifactUsesNativeOctetStreamBody(t *testing.T) {
 		t.Fatalf("decode APIGen IR: %v", err)
 	}
 	for _, endpoint := range irDoc.Endpoints {
-		if endpoint.OperationID != "uploadReleaseArtifact" {
+		if endpoint.OperationID != "uploadProjectCandidateSourceBlob" {
 			continue
 		}
 		if endpoint.RequestBody == nil || len(endpoint.RequestBody.Contents) != 1 {
@@ -1337,11 +1346,11 @@ func TestAPIGenUploadArtifactUsesNativeOctetStreamBody(t *testing.T) {
 		if content.ContentType != "application/octet-stream" || content.BodyKind != "binary" {
 			t.Fatalf("upload IR content = %#v, want application/octet-stream binary", content)
 		}
-		var generatedBody releasegen.GenUploadReleaseArtifactBody
+		var generatedBody deploymentgen.GenUploadProjectCandidateSourceBlobBody
 		_ = []byte(generatedBody)
 		return
 	}
-	t.Fatal("uploadReleaseArtifact missing from APIGen IR")
+	t.Fatal("uploadProjectCandidateSourceBlob missing from APIGen IR")
 }
 
 func TestAPIGenListOperationsUseStandardEnvelope(t *testing.T) {
@@ -1364,7 +1373,6 @@ func TestAPIGenListOperationsUseStandardEnvelope(t *testing.T) {
 		{"/api/v1/projects/{project}/audit-events", "get"},
 		{"/api/v1/projects/{project}/refresh-runs", "get"},
 		{"/api/v1/projects/{project}/releases", "get"},
-		{"/api/v1/projects/{project}/deployments", "get"},
 		{"/api/v1/semantic-models", "get"},
 		{"/api/v1/agent/conversations", "get"},
 	} {

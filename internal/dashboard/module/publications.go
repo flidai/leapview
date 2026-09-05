@@ -3,9 +3,11 @@ package module
 import (
 	"context"
 	"errors"
+	"fmt"
 	"html"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
@@ -19,7 +21,7 @@ import (
 )
 
 func (m *Module) PublicationsConfigured() bool {
-	return m != nil && m.publications != nil && m.publicationService != nil
+	return m != nil && m.publications != nil && m.publicationService != nil && m.publicationAuditConfigured
 }
 
 func (m *Module) ResolvePublic(ctx context.Context, publicID string) (publication.Publication, error) {
@@ -52,12 +54,22 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, projectID,
 	if invocation.Surface == "" {
 		invocation.Surface = string(apigencommand.SurfaceUI)
 	}
+	if invocation.ExpectedRevision <= 0 {
+		return publication.Publication{}, fmt.Errorf("%w: missing expected publication revision", publication.ErrConflict)
+	}
 	parsedProjectID, err := projectgraph.NewResourceID(strings.TrimSpace(projectID))
 	if err != nil {
 		return publication.Publication{}, err
 	}
 	ctx, err = beginGeneratedPublicationInvocation(ctx, action, parsedProjectID, invocation)
 	if err != nil {
+		return publication.Publication{}, err
+	}
+	current, err := m.publications.Get(ctx, parsedProjectID, name)
+	if err != nil {
+		return publication.Publication{}, err
+	}
+	if err := markPublicationConcurrencyChecked(ctx, operationIDValue, invocation.ExpectedRevision, current.Revision); err != nil {
 		return publication.Publication{}, err
 	}
 	intent, err := buildPublicationAuditIntent(publicationCommandAuditInput{
@@ -71,7 +83,7 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, projectID,
 		return publication.Publication{}, err
 	}
 	ctx = publication.WithAuditIntent(ctx, intent)
-	row, err := m.publicationService.Mutate(ctx, parsedProjectID, name, actorID, action)
+	row, err := m.publicationService.Mutate(ctx, parsedProjectID, name, actorID, action, invocation.ExpectedRevision)
 	if err != nil {
 		return row, err
 	}
@@ -91,6 +103,24 @@ func (m *Module) completePublicationCommand(ctx context.Context, operationID str
 	})
 }
 
+func markPublicationConcurrencyChecked(ctx context.Context, operationID string, expectedRevision, currentRevision int64) error {
+	executor, err := apigencommand.NewExecutor(dashboardgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return err
+	}
+	expectedToken := fmt.Sprintf("\"%d\"", expectedRevision)
+	currentToken := fmt.Sprintf("\"%d\"", currentRevision)
+	err = executor.CheckConcurrency(ctx, operationID, expectedToken, currentToken)
+	// The generated command runtime owns ETag parsing/comparison, while the
+	// transport resolves classified domain failures through the operation's
+	// public failure vocabulary. Preserve the runtime sentinel for callers but
+	// classify it so API/UI adapters emit the documented 412 contract.
+	if errors.Is(err, apigencommand.ErrPreconditionRequired) || errors.Is(err, apigencommand.ErrPreconditionFailed) {
+		return apigenfailure.Wrap("precondition", err)
+	}
+	return err
+}
+
 func beginGeneratedPublicationInvocation(ctx context.Context, action publication.Action, projectID projectgraph.ResourceID, invocation publication.CommandInvocation) (context.Context, error) {
 	operationID, ok := publicationOperationID(action)
 	if !ok {
@@ -104,19 +134,19 @@ func beginGeneratedPublicationInvocation(ctx context.Context, action publication
 	case publication.ActionSuspend:
 		started, _, err := dashboardgen.BeginGenSuspendDashboardPublicationCommand(ctx, dashboardgen.GenSuspendDashboardPublicationCommandInvocation{
 			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
-			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID, ConcurrencyToken: fmt.Sprintf("\"%d\"", invocation.ExpectedRevision),
 		})
 		return started, err
 	case publication.ActionResume:
 		started, _, err := dashboardgen.BeginGenResumeDashboardPublicationCommand(ctx, dashboardgen.GenResumeDashboardPublicationCommandInvocation{
 			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
-			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID, ConcurrencyToken: fmt.Sprintf("\"%d\"", invocation.ExpectedRevision),
 		})
 		return started, err
 	case publication.ActionRotate:
 		started, _, err := dashboardgen.BeginGenRotateDashboardPublicationCommand(ctx, dashboardgen.GenRotateDashboardPublicationCommandInvocation{
 			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
-			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
+			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID, ConcurrencyToken: fmt.Sprintf("\"%d\"", invocation.ExpectedRevision),
 		})
 		return started, err
 	default:
@@ -186,6 +216,7 @@ func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request,
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATION_NOT_FOUND", "Dashboard publication not found", nil)
 		return
 	}
+	setPublicationETag(w, row)
 	writeJSON(w, http.StatusOK, m.dashboardPublicationDTO(row))
 }
 
@@ -240,6 +271,10 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, parseErr)
 		return
 	}
+	if !canonicalPublicationUUIDv7(strings.TrimSpace(r.Header.Get("Idempotency-Key"))) {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key must be a canonical UUIDv7", nil)
+		return
+	}
 	// The API command guard has already begun the generated invocation on the
 	// request context. Starting a nested invocation here would mark only the
 	// child state complete and cause the outer guard to reject the response.
@@ -250,7 +285,16 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	ctx = publication.WithAuditIntent(ctx, intent)
-	row, err := m.publicationService.Mutate(ctx, parsedProjectID, name, actor, action)
+	expectedRevision, currentRevision, parseRevisionErr := publicationExpectedRevision(r, row)
+	if parseRevisionErr != nil {
+		m.writePublicationMutation(w, r, operationID, publication.Publication{}, parseRevisionErr)
+		return
+	}
+	if err := markPublicationConcurrencyChecked(ctx, operationIDValue, expectedRevision, currentRevision); err != nil {
+		m.writePublicationMutation(w, r, operationID, publication.Publication{}, err)
+		return
+	}
+	row, err := m.publicationService.Mutate(ctx, parsedProjectID, name, actor, action, expectedRevision)
 	if err == nil {
 		err = m.completePublicationCommand(ctx, operationIDValue)
 	}
@@ -311,7 +355,15 @@ func (m *Module) writePublicationMutation(w http.ResponseWriter, r *http.Request
 		apitransport.WriteAPIGenCommandFailure(r.Context(), w, r, logger, operationID, dashboardgen.GetAPIGenCommandFailureContracts, err)
 		return
 	}
+	setPublicationETag(w, row)
 	writeJSON(w, http.StatusOK, m.dashboardPublicationDTO(row))
+}
+
+func setPublicationETag(w http.ResponseWriter, row publication.Publication) {
+	if w == nil || row.Revision <= 0 {
+		return
+	}
+	w.Header().Set("ETag", fmt.Sprintf("\"%d\"", row.Revision))
 }
 
 func (m *Module) dashboardPublicationDTO(row publication.Publication) dashboardapi.PublicationResponse {
@@ -326,6 +378,7 @@ func (m *Module) dashboardPublicationDTO(row publication.Publication) dashboarda
 		AllowedOrigins: append([]string(nil), row.AllowedOrigins...), PublicURL: publicURL, EmbedURL: embedURL, IFrameSnippet: iframe,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
+	dto.Revision = row.Revision
 	optionalString := func(value string) *string {
 		if strings.TrimSpace(value) == "" {
 			return nil
@@ -340,6 +393,28 @@ func (m *Module) dashboardPublicationDTO(row publication.Publication) dashboarda
 	dto.SuspendedBy = optionalString(row.SuspendedBy)
 	dto.RotatedAt = optionalString(row.RotatedAt)
 	return dto
+}
+
+func publicationExpectedRevision(r *http.Request, row publication.Publication) (int64, int64, error) {
+	if r == nil {
+		return 0, 0, fmt.Errorf("%w: publication expected revision is required", publication.ErrConflict)
+	}
+	raw := strings.TrimSpace(r.Header.Get("If-Match"))
+	if len(raw) < 3 || raw[0] != '"' || raw[len(raw)-1] != '"' || strings.HasPrefix(raw, "W/") {
+		return 0, 0, fmt.Errorf("%w: publication expected revision must be a strong quoted ETag", publication.ErrConflict)
+	}
+	token := raw[1 : len(raw)-1]
+	if strings.ContainsAny(token, "\"*,") {
+		return 0, 0, fmt.Errorf("%w: publication expected revision ETag is malformed", publication.ErrConflict)
+	}
+	expected, err := strconv.ParseInt(token, 10, 64)
+	if err != nil || expected <= 0 || strconv.FormatInt(expected, 10) != token {
+		return 0, 0, fmt.Errorf("%w: publication expected revision ETag is malformed", publication.ErrConflict)
+	}
+	if row.Revision <= 0 {
+		return 0, 0, fmt.Errorf("%w: publication current revision is invalid", publication.ErrConflict)
+	}
+	return expected, row.Revision, nil
 }
 
 func (m *Module) absolutePublicURL(path string) string {

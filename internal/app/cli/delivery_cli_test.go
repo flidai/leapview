@@ -118,7 +118,7 @@ func TestDeliveryPlanRetainsSourceWhenCandidateIdentityIsIncomplete(t *testing.T
 	}
 	attestation := "sha256:" + strings.Repeat("a", 64)
 	transport := &deliveryPlanSourceHandoffTransport{retained: deploymentgen.CandidateSourceSnapshotResponse{
-		ProjectId: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, SourceAttestationDigest: attestation,
+		ProjectId: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, ProjectDigest: snapshot.Digest, SourceAttestationDigest: attestation,
 		TargetId: "target-1", Environment: "development",
 	}}
 	result, err := (projectDeliveryPlanOperations{client: deliveryPlanSourceHandoffClient{transport: transport}}).Create(t.Context(), projectcli.DeliveryPlanOptions{
@@ -206,6 +206,14 @@ type deliveryBuildRetryTransport struct {
 	keys []string
 }
 
+func generatedProblemErrorForTest(status int, code string) error {
+	return &apigenclient.ProblemError{
+		OperationID: "delivery-command",
+		Response:    apigenclient.Response{StatusCode: status},
+		Problem:     apigenclient.ProblemDetails{Status: status, Code: code, Detail: "declared failure"},
+	}
+}
+
 func (transport *deliveryBuildRetryTransport) DoAPIGen(_ context.Context, request apigenclient.Request, out any) (apigenclient.Response, error) {
 	if request.OperationID != deploymentgen.GenOperationBuildDeliveryPlan {
 		return apigenclient.Response{}, fmt.Errorf("unexpected operation %q", request.OperationID)
@@ -218,7 +226,7 @@ func (transport *deliveryBuildRetryTransport) DoAPIGen(_ context.Context, reques
 	response := deploymentgen.DeliveryBuildStatusResponse{
 		Id: "attempt-2", PlanId: "plan-1", PlanDigest: "sha256:plan", SourceDigest: "sha256:source",
 		ExecutionDigest: "sha256:execution", PhysicalPoolId: "pool-1", WriterLeaseId: "writer-2",
-		CandidateId: &candidateID, SealId: &sealID, Status: deploymentgen.DeliveryBuildStatusSealed, Revision: 2,
+		CandidateId: &candidateID, SnapshotSealId: &sealID, Status: deploymentgen.DeliveryBuildStatusSealed, Revision: 2,
 	}
 	encoded, err := json.Marshal(response)
 	if err != nil {
@@ -239,17 +247,18 @@ func TestDeliveryPlanRejectsRetainedSourceIdentityMismatch(t *testing.T) {
 	const retainedTarget = "target-1"
 	const retainedEnvironment = "development"
 	const retainedAttestation = "sha256:" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const retainedProjectDigest = "sha256:" + "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 	tests := []struct {
 		name     string
 		options  projectcli.DeliveryPlanOptions
 		retained deploymentgen.CandidateSourceSnapshotResponse
 		wantPart string
 	}{
-		{name: "project", options: projectcli.DeliveryPlanOptions{ProjectID: "project:asserted", TargetID: retainedTarget, SourceDigest: snapshot.Digest}, retained: deploymentgen.CandidateSourceSnapshotResponse{ProjectId: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, SourceAttestationDigest: retainedAttestation, TargetId: retainedTarget, Environment: retainedEnvironment}, wantPart: "project"},
-		{name: "target", options: projectcli.DeliveryPlanOptions{ProjectID: snapshot.ProjectID.String(), TargetID: "target-asserted", SourceDigest: snapshot.Digest}, retained: deploymentgen.CandidateSourceSnapshotResponse{ProjectId: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, SourceAttestationDigest: retainedAttestation, TargetId: retainedTarget, Environment: retainedEnvironment}, wantPart: "target"},
-		{name: "source digest", options: projectcli.DeliveryPlanOptions{ProjectID: snapshot.ProjectID.String(), TargetID: retainedTarget, SourceDigest: snapshot.Digest}, retained: deploymentgen.CandidateSourceSnapshotResponse{ProjectId: snapshot.ProjectID.String(), SourceDigest: "sha256:" + strings.Repeat("b", 64), SourceAttestationDigest: retainedAttestation, TargetId: retainedTarget, Environment: retainedEnvironment}, wantPart: "source digest"},
-		{name: "source attestation", options: projectcli.DeliveryPlanOptions{ProjectID: snapshot.ProjectID.String(), SourceAttestationDigest: "sha256:" + strings.Repeat("c", 64), SourceDigest: snapshot.Digest}, retained: deploymentgen.CandidateSourceSnapshotResponse{ProjectId: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, SourceAttestationDigest: retainedAttestation, TargetId: retainedTarget, Environment: retainedEnvironment}, wantPart: "source attestation"},
-		{name: "environment", options: projectcli.DeliveryPlanOptions{ProjectID: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, Environment: "production"}, retained: deploymentgen.CandidateSourceSnapshotResponse{ProjectId: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, SourceAttestationDigest: retainedAttestation, TargetId: retainedTarget, Environment: retainedEnvironment}, wantPart: "environment"},
+		{name: "project", options: projectcli.DeliveryPlanOptions{ProjectID: "project:asserted", TargetID: retainedTarget, SourceDigest: snapshot.Digest}, retained: deploymentgen.CandidateSourceSnapshotResponse{ProjectId: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, ProjectDigest: retainedProjectDigest, SourceAttestationDigest: retainedAttestation, TargetId: retainedTarget, Environment: retainedEnvironment}, wantPart: "project"},
+		{name: "target", options: projectcli.DeliveryPlanOptions{ProjectID: snapshot.ProjectID.String(), TargetID: "target-asserted", SourceDigest: snapshot.Digest}, retained: deploymentgen.CandidateSourceSnapshotResponse{ProjectId: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, ProjectDigest: retainedProjectDigest, SourceAttestationDigest: retainedAttestation, TargetId: retainedTarget, Environment: retainedEnvironment}, wantPart: "target"},
+		{name: "source digest", options: projectcli.DeliveryPlanOptions{ProjectID: snapshot.ProjectID.String(), TargetID: retainedTarget, SourceDigest: snapshot.Digest}, retained: deploymentgen.CandidateSourceSnapshotResponse{ProjectId: snapshot.ProjectID.String(), SourceDigest: "sha256:" + strings.Repeat("b", 64), ProjectDigest: retainedProjectDigest, SourceAttestationDigest: retainedAttestation, TargetId: retainedTarget, Environment: retainedEnvironment}, wantPart: "source digest"},
+		{name: "source attestation", options: projectcli.DeliveryPlanOptions{ProjectID: snapshot.ProjectID.String(), SourceAttestationDigest: "sha256:" + strings.Repeat("c", 64), SourceDigest: snapshot.Digest}, retained: deploymentgen.CandidateSourceSnapshotResponse{ProjectId: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, ProjectDigest: retainedProjectDigest, SourceAttestationDigest: retainedAttestation, TargetId: retainedTarget, Environment: retainedEnvironment}, wantPart: "source attestation"},
+		{name: "environment", options: projectcli.DeliveryPlanOptions{ProjectID: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, Environment: "production"}, retained: deploymentgen.CandidateSourceSnapshotResponse{ProjectId: snapshot.ProjectID.String(), SourceDigest: snapshot.Digest, ProjectDigest: retainedProjectDigest, SourceAttestationDigest: retainedAttestation, TargetId: retainedTarget, Environment: retainedEnvironment}, wantPart: "environment"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -303,10 +312,9 @@ func (transport *deliveryPlanSourceHandoffTransport) DoAPIGen(_ context.Context,
 	case deploymentgen.GenOperationPlanProjectCandidateSynchronization:
 		transport.planCalls++
 		body := request.Body.(deploymentgen.CandidateSynchronizationRequest)
-		response = deploymentgen.CandidateSynchronizationPlanResponse{ArtifactDigest: body.ArtifactDigest}
+		response = deploymentgen.CandidateSynchronizationPlanResponse{PlanId: "plan-delivery", ArtifactDigest: body.ArtifactDigest}
 	case deploymentgen.GenOperationRetainProjectCandidateSource:
 		transport.retainCalls++
-		status = http.StatusCreated
 		response = transport.retained
 	case deploymentgen.GenOperationCreateDeliveryPlan:
 		transport.createCalls++

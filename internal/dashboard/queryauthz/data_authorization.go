@@ -338,13 +338,17 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	if ok, err := m.authorizeDataQuery(ctx, snapshot, principalID, capabilityAction, request, objects); err != nil {
-		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
-		return request, nil, err
-	} else if !ok {
-		err := DeniedError{PrincipalID: principalID, Capability: capabilityAction}
-		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
-		return request, nil, err
+	bootstrapCandidateOwner := candidateQuery && candidateCapability.BootstrapAuthorized &&
+		!viewAsQuery && request.PrincipalID == candidateCapability.OwnerPrincipalID
+	if !bootstrapCandidateOwner {
+		if ok, err := m.authorizeDataQuery(ctx, snapshot, principalID, capabilityAction, request, objects); err != nil {
+			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
+			return request, nil, err
+		} else if !ok {
+			err := DeniedError{PrincipalID: principalID, Capability: capabilityAction}
+			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
+			return request, nil, err
+		}
 	}
 	governed, policies, err := m.applyDataPolicies(ctx, request, objects, resourceIndex)
 	if err != nil {
@@ -510,7 +514,11 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 		}
 		semanticObjects = append(semanticObjects, modelObject)
 	}
-	physicalObjects := make([]access.ResourceRef, 0, len(dependencies.Datasets)+len(dependencies.PhysicalFields))
+	// Dependency cardinality is compiler-controlled, but do not combine two
+	// independently sized slices into an allocation hint: the addition can
+	// overflow before make applies its own bounds check. Appends retain the
+	// same bounded result without an attacker-controlled capacity calculation.
+	physicalObjects := make([]access.ResourceRef, 0)
 	datasets := map[string]access.ResourceRef{}
 	for _, datasetName := range dependencies.Datasets {
 		dataset, ok := resourceIndex.byName(datasetName, projectgraph.KindModel)

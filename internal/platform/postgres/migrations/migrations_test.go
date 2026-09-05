@@ -1,160 +1,157 @@
 package migrations
 
 import (
-	"context"
-	"errors"
-	"slices"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"io/fs"
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	jobpostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-type recordingTx struct {
-	sqls             []string
-	revision         int64
-	migrationID      string
-	recordedChecksum string
-	queryErr         error
-	revisions        map[int64]recordingRow
-}
-
-func (r *recordingTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	r.sqls = append(r.sqls, sql)
-	if strings.Contains(sql, "INSERT INTO platform.schema_revision") && len(args) == 3 {
-		if r.revisions == nil {
-			r.revisions = make(map[int64]recordingRow)
-		}
-		revision := args[0].(int64)
-		r.revisions[revision] = recordingRow{revision: revision, migrationID: args[1].(string), checksum: args[2].(string)}
+func TestEmbeddedGooseBaselineIsTheOnlyImmutableMigration(t *testing.T) {
+	entries, err := fs.ReadDir(MigrationFS(), ".")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return pgconn.CommandTag{}, nil
-}
-
-func (r *recordingTx) QueryRow(_ context.Context, _ string, args ...any) pgx.Row {
-	if len(args) == 1 && r.revisions != nil {
-		if row, ok := r.revisions[args[0].(int64)]; ok {
-			return row
-		}
-		return recordingRow{err: pgx.ErrNoRows}
-	}
-	return recordingRow{revision: r.revision, migrationID: r.migrationID, checksum: r.recordedChecksum, err: r.queryErr}
-}
-
-type recordingRow struct {
-	revision    int64
-	migrationID string
-	checksum    string
-	err         error
-}
-
-func (r recordingRow) Scan(dest ...any) error {
-	if r.err != nil {
-		return r.err
-	}
-	switch len(dest) {
-	case 3:
-		*dest[0].(*int64) = r.revision
-		*dest[1].(*string) = r.migrationID
-		*dest[2].(*string) = r.checksum
-	default:
-		return errors.New("unexpected destination count")
-	}
-	return nil
-}
-
-func TestBaselineMetadata(t *testing.T) {
-	if BaselineRevision != 1 || BaselineMigrationID != "001_control_plane" {
-		t.Fatalf("baseline metadata = revision %d, id %q", BaselineRevision, BaselineMigrationID)
-	}
-	sql := BaselineSQL()
-	for _, marker := range []string{"platform.schema_revision", "platform.reject_schema_revision_mutation", "leapview_control_owner", "leapview_control_maintenance", "leapview_control_backup", ")) <> 6"} {
-		if !strings.Contains(sql, marker) {
-			t.Errorf("foundation missing required contract marker %q", marker)
+	var sqlFiles []string
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".sql") {
+			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if strings.Contains(sql, "CREATE TABLE IF NOT EXISTS platform.operation") || strings.Contains(sql, "CREATE SCHEMA IF NOT EXISTS access") {
-		t.Fatal("foundation must not duplicate capability-owned DDL")
+	if len(sqlFiles) != 1 || sqlFiles[0] != "001_control_plane.sql" {
+		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
-	if strings.Contains(sql, "-- +goose") {
-		t.Fatal("PostgreSQL baseline must use its own migration mechanism")
+	contents, err := fs.ReadFile(MigrationFS(), sqlFiles[0])
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(sql, "repeat('0', 64)") {
-		t.Fatal("baseline must not seed a fake schema checksum")
+	sum := sha256.Sum256(contents)
+	if got, want := hex.EncodeToString(sum[:]), "d81bca2a7a9ab96a2a3e9788ca43974a71a08b37b103608cdd1f5489b2161d6a"; got != want {
+		t.Fatalf("immutable Goose baseline digest = %s, want %s", got, want)
 	}
-}
-
-func testPlan() Plan {
-	return Plan{
-		Components:    []Component{{Name: "test.capability", SQL: "SELECT 1"}},
-		Migrations:    []Migration{{Revision: 2, MigrationID: "002_test", SQL: "SELECT 3"}},
-		RolePolicySQL: "SELECT 2",
+	text := string(contents)
+	for _, required := range []string{"-- +goose Up", "SET LOCAL ROLE leapview_control_owner", "CREATE TABLE IF NOT EXISTS event.event_log"} {
+		if !strings.Contains(text, required) {
+			t.Errorf("Goose baseline missing %q", required)
+		}
 	}
-}
-
-func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
-	plan := testPlan()
-	recorder := &recordingTx{revisions: map[int64]recordingRow{
-		BaselineRevision: {revision: BaselineRevision, migrationID: BaselineMigrationID, checksum: plan.Checksum()},
-		2:                {revision: 2, migrationID: "002_test", checksum: plan.Migrations[0].Checksum()},
-	}}
-	if err := Apply(context.Background(), recorder, plan); err != nil {
-		t.Fatalf("Apply() error = %v", err)
-	}
-	if len(recorder.sqls) != 4 || recorder.sqls[2] != BaselineSQL() {
-		t.Fatal("Apply() did not acquire its lock and execute the authored foundation")
-	}
-	if err := Apply(context.Background(), nil, plan); err == nil {
-		t.Fatal("Apply(nil) unexpectedly succeeded")
+	for _, forbidden := range []string{"platform.schema_revision", "watermill", "cache.cache_l3", "CREATE SCHEMA IF NOT EXISTS cache"} {
+		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
+			t.Errorf("Goose baseline retains removed contract %q", forbidden)
+		}
 	}
 }
 
-func TestApplyRejectsRevisionChecksumMismatch(t *testing.T) {
-	recorder := &recordingTx{revisions: map[int64]recordingRow{
-		BaselineRevision: {revision: BaselineRevision, migrationID: BaselineMigrationID, checksum: strings.Repeat("f", 64)},
-	}}
-	if err := Apply(context.Background(), recorder, testPlan()); err == nil {
-		t.Fatal("Apply() accepted a mismatched recorded checksum")
+func TestEmbeddedGooseBaselineMirrorsCanonicalJobsRiverFence(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := strings.ReplaceAll(strings.ReplaceAll(string(contents), "-- +goose StatementBegin\n", ""), "-- +goose StatementEnd\n", "")
+	canonical := strings.ReplaceAll(strings.ReplaceAll(jobpostgres.SchemaSQL(), "-- +goose StatementBegin\n", ""), "-- +goose StatementEnd\n", "")
+	const start = "CREATE OR REPLACE FUNCTION jobs.guard_river_result_fence()"
+	const end = "CREATE TABLE IF NOT EXISTS jobs.job_history ("
+	if got, want := recoverySQLBlock(t, baseline, start, end), recoverySQLBlock(t, canonical, start, end); got != want {
+		t.Error("Goose baseline River result fence differs from canonical jobs schema")
 	}
 }
 
-func TestApplyAppendsForwardMigrationWithoutChangingBaselineIdentity(t *testing.T) {
-	plan := testPlan()
-	withoutForward := plan
-	withoutForward.Migrations = nil
-	if plan.Checksum() != withoutForward.Checksum() {
-		t.Fatal("forward migration changed the immutable baseline checksum")
+func TestEmbeddedGooseBaselineMirrorsCanonicalRecoveryGuards(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
+	if err != nil {
+		t.Fatal(err)
 	}
-	recorder := &recordingTx{revisions: map[int64]recordingRow{
-		BaselineRevision: {revision: BaselineRevision, migrationID: BaselineMigrationID, checksum: plan.Checksum()},
-	}}
-	if err := Apply(context.Background(), recorder, plan); err != nil {
-		t.Fatalf("Apply() error = %v", err)
-	}
-	forward := recorder.revisions[2]
-	if forward.migrationID != "002_test" || forward.checksum != plan.Migrations[0].Checksum() {
-		t.Fatalf("forward revision = %#v", forward)
-	}
-	if got := recorder.revisions[BaselineRevision].checksum; got != plan.Checksum() {
-		t.Fatalf("baseline checksum changed to %q", got)
-	}
-	if !slices.Contains(recorder.sqls, "SELECT 3") {
-		t.Fatal("forward migration SQL was not executed")
-	}
-}
-
-func TestApplyRejectsIncompleteOrDuplicatePlan(t *testing.T) {
-	recorder := &recordingTx{queryErr: pgx.ErrNoRows}
-	for _, plan := range []Plan{
-		{},
-		{Components: []Component{{Name: "one", SQL: "SELECT 1"}}},
-		{Components: []Component{{Name: "one", SQL: "SELECT 1"}, {Name: "one", SQL: "SELECT 2"}}, RolePolicySQL: "SELECT 3"},
-		{Components: []Component{{Name: "one", SQL: "SELECT 1"}}, Migrations: []Migration{{Revision: 3, MigrationID: "003_gap", SQL: "SELECT 4"}}, RolePolicySQL: "SELECT 3"},
-		{Components: []Component{{Name: "one", SQL: "SELECT 1"}}, Migrations: []Migration{{Revision: 2, MigrationID: "", SQL: "SELECT 4"}}, RolePolicySQL: "SELECT 3"},
+	baseline := strings.ReplaceAll(strings.ReplaceAll(string(contents), "-- +goose StatementBegin\n", ""), "-- +goose StatementEnd\n", "")
+	canonical := recoverypostgres.SchemaSQL()
+	for _, block := range []struct {
+		name, start, end string
+	}{
+		{name: "object root constraints", start: "CREATE TABLE IF NOT EXISTS recovery.recovery_object_root (", end: "CREATE TABLE IF NOT EXISTS recovery.validation_attempt ("},
+		{name: "publication guard", start: "CREATE OR REPLACE FUNCTION recovery.reject_frontier_mutation()", end: "CREATE OR REPLACE FUNCTION recovery.reject_frontier_insert()"},
+		{name: "validation guard", start: "CREATE OR REPLACE FUNCTION recovery.guard_validation_result_insert()", end: "DROP TRIGGER IF EXISTS recovery_validation_result_guard"},
 	} {
-		if err := Apply(context.Background(), recorder, plan); err == nil {
-			t.Fatalf("Apply accepted invalid plan %#v", plan)
+		want := recoverySQLBlock(t, canonical, block.start, block.end)
+		got := recoverySQLBlock(t, baseline, block.start, block.end)
+		if got != want {
+			t.Errorf("Goose baseline %s differs from canonical recovery schema", block.name)
 		}
+	}
+}
+
+func recoverySQLBlock(t *testing.T, source, start, end string) string {
+	t.Helper()
+	startAt := strings.Index(source, start)
+	if startAt < 0 {
+		t.Fatalf("SQL block start %q is missing", start)
+	}
+	endAt := strings.Index(source[startAt:], end)
+	if endAt < 0 {
+		t.Fatalf("SQL block end %q is missing", end)
+	}
+	return source[startAt : startAt+endAt]
+}
+
+func TestGooseEntryPointsRejectNilDatabase(t *testing.T) {
+	if _, err := NewProvider(nil); err == nil {
+		t.Fatal("NewProvider(nil) unexpectedly succeeded")
+	}
+	if err := ApplyGoose(t.Context(), nil); err == nil {
+		t.Fatal("ApplyGoose(nil) unexpectedly succeeded")
+	}
+	if err := VerifyGoose(t.Context(), nil); err == nil {
+		t.Fatal("VerifyGoose(nil) unexpectedly succeeded")
+	}
+	if err := ReconcileRolePolicy(t.Context(), nil, "SELECT 1"); err == nil {
+		t.Fatal("ReconcileRolePolicy(nil) unexpectedly succeeded")
+	}
+}
+
+func TestVerifyGooseFailsClosedOnFreshDatabase(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "goose_verify_fresh")
+	db, err := sql.Open("pgx", database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := VerifyGoose(t.Context(), db); err == nil {
+		t.Fatal("VerifyGoose unexpectedly succeeded on a fresh database")
+	}
+
+	var eventSchemaExists, versionTableExists bool
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT EXISTS (
+		           SELECT 1 FROM information_schema.schemata
+		           WHERE schema_name = 'event'
+		       ),
+		       EXISTS (
+		           SELECT 1 FROM information_schema.tables
+		           WHERE table_schema = 'public' AND table_name = 'goose_db_version'
+		       )`).Scan(&eventSchemaExists, &versionTableExists); err != nil {
+		t.Fatal(err)
+	}
+	if eventSchemaExists {
+		t.Fatal("VerifyGoose applied the event schema while checking a fresh database")
+	}
+	if !versionTableExists {
+		t.Fatal("VerifyGoose did not initialize its authoritative version table")
+	}
+	var version int64
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT version_id
+		FROM public.goose_db_version
+		ORDER BY id DESC LIMIT 1`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 0 {
+		t.Fatalf("fresh Goose version row = %d, want 0", version)
 	}
 }

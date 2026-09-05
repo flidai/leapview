@@ -1,0 +1,413 @@
+package runtimefactory
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
+	deploymentdomain "github.com/flidai/leapview/internal/deployment"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/runtimehost"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
+	h := postgrestest.Start(t)
+	database := h.NewDatabase(t, "runtimefactory_sealed_root")
+	db, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := deploymentpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := physicalpoolpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := lineagepostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	targetID := "target-preview"
+	projectID := "project-preview"
+	environment := "prod"
+	generationID := "11111111-1111-4111-8111-111111111111"
+	planID := "22222222-2222-4222-8222-222222222222"
+	candidateID := "33333333-3333-4333-8333-333333333333"
+	attemptID := "44444444-4444-4444-8444-444444444444"
+	sealID := "55555555-5555-4555-8555-555555555555"
+	relationNamespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{CandidateID: candidateID, AttemptID: attemptID, FencingEpoch: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestDigest := testPostgresResolverDigest('1')
+	graphDigest := testPostgresResolverDigest('3')
+	configDigest := testPostgresResolverDigest('4')
+	securityDigest := testPostgresResolverDigest('5')
+	artifactDigest := testPostgresResolverDigest('6')
+	artifactRootDigest := testPostgresResolverDigest('7')
+	closureDigest := testPostgresResolverDigest('8')
+	relationDigest := testPostgresResolverDigest('9')
+	objectDigest := testPostgresResolverDigest('a')
+	qualificationDigest := testPostgresResolverDigest('b')
+	planDocument, err := deploymentdomain.NewDeliveryPlan(deploymentdomain.DeliveryPlan{
+		ID: planID, TargetID: targetID, ProjectID: projectgraph.ResourceID(projectID), Environment: environment,
+		Operation: deploymentdomain.DeliveryOperationCodeChange, SourceDigest: artifactDigest, ServingArtifactDigest: artifactDigest,
+		Execution:  deploymentdomain.DeliveryExecutionInputs{SourceArtifactDigest: artifactDigest, CompilerDigest: graphDigest, ExecutableDigest: testPostgresResolverDigest('c'), DependencyDigest: testPostgresResolverDigest('d'), ConfigDigest: configDigest, BindingDigest: securityDigest, RuntimeDigest: testPostgresResolverDigest('e'), CapabilityDigest: testPostgresResolverDigest('f')},
+		Provenance: deploymentdomain.DeliveryProvenance{Builder: "runtimefactory-test"},
+		Governance: deploymentdomain.DeliveryGovernance{PolicyDigest: testPostgresResolverDigest('0'), AuthorizationDigest: securityDigest, QualificationDigest: runtimeFactoryDigest("qualification"), ApprovalPolicyRevision: 1, ExpiresAt: time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC)},
+		Evidence:   deploymentdomain.DeliveryPlanEvidence{ImpactStatement: "runtime resolver fixture", PhysicalWorkStatement: "resolve sealed physical state", ReuseStatement: "no fixture reuse", Qualification: deploymentdomain.DeliveryQualificationEvidence{Policy: "exact sealed snapshot", Steps: []deploymentdomain.DeliveryQualificationStep{{ID: "snapshot", Kind: "contract", Description: "verify sealed snapshot", Required: true, Blocking: true}}}, StalePolicy: deploymentdomain.DeliveryStalePolicy{Mode: "reject"}, Rollback: deploymentdomain.DeliveryRollbackEvidence{Class: deploymentdomain.DeliveryServingSafe}},
+		CreatedAt:  time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDocumentJSON, err := json.Marshal(planDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDigest := planDocument.Digest
+
+	compatibility := physicalpool.Compatibility{
+		DuckDBRuntime: "duckdb:1.5.4", DuckLakeExtension: "ducklake:0.3.0",
+		CatalogFormat: "ducklake-catalog:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1",
+	}
+	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
+		StorageLocation: filepath.Join(t.TempDir(), "warehouse"), StorageNamespace: "warehouse",
+		Region: "us-east-1", Tenant: "tenant-preview", EncryptionDomain: "tenant-preview", IsolationBoundary: targetID,
+		RetentionAuthority: targetID, RetentionPolicy: physicalpool.RetentionPolicy{ReaderGracePeriodSeconds: 300, OrphanGracePeriodSeconds: 3600, BuildGracePeriodSeconds: 60},
+		Compatibility: compatibility,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := physicalpool.NewEvidence(physicalpool.EvidenceInput{
+		Compatibility: compatibility, ConformanceVersion: "runtimefactory-test/v1",
+		Checks: []physicalpool.EvidenceCheck{{ID: "resolver", Passed: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pools := physicalpoolpostgres.New(db)
+	pool, _, err = pools.CreateAndAdmit(t.Context(), pool, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compatibilityDigest, err := compatibility.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	delivery := deploymentpostgres.New(db)
+	lineage := lineagepostgres.New(db)
+	if _, err := delivery.CreateTarget(t.Context(), deploymentpostgres.TargetInput{TargetID: targetID, ProjectID: projectID, Environment: environment}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.CreatePlan(t.Context(), deploymentpostgres.PlanInput{
+		PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest,
+		CompiledGraphDigest: graphDigest, CompiledConfigDigest: configDigest,
+		SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, QualificationDigest: runtimeFactoryDigest("qualification"),
+		QualificationRequired: true, ApprovalRequired: false, ApprovalPolicyRevision: 1, PlanDocument: planDocumentJSON, Evidence: json.RawMessage(`{"source":"resolver-test"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.CreateCandidate(t.Context(), deploymentpostgres.CandidateInput{
+		CandidateID: candidateID, TargetID: targetID, PlanID: planID, CandidateRevision: 1, ArtifactDigest: artifactDigest,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := delivery.BeginBuildAttempt(t.Context(), deploymentpostgres.BuildAttemptInput{
+		AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "resolver-test-owner",
+		PhysicalPoolID: pool.ID.String(), CatalogID: "catalog-id", FencingEpoch: 1, RequestDigest: requestDigest, PlanDigest: planDigest,
+		Namespace: relationNamespace, SessionIdentity: "resolver-session", LeaseExpiresAt: time.Now().UTC().Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.BindBuildArtifact(t.Context(), deploymentpostgres.BuildArtifactBindingInput{
+		AttemptID: attemptID, ServingArtifactID: "artifact-preview", ServingArtifactDigest: artifactDigest,
+		ServingStateID: generationID, OwnerID: attempt.OwnerID, FencingEpoch: attempt.FencingEpoch,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	markerJSON, err := (ducklake.CommitMarker{
+		SchemaVersion: ducklake.CommitMarkerSchemaVersion, DeliveryID: "delivery-preview",
+		GenerationID: generationID, AttemptID: attemptID, LeaseEpoch: attempt.FencingEpoch,
+		RequestDigest: requestDigest, PlanDigest: planDigest, Project: projectID, Environment: environment,
+		PhysicalPoolID: pool.ID.String(),
+	}).CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.CommitBuildAttempt(t.Context(), deploymentpostgres.CommitAttemptInput{
+		AttemptID: attemptID, OwnerID: attempt.OwnerID, FencingEpoch: attempt.FencingEpoch, SnapshotID: 42,
+		CommitMarker: json.RawMessage(markerJSON),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.CreateSnapshotSeal(t.Context(), deploymentpostgres.SnapshotSealInput{
+		SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: pool.ID.String(),
+		TenantDomain: "tenant-preview", Region: "us-east-1", EncryptionDomain: "kms-preview", ObjectNamespace: "objects-preview",
+		CatalogDatabase: "catalog_preview", CatalogID: "catalog-id", CatalogUUID: "66666666-6666-4666-8666-666666666666", CatalogVersion: 3, DuckLakeSnapshotID: 42,
+		RelationNamespace: relationNamespace, RelationManifestDigest: relationDigest, ClosureDigest: closureDigest,
+		ObjectRoot: "objects/root", ObjectRootDigest: objectDigest, ArtifactRoot: "artifacts/root", ArtifactRootDigest: artifactRootDigest,
+		CompiledGraphDigest: graphDigest, CompiledConfigDigest: configDigest, SecurityDomainFingerprint: securityDigest,
+		RequestDigest: requestDigest, PlanDigest: planDigest, CompatibilityDigest: compatibilityDigest,
+		ServingArtifactID: "artifact-preview", ServingArtifactDigest: artifactDigest,
+		DuckDBVersion: "duckdb:1.5.4", RuntimeVersion: "runtime-preview", DuckLakeExtensionVersion: "ducklake:0.3.0",
+		DuckLakeSpecVersion: "ducklake-catalog:v1", CatalogSchemaVersion: "schema-v1", QualificationEvidence: json.RawMessage(`{"qualified":true}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.QualifyCandidate(t.Context(), candidateID, sealID, qualificationDigest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.CreateGeneration(t.Context(), deploymentpostgres.GenerationInput{
+		GenerationID: generationID, TargetID: targetID, CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID,
+		PlanDigest: planDigest, ArtifactRoot: "artifacts/root", ArtifactRootDigest: artifactRootDigest, ServingArtifactDigest: artifactDigest,
+		CompiledGraphDigest: graphDigest, CompiledConfigDigest: configDigest, SecurityDomainFingerprint: securityDigest, GenerationRevision: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lineageGraph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: projectgraph.ResourceID(projectID), Kind: projectgraph.KindProject, Name: "project"},
+		{ID: projectgraph.ResourceID("source:orders"), Kind: projectgraph.KindSource, Name: "orders"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineageTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lineage.PersistGraph(t.Context(), lineageTx, lineageGraph, lineagepostgres.Binding{
+		DeliveryID: targetID, GenerationID: generationID, ProjectID: projectID,
+	}); err != nil {
+		_ = lineageTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := lineageTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	preActivationInput := runtimehost.RuntimeInput{
+		State:                     servingstate.State{ID: servingstate.ID(generationID), ProjectID: projectgraph.ResourceID(projectID), Environment: servingstate.Environment(environment), DuckLakeSnapshotID: 42},
+		Artifact:                  servingstate.Artifact{ID: "artifact-preview", Digest: artifactDigest},
+		SealedActivationCandidate: &runtimehost.CandidateRuntimeContext{CandidateID: candidateID},
+	}
+	if root, err := resolverBeforeActivation(t, targetID, delivery, pools, lineage, preActivationInput); err != nil {
+		t.Fatal(err)
+	} else if root.GenerationID != generationID || root.CandidateID != candidateID {
+		t.Fatalf("pre-activation root identity=%s/%s, want %s/%s", root.GenerationID, root.CandidateID, generationID, candidateID)
+	}
+	if _, err := resolverBeforeActivation(t, targetID, delivery, pools, lineage, func() runtimehost.RuntimeInput {
+		bad := preActivationInput
+		bad.SealedActivationCandidate = nil
+		return bad
+	}()); !errors.Is(err, ErrSealedRootUnavailable) {
+		t.Fatalf("active-only resolver before target activation error=%v, want unavailable", err)
+	}
+	publication, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{
+		PublicationID: "88888888-8888-4888-8888-888888888888", TargetID: targetID, GenerationID: generationID,
+		CandidateID: candidateID, SnapshotSealID: sealID, ExpectedTargetRevision: 1, ActorID: "resolver-test", RequestDigest: requestDigest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activationTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := activationTx.Exec(t.Context(), `UPDATE delivery.delivery_target SET target_revision=2, updated_at=clock_timestamp() WHERE target_id=$1`, targetID); err != nil {
+		_ = activationTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := activationTx.Exec(t.Context(), `INSERT INTO delivery.delivery_active_pointer(target_id,generation_id,publication_id) VALUES($1,$2::uuid,$3::uuid)`, targetID, generationID, publication.PublicationID); err != nil {
+		_ = activationTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := activationTx.Exec(t.Context(), `UPDATE delivery.delivery_publication SET state='committed', result_target_revision=2, committed_at=clock_timestamp() WHERE publication_id=$1::uuid`, publication.PublicationID); err != nil {
+		_ = activationTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := activationTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := NewPostgresSealedRootResolver(targetID, delivery, pools, lineage)
+	input := runtimehost.RuntimeInput{
+		State:     servingstate.State{ID: servingstate.ID(generationID), ProjectID: projectgraph.ResourceID(projectID), Environment: servingstate.Environment(environment), DuckLakeSnapshotID: 42},
+		Artifact:  servingstate.Artifact{ID: "artifact-preview", Digest: artifactDigest},
+		Candidate: &runtimehost.CandidateRuntimeContext{CandidateID: candidateID},
+	}
+	root, err := resolver(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root.TargetID != targetID || root.DeliveryID != "delivery-preview" || root.GenerationID != generationID || root.ServingStateID != generationID || root.CandidateID != candidateID || root.AttemptID != attemptID || root.SealID != sealID || root.ServingArtifactID != "artifact-preview" || root.ServingArtifactDigest != artifactDigest || root.ClosureDigest != closureDigest || root.RuntimeVersion != "runtime-preview" || root.CatalogSnapshotID != 42 || root.PoolContract == nil {
+		t.Fatalf("unexpected resolved root: %#v", root)
+	}
+	t.Run("artifact digest mismatch fails closed", func(t *testing.T) {
+		bad := input
+		bad.Artifact.Digest = testPostgresResolverDigest('c')
+		if _, err := resolver(t.Context(), bad); !errors.Is(err, ErrSealedRootMismatch) {
+			t.Fatalf("error=%v, want sealed-root mismatch", err)
+		}
+	})
+	t.Run("marker generation mismatch fails closed", func(t *testing.T) {
+		bad := input
+		bad.State.ID = servingstate.ID("77777777-7777-4777-8777-777777777777")
+		if _, err := resolver(t.Context(), bad); !errors.Is(err, ErrSealedRootMismatch) {
+			t.Fatalf("error=%v, want sealed-root mismatch", err)
+		}
+	})
+	t.Run("candidate runtime mismatch fails closed", func(t *testing.T) {
+		bad := input
+		bad.Candidate = &runtimehost.CandidateRuntimeContext{CandidateID: candidateID, RuntimeVersion: "runtime-other"}
+		if _, err := resolver(t.Context(), bad); !errors.Is(err, ErrSealedRootMismatch) {
+			t.Fatalf("error=%v, want sealed-root mismatch", err)
+		}
+	})
+	t.Run("active publication resolves the same sealed root", func(t *testing.T) {
+		activeInput := input
+		activeInput.Candidate = nil
+		root, err := resolver(t.Context(), activeInput)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if root.TargetID != targetID || root.GenerationID != generationID || root.DeliveryID != "delivery-preview" {
+			t.Fatalf("root identity=%s/%s/%s", root.TargetID, root.GenerationID, root.DeliveryID)
+		}
+	})
+	t.Run("missing and wrong lineage bindings fail closed before pool admission", func(t *testing.T) {
+		// Keep delivery and physical-pool authorities valid while querying a
+		// separately configured lineage authority with no exact binding. This
+		// exercises both candidate-preview and active-generation paths without
+		// mutating the immutable binding in the success fixture.
+		missingDatabase := h.NewDatabase(t, "runtimefactory_sealed_root_missing_lineage")
+		missingDB, err := pgxpool.New(t.Context(), missingDatabase.AdminURL())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(missingDB.Close)
+		missingTx, err := missingDB.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lineagepostgres.ApplySchema(t.Context(), missingTx); err != nil {
+			_ = missingTx.Rollback(t.Context())
+			t.Fatal(err)
+		}
+		if err := missingTx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		missingLineage := lineagepostgres.New(missingDB)
+		missingResolver := NewPostgresSealedRootResolver(targetID, delivery, pools, missingLineage)
+		if _, err := missingResolver(t.Context(), input); !errors.Is(err, ErrSealedRootMismatch) {
+			t.Fatalf("candidate missing lineage error=%v, want sealed-root mismatch", err)
+		}
+		activeInput := input
+		activeInput.Candidate = nil
+		if _, err := missingResolver(t.Context(), activeInput); !errors.Is(err, ErrSealedRootMismatch) {
+			t.Fatalf("active missing lineage error=%v, want sealed-root mismatch", err)
+		}
+
+		// A binding for the wrong delivery target is also not an admissible
+		// target+generation scope. Persist it in the isolated authority and
+		// ensure resolution remains a mismatch rather than falling back to it.
+		wrongTx, err := missingDB.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := missingLineage.PersistGraph(t.Context(), wrongTx, lineageGraph, lineagepostgres.Binding{
+			DeliveryID: "wrong-target", GenerationID: generationID, ProjectID: projectID,
+		}); err != nil {
+			_ = wrongTx.Rollback(t.Context())
+			t.Fatal(err)
+		}
+		if err := wrongTx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := missingResolver(t.Context(), input); !errors.Is(err, ErrSealedRootMismatch) {
+			t.Fatalf("candidate wrong lineage binding error=%v, want sealed-root mismatch", err)
+		}
+
+		// Remove pool admission from a separate authority. The lineage check
+		// must still win, proving it runs before physical-pool admission.
+		poolDatabase := h.NewDatabase(t, "runtimefactory_sealed_root_missing_pool")
+		poolDB, err := pgxpool.New(t.Context(), poolDatabase.AdminURL())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(poolDB.Close)
+		poolTx, err := poolDB.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := physicalpoolpostgres.ApplySchema(t.Context(), poolTx); err != nil {
+			_ = poolTx.Rollback(t.Context())
+			t.Fatal(err)
+		}
+		if err := poolTx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		noAdmissionResolver := NewPostgresSealedRootResolver(targetID, delivery, physicalpoolpostgres.New(poolDB), missingLineage)
+		if _, err := noAdmissionResolver(t.Context(), input); !errors.Is(err, ErrSealedRootMismatch) {
+			t.Fatalf("missing lineage with unavailable pool error=%v, want sealed-root mismatch", err)
+		}
+		if _, err := noAdmissionResolver(t.Context(), activeInput); !errors.Is(err, ErrSealedRootMismatch) {
+			t.Fatalf("active missing lineage with unavailable pool error=%v, want sealed-root mismatch", err)
+		}
+	})
+	t.Run("transient lineage failure remains unavailable", func(t *testing.T) {
+		canceled, cancel := context.WithCancel(t.Context())
+		cancel()
+		err := validatePostgresLineageBinding(canceled, lineage, targetID, projectID, generationID)
+		if !errors.Is(err, ErrSealedRootUnavailable) || !errors.Is(err, context.Canceled) || errors.Is(err, ErrSealedRootMismatch) {
+			t.Fatalf("error=%v, want retryable sealed-root unavailable with cancellation cause", err)
+		}
+	})
+	t.Run("lineage repository is required", func(t *testing.T) {
+		for name, repository := range map[string]*lineagepostgres.Repository{
+			"nil":          nil,
+			"unconfigured": lineagepostgres.New(nil),
+		} {
+			t.Run(name, func(t *testing.T) {
+				resolver := NewPostgresSealedRootResolver(targetID, delivery, pools, repository)
+				if _, err := resolver(t.Context(), input); !errors.Is(err, ErrSealedRootUnavailable) {
+					t.Fatalf("error=%v, want sealed-root unavailable", err)
+				}
+			})
+		}
+	})
+}
+
+func resolverBeforeActivation(t *testing.T, targetID string, delivery *deploymentpostgres.Repository, pools *physicalpoolpostgres.Repository, lineage *lineagepostgres.Repository, input runtimehost.RuntimeInput) (SealedServingRoot, error) {
+	t.Helper()
+	return NewPostgresSealedRootResolver(targetID, delivery, pools, lineage)(t.Context(), input)
+}
+
+func testPostgresResolverDigest(value byte) string {
+	return "sha256:" + strings.Repeat(string(value), 64)
+}

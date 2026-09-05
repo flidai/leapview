@@ -147,6 +147,7 @@ func TestDBTWarehouseBoundaryTasksSequencePrerequisites(t *testing.T) {
 
 		previous := -1
 		for _, command := range []string{
+			"      - task: postgres:dev:up",
 			"      - task: generate",
 			"      - task: build",
 			"      - task: map-assets:install",
@@ -506,7 +507,7 @@ func TestDBTWarehouseBoundaryCIJobUsesTheTieredWorkflow(t *testing.T) {
 	for _, want := range []string{
 		"dbt-warehouse-boundary-validation:",
 		"name: dbt physical contract (PR)",
-		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]",
+		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]",
 		"DBT_WAREHOUSE_RESULT: ${{ needs.dbt-warehouse-boundary-validation.result }}",
 	} {
 		if !strings.Contains(text, want) {
@@ -514,6 +515,14 @@ func TestDBTWarehouseBoundaryCIJobUsesTheTieredWorkflow(t *testing.T) {
 		}
 	}
 	dbtWarehouseCI := workflowJobBlock(t, text, "dbt-warehouse-boundary-validation")
+	for _, want := range []string{
+		"if: always()",
+		"run: task postgres:dev:down",
+	} {
+		if !strings.Contains(dbtWarehouseCI, want) {
+			t.Fatalf("dbt validation job does not clean up its PostgreSQL service: missing %q", want)
+		}
+	}
 	for _, want := range []string{
 		"github.event_name == 'workflow_dispatch'",
 		"github.event.pull_request.stack == null",

@@ -17,7 +17,17 @@ import (
 const rowPresenceColumn = "__leapview_row_present"
 
 func PlanModelTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table) (analyticsmaterialize.ModelTablePlan, error) {
-	return planModelTable(ctx, runtimeDB, model, tableName, table, nil)
+	return PlanModelTableInNamespace(ctx, runtimeDB, model, tableName, table, "model")
+}
+
+// PlanModelTableInNamespace plans one Model relation for a specific write
+// namespace. The namespace is validated before it is interpolated into DDL;
+// the legacy PlanModelTable wrapper retains the active model schema.
+func PlanModelTableInNamespace(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, relationNamespace string) (analyticsmaterialize.ModelTablePlan, error) {
+	if err := validateRelationNamespace(relationNamespace); err != nil {
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("relation namespace: %w", err)
+	}
+	return planModelTableInNamespace(ctx, runtimeDB, model, tableName, table, nil, relationNamespace)
 }
 
 type stagedRelationKind uint8
@@ -37,12 +47,19 @@ type stagedRelation struct {
 }
 
 func planModelTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]stagedRelation) (analyticsmaterialize.ModelTablePlan, error) {
+	return planModelTableInNamespace(ctx, runtimeDB, model, tableName, table, staged, "model")
+}
+
+func planModelTableInNamespace(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]stagedRelation, relationNamespace string) (analyticsmaterialize.ModelTablePlan, error) {
 	if err := validateIdentifier(tableName); err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
+	if err := validateRelationNamespace(relationNamespace); err != nil {
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("relation namespace: %w", err)
+	}
 	sqlText := strings.TrimSpace(table.Execution.SQL)
 	if table.Execution.Source != "" && sqlText == "" {
-		return planDirectSourceTable(ctx, runtimeDB, model, tableName, table, staged)
+		return planDirectSourceTableInNamespace(ctx, runtimeDB, model, tableName, table, staged, relationNamespace)
 	}
 	if sqlText == "" {
 		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("Model %q requires a direct source binding or definition.sql", tableName)
@@ -79,29 +96,33 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 		}
 	}
 	if len(table.SourceDependencies) == 0 && len(table.ModelDependencies) == 0 {
-		if err := preparePlanningDatabase(ctx, plannerDB, nil, nil); err != nil {
+		if err := preparePlanningDatabaseInNamespace(ctx, plannerDB, nil, nil, relationNamespace); err != nil {
 			return analyticsmaterialize.ModelTablePlan{}, err
 		}
 		if err := validateModelOutput(ctx, plannerDB, tableName, table, sqlText); err != nil {
 			return analyticsmaterialize.ModelTablePlan{}, err
 		}
-		return materializationPlan(analyticsmaterialize.PlanModeModelSQL, tableName, sqlText), nil
+		return materializationPlan(analyticsmaterialize.PlanModeModelSQL, tableName, sqlText, relationNamespace), nil
 	}
 	sourceSchemas, err := discoverPlanningSourceSchemas(ctx, runtimeDB, model, table.SourceDependencies)
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	modelSchemas, err := discoverPlanningModelSchemas(ctx, runtimeDB, model, table.ModelDependencies)
+	modelSchemas, err := discoverPlanningModelSchemasInNamespace(ctx, runtimeDB, model, table.ModelDependencies, relationNamespace)
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	if err := preparePlanningDatabase(ctx, plannerDB, sourceSchemas, modelSchemas); err != nil {
+	if err := preparePlanningDatabaseInNamespace(ctx, plannerDB, sourceSchemas, modelSchemas, relationNamespace); err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	if err := validateModelOutput(ctx, plannerDB, tableName, table, sqlText); err != nil {
+	rewrittenSQL, err := modelsql.RewriteModels(sqlText, sqlAnalysis, relationNamespace)
+	if err != nil {
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("rewriting Model %q refs: %w", tableName, err)
+	}
+	if err := validateModelOutput(ctx, plannerDB, tableName, table, rewrittenSQL); err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	explainAnalysis, err := duckdbsql.AnalyzePlan(ctx, plannerDB, sqlText)
+	explainAnalysis, err := duckdbsql.AnalyzePlan(ctx, plannerDB, rewrittenSQL)
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("planning Model %q source reads: %w", tableName, err)
 	}
@@ -113,14 +134,18 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	rewritten, err := modelsql.RewriteSources(sqlText, sqlAnalysis, replacements, true)
+	rewritten, err := modelsql.RewriteSourcesAndModels(sqlText, sqlAnalysis, replacements, relationNamespace, true)
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("rewriting Model %q source refs: %w", tableName, err)
 	}
-	return materializationPlan(analyticsmaterialize.PlanModeProjectedSourceInline, tableName, rewritten), nil
+	return materializationPlan(analyticsmaterialize.PlanModeProjectedSourceInline, tableName, rewritten, relationNamespace), nil
 }
 
 func planDirectSourceTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]stagedRelation) (analyticsmaterialize.ModelTablePlan, error) {
+	return planDirectSourceTableInNamespace(ctx, runtimeDB, model, tableName, table, staged, "model")
+}
+
+func planDirectSourceTableInNamespace(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]stagedRelation, relationNamespace string) (analyticsmaterialize.ModelTablePlan, error) {
 	source, ok := model.Sources[table.Execution.Source]
 	if !ok {
 		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("unknown source %q", table.Execution.Source)
@@ -137,13 +162,15 @@ func planDirectSourceTable(ctx context.Context, runtimeDB queryContext, model *s
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	return materializationPlan(analyticsmaterialize.PlanModeDirectSourceRead, tableName, relation), nil
+	return materializationPlan(analyticsmaterialize.PlanModeDirectSourceRead, tableName, relation, relationNamespace), nil
 }
 
-func materializationPlan(mode string, tableName string, query string) analyticsmaterialize.ModelTablePlan {
+func materializationPlan(mode string, tableName string, query string, relationNamespace string) analyticsmaterialize.ModelTablePlan {
+	namespace := relationNamespace
+	table := tableName
 	return analyticsmaterialize.ModelTablePlan{
 		Mode: mode,
-		SQL:  fmt.Sprintf("CREATE OR REPLACE TABLE model.%s AS %s", tableName, query),
+		SQL:  fmt.Sprintf("CREATE OR REPLACE TABLE %s.%s AS %s", namespace, table, query),
 	}
 }
 
@@ -195,9 +222,16 @@ func discoverPlanningSourceSchemas(ctx context.Context, db queryContext, model *
 }
 
 func discoverPlanningModelSchemas(ctx context.Context, db queryContext, model *semanticmodel.Model, dependencies []string) (map[string][]semanticmodel.ColumnSchema, error) {
+	return discoverPlanningModelSchemasInNamespace(ctx, db, model, dependencies, "model")
+}
+
+func discoverPlanningModelSchemasInNamespace(ctx context.Context, db queryContext, model *semanticmodel.Model, dependencies []string, relationNamespace string) (map[string][]semanticmodel.ColumnSchema, error) {
 	result := map[string][]semanticmodel.ColumnSchema{}
 	for _, tableName := range dependencies {
-		columns, err := describeRelationSchema(ctx, db, "model."+tableName)
+		if err := validateRelationNamespace(relationNamespace); err != nil {
+			return nil, fmt.Errorf("relation namespace: %w", err)
+		}
+		columns, err := describeRelationSchema(ctx, db, quoteIdentifier(relationNamespace)+"."+quoteIdentifier(tableName))
 		if err == nil && len(columns) > 0 {
 			result[tableName] = columns
 			continue
@@ -238,10 +272,17 @@ func modelColumnsAsSchema(table semanticmodel.Table) []semanticmodel.ColumnSchem
 }
 
 func preparePlanningDatabase(ctx context.Context, db *sql.DB, sourceSchemas map[string][]semanticmodel.ColumnSchema, modelSchemas map[string][]semanticmodel.ColumnSchema) error {
+	return preparePlanningDatabaseInNamespace(ctx, db, sourceSchemas, modelSchemas, "model")
+}
+
+func preparePlanningDatabaseInNamespace(ctx context.Context, db *sql.DB, sourceSchemas map[string][]semanticmodel.ColumnSchema, modelSchemas map[string][]semanticmodel.ColumnSchema, relationNamespace string) error {
+	if err := validateRelationNamespace(relationNamespace); err != nil {
+		return fmt.Errorf("relation namespace: %w", err)
+	}
 	if _, err := db.ExecContext(ctx, "CREATE SCHEMA source"); err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, "CREATE SCHEMA model"); err != nil {
+	if _, err := db.ExecContext(ctx, "CREATE SCHEMA "+quoteIdentifier(relationNamespace)); err != nil {
 		return err
 	}
 	for _, name := range sortedKeys(sourceSchemas) {
@@ -250,7 +291,7 @@ func preparePlanningDatabase(ctx context.Context, db *sql.DB, sourceSchemas map[
 		}
 	}
 	for _, name := range sortedKeys(modelSchemas) {
-		if err := createPlanningTable(ctx, db, "model", name, modelSchemas[name]); err != nil {
+		if err := createPlanningTable(ctx, db, relationNamespace, name, modelSchemas[name]); err != nil {
 			return err
 		}
 	}

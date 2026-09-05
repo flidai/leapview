@@ -61,7 +61,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 270
     permissions:
       contents: read
       packages: read
@@ -88,6 +88,26 @@ jobs:
           sha256sum --check "${package}.tar.gz.sha256"
           tar --extract --gzip --file "${package}.tar.gz"
           echo "package_root=$RUNNER_TEMP/leapview-public/$package" >> "$GITHUB_OUTPUT"
+
+      - name: Verify native PostgreSQL qualification assets
+        env:
+          PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
+        run: |
+          set -euo pipefail
+          init_script="$PACKAGE_ROOT/qualification/postgres-init.sh"
+          test -s "$init_script"
+          # The release archive may have crossed an artifact boundary that
+          # strips executable bits (or was produced by a hardened umask).
+          # PostgreSQL executes this hook after dropping to the `postgres`
+          # user, so normalize its reviewed mode before starting the sidecar.
+          chmod 0755 "$PACKAGE_ROOT/qualification/validate-bundle.sh"
+          chmod 0755 "$init_script"
+          # The release archive may have crossed an artifact boundary that
+          # strips world-readable bits (or was extracted under umask 0077).
+          # Caddy reads this bind-mounted file, so restore the reviewed mode
+          # before starting Compose.
+          chmod 0644 "$PACKAGE_ROOT/Caddyfile"
+          "$PACKAGE_ROOT/qualification/validate-bundle.sh" "$PACKAGE_ROOT"
 
       - name: Resolve candidate image identity
         id: identity
@@ -129,26 +149,7 @@ jobs:
           PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
           EVIDENCE_ROOT: ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}
         run: |
-          previous_image="$(
-            jq -r --arg platform "linux/${{ matrix.arch }}" '
-              .candidateRelease as $candidate |
-              first(
-                .transitions[]? |
-                select(.operation == "upgrade" and .to == $candidate and .decision.allowed == true and (.platforms | index($platform))) |
-                .from as $previous |
-                .releases[] |
-                select(.id == $previous) |
-                .artifacts[] |
-                select(.platform == $platform) |
-                .image
-              ) // ""
-            ' "$PACKAGE_ROOT/release-transition-policy.json"
-          )"
-          test -n "$previous_image" || {
-            echo "candidate policy has no reviewed predecessor transition for linux/${{ matrix.arch }}" >&2
-            exit 1
-          }
-          args=(qualify installed-candidate --require-release-transition --previous-image "$previous_image" --evidence-dir "$EVIDENCE_ROOT")
+          args=(qualify installed-candidate --bundle "$PACKAGE_ROOT" --evidence-dir "$EVIDENCE_ROOT" --multi-node-process)
           env -u GH_TOKEN -u GITHUB_TOKEN \
             "$PACKAGE_ROOT/leapviewctl" "${args[@]}"
 

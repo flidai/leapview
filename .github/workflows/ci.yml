@@ -157,6 +157,44 @@ jobs:
       - name: Verify generated artifacts
         run: task generated:check
 
+  postgres-isolation-validation:
+    name: PostgreSQL topology isolation (PR)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.stack == null ||
+      github.event.pull_request.stack.position == github.event.pull_request.stack.size
+    runs-on: ubuntu-24.04
+    # The native qualification starts a pinned PostgreSQL 18 sidecar, runs
+    # the canonical init hook, and exercises a deliberate fail-closed case.
+    # Keep enough room for a cold image pull while bounding the required lane.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Provision PostgreSQL test topology
+        run: task postgres:test:up
+
+      - name: Check PostgreSQL topology isolation
+        run: task postgres:test:check
+
+      - name: Run native PostgreSQL qualification contract
+        run: task test:qualification:native-postgres
+
+      - name: Tear down PostgreSQL test topology
+        if: always()
+        run: task postgres:test:down
+
   spatial-tile-benchmarks:
     name: Spatial tile benchmarks (PR)
     if: >-
@@ -231,10 +269,14 @@ jobs:
       - name: Run real dbt Parquet through the headless LeapView lifecycle
         run: DBT_BIN="$(command -v dbt)" task dbt:warehouse:qualify
 
+      - name: Stop the isolated PostgreSQL development service
+        if: always()
+        run: task postgres:dev:down
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]
+    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -244,10 +286,11 @@ jobs:
           GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}
           GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}
           FRONTEND_RESULT: ${{ needs.frontend-validation.result }}
+          POSTGRES_ISOLATION_RESULT: ${{ needs.postgres-isolation-validation.result }}
           SPATIAL_BENCHMARK_RESULT: ${{ needs.spatial-tile-benchmarks.result }}
           DBT_WAREHOUSE_RESULT: ${{ needs.dbt-warehouse-boundary-validation.result }}
         run: |
-          if [[ "${APIGEN_RESULT}" = skipped && "${GO_PACKAGES_RESULT}" = skipped && "${GO_APPLICATION_RESULT}" = skipped && "${FRONTEND_RESULT}" = skipped && "${SPATIAL_BENCHMARK_RESULT}" = skipped && "${DBT_WAREHOUSE_RESULT}" = skipped ]]; then
+          if [[ "${APIGEN_RESULT}" = skipped && "${GO_PACKAGES_RESULT}" = skipped && "${GO_APPLICATION_RESULT}" = skipped && "${FRONTEND_RESULT}" = skipped && "${POSTGRES_ISOLATION_RESULT}" = skipped && "${SPATIAL_BENCHMARK_RESULT}" = skipped && "${DBT_WAREHOUSE_RESULT}" = skipped ]]; then
             printf '%s\n' 'Validation is deferred to the top of this stack.' >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
@@ -265,6 +308,10 @@ jobs:
           }
           test "${FRONTEND_RESULT}" = success || {
             printf 'Frontend validation: %s\n' "${FRONTEND_RESULT}" >&2
+            exit 1
+          }
+          test "${POSTGRES_ISOLATION_RESULT}" = success || {
+            printf 'PostgreSQL topology isolation: %s\n' "${POSTGRES_ISOLATION_RESULT}" >&2
             exit 1
           }
           test "${SPATIAL_BENCHMARK_RESULT}" = success || {

@@ -83,6 +83,76 @@ func TestBeginUploadEnsuresCollectionCanonicalizesManifestAndDeduplicatesMissing
 	}
 }
 
+func TestBeginUploadIdempotentReplayAcceptsPostgresJSONBManifestFormatting(t *testing.T) {
+	now := time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC)
+	repo := newFakeRepository()
+	service := newService(t, repo, &fakeBlobStore{blobs: make(map[string]storage.Blob)}, &fakeTransport{backend: "local"}, now)
+	request := control.BeginUploadRequest{
+		Project: "project-a", Connection: "orders", IdempotencyKey: "jsonb-replay",
+		Manifest: manageddata.Manifest{Files: []manageddata.File{
+			{Path: "z.csv", Size: 7, SHA256: digestB},
+			{Path: "a.csv", Size: 3, SHA256: digestA},
+		}},
+	}
+	first, err := service.BeginUpload(t.Context(), request)
+	if err != nil {
+		t.Fatalf("first BeginUpload() error = %v", err)
+	}
+
+	// PostgreSQL jsonb may reorder object keys and discard producer whitespace.
+	// The file array is intentionally reversed here because manifest
+	// canonicalization defines file order semantically by path.
+	repo.mu.Lock()
+	session := repo.sessions[first.ID]
+	session.ManifestJSON = `{
+  "files": [
+    {"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "path":"z.csv", "size":7},
+    {"size":3, "path":"a.csv", "sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+  ]
+}`
+	repo.sessions[first.ID] = session
+	repo.mu.Unlock()
+
+	retry, err := service.BeginUpload(t.Context(), request)
+	if err != nil {
+		t.Fatalf("jsonb-formatted replay error = %v", err)
+	}
+	if retry.ID != first.ID || retry.Manifest.RevisionID() != first.Manifest.RevisionID() {
+		t.Fatalf("replay = %#v, first = %#v", retry, first)
+	}
+}
+
+func TestBeginUploadRejectsCorruptPersistedManifestOnReplay(t *testing.T) {
+	for name, raw := range map[string]string{
+		"unknown field":  `{"files":[{"path":"a.csv","size":3,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],"unexpected":true}`,
+		"trailing value": `{"files":[{"path":"a.csv","size":3,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]} {"unexpected":true}`,
+		"invalid digest": `{"files":[{"path":"a.csv","size":3,"sha256":"not-a-sha256"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			now := time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC)
+			repo := newFakeRepository()
+			service := newService(t, repo, &fakeBlobStore{blobs: make(map[string]storage.Blob)}, &fakeTransport{backend: "local"}, now)
+			request := control.BeginUploadRequest{
+				Project: "project-a", Connection: "orders", IdempotencyKey: "jsonb-corrupt-" + name,
+				Manifest: manageddata.Manifest{Files: []manageddata.File{{Path: "a.csv", Size: 3, SHA256: digestA}}},
+			}
+			first, err := service.BeginUpload(t.Context(), request)
+			if err != nil {
+				t.Fatalf("first BeginUpload() error = %v", err)
+			}
+			repo.mu.Lock()
+			session := repo.sessions[first.ID]
+			session.ManifestJSON = raw
+			repo.sessions[first.ID] = session
+			repo.mu.Unlock()
+
+			if _, err := service.BeginUpload(t.Context(), request); !errors.Is(err, control.ErrConflict) {
+				t.Fatalf("corrupt replay error = %v, want conflict", err)
+			}
+		})
+	}
+}
+
 func TestBeginUploadEnforcesLimitsAndChecksBaseRevision(t *testing.T) {
 	repo := newFakeRepository()
 	blobs := &fakeBlobStore{blobs: make(map[string]storage.Blob)}

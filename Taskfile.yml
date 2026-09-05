@@ -7,6 +7,7 @@ tasks:
   dev:
     desc: Start the managed LeapView dev server for this worktree
     cmds:
+      - task: postgres:dev:up
       - task: generate
       - task: build
       - task: bootstrap
@@ -16,6 +17,7 @@ tasks:
   dev:movielens:
     desc: Start the managed LeapView dev server with the MovieLens 32M experiment project
     cmds:
+      - task: postgres:dev:up
       - task: generate
       - task: build
       - task: bootstrap:movielens
@@ -38,6 +40,7 @@ tasks:
   dbt:warehouse:qualify:
     desc: Run the physical dbt Parquet publication through the ordinary headless LeapView candidate lifecycle
     cmds:
+      - task: postgres:dev:up
       - task: generate
       - task: build
       - task: map-assets:install
@@ -47,6 +50,7 @@ tasks:
   dbt:warehouse:
     desc: Build the dbt-duckdb showcase and start LeapView through the managed development flow
     cmds:
+      - task: postgres:dev:up
       - task: generate
       - task: build
       - task: map-assets:install
@@ -127,6 +131,82 @@ tasks:
     desc: Tail managed LeapView dev server logs
     cmds:
       - ./scripts/dev-server.sh logs
+
+  postgres:dev:up:
+    desc: Provision the loopback-only PostgreSQL 18 development databases and roles
+    cmds:
+      - ./scripts/postgres-dev.sh up
+
+  postgres:dev:
+    desc: Provision the local PostgreSQL development databases and roles
+    cmds:
+      - task: postgres:dev:up
+
+  postgres:dev:down:
+    desc: Stop the local PostgreSQL development service (retains its volume)
+    cmds:
+      - ./scripts/postgres-dev.sh down
+
+  postgres:dev:status:
+    desc: Show the local PostgreSQL development service status
+    cmds:
+      - ./scripts/postgres-dev.sh status
+
+  postgres:dev:env:
+    desc: Print the path to the mode-0600 local PostgreSQL runtime environment file
+    cmds:
+      - ./scripts/postgres-dev.sh env
+
+  postgres:dev:check:
+    desc: Verify local PostgreSQL database and runtime-role isolation
+    cmds:
+      - ./scripts/postgres-dev.sh check
+
+  postgres:test:up:
+    desc: Provision an isolated PostgreSQL 18 test service on a worktree-scoped port
+    env:
+      LEAPVIEW_POSTGRES_PROJECT_SUFFIX: -test
+      LEAPVIEW_POSTGRES_TEST_MODE: "1"
+      LEAPVIEW_POSTGRES_DEV_ENV_FILE: "{{.ROOT_DIR}}/.tmp/postgres-test.env"
+    cmds:
+      - ./scripts/postgres-dev.sh up
+
+  postgres:test:
+    desc: Provision the isolated PostgreSQL test databases and roles
+    cmds:
+      - task: postgres:test:up
+
+  postgres:test:down:
+    desc: Stop the isolated PostgreSQL test service (retains its volume)
+    env:
+      LEAPVIEW_POSTGRES_PROJECT_SUFFIX: -test
+      LEAPVIEW_POSTGRES_TEST_MODE: "1"
+      LEAPVIEW_POSTGRES_DEV_ENV_FILE: "{{.ROOT_DIR}}/.tmp/postgres-test.env"
+    cmds:
+      - ./scripts/postgres-dev.sh down
+
+  postgres:test:check:
+    desc: Verify isolated PostgreSQL test database and runtime-role isolation
+    env:
+      LEAPVIEW_POSTGRES_PROJECT_SUFFIX: -test
+      LEAPVIEW_POSTGRES_TEST_MODE: "1"
+      LEAPVIEW_POSTGRES_DEV_ENV_FILE: "{{.ROOT_DIR}}/.tmp/postgres-test.env"
+    cmds:
+      - ./scripts/postgres-dev.sh check
+
+  test:qualification:native-postgres:
+    desc: Run the required container-backed native PostgreSQL 18 qualification contract
+    deps:
+      - api:generate
+    env:
+      LEAPVIEW_TEST_CONTAINERS: "1"
+    cmds:
+      - go test ./internal/app/cli/composectl -run '^TestQualificationNativePostgresTopologyContainerBackedContract$' -count=1 -v
+
+  test:qualification:postgres-ha:
+    desc: Run the bounded disposable same-host PostgreSQL 18 Patroni HA qualification
+    cmds:
+      - timeout --signal=TERM --kill-after=30s 10m ./deploy/postgres/ha/run.sh
 
   node:deps:
     desc: Install JavaScript dependencies with Bun
@@ -304,6 +384,8 @@ tasks:
 
   site:product-screenshot:
     desc: Refresh light and dark homepage screenshots from the deployed Visual Showcase
+    deps:
+      - postgres:dev:up
     cmds:
       - task: generate
       - task: build
@@ -517,7 +599,7 @@ tasks:
       - bun scripts/generate_lucide_icon_catalog.ts
 
   docs:generate:
-    desc: Generate reference documentation, the unified catalog, and the FTS5 search index
+    desc: Generate reference documentation, the unified catalog, and the search index
     cmds:
       - task: schema:generate
       - task: data-resource-contracts:generate
@@ -555,13 +637,13 @@ tasks:
     generates:
       - docs/catalog.json
       - docs/llms.txt
-      - docs/search-index.sqlite3
+      - docs/search-index.json
     cmds:
       - bun run docs:validate-diagrams
       - go run ./internal/app/tools/docsitegen
 
   docs:check:
-    desc: Verify the unified documentation catalog and FTS5 search index are current
+    desc: Verify the unified documentation catalog and search index are current
     deps:
       - node:deps
       - ci:extensions:prepare
@@ -637,7 +719,7 @@ tasks:
       - go run ./internal/app/tools/agenttooldocgen
 
   db:generate:
-    desc: Generate SQLite adapter code from the checked-in schema and queries
+    desc: Generate SQLite and PostgreSQL adapter code from checked-in schemas and queries
     method: checksum
     sources:
       - Taskfile.yml
@@ -647,15 +729,109 @@ tasks:
       - internal/platform/db/db.go
       - internal/platform/db/models.go
       - internal/platform/db/*.sql.go
-      - internal/*/internal/db/*.go
+      - internal/**/internal/db/*.go
+      - internal/project/postgres/internal/db/*.go
       - internal/access/postgres/internal/db/*.go
-      - internal/platform/postgres/internal/db/*.go
-      - internal/platform/bootstrap/postgres/internal/db/*.go
-      - internal/analytics/physicalpool/postgres/internal/db/*.go
-      - internal/analytics/ducklake/postgres/internal/db/*.go
+      - internal/platform/operation/postgres/internal/db/*.go
+      - internal/platform/http/cursorsigning/postgres/internal/db/*.go
+      - internal/manageddata/postgres/internal/db/*.go
+      - internal/platform/events/postgres/internal/db/*.go
       - internal/platform/**/sqlite/*db/*.go
     cmds:
-      - go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
+      - GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
+
+  db:verify:
+    desc: Compile generated PostgreSQL sqlc packages and audit handwritten SQL boundaries
+    cmds:
+      - GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 vet --no-remote
+      - GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff --no-remote
+      - |
+        packages="$(
+          find internal -type f -name '*.go' -print |
+            while IFS= read -r file; do
+              IFS= read -r first_line <"$file" || true
+              if [ "$first_line" = '// Code generated by sqlc. DO NOT EDIT.' ]; then
+                dirname "$file"
+              fi
+            done |
+            sort -u |
+            sed 's#^#./#'
+        )"
+        if [ -z "$packages" ]; then
+          printf '%s\n' 'sqlc generation produced no Go packages' >&2
+          exit 1
+        fi
+        # Compile the generated leaves here. Aggregate consumers compile after
+        # the independent APIGen/signal build inputs are prepared by task ci.
+        go test -run '^$' $packages
+      - go run ./internal/app/tools/sqlcaudit --root {{.ROOT_DIR | quote}}
+
+  db:prepare:
+    desc: Prepare every PostgreSQL sqlc query against the clean PostgreSQL 18 baseline
+    # The baseline package composes capability schemas whose domain packages
+    # consume APIGen types. A clean checkout must create those independent Go
+    # build inputs before compiling the PostgreSQL 18 prepare harness.
+    deps:
+      - api:generate
+    cmds:
+      - >-
+        LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=true
+        go test ./internal/app/postgresbaseline
+        -run '^TestSQLCVetPreparesAgainstBaselinePostgreSQL18$'
+        -count=1 -timeout=10m
+
+  db:check:
+    desc: Regenerate pinned sqlc output, reject tracked drift, compile consumers, and audit SQL
+    cmds:
+      - |
+        tracked_sqlc="$(
+          git ls-files '*.go' |
+            while IFS= read -r file; do
+              [ -f "$file" ] || continue
+              IFS= read -r first_line <"$file" || true
+              if [ "$first_line" = '// Code generated by sqlc. DO NOT EDIT.' ]; then
+                printf '%s\n' "$file"
+              fi
+            done
+        )"
+        if [ -n "$tracked_sqlc" ]; then
+          printf '%s\n%s\n' 'sqlc output is a build input and must not be tracked:' "$tracked_sqlc" >&2
+          exit 1
+        fi
+        before="$(mktemp)"
+        after="$(mktemp)"
+        generated_after="$(mktemp)"
+        generated_repeat="$(mktemp)"
+        trap 'rm -f "$before" "$after" "$generated_after" "$generated_repeat"' EXIT
+        generated_snapshot() {
+          find . -type f -name '*.go' \
+            -not -path './.git/*' -not -path './node_modules/*' -not -path './.tmp/*' -print |
+            sort |
+            while IFS= read -r file; do
+              if grep -q -F 'Code generated by sqlc' "$file"; then sha256sum "$file"; fi
+            done
+        }
+        git diff --binary -- '*.go' >"$before"
+        GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
+        generated_snapshot >"$generated_after"
+        git diff --binary -- '*.go' >"$after"
+        if ! cmp -s "$before" "$after"; then
+          printf '%s\n' 'sqlc generation changed tracked source files:' >&2
+          git diff --stat -- '*.go' >&2 || true
+          exit 1
+        fi
+        # A second local generation catches nondeterministic or newly emitted
+        # untracked sqlc files without rejecting the intentionally build-only
+        # output created by a clean checkout.
+        GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
+        generated_snapshot >"$generated_repeat"
+        cmp -s "$generated_after" "$generated_repeat" || {
+          printf '%s\n' 'sqlc generation is nondeterministic across generated Go outputs' >&2
+          diff -u "$generated_after" "$generated_repeat" >&2 || true
+          exit 1
+        }
+      - task: db:verify
+      - task: db:prepare
 
   config:generate:
     desc: Generate runtime configuration, reference documentation, example environment, and schema
@@ -719,7 +895,15 @@ tasks:
     desc: Verify build-only generated code is not tracked by Git
     cmds:
       - |
-        tracked="$(git grep -l -F '// Code generated by sqlc. DO NOT EDIT.' -- '*.go' || true)"
+        tracked="$(
+          git ls-files '*.go' | while IFS= read -r file; do
+            [ -f "$file" ] || continue
+            first_line="$(sed -n '1p' "$file")"
+            if [ "$first_line" = '// Code generated by sqlc. DO NOT EDIT.' ]; then
+              printf '%s\n' "$file"
+            fi
+          done
+        )"
         test -z "$tracked" || { printf 'build-only sqlc output is tracked:\n%s\n' "$tracked" >&2; exit 1; }
 
   api:generate:
@@ -1066,7 +1250,22 @@ tasks:
 
   test:go:packages:
     cmds:
-      - go list ./... | grep -v '/internal/app$' | xargs go test -p 2
+      # Container-backed PostgreSQL tests are run once, fail closed, by the
+      # dedicated conformance lane. Derive the exclusion by source so a new
+      # harness user cannot silently run in both lanes. App tests use the same
+      # skip flag in their stable shards below.
+      - |
+        set -eu
+        export LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1
+        inventory_file="$(mktemp)"
+        trap 'rm -f "$inventory_file"' EXIT
+        bash scripts/postgres-conformance-tests.sh list >"$inventory_file"
+        test -s "$inventory_file"
+        all_packages="$(go list ./...)"
+        printf '%s\n' "$all_packages" |
+          grep -v '/internal/app$' |
+          grep -Fvx -f "$inventory_file" |
+          xargs -r go test -p 2
 
   test:cache:qualification:
     desc: Race-qualify stable cache cutover, generation execution, and bounded cache observers
@@ -1083,25 +1282,25 @@ tasks:
     cmds:
       - |
         pattern="$(go run ./internal/app/tools/testshard --package ./internal/app --shard-index 0 --shard-count 4)"
-        go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
+        LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1 go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
 
   test:go:app:1:
     cmds:
       - |
         pattern="$(go run ./internal/app/tools/testshard --package ./internal/app --shard-index 1 --shard-count 4)"
-        go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
+        LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1 go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
 
   test:go:app:2:
     cmds:
       - |
         pattern="$(go run ./internal/app/tools/testshard --package ./internal/app --shard-index 2 --shard-count 4)"
-        go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
+        LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1 go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
 
   test:go:app:3:
     cmds:
       - |
         pattern="$(go run ./internal/app/tools/testshard --package ./internal/app --shard-index 3 --shard-count 4)"
-        go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
+        LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1 go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
 
   test:go:external:
     desc: Run container-backed external-service integration tests serially
@@ -1110,11 +1309,26 @@ tasks:
       - task: test:go:postgres-conformance
 
   test:go:postgres-conformance:
-    desc: Run required PostgreSQL 18 container-backed conformance packages against a pinned image
+    desc: Run every source-inventoried PostgreSQL container suite once, fail closed, under the pinned PostgreSQL 18 harness
     env:
       LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
     cmds:
-      - go test ./internal/platform/postgres/... ./internal/platform/bootstrap/postgres ./internal/access/postgres ./internal/analytics/physicalpool/postgres ./internal/access/http/mcpoauth -count=1 -v
+      - bash scripts/postgres-conformance-tests.sh run
+
+  test:go:postgres-multinode-qualification:
+    desc: Run the FAI-572 independent PostgreSQL multi-node fencing qualification suites
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+    cmds:
+      - |
+        output="$$(mktemp)"
+        trap 'rm -f "$$output"' EXIT
+        status=0
+        go test -tags 'integration duckdb_arrow' -p 1 -count=1 -v -run '^TestPostgreSQL18MultiNode.*Qualification$$' ./internal/platform/jobs/module ./internal/deployment/postgres >"$$output" 2>&1 || status=$$?
+        cat "$$output"
+        test "$$status" -eq 0
+        grep -Eq '^=== RUN   TestPostgreSQL18MultiNodeRiverQualification$$' "$$output"
+        grep -Eq '^=== RUN   TestPostgreSQL18MultiNodeActivationServingStateQualification$$' "$$output"
 
   test:workload:qualify:
     desc: Qualify the reusable workload scheduler independently of LeapView
@@ -1128,7 +1342,7 @@ tasks:
       - go test ./pkg/workload -run '^$' -bench 'Workload$' -benchmem -benchtime=100ms -count=1
 
   test:go:minio-conformance:
-    desc: Run the object-backed candidate-catalog, shared-pool, and GC namespace MinIO conformance tests
+    desc: Run the object-backed shared-pool and GC namespace MinIO conformance tests
     deps:
       - db:generate
       - api:generate
@@ -1137,11 +1351,10 @@ tasks:
       LEAPVIEW_CONFORMANCE_EVIDENCE_OUT: "{{.ROOT_DIR}}/.tmp/minio-conformance/shared-pool-evidence.json"
     cmds:
       - rm -f "{{.ROOT_DIR}}/.tmp/minio-conformance/shared-pool-evidence.json"
-      - go test -tags 'duckdb_arrow ducklake_minio' -count=1 -run '^TestCandidateCatalogMinIOSealedBaseRetainsUnchangedRefs$' -v ./internal/analytics/candidatecatalog
       - go test -tags 'duckdb_arrow ducklake_minio' -count=1 -run '^TestSharedPoolConformanceMinIOLane$' -v ./internal/analytics/ducklake
 
   test:go:plan-gc-conformance:
-    desc: Run the maintained plan-to-GC lifecycle, failure, crash, concurrency, race, and provenance matrix
+    desc: Run the maintained native-delivery lifecycle, retention, concurrency, and provenance matrix
     deps:
       - db:generate
       - api:generate
@@ -1153,99 +1366,30 @@ tasks:
       # this package-wide so adding a reviewed failure boundary cannot silently
       # leave the release gate running a stale selective subset.
       - go test ./internal/deployment/... -count=1 -v
-      # Candidate catalog isolation and destination promotion are part of the
-      # same plan-to-GC contract, but live in their owning packages.
-      - go test -tags duckdb_arrow ./internal/analytics/candidatecatalog -count=1 -v
       - go test ./internal/app/runtimefactory -count=1 -v
-      # Recovery is part of the lifecycle: audit stays query-only and repair
-      # revalidates the exact root revision atomically before mutation.
-      - go test ./internal/admin/offline ./internal/admin/cli ./internal/app/adminoffline ./internal/app/gcadapter ./internal/platform/architecture -count=1 -v
+      # Recovery and physical-pool retention stay in their owning native
+      # PostgreSQL/runtime packages; no legacy audit/repair path is composed.
+      - go test ./internal/admin/offline ./internal/admin/cli ./internal/app/adminpostgres ./internal/app/gcadapter ./internal/platform/architecture -count=1 -v
       # Protected targets must prove that source ownership and retained
       # attestations are enforced, rather than trusting client provenance text.
       - go test ./internal/project/module -run '^(TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads|TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart)$' -count=1 -v
 
-  test:ubdr:v0.1-artifact:
-    desc: Validate exact v0.1 registry provenance and authentic isolated application journey
-    deps:
-      - db:generate
-      - api:generate
-    cmds:
-      - >-
-        go test
-        ./internal/platform/compatibility
-        ./internal/app/cli/composectl
-        -run 'V010'
-        -count=1
-
-  test:ubdr:transition-policy:
-    desc: Validate the versioned release-transition policy and pre-mutation denial contract
-    deps:
-      - db:generate
-      - api:generate
-    cmds:
-      - >-
-        go test
-        ./deploy/compose
-        ./internal/app/tools/transitionpolicy
-        ./internal/platform/compatibility
-        ./internal/app/cli/hostinstall
-        ./internal/app/cli/composectl
-        ./internal/platform
-        -run 'Bind|Predecessor|Transition|Upgrade|Rollback|Legacy|ReleasePolicy|V010'
-        -count=1
-      - >-
-        go run ./internal/app/tools/transitionpolicy
-        --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/transition-policy
-
-  test:ubdr:backup-manifest-v2:
-    desc: Validate backup manifest v2, bounded restore preflight, and non-mutation evidence
-    deps:
-      - db:generate
-      - api:generate
-    cmds:
-      - >-
-        go test
-        ./internal/platform
-        ./internal/admin/offline
-        ./internal/admin/cli
-        ./internal/app/adminoffline
-        -run 'Backup|Restore|Manifest|Preflight'
-        -count=1
-      - >-
-        go run ./internal/app/tools/backupmanifestv2
-        --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/backup-manifest-v2
-
-  test:ubdr:recovery-ledger:
-    desc: Validate the durable scheduled recovery ledger, fencing, restart, evidence publication, and retention contracts
-    deps:
-      - db:generate
-      - config:generate
-      - ui-signals:generate
-    cmds:
-      - >-
-        go test
-        ./internal/refresh/module
-        ./internal/refresh/recovery
-        ./internal/refresh/sqlite
-        ./internal/platform
-        ./internal/app
-        -run 'Recovery|Occurrence|Lease|Fence|Schedule|Retention|MigrationChain'
-        -count=1
-      - go test ./internal/platform/safetext -count=1
-      - go test ./internal/analytics/queryaudit/... -count=1
-      - >-
-        go run ./internal/app/tools/recoveryledger
-        --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/recovery-ledger
-
   ci:lane:go:
     desc: Run the bounded Go unit and integration lane
     cmds:
+      # Local PR/full CI enters through this aggregate lane rather than the
+      # hosted package shard, so retain the SQL quality gate here as well.
+      - task: db:check
       - task: apigen:test
       - task: test:go:prepared
 
   ci:lane:go:packages:
     desc: Run non-application Go package tests
     cmds:
+      # Keep the SQL generation, PostgreSQL conformance, and audit gate out
+      # of the watchdog-wrapped shared preparation. It runs once here after
+      # preparation instead of being repeated on every preparation retry.
+      - task: db:check
       - task: quality:budget:check
       - task: quality:exceptions:check
       - task: quality:trends:report
@@ -1272,6 +1416,11 @@ tasks:
       - task: ci:test:frontend:data
       - task: ci:test:frontend:site
 
+  ci:lane:frontend:local:
+    desc: Run the frontend lane locally with the hosted-CI hang watchdog
+    cmds:
+      - node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend
+
   ci:prepare:
     desc: Generate and build the shared inputs required by every CI validation lane
     cmds:
@@ -1295,9 +1444,11 @@ tasks:
     desc: Run the fast required contract for every pull-request update
     cmds:
       - task: ci:prepare
-      # Keep local composition bounded to two top-level lanes. GitHub-hosted CI
-      # runs each lane on its own runner to avoid cross-lane CPU contention.
-      - task --parallel --concurrency 2 ci:lane:go ci:lane:frontend
+      # Hosted CI runs these lanes in parallel on separate runners. Keep local
+      # execution sequential: concurrent Go builds can make Bun's bundler spin,
+      # costing more time than the overlap saves on a shared workstation.
+      - task: ci:lane:go
+      - task: ci:lane:frontend:local
       - task: generated:check
 
   ci:full:
@@ -1314,6 +1465,7 @@ tasks:
       - go test -race ./pkg/...
       - task: quality:critical:race
       - task: test:workload:qualify
+      - task: test:go:postgres-multinode-qualification
       - task: qa:ui-framework
       - task: deploy:check
       - task: test:go:minio-conformance
@@ -1487,5 +1639,7 @@ tasks:
 
   agent:e2e:
     desc: Run opt-in DeepSeek-backed headless agent E2E
+    deps:
+      - postgres:dev:up
     cmds:
       - bash scripts/agent_e2e.sh

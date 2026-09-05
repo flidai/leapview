@@ -21,6 +21,34 @@ func TestNodeUsesDuckDBBackedCatalog(t *testing.T) {
 	}
 }
 
+func TestQualifiedSnapshotRelationInNamespaceUsesExactSchema(t *testing.T) {
+	relation, err := QualifiedSnapshotRelationInNamespace(42, "_candidate_namespace", "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "(FROM lake._candidate_namespace.orders AT (VERSION => 42))"
+	if relation != want {
+		t.Fatalf("qualified relation = %q, want %q", relation, want)
+	}
+	legacy, err := QualifiedSnapshotRelation(42, "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy != "(FROM lake.model.orders AT (VERSION => 42))" {
+		t.Fatalf("legacy qualified relation = %q, want model schema", legacy)
+	}
+}
+
+func TestQualifiedSnapshotRelationInNamespaceRejectsUnsafeSchema(t *testing.T) {
+	for _, namespace := range []string{"", "Model", "candidate.namespace", "candidate namespace", strings.Repeat("a", 64)} {
+		t.Run(namespace, func(t *testing.T) {
+			if _, err := QualifiedSnapshotRelationInNamespace(42, namespace, "orders"); err == nil {
+				t.Fatalf("namespace %q unexpectedly accepted", namespace)
+			}
+		})
+	}
+}
+
 func TestEnvironmentAcquireRequiresWorkloadPermit(t *testing.T) {
 	node := openLeaseTestNode(t)
 	defer node.Close()

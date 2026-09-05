@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
-	"github.com/flidai/leapview/internal/deployment/gc"
 )
 
 func TestLocalStoreScopesAndConditionalVersion(t *testing.T) {
@@ -26,13 +25,13 @@ func TestLocalStoreScopesAndConditionalVersion(t *testing.T) {
 	if err != nil || len(objects) != 1 {
 		t.Fatalf("objects=%v err=%v", objects, err)
 	}
-	if _, err := store.Stat(context.Background(), "pool", "../outside"); !errors.Is(err, gc.ErrObjectOutsidePool) {
+	if _, err := store.Stat(context.Background(), "pool", "../outside"); !errors.Is(err, ErrObjectOutsidePool) {
 		t.Fatalf("outside stat err=%v", err)
 	}
-	if _, err := store.DeleteConditional(context.Background(), gc.DeleteRequest{PhysicalPoolID: "pool", Key: "orphan.parquet", Digest: objects[0].Digest, Version: "replacement"}); err == nil {
+	if _, err := store.DeleteConditional(context.Background(), DeleteRequest{PhysicalPoolID: "pool", Key: "orphan.parquet", Digest: objects[0].Digest, Version: "replacement"}); err == nil {
 		t.Fatal("replacement version was deleted")
 	}
-	result, err := store.DeleteConditional(context.Background(), gc.DeleteRequest{PhysicalPoolID: "pool", Key: "orphan.parquet", Digest: objects[0].Digest, Version: objects[0].Version})
+	result, err := store.DeleteConditional(context.Background(), DeleteRequest{PhysicalPoolID: "pool", Key: "orphan.parquet", Digest: objects[0].Digest, Version: objects[0].Version})
 	if err != nil || !result.Deleted {
 		t.Fatalf("delete=%#v err=%v", result, err)
 	}

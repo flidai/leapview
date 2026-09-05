@@ -19,9 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/access/desktopauth"
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var ErrAuthorizationSnapshotIdentityConflict = errors.New("authorization snapshot identity already installed with a different digest")
@@ -127,6 +125,9 @@ func (r *Repository) setPrincipalDisabled(ctx context.Context, id string, provis
 			return access.Principal{}, err
 		}
 		if err = accessdb.New(tx).RevokePrincipalAuthoringSessions(ctx, principalID); err != nil {
+			return access.Principal{}, err
+		}
+		if err = accessdb.New(tx).RevokePrincipalOAuthSessions(ctx, principalID); err != nil {
 			return access.Principal{}, err
 		}
 	}
@@ -481,14 +482,6 @@ func (r *Repository) RecordCanonicalAuditEvent(ctx context.Context, event access
 	if err != nil {
 		return err
 	}
-	requestID, err := optionalUUID("audit request id", event.RequestID)
-	if err != nil {
-		return err
-	}
-	correlationID, err := optionalUUID("audit correlation id", event.CorrelationID)
-	if err != nil {
-		return err
-	}
 	outcome := strings.TrimSpace(event.Status)
 	if outcome == "" {
 		outcome = "success"
@@ -497,7 +490,10 @@ func (r *Repository) RecordCanonicalAuditEvent(ctx context.Context, event access
 		return fmt.Errorf("audit outcome %q is invalid", outcome)
 	}
 	intentDigest := canonicalAuditDigest(event, metadata)
-	id := uuid.New()
+	idString, err := newUUID()
+	if err != nil {
+		return err
+	}
 	db, err := r.requireDB()
 	if err != nil {
 		return err
@@ -506,11 +502,7 @@ func (r *Repository) RecordCanonicalAuditEvent(ctx context.Context, event access
 	if err != nil {
 		return err
 	}
-	parsedRequestID, err := optionalPGUUID("audit request id", requestID)
-	if err != nil {
-		return err
-	}
-	parsedCorrelationID, err := optionalPGUUID("audit correlation id", correlationID)
+	id, err := pgUUID(idString)
 	if err != nil {
 		return err
 	}
@@ -519,25 +511,11 @@ func (r *Repository) RecordCanonicalAuditEvent(ctx context.Context, event access
 	projectID := event.Identity.ProjectID.String()
 	environment := event.Identity.Environment
 	generationID := event.Identity.GenerationID
-	err = accessdb.New(db).RecordCanonicalAudit(ctx, accessdb.RecordCanonicalAuditParams{AuditID: pgtype.UUID{Bytes: id, Valid: true}, PrincipalID: parsedPrincipalID,
+	err = accessdb.New(db).RecordCanonicalAudit(ctx, accessdb.RecordCanonicalAuditParams{AuditID: id, PrincipalID: parsedPrincipalID,
 		Action: event.Action, ResourceKind: &resourceKind, ResourceID: &resourceID, ProjectID: &projectID, Environment: &environment,
-		GenerationID: &generationID, Capability: event.Capability.String(), Outcome: outcome, RequestID: parsedRequestID,
-		CorrelationID: parsedCorrelationID, AggregateKey: resourceID, IntentDigest: intentDigest, Metadata: []byte(metadata)})
+		GenerationID: &generationID, Capability: event.Capability.String(), Outcome: outcome, RequestID: auditNullableTextPointer(event.RequestID),
+		CorrelationID: auditNullableTextPointer(event.CorrelationID), AggregateKey: resourceID, IntentDigest: intentDigest, Metadata: []byte(metadata)})
 	return err
-}
-
-func optionalUUID(label, value string) (string, error) {
-	if strings.TrimSpace(value) == "" {
-		return "", nil
-	}
-	return uuidID(label, value)
-}
-
-func optionalPGUUID(label, value string) (pgtype.UUID, error) {
-	if strings.TrimSpace(value) == "" {
-		return pgtype.UUID{}, nil
-	}
-	return pgUUID(value)
 }
 
 func canonicalAuditDigest(event access.CanonicalAuditEvent, metadata string) string {

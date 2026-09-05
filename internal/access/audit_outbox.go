@@ -9,29 +9,34 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/flidai/leapview/internal/platform/transaction"
+	"github.com/google/uuid"
 )
 
 const MaxAuditIntentMetadataBytes = 64 * 1024
 
-// MaxUndeliveredAuditIntents is the fail-closed local backlog bound. Delivered
-// handoff rows are governed by retention and do not consume this capacity.
-const MaxUndeliveredAuditIntents = 100_000
-
-var (
-	ErrAuditIntentConflict = errors.New("audit intent conflicts with durable state")
-	ErrAuditIntentFence    = errors.New("audit intent lease fence is stale")
-	ErrAuditOutboxCapacity = errors.New("audit outbox undelivered capacity is exhausted")
-	ErrAuditOutboxNotFound = errors.New("audit outbox event was not found")
-)
+// ErrAuditIntentConflict indicates that a retry identity already exists with
+// a different canonical payload. PostgreSQL direct immutable insertion and
+// its capability adapters use this sentinel to reject conflicting replays.
+var ErrAuditIntentConflict = errors.New("audit intent conflicts with durable state")
 
 // AuditIntent is the canonical, non-secret handoff committed by a source
 // capability in the same transaction as its security-relevant mutation.
 type AuditIntent struct {
-	EventID           string
+	EventID string
+	// ScopeID identifies the instance/project boundary for cross-capability
+	// records. It is optional for global identity audit events.
+	ScopeID string
+	// DomainEventID links a source mutation's audit row to its durable domain
+	// event without introducing an audit-intent outbox or a second event log.
+	DomainEventID string
+	// ActorID retains opaque operator/workload identities that are not access
+	// principal UUIDs. PrincipalID remains the typed identity when available.
+	ActorID string
+	// RequestDigest binds the audit row to the exact source request identity.
+	RequestDigest     string
 	Source            string
 	Operation         string
 	PrincipalID       string
@@ -60,113 +65,21 @@ func (f AuditIntentRecorderFunc) RecordAuditIntent(ctx context.Context, tx trans
 	return f(ctx, tx, intent)
 }
 
-type AuditIntentState string
-
-const (
-	AuditIntentPending     AuditIntentState = "pending"
-	AuditIntentRetry       AuditIntentState = "retry"
-	AuditIntentLeased      AuditIntentState = "leased"
-	AuditIntentDelivered   AuditIntentState = "delivered"
-	AuditIntentPoison      AuditIntentState = "poison"
-	AuditIntentQuarantined AuditIntentState = "quarantined"
-)
-
-type AuditIntentLease struct {
-	Intent          AuditIntent
-	State           AuditIntentState
-	AttemptCount    int
-	LeaseOwner      string
-	LeaseGeneration int64
-	LeaseExpiresAt  time.Time
-	CreatedAt       time.Time
-}
-
-type AuditOutboxStats struct {
-	Pending, Retry, Leased, Delivered, Poison, Quarantined int64
-	OldestUndeliveredAge                                   time.Duration
-	// AttemptCount is the bounded aggregate of persisted delivery attempts.
-	// Capacity and CapacityRemaining deliberately describe only the local
-	// undelivered queue; they never expose event or actor dimensions.
-	AttemptCount      int64
-	Capacity          int64
-	CapacityRemaining int64
-}
-
-// MaxAuditOutboxInspectionRows bounds operator output and protects the
-// offline command from turning a terminal backlog into an unbounded export.
-const MaxAuditOutboxInspectionRows = 100
-
-// AuditOutboxTerminalIntent is the safe operator view of one terminal intent.
-// It intentionally omits the immutable payload and metadata. PayloadDigest
-// lets an operator bind a recovery command to the exact stored payload without
-// copying sensitive fields into a shell history or incident ticket.
-type AuditOutboxTerminalIntent struct {
-	EventID           string
-	State             AuditIntentState
-	AttemptCount      int
-	LastErrorCode     string
-	PayloadDigest     string
-	AggregateKey      string
-	AggregateSequence int64
-	LeaseGeneration   int64
-	CreatedAt         time.Time
-}
-
-type AuditOutboxInspection struct {
-	Stats     AuditOutboxStats
-	Terminals []AuditOutboxTerminalIntent
-	Truncated bool
-}
-
-// AuditOutboxRequeueRequest provides optional compare-and-swap guards for the
-// operator recovery operation. EventID is always required; an omitted guard
-// means that dimension is not part of the compare-and-swap.
-type AuditOutboxRequeueRequest struct {
-	EventID               string
-	ExpectedState         AuditIntentState
-	ExpectedAttempts      *int
-	ExpectedFailureCode   string
-	ExpectedPayloadDigest string
-}
-
-// AuditOutboxDeliveryStore is the least-privilege worker surface. It contains only
-// the lease and state-transition operations needed by the dispatcher; in
-// particular, it cannot inspect terminal payload facts or recover an intent.
-type AuditOutboxDeliveryStore interface {
-	ClaimAuditIntent(context.Context, string, time.Duration) (AuditIntentLease, bool, error)
-	CompleteAuditIntent(context.Context, AuditIntentLease) error
-	RetryAuditIntent(context.Context, AuditIntentLease, time.Time, string) error
-	PoisonAuditIntent(context.Context, AuditIntentLease, string) error
-	QuarantineAuditIntent(context.Context, AuditIntentLease, string) error
-}
-
-// AuditOutboxStatsReader is the aggregate-only observability surface. It is
-// intentionally separate from delivery and operator controls so metrics and
-// readiness cannot acquire mutation authority.
-type AuditOutboxStatsReader interface {
-	AuditOutboxStats(context.Context, time.Time) (AuditOutboxStats, error)
-}
-
-// AuditOutboxOperator is the least-privilege operator surface. It is separate
-// from worker and producer contracts and only exposes guarded recovery.
-type AuditOutboxOperator interface {
-	InspectAuditOutbox(context.Context, time.Time, int) (AuditOutboxInspection, error)
-	RequeueAuditIntentExact(context.Context, AuditOutboxRequeueRequest) error
-}
-
-// AuditStore is the module-owned durable audit surface used by process
-// composition. Producer capabilities receive only AuditIntentRecorder, while
-// lifecycle and operator wiring may use the worker or recovery subsets.
-type AuditStore interface {
-	AuditIntentRecorder
-	AuditOutboxDeliveryStore
-	AuditOutboxStatsReader
-	AuditOutboxOperator
-}
-
 func (intent AuditIntent) Canonicalize() (AuditIntent, error) {
 	if !canonicalAuditIntentEventID(intent.EventID) {
 		return AuditIntent{}, fmt.Errorf("audit intent event id is not canonical")
+	}
+	if !optionalCanonicalAuditIntentLiteral(intent.ScopeID, 255) {
+		return AuditIntent{}, fmt.Errorf("audit intent scope id is not canonical")
+	}
+	if intent.DomainEventID != "" && !canonicalAuditIntentUUID(intent.DomainEventID) {
+		return AuditIntent{}, fmt.Errorf("audit intent domain event id is not canonical")
+	}
+	if !optionalCanonicalAuditIntentLiteral(intent.ActorID, 255) {
+		return AuditIntent{}, fmt.Errorf("audit intent actor id is not canonical")
+	}
+	if intent.RequestDigest != "" && !canonicalAuditIntentDigest(intent.RequestDigest) {
+		return AuditIntent{}, fmt.Errorf("audit intent request digest is not canonical")
 	}
 	for name, value := range map[string]string{
 		"source": intent.Source, "operation": intent.Operation, "action": intent.Action,
@@ -185,8 +98,7 @@ func (intent AuditIntent) Canonicalize() (AuditIntent, error) {
 			return AuditIntent{}, fmt.Errorf("audit intent %s is not canonical", name)
 		}
 	}
-	if intent.RequestID != strings.TrimSpace(intent.RequestID) || len(intent.RequestID) > 256 ||
-		intent.CorrelationID != strings.TrimSpace(intent.CorrelationID) || len(intent.CorrelationID) > 256 {
+	if !validAuditRequestIdentities(intent.RequestID, intent.CorrelationID) {
 		return AuditIntent{}, fmt.Errorf("audit intent request identity is not canonical")
 	}
 	if intent.AggregateSequence < 0 {
@@ -210,7 +122,23 @@ func (intent AuditIntent) PayloadDigest() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	encoded, err := json.Marshal(canonical)
+	// Marshal a wire projection rather than AuditIntent directly: Capability
+	// intentionally rejects the empty value at its TextMarshaler boundary,
+	// while global/system audit events are allowed to omit a capability.
+	encoded, err := json.Marshal(struct {
+		EventID, ScopeID, DomainEventID, ActorID, RequestDigest          string
+		Source, Operation, PrincipalID, Action, ResourceKind, ResourceID string
+		Capability, Outcome, RequestID, CorrelationID, AggregateKey      string
+		AggregateSequence                                                int64
+		MetadataJSON                                                     string
+	}{
+		EventID: canonical.EventID, ScopeID: canonical.ScopeID, DomainEventID: canonical.DomainEventID,
+		ActorID: canonical.ActorID, RequestDigest: canonical.RequestDigest, Source: canonical.Source,
+		Operation: canonical.Operation, PrincipalID: canonical.PrincipalID, Action: canonical.Action,
+		ResourceKind: canonical.ResourceKind, ResourceID: canonical.ResourceID, Capability: canonical.Capability.String(),
+		Outcome: canonical.Outcome, RequestID: canonical.RequestID, CorrelationID: canonical.CorrelationID,
+		AggregateKey: canonical.AggregateKey, AggregateSequence: canonical.AggregateSequence, MetadataJSON: canonical.MetadataJSON,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -332,6 +260,26 @@ func canonicalAuditIntentEventID(value string) bool {
 			continue
 		}
 		return false
+	}
+	return true
+}
+
+func canonicalAuditIntentUUID(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) {
+		return false
+	}
+	parsed, err := uuid.Parse(value)
+	return err == nil && parsed.String() == strings.ToLower(value)
+}
+
+func canonicalAuditIntentDigest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, char := range value[len("sha256:"):] {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return false
+		}
 	}
 	return true
 }

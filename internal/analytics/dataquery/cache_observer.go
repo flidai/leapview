@@ -44,6 +44,10 @@ const (
 	CacheAdmissionReasonDependencyInvalid     CacheAdmissionReason = "dependency_invalid"
 	CacheAdmissionReasonPolicyInvalid         CacheAdmissionReason = "policy_invalid"
 	CacheAdmissionReasonPartitionInvalid      CacheAdmissionReason = "partition_invalid"
+	// NonDeterministic covers volatile plans and plans without positive
+	// determinism evidence. Both bypass lookup, store, and execution
+	// coalescing so a transient result cannot be reused accidentally.
+	CacheAdmissionReasonNonDeterministic CacheAdmissionReason = "non_deterministic"
 )
 
 type CacheLookupMissReason string

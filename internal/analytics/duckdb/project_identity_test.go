@@ -23,6 +23,28 @@ func TestOpenProjectMaterializeRuntimeRejectsInvalidProjectID(t *testing.T) {
 	}
 }
 
+func TestOpenProjectMaterializeRuntimeRequiresBoundedCandidateNamespace(t *testing.T) {
+	base := ProjectRuntimeConfig{
+		ProjectID:   "sales",
+		CandidateID: "candidate-1",
+		Models:      map[string]*semanticmodel.Model{"orders": {}},
+	}
+	for name, namespace := range map[string]string{
+		"missing":      "",
+		"shared model": "model",
+		"invalid":      "candidate;drop",
+		"oversized":    strings.Repeat("a", 64),
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := base
+			config.RelationNamespace = namespace
+			if _, err := OpenProjectMaterializeRuntime(context.Background(), config); err == nil || !strings.Contains(err.Error(), "candidate relation namespace") && !strings.Contains(err.Error(), "relation namespace") {
+				t.Fatalf("namespace %q error = %v, want namespace validation", namespace, err)
+			}
+		})
+	}
+}
+
 func TestProjectRuntimeBindsEveryQueryToItsProject(t *testing.T) {
 	runtime := &ProjectRuntime{projectID: projectgraph.ResourceID("sales")}
 	valid := dataquery.Query{ProjectID: projectgraph.ResourceID("sales")}

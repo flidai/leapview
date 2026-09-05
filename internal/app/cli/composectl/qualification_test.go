@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/csv"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -26,8 +28,7 @@ import (
 	"github.com/creachadair/jrpc2/channel"
 	"github.com/creachadair/jrpc2/handler"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
-	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
-	"github.com/flidai/leapview/internal/platform/compatibility"
+	"github.com/flidai/leapview/internal/deployment/qualificationbarrier"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,6 +52,151 @@ func TestQualificationCommandSurfaceBelongsToLeapviewctl(t *testing.T) {
 			t.Errorf("qualification help missing %q:\n%s", required, output.String())
 		}
 	}
+}
+
+func TestQualificationAuthoringUsesUnprivilegedClientProjectCopy(t *testing.T) {
+	options := normalizeQualificationAuthoringOptions(qualificationAuthoringOptions{
+		Image: "leapview:test",
+	})
+	require.Equal(t, "/qualification/evaluation/project/leapview.yaml", options.Project)
+}
+
+func TestRewriteQualificationRecoveryProjectForcesDistinctNativeBuilds(t *testing.T) {
+	writeProject := func(root string) {
+		t.Helper()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "models"), 0o700))
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "access"), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "leapview.yaml"), []byte("metadata:\n  name: leapview-evaluation\n"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "models", "orders.yaml"), []byte("    sql: |\n      SELECT *\n      FROM source.\"sample.orders\"\n"), 0o600))
+		for name, placeholder := range map[string]string{
+			"qualification-author-admin.yaml":   qualificationAuthorPrincipalPlaceholder,
+			"qualification-reviewer-admin.yaml": qualificationReviewerPrincipalPlaceholder,
+		} {
+			require.NoError(t, os.WriteFile(
+				filepath.Join(root, "access", name),
+				[]byte("spec:\n  subject:\n    principalId: "+placeholder+"\n"), 0o600,
+			))
+		}
+	}
+	const authorPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000776"
+	const reviewerPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000777"
+	first := filepath.Join(t.TempDir(), "project-a")
+	second := filepath.Join(t.TempDir(), "project-b")
+	writeProject(first)
+	writeProject(second)
+	require.NoError(t, rewriteQualificationRecoveryProject(first, "recovery-release-project", "qualification_release_orders", authorPrincipalID, reviewerPrincipalID))
+	require.NoError(t, rewriteQualificationRecoveryProject(second, "recovery-deployment-project", "qualification_deployment_orders", authorPrincipalID, reviewerPrincipalID))
+
+	firstProject, err := os.ReadFile(filepath.Join(first, "leapview.yaml"))
+	require.NoError(t, err)
+	firstModel, err := os.ReadFile(filepath.Join(first, "models", "orders.yaml"))
+	require.NoError(t, err)
+	secondModel, err := os.ReadFile(filepath.Join(second, "models", "orders.yaml"))
+	require.NoError(t, err)
+	require.Contains(t, string(firstProject), "name: recovery-release-project")
+	require.Contains(t, string(firstModel), `FROM source."sample.orders" AS qualification_release_orders`)
+	require.Contains(t, string(secondModel), `FROM source."sample.orders" AS qualification_deployment_orders`)
+	require.NotEqual(t, string(firstModel), string(secondModel))
+}
+
+func TestRewriteQualificationRecoveryProjectBindsRuntimePrincipals(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "project")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "models"), 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "access"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "leapview.yaml"), []byte("metadata:\n  name: leapview-evaluation\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models", "orders.yaml"), []byte("    sql: |\n      SELECT *\n      FROM source.\"sample.orders\"\n"), 0o600))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(root, "access", "qualification-author-admin.yaml"),
+		[]byte("spec:\n  subject:\n    principalId: "+qualificationAuthorPrincipalPlaceholder+"\n"), 0o600,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(root, "access", "qualification-reviewer-admin.yaml"),
+		[]byte("spec:\n  subject:\n    principalId: "+qualificationReviewerPrincipalPlaceholder+"\n"), 0o600,
+	))
+
+	const authorPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000776"
+	const reviewerPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000777"
+	require.NoError(t, rewriteQualificationRecoveryProject(
+		root,
+		"recovery-project",
+		"qualification_recovery_orders",
+		authorPrincipalID,
+		reviewerPrincipalID,
+	))
+	authorContents, err := os.ReadFile(filepath.Join(root, "access", "qualification-author-admin.yaml"))
+	require.NoError(t, err)
+	reviewerContents, err := os.ReadFile(filepath.Join(root, "access", "qualification-reviewer-admin.yaml"))
+	require.NoError(t, err)
+	require.Contains(t, string(authorContents), "principalId: "+authorPrincipalID)
+	require.Contains(t, string(reviewerContents), "principalId: "+reviewerPrincipalID)
+	require.NotContains(t, string(authorContents), qualificationAuthorPrincipalPlaceholder)
+	require.NotContains(t, string(reviewerContents), qualificationReviewerPrincipalPlaceholder)
+}
+
+func TestRewriteQualificationRecoveryProjectRejectsMissingOrInvalidPrincipals(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "project")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "models"), 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "access"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "leapview.yaml"), []byte("metadata:\n  name: leapview-evaluation\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models", "orders.yaml"), []byte("    sql: |\n      SELECT *\n      FROM source.\"sample.orders\"\n"), 0o600))
+	for name, placeholder := range map[string]string{
+		"qualification-author-admin.yaml":   qualificationAuthorPrincipalPlaceholder,
+		"qualification-reviewer-admin.yaml": qualificationReviewerPrincipalPlaceholder,
+	} {
+		require.NoError(t, os.WriteFile(
+			filepath.Join(root, "access", name),
+			[]byte("spec:\n  subject:\n    principalId: "+placeholder+"\n"), 0o600,
+		))
+	}
+	const reviewerPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000777"
+	if err := rewriteQualificationRecoveryProject(root, "recovery-project", "qualification_recovery_orders", "", reviewerPrincipalID); err == nil {
+		t.Fatal("missing author principal was accepted")
+	}
+	if err := rewriteQualificationRecoveryProject(root, "recovery-project", "qualification_recovery_orders", "not-a-uuid", reviewerPrincipalID); err == nil {
+		t.Fatal("invalid author principal was accepted")
+	}
+}
+
+func TestQualificationLoginKeepsDiagnosticsOutOfJSONEventStream(t *testing.T) {
+	bin := t.TempDir()
+	leapview := filepath.Join(bin, "leapview")
+	script := `#!/bin/sh
+printf '%s\n' 'retrying native credential storage' >&2
+printf '%s\n' '{"schemaVersion":1,"type":"deviceChallenge","verificationUrl":"https://example.test/device","userCode":"ABCD-EFGH"}'
+printf '%s\n' '{"schemaVersion":1,"type":"authenticated"}'
+`
+	require.NoError(t, os.WriteFile(leapview, []byte(script), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var challenge qualificationLoginChallenge
+	err := runQualificationLogin(t.Context(), os.Environ(), QualificationClientWorkerOptions{
+		Target: "https://example.test", Project: "dashboards/leapview.yaml",
+	}, func(value qualificationLoginChallenge) error {
+		challenge = value
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, qualificationLoginChallenge{
+		VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH",
+	}, challenge)
+}
+
+func TestQualificationLoginReportsCommandFailureBeforeIncompleteStream(t *testing.T) {
+	bin := t.TempDir()
+	leapview := filepath.Join(bin, "leapview")
+	script := `#!/bin/sh
+printf '%s\n' '{"schemaVersion":1,"type":"deviceChallenge","verificationUrl":"https://example.test/device","userCode":"ABCD-EFGH"}'
+printf '%s\n' 'native credential storage unavailable' >&2
+exit 1
+`
+	require.NoError(t, os.WriteFile(leapview, []byte(script), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err := runQualificationLogin(t.Context(), os.Environ(), QualificationClientWorkerOptions{
+		Target: "https://example.test", Project: "dashboards/leapview.yaml",
+	}, func(qualificationLoginChallenge) error { return nil })
+	require.ErrorContains(t, err, "native credential storage unavailable")
+	require.NotContains(t, err.Error(), "login event stream is incomplete")
 }
 
 func TestQualificationPlanEvidenceUsesSharedCandidateIdentityDomains(t *testing.T) {
@@ -83,75 +229,57 @@ func TestInstalledQualificationAcceptsExplicitReleaseBundle(t *testing.T) {
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "--bundle") || !strings.Contains(output.String(), "--require-release-transition") {
+	if !strings.Contains(output.String(), "--bundle") || !strings.Contains(output.String(), "--multi-node-process") {
 		t.Fatalf("installed-candidate help = %s", output.String())
 	}
 }
 
-func TestInstalledReleaseQualificationRequiresPreviousImageBeforeMutation(t *testing.T) {
-	root := t.TempDir()
-	controller, err := New(Options{Root: root, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}})
-	require.NoError(t, err)
-	err = controller.QualifyInstalledCandidate(t.Context(), QualificationInstalledOptions{
-		RequireReleaseTransition: true,
-	})
-	if err == nil || !strings.Contains(err.Error(), "--previous-image") {
-		t.Fatalf("missing predecessor error = %v", err)
-	}
-	entries, readErr := os.ReadDir(root)
-	require.NoError(t, readErr)
-	if len(entries) != 0 {
-		t.Fatalf("missing predecessor qualification mutated root: %#v", entries)
-	}
-}
+func TestInstalledQualificationDeploymentUsesLoopbackCaddyBindings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), deploymentEnvName)
+	contents := strings.Join([]string{
+		"COMPOSE_PROJECT_NAME=leapview",
+		"LEAPVIEW_IMAGE=ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64),
+		"COMPOSE_APP_BIND=127.0.0.1:8080",
+		"CADDY_DOMAIN=dash.example.com",
+		"CADDY_HTTP_BIND=80",
+		"CADDY_HTTPS_BIND=443",
+		"CADDY_HTTPS_UDP_BIND=443",
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
 
-func TestQualificationTransitionStateRejectsApplicationMutationDespiteUnchangedMarker(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "qualification-transition-state")
-	require.NoError(t, os.WriteFile(marker, []byte("unchanged-marker\n"), 0o600))
-	markerBefore, err := os.ReadFile(marker)
+	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+	target, err := configureInstalledQualificationDeployment(path, "leapview-qualification-test", image)
 	require.NoError(t, err)
-
-	expected := qualificationTransitionState{
-		InstanceID: "lvinst_qualification", Environment: "evaluation", CanonicalOrigin: "https://localhost",
-		PrincipalID: "principal_admin", PrincipalKind: "user", PrincipalEmail: "admin@localhost", PrincipalName: "Admin",
-	}
-	actual := expected
-	actual.PrincipalEmail = "mutated@localhost"
-	if err := verifyQualificationTransitionState(expected, actual); err == nil {
-		t.Fatal("application state mutation was accepted")
-	}
-	markerAfter, err := os.ReadFile(marker)
+	httpBind, err := envFileValue(path, "CADDY_HTTP_BIND")
 	require.NoError(t, err)
-	if !bytes.Equal(markerBefore, markerAfter) {
-		t.Fatal("legacy marker changed during application-state regression test")
+	httpsBind, err := envFileValue(path, "CADDY_HTTPS_BIND")
+	require.NoError(t, err)
+	httpPort := strings.TrimPrefix(httpBind, "127.0.0.1:")
+	httpsPort := strings.TrimPrefix(httpsBind, "127.0.0.1:")
+	if _, err := strconv.Atoi(httpPort); err != nil || httpPort == "80" {
+		t.Fatalf("qualification HTTP bind = %q, want ephemeral loopback port", httpBind)
 	}
-}
+	if _, err := strconv.Atoi(httpsPort); err != nil || httpsPort == "443" {
+		t.Fatalf("qualification HTTPS bind = %q, want ephemeral loopback port", httpsBind)
+	}
+	require.NotEqual(t, httpPort, httpsPort)
+	require.Equal(t, "https://localhost:"+httpsPort, target)
 
-func TestQualificationPredecessorIdentityRequiresReviewedRuntimeProvenance(t *testing.T) {
-	clean, released := false, false
-	expected := compatibility.ReleaseIdentity{
-		Version: "0.2.0-rc.1", SourceRevision: strings.Repeat("a", 40),
-		Image: "ghcr.io/" + "yacobolo" + "/leapview@sha256:" + strings.Repeat("b", 64),
-	}
-	actual := qualificationReleaseIdentity{
-		Version: expected.Version, Revision: expected.SourceRevision, Dirty: &clean, Development: &released,
-	}
-	if err := verifyQualificationPredecessorIdentity(expected, actual); err != nil {
-		t.Fatalf("valid predecessor provenance: %v", err)
-	}
-	for name, mutate := range map[string]func(*qualificationReleaseIdentity){
-		"version":     func(identity *qualificationReleaseIdentity) { identity.Version = "0.2.0-rc.2" },
-		"revision":    func(identity *qualificationReleaseIdentity) { identity.Revision = strings.Repeat("c", 40) },
-		"dirty":       func(identity *qualificationReleaseIdentity) { value := true; identity.Dirty = &value },
-		"development": func(identity *qualificationReleaseIdentity) { value := true; identity.Development = &value },
+	for _, test := range []struct {
+		key  string
+		want string
+	}{
+		{key: "COMPOSE_PROJECT_NAME", want: "leapview-qualification-test"},
+		{key: "LEAPVIEW_IMAGE", want: image},
+		{key: "CADDY_DOMAIN", want: "localhost"},
+		{key: "CADDY_HTTP_BIND", want: httpBind},
+		{key: "CADDY_HTTPS_BIND", want: httpsBind},
+		{key: "CADDY_HTTPS_UDP_BIND", want: httpsBind},
+		{key: "COMPOSE_APP_BIND", want: "127.0.0.1:8080"},
 	} {
-		t.Run(name, func(t *testing.T) {
-			candidate := actual
-			mutate(&candidate)
-			if err := verifyQualificationPredecessorIdentity(expected, candidate); err == nil {
-				t.Fatal("qualification accepted mismatched predecessor provenance")
-			}
-		})
+		got, err := envFileValue(path, test.key)
+		require.NoError(t, err)
+		require.Equal(t, test.want, got, test.key)
 	}
 }
 
@@ -199,7 +327,7 @@ func TestVerifyExactAuthoringCandidate(t *testing.T) {
 		GenerationID:      "generation_1",
 		PlanID:            candidate.PlanID,
 		PlanDigest:        candidate.PlanDigest,
-		Status:            "pending",
+		Status:            "committed",
 	}
 	deployment := QualificationDeployment{
 		CandidateID:       candidate.ID,
@@ -327,6 +455,67 @@ func TestQualificationProjectDataCapabilitiesAreReadOnly(t *testing.T) {
 	}
 }
 
+func TestConfigureQualificationPrincipalsBindRuntimeUUIDs(t *testing.T) {
+	projectDir := filepath.Join(t.TempDir(), "project")
+	grantDir := filepath.Join(projectDir, "access")
+	require.NoError(t, os.MkdirAll(grantDir, 0o700))
+	projectPath := filepath.Join(projectDir, "leapview.yaml")
+	require.NoError(t, os.WriteFile(projectPath, []byte("apiVersion: leapview.dev/v1\n"), 0o600))
+	authorGrantPath := filepath.Join(grantDir, "qualification-author-admin.yaml")
+	reviewerGrantPath := filepath.Join(grantDir, "qualification-reviewer-admin.yaml")
+	require.NoError(t, os.WriteFile(authorGrantPath, []byte("spec:\n  subject:\n    principalId: "+qualificationAuthorPrincipalPlaceholder+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(reviewerGrantPath, []byte("spec:\n  subject:\n    principalId: "+qualificationReviewerPrincipalPlaceholder+"\n"), 0o600))
+
+	const authorPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000776"
+	const reviewerPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000777"
+	require.NoError(t, configureQualificationPrincipals(projectPath, authorPrincipalID, reviewerPrincipalID))
+	authorContents, err := os.ReadFile(authorGrantPath)
+	require.NoError(t, err)
+	reviewerContents, err := os.ReadFile(reviewerGrantPath)
+	require.NoError(t, err)
+	require.Contains(t, string(authorContents), "principalId: "+authorPrincipalID)
+	require.Contains(t, string(reviewerContents), "principalId: "+reviewerPrincipalID)
+	require.NotContains(t, string(authorContents), qualificationAuthorPrincipalPlaceholder)
+	require.NotContains(t, string(reviewerContents), qualificationReviewerPrincipalPlaceholder)
+
+	if err := configureQualificationPrincipals(projectPath, authorPrincipalID, reviewerPrincipalID); err == nil {
+		t.Fatal("already-bound qualification principal grants were accepted")
+	}
+}
+
+func TestConfigureQualificationPrincipalGrantRejectsInvalidIdentityAndFixture(t *testing.T) {
+	projectDir := t.TempDir()
+	projectPath := filepath.Join(projectDir, "leapview.yaml")
+	if err := configureQualificationPrincipalGrant(projectPath, "qualification-reviewer-admin.yaml", qualificationReviewerPrincipalPlaceholder, "not-a-uuid"); err == nil {
+		t.Fatal("non-UUID qualification principal was accepted")
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(projectDir, "access"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "access", "qualification-reviewer-admin.yaml"), []byte("spec: {}\n"), 0o600))
+	if err := configureQualificationPrincipalGrant(projectPath, "qualification-reviewer-admin.yaml", qualificationReviewerPrincipalPlaceholder, "0198f2c0-7c7a-7f00-8a11-000000000778"); err == nil {
+		t.Fatal("qualification fixture without exact principal placeholder was accepted")
+	}
+}
+
+func TestQualificationEvaluationProjectCarriesRuntimeIdentityPlaceholders(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "..")
+	for _, fixture := range []struct {
+		name        string
+		placeholder string
+	}{
+		{name: "qualification-author-admin.yaml", placeholder: qualificationAuthorPrincipalPlaceholder},
+		{name: "qualification-reviewer-admin.yaml", placeholder: qualificationReviewerPrincipalPlaceholder},
+	} {
+		contents, err := os.ReadFile(filepath.Join(root, "evaluation", "project", "access", fixture.name))
+		require.NoError(t, err)
+		if count := bytes.Count(contents, []byte("principalId: "+fixture.placeholder)); count != 1 {
+			t.Fatalf("%s principal placeholder count = %d, want 1", fixture.name, count)
+		}
+		if bytes.Contains(contents, []byte("principalId: email_")) {
+			t.Fatalf("%s retained a SQLite-derived principal identity", fixture.name)
+		}
+	}
+}
+
 func TestQualificationLoopbackRequestUsesProductionAllowedHost(t *testing.T) {
 	request, err := newQualificationLoopbackRequest(
 		t.Context(),
@@ -337,6 +526,31 @@ func TestQualificationLoopbackRequestUsesProductionAllowedHost(t *testing.T) {
 	require.NoError(t, err)
 	if request.Host != "localhost" {
 		t.Fatalf("request Host = %q, want localhost", request.Host)
+	}
+}
+
+func TestQualificationHTTPSClientTrustsOnlySuppliedCA(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	certificateFile := filepath.Join(t.TempDir(), "qualification-ca.pem")
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	require.NoError(t, os.WriteFile(certificateFile, certificate, 0o600))
+	client, err := qualificationHTTPSClient(certificateFile)
+	require.NoError(t, err)
+
+	response, err := client.Get(server.URL)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("qualification HTTPS status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+
+	require.NoError(t, os.WriteFile(certificateFile, []byte("not a certificate"), 0o600))
+	if _, err := qualificationHTTPSClient(certificateFile); err == nil {
+		t.Fatal("invalid qualification CA certificate was accepted")
 	}
 }
 
@@ -652,6 +866,68 @@ func (e *recordingQualificationExecutor) Execute(
 	return append([]byte(nil), e.output...), e.err
 }
 
+func TestVerifyQualificationRuntimeIdentityBindsBundleImage(t *testing.T) {
+	root := t.TempDir()
+	imageReference := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	const runtimeIdentity = `{"version":"1.2.3","revision":"rev","buildTime":"2026-09-02T00:00:00Z","dirty":false,"development":false}`
+	require.NoError(t, writeQualificationJSON(
+		filepath.Join(root, "release-identity.json"),
+		map[string]any{
+			"version":     "1.2.3",
+			"revision":    "rev",
+			"buildTime":   "2026-09-02T00:00:00Z",
+			"dirty":       false,
+			"development": false,
+			"image":       imageReference,
+		},
+	))
+	evidenceDir := filepath.Join(root, "evidence")
+	require.NoError(t, os.MkdirAll(evidenceDir, 0o700))
+	executor := &recordingQualificationExecutor{output: []byte(runtimeIdentity)}
+	controller, err := New(Options{
+		Root: root, DockerBin: "docker-probe",
+		qualificationExecutor: executor,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, controller.verifyQualificationRuntimeIdentity(
+		t.Context(), imageReference, evidenceDir,
+	))
+	require.Len(t, executor.requests, 1)
+	require.Equal(t, []string{"run", "--rm", imageReference, "version", "--json"}, executor.requests[0].Arguments)
+	contents, err := os.ReadFile(filepath.Join(evidenceDir, "runtime-identity.json"))
+	require.NoError(t, err)
+	require.Equal(t, runtimeIdentity, string(contents))
+}
+
+func TestVerifyQualificationRuntimeIdentityRejectsBundleImageDrift(t *testing.T) {
+	root := t.TempDir()
+	expectedImage := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	observedImage := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+	require.NoError(t, writeQualificationJSON(
+		filepath.Join(root, "release-identity.json"),
+		map[string]any{
+			"version":     "1.2.3",
+			"revision":    "rev",
+			"buildTime":   "2026-09-02T00:00:00Z",
+			"dirty":       false,
+			"development": false,
+			"image":       expectedImage,
+		},
+	))
+	executor := &recordingQualificationExecutor{}
+	controller, err := New(Options{
+		Root: root, DockerBin: "docker-probe",
+		qualificationExecutor: executor,
+	})
+	require.NoError(t, err)
+
+	err = controller.verifyQualificationRuntimeIdentity(t.Context(), observedImage, filepath.Join(root, "evidence"))
+	require.ErrorContains(t, err, "release identity image")
+	require.ErrorContains(t, err, "image-reference.txt")
+	require.Empty(t, executor.requests)
+}
+
 func TestQualificationDockerExecutorPreservesExactArgumentsWithoutShell(t *testing.T) {
 	root := t.TempDir()
 	executor := &recordingQualificationExecutor{output: []byte("ok")}
@@ -725,7 +1001,7 @@ func TestQualificationComposeBuildsExactDockerArguments(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(
 		filepath.Join(root, deploymentEnvName),
-		[]byte("COMPOSE_HTTPS=1\n"),
+		[]byte("COMPOSE_PROJECT_NAME=qualification-project\nCOMPOSE_HTTPS=1\n"),
 		0o600,
 	); err != nil {
 		t.Fatal(err)
@@ -746,6 +1022,7 @@ func TestQualificationComposeBuildsExactDockerArguments(t *testing.T) {
 	}
 	want := []string{
 		"compose",
+		"--project-name", "qualification-project",
 		"--project-directory", root,
 		"--env-file", filepath.Join(root, deploymentEnvName),
 		"--file", filepath.Join(root, "compose.yaml"),
@@ -756,31 +1033,6 @@ func TestQualificationComposeBuildsExactDockerArguments(t *testing.T) {
 	if len(executor.requests) != 1 ||
 		!slices.Equal(executor.requests[0].Arguments, want) {
 		t.Fatalf("Compose arguments = %v, want %v", executor.requests, want)
-	}
-}
-
-func TestParseQualificationPoolBootstrapResult(t *testing.T) {
-	poolID := "sha256:" + strings.Repeat("a", 64)
-	compatibility := "sha256:" + strings.Repeat("b", 64)
-	gotPool, gotCompatibility, err := parseQualificationPoolBootstrapResult([]byte(
-		"pool_id: " + poolID + "\n" +
-			"compatibility_digest: " + compatibility + "\n" +
-			"evidence_digest: sha256:" + strings.Repeat("c", 64) + "\n" +
-			"conformance_version: lea-406/v1\n" +
-			"applied: true\n",
-	))
-	require.NoError(t, err)
-	if gotPool != poolID || gotCompatibility != compatibility {
-		t.Fatalf("parsed bootstrap = %q/%q", gotPool, gotCompatibility)
-	}
-	for _, invalid := range [][]byte{
-		[]byte("pool_id: " + poolID + "\ncompatibility_digest: " + compatibility + "\napplied: false\n"),
-		[]byte("pool_id: invalid\ncompatibility_digest: " + compatibility + "\napplied: true\n"),
-		[]byte("pool_id: " + poolID + "\ncompatibility_digest: invalid\napplied: true\n"),
-	} {
-		if _, _, err := parseQualificationPoolBootstrapResult(invalid); err == nil {
-			t.Fatalf("accepted invalid bootstrap output %q", invalid)
-		}
 	}
 }
 
@@ -902,13 +1154,13 @@ func TestQualificationRecoveryArmsActivationBarrierWithDockerCopy(t *testing.T) 
 	}
 	if got, want := executor.requests[0].Arguments, []string{
 		"exec", "app-container", "rm", "-f",
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+		qualificationActivationBarrierContainerPath(qualificationbarrier.ArmedMarker),
+		qualificationActivationBarrierContainerPath(qualificationbarrier.ReachedMarker),
 	}; !slices.Equal(got, want) {
 		t.Fatalf("clear arguments = %v, want %v", got, want)
 	}
 	cp := executor.requests[1].Arguments
-	if len(cp) != 3 || cp[0] != "cp" || cp[2] != "app-container:"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker) {
+	if len(cp) != 3 || cp[0] != "cp" || cp[2] != "app-container:"+qualificationActivationBarrierContainerPath(qualificationbarrier.ArmedMarker) {
 		t.Fatalf("arm copy arguments = %v", cp)
 	}
 	if contents, err := os.ReadFile(cp[1]); err != nil || string(contents) != "qualification-recovery\n" {
@@ -940,15 +1192,39 @@ func TestQualificationRecoveryClientUsesPublicTarget(t *testing.T) {
 	got := qualificationClientExecArguments(
 		"recovery-client",
 		"publisher-secret",
+		"https://localhost:43127",
 		"leapview", "dev",
 	)
 	want := []string{
 		"exec",
 		"--env", "LEAPVIEW_API_TOKEN=publisher-secret",
-		"--env", "LEAPVIEW_TARGET=https://localhost",
+		"--env", "LEAPVIEW_TARGET=https://localhost:43127",
 		"--env", "LEAPVIEW_HOME=/client-home",
 		"recovery-client",
 		"leapview", "dev",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("client arguments = %v, want %v", got, want)
+	}
+}
+
+func TestQualificationRecoveryClientArgumentsSortInjectedEnvironment(t *testing.T) {
+	got := qualificationClientExecArgumentsWithEnv(
+		"recovery-client",
+		"publisher-secret",
+		"https://localhost:43127",
+		map[string]string{"Z_TEST": "z", "A_TEST": "a"},
+		"leapview", "data", "sync",
+	)
+	want := []string{
+		"exec",
+		"--env", "LEAPVIEW_API_TOKEN=publisher-secret",
+		"--env", "LEAPVIEW_TARGET=https://localhost:43127",
+		"--env", "LEAPVIEW_HOME=/client-home",
+		"--env", "A_TEST=a",
+		"--env", "Z_TEST=z",
+		"recovery-client",
+		"leapview", "data", "sync",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("client arguments = %v, want %v", got, want)
@@ -983,21 +1259,38 @@ func TestQualificationClientParsesTypedCLIResults(t *testing.T) {
 	}
 }
 
-func TestQualificationBootstrapCandidateAllowsMissingDeliveryPlan(t *testing.T) {
-	output := fmt.Sprintf(
-		`{"schemaVersion":1,"candidateId":"cand_bootstrap","revision":7,"targetId":"target_1",`+
-			`"principalId":"principal_1","artifactDigest":"sha256:%s","provenanceDigest":"sha256:%s",`+
-			`"previewUrl":"https://localhost/candidates/cand_bootstrap"}`,
-		strings.Repeat("a", 64),
-		strings.Repeat("b", 64),
-	)
-	if _, err := parseQualificationCandidate(output, ""); err == nil {
-		t.Fatal("normal candidate parser accepted a missing delivery plan")
+func TestQualificationClientRequiresNativeDeliveryIdentities(t *testing.T) {
+	candidate := QualificationCandidate{
+		ID:          "0198f2c0-7c7a-7f00-8a11-000000000103",
+		PlanID:      "0198f2c0-7c7a-7f00-8a11-000000000101",
+		PrincipalID: "0198f2c0-7c7a-7f00-8a11-000000000105",
 	}
-	candidate, err := parseQualificationCandidateBootstrap(output, "")
-	require.NoError(t, err)
-	if candidate.ID != "cand_bootstrap" || candidate.PlanID != "" || candidate.PlanDigest != "" {
-		t.Fatalf("bootstrap candidate = %+v", candidate)
+	if err := validateQualificationNativeCandidate(candidate); err != nil {
+		t.Fatalf("native candidate rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*QualificationCandidate){
+		"candidate": func(value *QualificationCandidate) { value.ID = "cand_opaque" },
+		"plan":      func(value *QualificationCandidate) { value.PlanID = "plan_opaque" },
+		"principal": func(value *QualificationCandidate) { value.PrincipalID = "principal_opaque" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := candidate
+			mutate(&invalid)
+			if err := validateQualificationNativeCandidate(invalid); err == nil {
+				t.Fatalf("accepted opaque %s identity", name)
+			}
+		})
+	}
+
+	publication := QualificationPublication{
+		DeploymentID: "0198f2c0-7c7a-7f00-8a11-000000000106",
+		CandidateID:  candidate.ID,
+		GenerationID: "0198f2c0-7c7a-7f00-8a11-000000000107",
+		PlanID:       candidate.PlanID,
+		PrincipalID:  candidate.PrincipalID,
+	}
+	if err := validateQualificationNativePublication(publication); err != nil {
+		t.Fatalf("native publication rejected: %v", err)
 	}
 }
 
@@ -1254,30 +1547,5 @@ func TestVerifyQualificationChecksumsRejectsPathsOutsideRelease(t *testing.T) {
 	if err := verifyQualificationChecksums(root); err == nil ||
 		!strings.Contains(err.Error(), "escapes the release root") {
 		t.Fatalf("path traversal error = %v", err)
-	}
-}
-
-func TestQualificationReleaseIdentityRejectsUnknownProvenance(t *testing.T) {
-	clean := false
-	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
-	valid := qualificationReleaseIdentity{
-		Version: "1.0.0", Revision: strings.Repeat("b", 40), Image: image,
-		Dirty: &clean, Development: &clean,
-	}
-	if _, err := valid.transitionIdentity(image, "linux/amd64"); err != nil {
-		t.Fatalf("valid identity: %v", err)
-	}
-	for _, test := range []struct {
-		name     string
-		identity qualificationReleaseIdentity
-	}{
-		{name: "missing provenance", identity: qualificationReleaseIdentity{Version: valid.Version, Revision: valid.Revision, Image: image}},
-		{name: "mismatched admitted image", identity: qualificationReleaseIdentity{Version: valid.Version, Revision: valid.Revision, Image: "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("c", 64), Dirty: &clean, Development: &clean}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := test.identity.transitionIdentity(image, "linux/amd64"); err == nil {
-				t.Fatal("unknown release provenance was accepted")
-			}
-		})
 	}
 }

@@ -14,18 +14,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
-	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
+	deploymentqualificationbarrier "github.com/flidai/leapview/internal/deployment/qualificationbarrier"
+	manageddataqualificationbarrier "github.com/flidai/leapview/internal/manageddata/qualificationbarrier"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
 )
 
 const qualificationRecoveryDiskLimitKiB = int64(51200)
+const qualificationManagedUploadMinimumSize = int64(50_000_000)
 const qualificationRecoveryReleaseInterruptionDelay = 15 * time.Second
 const qualificationRecoveryActivationBarrierTimeout = 2 * time.Minute
 
@@ -48,10 +51,13 @@ type qualificationRecoveryOptions struct {
 	ProjectDataToken     string
 	RecoveryControlToken string
 	MetricsToken         string
+	AuthorPrincipalID    string
+	ReviewerPrincipalID  string
 	ContainerID          string
 	ComposeProject       string
 	ProjectID            string
 	Image                string
+	Target               string
 }
 
 type qualificationRecoveryReport struct {
@@ -66,19 +72,14 @@ type qualificationRecoveryReport struct {
 		DeploymentActivation bool `json:"deploymentActivation"`
 		RefreshRecovery      bool `json:"refreshRecovery"`
 		QueryStreamReconnect bool `json:"queryStreamReconnect"`
-		BackupInterruption   bool `json:"backupInterruption"`
-		RestorePreflight     bool `json:"restorePreflight"`
 		BoundedDisk          bool `json:"boundedDisk"`
 	} `json:"assertions"`
 	BoundedState struct {
-		DiskBeforeKiB          int64 `json:"diskBeforeKiB"`
-		DiskAfterKiB           int64 `json:"diskAfterKiB"`
-		DiskGrowthKiB          int64 `json:"diskGrowthKiB"`
-		DiskGrowthLimitKiB     int64 `json:"diskGrowthLimitKiB"`
-		StaleRecoveryEntries   int64 `json:"staleRecoveryEntries"`
-		StaleRestoreEntries    int64 `json:"staleRestoreEntries"`
-		StaleBackupEntries     int64 `json:"staleBackupEntries"`
-		StaleCheckpointEntries int64 `json:"staleCheckpointEntries"`
+		DiskBeforeKiB        int64 `json:"diskBeforeKiB"`
+		DiskAfterKiB         int64 `json:"diskAfterKiB"`
+		DiskGrowthKiB        int64 `json:"diskGrowthKiB"`
+		DiskGrowthLimitKiB   int64 `json:"diskGrowthLimitKiB"`
+		StaleRecoveryEntries int64 `json:"staleRecoveryEntries"`
 	} `json:"boundedState"`
 }
 
@@ -135,6 +136,9 @@ func (c *Controller) runQualificationRecovery(
 	if options.ProjectID == "" {
 		options.ProjectID = "project:leapview-evaluation"
 	}
+	if options.ProjectID != manageddataqualificationbarrier.EvaluationProjectID {
+		return report, fmt.Errorf("recovery qualification requires exact evaluation project %q", manageddataqualificationbarrier.EvaluationProjectID)
+	}
 	for label, value := range map[string]string{
 		"bundle root":            options.BundleRoot,
 		"evidence directory":     options.EvidenceDir,
@@ -143,13 +147,24 @@ func (c *Controller) runQualificationRecovery(
 		"project data token":     options.ProjectDataToken,
 		"recovery control token": options.RecoveryControlToken,
 		"metrics token":          options.MetricsToken,
+		"author principal id":    options.AuthorPrincipalID,
+		"reviewer principal id":  options.ReviewerPrincipalID,
 		"container":              options.ContainerID,
 		"Compose project":        options.ComposeProject,
 		"project":                options.ProjectID,
 		"image":                  options.Image,
+		"target":                 options.Target,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return report, fmt.Errorf("recovery qualification %s is required", label)
+		}
+	}
+	for label, value := range map[string]string{
+		"author principal":   options.AuthorPrincipalID,
+		"reviewer principal": options.ReviewerPrincipalID,
+	} {
+		if err := validateQualificationNativeUUID(value, label); err != nil {
+			return report, fmt.Errorf("recovery qualification %s: %w", label, err)
 		}
 	}
 	appEnv, err := os.ReadFile(filepath.Join(options.BundleRoot, appEnvName))
@@ -235,22 +250,31 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	baselineRevision := active.Revision.ID
-	if baselineRevision == "" {
-		return report, fmt.Errorf("active managed-data revision is empty")
-	}
+	// A clean installation legitimately has no active managed-data revision
+	// until its first deployment selects a staged revision. The interruption
+	// invariant is still exact: the partial upload must leave that empty active
+	// pointer unchanged, just as it must preserve an existing revision.
 	if err := c.prepareQualificationRecoveryData(ctx, options, workDir); err != nil {
 		return report, err
 	}
-	if _, err := c.qualificationDocker(
-		ctx, nil, "update", "--cpus", "0.25", options.ContainerID,
-	); err != nil {
+	managedUploadBarrierDir := filepath.Join(workDir, "client-home")
+	if err := armQualificationManagedUploadBarrier(managedUploadBarrierDir); err != nil {
 		return report, err
 	}
-	syncCommand, err := c.startQualificationClientCommand(
+	cleanup.Add(func(context.Context) error {
+		return clearQualificationManagedUploadBarrier(managedUploadBarrierDir)
+	})
+	syncCommand, err := c.startQualificationClientCommandWithEnv(
 		ctx,
 		recoveryClient,
 		options.PublisherToken,
+		options.Target,
 		filepath.Join(options.EvidenceDir, "recovery-managed-upload.log"),
+		map[string]string{
+			manageddataqualificationbarrier.EnabledEnv:   manageddataqualificationbarrier.EnabledValue,
+			manageddataqualificationbarrier.PathEnv:      "/client-home",
+			manageddataqualificationbarrier.ProjectIDEnv: options.ProjectID,
+		},
 		"leapview", "data", "sync",
 		"--project", "/work/project-a/leapview.yaml",
 		"--connection", "sample",
@@ -260,35 +284,14 @@ func (c *Controller) runQualificationRecovery(
 	if err != nil {
 		return report, err
 	}
-	var interruptedSession string
-	var interruptedOffset int64
-	uploadCtx, cancelUpload := qualificationContext(ctx, 10*time.Minute)
-	err = qualificationWait(uploadCtx, 500*time.Millisecond, func(waitCtx context.Context) (bool, error) {
-		var sessions qualificationUploadSessions
-		if apiErr := qualificationAPI(
-			waitCtx, client, http.MethodGet,
-			apiRoot+qualificationManagedConnectionPath(options.ProjectID)+"/upload-sessions?limit=100",
-			options.PublisherToken, nil, "", &sessions,
-		); apiErr != nil {
-			return false, nil
-		}
-		for _, session := range sessions.Items {
-			if session.Status != "open" {
-				continue
-			}
-			for _, file := range session.Files {
-				offset := file.Negotiation.TUS.Offset
-				if file.File.Size > 50_000_000 && offset > 0 && offset < file.File.Size {
-					interruptedSession = session.ID
-					if offset > interruptedOffset {
-						interruptedOffset = offset
-					}
-				}
-			}
-		}
-		return interruptedSession != "", nil
-	})
-	cancelUpload()
+	cleanup.Add(func(context.Context) error { return syncCommand.Stop() })
+	barrierCtx, cancelBarrier := qualificationContext(ctx, 10*time.Minute)
+	err = waitForQualificationManagedUploadBarrier(barrierCtx, managedUploadBarrierDir, syncCommand)
+	cancelBarrier()
+	if err != nil {
+		return report, err
+	}
+	interruptedSession, interruptedOffset, err := qualificationManagedUploadPartialOffset(ctx, client, apiRoot, options)
 	if err != nil {
 		_ = syncCommand.Stop()
 		return report, err
@@ -297,7 +300,6 @@ func (c *Controller) runQualificationRecovery(
 		_ = syncCommand.Stop()
 		return report, err
 	}
-	_ = syncCommand.Stop()
 	var sessionObject struct {
 		Status string `json:"status"`
 		Files  []struct {
@@ -324,19 +326,16 @@ func (c *Controller) runQualificationRecovery(
 			maxOffset = file.Negotiation.TUS.Offset
 		}
 	}
-	if sessionObject.Status != "open" || maxOffset < interruptedOffset {
+	if sessionObject.Status != "open" || maxOffset != interruptedOffset {
 		return report, fmt.Errorf("managed upload did not preserve its durable offset")
 	}
-	syncOutput, err := c.runQualificationClientCommand(
-		ctx,
-		recoveryClient,
-		options.PublisherToken,
-		"leapview", "data", "sync",
-		"--project", "/work/project-a/leapview.yaml",
-		"--connection", "sample",
-		"--from", "/work/input",
-		"--format", "json",
-	)
+	if err := releaseQualificationManagedUploadBarrier(managedUploadBarrierDir); err != nil {
+		return report, err
+	}
+	if err := syncCommand.Wait(ctx); err != nil {
+		return report, fmt.Errorf("managed upload sync after recovery: %w", err)
+	}
+	syncOutput, err := os.ReadFile(filepath.Join(options.EvidenceDir, "recovery-managed-upload.log"))
 	if err != nil {
 		return report, err
 	}
@@ -383,7 +382,7 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	releaseCommand, err := c.startQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken, releaseLog,
+		ctx, recoveryClient, options.PublisherToken, options.Target, releaseLog,
 		"leapview", "dev", "--once", "--no-browser",
 		"--project", "/work/project-a/leapview.yaml",
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
@@ -406,7 +405,7 @@ func (c *Controller) runQualificationRecovery(
 	}
 	_ = releaseCommand.Stop()
 	releaseOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken,
+		ctx, recoveryClient, options.PublisherToken, options.Target,
 		"leapview", "dev", "--once", "--no-browser",
 		"--project", "/work/project-a/leapview.yaml",
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
@@ -441,7 +440,7 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	deploymentCandidateOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken,
+		ctx, recoveryClient, options.PublisherToken, options.Target,
 		"leapview", "dev", "--once", "--no-browser",
 		"--project", "/work/project-b/leapview.yaml",
 		"--candidate-key", qualificationRecoveryDeploymentCandidateKey,
@@ -455,7 +454,7 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	pendingOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken,
+		ctx, recoveryClient, options.PublisherToken, options.Target,
 		"leapview", "publish", deploymentCandidate.ID,
 		"--format", "json",
 	)
@@ -469,6 +468,9 @@ func (c *Controller) runQualificationRecovery(
 	if pendingPublication.Status != "pending" {
 		return report, fmt.Errorf("recovery publication status %q is not pending", pendingPublication.Status)
 	}
+	if err := c.armQualificationActivationBarrier(ctx, options.ContainerID, workDir); err != nil {
+		return report, err
+	}
 	if err := approveQualificationPublication(
 		ctx,
 		client,
@@ -480,32 +482,30 @@ func (c *Controller) runQualificationRecovery(
 	); err != nil {
 		return report, err
 	}
-	if err := c.armQualificationActivationBarrier(ctx, options.ContainerID, workDir); err != nil {
-		return report, err
+	barrierCtx, cancelBarrier = qualificationContext(ctx, qualificationRecoveryActivationBarrierTimeout)
+	err = c.waitForQualificationActivationBarrier(barrierCtx, options.ContainerID, workDir)
+	cancelBarrier()
+	if err != nil {
+		return report, fmt.Errorf("wait for canonical publication activation barrier: %w", err)
 	}
-	deploymentLog := filepath.Join(options.EvidenceDir, "recovery-deployment-activation.log")
-	deploymentCommand, err := c.startQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken, deploymentLog,
-		"leapview", "publish", deploymentCandidate.ID,
-		"--format", "json",
+	interruptedEvidence, err := qualificationPublicationEvidence(
+		ctx, client, apiRoot, options.ProjectID, options.PublisherToken,
+		deploymentCandidate, pendingPublication,
 	)
 	if err != nil {
 		return report, err
 	}
-	barrierCtx, cancelBarrier := qualificationContext(ctx, qualificationRecoveryActivationBarrierTimeout)
-	err = c.waitForQualificationActivationBarrier(barrierCtx, options.ContainerID, workDir)
-	cancelBarrier()
-	if err != nil {
-		_ = deploymentCommand.Stop()
-		return report, fmt.Errorf("wait for canonical publication activation barrier: %w", err)
+	if interruptedEvidence.Status != deploymentgen.DeliveryPublicationStatusPending {
+		return report, fmt.Errorf(
+			"publication reached %q before the activation barrier interrupted its commit",
+			interruptedEvidence.Status,
+		)
 	}
 	if err := c.killAndRecoverQualificationCandidate(
 		ctx,
 		options.ContainerID,
 		report.Stage,
-		func() { _ = deploymentCommand.Stop() },
 	); err != nil {
-		_ = deploymentCommand.Stop()
 		return report, err
 	}
 	recoveredEvidence, err := qualificationPublicationEvidence(
@@ -515,27 +515,30 @@ func (c *Controller) runQualificationRecovery(
 	if err != nil {
 		return report, err
 	}
-	if recoveredEvidence.Status != deploymentgen.DeliveryPublicationStatusPending {
+	if recoveredEvidence.Status != deploymentgen.DeliveryPublicationStatusPending &&
+		recoveredEvidence.Status != deploymentgen.DeliveryPublicationStatusCommitted {
 		return report, fmt.Errorf(
-			"canonical publication reached %q instead of preserving the interrupted pending request",
+			"interrupted publication reached unexpected status %q after recovery",
 			recoveredEvidence.Status,
 		)
 	}
-	committedOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken,
-		"leapview", "publish", deploymentCandidate.ID,
-		"--format", "json",
+	// The approval decision already enqueued the only canonical activation
+	// intent. After a process loss, wait for that exact leased job to be
+	// reclaimed; issuing publish again would correctly create a distinct
+	// operator publication attempt rather than recovering this one.
+	committedPublication, err := waitQualificationNativePublication(
+		ctx,
+		client,
+		qualificationAuthoringOptions{Target: apiRoot, ProjectID: options.ProjectID},
+		options.PublisherToken,
+		pendingPublication,
 	)
 	if err != nil {
-		return report, err
-	}
-	committedPublication, err := parseQualificationPublication(string(committedOutput), deploymentCandidate)
-	if err != nil {
-		return report, err
+		return report, fmt.Errorf("wait for canonical interrupted publication recovery: %w", err)
 	}
 	if committedPublication.Status != "committed" ||
 		committedPublication.DeploymentID != pendingPublication.DeploymentID {
-		return report, fmt.Errorf("canonical publication retry did not commit the exact interrupted publication")
+		return report, fmt.Errorf("recovery did not commit the exact interrupted publication")
 	}
 	deploymentEvidence, err := waitForQualificationPublicationEvidence(
 		ctx, client, apiRoot, options.ProjectID, options.PublisherToken,
@@ -545,7 +548,7 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	if deploymentEvidence.GenerationId != committedPublication.GenerationID {
-		return report, fmt.Errorf("canonical publication retry returned a different generation")
+		return report, fmt.Errorf("recovered publication returned a different generation")
 	}
 	deploymentEvents, err := json.Marshal(deploymentEvidence)
 	if err != nil {
@@ -673,127 +676,6 @@ func (c *Controller) runQualificationRecovery(
 	if err := phases.Finish(nil); err != nil {
 		return report, err
 	}
-	report.Stage = "backup interruption"
-	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
-	if _, err := c.qualificationDocker(ctx, nil, "update", "--cpus", "0.25", options.ContainerID); err != nil {
-		return report, err
-	}
-	for _, name := range []string{"interrupted.tar.gz", "interrupted.tar.gz.sha256"} {
-		_ = os.Remove(filepath.Join(options.BundleRoot, "backups", name))
-	}
-	backupCommand, err := startQualificationControllerCommand(
-		ctx,
-		options.BundleRoot,
-		filepath.Join(options.EvidenceDir, "recovery-backup-interruption.log"),
-		"backup", "interrupted.tar.gz",
-	)
-	if err != nil {
-		return report, err
-	}
-	backupOneoff, err := c.waitForQualificationComposeOneoff(
-		ctx, options.ComposeProject, "admin", "backup",
-	)
-	if err != nil {
-		_ = backupCommand.Stop()
-		return report, err
-	}
-	_ = backupCommand.Stop()
-	backupContainer := c.qualificationContainers.Existing(backupOneoff)
-	_, _ = backupContainer.Kill(ctx, "KILL")
-	_, _ = backupContainer.Remove(ctx)
-	if _, statErr := os.Stat(filepath.Join(options.BundleRoot, "backups", "interrupted.tar.gz")); !os.IsNotExist(statErr) {
-		return report, fmt.Errorf("interrupted backup produced a completed archive")
-	}
-	if _, err := c.qualificationDocker(ctx, nil, "update", "--cpus", qualificationRecoveryFullCPUs, options.ContainerID); err != nil {
-		return report, err
-	}
-	recoveryController, err := New(Options{
-		Root:      options.BundleRoot,
-		DockerBin: c.dockerBin,
-		Stdout:    io.Discard,
-		Stderr:    c.stderr,
-		Now:       c.now,
-		Sleep:     c.sleep,
-	})
-	if err != nil {
-		return report, err
-	}
-	if err := recoveryController.Start(ctx); err != nil {
-		return report, err
-	}
-	if err := recoveryController.Backup(ctx, "recovered.tar.gz"); err != nil {
-		return report, err
-	}
-	options.ContainerID, err = recoveryController.containerID(ctx)
-	if err != nil {
-		return report, err
-	}
-	if err := c.waitQualificationHealthy(ctx, options.ContainerID, report.Stage); err != nil {
-		return report, err
-	}
-	temporaryBackups, err := filepath.Glob(filepath.Join(options.BundleRoot, "backups", ".leapview-backup-*.tmp"))
-	if err != nil || len(temporaryBackups) != 0 {
-		return report, fmt.Errorf("interrupted backup left temporary archives")
-	}
-	report.Assertions.BackupInterruption = true
-
-	if err := phases.Finish(nil); err != nil {
-		return report, err
-	}
-	report.Stage = "restore preflight interruption"
-	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
-	restoreCommand, err := startQualificationControllerCommand(
-		ctx,
-		options.BundleRoot,
-		filepath.Join(options.EvidenceDir, "recovery-restore-preflight.log"),
-		"restore", "backups/recovered.tar.gz",
-	)
-	if err != nil {
-		return report, err
-	}
-	restoreOneoff, err := c.waitForQualificationComposeOneoff(
-		ctx, options.ComposeProject, "admin", "restore",
-	)
-	if err != nil {
-		_ = restoreCommand.Stop()
-		return report, err
-	}
-	_ = restoreCommand.Stop()
-	restoreContainer := c.qualificationContainers.Existing(restoreOneoff)
-	_, _ = restoreContainer.Kill(ctx, "KILL")
-	_, _ = restoreContainer.Remove(ctx)
-	if err := recoveryController.Start(ctx); err != nil {
-		return report, err
-	}
-	if err := recoveryController.Restore(ctx, "backups/recovered.tar.gz"); err != nil {
-		return report, err
-	}
-	options.ContainerID, err = recoveryController.containerID(ctx)
-	if err != nil {
-		return report, err
-	}
-	if err := c.waitQualificationHealthy(ctx, options.ContainerID, report.Stage); err != nil {
-		return report, err
-	}
-	postRestoreOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.WorkloadToken,
-		"leapview", "api", "call", "querySemanticModel",
-		"--path", "model=semantic-model:sales", "--body-json", mustQualificationJSON(queryBody),
-	)
-	if err != nil {
-		return report, err
-	}
-	var postRestore struct {
-		Rows []json.RawMessage `json:"rows"`
-	}
-	if err := json.Unmarshal(postRestoreOutput, &postRestore); err != nil || len(postRestore.Rows) != 4 {
-		return report, fmt.Errorf("post-restore governed query failed")
-	}
-	report.Assertions.RestorePreflight = true
-
-	if err := phases.Finish(nil); err != nil {
-		return report, err
-	}
 	report.Stage = "bounded recovery state"
 	ctx = phases.Begin(rootContext, report.Stage, 10*time.Minute)
 	_, _ = c.qualificationDocker(ctx, nil, "update", "--cpus", qualificationRecoveryFullCPUs, options.ContainerID)
@@ -803,37 +685,7 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.BoundedState.DiskAfterKiB = diskAfter
 	report.BoundedState.DiskGrowthKiB = diskAfter - diskBefore
-	report.BoundedState.StaleRestoreEntries, err = c.countQualificationContainerPaths(
-		ctx, options.ContainerID, "/var/lib/leapview", ".leapview-restore-*",
-	)
-	if err != nil {
-		return report, err
-	}
-	report.BoundedState.StaleBackupEntries, err = c.countQualificationContainerPaths(
-		ctx, options.ContainerID, "/var/lib/leapview", ".leapview-instance-backup-*",
-	)
-	if err != nil {
-		return report, err
-	}
-	firstCheckpoints, err := c.countQualificationContainerPaths(
-		ctx, options.ContainerID, "/var/lib/leapview", ".leapview-current-backup-*.tar.gz",
-	)
-	if err != nil {
-		return report, err
-	}
-	secondCheckpoints, err := c.countQualificationContainerPaths(
-		ctx, options.ContainerID, "/var/lib/leapview", "leapview-current-backup-*.tar.gz",
-	)
-	if err != nil {
-		return report, err
-	}
-	report.BoundedState.StaleCheckpointEntries = firstCheckpoints + secondCheckpoints
-	report.BoundedState.StaleRecoveryEntries =
-		report.BoundedState.StaleRestoreEntries +
-			report.BoundedState.StaleBackupEntries +
-			report.BoundedState.StaleCheckpointEntries
-	if report.BoundedState.DiskGrowthKiB > qualificationRecoveryDiskLimitKiB ||
-		report.BoundedState.StaleRecoveryEntries != 0 {
+	if report.BoundedState.DiskGrowthKiB > qualificationRecoveryDiskLimitKiB {
 		return report, fmt.Errorf("recovery state is unbounded")
 	}
 	report.Assertions.BoundedDisk = true
@@ -899,25 +751,24 @@ func (c *Controller) prepareQualificationRecoveryData(
 	); err != nil {
 		return err
 	}
-	for name, title := range map[string]string{
-		"project-a": qualificationRecoveryReleaseProjectName,
-		"project-b": qualificationRecoveryDeploymentProjectName,
+	for name, variant := range map[string]struct {
+		title string
+		alias string
+	}{
+		"project-a": {title: qualificationRecoveryReleaseProjectName, alias: "qualification_release_orders"},
+		"project-b": {title: qualificationRecoveryDeploymentProjectName, alias: "qualification_deployment_orders"},
 	} {
 		target := filepath.Join(workDir, name)
 		if err := copyQualificationTree(sourceProject, target); err != nil {
 			return err
 		}
-		projectPath := filepath.Join(target, "leapview.yaml")
-		contents, err := os.ReadFile(projectPath)
-		if err != nil {
-			return err
-		}
-		contents = bytes.ReplaceAll(
-			contents,
-			[]byte("name: leapview-evaluation"),
-			[]byte("name: "+title),
-		)
-		if err := os.WriteFile(projectPath, contents, 0o600); err != nil {
+		if err := rewriteQualificationRecoveryProject(
+			target,
+			variant.title,
+			variant.alias,
+			options.AuthorPrincipalID,
+			options.ReviewerPrincipalID,
+		); err != nil {
 			return err
 		}
 	}
@@ -946,6 +797,47 @@ func (c *Controller) prepareQualificationRecoveryData(
 		}
 	}
 	return nil
+}
+
+func rewriteQualificationRecoveryProject(
+	root string,
+	title string,
+	modelAlias string,
+	authorPrincipalID string,
+	reviewerPrincipalID string,
+) error {
+	projectPath := filepath.Join(root, "leapview.yaml")
+	projectContents, err := os.ReadFile(projectPath)
+	if err != nil {
+		return err
+	}
+	projectName := []byte("name: leapview-evaluation")
+	if bytes.Count(projectContents, projectName) != 1 {
+		return fmt.Errorf("qualification recovery project name marker is not unique")
+	}
+	projectContents = bytes.Replace(projectContents, projectName, []byte("name: "+title), 1)
+	if err := os.WriteFile(projectPath, projectContents, 0o600); err != nil {
+		return err
+	}
+	if err := configureQualificationPrincipals(projectPath, authorPrincipalID, reviewerPrincipalID); err != nil {
+		return fmt.Errorf("configure recovery principals: %w", err)
+	}
+
+	// The recovery journey must exercise a real native build on both sides of
+	// each interruption. A metadata-only rename is eligible for whole-candidate
+	// reuse and can complete before the interruption boundary. Give each copy a
+	// semantically equivalent but distinct model execution identity instead.
+	modelPath := filepath.Join(root, "models", "orders.yaml")
+	modelContents, err := os.ReadFile(modelPath)
+	if err != nil {
+		return err
+	}
+	from := []byte(`      FROM source."sample.orders"`)
+	if bytes.Count(modelContents, from) != 1 {
+		return fmt.Errorf("qualification recovery model source marker is not unique")
+	}
+	modelContents = bytes.Replace(modelContents, from, []byte(`      FROM source."sample.orders" AS `+modelAlias), 1)
+	return os.WriteFile(modelPath, modelContents, 0o600)
 }
 
 func makeQualificationContainerReadable(root string) error {
@@ -1068,7 +960,8 @@ func (c *Controller) startQualificationRecoveryClient(
 			{Source: certificateFile, Target: "/run/certs/caddy-root.crt", ReadOnly: true},
 		},
 		Environment: map[string]string{
-			"SSL_CERT_FILE": "/run/certs/caddy-root.crt",
+			"SSL_CERT_FILE":   "/run/certs/caddy-root.crt",
+			"LEAPVIEW_TARGET": options.Target,
 		},
 		Entrypoint: []string{"sleep"},
 		Command:    []string{"infinity"},
@@ -1081,15 +974,34 @@ func (c *Controller) startQualificationRecoveryClient(
 func qualificationClientExecArguments(
 	container string,
 	token string,
+	target string,
+	arguments ...string,
+) []string {
+	return qualificationClientExecArgumentsWithEnv(container, token, target, nil, arguments...)
+}
+
+func qualificationClientExecArgumentsWithEnv(
+	container string,
+	token string,
+	target string,
+	environment map[string]string,
 	arguments ...string,
 ) []string {
 	result := []string{
 		"exec",
 		"--env", "LEAPVIEW_API_TOKEN=" + token,
-		"--env", "LEAPVIEW_TARGET=https://localhost",
+		"--env", "LEAPVIEW_TARGET=" + target,
 		"--env", "LEAPVIEW_HOME=/client-home",
-		container,
 	}
+	keys := make([]string, 0, len(environment))
+	for key := range environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		result = append(result, "--env", key+"="+environment[key])
+	}
+	result = append(result, container)
 	return append(result, arguments...)
 }
 
@@ -1097,7 +1009,20 @@ func (c *Controller) startQualificationClientCommand(
 	ctx context.Context,
 	clientContainer string,
 	token string,
+	target string,
 	logPath string,
+	arguments ...string,
+) (*qualificationRunningCommand, error) {
+	return c.startQualificationClientCommandWithEnv(ctx, clientContainer, token, target, logPath, nil, arguments...)
+}
+
+func (c *Controller) startQualificationClientCommandWithEnv(
+	ctx context.Context,
+	clientContainer string,
+	token string,
+	target string,
+	logPath string,
+	environment map[string]string,
 	arguments ...string,
 ) (*qualificationRunningCommand, error) {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
@@ -1107,9 +1032,11 @@ func (c *Controller) startQualificationClientCommand(
 	if err != nil {
 		return nil, err
 	}
-	dockerArguments := qualificationClientExecArguments(
+	dockerArguments := qualificationClientExecArgumentsWithEnv(
 		clientContainer,
 		token,
+		target,
+		environment,
 		arguments...,
 	)
 	command := exec.CommandContext(ctx, c.dockerBin, dockerArguments...)
@@ -1128,6 +1055,7 @@ func (c *Controller) runQualificationClientCommand(
 	ctx context.Context,
 	clientContainer string,
 	token string,
+	target string,
 	arguments ...string,
 ) ([]byte, error) {
 	return c.qualificationContainers.Existing(clientContainer).Exec(
@@ -1136,7 +1064,7 @@ func (c *Controller) runQualificationClientCommand(
 			[]string{
 				"env",
 				"LEAPVIEW_API_TOKEN=" + token,
-				"LEAPVIEW_TARGET=https://localhost",
+				"LEAPVIEW_TARGET=" + target,
 				"LEAPVIEW_HOME=/client-home",
 			},
 			arguments...,
@@ -1164,6 +1092,36 @@ func (r *qualificationRunningCommand) Stop() error {
 		}
 	})
 	if waitErr != nil && !strings.Contains(waitErr.Error(), "signal: killed") {
+		return errorsJoin(waitErr, closeErr)
+	}
+	return closeErr
+}
+
+// Wait waits for a started qualification command and closes its evidence log.
+// It does not signal the process; callers can release a filesystem barrier and
+// then wait for the original command to finish normally.
+func (r *qualificationRunningCommand) Wait(ctx context.Context) error {
+	if r == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-r.done:
+	}
+	r.mu.Lock()
+	waitErr := r.waitErr
+	r.mu.Unlock()
+	var closeErr error
+	r.close.Do(func() {
+		if r.output != nil {
+			closeErr = r.output.Close()
+		}
+	})
+	if waitErr != nil {
 		return errorsJoin(waitErr, closeErr)
 	}
 	return closeErr
@@ -1214,7 +1172,7 @@ func (c *Controller) armQualificationActivationBarrier(
 	if err := c.clearQualificationActivationBarrier(ctx, containerID); err != nil {
 		return fmt.Errorf("clear qualification activation barrier markers: %w", err)
 	}
-	armedFile := filepath.Join(workDir, sealedcontrol.QualificationActivationBarrierArmedMarker)
+	armedFile := filepath.Join(workDir, deploymentqualificationbarrier.ArmedMarker)
 	if err := os.WriteFile(armedFile, []byte("qualification-recovery\n"), 0o600); err != nil {
 		return fmt.Errorf("write qualification activation barrier marker: %w", err)
 	}
@@ -1222,7 +1180,7 @@ func (c *Controller) armQualificationActivationBarrier(
 		ctx,
 		nil,
 		"cp", armedFile,
-		containerID+":"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
+		containerID+":"+qualificationActivationBarrierContainerPath(deploymentqualificationbarrier.ArmedMarker),
 	); err != nil {
 		return fmt.Errorf("arm qualification activation barrier: %w", err)
 	}
@@ -1231,8 +1189,8 @@ func (c *Controller) armQualificationActivationBarrier(
 
 func (c *Controller) clearQualificationActivationBarrier(ctx context.Context, containerID string) error {
 	_, err := c.qualificationContainers.Existing(containerID).Exec(ctx, nil, "rm", "-f",
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+		qualificationActivationBarrierContainerPath(deploymentqualificationbarrier.ArmedMarker),
+		qualificationActivationBarrierContainerPath(deploymentqualificationbarrier.ReachedMarker),
 	)
 	return err
 }
@@ -1242,14 +1200,14 @@ func (c *Controller) waitForQualificationActivationBarrier(
 	containerID string,
 	workDir string,
 ) error {
-	reachedFile := filepath.Join(workDir, sealedcontrol.QualificationActivationBarrierReachedMarker)
+	reachedFile := filepath.Join(workDir, deploymentqualificationbarrier.ReachedMarker)
 	return qualificationWait(ctx, 250*time.Millisecond, func(waitCtx context.Context) (bool, error) {
 		_ = os.Remove(reachedFile)
 		_, err := c.qualificationDocker(
 			waitCtx,
 			nil,
 			"cp",
-			containerID+":"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+			containerID+":"+qualificationActivationBarrierContainerPath(deploymentqualificationbarrier.ReachedMarker),
 			reachedFile,
 		)
 		if err != nil {
@@ -1260,30 +1218,94 @@ func (c *Controller) waitForQualificationActivationBarrier(
 	})
 }
 
-func startQualificationControllerCommand(
+func armQualificationManagedUploadBarrier(dir string) error {
+	if strings.TrimSpace(dir) == "" {
+		return fmt.Errorf("managed upload qualification barrier directory is required")
+	}
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		return fmt.Errorf("create managed upload qualification barrier directory: %w", err)
+	}
+	for _, marker := range []string{manageddataqualificationbarrier.ArmedMarker, manageddataqualificationbarrier.ReachedMarker} {
+		if err := os.Remove(filepath.Join(dir, marker)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("clear managed upload qualification barrier marker: %w", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, manageddataqualificationbarrier.ArmedMarker), []byte("qualification-recovery\n"), 0o600); err != nil {
+		return fmt.Errorf("write managed upload qualification barrier marker: %w", err)
+	}
+	return nil
+}
+
+func releaseQualificationManagedUploadBarrier(dir string) error {
+	if err := os.Remove(filepath.Join(dir, manageddataqualificationbarrier.ReachedMarker)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("release managed upload qualification barrier: %w", err)
+	}
+	return nil
+}
+
+func clearQualificationManagedUploadBarrier(dir string) error {
+	for _, marker := range []string{manageddataqualificationbarrier.ArmedMarker, manageddataqualificationbarrier.ReachedMarker} {
+		if err := os.Remove(filepath.Join(dir, marker)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("clear managed upload qualification barrier marker: %w", err)
+		}
+	}
+	return nil
+}
+
+func waitForQualificationManagedUploadBarrier(ctx context.Context, dir string, command *qualificationRunningCommand) error {
+	reached := filepath.Join(dir, manageddataqualificationbarrier.ReachedMarker)
+	return qualificationWait(ctx, 100*time.Millisecond, func(waitCtx context.Context) (bool, error) {
+		if _, err := os.Stat(reached); err == nil {
+			return true, nil
+		} else if !os.IsNotExist(err) {
+			return false, err
+		}
+		if command != nil && !command.Running() {
+			return false, fmt.Errorf("managed upload sync completed before qualification barrier was reached")
+		}
+		return false, nil
+	})
+}
+
+func qualificationManagedUploadPartialOffset(
 	ctx context.Context,
-	bundleRoot string,
-	logPath string,
-	arguments ...string,
-) (*qualificationRunningCommand, error) {
-	output, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, err
+	client *http.Client,
+	apiRoot string,
+	options qualificationRecoveryOptions,
+) (string, int64, error) {
+	var sessions qualificationUploadSessions
+	if err := qualificationAPI(
+		ctx, client, http.MethodGet,
+		apiRoot+qualificationManagedConnectionPath(options.ProjectID)+"/upload-sessions?limit=100",
+		options.PublisherToken, nil, "", &sessions,
+	); err != nil {
+		return "", 0, err
 	}
-	command := exec.CommandContext(
-		ctx,
-		filepath.Join(bundleRoot, "leapviewctl"),
-		arguments...,
-	)
-	command.Dir = bundleRoot
-	command.Env = os.Environ()
-	command.Stdout = output
-	command.Stderr = output
-	if err := command.Start(); err != nil {
-		_ = output.Close()
-		return nil, err
+	var sessionID string
+	var maxOffset int64
+	for _, session := range sessions.Items {
+		if session.Status != "open" || strings.TrimSpace(session.ID) == "" {
+			continue
+		}
+		sessionOffset := int64(0)
+		for _, file := range session.Files {
+			offset := file.Negotiation.TUS.Offset
+			if file.File.Size > qualificationManagedUploadMinimumSize && offset > 0 && offset < file.File.Size && offset > sessionOffset {
+				sessionOffset = offset
+			}
+		}
+		if sessionOffset == 0 {
+			continue
+		}
+		if sessionID != "" {
+			return "", 0, fmt.Errorf("managed upload qualification barrier matched multiple open sessions")
+		}
+		sessionID, maxOffset = session.ID, sessionOffset
 	}
-	return newQualificationRunningCommand(command, output), nil
+	if sessionID == "" || maxOffset <= 0 {
+		return "", 0, fmt.Errorf("managed upload qualification barrier reached without an open session at a positive partial offset")
+	}
+	return sessionID, maxOffset, nil
 }
 
 func (c *Controller) killAndRecoverQualificationCandidate(
@@ -1662,52 +1684,6 @@ func (c *Controller) countQualificationContainerPaths(
 	return count, nil
 }
 
-func (c *Controller) waitForQualificationComposeOneoff(
-	ctx context.Context,
-	project string,
-	commandParts ...string,
-) (string, error) {
-	waitCtx, cancel := qualificationContext(ctx, time.Minute)
-	defer cancel()
-	var found string
-	err := qualificationWait(waitCtx, 50*time.Millisecond, func(requestCtx context.Context) (bool, error) {
-		output, listErr := c.qualificationDocker(
-			requestCtx, nil,
-			"ps",
-			"--filter", "label=com.docker.compose.project="+project,
-			"--filter", "label=com.docker.compose.oneoff=True",
-			"--quiet",
-		)
-		if listErr != nil {
-			return false, nil
-		}
-		for _, candidate := range strings.Fields(string(output)) {
-			commandOutput, inspectErr := c.qualificationContainers.Existing(candidate).
-				Inspect(requestCtx, "{{json .Config.Cmd}}")
-			if inspectErr != nil {
-				continue
-			}
-			var command []string
-			if err := json.Unmarshal(bytes.TrimSpace(commandOutput), &command); err != nil {
-				continue
-			}
-			joined := strings.Join(command, "\x00")
-			match := true
-			for _, part := range commandParts {
-				if !strings.Contains(joined, part) {
-					match = false
-				}
-			}
-			if match {
-				found = candidate
-				return true, nil
-			}
-		}
-		return false, nil
-	})
-	return found, err
-}
-
 func expandQualificationEventTimeline(operation string) []qualificationRecoveryEvent {
 	return []qualificationRecoveryEvent{
 		{Operation: operation, Status: "attempted"},
@@ -1726,12 +1702,6 @@ func qualificationRecoveryTimeline() []qualificationRecoveryEvent {
 		"refreshRecovery",
 	} {
 		result = append(result, expandQualificationEventTimeline(operation)...)
-	}
-	for _, operation := range []string{"backupInterruption", "restorePreflight"} {
-		result = append(result,
-			qualificationRecoveryEvent{Operation: operation, Status: "interrupted"},
-			qualificationRecoveryEvent{Operation: operation, Status: "completed"},
-		)
 	}
 	return result
 }

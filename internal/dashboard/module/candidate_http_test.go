@@ -1,6 +1,8 @@
 package module
 
 import (
+	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -18,7 +20,12 @@ type candidateMetricsStub struct {
 }
 
 func TestCandidateHTTPScopesRoutesStreamsAndSessions(t *testing.T) {
-	module := &Module{handler: dashboardhttp.Handler{}}
+	module := &Module{handler: dashboardhttp.Handler{
+		ProjectID: "active_project",
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return "", errors.New("no active serving state")
+		},
+	}}
 	digest := "sha256:" + strings.Repeat("a", 64)
 	resource, err := access.NewResourceRef(projectgraph.ResourceID("dashboard_1"), projectgraph.KindDashboard)
 	require.NoError(t, err)
@@ -36,6 +43,9 @@ func TestCandidateHTTPScopesRoutesStreamsAndSessions(t *testing.T) {
 	if handler.RouteScope.BasePath != "/candidates/cand_1/projects/project_1" ||
 		handler.StreamNamespace != "candidate:cand_1" {
 		t.Fatalf("candidate handler scope = (%q, %q)", handler.RouteScope.BasePath, handler.StreamNamespace)
+	}
+	if handler.ProjectID != "project_1" || handler.ResolveProjectID != nil {
+		t.Fatalf("candidate project identity = (%q, resolver configured=%t)", handler.ProjectID, handler.ResolveProjectID != nil)
 	}
 	key, err := handler.SessionKey(
 		httptest.NewRequest("GET", "/", nil),

@@ -118,6 +118,25 @@ func TestReadyzExposesOnlyReviewedDeliveryStartupCodes(t *testing.T) {
 	}
 }
 
+func TestReadyzExposesReviewedRecoveryStartupCodeWithoutScope(t *testing.T) {
+	deliveryErr := &deployment.DeliveryStartupDiagnosticsError{Diagnostics: []deployment.DeliveryStartupDiagnostic{{Code: deployment.DeliveryStartupRecoverySetSealMismatch, Scope: "secret-recovery-scope"}}}
+	response := httptest.NewRecorder()
+	newHealth(healthConfig{
+		Platform: func(context.Context) error { return nil },
+		Checks: map[string]func(context.Context) error{
+			"deliveryStartup": func(context.Context) error { return deliveryErr },
+		},
+	}).Readyz(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	want := `{"checks":{"deliveryStartup":"recovery_set_seal_mismatch","platformStore":"ok"},"status":"not_ready"}` + "\n"
+	if response.Code != http.StatusServiceUnavailable || response.Body.String() != want {
+		t.Fatalf("recovery readiness = %d %q, want %d %q", response.Code, response.Body.String(), http.StatusServiceUnavailable, want)
+	}
+	if strings.Contains(response.Body.String(), "secret-recovery-scope") {
+		t.Fatalf("response exposed recovery scope: %s", response.Body.String())
+	}
+}
+
 func TestReadyzUsesStableRuntimeKeyWhenReady(t *testing.T) {
 	response := httptest.NewRecorder()
 	newHealth(healthConfig{
@@ -135,5 +154,41 @@ func TestReadyzUsesStableRuntimeKeyWhenReady(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "internal-name") {
 		t.Fatalf("response exposed project identity: %s", response.Body.String())
+	}
+}
+
+func TestReadyzAllowsFreshTargetWithoutRequiredDeployment(t *testing.T) {
+	response := httptest.NewRecorder()
+	newHealth(healthConfig{
+		Platform:                func(context.Context) error { return nil },
+		ActiveProjectID:         func(context.Context) (projectgraph.ResourceID, error) { return "", nil },
+		RuntimeReady:            func(context.Context) error { return errors.New("must not run without an active project") },
+		RequireActiveDeployment: false,
+	}).Readyz(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	want := `{"checks":{"platformStore":"ok","runtime":"no_active_deployments"},"status":"ready"}` + "\n"
+	if got := response.Body.String(); got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestReadyzRejectsMalformedNonemptyActiveProject(t *testing.T) {
+	response := httptest.NewRecorder()
+	newHealth(healthConfig{
+		Platform:                func(context.Context) error { return nil },
+		ActiveProjectID:         func(context.Context) (projectgraph.ResourceID, error) { return "invalid project", nil },
+		RuntimeReady:            func(context.Context) error { return nil },
+		RequireActiveDeployment: false,
+	}).Readyz(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+	want := `{"checks":{"platformStore":"ok","runtime":"failed"},"status":"not_ready"}` + "\n"
+	if got := response.Body.String(); got != want {
+		t.Fatalf("body = %q, want %q", got, want)
 	}
 }

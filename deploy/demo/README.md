@@ -9,43 +9,46 @@ as `task dev`:
 - Visual Showcase
 
 The project source remains in `dashboards/`. This directory contains only the
-deployment contract and the reviewed SSH host identity; it must never contain
-client configuration or secret values.
+content-publication contract; it must never contain client configuration or
+secret values.
 
 ## Delivery
 
-After `Main artifacts` builds and qualifies an immutable image from `main`,
+After `Main artifacts` builds and qualifies the `main` revision,
 `.github/workflows/demo-deploy.yml`:
 
-1. resolves the exact `ghcr.io/flidai/leapview@sha256:...` image;
-2. temporarily admits the GitHub-hosted runner to the demo server firewall;
-3. upgrades the server through `leapviewctl`, including its healthchecked
-   rollback path;
-4. downloads the digest-pinned public Olist dataset and synchronizes it as
+1. downloads the pinned public Olist dataset and synchronizes it as
    managed data;
-5. publishes `dashboards/leapview.yaml` through the normal candidate,
+2. authenticates to `/api/v1/capabilities` and admits the running runtime only
+   when it reports API v1, native PostgreSQL delivery, a clean production
+   build, and a canonical immutable build revision;
+3. publishes `dashboards/leapview.yaml` through the normal candidate,
    approval, and activation APIs; and
-6. verifies the Visual Showcase and public readiness.
+4. verifies the Visual Showcase and public readiness.
+
+This is deliberately a content-only workflow. The `leapview-demo` platform
+operators own runtime image rollout outside this repository workflow, using an
+immutable image that has passed the repository's [release qualification](../../.github/workflows/release.yml)
+and [installed-candidate qualification](../../.github/workflows/installed-candidate.yml).
+The publication records both the selected source revision and the authenticated
+running build revision in its job output; equality is not required, but the
+runtime compatibility contract above is. No SSH host rollout or tracked SSH
+identity is part of the supported path.
 
 The `leapview-demo` GitHub environment authenticates to Infisical through
 GitHub OIDC. The Infisical `prod:/demo/deployment` path supplies:
 
-- `DEMO_FIREWALL_ID`
-- `DEMO_HOST`
 - `DEMO_PUBLISHER_CLIENT_ID`
 - `DEMO_PUBLISHER_CLIENT_SECRET`
 - `DEMO_RELEASE_CLIENT_ID`
 - `DEMO_RELEASE_CLIENT_SECRET`
-- `DEMO_SSH_PRIVATE_KEY`
 
-The existing `prod:/hetzner-qualification/infrastructure` path supplies
-`HCLOUD_TOKEN`. The publisher and release identities are separate service
-principals. Their credentials are exchanged for one-hour, project-scoped OAuth
-workload tokens on every deployment. The publisher is restricted to
-managed-data ingestion, project authoring, and release publication. The
-release principal is restricted to viewing, approving, and activating the demo
-project environment, plus managing the public dashboard publications declared
-by the canonical showcase.
+The publisher and release identities are separate service principals. Their
+credentials are exchanged for one-hour, project-scoped OAuth workload tokens
+on every publication. The publisher is restricted to managed-data ingestion,
+project authoring, and release publication. The release principal is restricted
+to viewing, approving, and activating the demo project environment, plus
+managing the public dashboard publications declared by the canonical showcase.
 
 Target capability discovery requires an authenticated credential but no
 pre-existing project grant. This is essential on the first deployment,
@@ -79,9 +82,5 @@ does not revoke an already-issued browser session. On a replacement instance,
 create the local shared principal before the first project deployment; the
 project deployment then reconciles its least-privilege grants.
 
-The checked-in `ssh-host-key.sha256` pins the server identity. The workflow
-adds only its current runner `/32` to SSH, then restores the complete prior
-firewall rule set on exit.
-
-Manual recovery is available from the workflow dispatch control. It deploys
-the selected `main` revision through the identical digest-pinned path.
+Manual recovery is available from the workflow dispatch control. It republishes
+the selected `main` revision through the identical project-content path.

@@ -1,6 +1,9 @@
 package postgrestest
 
 import (
+	"crypto/x509"
+	"encoding/pem"
+	"os"
 	"strings"
 	"testing"
 )
@@ -37,15 +40,76 @@ func TestValidateRoleRequiresPasswordForLogin(t *testing.T) {
 	}
 }
 
-func TestRequiredParsesBooleanSetting(t *testing.T) {
+func TestRequiredParsesBooleanEnvironment(t *testing.T) {
 	for _, value := range []string{"1", "true", "T", "yes", "on"} {
-		if !Required(value) {
-			t.Fatalf("Required(%q) = false", value)
+		t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED", value)
+		if !Required() {
+			t.Fatalf("Required() = false for %q", value)
 		}
 	}
 	for _, value := range []string{"", "0", "false", "off", "no"} {
-		if Required(value) {
-			t.Fatalf("Required(%q) = true", value)
+		t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED", value)
+		if Required() {
+			t.Fatalf("Required() = true for %q", value)
 		}
+	}
+}
+
+func TestConformanceSkippedParsesBooleanEnvironment(t *testing.T) {
+	for _, value := range []string{"1", "true", "T", "yes", "on"} {
+		t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_SKIP", value)
+		if !conformanceSkipped() {
+			t.Fatalf("conformanceSkipped() = false for %q", value)
+		}
+	}
+	for _, value := range []string{"", "0", "false", "off", "no"} {
+		t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_SKIP", value)
+		if conformanceSkipped() {
+			t.Fatalf("conformanceSkipped() = true for %q", value)
+		}
+	}
+}
+
+func TestRequiredOverridesConformanceSkip(t *testing.T) {
+	t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_SKIP", "1")
+	t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED", "1")
+	if shouldSkipConformance() {
+		t.Fatal("required conformance lane would be suppressed by skip flag")
+	}
+}
+
+func TestTLSCertificateFilesProducesParsablePair(t *testing.T) {
+	caPath, certPath, keyPath := tlsCertificateFiles(t)
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caBlock, _ := pem.Decode(caPEM)
+	certBlock, _ := pem.Decode(certPEM)
+	keyBlock, _ := pem.Decode(keyPEM)
+	if caBlock == nil || certBlock == nil || keyBlock == nil {
+		t.Fatal("TLS certificate helper emitted incomplete PEM files")
+	}
+	ca, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse CA certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse server certificate: %v", err)
+	}
+	if err := cert.CheckSignatureFrom(ca); err != nil {
+		t.Fatalf("server certificate is not signed by generated CA: %v", err)
+	}
+	if _, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes); err != nil {
+		t.Fatalf("parse server private key: %v", err)
 	}
 }

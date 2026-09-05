@@ -26,6 +26,7 @@ type JSONEnqueueInput struct {
 	WorkloadClass        string
 	PrincipalID          string
 	GroupIDs             []string
+	PartitionKey         string
 	ResourceKind         string
 	ResourceID           string
 	EstimatedMemoryBytes int64
@@ -44,6 +45,7 @@ func EnqueueJSON(ctx context.Context, queue Enqueuer, input JSONEnqueueInput) er
 	_, err = queue.Enqueue(ctx, EnqueueInput{
 		ID: input.ID, Kind: input.Kind, WorkloadClass: input.WorkloadClass,
 		PrincipalID: input.PrincipalID, GroupIDs: input.GroupIDs,
+		PartitionKey: input.PartitionKey,
 		ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
 		EstimatedMemoryBytes: input.EstimatedMemoryBytes, Payload: payload,
 	})

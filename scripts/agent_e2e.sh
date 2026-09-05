@@ -21,21 +21,13 @@ go run ./internal/app/tools/mapassets --shared-cache --out .data/map-assets
 TMP_DIR="$(mktemp -d)"
 cleanup() {
   if [[ -n "${SERVER_PID:-}" ]]; then
-    kill "$SERVER_PID" 2>/dev/null || true
+    ./scripts/dev-server.sh stop >/dev/null 2>&1 || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
   chmod -R u+w "$TMP_DIR" 2>/dev/null || true
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
-
-EXTENSION_SUPPLY_DIR="$TMP_DIR/dev-extension-supply"
-EXTENSION_SUPPLY_PATH="$EXTENSION_SUPPLY_DIR/extension-supply.json"
-mkdir -p "$EXTENSION_SUPPLY_DIR"
-go run ./internal/app/tools/ducklakeprepare --supply-out "$EXTENSION_SUPPLY_PATH" >/dev/null
-export LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH="$EXTENSION_SUPPLY_PATH"
-export LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_SHA256
-LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_SHA256="$(awk 'NF {print $1; exit}' "$EXTENSION_SUPPLY_PATH.sha256")"
 
 BIN="$TMP_DIR/leapview"
 TOONJSON="$TMP_DIR/toonjson"
@@ -51,6 +43,8 @@ s.close()
 PY
 )"
 TARGET="http://127.0.0.1:$PORT"
+
+./scripts/postgres-dev.sh up
 
 export LEAPVIEW_HOME="$TMP_DIR/home"
 export LEAPVIEW_ADDR="127.0.0.1:$PORT"
@@ -68,11 +62,16 @@ export LEAPVIEW_AGENT_BASE_URL="https://api.deepseek.com"
 export LEAPVIEW_AGENT_MODEL="${LEAPVIEW_AGENT_MODEL:-deepseek-v4-flash}"
 
 TOKEN="$LEAPVIEW_DEV_API_TOKEN"
-"$BIN" serve > "$TMP_DIR/server.log" 2>&1 &
+export PORT
+export LEAPVIEW_DEV_RESTART=1
+export LEAPVIEW_DEV_SKIP_PUBLISH=1
+./scripts/dev-server.sh start dashboards/leapview.yaml olist .data/olist > "$TMP_DIR/server.log" 2>&1 &
 SERVER_PID="$!"
 
+ready=false
 for _ in {1..120}; do
-  if curl -fsS -H "Authorization: Bearer $TOKEN" "$TARGET/api/v1/projects?limit=1" >/dev/null 2>&1; then
+  if [[ -f "$ROOT/.tmp/dev-server.port" ]] && [[ "$(cat "$ROOT/.tmp/dev-server.port" 2>/dev/null || true)" == "$PORT" ]] && curl -fsS -H "Authorization: Bearer $TOKEN" "$TARGET/api/v1/projects?limit=1" >/dev/null 2>&1; then
+    ready=true
     break
   fi
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
@@ -81,6 +80,11 @@ for _ in {1..120}; do
   fi
   sleep 0.25
 done
+if [[ "$ready" != true ]]; then
+  cat "$TMP_DIR/server.log" >&2
+  echo "managed development server did not become ready" >&2
+  exit 1
+fi
 
 SYNC_OUTPUT="$("$BIN" data sync --project dashboards/leapview.yaml --connection olist --from .data/olist --target "$TARGET" --token "$TOKEN")"
 REVISION="$(awk '$1 == "staged" { print $2 }' <<<"$SYNC_OUTPUT")"
@@ -90,7 +94,7 @@ REVISION="$(awk '$1 == "staged" { print $2 }' <<<"$SYNC_OUTPUT")"
 }
 DEV_OUTPUT="$("$BIN" dev --once --no-browser --target "$TARGET" --token "$TOKEN" --project dashboards/leapview.yaml)"
 CANDIDATE_ID="$(awk '$1 == "candidate" { print $2; exit }' <<<"$DEV_OUTPUT")"
-[[ "$CANDIDATE_ID" =~ ^cand_[A-Za-z0-9_-]+$ ]] || {
+[[ "$CANDIDATE_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || {
   echo "development candidate publication did not return a canonical candidate ID" >&2
   exit 1
 }

@@ -21,6 +21,29 @@ const (
 	DeliveryStartupMissingTargetRevision    DeliveryStartupDiagnosticCode = "target_revision_missing"
 	DeliveryStartupMissingServingGeneration DeliveryStartupDiagnosticCode = "active_serving_generation_missing"
 	DeliveryStartupIndeterminatePublication DeliveryStartupDiagnosticCode = "indeterminate_publication_state"
+	// The following diagnostics are emitted by the native PostgreSQL startup
+	// checker when the durable claim/pointer/evidence tuple is incomplete.
+	DeliveryStartupClaimTargetPartial      DeliveryStartupDiagnosticCode = "claim_target_partial"
+	DeliveryStartupTargetIdentityMismatch  DeliveryStartupDiagnosticCode = "target_identity_mismatch"
+	DeliveryStartupActivePointerMismatch   DeliveryStartupDiagnosticCode = "active_pointer_mismatch"
+	DeliveryStartupMissingPublication      DeliveryStartupDiagnosticCode = "active_publication_missing"
+	DeliveryStartupMissingServingState     DeliveryStartupDiagnosticCode = "serving_state_missing"
+	DeliveryStartupServingEvidenceMismatch DeliveryStartupDiagnosticCode = "serving_evidence_mismatch"
+	DeliveryStartupMissingSeal             DeliveryStartupDiagnosticCode = "snapshot_seal_missing"
+	DeliveryStartupSealEvidenceMismatch    DeliveryStartupDiagnosticCode = "snapshot_seal_evidence_mismatch"
+	// Optional explicit recovery-mode validation diagnostics. These values are
+	// stable and intentionally carry no recovery-set contents or provider data.
+	DeliveryStartupRecoverySetMissing               DeliveryStartupDiagnosticCode = "recovery_set_missing"
+	DeliveryStartupRecoverySetNotPublished          DeliveryStartupDiagnosticCode = "recovery_set_not_published"
+	DeliveryStartupRecoverySetPointerMismatch       DeliveryStartupDiagnosticCode = "recovery_set_pointer_mismatch"
+	DeliveryStartupRecoverySetSealMismatch          DeliveryStartupDiagnosticCode = "recovery_set_seal_mismatch"
+	DeliveryStartupRecoverySetCatalogMismatch       DeliveryStartupDiagnosticCode = "recovery_set_catalog_mismatch"
+	DeliveryStartupRecoverySetCompatibilityMismatch DeliveryStartupDiagnosticCode = "recovery_set_compatibility_mismatch"
+	DeliveryStartupRecoverySetArtifactMismatch      DeliveryStartupDiagnosticCode = "recovery_set_artifact_mismatch"
+	DeliveryStartupRecoverySetValidationMissing     DeliveryStartupDiagnosticCode = "recovery_set_validation_missing"
+	DeliveryStartupRecoverySetValidationNotPassed   DeliveryStartupDiagnosticCode = "recovery_set_validation_not_passed"
+	DeliveryStartupRecoverySetValidationMismatch    DeliveryStartupDiagnosticCode = "recovery_set_validation_mismatch"
+	DeliveryStartupRecoverySetInvalid               DeliveryStartupDiagnosticCode = "recovery_set_invalid"
 )
 
 // DeliveryStartupDiagnostic is a stable, non-secret readiness reason. Scope

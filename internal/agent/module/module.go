@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -23,7 +22,6 @@ import (
 	"github.com/flidai/leapview/internal/agent/ui"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
-	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
@@ -84,13 +82,15 @@ func BuildAPIGenOperations(operationContracts map[string]APIGenOperationContract
 }
 
 type Config struct {
-	Database            *sql.DB
-	Model               ModelConfig
-	Service             *agent.Service
-	Jobs                JobStore
-	AuditIntentRecorder access.AuditIntentRecorder
-	RunWorkloadClass    string
-	ProjectID           projectgraph.ResourceID
+	// Persistence is the capability-owned storage selection. Production
+	// callers must provide a PostgreSQL persistence.
+	Persistence      *Persistence
+	Production       bool
+	Model            ModelConfig
+	Service          *agent.Service
+	Jobs             JobStore
+	RunWorkloadClass string
+	ProjectID        projectgraph.ResourceID
 	// ResolveProjectID returns the exact project bound to the active serving
 	// lease. It is required for fresh installations where ProjectID is empty at
 	// process startup, and is evaluated for each project-dependent operation.
@@ -179,10 +179,21 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			return nil, fmt.Errorf("agent active project: %w", err)
 		}
 	}
+	if config.Production {
+		if config.Persistence == nil || !config.Persistence.isPostgres() {
+			return nil, fmt.Errorf("agent production persistence must be PostgreSQL")
+		}
+		if err := config.Persistence.validate(); err != nil {
+			return nil, err
+		}
+	} else if config.Persistence != nil {
+		if err := config.Persistence.validate(); err != nil {
+			return nil, err
+		}
+	}
 	service := config.Service
-	workflow, durableWorkflow := config.Jobs.(jobplatform.WorkflowRecorder)
-	if service == nil && config.Database != nil {
-		repository := newRepository(config.Database, workflow, config.AuditIntentRecorder)
+	if service == nil && config.Persistence != nil {
+		repository := config.Persistence.Repository
 		service = agent.NewService(repository, agent.Config{
 			APIKey: config.Model.APIKey, BaseURL: config.Model.BaseURL, Model: config.Model.Model,
 		})
@@ -191,19 +202,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		if config.RecordAudit == nil {
 			return nil, fmt.Errorf("agent command audit recorder is required")
 		}
-		if config.Database != nil {
-			if err := service.ConfigureAuditIntentRecorder(config.AuditIntentRecorder); err != nil {
-				return nil, fmt.Errorf("configure transactional agent command audit: %w", err)
-			}
-		}
 		service.ConfigureDefaultModel(func(modelConfig agent.Config) agentcore.Model {
 			return agentopenai.NewModel(modelConfig, nil)
 		})
-		if durableWorkflow {
-			if err := service.ConfigureRunWorkflow(workflow); err != nil {
-				return nil, fmt.Errorf("configure transactional agent run workflow: %w", err)
-			}
-		}
 	}
 	var dispatchAPIGen func(agent.Scope, string, http.ResponseWriter, *http.Request) bool
 	if config.DispatchAPIGen != nil {
@@ -246,7 +247,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if err := validateRunJobHandlers(runExecution, m.JobHandlers(nil)); err != nil {
 		return nil, err
 	}
-	if service != nil && durableWorkflow {
+	if service != nil && config.Persistence != nil {
 		service.SetPromptWorkflow(m.runWorkflow)
 	}
 	searchReferences := config.HTTP.SearchReferences
@@ -256,10 +257,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	resolveTurnContext := config.HTTP.ResolveTurnContext
 	if resolveTurnContext == nil {
 		resolveTurnContext = m.ResolveTurnContext
-	}
-	var buildAuditIntent func(context.Context, agenthttp.CommandAuditInput) (*access.AuditIntent, error)
-	if config.Database != nil {
-		buildAuditIntent = BuildAuditIntent
 	}
 	currentPrincipal := func(r *http.Request) (agenthttp.Principal, bool) {
 		if config.HTTP.CurrentPrincipal == nil {
@@ -279,7 +276,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		ResolveTurnContext: resolveTurnContext, QueueMissingTitle: m.queueMissingChatTitle,
 		ExecuteStartedChatTurn: m.executeStartedChatTurn,
 		EnqueueRun:             m.EnqueueRun, EnqueueChatRun: m.EnqueueChatRun,
-		CancelQueuedRun: m.CancelQueuedRun, RecordCommandAudit: m.recordCommandAudit, BuildAuditIntent: buildAuditIntent, Logger: config.Logger,
+		CancelQueuedRun: m.CancelQueuedRun, RecordCommandAudit: m.recordCommandAudit, Logger: config.Logger,
 		APIGenToolContracts: apiGenToolContracts(m.apiOperations),
 	})
 	m.configureTools()

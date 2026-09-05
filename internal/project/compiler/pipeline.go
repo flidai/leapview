@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -19,10 +18,14 @@ import (
 // generated TypeSpec DTO owns the public shape; this function explicitly
 // lowers it into the runtime scheduler definition.
 func LoadRefreshPipeline(path string) (refreshschedule.Definition, error) {
+	return LoadRefreshPipelineWithReader(osProjectReader{}, path)
+}
+
+func LoadRefreshPipelineWithReader(reader projectFileReader, path string) (refreshschedule.Definition, error) {
 	if strings.TrimSpace(path) == "" {
 		return refreshschedule.Definition{}, fmt.Errorf("pipeline path is required")
 	}
-	content, err := os.ReadFile(path)
+	content, err := reader.ReadFile(path)
 	if err != nil {
 		return refreshschedule.Definition{}, err
 	}

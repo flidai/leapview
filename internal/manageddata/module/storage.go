@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,17 +22,15 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/control"
 	manageddatahttp "github.com/flidai/leapview/internal/manageddata/http"
 	"github.com/flidai/leapview/internal/manageddata/maintenance"
-	maintenancesqlite "github.com/flidai/leapview/internal/manageddata/maintenance/sqlite"
+	manageddatapostgres "github.com/flidai/leapview/internal/manageddata/postgres"
 	manageddataresolver "github.com/flidai/leapview/internal/manageddata/resolver"
 	"github.com/flidai/leapview/internal/manageddata/runtimeview"
 	"github.com/flidai/leapview/internal/manageddata/s3multipart"
-	manageddatasqlite "github.com/flidai/leapview/internal/manageddata/sqlite"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	managedfilesystem "github.com/flidai/leapview/internal/manageddata/storage/filesystem"
 	manageds3 "github.com/flidai/leapview/internal/manageddata/storage/s3"
 	managedtus "github.com/flidai/leapview/internal/manageddata/storage/tus"
 	"github.com/flidai/leapview/internal/platform/filesystem"
-	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -69,7 +66,7 @@ type Module struct {
 	maintenance         Maintenance
 	maintenanceWorker   *maintenanceWorker
 	jobs                JobStore
-	workflow            jobplatform.WorkflowRecorder
+	atomicTransitions   manageddata.UploadTransitionPort
 	eventMu             sync.Mutex
 	bindings            *binding.Binder
 	runtimeResolver     *manageddataresolver.Resolver
@@ -80,13 +77,52 @@ type Module struct {
 	resolveTusTarget    func(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error)
 }
 
-type repository interface {
+// Repository is the complete managed-data authority consumed by this module.
+// Keeping the aggregate at the module boundary prevents handlers from
+// reaching across sibling storage packages or selecting a SQL dialect.
+type Repository interface {
 	control.Repository
 	s3multipart.Repository
 	apiadapter.Repository
 	binding.Repository
 	manageddataresolver.Repository
 	DeploymentMetadata
+}
+
+// Persistence is the capability-owned managed-data authority bundle. Native
+// PostgreSQL persistence is constructed only from the concrete repository.
+type Persistence struct {
+	repository Repository
+	native     *manageddatapostgres.Repository
+}
+
+func NewPostgresPersistence(repository *manageddatapostgres.Repository) (Persistence, error) {
+	if repository == nil {
+		return Persistence{}, errors.New("PostgreSQL managed-data repository is required")
+	}
+	if !repository.TransitionCapabilitiesConfigured() {
+		return Persistence{}, errors.New("PostgreSQL managed-data workflow and audit capabilities are required")
+	}
+	return Persistence{repository: repository, native: repository}, nil
+}
+
+func (p Persistence) isNative() bool { return p.native != nil }
+
+func (p Persistence) validate() error {
+	if p.repository == nil {
+		return errors.New("managed-data repository is required")
+	}
+	// Native PostgreSQL bundles prove identity through native. Test adapters
+	// may provide the narrow repository contract directly and are never
+	// admitted by production Build, which checks isNative first.
+	if p.native == nil {
+		return nil
+	}
+	native, ok := p.repository.(*manageddatapostgres.Repository)
+	if !ok || native != p.native {
+		return errors.New("managed-data PostgreSQL persistence repository identity mismatch")
+	}
+	return nil
 }
 
 type JobStore interface {
@@ -105,8 +141,20 @@ type Principal struct {
 // types out of the module configuration contract.
 type ConnectionAuthorizer func(context.Context, string, string, string, access.Capability) (bool, error)
 
+// PostgreSQLCleanupAuthority is the capability marker for the separately
+// authenticated managed-data maintenance facade. Production composition may
+// not substitute the runtime repository for this authority.
+type PostgreSQLCleanupAuthority interface {
+	control.CleanupAcker
+	PostgreSQLMaintenanceAuthority()
+	Configured() bool
+}
+
 type Config struct {
-	Database            *sql.DB
+	// Persistence is the capability-owned authority bundle consumed by active
+	// module builds.
+	Persistence         *Persistence
+	Production          bool
 	Disabled            bool
 	Product             ProductConfig
 	Worker              MaintenanceWorkerConfig
@@ -115,9 +163,8 @@ type Config struct {
 	CurrentPrincipal    func(*http.Request) (Principal, bool)
 	AuthorizeConnection ConnectionAuthorizer
 	Jobs                JobStore
-	Workflow            jobplatform.WorkflowRecorder
 	ServingStates       ServingStateReader
-	AuditIntentRecorder access.AuditIntentRecorder
+	CleanupAcker        PostgreSQLCleanupAuthority
 }
 
 type ProductConfig struct {
@@ -148,11 +195,16 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Validate the production authority before checking optional HTTP concerns.
+	if cfg.Production && !cfg.Disabled {
+		if cfg.Persistence == nil || !cfg.Persistence.isNative() {
+			return nil, errors.New("production managed-data module requires native PostgreSQL persistence")
+		}
+	}
 	var buildAuditIntent func(context.Context, manageddatahttp.CommandAuditInput) (*access.AuditIntent, error)
 	if !cfg.Disabled {
-		if cfg.AuditIntentRecorder == nil {
-			return nil, errors.New("managed-data audit intent recorder is required")
-		}
+		// Native PostgreSQL persistence carries its Access audit adapter on the
+		// repository's caller-owned transaction.
 		buildAuditIntent, err = buildManagedDataAuditIntentBuilder()
 		if err != nil {
 			return nil, err
@@ -174,21 +226,37 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		})
 		return module, nil
 	}
-	if cfg.Database == nil {
-		return nil, errors.New("managed-data database is required")
+	if cfg.Production {
+		if cfg.Persistence == nil || !cfg.Persistence.isNative() {
+			return nil, errors.New("production managed-data module requires native PostgreSQL persistence")
+		}
+		if cfg.CleanupAcker == nil || !cfg.CleanupAcker.Configured() {
+			return nil, errors.New("production managed-data module requires PostgreSQL maintenance cleanup authority")
+		}
 	}
-	repository := manageddatasqlite.NewRepositoryWithWorkflowAndAudit(cfg.Database, cfg.Workflow, cfg.AuditIntentRecorder)
+	if cfg.Persistence == nil {
+		return nil, errors.New("managed-data PostgreSQL persistence is required")
+	}
+	if err := cfg.Persistence.validate(); err != nil {
+		return nil, err
+	}
+	repository := cfg.Persistence.repository
+	var transitions manageddata.UploadTransitionPort
+	transitions, _ = any(repository).(manageddata.UploadTransitionPort)
 	services, err := newManagedDataStorage(ctx, cfg.Product)
 	if err != nil {
 		return nil, err
 	}
-	uploads, err := newManagedDataControl(repository, repository, services, cfg.Product)
+	uploads, err := newManagedDataControl(repository, transitions, cfg.CleanupAcker, services, cfg.Product)
 	if err != nil {
 		return nil, err
 	}
-	collector, err := newManagedDataCollector(cfg.Database, services, cfg.Product)
-	if err != nil {
-		return nil, err
+	var collector *maintenance.BlobCollector
+	if cfg.Persistence.native != nil {
+		collector, err = newManagedDataCollectorPostgres(cfg.Persistence.native.DB(), services, cfg.Product)
+		if err != nil {
+			return nil, err
+		}
 	}
 	runtimeCollector, err := newManagedDataRuntimeCollector(services, cfg.Product)
 	if err != nil {
@@ -229,7 +297,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 			uploads: uploads, multipart: multipartService, uploadTTL: cfg.Product.UploadSessionTTL,
 			collector: collector, runtime: runtimeCollector,
 		},
-		jobs: cfg.Jobs, workflow: cfg.Workflow, bindings: bindings, runtimeResolver: runtimeResolver,
+		jobs: cfg.Jobs, atomicTransitions: transitions, bindings: bindings, runtimeResolver: runtimeResolver,
 		currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection),
 		metadata: metadataReader{repository: repository}, finalizeExecution: finalizeExecution,
 	}
@@ -268,6 +336,7 @@ func (m *Module) BindingValidation() BindingValidation {
 
 type RuntimeResolver interface {
 	ResolveManagedData(context.Context, projectgraph.ServingIdentity) (manageddataresolver.Resolution, error)
+	ResolveCandidateManagedData(context.Context, projectgraph.ResourceID, map[projectgraph.ResourceID]string) (manageddataresolver.Resolution, error)
 }
 
 func (m *Module) RuntimeResolution() RuntimeResolver {
@@ -289,13 +358,17 @@ func (disabledRuntimeResolver) ResolveManagedData(context.Context, projectgraph.
 	return manageddataresolver.Resolution{Roots: map[projectgraph.ResourceID]string{}}, nil
 }
 
+func (disabledRuntimeResolver) ResolveCandidateManagedData(context.Context, projectgraph.ResourceID, map[projectgraph.ResourceID]string) (manageddataresolver.Resolution, error) {
+	return manageddataresolver.Resolution{Roots: map[projectgraph.ResourceID]string{}}, nil
+}
+
 type DeploymentMetadata interface {
 	CollectionByID(context.Context, projectgraph.ResourceID) (manageddata.Collection, error)
 	RevisionByID(context.Context, manageddata.RevisionID) (manageddata.Revision, error)
 }
 
 type metadataReader struct {
-	repository repository
+	repository Repository
 }
 
 func (r metadataReader) CollectionByID(ctx context.Context, id projectgraph.ResourceID) (manageddata.Collection, error) {
@@ -362,8 +435,16 @@ func (m *Module) HTTP() *manageddatahttp.Handler {
 }
 
 func (m *Module) SetAuthorizeConnection(authorizer ConnectionAuthorizer) {
-	if m != nil && m.handler != nil {
-		m.handler.SetAuthorizeConnection(manageddatahttp.ConnectionAuthorizer(authorizer))
+	if m == nil {
+		return
+	}
+	converted := manageddatahttp.ConnectionAuthorizer(authorizer)
+	// Upload-session event methods are implemented directly on Module, while
+	// the remaining managed-data API is delegated to handler. Late composition
+	// wiring must update both surfaces so they enforce the same authorization.
+	m.authorizeConnection = converted
+	if m.handler != nil {
+		m.handler.SetAuthorizeConnection(converted)
 	}
 }
 
@@ -430,8 +511,8 @@ func newManagedDataStorage(ctx context.Context, cfg ProductConfig) (managedDataS
 	return result, nil
 }
 
-func newManagedDataCollector(db *sql.DB, services managedDataStorage, cfg ProductConfig) (*maintenance.BlobCollector, error) {
-	reachability, err := maintenancesqlite.New(db)
+func newManagedDataCollectorPostgres(db manageddatapostgres.DBTX, services managedDataStorage, cfg ProductConfig) (*maintenance.BlobCollector, error) {
+	reachability, err := manageddatapostgres.NewReachabilitySource(db)
 	if err != nil {
 		return nil, err
 	}
@@ -511,15 +592,16 @@ func newS3BlobStore(ctx context.Context, cfg ProductConfig, prefix string) (*man
 	})
 }
 
-func newManagedDataControl(repo control.Repository, transitions manageddata.UploadTransitionPort, services managedDataStorage, cfg ProductConfig) (*control.Service, error) {
+func newManagedDataControl(repo control.Repository, transitions manageddata.UploadTransitionPort, cleanupAcker control.CleanupAcker, services managedDataStorage, cfg ProductConfig) (*control.Service, error) {
 	return control.New(repo, services.blobs, control.Config{
 		Limits: manageddata.Limits{
 			MaxFiles:         cfg.MaxFiles,
 			MaxFileBytes:     cfg.MaxFileBytes,
 			MaxRevisionBytes: cfg.MaxRevisionBytes,
 		},
-		UploadTTL:   cfg.UploadSessionTTL,
-		Transport:   services.transport,
-		Transitions: transitions,
+		UploadTTL:    cfg.UploadSessionTTL,
+		Transport:    services.transport,
+		Transitions:  transitions,
+		CleanupAcker: cleanupAcker,
 	})
 }

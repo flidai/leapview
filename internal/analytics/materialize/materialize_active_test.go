@@ -187,6 +187,45 @@ func TestActiveModelTablesNamedValidatesInputsBeforePlanning(t *testing.T) {
 	}
 }
 
+func TestCandidateRefreshUsesAuthorityRelationNamespaceForEveryDDL(t *testing.T) {
+	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {}}}
+	planner := &namespacedMaterializePlanner{}
+	executor := &activeMaterializeExecutor{}
+	const namespace = "_candidate_namespace"
+	if err := analyticsmaterialize.ModelTablesNamedInNamespace(context.Background(), executor, planner, model, []string{"orders"}, namespace); err != nil {
+		t.Fatalf("ModelTablesNamedInNamespace() error = %v", err)
+	}
+	want := []string{"CREATE SCHEMA IF NOT EXISTS " + namespace, "CREATE OR REPLACE TABLE " + namespace + ".orders AS SELECT 1"}
+	if !reflect.DeepEqual(executor.statements, want) {
+		t.Fatalf("candidate DDL = %#v, want %#v", executor.statements, want)
+	}
+	if planner.namespace != namespace {
+		t.Fatalf("planner namespace = %q, want %q", planner.namespace, namespace)
+	}
+	for _, statement := range executor.statements {
+		if strings.Contains(statement, "model") {
+			t.Fatalf("candidate DDL unexpectedly touched model schema: %q", statement)
+		}
+	}
+}
+
+func TestCandidateRefreshRejectsPlannerWithoutNamespaceCapability(t *testing.T) {
+	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {}}}
+	if err := analyticsmaterialize.ModelTablesNamedInNamespace(context.Background(), &activeMaterializeExecutor{}, &activeMaterializePlanner{plans: map[string]analyticsmaterialize.ModelTablePlan{"orders": {SQL: "CREATE TABLE model.orders AS SELECT 1"}}}, model, []string{"orders"}, "_candidate_namespace"); err == nil || !strings.Contains(err.Error(), "does not support relation namespace") {
+		t.Fatalf("candidate planner error = %v, want capability rejection", err)
+	}
+}
+
+func TestCandidateRefreshRejectsInvalidRelationNamespace(t *testing.T) {
+	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {}}}
+	planner := &namespacedMaterializePlanner{}
+	for _, namespace := range []string{"candidate;drop", strings.Repeat("a", 64)} {
+		if err := analyticsmaterialize.ModelTablesNamedInNamespace(context.Background(), &activeMaterializeExecutor{}, planner, model, []string{"orders"}, namespace); err == nil || !strings.Contains(err.Error(), "relation namespace") {
+			t.Fatalf("namespace %q unexpectedly accepted: %v", namespace, err)
+		}
+	}
+}
+
 func TestActiveValidateFilesSkipsRemoteSources(t *testing.T) {
 	model := &semanticmodel.Model{
 		Connections: map[string]semanticmodel.Connection{
@@ -258,6 +297,19 @@ type activeMaterializePlanner struct {
 	plans  map[string]analyticsmaterialize.ModelTablePlan
 	errors map[string]error
 	calls  []string
+}
+
+type namespacedMaterializePlanner struct {
+	namespace string
+}
+
+func (p *namespacedMaterializePlanner) PlanModelTable(context.Context, *semanticmodel.Model, string, semanticmodel.Table) (analyticsmaterialize.ModelTablePlan, error) {
+	return analyticsmaterialize.ModelTablePlan{}, errors.New("legacy planner must not be used for candidate refresh")
+}
+
+func (p *namespacedMaterializePlanner) PlanModelTableInNamespace(_ context.Context, _ *semanticmodel.Model, tableName string, _ semanticmodel.Table, relationNamespace string) (analyticsmaterialize.ModelTablePlan, error) {
+	p.namespace = relationNamespace
+	return analyticsmaterialize.ModelTablePlan{SQL: "CREATE OR REPLACE TABLE " + relationNamespace + "." + tableName + " AS SELECT 1"}, nil
 }
 
 func (p *activeMaterializePlanner) PlanModelTable(_ context.Context, _ *semanticmodel.Model, tableName string, _ semanticmodel.Table) (analyticsmaterialize.ModelTablePlan, error) {

@@ -601,15 +601,15 @@ After:
 alias CommonErrors = BadRequest | Unauthorized | Forbidden;
 
 @route("/api/v1")
-namespace Deployments {
-  @route("/projects/{project}/deployments/{deployment}/artifact")
+namespace CandidateSources {
+  @route("/projects/{project}/candidate-sync/blobs/{digest}")
   @put
-  op uploadDeploymentArtifact(
+  op uploadProjectCandidateSourceBlob(
     @path project: string,
-    @path deployment: string,
+    @path digest: string,
     @header contentType: "application/octet-stream",
     @body body: bytes,
-  ): OkJson<DeploymentArtifactResponse> | CommonErrors;
+  ): OkJson<CandidateSourceBlobResponse> | CommonErrors;
 }
 ```
 

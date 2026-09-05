@@ -11,18 +11,17 @@ import (
 
 // RefreshArtifactLoader decodes the refresh projection from a persisted
 // project bundle without exposing the bundle layout to the refresh capability.
-type RefreshArtifactLoader struct{}
+type RefreshArtifactLoader struct {
+	Serving ServingArtifactLoader
+}
 
-func (RefreshArtifactLoader) Load(_ context.Context, artifact servingstate.Artifact) (refreshrun.LoadedArtifact, error) {
+func (l RefreshArtifactLoader) Load(ctx context.Context, artifact servingstate.Artifact) (refreshrun.LoadedArtifact, error) {
 	root, err := os.MkdirTemp("", "leapview-refresh-artifact-*")
 	if err != nil {
 		return refreshrun.LoadedArtifact{}, err
 	}
 	defer os.RemoveAll(root)
-	if err := ExtractArtifact(artifact.Path, root); err != nil {
-		return refreshrun.LoadedArtifact{}, err
-	}
-	compiled, _, err := LoadCompiledProjectArtifact(root)
+	compiled, err := l.Serving.LoadCompiled(ctx, artifact, root)
 	if err != nil {
 		return refreshrun.LoadedArtifact{}, err
 	}

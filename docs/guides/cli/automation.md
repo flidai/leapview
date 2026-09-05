@@ -69,19 +69,11 @@ Map source-control events onto the candidate lifecycle rather than inventing a C
 | Retry or missed webhook | Repeat the same operation and idempotency key |
 | Superseded commit | Synchronize the new revision; never publish the older checkpoint |
 | Merge to a protected branch | Build the reviewed plan, then run `publish CANDIDATE_ID` |
-| Close or abandon | Cancel the active candidate by its stable key |
+| Close or abandon | Let the target expire the private candidate; reconcile its status before retrying |
 
-Cancellation uses the same generated Deployment API:
+There is no candidate-cancellation operation in the canonical Delivery API.
 
-```sh
-leapview api call cancelProjectCandidateByKey \
-  --target "$LEAPVIEW_TARGET" \
-  --path project="$LEAPVIEW_WORKLOAD_PROJECT" \
-  --path candidateKey="$CHANGE_KEY" \
-  --idempotency-key "candidate-close:$CHANGE_KEY"
-```
-
-Candidates also expire on the target, so a missed close event does not leave an active runtime indefinitely. Scheduled reconciliation may safely repeat close calls and ignore a not-found result for an already expired or cancelled key.
+Candidates expire on the target, so a missed close event does not leave an active runtime indefinitely. Scheduled reconciliation should inspect the candidate or publication status and must never publish a superseded candidate.
 
 ## Preserve evidence and verify
 
@@ -92,6 +84,6 @@ evidence after the runner disappears.
 
 After activation, verify readiness and exercise a representative project query or dashboard with a separate verifier identity. A transport retry must reuse the same durable plan or candidate ID and its plan/seal digests; never rebuild from a moving branch between attempts.
 
-The maintained GitHub Actions reference is [`/.github/examples/leapview-authoring.yml`](https://github.com/flidai/leapview/blob/main/.github/examples/leapview-authoring.yml). It keeps fork validation credential-free, gates trusted candidate creation, uses protected publication, and reconciles closed pull requests. Adapt only the source-control event syntax; keep the LeapView commands and target policy unchanged.
+The maintained GitHub Actions reference is [`/.github/examples/leapview-authoring.yml`](https://github.com/flidai/leapview/blob/main/.github/examples/leapview-authoring.yml). It keeps fork validation credential-free, gates trusted candidate creation, uses protected publication, and relies on target expiry for abandoned candidates. Adapt only the source-control event syntax; keep the LeapView commands and target policy unchanged.
 
 See [Targets and environments](/docs/cli/targets) for environment safeguards and the generated [`validate`](/docs/cli/validate), [`dev`](/docs/cli/dev), and [`publish`](/docs/cli/publish) references for all flags.

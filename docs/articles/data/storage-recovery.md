@@ -1,69 +1,58 @@
 # Storage and recovery
 
-LeapView separates application state, analytical metadata, analytical files, managed source objects, and ephemeral runtime data. Recovery succeeds only when the authoritative boundaries are backed up consistently.
+LeapView separates application state, analytical metadata, analytical files,
+managed source objects, and ephemeral runtime data. Production authority lives
+in PostgreSQL and a PostgreSQL-backed DuckLake catalog; Parquet and managed
+source objects remain in their configured object stores.
 
 ## Storage ownership
 
-The control-plane database owns application state such as users, grants, projects, environments, deployments, jobs, audit records, and active serving pointers.
+The `leapview_control` PostgreSQL database owns users, grants, projects,
+environments, deployments, jobs, event and audit records, lineage projections,
+leases, and active serving pointers. The separately owned
+`leapview_ducklake` database contains DuckLake metadata: analytical schemas,
+snapshots, changesets, statistics, and physical-file manifests. Parquet files,
+managed-data objects, and immutable serving artifacts hold the bytes described
+by those authorities. Runtime directories and the process-memory L1 query cache
+are disposable. No L2 or L3 cache is admitted; a future L2 tier requires
+separate qualification evidence before deployment.
 
-DuckLake owns analytical table schemas, snapshots, changesets, statistics, and physical file manifests. Parquet files hold the analytical table data described by that catalog. DuckDB is the execution engine; it is not the authority for a second copy of serving state.
+A recoverable analytical state therefore requires the control-database
+recovery point and the matching DuckLake-database and object-store recovery
+points.
+Backing up only a local `leapview.db`, a catalog file, or copied Parquet objects
+does not recover a production target.
 
-Managed-data storage owns staged source objects and immutable revision manifests. Runtime extraction directories and temporary files are caches or work areas and should be reconstructable.
+## Native recovery boundary
 
-Do not back up only `leapview.db` and assume the rest can always be reconstructed. The control-plane pointer without its referenced DuckLake catalog and Parquet files is incomplete. Likewise, copied Parquet files without the catalog metadata do not form a recoverable analytical state.
+Use PostgreSQL's native backup/PITR facilities for control-plane recovery. Use
+the DuckLake/catalog and object-store provider's native snapshot, versioning,
+replication, or backup facilities for analytical and managed-data objects.
+Coordinate the selected points and retain the encryption keys and secret-store
+procedures required to restore them.
 
-## Local-backend backup
+The removed offline administrative backup, restore, and storage-cleanup
+commands are not production recovery or cleanup procedures. LeapView currently
+has no product-owned local file archive that substitutes for PostgreSQL
+backup/PITR. Follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore) for the complete operational
+procedure; do not invent CLI flags or manually rewrite catalog and pointer
+metadata.
 
-Create a coordinated instance archive:
+## Verify a recovery
 
-```sh
-leapview admin backup --out /srv/backups/leapview-backup.tar
-```
+Keep writes stopped while native recovery runs. Start LeapView with the matching
+image and configuration only after both PostgreSQL databases and the
+corresponding object-store points are restored. Follow the backup and restore
+guide's `leapview admin recovery prepare`, `validate`, and `publish` sequence
+for one immutable recovery-set document and its provider-produced evidence.
+That sequence checks the exact control, DuckLake, object, active-generation,
+snapshot-seal, and compatibility frontier before traffic can resume. Then
+verify authorization, managed-data revisions, representative semantic queries,
+and dashboards. Preserve recovery evidence and the failed state until
+verification is complete.
 
-Use `--database-only` only for a deliberately limited operation; it is not a complete analytical instance backup. Record the application version, configuration, storage backend, archive checksum, and creation time with the backup.
-
-For a local managed-data backend, the coordinated instance backup includes the local authoritative object store and LeapView metadata according to the deployment contract. Ensure the destination is outside the live instance directory and is protected with appropriate permissions and retention.
-
-## Object-storage boundary
-
-With an S3-style managed-data backend, the instance archive does not replace bucket-native protection of authoritative objects. Enable versioning and an independent backup or replication policy. Recovery requires both LeapView metadata and the corresponding object versions.
-
-Analytical catalog and Parquet backups must form a mutually consistent recovery point with the node's control-plane backup.
-
-## Validate backups
-
-A successful command exit is only the first check. Regularly verify:
-
-- the archive exists and has the expected non-zero size;
-- its checksum is recorded and can be revalidated;
-- required external bucket/catalog backups cover the same period;
-- retention protects enough copies from operator error and corruption;
-- an isolated restore can start and query representative dashboards.
-
-Practice restores on a schedule. A backup that has never been restored is an untested assumption.
-
-## Restore safely
-
-Stop serving traffic or enter the supported maintenance boundary before replacing an instance. Restore from a validated archive and ask the command to preserve the current instance first:
-
-```sh
-leapview admin restore \
-  --from /srv/backups/leapview-backup.tar \
-  --current-out /srv/backups/pre-restore.tar \
-  --confirm
-```
-
-Restore into the configured instance boundary, not a live runtime subdirectory selected ad hoc. The command requires explicit confirmation because it replaces current state.
-
-After restoration:
-
-1. Start the application with the matching supported configuration.
-2. Verify health and storage attachment.
-3. Confirm the bound instance environment, projects, users, grants, and active serving pointers.
-4. Open representative dashboards and run semantic queries.
-5. Confirm managed revision lookups and refresh history.
-6. Run a non-destructive backup or maintenance inspection.
-
-If any authoritative external store was restored to a different point, reconcile it before admitting traffic. Do not repair metadata by manually changing snapshot IDs or moving Parquet files.
-
-Read [Storage architecture](/docs/storage-architecture) for the detailed model and [Backup and restore](/docs/guides/operate/backup-restore) for the production runbook. Use the generated [`admin backup`](/docs/cli/admin-backup) and [`admin restore`](/docs/cli/admin-restore) references for exact flags and accepted arguments.
+Development and evaluation fixtures may use embedded SQLite and a local DuckLake
+catalog, but those adapters are not a production fallback. Test fixture backup
+and restore belongs to the fixture harness, not this production runbook.

@@ -58,6 +58,12 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		case planErr != nil:
 			admissionReason = dataquery.CacheAdmissionReasonPlanningFailed
 			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionRejected, admissionReason)
+		case !planCacheDeterministic(r.model, planned.plan):
+			// Opaque or volatile plans, and plans whose participating datasets
+			// cannot be resolved to safe materialized tables, carry no positive
+			// cache-admission evidence.
+			admissionReason = dataquery.CacheAdmissionReasonNonDeterministic
+			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionBypassed, admissionReason)
 		case !planned.reusable:
 			admissionReason = dataquery.CacheAdmissionReasonDependencyUnavailable
 			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionBypassed, admissionReason)
@@ -146,7 +152,7 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		// classification even though planning now precedes cache eligibility.
 		result = dataquery.Result{PlanningMS: planned.planningMS, ExecutionState: dataquery.ExecutionFailed}
 	} else if cacheable && admissionReason == dataquery.CacheAdmissionReasonEligible {
-		result, err = r.queryCache.executeArrow(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, cacheStarted, execute)
+		result, err = r.queryCache.executeArrowWithPlan(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, cacheStarted, planned.plan, execute)
 		observeQueryCacheOutcome(ctx, result, err)
 	} else {
 		execution, executeErr := execute(ctx)

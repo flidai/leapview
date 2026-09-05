@@ -13,7 +13,6 @@ type APIGenHandler interface {
 	CreateRelease(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
 	ListReleases(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
 	GetRelease(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
-	UploadReleaseArtifact(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string, string)
 	FinalizeRelease(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
 	ListReleaseEvents(stdhttp.ResponseWriter, *stdhttp.Request, string, string, *int32, *string)
 }
@@ -34,10 +33,6 @@ func (d *APIGenDispatcher) ListReleases(w stdhttp.ResponseWriter, r *stdhttp.Req
 
 func (d *APIGenDispatcher) GetRelease(w stdhttp.ResponseWriter, r *stdhttp.Request, project, releaseID string) {
 	d.handler.GetRelease(w, r, project, releaseID)
-}
-
-func (d *APIGenDispatcher) UploadReleaseArtifact(w stdhttp.ResponseWriter, r *stdhttp.Request, project, releaseID string, headers releasegen.GenUploadReleaseArtifactHeaders) {
-	d.handler.UploadReleaseArtifact(w, r, project, releaseID, headers.ContentType, headers.ContentDigest)
 }
 
 func (d *APIGenDispatcher) FinalizeRelease(w stdhttp.ResponseWriter, r *stdhttp.Request, project, releaseID string, headers releasegen.GenFinalizeReleaseHeaders) {

@@ -57,7 +57,13 @@ func (r *Repository) txOrBegin(ctx context.Context) (pgx.Tx, bool, error) {
 	return tx, true, err
 }
 
-func newUUID() (string, error) { id, err := uuid.NewV7(); return id.String(), err }
+func newUUID() (string, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return "", fmt.Errorf("generate UUIDv7 identity: %w", err)
+	}
+	return id.String(), nil
+}
 
 func uuidID(label, value string) (string, error) {
 	v := strings.TrimSpace(value)
@@ -135,6 +141,7 @@ func scanPrincipal(row pgx.Row) (access.Principal, error) {
 	p.UpdatedAt = formatTimePtr(updated)
 	return p, nil
 }
+
 func principalFromGenerated(row accessdb.GetPrincipalRow) access.Principal {
 	p := access.Principal{
 		ID:          principalUUID(row.ID),
@@ -184,6 +191,7 @@ func pgTimestamp(value time.Time) pgtype.Timestamptz {
 func pgInterval(value time.Duration) pgtype.Interval {
 	return pgtype.Interval{Microseconds: int64(value / time.Microsecond), Valid: true}
 }
+
 func principalFromListGenerated(row accessdb.ListPrincipalsRow) access.Principal {
 	return principalFromGenerated(accessdb.GetPrincipalRow{
 		ID: row.ID, PrincipalType: row.PrincipalType, Status: row.Status,

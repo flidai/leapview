@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +92,23 @@ func TestPackCompiledProjectUsesSingleDeterministicCompiledPath(t *testing.T) {
 	}
 	if !strings.HasPrefix(validation.Digest, "sha256:") {
 		t.Fatalf("bundle digest = %q, want canonical sha256 identity", validation.Digest)
+	}
+	readerValidation, compiled, err := ValidateArtifactBytes(first.Bytes())
+	if err != nil {
+		t.Fatalf("ValidateArtifactBytes() error = %v", err)
+	}
+	if readerValidation.RootDir != "" {
+		t.Fatalf("reader validation root = %q, want empty", readerValidation.RootDir)
+	}
+	if readerValidation.Digest != validation.Digest || readerValidation.ManifestJSON != validation.ManifestJSON || readerValidation.ProjectID != validation.ProjectID || readerValidation.ProjectDigest != validation.ProjectDigest || compiled.ProjectID.String() != validation.ProjectID {
+		t.Fatalf("reader validation = %#v, compiled = %#v; path validation = %#v", readerValidation, compiled, validation)
+	}
+	readerValidation2, compiled2, err := ValidateArtifactReader(bytes.NewReader(first.Bytes()), int64(first.Len()))
+	if err != nil {
+		t.Fatalf("ValidateArtifactReader() error = %v", err)
+	}
+	if readerValidation2.Digest != readerValidation.Digest || compiled2.ProjectDigest != compiled.ProjectDigest {
+		t.Fatal("reader and bytes validation differ")
 	}
 }
 
@@ -458,6 +476,81 @@ func TestExtractArtifactRejectsDuplicateEntries(t *testing.T) {
 	artifactPath := testTarEntries(t, [][2]string{{"manifest.json", "first"}, {"manifest.json", "second"}})
 	if err := ExtractArtifact(artifactPath, t.TempDir()); err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("ExtractArtifact() duplicate error = %v", err)
+	}
+}
+
+func TestValidateArtifactBytesRejectsTrailingAndUnsafeEntries(t *testing.T) {
+	project := bundleProject(t)
+	var output bytes.Buffer
+	if _, _, err := PackCompiledProject(project, bundlePlan(project), &output); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func([]byte) []byte{
+		"trailing compressed bytes": func(data []byte) []byte { return append(append([]byte(nil), data...), []byte("trailing")...) },
+		"second gzip member": func(data []byte) []byte {
+			var member bytes.Buffer
+			writer := gzip.NewWriter(&member)
+			if _, err := writer.Write([]byte("second")); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			return append(append([]byte(nil), data...), member.Bytes()...)
+		},
+		"truncated gzip": func(data []byte) []byte { return data[:len(data)-1] },
+		"trailing tar bytes": func(data []byte) []byte {
+			reader, err := gzip.NewReader(bytes.NewReader(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			uncompressed, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = reader.Close()
+			uncompressed = append(uncompressed, []byte("trailing")...)
+			var encoded bytes.Buffer
+			writer := gzip.NewWriter(&encoded)
+			if _, err := writer.Write(uncompressed); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			return encoded.Bytes()
+		},
+	} {
+		if _, _, err := ValidateArtifactBytes(mutate(output.Bytes())); err == nil {
+			t.Fatalf("ValidateArtifactBytes() %s error = nil", name)
+		}
+	}
+	for name, entries := range map[string][][2]string{
+		"duplicate":           {{"manifest.json", "one"}, {"manifest.json", "two"}},
+		"traversal":           {{"../manifest.json", "bad"}},
+		"backslash traversal": {{`..\manifest.json`, "bad"}},
+	} {
+		path := testTarEntries(t, entries)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := ValidateArtifactBytes(data); err == nil {
+			t.Fatalf("ValidateArtifactBytes() %s error = nil", name)
+		}
+	}
+}
+
+func TestValidateArtifactReaderEnforcesExpectedSizeAndLimits(t *testing.T) {
+	if _, _, err := ValidateArtifactReader(bytes.NewReader([]byte("not an archive")), 1); err == nil {
+		t.Fatal("ValidateArtifactReader() malformed archive error = nil")
+	}
+	if _, _, err := ValidateArtifactReader(bytes.NewReader([]byte("not an archive")), 0); err == nil {
+		t.Fatal("ValidateArtifactReader() expected size error = nil")
+	}
+	oversized := bytes.Repeat([]byte{'x'}, int(MaxBundleBytes)+1)
+	if _, _, err := ValidateArtifactBytes(oversized); err == nil {
+		t.Fatal("ValidateArtifactBytes() oversized archive error = nil")
 	}
 }
 

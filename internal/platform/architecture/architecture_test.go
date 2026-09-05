@@ -2,10 +2,12 @@ package architecture
 
 import (
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -15,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 const modulePath = "github.com/flidai/leapview"
@@ -29,14 +32,16 @@ type goFile struct {
 var targetCapabilities = map[string]struct{}{
 	"project": {}, "access": {}, "manageddata": {}, "analytics": {},
 	"dashboard": {}, "agent": {}, "release": {}, "deployment": {}, "servingstate": {},
-	"refresh": {}, "runtimehost": {}, "workload": {}, "semanticvalue": {}, "platform": {},
+	"refresh": {}, "runtimehost": {}, "workload": {}, "lineage": {}, "semanticvalue": {}, "platform": {},
+	"recoveryset": {},
 }
 
 var approvedInternalRoots = map[string]struct{}{
 	"app": {}, "platform": {},
 	"access": {}, "admin": {}, "agent": {}, "analytics": {}, "dashboard": {},
 	"deployment": {}, "manageddata": {}, "project": {}, "refresh": {}, "release": {},
-	"runtimehost": {}, "semanticvalue": {}, "servingstate": {}, "workload": {}, "extension": {},
+	"runtimehost": {}, "semanticvalue": {}, "servingstate": {}, "workload": {}, "lineage": {}, "extension": {},
+	"recoveryset": {},
 }
 
 func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
@@ -57,12 +62,6 @@ func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
 		"docs/articles/start/installation.md": {},
 		"docs/public-release.json":            {},
 		"scripts/public_site_smoke.test.ts":   {},
-	}
-	historicalPredecessor := "ghcr.io/" + "yacobolo" + "/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9"
-	exactLegacyImageAllowlist := map[string][]string{
-		"internal/platform/compatibility/release-transition-policy.json": {
-			historicalPredecessor,
-		},
 	}
 	root := repoRoot(t)
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
@@ -91,17 +90,7 @@ func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
 		}
 		text := string(body)
 		for _, forbidden := range []string{legacyRepository, legacyImages} {
-			checkedText := text
-			if forbidden == legacyImages {
-				relative, relErr := filepath.Rel(root, path)
-				if relErr != nil {
-					return relErr
-				}
-				for _, exact := range exactLegacyImageAllowlist[filepath.ToSlash(relative)] {
-					checkedText = strings.ReplaceAll(checkedText, exact, "")
-				}
-			}
-			if strings.Contains(checkedText, forbidden) {
+			if strings.Contains(text, forbidden) {
 				relative, relErr := filepath.Rel(root, path)
 				if relErr != nil {
 					return relErr
@@ -194,7 +183,6 @@ func TestEnterpriseAuthoringPackagesRemainCapabilityOwned(t *testing.T) {
 		{path: "internal/analytics/modelsql", capability: "analytics", layer: LayerContract},
 		{path: "internal/analytics/infisical", capability: "analytics", layer: LayerAdapter},
 		{path: "internal/analytics/environment", capability: "analytics", layer: LayerAdapter},
-		{path: "internal/analytics/sqlite", capability: "analytics", layer: LayerAdapter},
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {
@@ -206,6 +194,65 @@ func TestEnterpriseAuthoringPackagesRemainCapabilityOwned(t *testing.T) {
 				t.Fatalf("%s classification = %#v, want %s %s", test.path, rule, test.capability, test.layer)
 			}
 		})
+	}
+}
+
+func TestSQLiteFixtureBoundaryIsExplicitAndNonCompositional(t *testing.T) {
+	for _, path := range SQLiteFixturePackagePrefixes {
+		if !IsSQLitePackage(path) {
+			t.Errorf("SQLite fixture prefix %q is not a SQLite package path", path)
+		}
+		if !IsSQLiteFixturePackage(path) {
+			t.Errorf("SQLite fixture prefix %q is not recognized as a retained fixture", path)
+		}
+		if IsCompositionContractImport(path) {
+			t.Errorf("SQLite fixture %q is exposed as a production composition contract", path)
+		}
+		rule, ok := ClassifyPackage(path)
+		if !ok || rule.Layer != LayerAdapter {
+			t.Errorf("SQLite fixture %q classification = %#v, %v; want adapter", path, rule, ok)
+		}
+	}
+	for _, removed := range []string{
+		"internal/analytics/sqlite",
+		"internal/dashboard/appearance/sqlite",
+		"internal/dashboard/authoring/sqlite",
+		"internal/release/sqlite",
+		"internal/manageddata/maintenance/sqlite",
+	} {
+		if IsSQLiteFixturePackage(removed) {
+			t.Errorf("removed SQLite adapter %q remains in fixture allowlist", removed)
+		}
+	}
+	for _, path := range SQLiteFixtureFilePaths {
+		if !IsSQLiteFixtureFile(path) {
+			t.Errorf("SQLite fixture file %q is not recognized as a retained fixture", path)
+		}
+	}
+}
+
+func TestPlatformRootImportRuleIsExact(t *testing.T) {
+	if !IsPlatformRootImport(modulePath + "/internal/platform") {
+		t.Fatal("platform root import was not recognized")
+	}
+	for _, subpackage := range []string{
+		modulePath + "/internal/platform/digest",
+		modulePath + "/internal/platform/postgres",
+		modulePath + "/internal/platform/http/transport",
+	} {
+		if IsPlatformRootImport(subpackage) {
+			t.Fatalf("platform subpackage %q was incorrectly rejected as the root import", subpackage)
+		}
+	}
+}
+
+func TestProductionDoesNotImportPlatformRootPackage(t *testing.T) {
+	for _, file := range productionGoFiles(t) {
+		for _, imported := range file.imports {
+			if IsPlatformRootImport(imported) {
+				t.Errorf("%s imports the platform root package; production code must use an explicit platform subpackage", file.path)
+			}
+		}
 	}
 }
 
@@ -421,13 +468,11 @@ func TestEnterpriseAuthoringStateRemainsCapabilityOwned(t *testing.T) {
 		layer      Layer
 	}{
 		{path: "internal/deployment", capability: "deployment", layer: LayerContract},
-		{path: "internal/deployment/sqlite", capability: "deployment", layer: LayerAdapter},
 		{path: "internal/release", capability: "release", layer: LayerContract},
 		{path: "internal/release/filesystem", capability: "release", layer: LayerAdapter},
 		{path: "internal/analytics/connectionbinding", capability: "analytics", layer: LayerUseCase},
 		{path: "internal/analytics/infisical", capability: "analytics", layer: LayerAdapter},
 		{path: "internal/analytics/environment", capability: "analytics", layer: LayerAdapter},
-		{path: "internal/analytics/sqlite", capability: "analytics", layer: LayerAdapter},
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {
@@ -693,7 +738,6 @@ func TestCapabilityAPIPackagesOptIntoTypedClientGeneration(t *testing.T) {
 func TestApplicationCLIAdminOnlyComposesAdminOperations(t *testing.T) {
 	forbiddenImports := map[string]bool{
 		modulePath + "/internal/access/sqlite":       true,
-		modulePath + "/internal/admin/sqlite":        true,
 		modulePath + "/internal/analytics/ducklake":  true,
 		modulePath + "/internal/servingstate/sqlite": true,
 	}
@@ -717,7 +761,7 @@ func TestApplicationCLIAdminOnlyComposesAdminOperations(t *testing.T) {
 	}
 	for _, required := range []string{
 		modulePath + "/internal/admin/cli",
-		modulePath + "/internal/app/adminoffline",
+		modulePath + "/internal/app/adminpostgres",
 	} {
 		if !importListContains(adminFile.imports, required) {
 			t.Errorf("application CLI Admin composition is missing import %s", required)
@@ -747,7 +791,6 @@ func TestOfflineAdminUseCasesAreCapabilityOwned(t *testing.T) {
 
 	forbiddenImports := map[string]bool{
 		modulePath + "/internal/access/sqlite":          true,
-		modulePath + "/internal/admin/sqlite":           true,
 		modulePath + "/internal/analytics/ducklake":     true,
 		modulePath + "/internal/app/config":             true,
 		modulePath + "/internal/platform":               true,
@@ -771,31 +814,6 @@ func TestOfflineAdminUseCasesAreCapabilityOwned(t *testing.T) {
 		t.Fatal("internal/admin/offline production package was not found")
 	}
 
-	compositionFound := false
-	for _, file := range productionGoFiles(t) {
-		if file.pkgDir != "internal/app/adminoffline" {
-			continue
-		}
-		compositionFound = true
-		if !importListContains(file.imports, modulePath+"/internal/admin/offline") {
-			t.Errorf("%s does not compose Admin-owned offline use cases", file.path)
-		}
-		for _, forbidden := range []string{
-			"mail.ParseAddress(",
-			"json.Marshal(",
-			"fmt.Fprintf(",
-			"retention days must be zero or greater",
-			"admin restore requires --confirm",
-			"admin backup requires --out",
-		} {
-			if strings.Contains(file.body, forbidden) {
-				t.Errorf("%s retains offline Admin product behavior %q", file.path, forbidden)
-			}
-		}
-	}
-	if !compositionFound {
-		t.Fatal("internal/app/adminoffline composition package was not found")
-	}
 }
 
 func TestAccessGeneratedAPIIsCapabilityOwned(t *testing.T) {
@@ -910,6 +928,13 @@ func TestApplicationOwnsProductConfigurationContract(t *testing.T) {
 func TestPlatformProductionCodeDoesNotOwnApplicationEnvironment(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
 		if file.pkgDir != "internal/platform" && !strings.HasPrefix(file.pkgDir, "internal/platform/") {
+			continue
+		}
+		// postgrestest is an importable test harness rather than runtime code.
+		// Its environment gate is deliberately owned by the conformance lane so
+		// CI can fail closed while ordinary developer runs may skip without a
+		// container provider.
+		if file.pkgDir == "internal/platform/postgres/postgrestest" {
 			continue
 		}
 		parsed, err := parser.ParseFile(token.NewFileSet(), file.path, file.body, 0)
@@ -1361,7 +1386,6 @@ func TestGeneratedQueryPackagesDoNotCombineCapabilitySQL(t *testing.T) {
 		generatedPackage string
 		queryPath        string
 	}{
-		{generatedPackage: `out: "internal/deployment/internal/db"`, queryPath: `"internal/servingstate/sqlite/queries`},
 		{generatedPackage: `out: "internal/servingstate/internal/db"`, queryPath: `"internal/access/sqlite/queries`},
 	} {
 		for _, block := range blocks {
@@ -1378,16 +1402,11 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 	config := string(body)
 	for _, output := range []string{
 		"internal/access/internal/db",
-		"internal/admin/internal/db",
 		"internal/agent/internal/db",
-		"internal/analytics/internal/db",
 		"internal/dashboard/internal/db",
-		"internal/deployment/internal/db",
 		"internal/manageddata/internal/db",
 		"internal/refresh/internal/db",
-		"internal/release/internal/db",
 		"internal/servingstate/internal/db",
-		"internal/project/internal/db",
 	} {
 		fragment := "package: \"db\"\n        out: \"" + output + "\""
 		if !strings.Contains(config, fragment) {
@@ -1396,14 +1415,10 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 	}
 	for _, legacy := range []string{
 		"internal/access/sqlite/accessdb",
-		"internal/admin/sqlite/retentiondb",
 		"internal/agent/sqlite/agentdb",
-		"internal/analytics/queryaudit/sqlite/querydb",
-		"internal/deployment/sqlite/deploymentdb",
 		"internal/manageddata/sqlite/manageddb",
 		"internal/refresh/sqlite/materializedb",
 		"internal/refresh/sqlite/refreshdb",
-		"internal/release/sqlite/releasedb",
 		"internal/servingstate/sqlite/servingdb",
 	} {
 		if strings.Contains(config, legacy) {
@@ -1467,25 +1482,13 @@ func TestCompositionDoesNotUseTestTransports(t *testing.T) {
 }
 
 func TestRefreshPersistenceIsConstructedOnlyByItsModule(t *testing.T) {
-	constructors := 0
 	for _, file := range productionGoFiles(t) {
 		for _, imported := range file.imports {
 			if imported != modulePath+"/internal/refresh/sqlite" {
 				continue
 			}
-			if file.pkgDir != "internal/refresh/module" {
-				t.Errorf("%s imports refresh persistence outside refresh/module", file.path)
-			}
+			t.Errorf("%s imports the local refresh SQLite fixture; production must use the PostgreSQL persistence surface", file.path)
 		}
-		if file.pkgDir == "internal/refresh/module" {
-			constructors += strings.Count(file.body, "refreshsqlite.NewSQLRunRepository(")
-			constructors += strings.Count(file.body, "refreshsqlite.NewSQLRunRepositoryWithWorkflow(")
-			constructors += strings.Count(file.body, "refreshsqlite.NewSQLRunRepositoryWithWorkflowAndAudit(")
-			constructors += strings.Count(file.body, "refreshsqlite.NewRepository(")
-		}
-	}
-	if constructors != 3 {
-		t.Fatalf("refresh/module persistence constructors = %d, want 3 (run, schedule, recovery)", constructors)
 	}
 }
 
@@ -1667,6 +1670,13 @@ func TestProductionImportsFollowCapabilityGraph(t *testing.T) {
 				continue
 			}
 			packagePath := strings.TrimPrefix(imported, modulePath+"/")
+			if IsSQLitePackage(packagePath) {
+				if sameSQLiteFixture(packagePath, file.pkgDir) {
+					continue
+				}
+				t.Errorf("%s imports SQLite package %s; SQLite adapters are test fixtures only", file.path, packagePath)
+				continue
+			}
 			target, ok := ClassifyPackage(packagePath)
 			if !ok || source.Capability == target.Capability {
 				continue
@@ -1678,6 +1688,42 @@ func TestProductionImportsFollowCapabilityGraph(t *testing.T) {
 			if violation := CapabilityImportViolation(file.pkgDir, source, packagePath, target); violation != "" {
 				t.Errorf("%s imports %s: %s", file.path, packagePath, violation)
 			}
+		}
+	}
+}
+
+// sameSQLiteFixture permits a retained fixture adapter to import its own
+// generated support package while rejecting every cross-fixture or
+// production-to-fixture dependency.
+func sameSQLiteFixture(sourcePath, targetPath string) bool {
+	if !IsSQLiteFixturePackage(sourcePath) || !IsSQLiteFixturePackage(targetPath) {
+		return false
+	}
+	for _, prefix := range SQLiteFixturePackagePrefixes {
+		if hasPackagePrefix(sourcePath, []string{prefix}) && hasPackagePrefix(targetPath, []string{prefix}) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestProductionSourcesDoNotImportSQLiteAdapters(t *testing.T) {
+	for _, file := range productionGoFiles(t) {
+		for _, imported := range file.imports {
+			if imported == "modernc.org/sqlite" {
+				if !IsSQLiteFixtureFile(file.path) {
+					t.Errorf("%s imports SQLite driver outside the platform Store fixture", file.path)
+				}
+				continue
+			}
+			if !strings.HasPrefix(imported, modulePath+"/") {
+				continue
+			}
+			packagePath := strings.TrimPrefix(imported, modulePath+"/")
+			if !IsSQLitePackage(packagePath) || sameSQLiteFixture(file.pkgDir, packagePath) {
+				continue
+			}
+			t.Errorf("%s imports SQLite package %s; SQLite adapters are test fixtures only", file.path, packagePath)
 		}
 	}
 }
@@ -1947,7 +1993,7 @@ func TestRequestRuntimeDoesNotRetainConstructionDependencies(t *testing.T) {
 
 func TestAppDoesNotConstructRepositoriesFromSQLDB(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
-		if file.pkgDir == "internal/app" && file.path != "internal/app/composition.go" && strings.Contains(file.body, ".SQLDB()") {
+		if file.pkgDir == "internal/app" && file.path != "internal/app/composition.go" && file.path != "internal/app/postgres_composition.go" && strings.Contains(file.body, ".SQLDB()") {
 			t.Errorf("%s constructs adapters from platform.Store; capability modules must receive construction ownership", file.path)
 		}
 	}
@@ -2188,57 +2234,22 @@ func TestStaticSQLiteAdaptersUseGeneratedQueries(t *testing.T) {
 	generatedOnly := map[string]bool{
 		"internal/agent/sqlite":                 true,
 		"internal/dashboard/publication/sqlite": true,
-		"internal/dashboard/session/sqlite":     true,
-		"internal/deployment/sqlite":            true,
 		"internal/manageddata/sqlite":           true,
 		"internal/servingstate/sqlite":          true,
-		"internal/project/sqlite":               true,
 	}
 	generatedOnlyFiles := map[string]bool{
-		"internal/access/sqlite/api_symmetry.go":             true,
-		"internal/access/sqlite/authorization.go":            true,
-		"internal/refresh/sqlite/runs.go":                    true,
-		"internal/analytics/queryaudit/sqlite/repository.go": true,
+		"internal/access/sqlite/api_symmetry.go":  true,
+		"internal/access/sqlite/authorization.go": true,
+		"internal/refresh/sqlite/runs.go":         true,
 	}
 	for _, file := range productionGoFiles(t) {
 		if !generatedOnly[file.pkgDir] && !generatedOnlyFiles[file.path] {
-			continue
-		}
-		// SQLite PRAGMA statements are session-local controls rather than
-		// durable queries. The deployment adapter keeps this one authored
-		// helper outside generated sqlc output; its exact shape is guarded by
-		// TestDeploymentSQLitePragmaHelperIsSessionOnly below.
-		if file.path == "internal/deployment/sqlite/pragma.go" {
 			continue
 		}
 		for _, directCall := range []string{".QueryContext(", ".QueryRowContext(", ".ExecContext("} {
 			if strings.Contains(file.body, directCall) {
 				t.Fatalf("%s bypasses sqlc via %s", file.path, directCall)
 			}
-		}
-	}
-}
-
-func TestDeploymentSQLitePragmaHelperIsSessionOnly(t *testing.T) {
-	const helperPath = "internal/deployment/sqlite/pragma.go"
-	var helper goFile
-	for _, file := range productionGoFiles(t) {
-		if file.path == helperPath {
-			helper = file
-			break
-		}
-	}
-	if helper.path == "" {
-		t.Fatalf("authored SQLite PRAGMA helper %s is missing", helperPath)
-	}
-	const call = `tx.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout=%d", milliseconds))`
-	if strings.Count(helper.body, ".ExecContext(") != 1 || !strings.Contains(helper.body, call) {
-		t.Fatalf("%s must issue exactly one busy_timeout PRAGMA ExecContext call", helperPath)
-	}
-	upper := strings.ToUpper(helper.body)
-	for _, durable := range []string{"INSERT ", "UPDATE ", "DELETE ", "SELECT ", "CREATE ", "DROP ", "ALTER "} {
-		if strings.Contains(upper, durable) {
-			t.Fatalf("%s contains durable SQL verb %q; PRAGMA helper must remain session-only", helperPath, durable)
 		}
 	}
 }
@@ -2316,7 +2327,7 @@ func TestPlatformSQLCOmitsUnusedCapabilityModels(t *testing.T) {
 	require.NoError(t, err)
 	config := string(body)
 	start := strings.Index(config, `queries: "internal/platform/db/queries"`)
-	end := strings.Index(config, `"internal/analytics/queryaudit/sqlite/queries"`)
+	end := strings.Index(config, `queries: "internal/access/sqlite/queries"`)
 	if start < 0 || end < 0 || end <= start {
 		t.Fatal("platform sqlc generation block is missing")
 	}
@@ -2325,37 +2336,19 @@ func TestPlatformSQLCOmitsUnusedCapabilityModels(t *testing.T) {
 	}
 }
 
-func TestFixedOperationalRetentionQueriesUseSQLC(t *testing.T) {
-	for _, file := range productionGoFiles(t) {
-		if file.path != "internal/admin/sqlite/retention.go" {
-			continue
-		}
-		if strings.Contains(file.body, "DELETE FROM api_async_events") {
-			t.Fatalf("%s embeds the fixed async-event retention query instead of using sqlc", file.path)
-		}
-	}
-}
-
 func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 	root := repoRoot(t)
 	for _, domain := range []string{
-		"internal/admin/sqlite/queries/retention.sql",
 		"internal/access/sqlite/queries/access.sql",
 		"internal/agent/sqlite/queries/agent.sql",
 		"internal/platform/http/idempotency/sqlite/queries/idempotency.sql",
-		"internal/platform/http/cursorsigning/sqlite/queries/cursor_signing.sql",
-		"internal/deployment/sqlite/queries/deployment.sql",
 		"internal/dashboard/publication/sqlite/queries/publication.sql",
-		"internal/dashboard/session/sqlite/queries/session.sql",
 		"internal/manageddata/sqlite/queries/managed_data.sql",
 		"internal/refresh/sqlite/runqueries/materialization.sql",
 		"internal/platform/jobs/sqlite/queries/async_job.sql",
 		"internal/platform/db/queries/platform.sql",
-		"internal/analytics/queryaudit/sqlite/queries/query_history.sql",
 		"internal/refresh/sqlite/schedulequeries/refresh_pipeline.sql",
-		"internal/release/sqlite/queries/release.sql",
 		"internal/servingstate/sqlite/queries/serving_state.sql",
-		"internal/project/sqlite/queries/project.sql",
 	} {
 		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(domain)))
 		if err != nil {
@@ -2714,7 +2707,7 @@ func TestBuildSourceGenerationContract(t *testing.T) {
 	}
 	text := string(body)
 	commands := []string{
-		"go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate",
+		"GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
 		"go run ./internal/app/tools/configgen",
 		"go run ./internal/app/tools/layoutcontractgen",
 		"go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target leapview-v1",
@@ -2951,6 +2944,8 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Go application tests (PR)",
 		"frontend-validation:",
 		"name: Frontend tests (PR)",
+		"postgres-isolation-validation:",
+		"name: PostgreSQL topology isolation (PR)",
 		"spatial-tile-benchmarks:",
 		"name: Spatial tile benchmarks (PR)",
 		"runs-on: ubuntu-24.04",
@@ -2963,12 +2958,14 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
-		"needs: [apigen-validation,",
+		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]",
 		"APIGEN_RESULT: ${{ needs.apigen-validation.result }}",
 		"GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}",
 		"GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}",
 		"FRONTEND_RESULT: ${{ needs.frontend-validation.result }}",
+		"POSTGRES_ISOLATION_RESULT: ${{ needs.postgres-isolation-validation.result }}",
 		"SPATIAL_BENCHMARK_RESULT: ${{ needs.spatial-tile-benchmarks.result }}",
+		"DBT_WAREHOUSE_RESULT: ${{ needs.dbt-warehouse-boundary-validation.result }}",
 		"Validation is deferred to the top of this stack.",
 	} {
 		if !strings.Contains(text, want) {
@@ -2979,11 +2976,13 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	goPackagesCI := workflowJobBlock(t, text, "go-packages-validation")
 	goApplicationCI := workflowJobBlock(t, text, "go-application-validation")
 	frontendCI := workflowJobBlock(t, text, "frontend-validation")
+	postgresIsolationCI := workflowJobBlock(t, text, "postgres-isolation-validation")
 	for name, block := range map[string]string{
-		"apigen-validation":         apigenCI,
-		"go-packages-validation":    goPackagesCI,
-		"go-application-validation": goApplicationCI,
-		"frontend-validation":       frontendCI,
+		"apigen-validation":             apigenCI,
+		"go-packages-validation":        goPackagesCI,
+		"go-application-validation":     goApplicationCI,
+		"frontend-validation":           frontendCI,
+		"postgres-isolation-validation": postgresIsolationCI,
 	} {
 		for _, want := range []string{
 			"github.event_name == 'workflow_dispatch'",
@@ -2993,6 +2992,16 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 			if !strings.Contains(block, want) {
 				t.Fatalf("%s job is not limited to standalone pull requests and stack tips: missing %q", name, want)
 			}
+		}
+	}
+	for _, want := range []string{
+		"run: task postgres:test:up",
+		"run: task postgres:test:check",
+		"if: always()",
+		"run: task postgres:test:down",
+	} {
+		if !strings.Contains(postgresIsolationCI, want) {
+			t.Fatalf("PostgreSQL topology isolation lane missing %q", want)
 		}
 	}
 	for _, want := range []string{
@@ -3193,7 +3202,8 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"test:go:",
 		"task --parallel test:go:packages test:go:app:shards",
 		"task --parallel --concurrency 3 test:go:app:0 test:go:app:1 test:go:app:2 test:go:app:3",
-		"go list ./... | grep -v '/internal/app$' | xargs go test -p 2",
+		"scripts/postgres-conformance-tests.sh list",
+		"grep -Fvx -f",
 		"--shard-count 4",
 		"image:qualify:production:",
 		"TMPDIR={{.ROOT_DIR}}/.tmp/qualification/tmp",
@@ -3233,138 +3243,78 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}
 }
 
-func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
+func TestPostgreSQLConformanceCIUsesSourceInventoryAndNoGlobalNameSkip(t *testing.T) {
 	root := repoRoot(t)
-	read := func(path ...string) string {
-		t.Helper()
-		data, err := os.ReadFile(filepath.Join(append([]string{root}, path...)...))
-		if err != nil {
-			t.Fatalf("read %s: %v", filepath.Join(path...), err)
-		}
-		return string(data)
+	taskfileBytes, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
+	if err != nil {
+		t.Fatalf("read Taskfile.yml: %v", err)
 	}
-
-	taskfile := read("Taskfile.yml")
-	prWorkflow := read(".github", "workflows", "ci.yml")
-	mergeWorkflow := read(".github", "workflows", "merge-validation.yml")
-	nightlyWorkflow := read(".github", "workflows", "nightly.yml")
-	pr := taskfileTaskBlock(t, taskfile, "ci:pr")
-	for _, want := range []string{
-		"- task: ci:prepare",
-		"task --parallel --concurrency 2 ci:lane:go ci:lane:frontend",
-		"- task: generated:check",
+	taskfile := string(taskfileBytes)
+	packages := taskfileTaskBlock(t, taskfile, "test:go:packages")
+	conformance := taskfileTaskBlock(t, taskfile, "test:go:postgres-conformance")
+	if strings.Contains(packages, "-skip '^(TestPostgreSQL18") || strings.Contains(packages, "TestBaselinePostgreSQL18$") {
+		t.Fatal("ordinary package lane must not skip PostgreSQL tests by test-name prefix")
+	}
+	for _, fragment := range []string{
+		"export LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1",
+		"scripts/postgres-conformance-tests.sh list",
+		"grep -Fvx -f",
 	} {
-		if !strings.Contains(pr, want) {
-			t.Fatalf("ci:pr missing %q", want)
+		if !strings.Contains(packages, fragment) {
+			t.Fatalf("ordinary package lane missing PostgreSQL inventory guard %q", fragment)
 		}
 	}
-	prepare := taskfileTaskBlock(t, taskfile, "ci:prepare")
-	for _, want := range []string{"- task: ci:extensions:prepare", "- task: generate", "- task: build", "- task: site:build"} {
-		if !strings.Contains(prepare, want) {
-			t.Fatalf("ci:prepare missing %q", want)
+	if !strings.Contains(conformance, "bash scripts/postgres-conformance-tests.sh run") {
+		t.Fatal("PostgreSQL conformance lane must execute the same source-derived inventory")
+	}
+	if !strings.Contains(conformance, "LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED") {
+		t.Fatal("PostgreSQL conformance lane must remain fail-closed")
+	}
+	scriptBytes, err := os.ReadFile(filepath.Join(root, "scripts", "postgres-conformance-tests.sh"))
+	if err != nil {
+		t.Fatalf("read PostgreSQL conformance inventory: %v", err)
+	}
+	script := string(scriptBytes)
+	if !strings.Contains(script, "postgrestest\\.Start") || !strings.Contains(script, "tcpostgres\\.Run") {
+		t.Fatal("PostgreSQL inventory must include shared and direct PostgreSQL container harnesses")
+	}
+	if strings.Contains(script, "testcontainers\\.Run") {
+		t.Fatal("PostgreSQL inventory must not route generic containers such as MinIO")
+	}
+	listCmd := exec.Command("bash", filepath.Join(root, "scripts", "postgres-conformance-tests.sh"), "list")
+	listCmd.Dir = root
+	listedOutput, err := listCmd.Output()
+	if err != nil {
+		t.Fatalf("run PostgreSQL conformance inventory: %v", err)
+	}
+	allCmd := exec.Command("go", "list", "./...")
+	allCmd.Dir = root
+	allOutput, err := allCmd.Output()
+	if err != nil {
+		t.Fatalf("list Go packages for PostgreSQL inventory guard: %v", err)
+	}
+	allPackages := make(map[string]struct{})
+	for _, packagePath := range strings.Fields(string(allOutput)) {
+		allPackages[packagePath] = struct{}{}
+	}
+	for _, packagePath := range strings.Fields(string(listedOutput)) {
+		if _, ok := allPackages[packagePath]; !ok {
+			t.Fatalf("PostgreSQL inventory package %q is not a Go package", packagePath)
 		}
 	}
-	for _, lane := range []string{"ci:lane:go", "ci:lane:frontend"} {
-		if !strings.Contains(taskfile, "  "+lane+":\n") {
-			t.Fatalf("Taskfile missing bounded CI lane %q", lane)
-		}
+	filteredCmd := exec.Command("bash", "-c", `set -eu; inventory_file="$(mktemp)"; trap 'rm -f "$inventory_file"' EXIT; bash scripts/postgres-conformance-tests.sh list >"$inventory_file"; all_packages="$(go list ./...)"; printf '%s\n' "$all_packages" | grep -v '/internal/app$' | grep -Fvx -f "$inventory_file"`)
+	filteredCmd.Dir = root
+	filteredOutput, err := filteredCmd.Output()
+	if err != nil {
+		t.Fatalf("compute ordinary Go package set: %v", err)
 	}
-	goLane := taskfileTaskBlock(t, taskfile, "test:go:prepared")
-	if !strings.Contains(goLane, "task --parallel test:go:packages test:go:app:shards") {
-		t.Fatal("prepared Go lane must allow the package sweep and two application shards to overlap")
+	filteredPackages := make(map[string]struct{})
+	for _, packagePath := range strings.Fields(string(filteredOutput)) {
+		filteredPackages[packagePath] = struct{}{}
 	}
-	appShards := taskfileTaskBlock(t, taskfile, "test:go:app:shards")
-	if !strings.Contains(appShards, "task --parallel --concurrency 3 test:go:app:0 test:go:app:1 test:go:app:2 test:go:app:3") {
-		t.Fatal("application test shards must retain a three-process bound")
-	}
-	frontendLane := taskfileTaskBlock(t, taskfile, "ci:lane:frontend")
-	if strings.Contains(frontendLane, "- task: build") {
-		t.Fatal("frontend lane must not replace production assets while Go tests are running")
-	}
-	frontendSite := taskfileTaskBlock(t, taskfile, "ci:test:frontend:site")
-	if !strings.Contains(frontendSite, "bun run test:site:prepared") {
-		t.Fatal("frontend site tests must use the site tree prepared before concurrent lanes")
-	}
-	full := taskfileTaskBlock(t, taskfile, "ci:full")
-	for _, want := range []string{
-		"- task: ci:pr",
-		"- task: ci:full:extras",
-	} {
-		if !strings.Contains(full, want) {
-			t.Fatalf("ci:full missing %q", want)
-		}
-	}
-	fullExtras := taskfileTaskBlock(t, taskfile, "ci:full:extras")
-	for _, want := range []string{
-		"- task: desktop:test",
-		"go vet ./...",
-		"go test -race ./pkg/...",
-		"- task: quality:critical:race",
-		"- task: qa:ui-framework",
-		"- task: deploy:check",
-	} {
-		if !strings.Contains(fullExtras, want) {
-			t.Fatalf("ci:full:extras missing %q", want)
-		}
-	}
-	nightly := taskfileTaskBlock(t, taskfile, "ci:nightly")
-	for _, want := range []string{"- task: ci:full", "- task: ci:nightly:extras"} {
-		if !strings.Contains(nightly, want) {
-			t.Fatalf("ci:nightly missing %q", want)
-		}
-	}
-	nightlyExtras := taskfileTaskBlock(t, taskfile, "ci:nightly:extras")
-	for _, want := range []string{"- task: generate", "- task: security:check", "- task: dependency-security"} {
-		if !strings.Contains(nightlyExtras, want) {
-			t.Fatalf("ci:nightly:extras missing %q", want)
-		}
-	}
-	ciLocal := taskfileTaskBlock(t, taskfile, "ci:local")
-	if !strings.Contains(ciLocal, "- task: ci:full") {
-		t.Fatal("ci:local must remain a compatibility alias for the full current-machine contract")
-	}
-
-	for _, want := range []string{
-		"run: task ci:lane:go:apigen",
-		"run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare",
-		"run: task ci:lane:go:packages",
-		"run: task ci:lane:go:application",
-		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
-		"run: task generated:check",
-	} {
-		if !strings.Contains(prWorkflow, want) {
-			t.Fatalf("pull-request workflow missing split fast-tier command %q", want)
-		}
-	}
-	if strings.Contains(prWorkflow, "\n        run: task ci:pr\n") || strings.Contains(prWorkflow, "\n        run: task ci:full\n") {
-		t.Fatal("pull-request workflow must distribute the fast tier across independent runners")
-	}
-	for _, want := range []string{
-		"merge_group:",
-		"run: task ci:lane:go:apigen",
-		"run: task ci:lane:go:packages",
-		"run: task ci:lane:go:application",
-		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
-		"run: task ci:full:extras",
-	} {
-		if !strings.Contains(mergeWorkflow, want) {
-			t.Fatalf("merge queue must run the split full tier against the exact merge group: missing %q", want)
-		}
-	}
-	for _, want := range []string{
-		"name: Nightly CI",
-		"schedule:",
-		"cron: '17 2 * * *'",
-		"workflow_dispatch:",
-		"run: task ci:lane:go:apigen",
-		"run: task ci:lane:go:packages",
-		"run: task ci:lane:go:application",
-		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
-		"run: task ci:full:extras",
-		"run: task ci:nightly:extras",
-	} {
-		if !strings.Contains(nightlyWorkflow, want) {
-			t.Fatalf("nightly workflow missing %q", want)
+	for _, packagePath := range strings.Fields(string(listedOutput)) {
+		if _, ok := filteredPackages[packagePath]; ok {
+			t.Fatalf("PostgreSQL inventory package %q remains in ordinary package set", packagePath)
 		}
 	}
 }
@@ -3924,10 +3874,47 @@ func taskfileTaskBlock(t *testing.T, taskfile, task string) string {
 
 func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 	root := repoRoot(t)
+	sqlcConfig, err := os.ReadFile(filepath.Join(root, "sqlc.yaml"))
+	if err != nil {
+		t.Fatalf("read sqlc.yaml: %v", err)
+	}
+	var config struct {
+		SQL []struct {
+			Engine string `yaml:"engine"`
+			Gen    struct {
+				Go struct {
+					Out        string `yaml:"out"`
+					SQLPackage string `yaml:"sql_package"`
+				} `yaml:"go"`
+			} `yaml:"gen"`
+		} `yaml:"sql"`
+	}
+	if err := yaml.Unmarshal(sqlcConfig, &config); err != nil {
+		t.Fatalf("decode sqlc.yaml: %v", err)
+	}
+	var postgresOutputs []string
+	for _, statement := range config.SQL {
+		if statement.Engine != "postgresql" {
+			continue
+		}
+		if statement.Gen.Go.SQLPackage != "pgx/v5" {
+			t.Errorf("PostgreSQL sqlc output %q must use pgx/v5, got %q", statement.Gen.Go.Out, statement.Gen.Go.SQLPackage)
+			continue
+		}
+		if statement.Gen.Go.Out == "" {
+			t.Error("PostgreSQL sqlc statement has no generated output directory")
+			continue
+		}
+		postgresOutputs = append(postgresOutputs, statement.Gen.Go.Out)
+	}
+	if len(postgresOutputs) == 0 {
+		t.Fatal("sqlc.yaml has no PostgreSQL generated output directories")
+	}
+
 	files := map[string][]string{
 		"Taskfile.yml": {
 			"db:generate:",
-			"go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate",
+			"GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
 			"- task: db:generate",
 		},
 		".gitignore": {
@@ -3935,6 +3922,7 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			"internal/platform/db/models.go",
 			"internal/platform/db/*.sql.go",
 			"internal/*/internal/db/",
+			"internal/**/internal/db/",
 			"internal/platform/**/sqlite/*db/",
 		},
 		".dockerignore": {
@@ -3942,28 +3930,15 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			"internal/platform/db/models.go",
 			"internal/platform/db/*.sql.go",
 			"internal/*/internal/db/",
+			"internal/**/internal/db/",
 			"internal/platform/**/sqlite/*db/",
 		},
 		filepath.Join("scripts", "generate_build_sources.sh"): {
-			"go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate",
+			"GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
 		},
 		"Dockerfile": {
 			"./scripts/generate_build_sources.sh",
 			"FROM go-deps AS build",
-			"COPY --from=sourcegen /src/internal/access/internal/db ./internal/access/internal/db",
-			"COPY --from=sourcegen /src/internal/admin/internal/db ./internal/admin/internal/db",
-			"COPY --from=sourcegen /src/internal/agent/internal/db ./internal/agent/internal/db",
-			"COPY --from=sourcegen /src/internal/analytics/internal/db ./internal/analytics/internal/db",
-			"COPY --from=sourcegen /src/internal/dashboard/internal/db ./internal/dashboard/internal/db",
-			"COPY --from=sourcegen /src/internal/deployment/internal/db ./internal/deployment/internal/db",
-			"COPY --from=sourcegen /src/internal/manageddata/internal/db ./internal/manageddata/internal/db",
-			"COPY --from=sourcegen /src/internal/refresh/internal/db ./internal/refresh/internal/db",
-			"COPY --from=sourcegen /src/internal/release/internal/db ./internal/release/internal/db",
-			"COPY --from=sourcegen /src/internal/servingstate/internal/db ./internal/servingstate/internal/db",
-			"COPY --from=sourcegen /src/internal/project/internal/db ./internal/project/internal/db",
-			"COPY --from=sourcegen /src/internal/platform/http/cursorsigning/sqlite/cursordb ./internal/platform/http/cursorsigning/sqlite/cursordb",
-			"COPY --from=sourcegen /src/internal/platform/http/idempotency/sqlite/idempotencydb ./internal/platform/http/idempotency/sqlite/idempotencydb",
-			"COPY --from=sourcegen /src/internal/platform/jobs/sqlite/jobdb ./internal/platform/jobs/sqlite/jobdb",
 		},
 	}
 	for name, fragments := range files {
@@ -3977,6 +3952,68 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			}
 		}
 	}
+	dockerfile, err := os.ReadFile(filepath.Join(root, "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfileText := string(dockerfile)
+	if strings.Contains(dockerfileText, "COPY --from=sourcegen /src/internal/platform/db") {
+		t.Error("Dockerfile copies the SQLite platform fixture sqlc output into the production build")
+	}
+	for _, output := range postgresOutputs {
+		copy := fmt.Sprintf("COPY --from=sourcegen /src/%s ./%s", output, output)
+		if !strings.Contains(dockerfileText, copy) {
+			t.Errorf("Dockerfile missing generated PostgreSQL sqlc output %s", output)
+		}
+	}
+	for _, output := range []string{
+		"internal/access/internal/db",
+		"internal/agent/internal/db",
+		"internal/dashboard/internal/db",
+		"internal/manageddata/internal/db",
+		"internal/refresh/internal/db",
+		"internal/servingstate/internal/db",
+		"internal/platform/http/idempotency/sqlite/idempotencydb",
+		"internal/platform/jobs/sqlite/jobdb",
+	} {
+		copy := fmt.Sprintf("COPY --from=sourcegen /src/%s ./%s", output, output)
+		if strings.Contains(dockerfileText, copy) {
+			t.Errorf("Dockerfile copies SQLite fixture sqlc output %s into the production build", output)
+		}
+	}
+}
+
+func TestPostgreSQLSQLCVerificationIsOfflineAndDatabaseBacked(t *testing.T) {
+	root := repoRoot(t)
+	files := map[string][]string{
+		"Taskfile.yml": {
+			"db:verify:",
+			"vet --no-remote",
+			"diff --no-remote",
+			"db:prepare:",
+			"LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=true",
+			"TestSQLCVetPreparesAgainstBaselinePostgreSQL18",
+			"- task: db:prepare",
+		},
+		filepath.Join("internal", "app", "postgresbaseline", "sqlc_prepare_test.go"): {
+			"postgresbaseline.Apply(ctx, migrationDB)",
+			"sqlc/db-prepare",
+			"LEAPVIEW_SQLC_PREPARE_DATABASE_URL",
+			"github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1",
+			"PostgreSQL18",
+		},
+	}
+	for name, fragments := range files {
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for _, fragment := range fragments {
+			if !strings.Contains(string(body), fragment) {
+				t.Errorf("%s missing sqlc verification contract fragment %q", name, fragment)
+			}
+		}
+	}
 }
 
 func TestDerivedArtifactsAreGeneratedBuildInputs(t *testing.T) {
@@ -3987,7 +4024,7 @@ func TestDerivedArtifactsAreGeneratedBuildInputs(t *testing.T) {
 			"internal/app/config/spec/names_gen.go",
 			"web/generated/",
 			"docs/catalog.json",
-			"docs/search-index.sqlite3",
+			"docs/search-index.json",
 			"docs/configuration.md",
 			"docs/api/*.md",
 			"docs/api/operations.json",
@@ -3999,7 +4036,7 @@ func TestDerivedArtifactsAreGeneratedBuildInputs(t *testing.T) {
 			"internal/app/config/spec/names_gen.go",
 			"web/generated",
 			"docs/catalog.json",
-			"docs/search-index.sqlite3",
+			"docs/search-index.json",
 			"docs/configuration.md",
 			"docs/api/*.md",
 			"docs/api/operations.json",
@@ -4184,10 +4221,6 @@ func TestFixedPlatformSQLiteQueriesUseSQLC(t *testing.T) {
 		filepath.Join("internal", "platform", "store.go"): {
 			"INSERT INTO platform_settings",
 		},
-		filepath.Join("internal", "manageddata", "maintenance", "sqlite", "source.go"): {
-			"const reachabilityQuery",
-			"QueryContext(ctx, reachabilityQuery)",
-		},
 	}
 	for name, fragments := range handwrittenSQL {
 		body, err := os.ReadFile(filepath.Join(root, name))
@@ -4204,10 +4237,8 @@ func TestFixedPlatformSQLiteQueriesUseSQLC(t *testing.T) {
 
 func TestAPIv1SQLiteAdaptersUseSQLC(t *testing.T) {
 	packages := map[string]struct{}{
-		"internal/platform/http/idempotency/sqlite":   {},
-		"internal/jobs/sqlite":                        {},
-		"internal/platform/http/cursorsigning/sqlite": {},
-		"internal/release/sqlite":                     {},
+		"internal/platform/http/idempotency/sqlite": {},
+		"internal/platform/jobs/sqlite":             {},
 	}
 	for _, file := range productionGoFiles(t) {
 		if _, ok := packages[file.pkgDir]; !ok {
@@ -4229,9 +4260,10 @@ func TestStorageArchitectureSpecDocumentsProcessOwnedDuckDB(t *testing.T) {
 	}
 	text := string(spec)
 	for _, want := range []string{
-		"one process-owned DuckDB `DatabaseInstance`",
-		"leapview.db               # node-local control-plane state",
-		"ducklake/catalog.duckdb   # DuckDB-backed DuckLake metadata catalog",
+		"Production and development serving use one PostgreSQL control plane",
+		"process-owned DuckDB `DatabaseInstance`",
+		"leapview.db               # local/evaluation SQLite control-plane fixture",
+		"ducklake/catalog.duckdb   # local DuckDB-backed DuckLake metadata catalog",
 		"Every physical relation in a serving plan",
 		"AT (VERSION => 42)",
 		"Runtime retirement closes generation-scoped cache state",
@@ -4241,6 +4273,7 @@ func TestStorageArchitectureSpecDocumentsProcessOwnedDuckDB(t *testing.T) {
 		}
 	}
 	for _, forbidden := range []string{
+		"ducklake/catalog.sqlite",
 		"ducklake:sqlite:",
 		"PostgreSQL as the server/multi-user DuckLake catalog backend",
 		"one DuckDB file per semantic model",
@@ -4265,7 +4298,6 @@ func TestAnalyticsModuleConstructsTheProcessDuckDBExactlyOnce(t *testing.T) {
 	for _, path := range []string{
 		"internal/app/runtimefactory/factory.go",
 		"internal/analytics/duckdb/materialize.go",
-		"internal/refresh/analyticsruntime/materializer.go",
 		"internal/dashboard/analyticsruntime/factory.go",
 		"internal/runtimehost/manager.go",
 	} {
@@ -4375,8 +4407,7 @@ func isSQLDBAllowedFile(file goFile) bool {
 		strings.HasPrefix(file.pkgDir, "internal/admin/storage") ||
 		strings.HasPrefix(file.pkgDir, "internal/analytics/duckdb") ||
 		strings.HasPrefix(file.pkgDir, "internal/analytics/ducklake") ||
-		strings.HasSuffix(file.pkgDir, "/sqlite") ||
-		strings.Contains(file.pkgDir, "/sqlite/") {
+		IsSQLiteFixtureFile(file.path) {
 		return true
 	}
 	return false

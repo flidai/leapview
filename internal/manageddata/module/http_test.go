@@ -2,8 +2,8 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"strings"
 	"testing"
 	"time"
 )
@@ -14,9 +14,9 @@ func TestBuildRejectsMissingOwnedPersistence(t *testing.T) {
 	}
 }
 
-func TestBuildRejectsMissingCommandAuditSinkWhenEnabled(t *testing.T) {
-	if module, err := Build(t.Context(), Config{Database: new(sql.DB)}); module != nil || err == nil {
-		t.Fatalf("module = %v, err = %v", module, err)
+func TestBuildProductionFailsClosedWithoutNativePostgres(t *testing.T) {
+	if _, err := Build(t.Context(), Config{Production: true}); err == nil || !strings.Contains(err.Error(), "native PostgreSQL") {
+		t.Fatalf("production build error = %v, want native PostgreSQL requirement", err)
 	}
 }
 
