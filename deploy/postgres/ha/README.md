@@ -30,6 +30,7 @@ docker compose --project-name <isolated-project> --file deploy/postgres/ha/compo
 
 Each run gets a worktree-derived, process-scoped Compose project and unique
 markers, so a failed run cannot reuse another run's volumes or observations.
+Failure diagnostics retain at most 64 KiB each from Compose status and logs.
 The generated Patroni image is scoped to that same project and removed during
 normal cleanup. Set
 `LEAPVIEW_POSTGRES_HA_EVIDENCE_DIR` to retain evidence elsewhere, or set

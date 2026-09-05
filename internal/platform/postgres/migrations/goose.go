@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"slices"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pressly/goose/v3"
@@ -22,8 +23,13 @@ const (
 	// BaselineMigrationID is the immutable source name of the baseline file.
 	BaselineMigrationID = "001_control_plane"
 	// AdvisoryLockKey serializes migration attempts across instances. Goose
-	// owns acquisition and release of this session-level PostgreSQL lock.
+	// owns acquisition and release of this session-level PostgreSQL lock. The
+	// combined River+Goose path below uses the same key for one shared fence.
 	AdvisoryLockKey int64 = 0x4c565f7067730001
+
+	migrationLockTimeout       = 5 * time.Minute
+	migrationLockRetryInterval = time.Second
+	migrationUnlockTimeout     = time.Minute
 )
 
 // SQL migration files are the only schema source of truth. Keep the embedded
@@ -46,26 +52,37 @@ func NewProvider(db *sql.DB) (*goose.Provider, error) {
 }
 
 func newProvider(db *sql.DB, source fs.FS) (*goose.Provider, error) {
+	return newProviderWithLock(db, source, true)
+}
+
+func newProviderWithoutLock(db *sql.DB, source fs.FS) (*goose.Provider, error) {
+	return newProviderWithLock(db, source, false)
+}
+
+func newProviderWithLock(db *sql.DB, source fs.FS, withLock bool) (*goose.Provider, error) {
 	if db == nil {
 		return nil, errors.New("PostgreSQL Goose migration database is nil")
 	}
 	if source == nil {
 		return nil, errors.New("PostgreSQL Goose migration filesystem is nil")
 	}
-	gooseLock, err := lock.NewPostgresSessionLocker(
-		lock.WithLockID(AdvisoryLockKey),
-		lock.WithLockTimeout(1, 300),
-		lock.WithUnlockTimeout(1, 60),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("configure PostgreSQL Goose advisory lock: %w", err)
+	options := []goose.ProviderOption{goose.WithVerbose(false)}
+	if withLock {
+		gooseLock, err := lock.NewPostgresSessionLocker(
+			lock.WithLockID(AdvisoryLockKey),
+			lock.WithLockTimeout(1, 300),
+			lock.WithUnlockTimeout(1, 60),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("configure PostgreSQL Goose advisory lock: %w", err)
+		}
+		options = append(options, goose.WithSessionLocker(gooseLock))
 	}
 	provider, err := goose.NewProvider(
 		goose.DialectPostgres,
 		db,
 		source,
-		goose.WithSessionLocker(gooseLock),
-		goose.WithVerbose(false),
+		options...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construct PostgreSQL Goose provider: %w", err)
@@ -91,6 +108,145 @@ func ApplyGoose(ctx context.Context, db *sql.DB) error {
 	}
 	if _, err := provider.Up(ctx); err != nil {
 		return fmt.Errorf("apply PostgreSQL Goose migrations: %w", err)
+	}
+	return nil
+}
+
+// ApplyRiverAndGoose applies the upstream River schema and the product Goose
+// baseline while one session-level advisory lock fences the complete
+// operation. The optional afterGoose hook runs under that same fence, which
+// lets callers reconcile dependent product policy without reopening a lock.
+//
+// This is the only combined initialization path. Goose's own session locker
+// is deliberately disabled for the inner call because the fence is held on a
+// separate session; enabling both would deadlock when the migrator pool has a
+// single connection.
+func ApplyRiverAndGoose(ctx context.Context, pool *pgxpool.Pool, db *sql.DB, afterGoose func(context.Context, *sql.DB) error) error {
+	if pool == nil {
+		return errors.New("PostgreSQL River migration pool is nil")
+	}
+	if db == nil {
+		return errors.New("PostgreSQL Goose migration database is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return WithMigrationFence(ctx, pool, func() error {
+		if err := ApplyRiver(ctx, pool); err != nil {
+			return err
+		}
+		if err := applyGooseWithoutLock(ctx, db); err != nil {
+			return err
+		}
+		if afterGoose != nil {
+			if err := afterGoose(ctx, db); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func applyGooseWithoutLock(ctx context.Context, db *sql.DB) error {
+	if db == nil {
+		return errors.New("PostgreSQL Goose migration database is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	provider, err := newProviderWithoutLock(db, migrationFiles)
+	if err != nil {
+		return err
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		return fmt.Errorf("apply PostgreSQL Goose migrations: %w", err)
+	}
+	return nil
+}
+
+// WithMigrationFence runs fn while holding the advisory lock shared with
+// Goose. The fence session is a short-lived independent pool so a one-
+// connection River/Goose migrator pool remains usable by the operation.
+func WithMigrationFence(ctx context.Context, pool *pgxpool.Pool, fn func() error) (err error) {
+	if pool == nil {
+		return errors.New("PostgreSQL migration fence pool is nil")
+	}
+	if fn == nil {
+		return errors.New("PostgreSQL migration fence function is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	fenceConfig := pool.Config()
+	fenceConfig.MinConns = 1
+	fenceConfig.MaxConns = 1
+	fencePool, err := pgxpool.NewWithConfig(ctx, fenceConfig)
+	if err != nil {
+		return fmt.Errorf("open PostgreSQL migration fence pool: %w", err)
+	}
+	defer fencePool.Close()
+	conn, err := fencePool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire PostgreSQL migration fence connection: %w", err)
+	}
+	defer conn.Release()
+
+	lockCtx, cancel := context.WithTimeout(ctx, migrationLockTimeout)
+	defer cancel()
+	if err := acquireMigrationFence(lockCtx, conn); err != nil {
+		return fmt.Errorf("acquire PostgreSQL migration fence: %w", err)
+	}
+	defer func() {
+		unlockErr := releaseMigrationFence(conn)
+		if unlockErr != nil {
+			if err == nil {
+				err = fmt.Errorf("release PostgreSQL migration fence: %w", unlockErr)
+			} else {
+				err = errors.Join(err, fmt.Errorf("release PostgreSQL migration fence: %w", unlockErr))
+			}
+		}
+	}()
+
+	return fn()
+}
+
+func acquireMigrationFence(ctx context.Context, conn *pgxpool.Conn) error {
+	for {
+		var acquired bool
+		// sqlc-exception: analyzer-incompatible. pg_try_advisory_lock is
+		// connection-local migration-fence protocol and must run on this
+		// dedicated session; it is not a generated capability query.
+		if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, AdvisoryLockKey).Scan(&acquired); err != nil {
+			return err
+		}
+		if acquired {
+			return nil
+		}
+		timer := time.NewTimer(migrationLockRetryInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func releaseMigrationFence(conn *pgxpool.Conn) error {
+	ctx, cancel := context.WithTimeout(context.Background(), migrationUnlockTimeout)
+	defer cancel()
+	var released bool
+	// sqlc-exception: analyzer-incompatible. pg_advisory_unlock is
+	// connection-local migration-fence protocol and must run on the same
+	// dedicated session that acquired the lock.
+	if err := conn.QueryRow(ctx, `SELECT pg_advisory_unlock($1)`, AdvisoryLockKey).Scan(&released); err != nil {
+		return err
+	}
+	if !released {
+		return errors.New("migration fence was not held by the current session")
 	}
 	return nil
 }

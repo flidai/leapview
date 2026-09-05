@@ -42,12 +42,26 @@ or backup mechanism. Select recovery points that are mutually consistent and
 retain the encryption keys and secret-manager procedures needed to restore
 them.
 
+When the supported `local` managed-data backend or `filesystem` immutable
+object-store backend is selected, the provider-native recovery mechanism is a
+crash-consistent encrypted snapshot of the complete LeapView state volume—not
+an application archive or a copy of selected files. Quiesce application writes,
+record the PostgreSQL recovery point, snapshot the whole volume that contains
+`LEAPVIEW_HOME`, and retain the provider snapshot ID and encryption-key version
+with that recovery point. Restore the snapshot to an isolated volume, mount it
+at the identical path, and verify every recovery-set root and digest before
+traffic is admitted. A PostgreSQL recovery point and a volume snapshot taken at
+different write frontiers are not a valid recovery set.
+
 LeapView does not provide a product-owned local SQLite/file archive that can be
 used as a PostgreSQL target backup. Follow [PostgreSQL operations and high
 availability](/docs/guides/operate/postgresql-operations) for the provider
 ownership boundary, alert conditions, maintenance fencing, credential
 rotation, and failover checks. Do not claim that a local archive or copied
-Parquet files are a supported restore artifact.
+Parquet files are a supported restore artifact. Production local/filesystem
+storage is supported only when the host provider supplies, retains, and
+regularly rehearses the complete-volume snapshot procedure above; otherwise
+use versioned S3 storage.
 
 ## Provider-native restore drill
 

@@ -193,6 +193,24 @@ func TestPostgresBuildComposesOnlyNativeDeliveryMutations(t *testing.T) {
 	}
 }
 
+func TestPostgresBuildWiresReleaseCurrentPrincipal(t *testing.T) {
+	contents, err := os.ReadFile("postgres_build.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalizedSource := strings.Join(strings.Fields(string(contents)), " ")
+	for _, required := range []string{
+		"API: releasemodule.APIConfig{",
+		"CurrentPrincipal: func(r *http.Request) (releasemodule.Principal, bool)",
+		"p, ok := accessBundle.Module.CurrentPrincipal(r)",
+		"return releasemodule.Principal{ID: p.ID}, ok",
+	} {
+		if !strings.Contains(normalizedSource, strings.Join(strings.Fields(required), " ")) {
+			t.Fatalf("PostgreSQL release composition is missing %q", required)
+		}
+	}
+}
+
 func TestPostgresBuildDoesNotComposeRemovedL3Cache(t *testing.T) {
 	contents, err := os.ReadFile("postgres_build.go")
 	if err != nil {

@@ -18,7 +18,6 @@ import (
 	platformbootstrap "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
-	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 )
 
 // Initialize performs bootstrap through the native PostgreSQL access
@@ -223,10 +222,7 @@ func prepareProductionBaseline(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("open PostgreSQL Goose migration adapter: %w", err)
 	}
 	defer db.Close()
-	if err := platformmigrations.ApplyRiver(ctx, pool.NativePool()); err != nil {
-		return fmt.Errorf("apply PostgreSQL River schema: %w", err)
-	}
-	if err := postgresbaseline.Apply(ctx, db); err != nil {
+	if err := postgresbaseline.ApplyWithMigrationFence(ctx, pool.NativePool(), db); err != nil {
 		return fmt.Errorf("apply PostgreSQL control baseline: %w", err)
 	}
 	return nil

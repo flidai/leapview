@@ -62,13 +62,13 @@ postgresql:
   authentication:
     superuser:
       username: postgres
-      password: ${PATRONI_SUPERUSER_PASSWORD}
+      password: '${PATRONI_SUPERUSER_PASSWORD}'
     replication:
       username: replicator
-      password: ${PATRONI_REPLICATION_PASSWORD}
+      password: '${PATRONI_REPLICATION_PASSWORD}'
     rewind:
       username: rewind
-      password: ${PATRONI_REWIND_PASSWORD}
+      password: '${PATRONI_REWIND_PASSWORD}'
   parameters:
     unix_socket_directories: '/var/run/postgresql'
 EOF

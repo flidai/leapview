@@ -33,6 +33,14 @@ const maxCandidateSourceBlobBytes = 16 << 20
 // composition uses it for the narrowly reviewed expired-lease reclaim policy.
 const RetainProjectCandidateSourceOperationID = string(deploymentgen.GenOperationRetainProjectCandidateSource)
 
+// PlanProjectCandidateSynchronizationOperationID exposes the generated
+// source-plan command identity through the deployment module boundary. Native
+// PostgreSQL composition bypasses the generic HTTP response cache for this
+// operation because the source repository owns its exact replay projection:
+// a committed plan must be re-read so retries do not receive stale missing
+// blob identities from an earlier open-plan response.
+const PlanProjectCandidateSynchronizationOperationID = string(deploymentgen.GenOperationPlanProjectCandidateSynchronization)
+
 func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
 	operationID := deploymentgen.GenCommandOperationPlanProjectCandidateSynchronization()
 	request, ok := m.decodeCandidateSynchronizationRequest(w, r)

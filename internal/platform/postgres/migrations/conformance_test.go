@@ -9,7 +9,6 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
-	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/internal/recoveryset"
 	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
@@ -56,11 +55,8 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer riverPool.Close()
-	if err := platformmigrations.ApplyRiver(ctx, riverPool); err != nil {
-		t.Fatalf("apply River schema: %v", err)
-	}
-	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
-		t.Fatalf("apply baseline: %v", err)
+	if err := postgresbaseline.ApplyWithMigrationFence(ctx, riverPool, migrationDB); err != nil {
+		t.Fatalf("apply River and baseline: %v", err)
 	}
 	// Explicit migration replays are safe: Goose applies no DDL twice while
 	// LeapView still reconciles its role policy.

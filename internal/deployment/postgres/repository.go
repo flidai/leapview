@@ -3811,7 +3811,10 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 	// locked. The target lock serializes activation; the SECURITY DEFINER
 	// identity capability retains the root lock through this transaction, and
 	// the retirement capability refuses to retire whichever generation remains
-	// selected by the active pointer.
+	// selected by the active pointer. A fresh publication can legitimately
+	// select the generation that is already active (for example, a replay of an
+	// exact source/candidate sync). In that case the root is still validated,
+	// but it is not a predecessor and must remain live.
 	// The first activation has no predecessor root.
 	var predecessor depdb.FindLiveGenerationRootRow
 	if currentGeneration != "" {
@@ -3855,7 +3858,7 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 	if err := r.retireCandidateRootForActivation(ctx, tx, p, target); err != nil {
 		return ActivationResult{}, err
 	}
-	if currentGeneration != "" {
+	if currentGeneration != "" && currentGeneration != p.GenerationID {
 		retired, err := r.RetireRetentionRootTx(ctx, tx, predecessor.RootID)
 		if err != nil {
 			return ActivationResult{}, err

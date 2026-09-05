@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -27,6 +28,7 @@ func (catalogRepository) GetConnection(context.Context, string, string, string) 
 type countingCatalogRepository struct {
 	catalogRepository
 	connections          []release.ConnectionRecord
+	connection           release.ConnectionRecord
 	listConnectionsCalls int
 	getConnectionCalls   int
 }
@@ -38,7 +40,7 @@ func (r *countingCatalogRepository) ListConnections(context.Context, string, str
 
 func (r *countingCatalogRepository) GetConnection(context.Context, string, string, string) (release.ConnectionRecord, error) {
 	r.getConnectionCalls++
-	return release.ConnectionRecord{}, nil
+	return r.connection, nil
 }
 
 func testPrincipal(_ *http.Request) (Principal, bool) { return Principal{ID: "principal-1"}, true }
@@ -66,6 +68,57 @@ func TestListManagedConnectionsAuthenticatesBeforeCatalogAndFilters(t *testing.T
 	}
 	if repo.listConnectionsCalls != 1 {
 		t.Fatalf("list calls = %d, want 1", repo.listConnectionsCalls)
+	}
+}
+
+func TestManagedConnectionAPIsReceiveAuthenticatedBearerPrincipal(t *testing.T) {
+	accessSurface, err := accessmodule.Build(t.Context(), accessmodule.Config{
+		ExistingAuth: accessmodule.NewAuth(nil, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "dev"}),
+	})
+	if err != nil {
+		t.Fatalf("build auth surface: %v", err)
+	}
+	repo := &countingCatalogRepository{
+		connections: []release.ConnectionRecord{{ID: "connection:warehouse", Title: "Warehouse"}},
+		connection:  release.ConnectionRecord{ID: "connection:warehouse", Title: "Warehouse"},
+	}
+	var authorizedPrincipalIDs []string
+	module := &Module{
+		catalog: repo, environment: "prod",
+		api: APIConfig{
+			CurrentPrincipal: func(r *http.Request) (Principal, bool) {
+				principal, ok := accessSurface.CurrentPrincipal(r)
+				return Principal{ID: principal.ID}, ok
+			},
+			AuthorizeConnection: func(_ context.Context, principalID, projectID, connectionID string, capability access.Capability) (bool, error) {
+				authorizedPrincipalIDs = append(authorizedPrincipalIDs, principalID)
+				return principalID == accessmodule.DevelopmentPrincipalID && projectID == "project:leapview-showcase" && connectionID == "connection:warehouse" && capability == access.CapabilityResourceRead, nil
+			},
+		},
+	}
+	serve := func(path string, handler func(http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer dev")
+		response := httptest.NewRecorder()
+		accessSurface.Authenticate(http.HandlerFunc(handler)).ServeHTTP(response, request)
+		return response
+	}
+
+	list := serve("/api/v1/projects/project:leapview-showcase/connections", func(w http.ResponseWriter, r *http.Request) {
+		module.ListManagedConnections(w, r, "project:leapview-showcase", nil, nil)
+	})
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"id":"connection:warehouse"`) {
+		t.Fatalf("list connections = %d body=%s", list.Code, list.Body.String())
+	}
+	detail := serve("/api/v1/projects/project:leapview-showcase/connections/connection:warehouse", func(w http.ResponseWriter, r *http.Request) {
+		module.GetManagedConnection(w, r, "project:leapview-showcase", "connection:warehouse")
+	})
+	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `"id":"connection:warehouse"`) {
+		t.Fatalf("get connection = %d body=%s", detail.Code, detail.Body.String())
+	}
+	if len(authorizedPrincipalIDs) != 2 || authorizedPrincipalIDs[0] != accessmodule.DevelopmentPrincipalID || authorizedPrincipalIDs[1] != accessmodule.DevelopmentPrincipalID {
+		t.Fatalf("authorized principal IDs = %#v, want developer principal for list and detail", authorizedPrincipalIDs)
 	}
 }
 

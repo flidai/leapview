@@ -204,3 +204,36 @@ func TestManagedDataStorageCatalogAndRelationships(t *testing.T) {
 		t.Fatalf("valid S3 managed data config: %v", err)
 	}
 }
+
+func TestProductionCustomS3EndpointsRequireHTTPS(t *testing.T) {
+	rulesByID := map[string]Rule{}
+	for _, rule := range Rules() {
+		rulesByID[rule.ID] = rule
+	}
+
+	tests := []struct {
+		name   string
+		ruleID string
+		values map[string]any
+		want   bool
+	}{
+		{name: "managed data http", ruleID: "production-managed-data-s3-endpoint", values: map[string]any{"LEAPVIEW_PRODUCTION": true, "LEAPVIEW_MANAGED_DATA_BACKEND": "s3", "LEAPVIEW_MANAGED_DATA_S3_ENDPOINT": "http://storage.example.com"}, want: false},
+		{name: "managed data https", ruleID: "production-managed-data-s3-endpoint", values: map[string]any{"LEAPVIEW_PRODUCTION": true, "LEAPVIEW_MANAGED_DATA_BACKEND": "s3", "LEAPVIEW_MANAGED_DATA_S3_ENDPOINT": "https://storage.example.com"}, want: true},
+		{name: "object store http", ruleID: "production-object-store-s3-endpoint", values: map[string]any{"LEAPVIEW_PRODUCTION": true, "LEAPVIEW_OBJECT_STORE_BACKEND": "s3", "LEAPVIEW_OBJECT_STORE_S3_ENDPOINT": "http://storage.example.com"}, want: false},
+		{name: "object store https", ruleID: "production-object-store-s3-endpoint", values: map[string]any{"LEAPVIEW_PRODUCTION": true, "LEAPVIEW_OBJECT_STORE_BACKEND": "s3", "LEAPVIEW_OBJECT_STORE_S3_ENDPOINT": "https://storage.example.com"}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rule, ok := rulesByID[test.ruleID]
+			if !ok {
+				t.Fatalf("missing rule %q", test.ruleID)
+			}
+			if !rule.When.Evaluate(test.values) {
+				t.Fatalf("rule %q did not apply", test.ruleID)
+			}
+			if got := rule.Assert.Evaluate(test.values); got != test.want {
+				t.Fatalf("rule %q assertion = %v, want %v", test.ruleID, got, test.want)
+			}
+		})
+	}
+}

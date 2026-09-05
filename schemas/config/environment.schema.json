@@ -1389,6 +1389,61 @@
       "x-error-message": "S3 managed-data storage requires LEAPVIEW_MANAGED_DATA_S3_BUCKET and LEAPVIEW_MANAGED_DATA_S3_REGION"
     },
     {
+      "description": "Production custom managed-data S3 endpoints must use encrypted transport.",
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "LEAPVIEW_PRODUCTION": {
+                "enum": [
+                  "1",
+                  "t",
+                  "T",
+                  "true",
+                  "TRUE",
+                  "True"
+                ]
+              }
+            },
+            "required": [
+              "LEAPVIEW_PRODUCTION"
+            ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_MANAGED_DATA_BACKEND": {
+                "const": "s3"
+              }
+            },
+            "required": [
+              "LEAPVIEW_MANAGED_DATA_BACKEND"
+            ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_MANAGED_DATA_S3_ENDPOINT": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "LEAPVIEW_MANAGED_DATA_S3_ENDPOINT"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "LEAPVIEW_MANAGED_DATA_S3_ENDPOINT": {
+            "pattern": "^https://[^/]+"
+          }
+        },
+        "required": [
+          "LEAPVIEW_MANAGED_DATA_S3_ENDPOINT"
+        ]
+      },
+      "x-error-message": "production managed-data S3 custom endpoints must use HTTPS"
+    },
+    {
       "description": "Managed-data S3 credentials are either omitted or configured as a complete key pair.",
       "if": {
         "properties": {
@@ -1624,6 +1679,61 @@
         ]
       },
       "x-error-message": "S3 object storage requires LEAPVIEW_OBJECT_STORE_S3_BUCKET and LEAPVIEW_OBJECT_STORE_S3_REGION"
+    },
+    {
+      "description": "Production custom immutable-object S3 endpoints must use encrypted transport.",
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "LEAPVIEW_PRODUCTION": {
+                "enum": [
+                  "1",
+                  "t",
+                  "T",
+                  "true",
+                  "TRUE",
+                  "True"
+                ]
+              }
+            },
+            "required": [
+              "LEAPVIEW_PRODUCTION"
+            ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_OBJECT_STORE_BACKEND": {
+                "const": "s3"
+              }
+            },
+            "required": [
+              "LEAPVIEW_OBJECT_STORE_BACKEND"
+            ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_OBJECT_STORE_S3_ENDPOINT": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "LEAPVIEW_OBJECT_STORE_S3_ENDPOINT"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "LEAPVIEW_OBJECT_STORE_S3_ENDPOINT": {
+            "pattern": "^https://[^/]+"
+          }
+        },
+        "required": [
+          "LEAPVIEW_OBJECT_STORE_S3_ENDPOINT"
+        ]
+      },
+      "x-error-message": "production object-store S3 custom endpoints must use HTTPS"
     },
     {
       "description": "Immutable object-store S3 credentials are omitted for ambient AWS credentials or configured as a complete static pair.",
@@ -2434,7 +2544,7 @@
     },
     "LEAPVIEW_MANAGED_DATA_BACKEND": {
       "default": "local",
-      "description": "Storage backend for project-global managed data; supported values are local and s3.",
+      "description": "Storage backend for project-global managed data; supported values are local and s3. Production local storage requires provider-native volume snapshot protection.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
@@ -2584,7 +2694,7 @@
     },
     "LEAPVIEW_OBJECT_STORE_BACKEND": {
       "default": "filesystem",
-      "description": "Immutable object-store backend for project sources and compiled serving artifacts; supported values are filesystem and s3.",
+      "description": "Immutable object-store backend for project sources and compiled serving artifacts; supported values are filesystem and s3. Production filesystem storage requires provider-native volume snapshot protection.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"

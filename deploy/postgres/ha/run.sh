@@ -115,8 +115,8 @@ record_diagnostics() {
     local context="$1"
     local compose_ps
     local compose_logs
-    compose_ps="$(compose ps --all --format json 2>/dev/null || true)"
-    compose_logs="$(compose logs --no-color --tail=40 pg1 pg2 etcd1 etcd2 etcd3 haproxy 2>/dev/null || true)"
+    compose_ps="$(compose ps --all --format json 2>/dev/null | LC_ALL=C head -c 65536 || true)"
+    compose_logs="$(compose logs --no-color --tail=40 pg1 pg2 etcd1 etcd2 etcd3 haproxy 2>/dev/null | LC_ALL=C head -c 65536 || true)"
     compose_ps="${compose_ps//"$SUPERUSER_PASSWORD"/[redacted]}"
     compose_ps="${compose_ps//"$REPLICATION_PASSWORD"/[redacted]}"
     compose_ps="${compose_ps//"$REWIND_PASSWORD"/[redacted]}"

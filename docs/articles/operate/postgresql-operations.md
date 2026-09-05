@@ -176,8 +176,10 @@ Before a provider patch, failover rehearsal, or schema migration:
    Goose v3.27.1 product-migration operation with the maintenance identity and
    maintenance pool; never run two migrations concurrently or leave the
    migrator pool serving requests. Use the deployment's upgrade/preflight
-   checks and record their result. Goose owns `public.goose_db_version` and the
-   migration lock; serving startup must not apply pending migrations.
+   checks and record their result. The shared PostgreSQL advisory fence is
+   acquired once around both River and Goose initialization; Goose owns
+   `public.goose_db_version` and the fence key remains compatible with its
+   standalone lock. Serving startup must not apply pending migrations.
 4. Verify schema compatibility, readiness, pool acquisition, active
    generation, authorization, and a bounded read/write smoke test before
    resuming traffic. Keep the old application version only while the schema

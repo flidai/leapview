@@ -216,10 +216,7 @@ func applyPostgresControlPlaneMigrations(ctx context.Context, migrator *platform
 		return fmt.Errorf("open PostgreSQL Goose migration adapter: %w", err)
 	}
 	defer db.Close()
-	if err := platformmigrations.ApplyRiver(ctx, migrator.NativePool()); err != nil {
-		return fmt.Errorf("apply PostgreSQL River schema: %w", err)
-	}
-	if err := postgresbaseline.Apply(ctx, db); err != nil {
+	if err := postgresbaseline.ApplyWithMigrationFence(ctx, migrator.NativePool(), db); err != nil {
 		return err
 	}
 	return nil

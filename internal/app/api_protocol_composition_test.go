@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	"github.com/flidai/leapview/internal/platform/http/idempotency"
 )
@@ -80,6 +81,31 @@ func TestConfigureAPIProtocolBypassesOnlyConfiguredCommandDurability(t *testing.
 	}
 	if store.claims.Load() != 0 {
 		t.Fatalf("configured bypass claimed durable idempotency %d times", store.claims.Load())
+	}
+}
+
+func TestConfigureAPIProtocolBypassesCandidateSourcePlanDurability(t *testing.T) {
+	store := &compositionCountingIdempotencyStore{}
+	platform := &platformServices{}
+	if err := configureAPIProtocol(&capabilityRoutes{}, &runtimeServices{}, platform, &httpPolicy{}, t.Context(), apiProtocolPersistence{
+		Idempotency: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		BypassDurableIdempotency: map[string]struct{}{deploymentmodule.PlanProjectCandidateSynchronizationOperationID: {}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:leapview-showcase/candidate-sync/plan", strings.NewReader(`{"projectFile":"leapview.yaml","artifactDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifacts":[]}`))
+	request.Header.Set("Authorization", "Bearer credential")
+	request.Header.Set("Idempotency-Key", "plan-key")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	platform.apiProtocol.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("candidate source plan bypass response = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if store.claims.Load() != 0 {
+		t.Fatalf("candidate source plan bypass claimed durable idempotency %d times", store.claims.Load())
 	}
 }
 

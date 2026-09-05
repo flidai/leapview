@@ -84,6 +84,85 @@ func TestPostgresActivateReplaysAfterCommitLostAcknowledgement(t *testing.T) {
 	}
 }
 
+// TestPostgresActivateRepublishActiveGenerationKeepsRootLive proves that a
+// fresh publication for an already-active candidate/generation does not try
+// to retire the generation root that still protects the active pointer.
+func TestPostgresActivateRepublishActiveGenerationKeepsRootLive(t *testing.T) {
+	p := deliveryTestDB(t)
+	lineage := &testActivationLineage{}
+	r := NewWithOptions(p, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
+	input, ids := prepareLostAckActivation(t, r)
+	lineage.expected = ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation, CompiledGraphDigest: testDigest('b')}
+	seedPhysicalRetentionFixture(t, p, ids.seal)
+
+	first, err := r.Activate(t.Context(), input)
+	if err != nil {
+		t.Fatalf("initial activation: %v", err)
+	}
+	if first.Publication.State != "committed" || first.Pointer.ActiveGenerationID != ids.generation {
+		t.Fatalf("initial activation result = %#v", first)
+	}
+
+	secondPublicationID := "0198f2c0-7c7a-7f00-8a11-000000001010"
+	secondLeaseID := "0198f2c0-7c7a-7f00-8a11-000000001011"
+	requestDigest := testDigest('5')
+	// Reuse the exact candidate bound to the prepared generation. The first
+	// publication's helper does not expose it separately, so recover it from
+	// the immutable generation links.
+	generation, err := r.Generation(t.Context(), ids.generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreatePublication(t.Context(), PublicationInput{
+		PublicationID: secondPublicationID, TargetID: ids.target, GenerationID: ids.generation,
+		CandidateID: generation.CandidateID, SnapshotSealID: ids.seal.SealID,
+		ExpectedTargetRevision: 2, ActorID: "operator", RequestDigest: requestDigest,
+	}); err != nil {
+		t.Fatalf("republish active generation: %v", err)
+	}
+	lease, err := r.AcquireLease(t.Context(), LeaseInput{LeaseID: secondLeaseID, TargetID: ids.target, OwnerID: "operator", ExpiresAt: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondInput := ActivationInput{
+		PublicationID: secondPublicationID, TargetID: ids.target, GenerationID: ids.generation,
+		ExpectedTargetRevision: 2, RequestDigest: requestDigest, ActorID: "operator",
+		CorrelationID: "0198f2c0-7c7a-7f00-8a11-000000001012", LeaseID: lease.LeaseID,
+		OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch,
+	}
+	second, err := r.Activate(t.Context(), secondInput)
+	if err != nil {
+		t.Fatalf("republish activation: %v", err)
+	}
+	if second.Replay || second.Publication.State != "committed" || second.Publication.ResultTargetRevision != 3 ||
+		second.Pointer.TargetRevision != 3 || second.Pointer.ActiveGenerationID != ids.generation || second.Pointer.ActivePublicationID != secondPublicationID {
+		t.Fatalf("republish activation result = %#v", second)
+	}
+
+	root, err := loadRetentionRoot(t.Context(), p, generationRootID(first.Publication.PublicationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root.State != "live" || !root.RetiredAt.IsZero() {
+		t.Fatalf("active generation root lifecycle = %#v, want live", root)
+	}
+	var liveRoots int
+	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM delivery.delivery_retention_root WHERE target_id=$1 AND generation_id=$2::uuid AND root_kind='generation' AND state='live'`, ids.target, ids.generation).Scan(&liveRoots); err != nil {
+		t.Fatal(err)
+	}
+	if liveRoots != 1 {
+		t.Fatalf("live generation roots = %d, want one", liveRoots)
+	}
+
+	replay, err := r.Activate(t.Context(), secondInput)
+	if err != nil {
+		t.Fatalf("republish activation replay: %v", err)
+	}
+	if !replay.Replay || replay.Pointer.TargetRevision != 3 || replay.Pointer.ActivePublicationID != secondPublicationID {
+		t.Fatalf("republish activation replay = %#v", replay)
+	}
+}
+
 type lostAckActivationIDs struct {
 	target, generation, publication string
 	seal                            SnapshotSealInput

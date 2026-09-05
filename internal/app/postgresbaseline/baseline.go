@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -25,6 +26,15 @@ func Apply(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	return platformmigrations.ReconcileRolePolicy(ctx, db, rolePolicySQL)
+}
+
+// ApplyWithMigrationFence initializes River and the product baseline under
+// one advisory fence. The role policy hook remains inside that fence so the
+// next process cannot observe only half of the control-plane initialization.
+func ApplyWithMigrationFence(ctx context.Context, pool *pgxpool.Pool, db *sql.DB) error {
+	return platformmigrations.ApplyRiverAndGoose(ctx, pool, db, func(ctx context.Context, db *sql.DB) error {
+		return platformmigrations.ReconcileRolePolicy(ctx, db, rolePolicySQL)
+	})
 }
 
 // Verify is the read-only serving-startup compatibility check.
