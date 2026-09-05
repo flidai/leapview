@@ -15,13 +15,14 @@ import (
 )
 
 type plannedArrowQuery struct {
-	plan          semanticquery.Plan
-	countPlan     *semanticquery.Plan
-	planningMS    int64
-	countOnly     bool
-	totalFromData bool
-	dependency    resultidentity.Dependency
-	reusable      bool
+	plan                    semanticquery.Plan
+	countPlan               *semanticquery.Plan
+	planningMS              int64
+	countOnly               bool
+	totalFromData           bool
+	dependency              resultidentity.Dependency
+	resultEquivalenceDigest string
+	reusable                bool
 }
 
 func rowPlanWithTotal(plan semanticquery.Plan) (semanticquery.Plan, error) {
@@ -51,14 +52,20 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 	}
 	if cacheable {
 		planned, planErr = r.planOwnedArrowQuery(request)
+		var resultIdentity semanticquery.ResultIdentity
+		var resultIdentityErr error
 		if planErr == nil {
-			planned.dependency, planned.reusable = r.dependencyForPlan(planned.plan)
+			resultIdentity, resultIdentityErr = planned.plan.ResultIdentity()
+			if resultIdentityErr == nil {
+				planned.dependency, planned.reusable = r.dependencyForProjection(resultIdentity.Dependencies)
+				planned.resultEquivalenceDigest = resultIdentity.EquivalenceDigest
+			}
 		}
 		switch {
 		case planErr != nil:
 			admissionReason = dataquery.CacheAdmissionReasonPlanningFailed
 			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionRejected, admissionReason)
-		case !planCacheDeterministic(r.model, planned.plan):
+		case resultIdentityErr != nil || !planned.plan.Deterministic || !dependencyProjectionCacheDeterministic(r.model, resultIdentity.Dependencies):
 			// Opaque or volatile plans, and plans whose participating datasets
 			// cannot be resolved to safe materialized tables, carry no positive
 			// cache-admission evidence.
@@ -152,7 +159,8 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		// classification even though planning now precedes cache eligibility.
 		result = dataquery.Result{PlanningMS: planned.planningMS, ExecutionState: dataquery.ExecutionFailed}
 	} else if cacheable && admissionReason == dataquery.CacheAdmissionReasonEligible {
-		result, err = r.queryCache.executeArrowWithPlan(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, cacheStarted, planned.plan, execute)
+		queryDigest := materializeResultEquivalenceDigest(planned.resultEquivalenceDigest, request)
+		result, err = r.queryCache.executeArrowWithDigest(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, cacheStarted, queryDigest, execute)
 		observeQueryCacheOutcome(ctx, result, err)
 	} else {
 		execution, executeErr := execute(ctx)
@@ -203,11 +211,7 @@ func (r *Runtime) dependencyForPlan(plan semanticquery.Plan) (resultidentity.Dep
 	if err != nil {
 		return resultidentity.Dependency{}, false
 	}
-	dependency, err := r.dependencyEvidence.Dependency(r.dependencyPlanInput(projection))
-	if err != nil {
-		return resultidentity.Dependency{}, false
-	}
-	return dependency, true
+	return r.dependencyForProjection(projection)
 }
 
 func (r *Runtime) captureArrowPlan(ctx context.Context, plan semanticquery.Plan) (*arrowresult.Result, error) {

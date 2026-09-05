@@ -12,6 +12,39 @@ const ResultEquivalenceVersion = 1
 
 const resultEquivalenceDomain = "flid.resultidentity.result-equivalence.v1"
 
+// ResultIdentity contains the two target-independent projections needed to
+// address one planned result. Both values come from the same validated PlanIR
+// serialization so cache admission does not repeat graph validation and JSON
+// canonicalization.
+type ResultIdentity struct {
+	Dependencies      DependencyProjection
+	EquivalenceDigest string
+}
+
+// ResultIdentity derives dependency and result-equivalence evidence in one
+// pass while preserving the exact wire identities exposed by the independent
+// ResultDependencies and ResultEquivalenceDigest methods.
+func (p Plan) ResultIdentity() (ResultIdentity, error) {
+	if p.IR == nil {
+		return ResultIdentity{}, fmt.Errorf("plan has no PlanIR result identity evidence")
+	}
+	dependencies, canonical, err := p.IR.DependencyEvidence()
+	if err != nil {
+		return ResultIdentity{}, fmt.Errorf("canonicalize PlanIR result identity: %w", err)
+	}
+	if len(dependencies.Datasets) == 0 {
+		return ResultIdentity{}, fmt.Errorf("plan has no participating dataset")
+	}
+	plannerDigest := sha256.Sum256(canonical)
+	return ResultIdentity{
+		Dependencies: DependencyProjection{
+			Datasets:      append([]string(nil), dependencies.Datasets...),
+			PlannerDigest: "sha256:" + hex.EncodeToString(plannerDigest[:]),
+		},
+		EquivalenceDigest: digestResultEquivalence(canonical),
+	}, nil
+}
+
 // ResultEquivalenceCanonical returns the planner's canonical logical PlanIR
 // bytes. Physical relation names are intentionally omitted by using
 // DependencyCanonical; relation revisions are bound separately by

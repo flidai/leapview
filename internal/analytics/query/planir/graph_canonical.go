@@ -27,6 +27,13 @@ func (g *Graph) Canonical() ([]byte, error) {
 	if err := g.Validate(); err != nil {
 		return nil, err
 	}
+	return g.canonicalValidated()
+}
+
+// canonicalValidated serializes a graph whose caller has already validated
+// it. Keeping validation outside this helper lets one request derive several
+// identity projections without walking the same immutable graph repeatedly.
+func (g *Graph) canonicalValidated() ([]byte, error) {
 	ids := make([]string, 0, len(g.Nodes))
 	for id := range g.Nodes {
 		ids = append(ids, id)
@@ -48,7 +55,14 @@ func (g *Graph) Canonical() ([]byte, error) {
 // dependency identity. Execution targets are deliberately removed: their
 // revisions are represented separately by relation evidence.
 func (g *Graph) DependencyCanonical() ([]byte, error) {
-	canonical, err := g.Canonical()
+	if err := g.Validate(); err != nil {
+		return nil, err
+	}
+	return g.dependencyCanonicalValidated()
+}
+
+func (g *Graph) dependencyCanonicalValidated() ([]byte, error) {
+	canonical, err := g.canonicalValidated()
 	if err != nil {
 		return nil, err
 	}
