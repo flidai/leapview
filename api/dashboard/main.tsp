@@ -710,7 +710,6 @@ model PointDashboardColorScale {
   kind: LeapViewVisualization.VisualizationPointColorScaleKind;
   minimum?: float64;
   maximum?: float64;
-  scheme?: string;
 }
 
 /** Pixel and optional domain bounds for a governed point size binding. */
