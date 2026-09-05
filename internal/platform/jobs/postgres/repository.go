@@ -34,6 +34,12 @@ const (
 	maxPayloadBytes = 1 << 20
 )
 
+// ErrStaleRiverClaim distinguishes an executor that lost its River ownership
+// from a current worker reporting an ordinary product conflict. River's
+// completion API is keyed only by job ID, so callers must not return a stale
+// result while a successor still owns the operational row.
+var ErrStaleRiverClaim = errors.New("stale River execution claim")
+
 type DBTX interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
@@ -455,6 +461,64 @@ func (r *Repository) ValidateCurrentClaimTx(ctx context.Context, tx Tx, id strin
 	return r.lockRiverFence(ctx, tx, id, fence, completionFromContext(ctx) == nil)
 }
 
+// ValidateCurrentClaim checks the River fence in a short transaction without
+// mutating product history. It lets the outer jobs module distinguish a stale
+// executor from a current worker whose product operation is invalid.
+func (r *Repository) ValidateCurrentClaim(ctx context.Context, id string, fence jobs.Fence) error {
+	return r.inTx(ctx, func(tx Tx) error {
+		return r.lockRiverFence(ctx, tx, id, fence, false)
+	})
+}
+
+// WaitForRiverClaimFinalization waits until the operational row is terminal or
+// deleted. A stale executor must not return while a successor is running or
+// merely retryable: River reports every worker result by job ID, so returning
+// earlier could finalize a later attempt between the poll and River's result
+// report. Cancellation is intentionally observed only after the row reaches a
+// terminal state so a successor remains protected; River's rescuer and the
+// successor's own result provide eventual terminality.
+func (r *Repository) WaitForRiverClaimFinalization(ctx context.Context, riverJobID int64) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	waitCtx := context.WithoutCancel(ctx)
+	for {
+		probeCtx, cancel := context.WithTimeout(waitCtx, time.Second)
+		state, found, err := r.riverClaimState(probeCtx, riverJobID)
+		cancel()
+		if err != nil {
+			// Keep the stale worker from reporting an ID-only result while the
+			// database is unavailable. Returning while the state is unknown
+			// would let River race a recovered connection and finalize a live
+			// successor. The bounded probe timeout keeps each attempt finite.
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		if !found || state == rivertype.JobStateCompleted || state == rivertype.JobStateCancelled || state == rivertype.JobStateDiscarded {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func (r *Repository) riverClaimState(ctx context.Context, riverJobID int64) (rivertype.JobState, bool, error) {
+	var state rivertype.JobState
+	var found bool
+	err := r.inTx(ctx, func(tx Tx) error {
+		row, err := queries(tx).LockRiverJobFence(ctx, riverJobID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		state = rivertype.JobState(row.State)
+		found = true
+		return nil
+	})
+	return state, found, err
+}
+
 // lockRiverFence locks the operational row that is bound to a product job and
 // verifies the exact River claim before the caller mutates product history or
 // River state. River's completion/cancellation helpers identify a row by ID;
@@ -476,7 +540,7 @@ func (r *Repository) lockRiverFence(ctx context.Context, tx Tx, id string, fence
 	}
 	row, err := queries(tx).LockRiverJobFence(ctx, riverID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return jobs.ErrConflict
+		return staleRiverConflict()
 	}
 	if err != nil {
 		return err
@@ -485,14 +549,14 @@ func (r *Repository) lockRiverFence(ctx context.Context, tx Tx, id string, fence
 		return nil
 	}
 	if rivertype.JobState(row.State) != rivertype.JobStateRunning || int(row.Attempt) != int(fence.Generation) {
-		return jobs.ErrConflict
+		return staleRiverConflict()
 	}
 	if fence.Owner == "" || len(row.AttemptedBy) == 0 || row.AttemptedBy[len(row.AttemptedBy)-1] != fence.Owner {
-		return jobs.ErrConflict
+		return staleRiverConflict()
 	}
 	if completion := completionFromContext(ctx); completion != nil && completion.riverJobID > 0 {
 		if completion.riverJobID != riverID || completion.generation != fence.Generation || completion.owner != fence.Owner {
-			return jobs.ErrConflict
+			return staleRiverConflict()
 		}
 	}
 	return nil
@@ -514,7 +578,7 @@ func (r *Repository) lockRiverMarkFence(ctx context.Context, tx Tx, id string, a
 	}
 	row, err := queries(tx).LockRiverJobFence(ctx, riverID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return jobs.ErrConflict
+		return staleRiverConflict()
 	}
 	if err != nil {
 		return err
@@ -523,16 +587,20 @@ func (r *Repository) lockRiverMarkFence(ctx context.Context, tx Tx, id string, a
 		return nil
 	}
 	if int(row.Attempt) != attempt || rivertype.JobState(row.State) != rivertype.JobStateRunning {
-		return jobs.ErrConflict
+		return staleRiverConflict()
 	}
 	completion := completionFromContext(ctx)
 	if completion == nil || completion.riverJobID <= 0 || completion.generation != int64(attempt) || completion.owner == "" {
-		return jobs.ErrConflict
+		return staleRiverConflict()
 	}
 	if completion.riverJobID != riverID || len(row.AttemptedBy) == 0 || row.AttemptedBy[len(row.AttemptedBy)-1] != completion.owner {
-		return jobs.ErrConflict
+		return staleRiverConflict()
 	}
 	return nil
+}
+
+func staleRiverConflict() error {
+	return fmt.Errorf("%w: %w", jobs.ErrConflict, ErrStaleRiverClaim)
 }
 
 func (r *Repository) MarkRunning(ctx context.Context, id string, attempt int) (jobs.Job, error) {

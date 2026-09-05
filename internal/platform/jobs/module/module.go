@@ -174,6 +174,9 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 	defer lease.Release()
 	history, err = m.repository.MarkRunning(lease.Context(), history.ID, rowAttempt)
 	if err != nil {
+		if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
+			return m.waitForStaleRiverClaim(ctx, riverJobID)
+		}
 		if ctx.Err() != nil || lease.Context().Err() != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -195,7 +198,7 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 	handler := m.handlers[history.Kind]
 	m.mu.RUnlock()
 	if handler == nil {
-		return m.failTerminal(ctx, history.ID, history.Fence())
+		return m.failTerminal(ctx, riverJobID, history.ID, history.Fence())
 	}
 	err = handler.Handle(lease.Context(), history)
 	if err == nil {
@@ -206,10 +209,16 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 			}
 		} else {
 			if err := m.repository.Complete(lease.Context(), history.ID, history.Fence()); err != nil {
+				if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
+					return m.waitForStaleRiverClaim(ctx, riverJobID)
+				}
 				return river.JobCancel(errors.New("ASYNC_JOB_COMPLETION_FAILED"))
 			}
 		}
 		return nil
+	}
+	if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
+		return m.waitForStaleRiverClaim(ctx, riverJobID)
 	}
 	// River cancels a worker context on shutdown, lease loss, and explicit
 	// client cancellation. Preserve the row for replay in those cases instead
@@ -223,6 +232,9 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 	var retry *jobs.RetryError
 	if errors.As(err, &retry) && rowAttempt < jobpostgres.MaxAttempts {
 		if err := m.repository.RequeueAfterFailure(context.WithoutCancel(ctx), history.ID, rowAttempt, []byte(`{"code":"ASYNC_JOB_RETRY"}`)); err != nil {
+			if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
+				return m.waitForStaleRiverClaim(ctx, riverJobID)
+			}
 			// Keep River's attempt available until product history has durably
 			// moved back to queued. Without that transition, cancelling the row
 			// would strand the product job in running with no recovery authority.
@@ -232,18 +244,36 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 		m.retryAt.Store(riverJobID, time.Now().Add(max(retry.Delay, time.Millisecond)))
 		return errors.New("ASYNC_JOB_RETRY")
 	}
-	return m.failTerminal(ctx, history.ID, history.Fence())
+	return m.failTerminal(ctx, riverJobID, history.ID, history.Fence())
 }
 
-func (m *Module) failTerminal(ctx context.Context, id string, fence jobs.Fence) error {
+func (m *Module) failTerminal(ctx context.Context, riverJobID int64, id string, fence jobs.Fence) error {
+	// Check the River fence before reading product terminal state. A stale
+	// worker can otherwise observe a successor's terminal product update and
+	// return JobCancel while that successor's River row is still running.
+	if err := m.repository.ValidateCurrentClaim(context.WithoutCancel(ctx), id, fence); errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
+		return m.waitForStaleRiverClaim(ctx, riverJobID)
+	}
 	history, err := m.repository.Get(context.WithoutCancel(ctx), id)
 	if err == nil && (history.Status == jobs.StatusFailed || history.Status == jobs.StatusCancelled) {
 		return river.JobCancel(errors.New("ASYNC_JOB_FAILED"))
 	}
 	if err := m.repository.Fail(context.WithoutCancel(ctx), id, fence, []byte(`{"code":"ASYNC_JOB_FAILED"}`)); err != nil {
+		if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
+			return m.waitForStaleRiverClaim(ctx, riverJobID)
+		}
 		return river.JobCancel(errors.New("ASYNC_JOB_FAILURE_PERSISTENCE_FAILED"))
 	}
 	return river.JobCancel(errors.New("ASYNC_JOB_FAILED"))
+}
+
+func (m *Module) waitForStaleRiverClaim(ctx context.Context, riverJobID int64) error {
+	// River has no attempt predicate on its worker result update. Wait for the
+	// successor to reach a terminal state before this stale executor returns,
+	// so the eventual ID-only result cannot finalize an active or re-claimable
+	// successor. The repository keeps polling even if this worker's ordinary
+	// context is cancelled while the successor is active.
+	return m.repository.WaitForRiverClaimFinalization(ctx, riverJobID)
 }
 
 func workTyped[T river.JobArgs](ctx context.Context, m *Module, job *river.Job[T], args jobpostgres.ExecutionArgs) error {

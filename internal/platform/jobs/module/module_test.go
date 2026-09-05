@@ -168,6 +168,138 @@ func TestRiverPostgreSQL18ExecutionAndProductHistory(t *testing.T) {
 	}
 }
 
+func TestStaleRiverConflictCannotCancelSuccessorAttempt(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_stale_handoff")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	repository := jobpostgres.NewRepository(pool)
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan jobs.Job, 1)
+	release := make(chan struct{})
+	handlerReturned := make(chan struct{})
+	module, err := Build(t.Context(), Config{
+		Persistence:  &persistence,
+		Production:   true,
+		Admission:    jobs.AdmitterFunc(allowJobs),
+		OwnerID:      "river-stale-handoff-test",
+		PollInterval: 5 * time.Millisecond,
+		LeaseTimeout: 10 * time.Second,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
+		JobKind: "release.finalize",
+		Run: func(_ context.Context, job jobs.Job) error {
+			started <- job
+			<-release
+			close(handlerReturned)
+			return jobs.ErrConflict
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = module.Stop(context.Background()) })
+
+	job, err := module.Enqueue(t.Context(), testJobInput("job-stale-handoff", "stale-handoff"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var riverID int64
+	if err := pool.QueryRow(t.Context(), `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, job.ID).Scan(&riverID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case invocation := <-started:
+		if invocation.Attempts != 1 {
+			t.Fatalf("first invocation attempt = %d, want 1", invocation.Attempts)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for first River invocation")
+	}
+
+	// Rescue and hand off the operational row atomically while the old worker
+	// is still inside its handler. This leaves no retryable window for the test
+	// worker to fetch; the resulting row is exactly the successor's live claim.
+	if _, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job
+		SET state='running', attempt=2, attempted_by=array_append(attempted_by, 'river-successor'), attempted_at=clock_timestamp()
+		WHERE id=$1 AND state='running' AND attempt=1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+
+	select {
+	case <-handlerReturned:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for stale handler result")
+	}
+	time.Sleep(250 * time.Millisecond)
+	var state string
+	if err := pool.QueryRow(t.Context(), `SELECT state::text FROM public.river_job WHERE id=$1`, riverID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(rivertype.JobStateRunning) {
+		t.Fatalf("stale attempt finalized successor River attempt before handoff: state=%s", state)
+	}
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- repository.WaitForRiverClaimFinalization(t.Context(), riverID) }()
+	if _, err := pool.Exec(t.Context(), `UPDATE public.river_job SET state='retryable', scheduled_at=clock_timestamp()+interval '1 hour' WHERE id=$1 AND state='running' AND attempt=2`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-waitDone:
+		t.Fatalf("stale handoff waiter returned for retryable successor: %v", err)
+	case <-time.After(250 * time.Millisecond):
+	}
+	if _, err := pool.Exec(t.Context(), `UPDATE public.river_job SET state='completed', finalized_at=clock_timestamp() WHERE id=$1 AND state='retryable' AND attempt=2`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-waitDone:
+		if err != nil {
+			t.Fatalf("stale handoff waiter after terminal successor: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for terminal successor")
+	}
+	if err := module.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(t.Context(), `SELECT state::text FROM public.river_job WHERE id=$1`, riverID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(rivertype.JobStateCompleted) {
+		t.Fatalf("stale attempt changed terminal successor state: state=%s", state)
+	}
+
+	current, err := module.Get(t.Context(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != jobs.StatusRunning || current.Attempts != 1 {
+		t.Fatalf("stale handoff product history = status %q attempts %d, want running/1", current.Status, current.Attempts)
+	}
+}
+
 func TestWorkRetainsRiverRetryWhenRetryPersistenceFails(t *testing.T) {
 	harness := postgrestest.Start(t)
 	database := harness.NewDatabase(t, "river_retry_persistence_failure")
