@@ -15,7 +15,6 @@ import (
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 )
 
 type Config struct {
@@ -112,7 +111,7 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 		riverConfig.FetchCooldown = m.config.PollInterval
 		riverConfig.FetchPollInterval = m.config.PollInterval
 	}
-	client, err := river.NewClient(riverpgxv5.New(pool), riverConfig)
+	client, err := river.NewClient(newResultFenceRiverDriver(pool), riverConfig)
 	if err != nil {
 		return err
 	}

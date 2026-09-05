@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver"
 	"github.com/riverqueue/river/rivertype"
 )
 
@@ -396,23 +397,100 @@ func TestRiverResultFenceClosesPostValidationHandoff(t *testing.T) {
 	assertRiverState(rivertype.JobStateRunning, 2)
 	select {
 	case err := <-stopDone:
-		t.Fatalf("stale River finalizer returned before the successor completed: %v", err)
-	case <-time.After(250 * time.Millisecond):
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for the isolated stale River finalizer to drain")
 	}
+	assertRiverState(rivertype.JobStateRunning, 2)
 	if _, err := pool.Exec(t.Context(), `
 		UPDATE public.river_job SET state='completed', finalized_at=clock_timestamp()
 		WHERE id=$1 AND state='running' AND attempt=2`, riverID); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case err := <-stopDone:
+	assertRiverState(rivertype.JobStateCompleted, 2)
+}
+
+func TestRiverResultFenceDoesNotPoisonUnrelatedBatchCompletion(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_result_fence_batch")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	driver := newResultFenceRiverDriver(pool)
+	client, err := river.NewClient(driver, &river.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	insert := func(productJobID string) int64 {
+		t.Helper()
+		result, err := client.Insert(t.Context(), jobpostgres.ReleaseFinalizeArgs{
+			ProductJobID:  productJobID,
+			RequestDigest: "sha256:" + strings.Repeat("0", 64),
+		}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(15 * time.Second):
-		t.Fatal("timed out waiting for stale River finalizer to drain")
+		return result.Job.ID
 	}
-	assertRiverState(rivertype.JobStateCompleted, 2)
+	staleID := insert("stale-batch-result")
+	currentID := insert("current-batch-result")
+	if _, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job
+		SET state = 'running', attempt = 1, attempted_by = ARRAY['worker-a'], attempted_at = clock_timestamp()
+		WHERE id = ANY($1::bigint[])`, []int64{staleID, currentID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `
+		UPDATE public.river_job
+		SET attempt = 2, attempted_by = array_append(attempted_by, 'worker-b')
+		WHERE id = $1`, staleID); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	rows, err := client.Pilot().JobSetStateIfRunningMany(t.Context(), driver.GetExecutor(), &riverdriver.JobSetStateIfRunningManyParams{
+		ID:              []int64{staleID, currentID},
+		Attempt:         []*int{nil, nil},
+		ErrData:         [][]byte{nil, nil},
+		FinalizedAt:     []*time.Time{&now, &now},
+		MetadataDoMerge: []bool{true, true},
+		MetadataUpdates: [][]byte{
+			[]byte(`{"leapview:river_result_fence":{"attempt":1,"owner":"worker-a"}}`),
+			[]byte(`{"leapview:river_result_fence":{"attempt":1,"owner":"worker-a"}}`),
+		},
+		ScheduledAt: []*time.Time{nil, nil},
+		State:       []rivertype.JobState{rivertype.JobStateCompleted, rivertype.JobStateCompleted},
+	})
+	if err != nil {
+		t.Fatalf("mixed stale/current River completion batch: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != currentID || rows[0].State != rivertype.JobStateCompleted {
+		t.Fatalf("mixed completion rows = %+v, want only completed current job %d", rows, currentID)
+	}
+	assertState := func(id int64, wantState rivertype.JobState, wantAttempt int) {
+		t.Helper()
+		var state rivertype.JobState
+		var attempt int
+		if err := pool.QueryRow(t.Context(), `SELECT state, attempt FROM public.river_job WHERE id=$1`, id).Scan(&state, &attempt); err != nil {
+			t.Fatal(err)
+		}
+		if state != wantState || attempt != wantAttempt {
+			t.Fatalf("River row %d = %s/%d, want %s/%d", id, state, attempt, wantState, wantAttempt)
+		}
+	}
+	assertState(staleID, rivertype.JobStateRunning, 2)
+	assertState(currentID, rivertype.JobStateCompleted, 1)
 }
 
 func TestWorkRetainsRiverRetryWhenRetryPersistenceFails(t *testing.T) {

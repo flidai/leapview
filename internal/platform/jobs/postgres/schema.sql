@@ -43,10 +43,10 @@ BEGIN
        OR expected_owner = ''
        OR coalesce(array_length(OLD.attempted_by, 1), 0) = 0
        OR expected_owner IS DISTINCT FROM OLD.attempted_by[array_upper(OLD.attempted_by, 1)] THEN
-        -- Abort River's ID-only UPDATE while another attempt is running.
-        -- River retries its completer; once that attempt leaves running, the
-        -- branch above drains the stale result without changing its state.
-        RAISE EXCEPTION 'stale River result fence';
+        -- Abort River's ID-only UPDATE while another attempt is running. The
+        -- LeapView River executor isolates this SQLSTATE to the stale row, so
+        -- unrelated results in the same completion batch still commit.
+        RAISE EXCEPTION 'stale River result fence' USING ERRCODE = 'LV001';
     END IF;
     RETURN NEW;
 END;
