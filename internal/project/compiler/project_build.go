@@ -149,7 +149,13 @@ func projectManifest(project Project) (manifest.Project, error) {
 		}
 		result.NameIndex.Models[name] = id
 	}
-	for name, spec := range project.SemanticModels {
+	semanticModelNames := make([]string, 0, len(project.SemanticModels))
+	for name := range project.SemanticModels {
+		semanticModelNames = append(semanticModelNames, name)
+	}
+	sort.Strings(semanticModelNames)
+	for _, name := range semanticModelNames {
+		spec := project.SemanticModels[name]
 		id := project.SemanticModelIDs[name]
 		if id == "" {
 			return manifest.Project{}, fmt.Errorf("semantic model %q has no stable id", name)

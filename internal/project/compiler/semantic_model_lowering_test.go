@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -174,6 +175,35 @@ func TestSemanticModelAccessPolicyDiagnosticsAreDeterministic(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestProjectManifestSemanticAccessPolicyDiagnosticsAreDeterministic(t *testing.T) {
+	grants := []string{"can_view"}
+	project := Project{
+		SemanticModels: map[string]projectcontracts.SemanticModelSpec{
+			"zeta":  {Datasets: map[string]projectcontracts.SemanticDataset{"orders": {RequiredAccessGrants: &grants}}},
+			"alpha": {Datasets: map[string]projectcontracts.SemanticDataset{"orders": {RequiredAccessGrants: &grants}}},
+		},
+		SemanticModelIDs: map[string]string{
+			"zeta":  "semantic-model:zeta",
+			"alpha": "semantic-model:alpha",
+		},
+		SemanticModelPaths: map[string]string{
+			"zeta":  "semantic-models/zeta.yaml",
+			"alpha": "semantic-models/alpha.yaml",
+		},
+	}
+	wantMessage := `SemanticModel dataset "orders" requiredAccessGrants: compiled access-policy support is not available`
+	for run := 0; run < 100; run++ {
+		_, err := projectManifest(project)
+		var diagnostic ResourceError
+		if !errors.As(err, &diagnostic) {
+			t.Fatalf("run %d diagnostic = %T(%v), want ResourceError", run, err, err)
+		}
+		if diagnostic.Path != "semantic-models/alpha.yaml" || diagnostic.ResourceID != "semantic-model:alpha" || diagnostic.FieldPath != "spec" || diagnostic.Message != wantMessage {
+			t.Fatalf("run %d diagnostic = %#v, want alpha resource and %q", run, diagnostic, wantMessage)
+		}
 	}
 }
 

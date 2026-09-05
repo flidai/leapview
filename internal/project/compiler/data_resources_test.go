@@ -292,7 +292,7 @@ spec:
 }
 
 func TestTypedSemanticModelLoweringPreservesExactNumericLiterals(t *testing.T) {
-	for _, token := range []string{"5", "2.5", "9007199254740993"} {
+	for _, token := range []string{"5", "2.5", "9007199254740993", "9007199254740993.125"} {
 		t.Run(token, func(t *testing.T) {
 			spec, _, err := decodeSemanticModelResource("semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel

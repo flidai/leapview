@@ -18,7 +18,7 @@ func TestSemanticAccessAllowedValuesPreserveExactNumbersThroughResourceDecode(t 
     "accessGrants": {
       "numbers": {
         "userAttribute": "accountNumber",
-        "allowedValues": [7, 9007199254740993, 1.2300]
+        "allowedValues": [7, 9007199254740993, 1.2300, 9007199254740993.125]
       }
     },
     "datasets": {"orders": {"model": "orders_model"}},
@@ -31,7 +31,7 @@ func TestSemanticAccessAllowedValuesPreserveExactNumbersThroughResourceDecode(t 
 		t.Fatalf("DecodeResource: %v", err)
 	}
 	grant := (*model.Spec.AccessGrants)["numbers"]
-	wantTokens := []string{"7", "9007199254740993", "1.23"}
+	wantTokens := []string{"7", "9007199254740993", "1.2300", "9007199254740993.125"}
 	if len(grant.AllowedValues) != len(wantTokens) {
 		t.Fatalf("allowed value count = %d, want %d", len(grant.AllowedValues), len(wantTokens))
 	}
@@ -50,6 +50,7 @@ func TestSemanticAccessAllowedValuesPreserveExactNumbersThroughResourceDecode(t 
 		{index: 0, typeName: semanticvalue.TypeInteger, canonical: "7"},
 		{index: 1, typeName: semanticvalue.TypeInteger, canonical: "9007199254740993"},
 		{index: 2, typeName: semanticvalue.TypeDecimal, canonical: "1.23"},
+		{index: 3, typeName: semanticvalue.TypeDecimal, canonical: "9007199254740993.125"},
 	}
 	for _, check := range checks {
 		value, err := semanticvalue.Canonicalize(check.typeName, grant.AllowedValues[check.index])
@@ -65,7 +66,7 @@ func TestSemanticAccessAllowedValuesPreserveExactNumbersThroughResourceDecode(t 
 	if err != nil {
 		t.Fatalf("marshal exact allowed values: %v", err)
 	}
-	if got, want := string(encoded), `[7,9007199254740993,1.23]`; got != want {
+	if got, want := string(encoded), `[7,9007199254740993,1.2300,9007199254740993.125]`; got != want {
 		t.Fatalf("encoded allowed values = %s, want %s", got, want)
 	}
 }

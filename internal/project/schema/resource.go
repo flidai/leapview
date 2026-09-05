@@ -734,24 +734,27 @@ func yamlBool(value string) (bool, bool) {
 	}
 }
 
-func yamlFloat(value string) (float64, error) {
+func yamlFloat(value string) (json.Number, error) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	switch normalized {
 	case ".nan", "+.nan", "-.nan", ".inf", "+.inf", "-.inf":
-		return 0, fmt.Errorf("non-finite float %q cannot be represented in JSON", value)
+		return "", fmt.Errorf("non-finite float %q cannot be represented in JSON", value)
 	}
-	canonical := strings.ReplaceAll(value, "_", "")
+	canonical := jsonFloatToken(value)
+	if !json.Valid([]byte(canonical)) {
+		return "", fmt.Errorf("float value %q cannot be represented in JSON", value)
+	}
 	parsed, err := strconv.ParseFloat(canonical, 64)
 	if err != nil {
-		return 0, fmt.Errorf("float value %q cannot be represented in JSON: %v", value, err)
+		return "", fmt.Errorf("float value %q cannot be represented in JSON: %v", value, err)
 	}
 	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
-		return 0, fmt.Errorf("non-finite float %q cannot be represented in JSON", value)
+		return "", fmt.Errorf("non-finite float %q cannot be represented in JSON", value)
 	}
 	if parsed == 0 && numericMantissaIsNonZero(canonical) {
-		return 0, fmt.Errorf("float value %q underflows the finite JSON normalization range", value)
+		return "", fmt.Errorf("float value %q underflows the finite JSON normalization range", value)
 	}
-	return parsed, nil
+	return json.Number(canonical), nil
 }
 
 func numericMantissaIsNonZero(value string) bool {
