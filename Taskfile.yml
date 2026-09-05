@@ -169,6 +169,11 @@ tasks:
     cmds:
       - go test ./internal/app/cli/composectl -run '^TestQualificationNativePostgresTopologyContainerBackedContract$' -count=1 -v
 
+  test:qualification:postgres-ha:
+    desc: Run the bounded disposable same-host PostgreSQL 18 Patroni HA qualification
+    cmds:
+      - timeout --signal=TERM --kill-after=30s 10m ./deploy/postgres/ha/run.sh
+
   node:deps:
     desc: Install JavaScript dependencies with Bun
     method: checksum

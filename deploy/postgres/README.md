@@ -61,3 +61,7 @@ The local defaults are disposable credentials, suitable only for an isolated
 developer machine. Override the specific password settings documented in the
 Compose file for tests that need different credentials. The helper never
 prints passwords or connection URLs.
+
+For the bounded two-member Patroni failure and rolling-maintenance drill, use
+the separate [same-host HA qualification](ha/README.md). It intentionally does
+not share this development service's Compose project, volumes, or credentials.
