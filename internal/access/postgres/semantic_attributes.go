@@ -22,6 +22,7 @@ import (
 const maxSemanticAttributeSearchRows = 1000
 
 var _ access.SemanticAttributeRegistry = (*Repository)(nil)
+var _ access.VersionedSemanticAttributeRegistry = (*Repository)(nil)
 
 type registryDigestWire struct {
 	Profile     string                         `json:"profile"`
@@ -158,7 +159,21 @@ func (r *Repository) SemanticAttributeDefinitionByID(ctx context.Context, id str
 func (r *Repository) SearchSemanticAttributes(ctx context.Context, filter access.SemanticAttributeSearch) ([]access.SemanticAttributeDefinition, error) {
 	query := strings.TrimSpace(filter.Query)
 	if len(query) > 255 || strings.ContainsRune(query, '\x00') {
-		return nil, errors.New("semantic attribute search query is invalid")
+		return nil, fmt.Errorf("%w: query is invalid", access.ErrSemanticAttributeSearchInvalid)
+	}
+	if filter.OwnerKind != "" && !filter.OwnerKind.Valid() {
+		return nil, fmt.Errorf("%w: owner kind is invalid", access.ErrSemanticAttributeSearchInvalid)
+	}
+	if (filter.AfterName == "") != (filter.AfterDefinitionID == "") {
+		return nil, fmt.Errorf("%w: cursor is invalid", access.ErrSemanticAttributeSearchInvalid)
+	}
+	if filter.AfterName != "" {
+		if err := semanticvalue.ValidateAttributeName(filter.AfterName); err != nil {
+			return nil, fmt.Errorf("%w: cursor name is invalid: %v", access.ErrSemanticAttributeSearchInvalid, err)
+		}
+		if _, err := uuidID("semantic attribute search cursor definition id", filter.AfterDefinitionID); err != nil {
+			return nil, fmt.Errorf("%w: cursor definition id is invalid: %v", access.ErrSemanticAttributeSearchInvalid, err)
+		}
 	}
 	limit := filter.Limit
 	if limit <= 0 {
@@ -174,11 +189,14 @@ func (r *Repository) SearchSemanticAttributes(ctx context.Context, filter access
 	rows, err := db.Query(ctx, `
 		SELECT `+semanticAttributeDefinitionColumns+`
 		FROM access.semantic_attribute_definition
-		WHERE $1::text = ''
+		WHERE ($1::text = ''
 		   OR strpos(lower(name), lower($1::text)) > 0
 		   OR strpos(lower(display_name), lower($1::text)) > 0
-		   OR strpos(lower(description), lower($1::text)) > 0
-		ORDER BY name LIMIT $2::int`, query, limit)
+		   OR strpos(lower(description), lower($1::text)) > 0)
+		  AND ($2::text = '' OR owner_kind = $2::text)
+		  AND ($3::text = '' OR name > $3::text
+		       OR (name = $3::text AND definition_id > NULLIF($4::text, '')::uuid))
+		ORDER BY name, definition_id LIMIT $5::int`, query, string(filter.OwnerKind), filter.AfterName, filter.AfterDefinitionID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search semantic attribute definitions: %w", err)
 	}
@@ -245,8 +263,15 @@ func (r *Repository) RegisterSemanticAttribute(ctx context.Context, input access
 }
 
 func (r *Repository) UpdateSemanticAttributeMetadata(ctx context.Context, input access.UpdateSemanticAttributeMetadataInput) (access.SemanticAttributeDefinition, error) {
+	return r.UpdateSemanticAttributeMetadataExpected(ctx, input)
+}
+
+func (r *Repository) UpdateSemanticAttributeMetadataExpected(ctx context.Context, input access.UpdateSemanticAttributeMetadataInput) (access.SemanticAttributeDefinition, error) {
 	if err := semanticvalue.ValidateAttributeName(input.Name); err != nil {
 		return access.SemanticAttributeDefinition{}, err
+	}
+	if input.ExpectedVersion < 0 {
+		return access.SemanticAttributeDefinition{}, errors.New("semantic attribute expected version cannot be negative")
 	}
 	metadata, err := canonicalSemanticAttributeMetadata(input.Metadata)
 	if err != nil {
@@ -271,11 +296,17 @@ func (r *Repository) UpdateSemanticAttributeMetadata(ctx context.Context, input 
 			return access.AuditEventInput{}, err
 		}
 		result = existing
+		if input.ExpectedVersion > 0 && result.DefinitionVersion != input.ExpectedVersion {
+			return access.AuditEventInput{}, fmt.Errorf("%w: semantic attribute %s expected version %d, current %d", access.ErrSemanticAttributeConflict, input.Name, input.ExpectedVersion, result.DefinitionVersion)
+		}
 		if reflect.DeepEqual(result.Metadata, metadata) {
 			return semanticAttributeAuditEvent(input.Mutation, actorID, "semantic_attribute.metadata_replay", result, locked.Revision, locked.Digest), nil
 		}
-		result, err = updateSemanticAttributeMetadata(ctx, transactional.db, input.Name, metadata)
+		result, err = updateSemanticAttributeMetadata(ctx, transactional.db, input.Name, metadata, input.ExpectedVersion)
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) && input.ExpectedVersion > 0 {
+				return access.AuditEventInput{}, fmt.Errorf("%w: semantic attribute %s expected version %d", access.ErrSemanticAttributeConflict, input.Name, input.ExpectedVersion)
+			}
 			return access.AuditEventInput{}, fmt.Errorf("update semantic attribute metadata: %w", err)
 		}
 		registry, err := refreshSemanticAttributeRegistry(ctx, transactional.db, locked.Revision+1)
@@ -288,8 +319,15 @@ func (r *Repository) UpdateSemanticAttributeMetadata(ctx context.Context, input 
 }
 
 func (r *Repository) SetSemanticAttributeEnabled(ctx context.Context, name string, enabled bool, mutation access.SemanticAttributeMutationContext) (access.SemanticAttributeDefinition, error) {
+	return r.SetSemanticAttributeEnabledExpected(ctx, name, enabled, 0, mutation)
+}
+
+func (r *Repository) SetSemanticAttributeEnabledExpected(ctx context.Context, name string, enabled bool, expectedVersion int64, mutation access.SemanticAttributeMutationContext) (access.SemanticAttributeDefinition, error) {
 	if err := semanticvalue.ValidateAttributeName(name); err != nil {
 		return access.SemanticAttributeDefinition{}, err
+	}
+	if expectedVersion < 0 {
+		return access.SemanticAttributeDefinition{}, errors.New("semantic attribute expected version cannot be negative")
 	}
 	actorID, err := uuidID("semantic attribute mutation actor principal id", mutation.ActorPrincipalID)
 	if err != nil {
@@ -310,6 +348,9 @@ func (r *Repository) SetSemanticAttributeEnabled(ctx context.Context, name strin
 			return access.AuditEventInput{}, err
 		}
 		result = existing
+		if expectedVersion > 0 && result.DefinitionVersion != expectedVersion {
+			return access.AuditEventInput{}, fmt.Errorf("%w: semantic attribute %s expected version %d, current %d", access.ErrSemanticAttributeConflict, name, expectedVersion, result.DefinitionVersion)
+		}
 		action := "semantic_attribute.disable"
 		if enabled {
 			action = "semantic_attribute.enable"
@@ -317,8 +358,11 @@ func (r *Repository) SetSemanticAttributeEnabled(ctx context.Context, name strin
 		if result.Enabled == enabled {
 			return semanticAttributeAuditEvent(mutation, actorID, action+"_replay", result, locked.Revision, locked.Digest), nil
 		}
-		result, err = setSemanticAttributeEnabled(ctx, transactional.db, name, enabled)
+		result, err = setSemanticAttributeEnabled(ctx, transactional.db, name, enabled, expectedVersion)
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) && expectedVersion > 0 {
+				return access.AuditEventInput{}, fmt.Errorf("%w: semantic attribute %s expected version %d", access.ErrSemanticAttributeConflict, name, expectedVersion)
+			}
 			return access.AuditEventInput{}, fmt.Errorf("set semantic attribute enabled state: %w", err)
 		}
 		registry, err := refreshSemanticAttributeRegistry(ctx, transactional.db, locked.Revision+1)
@@ -579,17 +623,18 @@ func insertSemanticAttributeDefinition(ctx context.Context, db DBTX, definitionI
 	return semanticAttributeDefinition(value), nil
 }
 
-func updateSemanticAttributeMetadata(ctx context.Context, db DBTX, name string, metadata access.SemanticAttributeMetadata) (access.SemanticAttributeDefinition, error) {
+func updateSemanticAttributeMetadata(ctx context.Context, db DBTX, name string, metadata access.SemanticAttributeMetadata, expectedVersion int64) (access.SemanticAttributeDefinition, error) {
 	row := db.QueryRow(ctx, `UPDATE access.semantic_attribute_definition
 		SET owner_kind = $1::text, owner_id = NULLIF($2::text, '')::uuid,
 		    display_name = $3::text, description = $4::text, documentation_url = $5::text,
 		    definition_version = definition_version + 1
 		WHERE name = $6::text
+		  AND ($7::bigint <= 0 OR definition_version = $7::bigint)
 		  AND (owner_kind, owner_id, display_name, description, documentation_url) IS DISTINCT FROM
 		      ($1::text, NULLIF($2::text, '')::uuid, $3::text, $4::text, $5::text)
 		RETURNING `+semanticAttributeDefinitionColumns,
 		string(metadata.Owner.Kind), metadata.Owner.ID, metadata.DisplayName, metadata.Description,
-		metadata.DocumentationURL, name)
+		metadata.DocumentationURL, name, expectedVersion)
 	value, err := scanSemanticAttributeRow(row)
 	if err != nil {
 		return access.SemanticAttributeDefinition{}, err
@@ -597,11 +642,12 @@ func updateSemanticAttributeMetadata(ctx context.Context, db DBTX, name string, 
 	return semanticAttributeDefinition(value), nil
 }
 
-func setSemanticAttributeEnabled(ctx context.Context, db DBTX, name string, enabled bool) (access.SemanticAttributeDefinition, error) {
+func setSemanticAttributeEnabled(ctx context.Context, db DBTX, name string, enabled bool, expectedVersion int64) (access.SemanticAttributeDefinition, error) {
 	row := db.QueryRow(ctx, `UPDATE access.semantic_attribute_definition
 		SET enabled = $1::boolean, definition_version = definition_version + 1
 		WHERE name = $2::text AND enabled <> $1::boolean
-		RETURNING `+semanticAttributeDefinitionColumns, enabled, name)
+		  AND ($3::bigint <= 0 OR definition_version = $3::bigint)
+		RETURNING `+semanticAttributeDefinitionColumns, enabled, name, expectedVersion)
 	value, err := scanSemanticAttributeRow(row)
 	if err != nil {
 		return access.SemanticAttributeDefinition{}, err

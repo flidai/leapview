@@ -57,6 +57,9 @@ var accessControlAuthoritySQL string
 //go:embed 011_typed_attribute_registry.sql
 var typedAttributeRegistrySQL string
 
+//go:embed 012_semantic_attribute_control.sql
+var semanticAttributeControlSQL string
+
 // IdentityLedgerRevision introduces the PostgreSQL-only FAI-617 resource
 // identity ledger.
 const IdentityLedgerRevision int64 = 2
@@ -118,6 +121,13 @@ const AccessControlAuthorityMigrationID = "010_access_control_authority"
 const TypedAttributeRegistryRevision int64 = 11
 
 const TypedAttributeRegistryMigrationID = "011_typed_attribute_registry"
+
+// SemanticAttributeControlRevision adds durable semantic-access assignments
+// and trusted claim mappings while preserving the immutable definition
+// registry introduced by revision eleven.
+const SemanticAttributeControlRevision int64 = 12
+
+const SemanticAttributeControlMigrationID = "012_semantic_attribute_control"
 
 // BaselineSQL returns the exact authored baseline migration.  Callers should
 // execute it as a migration authority, inside a transaction where the driver
@@ -202,6 +212,13 @@ func TypedAttributeRegistryChecksum() string {
 	return hex.EncodeToString(sum[:])
 }
 
+func SemanticAttributeControlSQL() string { return semanticAttributeControlSQL }
+
+func SemanticAttributeControlChecksum() string {
+	sum := sha256.Sum256([]byte(semanticAttributeControlSQL))
+	return hex.EncodeToString(sum[:])
+}
+
 // Tx is the transaction boundary required by Apply.  pgx.Tx and pgxpool.Tx
 // both satisfy it; keeping the boundary here avoids opening a second
 // connection or introducing repository policy into the schema package.
@@ -237,6 +254,7 @@ func ordered() []migration {
 		{PlatformBootstrapAuthorityRevision, PlatformBootstrapAuthorityMigrationID, platformBootstrapAuthoritySQL, PlatformBootstrapAuthorityChecksum()},
 		{AccessControlAuthorityRevision, AccessControlAuthorityMigrationID, accessControlAuthoritySQL, AccessControlAuthorityChecksum()},
 		{TypedAttributeRegistryRevision, TypedAttributeRegistryMigrationID, typedAttributeRegistrySQL, TypedAttributeRegistryChecksum()},
+		{SemanticAttributeControlRevision, SemanticAttributeControlMigrationID, semanticAttributeControlSQL, SemanticAttributeControlChecksum()},
 	}
 }
 

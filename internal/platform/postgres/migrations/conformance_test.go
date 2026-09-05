@@ -137,6 +137,23 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if revision != TypedAttributeRegistryRevision || typedAttributeRegistryChecksum != TypedAttributeRegistryChecksum() {
 		t.Fatalf("typed attribute registry schema revision/checksum = %d/%q, want %d/%q", revision, typedAttributeRegistryChecksum, TypedAttributeRegistryRevision, TypedAttributeRegistryChecksum())
 	}
+	var semanticControlChecksum string
+	if err := db.QueryRow(ctx, `SELECT revision, checksum FROM platform.schema_revision WHERE migration_id = $1`, SemanticAttributeControlMigrationID).Scan(&revision, &semanticControlChecksum); err != nil {
+		t.Fatal(err)
+	}
+	if revision != SemanticAttributeControlRevision || semanticControlChecksum != SemanticAttributeControlChecksum() {
+		t.Fatalf("semantic attribute control schema revision/checksum = %d/%q, want %d/%q", revision, semanticControlChecksum, SemanticAttributeControlRevision, SemanticAttributeControlChecksum())
+	}
+	var controlProfile, controlDigest string
+	var controlRevision int64
+	if err := db.QueryRow(ctx, `
+		SELECT profile, control_revision, control_digest
+		FROM access.semantic_attribute_control_state WHERE singleton`).Scan(&controlProfile, &controlRevision, &controlDigest); err != nil {
+		t.Fatal(err)
+	}
+	if controlProfile != "leapview.semantic-access/v1" || controlRevision != 0 || controlDigest != "sha256:e05005cdeee20cc98d9e8de8f32ed4b8da34a95f82872dc3b65a451ce7de4e37" {
+		t.Fatalf("semantic attribute control seed = %q/%d/%q", controlProfile, controlRevision, controlDigest)
+	}
 	var registryProfile, registryDigest string
 	var registryRevision int64
 	if err := db.QueryRow(ctx, `

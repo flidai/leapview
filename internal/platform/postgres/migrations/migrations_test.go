@@ -93,7 +93,7 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 22 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() || recorder.sqls[14] != ContractPublicationIntegritySQL() || recorder.sqls[16] != PlatformBootstrapAuthoritySQL() || recorder.sqls[18] != AccessControlAuthoritySQL() || recorder.sqls[20] != TypedAttributeRegistrySQL() {
+	if len(recorder.sqls) != 24 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() || recorder.sqls[14] != ContractPublicationIntegritySQL() || recorder.sqls[16] != PlatformBootstrapAuthoritySQL() || recorder.sqls[18] != AccessControlAuthoritySQL() || recorder.sqls[20] != TypedAttributeRegistrySQL() || recorder.sqls[22] != SemanticAttributeControlSQL() {
 		t.Fatal("Apply() did not execute the authored migrations in order")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
@@ -143,6 +143,53 @@ func TestTypedAttributeRegistryMigrationIsForwardOnlyAndLeastPrivilege(t *testin
 	}
 	if TypedAttributeRegistryRevision != 11 || TypedAttributeRegistryMigrationID != "011_typed_attribute_registry" {
 		t.Fatalf("typed attribute registry identity = %d/%q", TypedAttributeRegistryRevision, TypedAttributeRegistryMigrationID)
+	}
+}
+
+func TestSemanticAttributeControlMigrationIsForwardOnlyAndLeastPrivilege(t *testing.T) {
+	sql := SemanticAttributeControlSQL()
+	for _, marker := range []string{
+		"SET ROLE leapview_control_owner",
+		"RESET ROLE",
+		"CREATE TABLE IF NOT EXISTS access.semantic_attribute_control_state",
+		"CREATE TABLE IF NOT EXISTS access.semantic_attribute_assignment",
+		"CREATE TABLE IF NOT EXISTS access.semantic_attribute_claim_mapping",
+		"SELECT d.value_type, d.value_shape, d.enabled, d.definition_version",
+		"semantic attribute assignment definition version does not match the definition",
+		"semantic attribute mapping definition version does not match the definition",
+		"control_revision",
+		"control_digest",
+		"semantic_attribute_control_state_immutable",
+		"semantic_attribute_assignment_immutable",
+		"semantic_attribute_claim_mapping_immutable",
+		"validate_semantic_attribute_owner_exists",
+		"GRANT SELECT, INSERT, UPDATE ON access.semantic_attribute_control_state",
+		"leapview_control_readonly",
+		"leapview_control_backup",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("semantic attribute control migration missing %q", marker)
+		}
+	}
+	if strings.Contains(sql, "DROP TABLE") || strings.Contains(sql, "ALTER TABLE") {
+		t.Fatal("semantic attribute control migration must be additive")
+	}
+	if SemanticAttributeControlRevision != 12 || SemanticAttributeControlMigrationID != "012_semantic_attribute_control" {
+		t.Fatalf("semantic attribute control identity = %d/%q", SemanticAttributeControlRevision, SemanticAttributeControlMigrationID)
+	}
+}
+
+func TestSemanticAttributeControlMigrationAllowsStaleIncarnationTombstones(t *testing.T) {
+	sql := SemanticAttributeControlSQL()
+	for _, marker := range []string{
+		"-- A stale active incarnation may be tombstoned after its definition",
+		"IF NOT tombstone_transition THEN",
+		"semantic attribute assignment definition version does not match the definition",
+		"semantic attribute mapping definition version does not match the definition",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("semantic attribute control migration missing stale-incarnation guard %q", marker)
+		}
 	}
 }
 
@@ -472,6 +519,9 @@ func validRevisions() map[int64]recordingRow {
 		},
 		TypedAttributeRegistryRevision: {
 			revision: TypedAttributeRegistryRevision, migrationID: TypedAttributeRegistryMigrationID, checksum: TypedAttributeRegistryChecksum(),
+		},
+		SemanticAttributeControlRevision: {
+			revision: SemanticAttributeControlRevision, migrationID: SemanticAttributeControlMigrationID, checksum: SemanticAttributeControlChecksum(),
 		},
 	}
 }

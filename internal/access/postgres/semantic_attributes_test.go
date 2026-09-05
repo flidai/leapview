@@ -1,17 +1,32 @@
 package postgres
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/access/trustedclaims"
 	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/semanticvalue"
 )
+
+type semanticAttributeClaimsVerifier struct {
+	claims trustedclaims.VerifiedClaims
+}
+
+func (v semanticAttributeClaimsVerifier) SourceKind() trustedclaims.SourceKind {
+	return trustedclaims.SourceOIDC
+}
+
+func (v semanticAttributeClaimsVerifier) Verify(context.Context, []byte) (trustedclaims.VerifiedClaims, error) {
+	return v.claims, nil
+}
 
 func TestSemanticAttributeRegistryDigestIsProfileQualifiedAndDeterministic(t *testing.T) {
 	empty, err := semanticAttributeRegistryDigest(semanticvalue.Profile, nil)
@@ -394,5 +409,106 @@ func TestSemanticAttributeRegistryPostgreSQL18ConcurrentRegistration(t *testing.
 	}
 	if snapshot.State.Revision != 1 || len(snapshot.Definitions) != 1 {
 		t.Fatalf("concurrent registry = %#v", snapshot)
+	}
+}
+
+func TestSemanticAttributeControlRowsRespectDefinitionVersionAcrossLifecycleChanges(t *testing.T) {
+	db := newAuditDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation := access.SemanticAttributeMutationContext{ActorPrincipalID: auditActorID}
+	definition, err := repo.RegisterSemanticAttribute(t.Context(), access.RegisterSemanticAttributeInput{
+		Name: "lifecycle_region", Type: semanticvalue.TypeString, Shape: access.SemanticAttributeScalar,
+		Mutation: mutation,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: auditActorID}
+	assignment, err := repo.SetSemanticAttributeAssignment(t.Context(), access.SemanticAttributeAssignmentInput{
+		DefinitionID: definition.ID, Subject: subject, Values: "west", Mutation: mutation,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapping, err := repo.SetTrustedClaimMapping(t.Context(), access.TrustedClaimMappingInput{
+		SourceKind: access.TrustedClaimSourceOIDC, Provider: "corp", Issuer: "https://issuer.example",
+		Audience: "dashboard", Claim: "region", DefinitionID: definition.ID, Mutation: mutation,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	envelope, err := trustedclaims.Verify(t.Context(), trustedclaims.RawEvidence{Source: trustedclaims.SourceOIDC, Raw: []byte("signed")}, semanticAttributeClaimsVerifier{claims: trustedclaims.VerifiedClaims{
+		Provider: "corp", Issuer: "https://issuer.example", Audience: "dashboard", Subject: auditActorID,
+		IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(10 * time.Minute),
+		CredentialFingerprint: strings.Repeat("a", 64), Claims: []trustedclaims.Claim{{Name: "region", Value: "west"}},
+	}}, trustedclaims.VerifyOptions{Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	metadata := definition.Metadata
+	metadata.DisplayName = "Lifecycle region"
+	definition, err = repo.UpdateSemanticAttributeMetadata(t.Context(), access.UpdateSemanticAttributeMetadataInput{
+		Name: definition.Name, Metadata: metadata, Mutation: mutation,
+	})
+	if err != nil || definition.DefinitionVersion != 2 {
+		t.Fatalf("metadata version bump = %#v, %v", definition, err)
+	}
+	if _, err := repo.EffectiveDirectSemanticAttributeAssignments(t.Context(), subject); !errors.Is(err, access.ErrSemanticAttributeSourceConflict) {
+		t.Fatalf("stale direct assignment resolution = %v, want fail-closed source conflict", err)
+	}
+	if _, err := repo.EffectiveSemanticAttributeAssignments(t.Context(), subject, envelope); !errors.Is(err, access.ErrSemanticAttributeSourceConflict) {
+		t.Fatalf("stale trusted mapping resolution = %v, want fail-closed source conflict", err)
+	}
+
+	replacement, err := repo.SetSemanticAttributeAssignment(t.Context(), access.SemanticAttributeAssignmentInput{
+		AssignmentID: assignment.ID, DefinitionID: definition.ID, Subject: subject, Values: "west",
+		ExpectedVersion: assignment.AssignmentVersion, Mutation: mutation,
+	})
+	if err != nil {
+		t.Fatalf("replace stale assignment: %v", err)
+	}
+	if replacement.ID == assignment.ID || replacement.DefinitionVersion != definition.DefinitionVersion || replacement.AssignmentVersion != 1 {
+		t.Fatalf("assignment replacement = %#v, old=%#v", replacement, assignment)
+	}
+	mappingReplacement, err := repo.SetTrustedClaimMapping(t.Context(), access.TrustedClaimMappingInput{
+		MappingID: mapping.ID, SourceKind: mapping.SourceKind, Provider: mapping.Provider, Issuer: mapping.Issuer,
+		Audience: mapping.Audience, Claim: mapping.Claim, DefinitionID: definition.ID,
+		ExpectedVersion: mapping.MappingVersion, Mutation: mutation,
+	})
+	if err != nil {
+		t.Fatalf("replace stale trusted mapping: %v", err)
+	}
+	if mappingReplacement.ID == mapping.ID || mappingReplacement.DefinitionVersion != definition.DefinitionVersion || mappingReplacement.MappingVersion != 1 {
+		t.Fatalf("mapping replacement = %#v, old=%#v", mappingReplacement, mapping)
+	}
+	if resolved, err := repo.EffectiveSemanticAttributeAssignments(t.Context(), subject, envelope); err != nil || len(resolved) != 1 || resolved[0].Source != "direct+trusted_claim" {
+		t.Fatalf("resolved replacement = %#v, %v", resolved, err)
+	}
+
+	definition, err = repo.SetSemanticAttributeEnabledExpected(t.Context(), definition.Name, false, definition.DefinitionVersion, mutation)
+	if err != nil || definition.Enabled || definition.DefinitionVersion != 3 {
+		t.Fatalf("disable version bump = %#v, %v", definition, err)
+	}
+	definition, err = repo.SetSemanticAttributeEnabledExpected(t.Context(), definition.Name, true, definition.DefinitionVersion, mutation)
+	if err != nil || !definition.Enabled || definition.DefinitionVersion != 4 {
+		t.Fatalf("restore version bump = %#v, %v", definition, err)
+	}
+	if _, err := repo.EffectiveDirectSemanticAttributeAssignments(t.Context(), subject); !errors.Is(err, access.ErrSemanticAttributeSourceConflict) {
+		t.Fatalf("restored stale direct assignment resolution = %v, want fail-closed source conflict", err)
+	}
+	if _, err := repo.EffectiveSemanticAttributeAssignments(t.Context(), subject, envelope); !errors.Is(err, access.ErrSemanticAttributeSourceConflict) {
+		t.Fatalf("restored stale trusted mapping resolution = %v, want fail-closed source conflict", err)
+	}
+
+	if revoked, err := repo.TombstoneSemanticAttributeAssignment(t.Context(), replacement.ID, replacement.AssignmentVersion, mutation); err != nil || !revoked.Tombstoned {
+		t.Fatalf("revoke stale assignment after lifecycle bump = %#v, %v", revoked, err)
+	}
+	if revoked, err := repo.TombstoneTrustedClaimMapping(t.Context(), mappingReplacement.ID, mappingReplacement.MappingVersion, mutation); err != nil || !revoked.Tombstoned {
+		t.Fatalf("revoke stale mapping after lifecycle bump = %#v, %v", revoked, err)
 	}
 }
