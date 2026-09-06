@@ -105,6 +105,9 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 		irGraph.Nodes[irGraph.Output] = sortNode
 		irGraph.NodeMeta = sortNode.NodeMeta
 	}
+	if err := p.securePlanGraph(irGraph); err != nil {
+		return Plan{}, err
+	}
 	rendered, irErr := planir.RenderDuckDB(irGraph)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("render row plan IR: %w", irErr)
@@ -200,6 +203,9 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 		irGraph.Nodes[irGraph.Output] = sortNode
 		irGraph.NodeMeta = sortNode.NodeMeta
 	}
+	if err := p.securePlanGraph(irGraph); err != nil {
+		return Plan{}, err
+	}
 	rendered, irErr := planir.RenderDuckDB(irGraph)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("render raw-value plan IR: %w", irErr)
@@ -222,6 +228,9 @@ func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
 	irGraph, irErr := p.buildFlatPlanIR(view.Dataset, nil, nil, request.Filters, nil, 0, 0)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("build count plan IR: %w", irErr)
+	}
+	if err := p.securePlanGraph(irGraph); err != nil {
+		return Plan{}, err
 	}
 	rendered, irErr := planir.RenderDuckDB(irGraph)
 	if irErr != nil {

@@ -99,6 +99,9 @@ func (p *Planner) renderAggregatePlanIR(request Request, resolved aggregateResol
 	if err := irGraph.Validate(); err != nil {
 		return Plan{}, fmt.Errorf("validate aggregate plan IR: %w", err)
 	}
+	if err := p.securePlanGraph(irGraph); err != nil {
+		return Plan{}, err
+	}
 	rendered, err := planir.RenderDuckDB(irGraph)
 	if err != nil {
 		return Plan{}, fmt.Errorf("render aggregate plan IR: %w", err)

@@ -33,8 +33,9 @@ adds an explicit activation-oriented compiler/evaluator for SemanticModel
 grant/filter policy against a registry snapshot, an exact registry-state match
 and valid control-state requirement at evaluation,
 fail-closed effective-value evaluation, redacted grant/filter outcomes, and
-typed PlanIR predicates and relationship routes. It does not yet place the
-planner SecurityBarrier (FAI-641), route authorization through semantic
+typed PlanIR predicates and relationship routes. FAI-641 adds explicit typed
+planner SecurityBarrier placement and sealed rewrite validation; see the
+[planner implementation boundary](semantic-access-planner.md). It does not route authorization through semantic
 consumers or discovery (FAI-642), establish cache/lifecycle/audit policy
 identity (FAI-645), wire real source-provider admission, or qualify full
 VAL-11 equivalence. Those requirements remain normative targets and their
@@ -42,8 +43,8 @@ evidence remains pending or partial below.
 
 The repository and contract tests cited here are source-level evidence. This
 specification makes no claim of a live PostgreSQL qualification/pass. FAI-639
-is the compiler/evaluator contextual-resolution slice; downstream planner,
-consumer, lifecycle, and provider-admission integration remain pending.
+is the compiler/evaluator contextual-resolution slice; FAI-641 is the planner
+slice. Consumer, lifecycle, and provider-admission integration remain pending.
 
 ## Change control
 
@@ -563,8 +564,9 @@ use of this identity remain unqualified under FAI-645, so LIF is not complete.
 | VAL-01–VAL-10 | [`internal/semanticvalue`](../../internal/semanticvalue/value.go), its [unit](../../internal/semanticvalue/value_test.go) and [cross-path](../../internal/semanticvalue/crosspath_test.go) tests, the independent [`profile-v1.json`](../../internal/semanticvalue/testdata/profile-v1.json) fixture, and semantic-filter integration | Implemented at the shared semantic-value boundary; typed control ingress also consumes it |
 | VAL-11 | The shared `internal/semanticvalue` canonicalizer is used by registry, assignment, mapping, effective-value, FAI-639 evaluation, and semantic-filter literal paths. Focused runtime canonicalization is covered; generated canonicalization, provider claim-ingestion/admission, candidate validation, full runtime equivalence, policy-digest, cache, and audit-projection equivalence remain unqualified. | Partial |
 | GRT-01–GRT-10 | [`semantic_access.go`](../../internal/analytics/query/semantic_access.go) compiles grant requirements and evaluates scalar/list matches, AND composition, transitive dependencies, and redacted outcomes; [`semantic_access_test.go`](../../internal/analytics/query/semantic_access_test.go) provides focused fixtures. Consumer enforcement remains pending under FAI-642. | Partial: compiler/evaluator boundary implemented; consumer enforcement pending |
-| FLT-01–FLT-10 | [`semantic_access.go`](../../internal/analytics/query/semantic_access.go) validates bindings and types, evaluates fail-closed filter inputs, and emits parameter-only typed PlanIR predicates with relationship routes; [`semantic_access_test.go`](../../internal/analytics/query/semantic_access_test.go) covers scalar/list AND composition and route evidence. SecurityBarrier placement and consumer enforcement remain pending under FAI-641/FAI-642. | Partial: compiler/evaluator boundary implemented; planner and consumer enforcement pending |
-| PLN-01–PLN-09 | Security-barrier IR validation and join, aggregate, rollup, and rewrite golden plans (FAI-641) | Pending |
+| FLT-01–FLT-10 | [`semantic_access.go`](../../internal/analytics/query/semantic_access.go) validates bindings and types, evaluates fail-closed filter inputs, and emits parameter-only typed PlanIR predicates with relationship routes; [`semantic_access_test.go`](../../internal/analytics/query/semantic_access_test.go) covers scalar/list AND composition and route evidence. [`security_plan.go`](../../internal/analytics/query/security_plan.go) places those predicates in distinct barriers. | Partial: compiler/evaluator and planner boundaries implemented; consumer enforcement pending FAI-642 |
+| PLN-01–PLN-06, PLN-08 | [`security_plan.go`](../../internal/analytics/query/security_plan.go), [`planir/security.go`](../../internal/analytics/query/planir/security.go), and the existing DuckDB renderer enforce scan-local barriers and preserve sealed occurrence identity. [`security_plan_test.go`](../../internal/analytics/query/security_plan_test.go) and [`planir/security_test.go`](../../internal/analytics/query/planir/security_test.go) exercise bound predicates, mixed sources, aliases, routed/reverse/multi-hop filters, member grants, outer joins, self-join occurrences, many-to-many execution, derived plans, bundle sharing, totals, and unsafe rewrites. | Implemented planner slice; focused Go/DuckDB execution qualification, not consumer or PostgreSQL qualification |
+| PLN-07, PLN-09 | Exact outer-join SQL goldens and deterministic typed-plan checks cover the implemented planner slice. Source substitution after sealing is rejected; no protected rollup/cache substitution admission is implemented. See the [transformation audit and remaining boundaries](semantic-access-planner.md). | Partial: consumer suggestions and lifecycle/cache/rollup identity remain FAI-642/645; exhaustive cross-consumer matrix remains FAI-648 |
 | ENF-01–ENF-11 | Catalog, dashboard, Explore, agent, export, API, and embed integration and discovery routing (FAI-642) | Pending |
 | CMP-01–CMP-06 | Policy-diff, compatibility, security-impact, version, and approval fixtures | Pending |
 | LIF-01–LIF-08 | Registry/control revision+digest identities and transactional control audit are implemented; FAI-639 registry-state binding is present, but FAI-645 cache partitioning, immediate event invalidation, semantic policy identity, semantic planning, generation references, and complete audit projection are not | Partial |

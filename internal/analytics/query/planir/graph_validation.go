@@ -144,7 +144,7 @@ func (g *Graph) Validate() error {
 	if len(g.AvailableMetrics) > 0 && !sameMetrics(g.AvailableMetrics, outputMeta.AvailableMetrics) {
 		return fmt.Errorf("graph available metrics do not match output node %q", g.Output)
 	}
-	return nil
+	return g.validateSecurity()
 }
 
 func validateMeta(meta NodeMeta, where string, requireID bool) error {
@@ -156,9 +156,14 @@ func validateMeta(meta NodeMeta, where string, requireID bool) error {
 
 func validateNode(node Node, nodes map[string]Node) error {
 	// Pointers are convenient when callers build a graph incrementally; the
-	// IR remains closed because all pointer forms still resolve to the eleven
+	// IR remains closed because all pointer forms still resolve to the
 	// concrete node types below.
 	switch value := node.(type) {
+	case *SecurityBarrier:
+		if value == nil {
+			return fmt.Errorf("node is nil")
+		}
+		return validateNode(*value, nodes)
 	case *ScanDataset:
 		if value == nil {
 			return fmt.Errorf("node is nil")
@@ -250,6 +255,8 @@ func validateNode(node Node, nodes map[string]Node) error {
 		metrics[metric.Name] = true
 	}
 	switch n := node.(type) {
+	case SecurityBarrier:
+		return validateSecurityBarrier(n, nodes)
 	case ScanDataset:
 		if n.Dataset == "" {
 			return fmt.Errorf("dataset is required")
@@ -261,6 +268,22 @@ func validateNode(node Node, nodes map[string]Node) error {
 			return fmt.Errorf("scan root datasets must contain only %q", n.Dataset)
 		}
 	case TraverseRelationship:
+		switch n.JoinType {
+		case "", RelationshipJoinLeft, RelationshipJoinInner, RelationshipJoinRight, RelationshipJoinFull:
+		default:
+			return fmt.Errorf("unsupported relationship join type %q", n.JoinType)
+		}
+		if n.TargetInput != "" {
+			target := nodes[n.TargetInput]
+			if target == nil || len(target.Meta().RootDatasets) != 1 || target.Meta().RootDatasets[0] != n.Path.ToDataset {
+				return fmt.Errorf("relationship protected target is inconsistent")
+			}
+			switch target.(type) {
+			case ScanDataset, *ScanDataset, SecurityBarrier, *SecurityBarrier:
+			default:
+				return fmt.Errorf("relationship target must be a governed scan or barrier")
+			}
+		}
 		if n.Input == "" {
 			return fmt.Errorf("input is required")
 		}
@@ -325,7 +348,7 @@ func validateNode(node Node, nodes map[string]Node) error {
 		}
 		input := nodes[n.Input]
 		switch input.(type) {
-		case ScanDataset, *ScanDataset, TraverseRelationship, *TraverseRelationship, FilterRows, *FilterRows, BundleBranches, *BundleBranches:
+		case ScanDataset, *ScanDataset, SecurityBarrier, *SecurityBarrier, TraverseRelationship, *TraverseRelationship, FilterRows, *FilterRows, BundleBranches, *BundleBranches:
 		default:
 			return fmt.Errorf("aggregate input %q crosses an aggregate boundary", n.Input)
 		}
@@ -868,7 +891,7 @@ func validateFilterPlacement(filter FilterRows, nodes map[string]Node) error {
 	}
 	phase := filter.Meta().FilterPhase
 	switch input.(type) {
-	case ScanDataset, *ScanDataset:
+	case ScanDataset, *ScanDataset, SecurityBarrier, *SecurityBarrier:
 		if phase != FilterPhaseScan {
 			return fmt.Errorf("scan filter must use scan phase, got %q", phase)
 		}
@@ -899,6 +922,12 @@ func nodeDatasets(id string, nodes map[string]Node, visiting map[string]bool) ma
 	}
 	result := map[string]bool{}
 	switch value := node.(type) {
+	case SecurityBarrier:
+		result = nodeDatasets(value.Input, nodes, visiting)
+	case *SecurityBarrier:
+		if value != nil {
+			result = nodeDatasets(value.Input, nodes, visiting)
+		}
 	case ScanDataset:
 		result[value.Dataset] = true
 	case *ScanDataset:

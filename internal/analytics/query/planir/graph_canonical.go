@@ -81,6 +81,23 @@ func removeExecutionTargets(value any) {
 func canonicalData(node Node) (json.RawMessage, error) {
 	var value any
 	switch n := node.(type) {
+	case *SecurityBarrier:
+		if n == nil {
+			return nil, fmt.Errorf("node is nil")
+		}
+		return canonicalData(*n)
+	case SecurityBarrier:
+		predicates := make([]Predicate, len(n.Predicates))
+		for i, p := range n.Predicates {
+			predicates[i] = canonicalPredicate(p)
+		}
+		value = struct {
+			Input      string                       `json:"input"`
+			Policy     string                       `json:"policy"`
+			Predicates []Predicate                  `json:"predicates,omitempty"`
+			Routes     map[string]RelationshipRoute `json:"routes,omitempty"`
+			Targets    map[string]string            `json:"targets,omitempty"`
+		}{n.Input, n.Policy, predicates, n.Routes, n.Targets}
 	case *ScanDataset:
 		if n == nil {
 			return nil, fmt.Errorf("node is nil")
@@ -148,9 +165,11 @@ func canonicalData(node Node) (json.RawMessage, error) {
 		}{n.Dataset, n.Relation}
 	case TraverseRelationship:
 		value = struct {
-			Input string           `json:"input"`
-			Path  RelationshipPath `json:"path"`
-		}{n.Input, canonicalPath(n.Path)}
+			Input       string               `json:"input"`
+			Path        RelationshipPath     `json:"path"`
+			TargetInput string               `json:"target_input,omitempty"`
+			JoinType    RelationshipJoinType `json:"join_type,omitempty"`
+		}{n.Input, canonicalPath(n.Path), n.TargetInput, n.JoinType}
 	case FilterRows:
 		predicate := canonicalPredicate(n.Predicate)
 		fieldRoutes := canonicalFieldRoutes(n.FieldRoutes)

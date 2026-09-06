@@ -9,8 +9,9 @@ import (
 )
 
 type Planner struct {
-	compiled      *CompiledModel
-	tableRelation TableRelation
+	compiled              *CompiledModel
+	tableRelation         TableRelation
+	semanticAccessContext *SemanticAccessEvaluationContext
 }
 
 // datasetTable resolves a semantic alias through the compiled serving

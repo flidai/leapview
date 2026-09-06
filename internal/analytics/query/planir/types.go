@@ -21,6 +21,7 @@ type Kind string
 
 const (
 	KindScanDataset          Kind = "ScanDataset"
+	KindSecurityBarrier      Kind = "SecurityBarrier"
 	KindTraverseRelationship Kind = "TraverseRelationship"
 	KindFilterRows           Kind = "FilterRows"
 	KindAggregateMetrics     Kind = "AggregateMetrics"
@@ -627,6 +628,7 @@ type ScanDataset struct {
 	NodeMeta
 	Dataset  string `json:"dataset"`
 	Relation string `json:"relation,omitempty"`
+	security *securityRequirement
 }
 
 func (ScanDataset) Kind() Kind       { return KindScanDataset }
@@ -636,14 +638,32 @@ func (ScanDataset) nodeMarker()      {}
 
 type TraverseRelationship struct {
 	NodeMeta
-	Input string           `json:"input"`
-	Path  RelationshipPath `json:"path"`
+	Input       string               `json:"input"`
+	Path        RelationshipPath     `json:"path"`
+	TargetInput string               `json:"target_input,omitempty"`
+	JoinType    RelationshipJoinType `json:"join_type,omitempty"`
 }
 
-func (TraverseRelationship) Kind() Kind         { return KindTraverseRelationship }
-func (n TraverseRelationship) Meta() NodeMeta   { return n.NodeMeta }
-func (n TraverseRelationship) Inputs() []string { return []string{n.Input} }
-func (TraverseRelationship) nodeMarker()        {}
+// RelationshipJoinType preserves null-extension intent at the typed boundary.
+// An absent value retains the existing left-traversal semantics.
+type RelationshipJoinType string
+
+const (
+	RelationshipJoinLeft  RelationshipJoinType = "left"
+	RelationshipJoinInner RelationshipJoinType = "inner"
+	RelationshipJoinRight RelationshipJoinType = "right"
+	RelationshipJoinFull  RelationshipJoinType = "full"
+)
+
+func (TraverseRelationship) Kind() Kind       { return KindTraverseRelationship }
+func (n TraverseRelationship) Meta() NodeMeta { return n.NodeMeta }
+func (n TraverseRelationship) Inputs() []string {
+	if n.TargetInput != "" {
+		return []string{n.Input, n.TargetInput}
+	}
+	return []string{n.Input}
+}
+func (TraverseRelationship) nodeMarker() {}
 
 type FilterRows struct {
 	NodeMeta
@@ -914,9 +934,10 @@ func (AnalyticalEnvelope) nodeMarker()        {}
 // documents the intended source roots.
 type Graph struct {
 	NodeMeta
-	Nodes  map[string]Node `json:"nodes"`
-	Roots  []string        `json:"roots,omitempty"`
-	Output string          `json:"output"`
+	Nodes        map[string]Node `json:"nodes"`
+	Roots        []string        `json:"roots,omitempty"`
+	Output       string          `json:"output"`
+	securitySeal map[string]string
 }
 
 func sortedStrings(values []string) []string {

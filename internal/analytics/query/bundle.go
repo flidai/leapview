@@ -67,6 +67,9 @@ func (p *Planner) renderBundlePlanIR(requests []BundleRequest, resolutions []agg
 	if err != nil {
 		return BundlePlan{}, err
 	}
+	if err := p.securePlanGraph(irGraph); err != nil {
+		return BundlePlan{}, err
+	}
 	rendered, err := planir.RenderDuckDB(irGraph)
 	if err != nil {
 		return BundlePlan{}, fmt.Errorf("render bundle plan IR: %w", err)

@@ -22,6 +22,8 @@ func (g *Graph) Explain() (string, error) {
 		m := n.Meta()
 		fmt.Fprintf(&b, "%s [%s] grain=%s phase=%s inputs=%v roots=%v fields=%v metrics=%v", id, n.Kind(), explainGrain(m.OutputGrain), m.FilterPhase, sortedStrings(n.Inputs()), sortedStrings(m.RootDatasets), explainFields(m.AvailableFields), explainMetrics(m.AvailableMetrics))
 		switch value := n.(type) {
+		case SecurityBarrier:
+			fmt.Fprintf(&b, " policy=%s predicates=%d", value.Policy, len(value.Predicates))
 		case ScanDataset:
 			fmt.Fprintf(&b, " dataset=%s", value.Dataset)
 		case TraverseRelationship:

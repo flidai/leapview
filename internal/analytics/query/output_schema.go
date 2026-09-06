@@ -149,6 +149,8 @@ func (p *Planner) deriveOutputNode(graph *planir.Graph, id string, memo map[stri
 	var states map[string]derivedOutputField
 	var err error
 	switch value := node.(type) {
+	case planir.SecurityBarrier:
+		states, err = p.deriveOutputNode(graph, value.Input, memo, visiting)
 	case planir.ScanDataset:
 		states = p.deriveScanOutput(value.NodeMeta)
 	case planir.TraverseRelationship:

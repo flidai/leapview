@@ -26,6 +26,9 @@ func (p *Planner) spatialAggregatePlanIR(request SpatialTileRequest, filters []F
 	if err := graph.Validate(); err != nil {
 		return nil, fmt.Errorf("validate spatial aggregate plan IR: %w", err)
 	}
+	if err := p.securePlanGraph(graph); err != nil {
+		return nil, err
+	}
 	return graph, nil
 }
 
@@ -43,8 +46,15 @@ func (p *Planner) spatialMetadataPlanIR(request SpatialMetadataRequest, filters 
 	if err != nil {
 		return nil, err
 	}
-	return p.buildBundlePlanIR(
+	graph, err := p.buildBundlePlanIR(
 		[]BundleRequest{{ID: "coordinate", Request: coordinateRequest}, {ID: "totals", Request: totalsRequest}},
 		[]aggregateResolution{coordinateResolved, totalsResolved},
 	)
+	if err != nil {
+		return nil, err
+	}
+	if err = p.securePlanGraph(graph); err != nil {
+		return nil, err
+	}
+	return graph, nil
 }

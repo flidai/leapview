@@ -59,10 +59,22 @@ func RenderDuckDB(graph *Graph) (Rendered, error) {
 	}
 	r := &duckRenderer{graph: graph, names: map[string]string{}, done: map[string]bool{}, useCount: map[string]int{}}
 	countNodeUses(graph, graph.Output, r.useCount)
+	// Materialize security sources before ordinary expressions are lowered so
+	// their parameters retain WITH-clause order independently of metric filters.
+	for _, id := range graph.reachableIDs() {
+		if b, ok := securityBarrier(graph.Nodes[id]); ok {
+			if _, err := r.sourceSecurityBarrier(b); err != nil {
+				return Rendered{}, err
+			}
+		}
+	}
+	securityArgs := append([]any(nil), r.args...)
+	r.args = nil
 	root, columns, err := r.renderNode(graph.Output)
 	if err != nil {
 		return Rendered{}, err
 	}
+	r.args = append(securityArgs, r.args...)
 	var sql string
 	if len(r.ctes) > 0 {
 		if strings.HasPrefix(strings.TrimSpace(root), "WITH ") {
@@ -86,8 +98,9 @@ func RenderDuckDB(graph *Graph) (Rendered, error) {
 		sql += root
 	} else if _, ok := asAnalyticalEnvelope(output); ok {
 		sql += root
-	} else if _, ok := asAggregate(output); ok && len(r.ctes) == 0 {
-		// Preserve the compact canonical form for a direct aggregate graph.
+	} else if _, ok := asAggregate(output); ok {
+		// An output aggregate returns a statement, including when its sources
+		// have materialized security CTEs.
 		sql += root
 	} else {
 		sql += "SELECT * FROM " + quoteName(root)
@@ -130,7 +143,7 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		return "", nil, fmt.Errorf("renderer node %q is unavailable", id)
 	}
 	switch value := node.(type) {
-	case ScanDataset, *ScanDataset, TraverseRelationship, *TraverseRelationship, FilterRows, *FilterRows:
+	case ScanDataset, *ScanDataset, SecurityBarrier, *SecurityBarrier, TraverseRelationship, *TraverseRelationship, FilterRows, *FilterRows:
 		return r.renderSource(id)
 	case AggregateMetrics, *AggregateMetrics:
 		n, ok := asAggregate(value)
@@ -509,6 +522,13 @@ func (r *duckRenderer) source(id string) (sourceContext, error) {
 		return sourceContext{}, fmt.Errorf("source node %q is unavailable", id)
 	}
 	switch n := node.(type) {
+	case SecurityBarrier:
+		return r.sourceSecurityBarrier(n)
+	case *SecurityBarrier:
+		if n == nil {
+			return sourceContext{}, fmt.Errorf("nil security barrier")
+		}
+		return r.sourceSecurityBarrier(*n)
 	case ScanDataset:
 		return r.scanContext(id, n), nil
 	case *ScanDataset:
@@ -635,6 +655,23 @@ func (r *duckRenderer) sourceTraverse(n TraverseRelationship) (sourceContext, er
 		return sourceContext{}, fmt.Errorf("relationship target %q: %w", n.Path.ToDataset, err)
 	}
 	toRelation := n.Path.ToRelation
+	if n.TargetInput != "" {
+		if _, err := r.source(n.TargetInput); err != nil {
+			return sourceContext{}, err
+		}
+		// Target sources are materialized barriers or bare scans. Remove the
+		// source alias here: this relationship owns its occurrence alias.
+		if b, ok := securityBarrier(r.graph.Nodes[n.TargetInput]); ok {
+			toRelation = r.cteName(b.NodeID)
+		} else if s, ok := securityScan(r.graph.Nodes[n.TargetInput]); ok {
+			toRelation = s.Relation
+			if toRelation == "" {
+				toRelation = quoteName(s.Dataset)
+			}
+		} else {
+			return sourceContext{}, fmt.Errorf("invalid relationship target")
+		}
+	}
 	if toRelation == "" {
 		toRelation = quoteName(n.Path.ToDataset)
 	}
@@ -648,7 +685,19 @@ func (r *duckRenderer) sourceTraverse(n TraverseRelationship) (sourceContext, er
 		joined = true
 	}
 	alias := fmt.Sprintf("r%d", len(ctx.aliases)+1)
-	ctx.from += " LEFT JOIN " + toRelation + " AS " + quoteName(alias) + " ON "
+	join := "LEFT"
+	switch n.JoinType {
+	case "", RelationshipJoinLeft:
+	case RelationshipJoinInner:
+		join = "INNER"
+	case RelationshipJoinRight:
+		join = "RIGHT"
+	case RelationshipJoinFull:
+		join = "FULL OUTER"
+	default:
+		return sourceContext{}, fmt.Errorf("unsupported relationship join type")
+	}
+	ctx.from += " " + join + " JOIN " + toRelation + " AS " + quoteName(alias) + " ON "
 	parts := make([]string, 0, len(n.Path.JoinKeys))
 	for _, key := range n.Path.JoinKeys {
 		if err := validName(key.From); err != nil {

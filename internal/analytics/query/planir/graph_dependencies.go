@@ -15,6 +15,22 @@ func (g *Graph) Dependencies() (Dependencies, error) {
 	for _, id := range g.reachableIDs() {
 		node := g.Nodes[id]
 		meta := node.Meta()
+		if barrier, ok := securityBarrier(node); ok {
+			// Security-only fields and correlated route keys are dependencies,
+			// even when they do not appear in the consumer projection.
+			for _, predicate := range barrier.Predicates {
+				for _, field := range predicate.fields() {
+					if !strings.Contains(field, ".") && len(meta.RootDatasets) == 1 {
+						field = meta.RootDatasets[0] + "." + field
+					}
+					physical[field] = struct{}{}
+				}
+			}
+			meta.RelationshipRoutes = append([]RelationshipRoute(nil), meta.RelationshipRoutes...)
+			for _, route := range barrier.Routes {
+				meta.RelationshipRoutes = append(meta.RelationshipRoutes, route)
+			}
+		}
 		for _, root := range meta.RootDatasets {
 			if root != "" {
 				datasets[root] = struct{}{}
