@@ -18,13 +18,16 @@ func spatialEnvelopeMeta(graph *planir.Graph, columns []string, id string) plani
 	return meta
 }
 
-func renderSpatialEnvelopePlan(graph *planir.Graph, envelope planir.SpatialEnvelope, mode string) (Plan, error) {
+func (p *Planner) renderSpatialEnvelopePlan(graph *planir.Graph, envelope planir.SpatialEnvelope, mode string, members []semanticAccessMemberRef) (Plan, error) {
 	if graph == nil {
 		return Plan{}, fmt.Errorf("spatial envelope graph is nil")
 	}
 	graph.Nodes[envelope.NodeID] = envelope
 	graph.Output = envelope.NodeID
 	graph.NodeMeta = envelope.NodeMeta
+	if _, err := p.securePlanGraph(graph, members...); err != nil {
+		return Plan{}, err
+	}
 	if err := graph.Validate(); err != nil {
 		return Plan{}, fmt.Errorf("validate spatial envelope plan IR: %w", err)
 	}
@@ -39,13 +42,16 @@ func renderSpatialEnvelopePlan(graph *planir.Graph, envelope planir.SpatialEnvel
 	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, Mode: mode, Datasets: deps.Datasets, PhysicalDependencies: deps.PhysicalFields, RelationshipPaths: deps.RelationshipPaths, IR: graph}, nil
 }
 
-func renderAnalyticalEnvelopePlan(graph *planir.Graph, envelope planir.AnalyticalEnvelope, mode string) (Plan, error) {
+func (p *Planner) renderAnalyticalEnvelopePlan(graph *planir.Graph, envelope planir.AnalyticalEnvelope, mode string, members []semanticAccessMemberRef) (Plan, error) {
 	if graph == nil {
 		return Plan{}, fmt.Errorf("analytical envelope graph is nil")
 	}
 	graph.Nodes[envelope.NodeID] = envelope
 	graph.Output = envelope.NodeID
 	graph.NodeMeta = envelope.NodeMeta
+	if _, err := p.securePlanGraph(graph, members...); err != nil {
+		return Plan{}, err
+	}
 	if err := graph.Validate(); err != nil {
 		return Plan{}, fmt.Errorf("validate analytical envelope plan IR: %w", err)
 	}

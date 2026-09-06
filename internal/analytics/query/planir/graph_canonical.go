@@ -100,6 +100,11 @@ func canonicalData(node Node) (json.RawMessage, error) {
 			return nil, fmt.Errorf("node is nil")
 		}
 		return canonicalData(*n)
+	case *SecurityBarrier:
+		if n == nil {
+			return nil, fmt.Errorf("node is nil")
+		}
+		return canonicalData(*n)
 	case *TraverseRelationship:
 		if n == nil {
 			return nil, fmt.Errorf("node is nil")
@@ -157,14 +162,24 @@ func canonicalData(node Node) (json.RawMessage, error) {
 		return canonicalData(*n)
 	case ScanDataset:
 		value = struct {
-			Dataset  string `json:"dataset"`
-			Relation string `json:"relation,omitempty"`
-		}{n.Dataset, n.Relation}
+			Dataset                 string `json:"dataset"`
+			Relation                string `json:"relation,omitempty"`
+			RequiresSecurityBarrier bool   `json:"requires_security_barrier,omitempty"`
+		}{n.Dataset, n.Relation, n.RequiresSecurityBarrier}
+	case SecurityBarrier:
+		value = struct {
+			Input          string     `json:"input"`
+			Dataset        string     `json:"dataset"`
+			PolicyDigest   string     `json:"policy_digest"`
+			DecisionDigest string     `json:"decision_digest"`
+			Predicate      *Predicate `json:"predicate,omitempty"`
+		}{n.Input, n.Dataset, n.PolicyDigest, n.DecisionDigest, cloneSecurityPredicate(n.Predicate)}
 	case TraverseRelationship:
 		value = struct {
-			Input string           `json:"input"`
-			Path  RelationshipPath `json:"path"`
-		}{n.Input, canonicalPath(n.Path)}
+			Input       string           `json:"input"`
+			TargetInput string           `json:"target_input,omitempty"`
+			Path        RelationshipPath `json:"path"`
+		}{n.Input, n.TargetInput, canonicalPath(n.Path)}
 	case FilterRows:
 		predicate := canonicalPredicate(n.Predicate)
 		fieldRoutes := canonicalFieldRoutes(n.FieldRoutes)

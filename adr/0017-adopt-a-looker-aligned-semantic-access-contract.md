@@ -353,7 +353,8 @@ SemanticModel policy compiler/evaluator handoff described below, including
 target qualification and typed PlanIR predicates. It does not implement the
 planner security barrier, catalog or query enforcement, semantic generation
 references, cache/event invalidation, or ordinary semantic consumer
-integration; those remain deferred to FAI-641 and later slices.
+integration. FAI-641 supplies the separate planner barrier boundary; consumer
+integration and the remaining lifecycle capabilities belong to later slices.
 
 The source names SAML, OIDC, embed, and service token are accepted as closed
 mapping/verifier vocabulary only. FAI-637 does not claim an OIDC, SAML, embed,
@@ -365,9 +366,9 @@ pending.
 FAI-619 qualifies only the generated structural SemanticModel contract and
 compatibility lowering boundary. Its fixtures do not claim semantic access
 policy compilation, planner security barriers, or consumer admission. FAI-639
-now supplies the compiler/evaluator boundary described below; planner
-security-barrier construction and consumer admission remain pending under
-FAI-641. VAL-11 remains Partial until generated canonicalization and complete
+now supplies the compiler/evaluator boundary described below; FAI-641 supplies
+planner security-barrier construction, while FAI-642 consumer admission remains
+pending. VAL-11 remains Partial until generated canonicalization and complete
 control-plane/runtime equivalence are evidenced.
 
 ### FAI-639 compiler/evaluator boundary
@@ -421,7 +422,7 @@ validity interval, and verifier fingerprints; raw values and claims are not
 identity inputs.
 
 The subject closure supplied when direct evidence is sealed is a trusted
-access-capability input, not a consumer assertion. FAI-641 integration must
+access-capability input, not a consumer assertion. FAI-642 composition must
 obtain it from the authoritative principal/group resolver and must not expose
 the evidence constructor as a request or browser boundary.
 
@@ -449,11 +450,13 @@ from both identity projections. These identities are an in-process handoff
 and audit/cache input; FAI-639 does not yet publish invalidation events or
 partition consumer/result caches.
 
-FAI-641 remains responsible for consuming this decision and typed PlanIR
+FAI-641 owns consumption of this decision and typed PlanIR
 output in the governed planner. In particular, it must attach a security
 barrier at every protected dataset occurrence before joins, outer-join null
-extension, aggregation, suggestions, totals, rewrites, and execution, then
-wire the same admission to catalogs and every semantic consumer. FAI-639's
+extension, aggregation, suggestions, totals, rewrites, and execution.
+FAI-642 separately owns wiring the same admission to catalogs and every
+semantic consumer. The [planner boundary](../docs/articles/architecture/semantic-access-planner.md)
+records the scan-occurrence and trusted-input contract. FAI-639's
 compiler/evaluator tests are not evidence that those barriers, catalog rules,
 consumer adapters, generation references, cache invalidation, or end-to-end
 query enforcement exist.

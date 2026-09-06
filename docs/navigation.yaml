@@ -550,6 +550,11 @@ sections:
             type: explanation
             summary: Understand typed semantic attribute identity, ownership, lifecycle, and compatibility boundaries.
             source: articles/architecture/semantic-attribute-registry.md
+          - slug: architecture/semantic-access-planner
+            title: Semantic access planner boundary
+            type: explanation
+            summary: Place typed authorization barriers before protected scans participate in relational operations.
+            source: articles/architecture/semantic-access-planner.md
           - slug: architecture/arrow-optimization-evidence
             title: Evidence-gated Arrow optimization
             type: explanation

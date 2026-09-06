@@ -127,7 +127,7 @@ func (p *Planner) buildBundlePlanIR(requests []BundleRequest, resolutions []aggr
 	return merged, nil
 }
 
-func (p *Planner) bundleBranchDependencyProjections(requests []BundleRequest, resolutions []aggregateResolution) ([]DependencyProjection, []string, []string, error) {
+func (p *Planner) bundleBranchDependencyProjections(requests []BundleRequest, resolutions []aggregateResolution, admission semanticAccessAdmission) ([]DependencyProjection, []string, []string, error) {
 	projections := make([]DependencyProjection, len(requests))
 	fingerprints := make([]string, len(requests))
 	equivalenceDigests := make([]string, len(requests))
@@ -135,6 +135,11 @@ func (p *Planner) bundleBranchDependencyProjections(requests []BundleRequest, re
 		graph, err := p.buildAggregatePlanIR(requests[i].Request, resolutions[i])
 		if err != nil {
 			return nil, nil, nil, err
+		}
+		if len(admission.Policies) > 0 {
+			if err := planir.ApplySecurityBarriers(graph, admission.Policies); err != nil {
+				return nil, nil, nil, fmt.Errorf("secure bundle branch %q: %w", requests[i].ID, err)
+			}
 		}
 		projections[i], err = (Plan{IR: graph}).ResultDependencies()
 		if err != nil {
