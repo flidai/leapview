@@ -2943,7 +2943,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"go-application-validation:",
 		"name: Go application tests (PR)",
 		"frontend-validation:",
-		"name: Frontend tests (PR)",
+		"name: Frontend tests (PR, ${{ matrix.shard }})",
 		"postgres-isolation-validation:",
 		"name: PostgreSQL topology isolation (PR)",
 		"spatial-tile-benchmarks:",
@@ -2954,7 +2954,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"run: task ci:lane:go:apigen",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
+		"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
@@ -2977,6 +2977,16 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	goApplicationCI := workflowJobBlock(t, text, "go-application-validation")
 	frontendCI := workflowJobBlock(t, text, "frontend-validation")
 	postgresIsolationCI := workflowJobBlock(t, text, "postgres-isolation-validation")
+	for _, want := range []string{
+		"name: Frontend tests (PR, ${{ matrix.shard }})",
+		"fail-fast: false",
+		"shard: [core, reports, chat, data, site]",
+		"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
+	} {
+		if !strings.Contains(frontendCI, want) {
+			t.Fatalf("PR frontend validation missing shard contract %q", want)
+		}
+	}
 	for name, block := range map[string]string{
 		"apigen-validation":             apigenCI,
 		"go-packages-validation":        goPackagesCI,
@@ -3037,7 +3047,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"go-application-validation:",
 		"name: Go application tests (merge queue)",
 		"frontend-validation:",
-		"name: Frontend tests (merge queue)",
+		"name: Frontend tests (merge queue, ${{ matrix.shard }})",
 		"full-validation:",
 		"name: Full merge validation",
 		"runs-on: ubuntu-24.04",
@@ -3053,6 +3063,17 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}
 	if strings.Contains(mergeText, "group: merge-validation-${{ github.repository }}") {
 		t.Fatal("merge validation concurrency must not cancel distinct merge-queue candidates")
+	}
+	mergeFrontendCI := workflowJobBlock(t, mergeText, "frontend-validation")
+	for _, want := range []string{
+		"name: Frontend tests (merge queue, ${{ matrix.shard }})",
+		"fail-fast: false",
+		"shard: [core, reports, chat, data, site]",
+		"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
+	} {
+		if !strings.Contains(mergeFrontendCI, want) {
+			t.Fatalf("merge-queue frontend validation missing shard contract %q", want)
+		}
 	}
 	goPackagesMerge := workflowJobBlock(t, mergeText, "go-packages-validation")
 	for _, want := range []string{
@@ -3128,7 +3149,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}{
 		{block: goPackagesCI, want: "task ci:lane:go:packages"},
 		{block: goApplicationCI, want: "task ci:lane:go:application"},
-		{block: frontendCI, want: "task ci:lane:frontend"},
+		{block: frontendCI, want: "task ci:lane:frontend:shard SHARD=${{ matrix.shard }}"},
 	} {
 		for _, want := range []string{"uses: ./.github/actions/setup-ci", "task ci:prepare", contract.want} {
 			if !strings.Contains(contract.block, want) {
@@ -3514,25 +3535,41 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 		for _, want := range []string{
 			contract.frontendTimeout,
 			prepareWatchdog,
-			"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
+			"fail-fast: false",
+			"shard: [core, reports, chat, data, site]",
+			"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
 		} {
 			if !strings.Contains(frontend, want) {
-				t.Fatalf("%s frontend lane does not bound and retry hung Bun work: missing %q", workflow, want)
+				t.Fatalf("%s frontend shard matrix is missing %q", workflow, want)
 			}
 		}
 	}
 
 	taskfile, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
 	require.NoError(t, err)
+	frontendShard := taskfileTaskBlock(t, string(taskfile), "ci:lane:frontend:shard")
+	for _, want := range []string{
+		"enum: [core, reports, chat, data, site]",
+		"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}",
+	} {
+		if !strings.Contains(frontendShard, want) {
+			t.Fatalf("frontend shard lane must retain its bounded retry contract: missing %q", want)
+		}
+	}
 	frontendCore := taskfileTaskBlock(t, string(taskfile), "ci:test:frontend:core")
 	if !strings.Contains(frontendCore, "node --test scripts/ci_watchdog.test.mjs") {
 		t.Fatal("frontend core contract must exercise the Node watchdog independently of Bun")
 	}
 
 	nodeDeps := taskfileTaskBlock(t, string(taskfile), "node:deps")
-	for _, want := range []string{"method: checksum", "package.json", "bun.lock", "node_modules/.bin/esbuild"} {
+	for _, want := range []string{"run: once", "bun install --frozen-lockfile"} {
 		if !strings.Contains(nodeDeps, want) {
-			t.Errorf("node:deps must cache a verified install across nested preparation tasks: missing %q", want)
+			t.Errorf("node:deps must share one frozen install across nested preparation tasks: missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"sources:", "generates:", "status:", "ignore_error:"} {
+		if strings.Contains(nodeDeps, forbidden) {
+			t.Errorf("node:deps must verify the installed tree on each invocation and propagate failures, found %q", forbidden)
 		}
 	}
 

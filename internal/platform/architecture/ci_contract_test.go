@@ -70,9 +70,27 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	if strings.Contains(frontendLane, "- task: build") {
 		t.Fatal("frontend lane must not replace production assets while Go tests are running")
 	}
+	for _, shard := range []string{"core", "reports", "chat", "data", "site"} {
+		want := "- task: ci:lane:frontend:shard\n        vars: { SHARD: " + shard + " }"
+		if !strings.Contains(frontendLane, want) {
+			t.Fatalf("frontend aggregate lane missing shard %q", shard)
+		}
+	}
+	frontendShard := taskfileTaskBlock(t, taskfile, "ci:lane:frontend:shard")
+	for _, want := range []string{
+		"enum: [core, reports, chat, data, site]",
+		"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}",
+	} {
+		if !strings.Contains(frontendShard, want) {
+			t.Fatalf("frontend shard lane missing bounded retry contract %q", want)
+		}
+	}
 	localFrontendLane := taskfileTaskBlock(t, taskfile, "ci:lane:frontend:local")
-	if !strings.Contains(localFrontendLane, "node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend") {
-		t.Fatal("local frontend lane must diagnose and retry a hung Bun process")
+	if !strings.Contains(localFrontendLane, "- task: ci:lane:frontend") {
+		t.Fatal("local frontend lane must invoke the aggregate frontend shards")
+	}
+	if strings.Contains(localFrontendLane, "node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend") {
+		t.Fatal("local frontend lane must not apply one aggregate watchdog to all frontend shards")
 	}
 	frontendSite := taskfileTaskBlock(t, taskfile, "ci:test:frontend:site")
 	if !strings.Contains(frontendSite, "bun run test:site:prepared") {
@@ -120,7 +138,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
+		"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
 		"run: task generated:check",
 	} {
 		if !strings.Contains(prWorkflow, want) {
@@ -135,7 +153,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"run: task ci:lane:go:apigen",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
+		"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
 		"run: task ci:full:extras",
 	} {
 		if !strings.Contains(mergeWorkflow, want) {
@@ -150,12 +168,28 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"run: task ci:lane:go:apigen",
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
-		"run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
+		"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
 		"run: task ci:full:extras",
 		"run: task ci:nightly:extras",
 	} {
 		if !strings.Contains(nightlyWorkflow, want) {
 			t.Fatalf("nightly workflow missing %q", want)
+		}
+	}
+	for workflowName, workflow := range map[string]string{
+		"ci.yml":               prWorkflow,
+		"merge-validation.yml": mergeWorkflow,
+		"nightly.yml":          nightlyWorkflow,
+	} {
+		frontend := workflowJobBlock(t, workflow, "frontend-validation")
+		for _, want := range []string{
+			"fail-fast: false",
+			"shard: [core, reports, chat, data, site]",
+			"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
+		} {
+			if !strings.Contains(frontend, want) {
+				t.Fatalf("%s frontend validation missing shard contract %q", workflowName, want)
+			}
 		}
 	}
 }

@@ -210,12 +210,10 @@ tasks:
 
   node:deps:
     desc: Install JavaScript dependencies with Bun
-    method: checksum
-    sources:
-      - package.json
-      - bun.lock
-    generates:
-      - node_modules/.bin/esbuild
+    # Nested dependency paths must share one writer to this checkout's tree.
+    # Verify the frozen graph on every Task invocation; a binary's presence
+    # cannot establish that the complete installed dependency tree is sound.
+    run: once
     cmds:
       - bun install --frozen-lockfile
 
@@ -305,6 +303,8 @@ tasks:
     desc: Run global browser contracts, typechecks, and core application tests
     cmds:
       - node --test scripts/ci_watchdog.test.mjs
+      - bun test scripts/frontend_ci_contract.test.ts
+      - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/ensure_playwright.test.ts
       - bun run test:primer-primitives
       - bun run test:primer-alignment
@@ -1403,18 +1403,34 @@ tasks:
       - task: test:go:external
 
   ci:lane:frontend:
-    desc: Run the bounded frontend and browser-contract lane
+    desc: Run every bounded frontend shard sequentially on a shared local machine
     cmds:
-      - task: ci:test:frontend:core
-      - task: ci:test:frontend:reports
-      - task: ci:test:frontend:chat
-      - task: ci:test:frontend:data
-      - task: ci:test:frontend:site
+      - task: ci:lane:frontend:shard
+        vars: { SHARD: core }
+      - task: ci:lane:frontend:shard
+        vars: { SHARD: reports }
+      - task: ci:lane:frontend:shard
+        vars: { SHARD: chat }
+      - task: ci:lane:frontend:shard
+        vars: { SHARD: data }
+      - task: ci:lane:frontend:shard
+        vars: { SHARD: site }
+
+  ci:lane:frontend:shard:
+    desc: Run one isolated frontend shard with the hosted-CI hang watchdog
+    requires:
+      vars:
+        - name: SHARD
+          enum: [core, reports, chat, data, site]
+    cmds:
+      # Bound a single unit of work, not the cumulative runtime of all five.
+      # Hosted CI gives each shard its own runner; local CI avoids CPU contention.
+      - node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}
 
   ci:lane:frontend:local:
     desc: Run the frontend lane locally with the hosted-CI hang watchdog
     cmds:
-      - node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend
+      - task: ci:lane:frontend
 
   ci:prepare:
     desc: Generate and build the shared inputs required by every CI validation lane
