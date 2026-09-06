@@ -14,7 +14,7 @@ func TestSemanticConsumersUseOneDiscoveryAndPlannerBoundary(t *testing.T) {
 		{"internal/dashboard/queryauthz/semantic_discovery.go", []string{"SemanticAccessResolutionSnapshot(", "NewSemanticAccessConsumer(", "snapshot.ValidateBound()", "consumer.Authorize("}},
 		{"internal/project/module/semantic_catalog.go", []string{"lease.Identity()", "compiled.MatchesModel(model)", "NewSemanticAccessDiscovery("}},
 		{"internal/analytics/materialize/semantic_consumer.go", []string{"SemanticAccessConsumerContextFromContext(", "consumer.ValidatePlan("}},
-		{"internal/access/postgres/semantic_attribute_resolution.go", []string{"REPEATABLE READ, READ ONLY", "requireLiveSemanticAttributePrincipal(", "ListPrincipalSemanticAttributeGroups("}},
+		{"internal/access/postgres/semantic_attribute_resolution.go", []string{"BeginTx(ctx, pgx.TxOptions{", "IsoLevel: pgx.RepeatableRead", "AccessMode: pgx.ReadOnly", "requireLiveSemanticAttributePrincipal(", "ListPrincipalSemanticAttributeGroups("}},
 	} {
 		body := readArchitectureFixture(t, root, check.path)
 		for _, fragment := range check.required {

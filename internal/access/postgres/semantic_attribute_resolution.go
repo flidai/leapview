@@ -18,6 +18,10 @@ type semanticAttributeOwnedTransaction interface {
 	Rollback(context.Context) error
 }
 
+type semanticAttributeTransactionBeginner interface {
+	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
+}
+
 // ResolveSemanticAttributes resolves one principal's direct and active-group
 // assignments together with the registry and control snapshots. The method
 // deliberately owns the transaction: callers must not be able to supply a
@@ -49,14 +53,15 @@ func (r *Repository) ResolveSemanticAttributes(ctx context.Context, subject acce
 		return access.SemanticAttributeResolution{}, errors.New("semantic attribute resolution rejects caller-owned PostgreSQL transactions")
 	}
 
-	tx, err := r.beginTx(ctx)
+	beginner, ok := db.(semanticAttributeTransactionBeginner)
+	if !ok {
+		return access.SemanticAttributeResolution{}, errors.New("access PostgreSQL database must support explicit read-only transactions")
+	}
+	tx, err := beginner.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return access.SemanticAttributeResolution{}, fmt.Errorf("begin semantic attribute resolution transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`); err != nil {
-		return access.SemanticAttributeResolution{}, fmt.Errorf("set semantic attribute resolution transaction: %w", err)
-	}
 
 	bound := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
 	if err := requireLiveSemanticAttributePrincipal(ctx, tx, subject.ID); err != nil {
