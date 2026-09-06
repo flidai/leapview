@@ -51,8 +51,9 @@ The repository and contract tests cited here qualify only their linked slices,
 not the complete specification. The consumer checkpoint records its focused
 live PostgreSQL 18 Access-resolution evidence separately. FAI-639
 is the compiler/evaluator contextual-resolution slice; FAI-641 is the planner
-slice. Consumer qualification is partial; lifecycle and provider-admission
-integration remain pending.
+slice. FAI-648 adds integration evidence for generated-policy execution and
+PostgreSQL lifecycle-to-cache enforcement. Consumer qualification remains
+partial; production activation and provider-admission integration remain pending.
 
 ## Change control
 
@@ -252,8 +253,9 @@ boundary for matching trusted mappings. It canonicalizes values through the
 shared semantic-value boundary. Equal values from multiple sources may be
 combined; conflicting values for one definition return a source-conflict
 error. FAI-639 consumes this effective-value projection at the semantic policy
-evaluator boundary, but the resolver is not yet wired to a real provider
-adapter or semantic consumer.
+evaluator boundary. FAI-642 exposes authenticated direct/group resolution to
+request-bound semantic consumers; real provider adapters and production
+activation composition remain deferred.
 
 ## Platform-admin control flow
 
@@ -493,9 +495,9 @@ already evaluate the profile.
 
 FAI-637 currently persists and validates the two durable identity pairs above;
 FAI-639 binds compiled policy and runtime evaluation to the registry state and
-requires a valid control state. Neither slice publishes invalidation events or
-provides a semantic result-cache consumer. The immediate invalidation identity
-for the future consumer boundary is therefore:
+requires a valid control state. Those authority slices do not publish
+invalidation events. FAI-642/645 consume their identities through existing
+consumer and cache read-through checks:
 
 ```text
 (instance, semantic generation, principal,
@@ -567,31 +569,19 @@ unbound trusted-claim cache reuse disabled. Full LIF remains incomplete.
 
 ## Evidence ledger
 
-The PostgreSQL repair qualification at `a63961bb1284` closes the migration,
-publication and live identity/access repository blockers; see the
-[repair evidence](data-contract-versioning-conformance.md#postgresql-qualification-repair-2026-09-06).
-It does not qualify the pending consumer, policy-cache or activation rows below.
-FAI-641 remains IMPLEMENTED / PARTIAL: PLN-07 substitution admission and the
-PLN-09 suggestions/rollup/full consumer evidence remain explicitly bounded by
-FAI-642/645/648. Rejection of unsupported substitution is qualified, not positive
-support for those paths. No downstream feature or issue state changes here.
+The [FAI-648 qualification matrix](semantic-access-qualification.md) is the
+single current per-requirement status ledger. It records implementation owner,
+exact executable evidence, PASS/PARTIAL/FAIL/NOT APPLICABLE disposition and
+remaining limits for every normative requirement above, plus the identity
+lifecycle prerequisites. Earlier milestone specifications retain historical
+checkpoint results; their grouped statuses do not override this matrix.
 
-| Requirement range | Evidence | Status |
-|---|---|---|
-| CHG-01–CHG-04 | Profile-version, historical-policy, and normative-change checks | Pending |
-| STR-01–STR-12 | Generated TypeSpec, JSON Schema, DTO, extracted-YAML, and authoring-registry fixtures | Pending |
-| ATT-01–ATT-04, ATT-08, ATT-11–ATT-12 | PostgreSQL registry/control migrations and repositories, typed API envelopes, canonical-value tests, trustedclaims structural tests, and platform-admin route/attenuation tests | Partial: durable definition/assignment/mapping boundaries are implemented; principal-context integration, source adapters, and semantic-consumer admission are not. |
-| ATT-05–ATT-07, ATT-09–ATT-10 | Control snapshot identity and disable/tombstone behavior exist; FAI-639 requires an exact registry-state match and validates effective values fail-closed. FAI-642 returns direct/group values with registry/control state from one PostgreSQL snapshot and rechecks it at result release; see [consumer evidence](semantic-access-consumers.md). Provider admission, runtime expiry wiring, dependent-object invalidation, and rollback retention checks remain unqualified. | Partial |
-| VAL-01–VAL-10 | [`internal/semanticvalue`](../../internal/semanticvalue/value.go), its [unit](../../internal/semanticvalue/value_test.go) and [cross-path](../../internal/semanticvalue/crosspath_test.go) tests, the independent [`profile-v1.json`](../../internal/semanticvalue/testdata/profile-v1.json) fixture, and semantic-filter integration | Implemented at the shared semantic-value boundary; typed control ingress also consumes it |
-| VAL-11 | The shared `internal/semanticvalue` canonicalizer is used by registry, assignment, mapping, effective-value, FAI-639 evaluation, and semantic-filter literal paths. Focused runtime canonicalization is covered; generated canonicalization, provider claim-ingestion/admission, candidate validation, full runtime equivalence, policy-digest, cache, and audit-projection equivalence remain unqualified. | Partial |
-| GRT-01–GRT-10 | [`semantic_access.go`](../../internal/analytics/query/semantic_access.go) compiles grant requirements and evaluates scalar/list matches, AND composition, transitive dependencies, and redacted outcomes; [`semantic_access_test.go`](../../internal/analytics/query/semantic_access_test.go) provides focused fixtures. [FAI-642](semantic-access-consumers.md) adds consumer enforcement without another evaluator. | Partial: compiler/evaluator and consumer slices implemented; production/cross-consumer qualification remains pending |
-| FLT-01–FLT-10 | [`semantic_access.go`](../../internal/analytics/query/semantic_access.go) validates bindings and types, evaluates fail-closed filter inputs, and emits parameter-only typed PlanIR predicates with relationship routes; [`semantic_access_test.go`](../../internal/analytics/query/semantic_access_test.go) covers scalar/list AND composition and route evidence. [`security_plan.go`](../../internal/analytics/query/security_plan.go) places those predicates in distinct barriers; [FAI-642](semantic-access-consumers.md) checks their admitted execution envelope. | Partial: compiler/evaluator, planner and consumer slices implemented; production/cross-consumer qualification remains pending |
-| PLN-01–PLN-06, PLN-08 | [`security_plan.go`](../../internal/analytics/query/security_plan.go), [`planir/security.go`](../../internal/analytics/query/planir/security.go), and the existing DuckDB renderer enforce scan-local barriers and preserve sealed occurrence identity. [`security_plan_test.go`](../../internal/analytics/query/security_plan_test.go) and [`planir/security_test.go`](../../internal/analytics/query/planir/security_test.go) exercise bound predicates, mixed sources, aliases, routed/reverse/multi-hop filters, member grants, outer joins, self-join occurrences, many-to-many execution, derived plans, bundle sharing, totals, and unsafe rewrites. | Implemented planner slice; focused Go/DuckDB execution qualification, not consumer or PostgreSQL qualification |
-| PLN-07, PLN-09 | Exact outer-join SQL goldens and deterministic typed-plan checks cover the implemented planner slice. Source substitution after sealing is rejected; no protected rollup/cache substitution admission is implemented. See the [transformation audit and remaining boundaries](semantic-access-planner.md). | Partial: consumer suggestions and lifecycle/cache/rollup identity remain FAI-642/645; exhaustive cross-consumer matrix remains FAI-648 |
-| ENF-01–ENF-11 | [FAI-642 consumer checkpoint](semantic-access-consumers.md): coherent Access resolution, private planner admission provenance, materialize result/Arrow gates, API/Explore discovery and same-lease catalog admission. [FAI-645](semantic-access-cache-lifecycle.md) adds guarded protected Arrow reuse; unsupported cache surfaces remain rejected. | Partial; production activation is not enabled (FAI-649). Complete cross-consumer equivalence remains FAI-648; the consolidated FAI-645 lifecycle/audit scope remains partial. |
-| CMP-01–CMP-06 | [FAI-645 policy evidence](semantic-access-policy-evidence.md) adds independent structural/semantic compatibility, security impact, indeterminate rejection, exact baseline/lifecycle-bound publication evidence and approval-required planning input. Registry-dependent transitions fail closed rather than guessing; live deployment acceptance and actual approval remain FAI-649 work. | Partial |
-| LIF-01–LIF-08 | Registry/control identities and transactional control audit are implemented. [FAI-645](semantic-access-cache-lifecycle.md) adds protected dependency identity, activation-bound role/grant revision, ledger history/publication evidence and guarded cache read/write/delivery. The [policy-evidence slice](semantic-access-policy-evidence.md) adds publication decision identity, full classification, affected-resource planning and immutable approval-required evidence. Event propagation, full query audit/diagnostics, lifecycle approval, trusted-source admission and exhaustive cross-consumer qualification are not claimed. | Partial |
-| OUT-01–OUT-05 | Negative schema, architecture, and documentation checks | Pending |
+The PostgreSQL repair and FAI-645 policy-evidence slices qualify their linked
+repository and publication boundaries. They do not substitute for production
+activation/restart evidence or complete provider-backed consumer coverage.
+Protected rollup/bundle/opaque-cache rejection is not positive substitution
+support. FAI-649 activation/approval and DataPolicy removal remain unimplemented
+by this qualification-only layer; FAI-632 is not declared ready.
 
 ## Maintained verification
 

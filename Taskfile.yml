@@ -1042,6 +1042,7 @@ tasks:
       - go test ./internal/project/identityledger/postgres -run '^TestReadLifecycleEvidence' -count=1 -v
       - go test ./internal/access/postgres -run '^TestControlAuthorityPostgreSQL18$' -count=1 -v
       - go test ./internal/access/postgres -run '^TestSemanticAttributeRegistryPostgreSQL18' -count=1 -v
+      - go test -tags=duckdb_arrow ./internal/project/module -run '^TestSemanticQualificationPostgreSQL18LifecycleAndAuthority$' -count=1 -v
 
   test:workload:qualify:
     desc: Qualify the reusable workload scheduler independently of LeapView
