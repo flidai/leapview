@@ -12,27 +12,34 @@ import (
 )
 
 type nativeBuildHeartbeatRunnerFake struct {
-	mu        sync.Mutex
-	calls     int
-	err       error
-	renewed   NativeBuildHeartbeatResult
-	calledCh  chan struct{}
-	releaseCh chan struct{}
+	mu               sync.Mutex
+	calls            int
+	err              error
+	renewed          NativeBuildHeartbeatResult
+	calledCh         chan struct{}
+	releaseCh        chan struct{}
+	cancelObservedCh chan struct{}
+	returnContextErr bool
+}
+
+func (f *nativeBuildHeartbeatRunnerFake) signal(ch chan struct{}) {
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
 }
 
 func (f *nativeBuildHeartbeatRunnerFake) Renew(ctx context.Context, _ NativeBuildHeartbeatInput) (NativeBuildHeartbeatResult, error) {
 	f.mu.Lock()
 	f.calls++
-	if f.calledCh != nil {
-		select {
-		case f.calledCh <- struct{}{}:
-		default:
-		}
-	}
 	err := f.err
 	result := f.renewed
 	f.mu.Unlock()
 	if err != nil {
+		f.signal(f.calledCh)
 		return NativeBuildHeartbeatResult{}, err
 	}
 	select {
@@ -40,8 +47,19 @@ func (f *nativeBuildHeartbeatRunnerFake) Renew(ctx context.Context, _ NativeBuil
 		return NativeBuildHeartbeatResult{}, ctx.Err()
 	default:
 	}
+	// Signal only after accepting the context. The test can now use
+	// releaseCh to keep this renewal in flight while Stop joins it.
+	f.signal(f.calledCh)
 	if f.releaseCh != nil {
-		<-f.releaseCh
+		select {
+		case <-f.releaseCh:
+		case <-ctx.Done():
+			f.signal(f.cancelObservedCh)
+			if f.returnContextErr {
+				return NativeBuildHeartbeatResult{}, ctx.Err()
+			}
+			<-f.releaseCh
+		}
 	}
 	return result, nil
 }
@@ -55,15 +73,40 @@ func TestNativeBuildHeartbeatGuardPublishesLatestLeaseAndStops(t *testing.T) {
 	input := nativeBuildHeartbeatGuardInput()
 	renewed := input.OperationLease
 	renewed.LeaseExpiresAt = renewed.LeaseExpiresAt.Add(time.Minute)
-	fake := &nativeBuildHeartbeatRunnerFake{calledCh: make(chan struct{}, 1), releaseCh: make(chan struct{}), renewed: NativeBuildHeartbeatResult{OperationLease: renewed, TargetLease: deploymentnative.DeliveryLease{LeaseID: "target-lease", TargetID: "target", OwnerID: "owner", FencingEpoch: 1}}}
+	releaseCh := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseCh) }) }
+	t.Cleanup(release)
+	fake := &nativeBuildHeartbeatRunnerFake{calledCh: make(chan struct{}, 1), releaseCh: releaseCh, cancelObservedCh: make(chan struct{}, 1), renewed: NativeBuildHeartbeatResult{OperationLease: renewed, TargetLease: deploymentnative.DeliveryLease{LeaseID: "target-lease", TargetID: "target", OwnerID: "owner", FencingEpoch: 1}}}
 	guard := newNativeBuildHeartbeatGuard(context.Background(), fake, time.Millisecond, input, nil)
 	select {
 	case <-fake.calledCh:
 	case <-time.After(time.Second):
 		t.Fatal("heartbeat runner was not called")
 	}
-	close(fake.releaseCh)
-	latest, err := guard.Stop()
+	stopDone := make(chan struct{})
+	var latest NativeBuildHeartbeatInput
+	var err error
+	go func() {
+		latest, err = guard.Stop()
+		close(stopDone)
+	}()
+	select {
+	case <-fake.cancelObservedCh:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not cancel the in-flight renewal")
+	}
+	select {
+	case <-stopDone:
+		t.Fatal("stop returned before the in-flight renewal was released")
+	default:
+	}
+	release()
+	select {
+	case <-stopDone:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not join the in-flight renewal")
+	}
 	if err != nil {
 		t.Fatalf("stop: %v", err)
 	}
@@ -94,14 +137,33 @@ func TestNativeBuildHeartbeatGuardCancelsBuildOnRenewalLoss(t *testing.T) {
 }
 
 func TestNativeBuildHeartbeatGuardStopDoesNotReportCancellationAsLoss(t *testing.T) {
-	fake := &nativeBuildHeartbeatRunnerFake{calledCh: make(chan struct{}, 1)}
+	releaseCh := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseCh) }) })
+	fake := &nativeBuildHeartbeatRunnerFake{calledCh: make(chan struct{}, 1), releaseCh: releaseCh, cancelObservedCh: make(chan struct{}, 1), returnContextErr: true}
 	guard := newNativeBuildHeartbeatGuard(context.Background(), fake, time.Millisecond, nativeBuildHeartbeatGuardInput(), nil)
 	select {
 	case <-fake.calledCh:
 	case <-time.After(time.Second):
 		t.Fatal("heartbeat runner was not called")
 	}
-	if _, err := guard.Stop(); err != nil {
+	stopDone := make(chan struct{})
+	var err error
+	go func() {
+		_, err = guard.Stop()
+		close(stopDone)
+	}()
+	select {
+	case <-fake.cancelObservedCh:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not cancel the in-flight renewal")
+	}
+	select {
+	case <-stopDone:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not join the canceled renewal")
+	}
+	if err != nil {
 		t.Fatalf("intentional stop reported heartbeat loss: %v", err)
 	}
 }
