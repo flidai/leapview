@@ -66,7 +66,7 @@ func (reconcilerFactory) PrepareSealed(_ context.Context, input runtimehost.Runt
 	if err != nil {
 		return nil, err
 	}
-	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: input.State.ProjectID, Kind: projectgraph.KindProject, Name: "project"}}, nil)
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
 	if err != nil {
 		return nil, err
 	}

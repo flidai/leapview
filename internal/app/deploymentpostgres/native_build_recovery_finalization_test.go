@@ -95,18 +95,18 @@ func recoveryFinalizeDB(t *testing.T) (*pgxpool.Pool, *deploymentnative.Reposito
 func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	db, delivery, ducklake := recoveryFinalizeDB(t)
 	base := validNativeSealAssemblerInput(t)
-	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: base.Plan.ProjectID, Kind: projectgraph.KindProject, Name: "recovery_finalization"}}, nil)
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	portableArtifact, err := projectartifact.NewProject(graph, projectmanifest.Project{ID: base.Plan.ProjectID.String(), Name: "recovery_finalization"})
+	portableArtifact, err := projectartifact.NewSourceBundle(graph, projectmanifest.ResourceManifest{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	base.Artifacts.Compiler.Graph = graph
 	base.Artifacts.Compiler.Artifact = portableArtifact
 	base.Artifacts.Compiler.Manifest = portableArtifact.Manifest()
-	base.Artifacts.Compiler.Plan = projectcompiler.ProjectPlan{Project: base.Plan.ProjectID.String(), Deterministic: true}
+	base.Artifacts.Compiler.Plan = projectcompiler.BundlePlan{Deterministic: true}
 	base.Artifacts.Artifact.ProjectDigest = portableArtifact.Digest()
 	base.Plan.ServingArtifactDigest = base.Artifacts.Generation.ArtifactDigest
 	base.Plan.Digest = ""

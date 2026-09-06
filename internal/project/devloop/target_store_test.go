@@ -188,10 +188,11 @@ func TestTargetStoreRejectsTraversalBeforeTouchingFilesystem(t *testing.T) {
 	store, err := NewTargetStore(t.TempDir())
 	require.NoError(t, err)
 	snapshot := testSnapshotWithArtifacts("traversal", []Artifact{
-		contentArtifact("leapview.yaml", []byte("project")),
+		contentArtifact("models/orders.yaml", []byte("project")),
 	})
 	request := planRequestForSnapshot(snapshot)
-	request.ProjectFile = "../outside.yaml"
+	request.Artifacts[0].Path = "../outside.yaml"
+	request.ArtifactDigest = candidateSetDigest([]Artifact{{Path: request.Artifacts[0].Path, Digest: request.Artifacts[0].Digest, SizeBytes: request.Artifacts[0].SizeBytes}})
 	if _, err := store.Missing(t.Context(), request); err == nil {
 		t.Fatal("target store accepted a parent-traversing project path")
 	}
@@ -201,7 +202,7 @@ func TestTargetStoreRejectsSymlinkedBlob(t *testing.T) {
 	root := t.TempDir()
 	store, err := NewTargetStore(root)
 	require.NoError(t, err)
-	artifact := contentArtifact("leapview.yaml", []byte("project"))
+	artifact := contentArtifact("models/orders.yaml", []byte("project"))
 	outside := filepath.Join(t.TempDir(), "outside")
 	require.NoError(t, os.WriteFile(outside, artifact.Content, 0o600))
 	link := filepath.Join(store.blobs, digestHex(artifact.Digest))
@@ -215,7 +216,7 @@ func TestTargetStoreRejectsSymlinkedBlob(t *testing.T) {
 }
 
 func TestTargetStoreRejectsSymlinkedRetainedSource(t *testing.T) {
-	snapshot, err := (FilesystemBuilder{ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")}).Build(t.Context())
+	snapshot, err := (FilesystemBuilder{SourceRoot: filepath.Join("..", "..", "..", "dashboards"), ProjectID: "project:leapview-showcase"}).Build(t.Context())
 	require.NoError(t, err)
 	store, err := NewTargetStore(t.TempDir())
 	require.NoError(t, err)
@@ -227,8 +228,9 @@ func TestTargetStoreRejectsSymlinkedRetainedSource(t *testing.T) {
 	require.NoError(t, err)
 	outside := filepath.Join(t.TempDir(), "outside.yaml")
 	require.NoError(t, os.WriteFile(outside, []byte("project"), 0o600))
-	require.NoError(t, os.Remove(stored.ProjectPath))
-	if err := os.Symlink(outside, stored.ProjectPath); err != nil {
+	target := filepath.Join(stored.SourceRoot, "models", "orders.yaml")
+	require.NoError(t, os.Remove(target))
+	if err := os.Symlink(outside, target); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	if _, err := store.Commit(t.Context(), request); err == nil {
@@ -240,7 +242,7 @@ func TestTargetStoreRejectsSymlinkedSnapshotDirectory(t *testing.T) {
 	root := t.TempDir()
 	store, err := NewTargetStore(root)
 	require.NoError(t, err)
-	artifact := contentArtifact("leapview.yaml", []byte("project"))
+	artifact := contentArtifact("models/orders.yaml", []byte("project"))
 	snapshot := testSnapshotWithArtifacts("symlink-snapshot", []Artifact{artifact})
 	request := planRequestForSnapshot(snapshot)
 	outside := t.TempDir()
@@ -257,7 +259,7 @@ func TestTargetStoreRejectsSymlinkedSnapshotDirectory(t *testing.T) {
 func TestTargetStoreManifestExcludesSynchronizationProtocolIdentity(t *testing.T) {
 	store, err := NewTargetStore(t.TempDir())
 	require.NoError(t, err)
-	snapshot, err := (FilesystemBuilder{ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")}).Build(t.Context())
+	snapshot, err := (FilesystemBuilder{SourceRoot: filepath.Join("..", "..", "..", "dashboards"), ProjectID: "project:leapview-showcase"}).Build(t.Context())
 	require.NoError(t, err)
 	request := planRequestForSnapshot(snapshot)
 	request.PlanID = "ephemeral-plan"

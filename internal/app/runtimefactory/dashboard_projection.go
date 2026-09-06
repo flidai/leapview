@@ -76,7 +76,7 @@ func (r dashboardRuntimeWithGraph) ProjectManifest() projectmanifest.ResourceMan
 		source := compiled.SourceModel()
 		runtimeSafe, err := model.RuntimeSnapshot()
 		if source == nil || err != nil || runtimeSafe == nil {
-			return projectmanifest.Project{}
+			return projectmanifest.ResourceManifest{}
 		}
 		source.Connections = runtimeSafe.Connections
 		source.Sources = runtimeSafe.Sources

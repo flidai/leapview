@@ -88,6 +88,23 @@ func TestPackCompiledSourceBundleUsesPortableDigestsAndDeterministicBytes(t *tes
 	if validation.Digest != digestA || validation.BundleDigest != project.Digest() || validation.Graph.Digest() != project.Graph().Digest() {
 		t.Fatalf("validated bundle = (%q, %q, %q)", validation.Digest, validation.BundleDigest, validation.Graph.Digest())
 	}
+	bytesValidation, compiled, err := ValidateArtifactBytes(first.Bytes())
+	if err != nil {
+		t.Fatalf("ValidateArtifactBytes() error = %v", err)
+	}
+	if bytesValidation.RootDir != "" {
+		t.Fatalf("bytes validation root = %q, want empty", bytesValidation.RootDir)
+	}
+	if bytesValidation.Digest != validation.Digest || bytesValidation.ManifestJSON != validation.ManifestJSON || bytesValidation.BundleDigest != validation.BundleDigest || compiled.BundleDigest != validation.BundleDigest {
+		t.Fatalf("bytes validation = %#v, compiled = %#v; path validation = %#v", bytesValidation, compiled, validation)
+	}
+	readerValidation, compiledReader, err := ValidateArtifactReader(bytes.NewReader(first.Bytes()), int64(first.Len()))
+	if err != nil {
+		t.Fatalf("ValidateArtifactReader() error = %v", err)
+	}
+	if readerValidation.Digest != bytesValidation.Digest || readerValidation.ManifestJSON != bytesValidation.ManifestJSON || compiledReader.BundleDigest != compiled.BundleDigest {
+		t.Fatal("reader and bytes validation differ")
+	}
 }
 
 func TestPackSourceBundleCollectsOnlySourceRootFiles(t *testing.T) {
@@ -328,6 +345,81 @@ func TestExtractArtifactRejectsTraversalAndNonRegularEntries(t *testing.T) {
 	}
 }
 
+func TestValidateArtifactBytesRejectsTrailingAndUnsafeEntries(t *testing.T) {
+	project := sourceBundleFixture(t)
+	var output bytes.Buffer
+	if _, _, err := PackCompiledSourceBundle(project, bundlePlan(project), &output); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func([]byte) []byte{
+		"trailing compressed bytes": func(data []byte) []byte { return append(append([]byte(nil), data...), []byte("trailing")...) },
+		"second gzip member": func(data []byte) []byte {
+			var member bytes.Buffer
+			writer := gzip.NewWriter(&member)
+			if _, err := writer.Write([]byte("second")); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			return append(append([]byte(nil), data...), member.Bytes()...)
+		},
+		"truncated gzip": func(data []byte) []byte { return data[:len(data)-1] },
+		"trailing tar bytes": func(data []byte) []byte {
+			reader, err := gzip.NewReader(bytes.NewReader(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			uncompressed, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = reader.Close()
+			uncompressed = append(uncompressed, []byte("trailing")...)
+			var encoded bytes.Buffer
+			writer := gzip.NewWriter(&encoded)
+			if _, err := writer.Write(uncompressed); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			return encoded.Bytes()
+		},
+	} {
+		if _, _, err := ValidateArtifactBytes(mutate(output.Bytes())); err == nil {
+			t.Fatalf("ValidateArtifactBytes() %s error = nil", name)
+		}
+	}
+	for name, entries := range map[string][][2]string{
+		"duplicate":           {{"manifest.json", "one"}, {"manifest.json", "two"}},
+		"traversal":           {{"../manifest.json", "bad"}},
+		"backslash traversal": {{`..\manifest.json`, "bad"}},
+	} {
+		path := testTarEntries(t, entries)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := ValidateArtifactBytes(data); err == nil {
+			t.Fatalf("ValidateArtifactBytes() %s error = nil", name)
+		}
+	}
+}
+
+func TestValidateArtifactReaderEnforcesExpectedSizeAndLimits(t *testing.T) {
+	if _, _, err := ValidateArtifactReader(bytes.NewReader([]byte("not an archive")), 1); err == nil {
+		t.Fatal("ValidateArtifactReader() malformed archive error = nil")
+	}
+	if _, _, err := ValidateArtifactReader(bytes.NewReader([]byte("not an archive")), 0); err == nil {
+		t.Fatal("ValidateArtifactReader() expected size error = nil")
+	}
+	oversized := bytes.Repeat([]byte{'x'}, int(MaxBundleBytes)+1)
+	if _, _, err := ValidateArtifactBytes(oversized); err == nil {
+		t.Fatal("ValidateArtifactBytes() oversized archive error = nil")
+	}
+}
+
 func tarEntries(t *testing.T, data []byte) map[string]struct{} {
 	t.Helper()
 	gz, err := gzip.NewReader(bytes.NewReader(data))
@@ -347,4 +439,34 @@ func tarEntries(t *testing.T, data []byte) map[string]struct{} {
 		}
 		entries[header.Name] = struct{}{}
 	}
+}
+
+func testTarEntries(t *testing.T, entries [][2]string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "test.tar.gz")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(file)
+	tarWriter := tar.NewWriter(gz)
+	for _, entry := range entries {
+		name, body := entry[0], entry[1]
+		if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tarWriter.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

@@ -5,6 +5,7 @@ package bundle
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -436,8 +437,31 @@ func addAuthoredPath(paths map[string]struct{}, baseDir, value string) error {
 }
 
 func writeBundleBytes(sourceFiles, generatedFiles map[string][]byte, manifest Manifest, out io.Writer) (Manifest, string, error) {
+	if len(sourceFiles)+len(generatedFiles)+1 > MaxBundleFiles {
+		return Manifest{}, "", fmt.Errorf("bundle file count exceeds limit %d", MaxBundleFiles)
+	}
+	var uncompressedBytes int64
+	for path, content := range sourceFiles {
+		if int64(len(content)) > MaxBundleFileBytes {
+			return Manifest{}, "", fmt.Errorf("bundle file %q exceeds maximum file size %d", path, MaxBundleFileBytes)
+		}
+		if int64(len(content)) > MaxBundleUncompressedBytes-uncompressedBytes {
+			return Manifest{}, "", fmt.Errorf("bundle uncompressed size exceeds limit %d", MaxBundleUncompressedBytes)
+		}
+		uncompressedBytes += int64(len(content))
+	}
+	for path, content := range generatedFiles {
+		if int64(len(content)) > MaxBundleFileBytes {
+			return Manifest{}, "", fmt.Errorf("bundle file %q exceeds maximum file size %d", path, MaxBundleFileBytes)
+		}
+		if int64(len(content)) > MaxBundleUncompressedBytes-uncompressedBytes {
+			return Manifest{}, "", fmt.Errorf("bundle uncompressed size exceeds limit %d", MaxBundleUncompressedBytes)
+		}
+		uncompressedBytes += int64(len(content))
+	}
 	hash := sha256.New()
-	gz := gzip.NewWriter(io.MultiWriter(out, hash))
+	limitedOut := &bundleSizeWriter{out: io.MultiWriter(out, hash)}
+	gz := gzip.NewWriter(limitedOut)
 	tw := tar.NewWriter(gz)
 	seen := map[string]struct{}{}
 	sourcePaths := sortedKeys(sourceFiles)
@@ -474,6 +498,12 @@ func writeBundleBytes(sourceFiles, generatedFiles map[string][]byte, manifest Ma
 	if err != nil {
 		return Manifest{}, "", err
 	}
+	if int64(len(manifestBytes)) > MaxBundleFileBytes {
+		return Manifest{}, "", fmt.Errorf("bundle file %q exceeds maximum file size %d", "manifest.json", MaxBundleFileBytes)
+	}
+	if int64(len(manifestBytes)) > MaxBundleUncompressedBytes-uncompressedBytes {
+		return Manifest{}, "", fmt.Errorf("bundle uncompressed size exceeds limit %d", MaxBundleUncompressedBytes)
+	}
 	if _, ok := seen["manifest.json"]; ok {
 		return Manifest{}, "", errors.New("bundle generated path manifest.json duplicates an existing file")
 	}
@@ -488,6 +518,20 @@ func writeBundleBytes(sourceFiles, generatedFiles map[string][]byte, manifest Ma
 		return Manifest{}, "", err
 	}
 	return manifest, "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+type bundleSizeWriter struct {
+	out io.Writer
+	n   int64
+}
+
+func (w *bundleSizeWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > MaxBundleBytes-w.n {
+		return 0, fmt.Errorf("bundle compressed size exceeds limit %d", MaxBundleBytes)
+	}
+	n, err := w.out.Write(p)
+	w.n += int64(n)
+	return n, err
 }
 
 func writeTarFile(tw *tar.Writer, name string, content []byte) error {
@@ -558,39 +602,30 @@ func ValidateArtifactReader(reader io.Reader, expectedSize int64) (Validation, C
 	if int64(len(data)) != expectedSize {
 		return Validation{}, CompiledProjectArtifact{}, fmt.Errorf("bundle compressed size = %d, want %d", len(data), expectedSize)
 	}
-	return ValidateArtifactBytes(data)
+	return validateArtifactBytes(data)
 }
 
 func validateArtifactBytes(data []byte) (Validation, CompiledProjectArtifact, error) {
-	root, err := os.MkdirTemp("", "leapview-validate-source-bundle-*")
+	entries, err := readBundleEntries(bytes.NewReader(data))
 	if err != nil {
 		return Validation{}, CompiledProjectArtifact{}, err
 	}
-	defer os.RemoveAll(root)
-	tmp, err := os.CreateTemp("", "leapview-validate-source-bundle-*.tar.gz")
+	manifestData, ok := entries["manifest.json"]
+	if !ok {
+		return Validation{}, CompiledProjectArtifact{}, errors.New("bundle manifest.json is missing")
+	}
+	manifest, err := decodeManifest(manifestData)
 	if err != nil {
 		return Validation{}, CompiledProjectArtifact{}, err
 	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
+	if _, err := validateManifestEntries(entries, manifest); err != nil {
 		return Validation{}, CompiledProjectArtifact{}, err
 	}
-	if err := tmp.Close(); err != nil {
-		return Validation{}, CompiledProjectArtifact{}, err
+	compiledData, ok := entries[CompiledSourceBundleFile]
+	if !ok {
+		return Validation{}, CompiledProjectArtifact{}, errors.New("compiled source bundle artifact is missing")
 	}
-	if err := ExtractArtifact(tmpPath, root); err != nil {
-		return Validation{}, CompiledProjectArtifact{}, err
-	}
-	manifest, err := readManifest(root)
-	if err != nil {
-		return Validation{}, CompiledProjectArtifact{}, err
-	}
-	if _, err := validateManifestFiles(root, manifest); err != nil {
-		return Validation{}, CompiledProjectArtifact{}, err
-	}
-	compiled, err := readCompiledSourceBundleArtifact(root, manifest)
+	compiled, err := decodeCompiledSourceBundleArtifact(compiledData, manifest)
 	if err != nil {
 		return Validation{}, CompiledProjectArtifact{}, err
 	}
@@ -599,6 +634,105 @@ func validateArtifactBytes(data []byte) (Validation, CompiledProjectArtifact, er
 		return Validation{}, CompiledProjectArtifact{}, err
 	}
 	return Validation{Digest: digestBytesPrefixed(data), ManifestJSON: string(manifestJSON), BundleDigest: compiled.BundleDigest, Graph: compiled.Graph, Manifest: compiled.Manifest}, compiled, nil
+}
+
+func readBundleEntries(data io.Reader) (map[string][]byte, error) {
+	if data == nil {
+		return nil, errors.New("bundle reader is required")
+	}
+	// Buffer the bounded compressed object once. This gives the reader and byte
+	// APIs identical digest input and lets us reject bytes after the gzip member.
+	raw, err := io.ReadAll(io.LimitReader(data, MaxBundleBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read bundle: %w", err)
+	}
+	if int64(len(raw)) > MaxBundleBytes {
+		return nil, fmt.Errorf("bundle compressed size exceeds limit %d", MaxBundleBytes)
+	}
+	compressed := bufio.NewReader(bytes.NewReader(raw))
+	gz, err := gzip.NewReader(compressed)
+	if err != nil {
+		return nil, fmt.Errorf("decode bundle gzip: %w", err)
+	}
+	gz.Multistream(false)
+	tr := tar.NewReader(gz)
+	entries := make(map[string][]byte)
+	var expanded int64
+	for count := 0; ; count++ {
+		header, nextErr := tr.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			_ = gz.Close()
+			return nil, fmt.Errorf("decode bundle tar: %w", nextErr)
+		}
+		if count >= MaxBundleFiles {
+			_ = gz.Close()
+			return nil, fmt.Errorf("bundle file count exceeds limit %d", MaxBundleFiles)
+		}
+		if header.Format == tar.FormatGNU || header.PAXRecords["path"] != "" || header.PAXRecords["linkpath"] != "" {
+			_ = gz.Close()
+			return nil, fmt.Errorf("unsupported extended bundle path %q", header.Name)
+		}
+		rel, pathErr := safeBundlePath(header.Name)
+		if pathErr != nil {
+			_ = gz.Close()
+			return nil, pathErr
+		}
+		if _, exists := entries[rel]; exists {
+			_ = gz.Close()
+			return nil, fmt.Errorf("duplicate bundle entry %q", rel)
+		}
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			_ = gz.Close()
+			return nil, fmt.Errorf("unsupported bundle entry %q", header.Name)
+		}
+		if header.Size < 0 || header.Size > MaxBundleFileBytes {
+			_ = gz.Close()
+			return nil, fmt.Errorf("bundle file %q exceeds maximum file size %d", rel, MaxBundleFileBytes)
+		}
+		if header.Size > MaxBundleUncompressedBytes-expanded {
+			_ = gz.Close()
+			return nil, fmt.Errorf("bundle uncompressed size exceeds limit %d", MaxBundleUncompressedBytes)
+		}
+		content, readErr := io.ReadAll(io.LimitReader(tr, MaxBundleFileBytes+1))
+		if readErr != nil {
+			_ = gz.Close()
+			return nil, fmt.Errorf("read bundle file %q: %w", rel, readErr)
+		}
+		if int64(len(content)) != header.Size {
+			_ = gz.Close()
+			return nil, fmt.Errorf("bundle file %q size = %d, want %d", rel, len(content), header.Size)
+		}
+		expanded += int64(len(content))
+		entries[rel] = content
+	}
+	// tar.Reader stops at its two zero blocks. Consume the decompressed stream
+	// to distinguish a valid end-of-archive from trailing tar bytes.
+	trailingTar, tailErr := io.ReadAll(gz)
+	if tailErr != nil {
+		_ = gz.Close()
+		return nil, fmt.Errorf("decode bundle trailing data: %w", tailErr)
+	}
+	if len(trailingTar) != 0 {
+		_ = gz.Close()
+		return nil, errors.New("bundle archive contains trailing tar data")
+	}
+	if err := gz.Close(); err != nil {
+		return nil, fmt.Errorf("close bundle gzip: %w", err)
+	}
+	// Multistream(false) leaves bytes after the first gzip member in the
+	// buffered source. Any such bytes are trailing archive data, including a
+	// second valid gzip member.
+	trailingGzip, err := io.ReadAll(compressed)
+	if err != nil {
+		return nil, fmt.Errorf("read bundle trailing bytes: %w", err)
+	}
+	if len(trailingGzip) != 0 {
+		return nil, errors.New("bundle archive contains trailing gzip data")
+	}
+	return entries, nil
 }
 
 func ValidateCompiledSourceBundleArtifact(compiled CompiledSourceBundleArtifact) error {
@@ -643,6 +777,10 @@ func readManifest(root string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
+	return decodeManifest(data)
+}
+
+func decodeManifest(data []byte) (Manifest, error) {
 	if err := rejectDuplicateJSONKeys(data); err != nil {
 		return Manifest{}, fmt.Errorf("decode bundle manifest: %w", err)
 	}
@@ -690,6 +828,13 @@ func readCompiledSourceBundleArtifact(root string, manifest Manifest) (CompiledS
 	data, err := os.ReadFile(filepath.Join(root, CompiledSourceBundleFile))
 	if err != nil {
 		return CompiledSourceBundleArtifact{}, err
+	}
+	return decodeCompiledSourceBundleArtifact(data, manifest)
+}
+
+func decodeCompiledSourceBundleArtifact(data []byte, manifest Manifest) (CompiledSourceBundleArtifact, error) {
+	if manifest.CompiledPath != CompiledSourceBundleFile {
+		return CompiledSourceBundleArtifact{}, fmt.Errorf("compiled path = %q, want %q", manifest.CompiledPath, CompiledSourceBundleFile)
 	}
 	if manifest.CompiledSHA256 != digestBytes(data) {
 		return CompiledSourceBundleArtifact{}, errors.New("compiled source bundle digest mismatch")
@@ -830,6 +975,46 @@ func validateManifestFiles(root string, manifest Manifest) (string, error) {
 	return compiledRel, nil
 }
 
+func validateManifestEntries(entries map[string][]byte, manifest Manifest) (string, error) {
+	compiledRel, err := safeBundlePath(manifest.CompiledPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid compiled path: %w", err)
+	}
+	if compiledRel != CompiledSourceBundleFile {
+		return "", fmt.Errorf("compiled path = %q, want %q", manifest.CompiledPath, CompiledSourceBundleFile)
+	}
+	seen := map[string]struct{}{}
+	allowed := map[string]struct{}{"manifest.json": {}, compiledRel: {}}
+	for _, file := range manifest.Files {
+		rel, err := safeBundlePath(file.Path)
+		if err != nil {
+			return "", fmt.Errorf("invalid manifest file path %q: %w", file.Path, err)
+		}
+		if rel == "leapview.yaml" {
+			return "", errors.New("legacy project root path is not supported in a source bundle")
+		}
+		if _, ok := seen[rel]; ok {
+			return "", fmt.Errorf("duplicate manifest file path %q", rel)
+		}
+		seen[rel] = struct{}{}
+		allowed[rel] = struct{}{}
+		content, ok := entries[rel]
+		if !ok {
+			return "", os.ErrNotExist
+		}
+		sum := sha256.Sum256(content)
+		if hex.EncodeToString(sum[:]) != file.SHA256 || int64(len(content)) != file.Size {
+			return "", fmt.Errorf("file %s digest or size mismatch", file.Path)
+		}
+	}
+	for rel := range entries {
+		if _, ok := allowed[rel]; !ok {
+			return "", fmt.Errorf("bundle file %q is not listed in manifest", rel)
+		}
+	}
+	return compiledRel, nil
+}
+
 func validateNoUnlistedBundleFiles(root string, allowed map[string]struct{}) error {
 	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -856,51 +1041,104 @@ func ExtractArtifact(path, dest string) error {
 		return err
 	}
 	defer file.Close()
-	gz, err := gzip.NewReader(file)
+	if info, statErr := file.Stat(); statErr != nil {
+		return statErr
+	} else if info.Size() > MaxBundleBytes {
+		return fmt.Errorf("bundle compressed size exceeds limit %d", MaxBundleBytes)
+	}
+	compressed := bufio.NewReader(file)
+	gz, err := gzip.NewReader(compressed)
 	if err != nil {
 		return err
 	}
-	defer gz.Close()
+	gz.Multistream(false)
 	tr := tar.NewReader(gz)
 	seen := map[string]struct{}{}
-	for {
+	var expanded int64
+	for count := 0; ; count++ {
 		header, err := tr.Next()
 		if err == io.EOF {
-			return nil
+			break
 		}
 		if err != nil {
+			_ = gz.Close()
 			return err
+		}
+		if count >= MaxBundleFiles {
+			_ = gz.Close()
+			return fmt.Errorf("bundle file count exceeds limit %d", MaxBundleFiles)
+		}
+		if header.Format == tar.FormatGNU || header.PAXRecords["path"] != "" || header.PAXRecords["linkpath"] != "" {
+			_ = gz.Close()
+			return fmt.Errorf("unsupported extended bundle path %q", header.Name)
 		}
 		rel, err := safeBundlePath(header.Name)
 		if err != nil {
+			_ = gz.Close()
 			return err
 		}
 		if _, ok := seen[rel]; ok {
+			_ = gz.Close()
 			return fmt.Errorf("duplicate bundle entry %q", rel)
 		}
 		seen[rel] = struct{}{}
-		target, err := secureBundleTarget(dest, rel)
-		if err != nil {
-			return err
-		}
 		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			_ = gz.Close()
 			return fmt.Errorf("unsupported bundle entry %q", header.Name)
 		}
+		if header.Size < 0 || header.Size > MaxBundleFileBytes {
+			_ = gz.Close()
+			return fmt.Errorf("bundle file %q exceeds maximum file size %d", rel, MaxBundleFileBytes)
+		}
+		if header.Size > MaxBundleUncompressedBytes-expanded {
+			_ = gz.Close()
+			return fmt.Errorf("bundle uncompressed size exceeds limit %d", MaxBundleUncompressedBytes)
+		}
+		target, err := secureBundleTarget(dest, rel)
+		if err != nil {
+			_ = gz.Close()
+			return err
+		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			_ = gz.Close()
 			return err
 		}
 		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 		if err != nil {
+			_ = gz.Close()
 			return err
 		}
-		if _, err := io.Copy(out, tr); err != nil {
+		if _, err := io.CopyN(out, tr, header.Size); err != nil {
 			out.Close()
+			_ = gz.Close()
 			return err
 		}
+		expanded += header.Size
 		if err := out.Close(); err != nil {
+			_ = gz.Close()
 			return err
 		}
 	}
+	trailingTar, err := io.ReadAll(gz)
+	if err != nil {
+		_ = gz.Close()
+		return err
+	}
+	if len(trailingTar) != 0 {
+		_ = gz.Close()
+		return errors.New("bundle archive contains trailing tar data")
+	}
+	if err := gz.Close(); err != nil {
+		return err
+	}
+	trailingGzip, err := io.ReadAll(compressed)
+	if err != nil {
+		return err
+	}
+	if len(trailingGzip) != 0 {
+		return errors.New("bundle archive contains trailing gzip data")
+	}
+	return nil
 }
 
 func secureBundleTarget(dest, rel string) (string, error) {
@@ -970,6 +1208,10 @@ func digestBytes(value []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func digestBytesPrefixed(value []byte) string {
+	return "sha256:" + digestBytes(value)
+}
+
 func sortedKeys(values map[string][]byte) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -980,6 +1222,12 @@ func sortedKeys(values map[string][]byte) []string {
 }
 
 func safeBundlePath(path string) (string, error) {
+	// Tar paths are slash-separated on every platform. Rejecting backslashes
+	// keeps validation independent of the host OS and prevents a bundle that is
+	// benign on Unix from becoming traversal on Windows.
+	if strings.Contains(path, `\`) {
+		return "", fmt.Errorf("bundle path %q contains a backslash", path)
+	}
 	if filepath.IsAbs(path) {
 		return "", fmt.Errorf("bundle path %q must be relative", path)
 	}

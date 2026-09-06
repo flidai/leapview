@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	dashboardpublication "github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/extension"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	"github.com/flidai/leapview/internal/project"
@@ -22,7 +21,6 @@ import (
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/google/uuid"
@@ -126,15 +124,14 @@ func TestNativeCandidateInspectUsesObjectReaderAndReturnsCompilerArtifact(t *tes
 	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
 	service := &nativeCandidateArtifactPhases{reader: reader, environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
 	request := fixture.request
-	request.Source.ProjectPath = filepath.Join(t.TempDir(), "must-not-be-read")
-	request.Source.ProjectArtifactPath = filepath.Join(t.TempDir(), "must-not-be-read")
+	request.Source.SourceRoot = filepath.Join(t.TempDir(), "must-not-be-read")
 	before := reader.opens
 	set, err := service.InspectCandidateArtifacts(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if set.Compiler.Artifact.ProjectID() != request.Scope.ProjectID || set.Compiler.Artifact.Digest() != request.Source.ProjectDigest {
-		t.Fatalf("compiler artifact identity = %s/%s", set.Compiler.Artifact.ProjectID(), set.Compiler.Artifact.Digest())
+	if set.Compiler.Artifact.Graph().Validate() != nil || set.Compiler.Artifact.Digest() != request.Source.ProjectDigest {
+		t.Fatalf("compiler artifact digest = %s", set.Compiler.Artifact.Digest())
 	}
 	if set.Artifact.ContentDigest == "" || set.Artifact.ContentDigest != set.Generation.ArtifactDigest || set.Generation.ServingArtifactID != nativeServingArtifactID(set.Generation.ArtifactDigest) || set.Generation.BundleManifestJSON == "" {
 		t.Fatalf("inspection did not bind deterministic serving identity: artifact=%#v generation=%#v", set.Artifact, set.Generation)
@@ -149,7 +146,7 @@ func TestNativeCandidateInspectUsesObjectReaderAndReturnsCompilerArtifact(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(serialized), request.Source.ProjectPath) || strings.Contains(string(serialized), request.Source.ProjectArtifactPath) {
+	if strings.Contains(string(serialized), request.Source.SourceRoot) {
 		t.Fatal("compiler evidence exposed caller filesystem paths")
 	}
 	for _, ref := range fixture.refs {
@@ -157,10 +154,8 @@ func TestNativeCandidateInspectUsesObjectReaderAndReturnsCompilerArtifact(t *tes
 			t.Fatalf("compiler evidence exposed opaque object key %q", ref.ObjectKey)
 		}
 	}
-	for _, callerPath := range []string{request.Source.ProjectPath, request.Source.ProjectArtifactPath} {
-		if _, statErr := os.Stat(callerPath); !errors.Is(statErr, os.ErrNotExist) {
-			t.Fatalf("native inspect touched caller path %q: %v", callerPath, statErr)
-		}
+	if _, statErr := os.Stat(request.Source.SourceRoot); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("native inspect touched caller path %q: %v", request.Source.SourceRoot, statErr)
 	}
 }
 
@@ -336,7 +331,7 @@ func TestNativeCandidateMaterializeAndHydrateUsesImmutableServingObject(t *testi
 }
 
 func TestNativeAuthorizationFingerprintIsGenerationIndependent(t *testing.T) {
-	fixture := nativePolicyInspectFixture(t)
+	fixture := nativeInspectFixture(t)
 	fixture.request.CandidateID = "018f0e4e-6f2a-7abc-8def-0123456789aa"
 	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
 	if err != nil {
@@ -349,10 +344,6 @@ func TestNativeAuthorizationFingerprintIsGenerationIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(inspected.Generation.Restrictions) == 0 {
-		t.Fatal("inspection did not retain data-policy restrictions")
-	}
-
 	for _, generationID := range []string{fixture.request.GenerationID, "018f0e4e-6f2a-7abd-8def-0123456789ab"} {
 		request := fixture.request
 		request.GenerationID = generationID
@@ -402,11 +393,16 @@ func nativeRecoveryFixtureForConnector(t *testing.T, connectorKind string) nativ
 	if connectorKind != "managed" {
 		files["sources/orders.yaml"] = []byte("apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: 's3://recovery/orders.csv', format: csv}}\n")
 	}
-	compiled, err := projectcompiler.CompileProjectFiles(files, fixture.request.Source.ProjectFile)
+	sourceRoot, err := materializeNativeSourceRoot(files)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := projectcompiler.PlanProjectFilesAgainstGraph(files, fixture.request.Source.ProjectFile, compiled.Graph())
+	defer os.RemoveAll(sourceRoot)
+	compiled, err := projectcompiler.Compile(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := projectcompiler.PlanSourceRootAgainstGraph(sourceRoot, projectgraph.ProjectGraph{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +452,7 @@ func TestNativeCandidateRecoverUsesImmutableBundleWithoutSourceReader(t *testing
 	if len(set.Extensions) != 2 || set.Extensions[0].Name != "ducklake" || set.Extensions[1].Name != "httpfs" {
 		t.Fatalf("recovered extension evidence = %#v, want exact bundle requirements", set.Extensions)
 	}
-	if set.Compiler.Graph.Validate() != nil || set.Compiler.Graph.ProjectID() != fixture.request.ServingIdentity.ProjectID || set.Compiler.Manifest.ID != fixture.request.ServingIdentity.ProjectID.String() || set.Compiler.Plan.Project != fixture.request.ServingIdentity.ProjectID.String() {
+	if set.Compiler.Graph.Validate() != nil {
 		t.Fatalf("recovered compiler evidence = %#v", set.Compiler)
 	}
 	if store.opens != 1 || store.puts != 0 {
@@ -503,10 +499,7 @@ func TestNativeCandidateRecoverRejectsIdentityAndBundleMismatches(t *testing.T) 
 	fixture := nativeRecoveryFixture(t)
 	service := &nativeCandidateArtifactPhases{artifacts: fixture.store, storageDomain: "runtime", environment: "dev", extensionPreparation: nativeInspectExtensionStub{}}
 	for name, mutate := range map[string]func(*release.CandidateArtifactRecoveryRequest){
-		"candidate": func(request *release.CandidateArtifactRecoveryRequest) { request.CandidateID = " candidate" },
-		"serving project": func(request *release.CandidateArtifactRecoveryRequest) {
-			request.ServingIdentity.ProjectID = "project:other"
-		},
+		"candidate":           func(request *release.CandidateArtifactRecoveryRequest) { request.CandidateID = " candidate" },
 		"serving environment": func(request *release.CandidateArtifactRecoveryRequest) { request.ServingIdentity.Environment = "prod" },
 		"serving generation": func(request *release.CandidateArtifactRecoveryRequest) {
 			request.ServingIdentity.GenerationID = uuid.NewString()
@@ -525,6 +518,15 @@ func TestNativeCandidateRecoverRejectsIdentityAndBundleMismatches(t *testing.T) 
 				t.Fatalf("identity error = %v", err)
 			}
 		})
+	}
+	rebound := fixture.request
+	rebound.ServingIdentity.ProjectID = "project:other"
+	recovered, err := service.RecoverCandidateArtifacts(t.Context(), rebound)
+	if err != nil {
+		t.Fatalf("recover portable bundle for another Project: %v", err)
+	}
+	if recovered.Generation.Identity != rebound.ServingIdentity || recovered.Artifact.ContentDigest != fixture.request.Artifact.ServingArtifactDigest {
+		t.Fatalf("rebound portable artifact = %#v", recovered)
 	}
 	service.artifacts = &nativeForgedArtifactStore{ImmutableStore: fixture.store, body: []byte("not-a-bundle")}
 	if _, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
@@ -590,32 +592,6 @@ func TestNativeCandidateServingDocumentsAreCanonicalAndBounded(t *testing.T) {
 	oversized := `{"x":"` + strings.Repeat("a", int(maxNativeServingDocumentBytes)) + `"}`
 	if err := validateNativeServingDocument(oversized, "test"); err == nil {
 		t.Fatal("oversized serving document was accepted")
-	}
-}
-
-func TestNativeCandidateServingDocumentsCanonicalizeNonEmptyManifestObjects(t *testing.T) {
-	manifest := projectmanifest.Project{
-		Access: projectmanifest.AccessPolicy{Grants: map[string]projectmanifest.Grant{
-			"grant": {ID: "grant", Name: "Grant", Object: projectmanifest.SecurableRef{Kind: "dashboard", ID: "dashboard:test"}, Subject: projectmanifest.Subject{Kind: "principal", PrincipalID: "alice"}, Capability: "read"},
-		}},
-		Publications: map[string]dashboardpublication.Definition{
-			"public": {Name: "public", Dashboard: "dashboard:test", DefaultPage: "overview", DependencyAssetIDs: []string{"dashboard:test"}, ConfigurationDigest: testNativeDigest("publication")},
-		},
-	}
-	access, publications, appearances, err := nativeServingDocumentsFromManifest(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if access == "{}" || publications == "{}" || appearances != "{}" {
-		t.Fatalf("canonical serving documents = access=%q publications=%q appearances=%q", access, publications, appearances)
-	}
-	for label, value := range map[string]string{"access": access, "publications": publications, "appearances": appearances} {
-		if err := validateNativeServingDocument(value, label); err != nil {
-			t.Fatalf("%s document is not canonical: %v", label, err)
-		}
-	}
-	if !strings.HasPrefix(access, `{"grants":`) || !strings.HasPrefix(publications, `{"public":`) {
-		t.Fatalf("serving documents are not deterministically key ordered: access=%q publications=%q", access, publications)
 	}
 }
 
@@ -734,17 +710,17 @@ func TestNativeCandidateMaterializeRejectsAmbiguousReplayContentIdentityMismatch
 	}
 	metadata := platformobjectstore.ObjectMetadata{StorageSecurityDomain: "runtime", SizeBytes: int64(len(body)), ContentType: nativeServingArtifactContentType, MetadataDigest: materialized.Generation.NativeArtifact.MetadataDigest}
 	cases := []struct {
-		name, digest, projectID string
+		name, digest, bundleDigest string
 	}{
-		{name: "digest", digest: testNativeDigest("different-bundle"), projectID: materialized.Compiler.Artifact.ProjectID().String()},
-		{name: "project", digest: materialized.Generation.ArtifactDigest, projectID: "project:other"},
+		{name: "digest", digest: testNativeDigest("different-bundle"), bundleDigest: materialized.Compiler.Artifact.Digest()},
+		{name: "bundle", digest: materialized.Generation.ArtifactDigest, bundleDigest: testNativeDigest("other-source-bundle")},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			metadata.Digest = testCase.digest
 			store := &nativeAmbiguousReplayStore{ImmutableStore: baseStore, body: body}
 			service.artifacts = store
-			if _, err := service.putServingArtifact(t.Context(), nativeServingArtifactKey(testCase.digest), bytes.NewReader(body), metadata, testCase.projectID); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+			if _, err := service.putServingArtifact(t.Context(), nativeServingArtifactKey(testCase.digest), bytes.NewReader(body), metadata, testCase.bundleDigest); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
 				t.Fatalf("ambiguous replay %s mismatch error = %v", testCase.name, err)
 			}
 		})
@@ -875,48 +851,11 @@ func TestReadNativeInspectBodyEnforcesEmptyObjectSize(t *testing.T) {
 }
 
 type nativeInspectFixtureValue struct {
-	request  release.CandidateArtifactRequest
-	artifact []byte
-	refs     []project.CandidateSourceObjectRef
-	objects  map[string][]byte
-}
-
-func nativePolicyInspectFixture(t *testing.T) nativeInspectFixtureValue {
-	t.Helper()
-	fixture := nativeInspectFixture(t)
-	var projectRef *project.CandidateSourceObjectRef
-	for index := range fixture.refs {
-		if fixture.refs[index].Path == fixture.request.Source.ProjectFile {
-			projectRef = &fixture.refs[index]
-			break
-		}
-	}
-	if projectRef == nil {
-		t.Fatal("native inspect fixture is missing project file")
-	}
-	projectYAML := strings.Replace(string(fixture.objects[projectRef.ObjectKey]), "access: {include: []}", "access: {include: [access/*.yaml]}", 1)
-	if projectYAML == string(fixture.objects[projectRef.ObjectKey]) {
-		t.Fatal("native inspect fixture project file did not contain empty access include")
-	}
-	fixture.objects[projectRef.ObjectKey] = []byte(projectYAML)
-	projectRef.Digest = testNativeDigestBytes([]byte(projectYAML))
-	projectRef.SizeBytes = int64(len(projectYAML))
-	policyYAML := []byte("apiVersion: leapview.dev/v1\nkind: DataPolicy\nmetadata: {id: policy:orders, name: orders}\nspec: {object: {kind: model, id: model:orders}, subject: {kind: principal, principalId: principal:alice}, policyType: row_filter, expression: {field: id, operator: equals, value: '1'}}\n")
-	const policyKey = "source_access_orders.yaml"
-	fixture.objects[policyKey] = policyYAML
-	fixture.refs = append(fixture.refs, project.CandidateSourceObjectRef{Path: "access/orders.yaml", Digest: testNativeDigestBytes(policyYAML), SizeBytes: int64(len(policyYAML)), ObjectKey: policyKey, ContentType: "text/plain", MetadataDigest: testNativeDigest("access/orders.yaml"), StorageSecurityDomain: "runtime"})
-
-	files := make(map[string][]byte, len(fixture.refs))
-	for _, ref := range fixture.refs {
-		files[ref.Path] = fixture.objects[ref.ObjectKey]
-	}
-	compiled, err := projectcompiler.CompileProjectFiles(files, fixture.request.Source.ProjectFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixture.artifact = compiled.Canonical()
-	fixture.request.Source.ProjectDigest = compiled.Digest()
-	return fixture
+	request    release.CandidateArtifactRequest
+	sourceRoot string
+	artifact   []byte
+	refs       []project.CandidateSourceObjectRef
+	objects    map[string][]byte
 }
 
 func nativeInspectFixture(t *testing.T) nativeInspectFixtureValue {
@@ -931,24 +870,10 @@ func nativeInspectFixtureForConnector(t *testing.T, connectorKind string) native
 		sourcePath = "https://example.com/native-inspect/orders.csv"
 	}
 	files := map[string]string{
-		"leapview.yaml": `apiVersion: leapview.dev/v1
-kind: Project
-metadata: {id: project:test, name: test}
-spec:
-  connections: {include: [connections/*.yaml]}
-  sources: {include: [sources/*.yaml]}
-  models: {include: [models/*.yaml]}
-  semanticModels: {include: []}
-  pipelines: {include: []}
-  dashboards: {include: []}
-  access: {include: []}
-  publications: {include: []}
-`,
 		"connections/warehouse.yaml": fmt.Sprintf("apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: %s}\n", connectorKind),
 		"sources/orders.yaml":        fmt.Sprintf("apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: %s, format: csv}}\n", sourcePath),
 		"models/orders.yaml":         "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders_model}\nspec: {definition: {type: sql, sql: 'SELECT id FROM source.orders'}, fields: {id: {datatype: Integer}}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}}\n",
 	}
-	projectPath := filepath.Join(root, "leapview.yaml")
 	for name, body := range files {
 		filePath := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
@@ -958,7 +883,7 @@ spec:
 			t.Fatal(err)
 		}
 	}
-	compiled, err := projectcompiler.CompileProject(projectPath)
+	compiled, err := projectcompiler.Compile(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -975,8 +900,8 @@ spec:
 	// relevant to the object-backed reader contract.
 	projectDigest := compiled.Digest()
 	sourceDigest := testNativeDigest("source-snapshot")
-	request := release.CandidateArtifactRequest{CandidateID: "candidate-1", GenerationID: "018f0e4e-6f2a-7abc-8def-0123456789ab", Scope: projectgraph.CandidateScope{ProjectID: "project:test", Environment: "dev"}, OwnerID: "owner-1", ArtifactDigest: sourceDigest, Source: project.CandidateSourceSnapshot{ProjectID: "project:test", ArtifactDigest: sourceDigest, ProjectFile: "leapview.yaml", ProjectDigest: projectDigest}}
-	return nativeInspectFixtureValue{request: request, artifact: compiled.Canonical(), refs: refs, objects: objects}
+	request := release.CandidateArtifactRequest{CandidateID: "candidate-1", GenerationID: "018f0e4e-6f2a-7abc-8def-0123456789ab", Scope: projectgraph.CandidateScope{ProjectID: "project:test", Environment: "dev"}, OwnerID: "owner-1", ArtifactDigest: sourceDigest, Source: project.CandidateSourceSnapshot{ProjectID: "project:test", ArtifactDigest: sourceDigest, SourceRoot: ".", ProjectDigest: projectDigest}}
+	return nativeInspectFixtureValue{request: request, sourceRoot: root, artifact: compiled.Canonical(), refs: refs, objects: objects}
 }
 
 type nativeBaseFixtureValue struct {
@@ -993,11 +918,7 @@ func nativeBaseFixture(t *testing.T, fixture nativeInspectFixtureValue) nativeBa
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := make(map[string][]byte, len(fixture.refs))
-	for _, ref := range fixture.refs {
-		files[ref.Path] = fixture.objects[ref.ObjectKey]
-	}
-	plan, err := projectcompiler.PlanProjectFilesAgainstGraph(files, fixture.request.Source.ProjectFile, compiled.Graph())
+	plan, err := projectcompiler.PlanSourceRootAgainstGraph(fixture.sourceRoot, projectgraph.ProjectGraph{})
 	if err != nil {
 		t.Fatal(err)
 	}

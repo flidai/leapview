@@ -389,8 +389,6 @@ func (c *Controller) runQualificationAuthoring(
 		"--network", "host",
 		"--volume", certificateFile+":/run/certs/caddy-root.crt:ro",
 		"--env", "QUALIFICATION_KEYRING_PASSWORD",
-		"--env", qualificationAuthorPrincipalEnv+"="+administrator.Principal.Id,
-		"--env", qualificationReviewerPrincipalEnv+"="+reviewer.Principal.Id,
 		"--env", "SSL_CERT_FILE=/run/certs/caddy-root.crt",
 		clientImage,
 		"dbus-run-session", "--",

@@ -37,8 +37,8 @@ func TestCompilerCompilesLogicalFilesAndReturnsCanonicalArtifact(t *testing.T) {
 	if err := json.Unmarshal(output.Manifest, &manifest); err != nil {
 		t.Fatalf("output manifest JSON: %v", err)
 	}
-	if got, _ := manifest["id"].(string); got != "project:test" {
-		t.Fatalf("manifest project id = %q", got)
+	if _, ok := manifest["id"]; ok {
+		t.Fatal("portable source manifest unexpectedly contains target project identity")
 	}
 	if strings.Contains(string(output.ProjectArtifact), "/tmp/") {
 		t.Fatal("artifact contains host path material")
@@ -54,9 +54,8 @@ func TestCompilerRejectsContextIdentityAndSourceIntegrityFailures(t *testing.T) 
 		t.Fatalf("canceled compile error = %v", err)
 	}
 	input.ProjectID = "project:other"
-	input.SourceDigest = compilerSourceDigest(input)
-	if _, err := (Compiler{}).Compile(context.Background(), input); err == nil || !strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("wrong project id error = %v", err)
+	if _, err := (Compiler{}).Compile(context.Background(), input); err != nil {
+		t.Fatalf("target project identity unexpectedly affected portable compilation: %v", err)
 	}
 	input = compilerTestInput(files, "project:test")
 	input.Files[0].Digest = sha256Identity([]byte("tampered"))
@@ -89,7 +88,7 @@ func compilerSourceDigest(input CompileInput) string {
 		entries = append(entries, projectpostgres.SourceSnapshotEntryInput{Path: file.Path, Digest: file.Digest, SizeBytes: int64(len(file.Bytes))})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
-	return projectpostgres.CanonicalSourceDigest(input.ProjectID, input.ProjectFile, entries)
+	return projectpostgres.CanonicalSourceDigest(entries)
 }
 
 func compilerTestInput(files map[string][]byte, projectID string) CompileInput {
@@ -102,24 +101,11 @@ func compilerTestInput(files map[string][]byte, projectID string) CompileInput {
 		sourceEntries = append(sourceEntries, projectpostgres.SourceSnapshotEntryInput{Path: file.Path, Digest: file.Digest, SizeBytes: int64(len(file.Bytes))})
 	}
 	sort.Slice(sourceEntries, func(i, j int) bool { return sourceEntries[i].Path < sourceEntries[j].Path })
-	return CompileInput{ProjectID: projectID, StorageSecurityDomain: "runtime", ProjectFile: "leapview.yaml", SourceDigest: projectpostgres.CanonicalSourceDigest(projectID, "leapview.yaml", sourceEntries), Files: entries}
+	return CompileInput{ProjectID: projectID, StorageSecurityDomain: "runtime", SourceDigest: projectpostgres.CanonicalSourceDigest(sourceEntries), Files: entries}
 }
 
 func compilerTestFiles() map[string][]byte {
 	files := map[string]string{
-		"leapview.yaml": `apiVersion: leapview.dev/v1
-kind: Project
-metadata: {id: project:test, name: test}
-spec:
-  connections: {include: [connections/*.yaml]}
-  sources: {include: [sources/*.yaml]}
-  models: {include: [models/*.yaml]}
-  semanticModels: {include: [semantic-models/*.yaml]}
-  pipelines: {include: [pipelines/*.yaml]}
-  dashboards: {include: [dashboards/*.yaml]}
-  access: {include: []}
-  publications: {include: []}
-`,
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}

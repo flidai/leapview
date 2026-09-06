@@ -148,20 +148,20 @@ func nativePlanPostgresDB(t *testing.T) (*pgxpool.Pool, *deploymentnative.Reposi
 func nativePlanPostgresFixture(t *testing.T, sourceDigest, attestationDigest string) (project.CandidateSourceSnapshot, release.CandidateArtifactSet) {
 	t.Helper()
 	projectID := projectgraph.ResourceID("project_native_plan")
-	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: projectID, Kind: projectgraph.KindProject, Name: "native_plan"}}, nil)
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := projectartifact.NewProject(graph, projectmanifest.Project{ID: projectID.String(), Name: "native_plan"})
+	artifact, err := projectartifact.NewSourceBundle(graph, projectmanifest.ResourceManifest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := project.CandidateSourceSnapshot{ProjectID: projectID, ArtifactDigest: sourceDigest, SourceAttestationDigest: attestationDigest, ProjectFile: "leapview.yaml", ProjectDigest: artifact.Digest()}
+	source := project.CandidateSourceSnapshot{ProjectID: projectID, ArtifactDigest: sourceDigest, SourceAttestationDigest: attestationDigest, ProjectDigest: artifact.Digest()}
 	set := release.CandidateArtifactSet{
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: artifact.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version},
 		AuthorizationFingerprint: createPlanTestDigest('c'),
 		Generation:               release.CandidateGenerationArtifact{DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
-		Compiler:                 release.CandidateCompilerEvidence{Graph: graph, Manifest: artifact.Manifest(), Artifact: artifact, Plan: projectcompiler.ProjectPlan{Project: projectID.String(), Deterministic: true}},
+		Compiler:                 release.CandidateCompilerEvidence{Graph: graph, Manifest: artifact.Manifest(), Artifact: artifact, Plan: projectcompiler.BundlePlan{Deterministic: true}},
 	}
 	return source, set
 }

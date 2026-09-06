@@ -79,6 +79,28 @@ func TestNativeGenerationBaseHydratesReorderedJSONBManifest(t *testing.T) {
 	}
 }
 
+func TestNativeGenerationBasePreservesTargetOwnedServingDocuments(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	base := nativeBaseFixture(t, fixture)
+	base.state.AccessPolicyJSON = `{"targetPolicy":"retained"}`
+	base.state.DashboardPublicationsJSON = `{"website":"published"}`
+	base.state.DashboardAppearancesJSON = `{"theme":"dark"}`
+	service := &nativeCandidateArtifactPhases{
+		states:        nativeBaseStateStub{state: base.state, artifact: base.artifact},
+		provenance:    nativeBaseProvenanceStub{provenance: base.provenance},
+		artifacts:     base.store,
+		storageDomain: "runtime",
+		environment:   "dev",
+	}
+	loaded, err := service.nativeGenerationBase(t.Context(), &base.identity)
+	if err != nil {
+		t.Fatalf("nativeGenerationBase() rejected target-owned serving documents: %v", err)
+	}
+	if !loaded.active || loaded.artifact.Digest() != base.state.ProjectDigest {
+		t.Fatalf("loaded native base = %#v", loaded)
+	}
+}
+
 func TestNativeGenerationBaseRejectsInactiveOrIncompleteState(t *testing.T) {
 	fixture := nativeInspectFixture(t)
 	base := nativeBaseFixture(t, fixture)

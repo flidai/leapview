@@ -93,7 +93,7 @@ func TestConfigureAPIProtocolBypassesCandidateSourcePlanDurability(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:leapview-showcase/candidate-sync/plan", strings.NewReader(`{"projectFile":"leapview.yaml","artifactDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifacts":[]}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:leapview-showcase/candidate-sync/plan", strings.NewReader(`{"artifactDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifacts":[]}`))
 	request.Header.Set("Authorization", "Bearer credential")
 	request.Header.Set("Idempotency-Key", "plan-key")
 	request.Header.Set("Content-Type", "application/json")

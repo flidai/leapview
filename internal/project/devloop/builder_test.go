@@ -229,7 +229,7 @@ func TestNormalizeSnapshotRejectsContentAndCandidateSetDigestMismatch(t *testing
 }
 
 func TestNormalizeSnapshotRejectsUnsafeArtifactPaths(t *testing.T) {
-	for _, path := range []string{"../secrets.env", "/etc/passwd", `C:\secrets.env`, "models/../leapview.yaml"} {
+	for _, path := range []string{"../secrets.env", "/etc/passwd", `C:\secrets.env`, "models/../orders.yaml"} {
 		snapshot := testSnapshot("valid")
 		snapshot.Artifacts[0].Path = path
 		snapshot.Digest = candidateSetDigest(snapshot.Artifacts)
@@ -252,10 +252,10 @@ func TestCandidateSetDigestIsIndependentOfArtifactOrder(t *testing.T) {
 }
 
 func TestCandidateSetDigestIncludesArtifactSize(t *testing.T) {
-	artifacts := []Artifact{{Path: "leapview.yaml", Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1}}
-	first := candidateSetDigest("project", "leapview.yaml", artifacts)
+	artifacts := []Artifact{{Path: "models/orders.yaml", Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1}}
+	first := candidateSetDigest(artifacts)
 	artifacts[0].SizeBytes = 2
-	if second := candidateSetDigest("project", "leapview.yaml", artifacts); second == first {
+	if second := candidateSetDigest(artifacts); second == first {
 		t.Fatal("candidate set digest ignored artifact size")
 	}
 }

@@ -37,8 +37,8 @@ func TestTransportRemoteRequiresNativeSynchronization(t *testing.T) {
 
 func TestTransportRemoteRetainSourceDoesNotPrepareCandidate(t *testing.T) {
 	snapshot := testSnapshotWithArtifacts("source-only", []Artifact{
-		contentArtifact("leapview.yaml", []byte("project")),
-		contentArtifact("models/orders.yaml", []byte("orders")),
+		contentArtifact("models/orders.yaml", []byte("project")),
+		contentArtifact("connections/warehouse.yaml", []byte("orders")),
 	})
 	transport := &recordingSyncTransport{missing: []string{snapshot.Artifacts[0].Digest, snapshot.Artifacts[1].Digest}}
 	remote, err := NewTransportRemote(transport, 2)
@@ -54,7 +54,7 @@ func TestTransportRemoteRetainSourceDoesNotPrepareCandidate(t *testing.T) {
 }
 
 func TestTransportRemoteRetainSourceBoundsUploads(t *testing.T) {
-	artifacts := []Artifact{contentArtifact("leapview.yaml", []byte("project"))}
+	artifacts := []Artifact{contentArtifact("models/orders.yaml", []byte("project"))}
 	for index := range 7 {
 		artifacts = append(artifacts, contentArtifact(
 			"models/model-"+string(rune('a'+index))+".yaml",
@@ -207,7 +207,7 @@ func (transport *recordingSyncTransport) RetainSource(
 
 func testSnapshotWithArtifacts(projectID string, artifacts []Artifact) Snapshot {
 	return Snapshot{
-		ProjectID: projectgraph.ResourceID(projectID), ProjectFile: "leapview.yaml",
-		Digest: candidateSetDigest(projectgraph.ResourceID(projectID), "leapview.yaml", artifacts), Artifacts: artifacts,
+		ProjectID: projectgraph.ResourceID(projectID),
+		Digest:    candidateSetDigest(artifacts), Artifacts: artifacts,
 	}
 }

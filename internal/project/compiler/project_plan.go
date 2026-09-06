@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"sort"
 
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -87,9 +86,13 @@ func PlanSourceRootAgainstBundle(sourceRoot string, active projectartifact.Sourc
 	if err != nil {
 		return BundlePlan{}, err
 	}
+	candidate, err := projectartifact.NewSourceBundle(project.Graph, project.Manifest)
+	if err != nil {
+		return BundlePlan{}, err
+	}
 	plan := planForSourceAssembly(project)
 	changes, dependencyChanges, summary := diffResourceGraphs(project.Graph, active.Graph())
-	for _, materialization := range diffCompiledMaterialization(project, active) {
+	for _, materialization := range diffCompiledMaterialization(candidate, active) {
 		merged := false
 		for i := range changes {
 			if changes[i].ID == materialization.ID && changes[i].Action == materialization.Action {
@@ -124,19 +127,26 @@ func PlanSourceRootAgainstBundle(sourceRoot string, active projectartifact.Sourc
 	for _, change := range dependencyChanges {
 		summary.MaterializationImpact = summary.MaterializationImpact || change.MaterializationImpact
 	}
+	if len(changes) == 0 && len(dependencyChanges) == 0 {
+		changes = nil
+		dependencyChanges = nil
+		summary = BundlePlanSummary{}
+	}
 	plan.Changes, plan.DependencyChanges, plan.Summary = changes, dependencyChanges, summary
 	return plan, nil
 }
 
-func diffCompiledMaterialization(project sourceAssembly, active projectartifact.SourceBundle) []BundlePlanChange {
+func diffCompiledMaterialization(candidate, active projectartifact.SourceBundle) []BundlePlanChange {
 	changes := make([]BundlePlanChange, 0)
-	activeTables := active.ModelTables()
-	authoredTables := make(map[string]semanticmodel.Table, len(project.Models))
-	for name, table := range project.Models {
-		if id := project.ModelIDs[name]; id != "" {
-			authoredTables[id] = table
-		}
-	}
+	candidateGraph := candidate.Graph()
+	activeManifest := active.Manifest()
+	candidateManifest := candidate.Manifest()
+	activeTables := activeManifest.Models
+	// Compare the same artifact projection on both sides. NewSourceBundle closes
+	// authored symbolic references to stable IDs and applies runtime aliases;
+	// comparing a pre-artifact manifest against that projection reports false
+	// changes for an otherwise identical source root.
+	authoredTables := candidateManifest.Models
 	seen := make(map[string]struct{}, len(activeTables)+len(authoredTables))
 	for id := range authoredTables {
 		seen[id] = struct{}{}
@@ -150,7 +160,7 @@ func diffCompiledMaterialization(project sourceAssembly, active projectartifact.
 		if authoredOK && retainedOK && reflect.DeepEqual(authored, retained) {
 			continue
 		}
-		resource, ok := project.Graph.Resource(projectgraph.ResourceID(id))
+		resource, ok := candidateGraph.Resource(projectgraph.ResourceID(id))
 		if !ok {
 			resource, _ = active.Graph().Resource(projectgraph.ResourceID(id))
 		}
@@ -163,13 +173,8 @@ func diffCompiledMaterialization(project sourceAssembly, active projectartifact.
 		breaking, _ := resourceImpact(projectgraph.KindModel, projectgraph.KindModel, action)
 		changes = append(changes, BundlePlanChange{Action: action, ID: id, Type: string(projectgraph.KindModel), Key: resource.Name, Reason: reason, Breaking: breaking, MaterializationImpact: true})
 	}
-	activeSources := active.Manifest().Sources
-	authoredSources := make(map[string]semanticmodel.Source, len(project.Sources))
-	for name, source := range project.Sources {
-		if id := project.SourceIDs[name]; id != "" {
-			authoredSources[id] = source
-		}
-	}
+	activeSources := activeManifest.Sources
+	authoredSources := candidateManifest.Sources
 	seen = make(map[string]struct{}, len(activeSources)+len(authoredSources))
 	for id := range authoredSources {
 		seen[id] = struct{}{}
@@ -181,7 +186,7 @@ func diffCompiledMaterialization(project sourceAssembly, active projectartifact.
 		if reflect.DeepEqual(authoredSources[id], activeSources[id]) {
 			continue
 		}
-		resource, ok := project.Graph.Resource(projectgraph.ResourceID(id))
+		resource, ok := candidateGraph.Resource(projectgraph.ResourceID(id))
 		if !ok {
 			resource, _ = active.Graph().Resource(projectgraph.ResourceID(id))
 		}

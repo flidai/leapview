@@ -16,7 +16,7 @@ func qualificationInputArtifacts() release.CandidateArtifactSet {
 	nullable := true
 	return release.CandidateArtifactSet{
 		Artifact: release.ProjectArtifactProvenance{SourceDigest: qualificationDigest("source")},
-		Compiler: release.CandidateCompilerEvidence{Manifest: projectmanifest.Project{
+		Compiler: release.CandidateCompilerEvidence{Manifest: projectmanifest.ResourceManifest{
 			Sources: map[string]semanticmodel.Source{
 				"source:customers": {
 					SchemaMode: "strict",

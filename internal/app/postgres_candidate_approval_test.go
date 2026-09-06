@@ -15,12 +15,12 @@ import (
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
 const (
-	qualificationReviewerFixturePlaceholder = "0198f2c0-7c7a-7f00-8a11-00000000f650"
-	qualificationReviewerPrincipalID        = "0198f2c0-7c7a-7f00-8a11-000000000777"
+	qualificationReviewerPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000777"
 )
 
 type candidateApprovalStateReaderFake struct {
@@ -36,38 +36,20 @@ func (f candidateApprovalStateReaderFake) ArtifactByServingState(context.Context
 	return f.artifact, nil
 }
 
-func TestCandidateApprovalCapabilitiesUsesQualificationFixtureProjectAdmin(t *testing.T) {
-	sourceProjectPath := qualificationEvaluationProjectPath(t)
-	projectRoot := filepath.Join(t.TempDir(), "project")
-	if err := os.CopyFS(projectRoot, os.DirFS(filepath.Dir(sourceProjectPath))); err != nil {
-		t.Fatalf("copy qualification project: %v", err)
-	}
-	reviewerGrantPath := filepath.Join(projectRoot, "access", "qualification-reviewer-admin.yaml")
-	reviewerGrant, err := os.ReadFile(reviewerGrantPath)
+func TestCandidateApprovalCapabilitiesUsesPersistedProjectAdminPolicy(t *testing.T) {
+	sourceRoot := qualificationEvaluationSourceRoot(t)
+	project, err := projectcompiler.Compile(sourceRoot)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("compile qualification source root: %v", err)
 	}
-	placeholder := []byte("principalId: " + qualificationReviewerFixturePlaceholder)
-	if bytes.Count(reviewerGrant, placeholder) != 1 {
-		t.Fatal("qualification reviewer fixture does not contain its identity placeholder")
-	}
-	reviewerGrant = bytes.Replace(reviewerGrant, placeholder, []byte("principalId: "+qualificationReviewerPrincipalID), 1)
-	if err := os.WriteFile(reviewerGrantPath, reviewerGrant, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	projectPath := filepath.Join(projectRoot, "leapview.yaml")
-	project, err := projectcompiler.Compile(projectPath)
+	plan, err := projectcompiler.PlanSourceRoot(sourceRoot)
 	if err != nil {
-		t.Fatalf("compile qualification project: %v", err)
-	}
-	plan, err := projectcompiler.PlanProject(projectPath)
-	if err != nil {
-		t.Fatalf("plan qualification project: %v", err)
+		t.Fatalf("plan qualification source root: %v", err)
 	}
 	var body bytes.Buffer
 	manifest, artifactDigest, err := projectbundle.PackCompiledProject(project, plan, &body)
 	if err != nil {
-		t.Fatalf("pack qualification project: %v", err)
+		t.Fatalf("pack qualification source bundle: %v", err)
 	}
 	_, compiled, err := projectbundle.ValidateArtifactBytes(body.Bytes())
 	if err != nil {
@@ -77,11 +59,6 @@ func TestCandidateApprovalCapabilitiesUsesQualificationFixtureProjectAdmin(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	accessPolicyJSON, err := json.Marshal(compiled.Manifest.Access)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	const storageDomain = "qualification-test"
 	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: storageDomain})
 	if err != nil {
@@ -114,13 +91,22 @@ func TestCandidateApprovalCapabilitiesUsesQualificationFixtureProjectAdmin(t *te
 		ManifestJSON:          string(manifestJSON),
 		SizeBytes:             info.SizeBytes,
 	}
+	accessPolicyJSON, err := json.Marshal(projectmanifest.AccessPolicy{RoleBindings: map[string]projectmanifest.RoleBinding{
+		"qualification-reviewer": {
+			ID: "role-binding:qualification-reviewer", Name: "qualification-reviewer",
+			Role: "admin", Subject: projectmanifest.Subject{Kind: "principal", PrincipalID: qualificationReviewerPrincipalID},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	state := servingstate.State{
 		ID:               generationID,
-		ProjectID:        compiled.ProjectID,
+		ProjectID:        "project:leapview-evaluation",
 		Environment:      "evaluation",
 		Status:           servingstate.StatusValidated,
 		Digest:           artifactDigest,
-		ProjectDigest:    compiled.ProjectDigest,
+		ProjectDigest:    compiled.BundleDigest,
 		AccessPolicyJSON: string(accessPolicyJSON),
 	}
 	subjects := func(context.Context, string) ([]access.SubjectRef, error) {
@@ -146,15 +132,15 @@ func TestCandidateApprovalCapabilitiesUsesQualificationFixtureProjectAdmin(t *te
 	t.Fatalf("qualification reviewer capabilities = %v, want PROJECT_ADMIN", capabilities)
 }
 
-func qualificationEvaluationProjectPath(t *testing.T) string {
+func qualificationEvaluationSourceRoot(t *testing.T) string {
 	t.Helper()
 	directory, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for {
-		candidate := filepath.Join(directory, "evaluation", "project", "leapview.yaml")
-		if _, statErr := os.Stat(candidate); statErr == nil {
+		candidate := filepath.Join(directory, "evaluation", "project")
+		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
 			return candidate
 		}
 		parent := filepath.Dir(directory)

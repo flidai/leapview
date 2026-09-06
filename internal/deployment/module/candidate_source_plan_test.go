@@ -33,7 +33,7 @@ func TestCandidateSourcePlanUsesNativeClaimAuthority(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	module.candidateSources = &candidateSourceSynchronizerStub{}
 
-	response := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidate-sync/plan", `{"projectFile":"leapview.yaml","artifactDigest":"`+digest+`","artifacts":[]}`, func(w http.ResponseWriter, r *http.Request) {
+	response := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidate-sync/plan", `{"artifactDigest":"`+digest+`","artifacts":[]}`, func(w http.ResponseWriter, r *http.Request) {
 		module.PlanProjectCandidateSynchronization(w, r, "finance", "plan-idem")
 	})
 
@@ -50,7 +50,7 @@ func TestNativeCandidateSourcePlanRequiresProjectClaimAuthority(t *testing.T) {
 	module.candidateSources = sources
 	digest := "sha256:" + strings.Repeat("a", 64)
 
-	response := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidate-sync/plan", `{"projectFile":"leapview.yaml","artifactDigest":"`+digest+`","artifacts":[]}`, func(w http.ResponseWriter, r *http.Request) {
+	response := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidate-sync/plan", `{"artifactDigest":"`+digest+`","artifacts":[]}`, func(w http.ResponseWriter, r *http.Request) {
 		module.PlanProjectCandidateSynchronization(w, r, "finance", "plan-idem")
 	})
 

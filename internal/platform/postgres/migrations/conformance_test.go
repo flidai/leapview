@@ -97,7 +97,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if err := db.QueryRow(ctx, "SELECT version_id, is_applied FROM public.goose_db_version ORDER BY id DESC LIMIT 1").Scan(&version, &applied); err != nil {
 		t.Fatal(err)
 	}
-	if version != postgresbaseline.BaselineRevision || !applied {
+	if version != postgresbaseline.CurrentRevision || !applied {
 		t.Fatalf("Goose baseline identity = %d/applied=%t", version, applied)
 	}
 	var registryProfile, registryDigest string

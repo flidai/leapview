@@ -192,7 +192,6 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	lineageGraph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: projectgraph.ResourceID(projectID), Kind: projectgraph.KindProject, Name: "project"},
 		{ID: projectgraph.ResourceID("source:orders"), Kind: projectgraph.KindSource, Name: "orders"},
 	}, nil)
 	if err != nil {

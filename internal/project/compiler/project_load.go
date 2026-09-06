@@ -7,27 +7,17 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
-	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	"gopkg.in/yaml.v3"
 )
 
-type projectFileReader interface {
+type sourceFileReader interface {
 	ReadFile(string) ([]byte, error)
-	ExpandIncludes(string, []string) ([]string, error)
 	document.FragmentReader
 }
 
-type osProjectReader struct{ document.OSFragmentReader }
-
-func (osProjectReader) ReadFile(path string) ([]byte, error) {
-	return securefs.ReadCanonicalFile(path)
-}
-
-func (osProjectReader) ExpandIncludes(_ string, _ []string) ([]string, error) {
-	return nil, fmt.Errorf("authored Project manifests are not supported; use a source root")
-}
+type osSourceReader struct{ document.OSFragmentReader }
 
 func loadConnections(project *sourceAssembly, paths []string) error {
 	for _, path := range paths {

@@ -27,49 +27,54 @@ ORDER BY created_at, project_id;
 -- name: InsertSourceSyncPlan :exec
 INSERT INTO project.source_sync_plan
     (plan_id, operation_id, project_id, storage_security_domain, owner_id,
-     candidate_key, source_digest, project_file, request_digest, expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     candidate_key, source_digest, request_digest, expires_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 ON CONFLICT DO NOTHING;
 
 -- name: GetSourceSyncPlan :one
-SELECT plan_id, operation_id, project_id, storage_security_domain, owner_id,
-       candidate_key, source_digest, project_file, request_digest, state,
+SELECT plan_id, operation_id, project_id, source_identity_version, storage_security_domain, owner_id,
+       candidate_key, source_digest, request_digest, state,
        expires_at, created_at, committed_at
 FROM project.source_sync_plan
-WHERE plan_id = $1;
+WHERE plan_id = $1 AND source_identity_version = 2;
 
 -- name: GetSourceSyncPlanForUpdate :one
-SELECT plan_id, operation_id, project_id, storage_security_domain, owner_id,
-       candidate_key, source_digest, project_file, request_digest, state,
+SELECT plan_id, operation_id, project_id, source_identity_version, storage_security_domain, owner_id,
+       candidate_key, source_digest, request_digest, state,
        expires_at, created_at, committed_at
 FROM project.source_sync_plan
-WHERE plan_id = $1
+WHERE plan_id = $1 AND source_identity_version = 2
 FOR UPDATE;
 
 -- name: GetSourceSyncPlanByOperation :one
-SELECT plan_id, operation_id, project_id, storage_security_domain, owner_id,
-       candidate_key, source_digest, project_file, request_digest, state,
+SELECT plan_id, operation_id, project_id, source_identity_version, storage_security_domain, owner_id,
+       candidate_key, source_digest, request_digest, state,
        expires_at, created_at, committed_at
 FROM project.source_sync_plan
-WHERE operation_id = $1;
+WHERE operation_id = $1 AND source_identity_version = 2;
 
 -- name: SourceSyncPlanActive :one
 SELECT state = 'open' AND expires_at > clock_timestamp() AS active
 FROM project.source_sync_plan
-WHERE plan_id = $1;
+WHERE plan_id = $1 AND source_identity_version = 2;
 
 -- name: InsertSourceSyncPlanEntries :exec
 INSERT INTO project.source_sync_plan_entry(plan_id, path, digest, size_bytes, ordinal)
 SELECT sqlc.arg(plan_id)::uuid, entry.path, entry.digest, entry.size_bytes, entry.ordinal
 FROM jsonb_to_recordset(sqlc.arg(entries)::jsonb)
     AS entry(path text, digest text, size_bytes bigint, ordinal integer)
+WHERE EXISTS (
+    SELECT 1 FROM project.source_sync_plan p
+    WHERE p.plan_id = sqlc.arg(plan_id)::uuid AND p.source_identity_version = 2
+)
 ON CONFLICT (plan_id, path) DO NOTHING;
 
 -- name: ListSourceSyncPlanEntries :many
-SELECT plan_id, path, digest, size_bytes, ordinal
-FROM project.source_sync_plan_entry
-WHERE plan_id = $1
-ORDER BY ordinal;
+SELECT e.plan_id, e.path, e.digest, e.size_bytes, e.ordinal
+FROM project.source_sync_plan_entry e
+JOIN project.source_sync_plan p ON p.plan_id = e.plan_id
+WHERE e.plan_id = $1 AND p.source_identity_version = 2
+ORDER BY e.ordinal;
 
 -- name: ListSourceSyncPlanObjectRefs :many
 -- Keep this as one capability-owned leaf: callers lock and validate the plan
@@ -92,6 +97,7 @@ LEFT JOIN project.source_blob b
  AND b.storage_security_domain = p.storage_security_domain
  AND b.digest = e.digest
 WHERE p.plan_id = $1
+  AND p.source_identity_version = 2
 ORDER BY e.ordinal;
 
 -- name: ListMissingSourceBlobDigests :many
@@ -114,6 +120,7 @@ WHERE EXISTS (
     JOIN project.source_sync_plan_entry e ON e.plan_id = p.plan_id
     WHERE p.plan_id = $8 AND p.owner_id = $9
       AND p.project_id = $1 AND p.storage_security_domain = $2
+      AND p.source_identity_version = 2
       AND p.state = 'open' AND p.expires_at > clock_timestamp()
       AND e.digest = $3
 )
@@ -138,27 +145,27 @@ ORDER BY requested.path;
 -- name: InsertSourceSnapshot :one
 INSERT INTO project.source_snapshot
     (snapshot_id, project_id, storage_security_domain, source_digest,
-     project_file, project_digest, project_artifact_object_key,
+     project_digest, project_artifact_object_key,
      project_artifact_digest, project_artifact_size_bytes,
      manifest_object_key, manifest_object_digest, manifest_object_size_bytes,
      compiler_version, schema_version)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 ON CONFLICT DO NOTHING
 RETURNING snapshot_id, project_id, storage_security_domain, source_digest,
-          project_file, project_digest, project_artifact_object_key,
+          project_digest, project_artifact_object_key,
           project_artifact_digest, project_artifact_size_bytes,
           manifest_object_key, manifest_object_digest, manifest_object_size_bytes,
           compiler_version, schema_version, created_at;
 
 -- name: GetSourceSnapshot :one
 SELECT snapshot_id, project_id, storage_security_domain, source_digest,
-       project_file, project_digest, project_artifact_object_key,
+       project_digest, project_artifact_object_key,
        project_artifact_digest, project_artifact_size_bytes,
        manifest_object_key, manifest_object_digest, manifest_object_size_bytes,
        compiler_version, schema_version, created_at
 FROM project.source_snapshot
 WHERE project_id = $1 AND storage_security_domain = $2 AND source_digest = $3
-  AND state = 'sealed';
+  AND source_identity_version = 2 AND state = 'sealed';
 
 -- name: InsertSourceSnapshotEntries :exec
 INSERT INTO project.source_snapshot_entry
@@ -169,10 +176,11 @@ FROM jsonb_to_recordset(sqlc.arg(entries)::jsonb)
 ON CONFLICT (snapshot_id, path) DO NOTHING;
 
 -- name: ListSourceSnapshotEntries :many
-SELECT snapshot_id, project_id, storage_security_domain, path, digest, size_bytes, ordinal
-FROM project.source_snapshot_entry
-WHERE snapshot_id = $1
-ORDER BY ordinal;
+SELECT e.snapshot_id, e.project_id, e.storage_security_domain, e.path, e.digest, e.size_bytes, e.ordinal
+FROM project.source_snapshot_entry e
+JOIN project.source_snapshot s ON s.snapshot_id = e.snapshot_id
+WHERE e.snapshot_id = $1 AND s.source_identity_version = 2
+ORDER BY e.ordinal;
 
 -- name: ListSealedSourceSnapshotObjectRefs :many
 SELECT e.snapshot_id, e.project_id, e.storage_security_domain,
@@ -191,6 +199,7 @@ JOIN project.source_blob b
 WHERE s.project_id = $1
   AND s.storage_security_domain = $2
   AND s.source_digest = $3
+  AND s.source_identity_version = 2
   AND s.state = 'sealed'
 ORDER BY e.ordinal;
 
@@ -202,17 +211,20 @@ VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9)
 ON CONFLICT (attestation_id) DO NOTHING;
 
 -- name: GetSourceAttestation :one
-SELECT attestation_id, snapshot_id, source_digest, attestation_digest,
-       payload::text AS payload, revision, repository, ref, change_id, created_at
-FROM project.source_attestation
-WHERE snapshot_id = $1 AND attestation_digest = $2;
+SELECT a.attestation_id, a.snapshot_id, a.source_digest, a.attestation_digest,
+       a.payload::text AS payload, a.revision, a.repository, a.ref, a.change_id, a.created_at
+FROM project.source_attestation a
+JOIN project.source_snapshot s ON s.snapshot_id = a.snapshot_id
+WHERE a.snapshot_id = $1 AND a.attestation_digest = $2
+  AND s.source_identity_version = 2;
 
 -- name: TransitionSourceSyncPlanCommitted :execrows
 UPDATE project.source_sync_plan
 SET state = 'committed'
-WHERE plan_id = $1 AND owner_id = $2 AND state = 'open' AND expires_at > clock_timestamp();
+WHERE plan_id = $1 AND owner_id = $2 AND source_identity_version = 2
+  AND state = 'open' AND expires_at > clock_timestamp();
 
 -- name: TransitionSourceSnapshotSealed :execrows
 UPDATE project.source_snapshot
 SET state = 'sealed'
-WHERE snapshot_id = $1 AND state = 'building';
+WHERE snapshot_id = $1 AND source_identity_version = 2 AND state = 'building';

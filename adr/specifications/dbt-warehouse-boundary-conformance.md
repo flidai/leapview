@@ -1,8 +1,8 @@
 # dbt warehouse-boundary conformance map
 
-Status: partial; Project namespace prerequisite pending
+Status: partial; Project-free source prerequisite satisfied
 
-Last updated: 2026-09-04
+Last updated: 2026-09-06
 
 Governing decision:
 [ADR-0019](../0019-integrate-dbt-at-the-warehouse-contract-boundary.md)
@@ -18,11 +18,12 @@ paths. It adds a maintained producer example, orchestration, physical contract
 CI, and evidence. It adds no dbt runtime kind, parser, scheduler, public CLI,
 publication service, release envelope, or compatibility algorithm.
 
-The profile remains partial while ADR-0018 is pending: current portable source
-still uses an authored `kind: Project` manifest. The example follows the
-currently implemented compiler contract and must migrate to Project-free
-discovery with ADR-0018. ADR-0019 must not be marked implemented before that
-prerequisite is satisfied.
+FAI-666 satisfies ADR-0018's Project-free source prerequisite: the portable
+source contains only the six analytics kinds in their conventional
+directories. Durable Project identity and complete target binding remain
+tracked separately. The profile remains partial for those dependencies and
+its separately identified dbt adoption and live-cloud evidence gaps;
+satisfying this prerequisite does not mark ADR-0019 complete.
 
 Evidence classifications used below:
 
@@ -31,14 +32,15 @@ Evidence classifications used below:
 - **Structurally validated — not live Azure** means the authored workflow,
   commands, and CI wiring are parsed and checked, but live Azure OIDC, RBAC,
   storage retention, and checksum behavior are not claimed.
-- **Blocked on ADR-0018** means the current authored Project profile cannot yet
-  satisfy the Project-free discovery and durable namespace contract.
+- **Satisfied by FAI-666** means Project-free discovery is maintained by the
+  ordinary compiler path; it does not claim the remaining ADR-0018 target
+  namespace work is complete.
 
 ## Confirmation map
 
 | ADR-0019 confirmation | Maintained implementation evidence | Status or remaining item |
 | --- | --- | --- |
-| Ordinary Connection → Source → Model → SemanticModel → Dashboard graph serves dbt output | `examples/dbt-warehouse-boundary/`; compiler and runtime packages under `internal/project/compiler`, `internal/analytics/duckdb`, and `internal/dashboard/runtime` | Proven local; remove the root Project manifest when ADR-0018 BND-01/BND-02 lands. |
+| Ordinary Connection → Source → Model → SemanticModel → Dashboard graph serves dbt output | `examples/dbt-warehouse-boundary/`; compiler and runtime packages under `internal/project/compiler`, `internal/analytics/duckdb`, and `internal/dashboard/runtime` | Proven local with Project-free conventional resource discovery. |
 | One local command builds dbt, external Parquet, and starts LeapView | `task dbt:warehouse`; `scripts/dbt-warehouse-boundary.sh`; `scripts/dev-server.sh` | Proven local. |
 | Explicit resources compile and serve without dbt artifacts or dbt in LeapView | Example LeapView YAML contains no artifact reference; `internal/platform/architecture/dbt_boundary_test.go` | Proven local. |
 | Production invokes LeapView only after successful build and complete publication | `.github/workflows/dbt-warehouse-boundary-reference.yml`; architecture workflow assertions | Structurally validated — not live Azure; target credentials and IAM scopes remain operator requirements. |
@@ -49,7 +51,7 @@ Evidence classifications used below:
 | Serving and refresh require no dbt executable, repository, artifacts, or credentials | Runtime module/image architecture assertion; dbt dependencies are isolated under `examples/` and CI | Proven local by runtime/module assertions. |
 | Source read, serving write, and semantic policy boundaries remain distinct | Azure workflow, existing scoped Azure secret tests in `internal/analytics/duckdb/source_test.go`, and integration guide | Structurally validated — not live Azure; IAM scopes are operator requirements and live Azure authorization is not claimed. |
 | MetricFlow/dbt Semantic Layer definitions do not silently become LeapView definitions | No artifact parser or dbt semantic dependency exists; architecture assertion | Implemented by absence and explicit deferral. |
-| Every SemanticModel dataset resolves inside the same Project candidate/generation | ADR-0018 SEM-01/SEM-02 evidence in `project-namespace-conformance.md` | Blocked on ADR-0018; current graph resolution remains Project-local. |
+| Every SemanticModel dataset resolves inside the same Project candidate/generation | ADR-0018 SEM-01/SEM-02 evidence in `project-namespace-conformance.md` | Partial; Project-free compilation is in place, while FAI-675 owns the closed candidate resolver proof. |
 
 ## Existing capability composition
 
@@ -61,7 +63,7 @@ Evidence classifications used below:
 | Candidate construction and qualification | `internal/app/runtimefactory/delivery_runner.go` and `internal/analytics/candidatecatalog` |
 | Atomic activation, retained generations, rollback, leases, recovery | `internal/runtimehost`, `internal/deployment`, and `internal/servingstate` |
 | Local non-interactive orchestration | `leapview dev --once --no-browser` via `scripts/dev-server.sh` |
-| Project/environment identity and target bindings | existing deployment and connection-binding contracts; final Project-free source semantics pending ADR-0018 |
+| Project/environment identity and target bindings | existing deployment and connection-binding contracts; Project-free source semantics supplied by FAI-666, with durable identity and final binding tracked by FAI-667/FAI-669 |
 
 Physical Parquet is the CI contract evidence. dbt's manifest and run-results
 files are neither parsed nor admitted; a targeted metadata-only case proves

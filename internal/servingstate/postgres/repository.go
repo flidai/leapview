@@ -134,8 +134,8 @@ func AdmitGenerationBundleTx(ctx context.Context, tx Tx, input GenerationBundleI
 	if err != nil {
 		return Bundle{}, err
 	}
-	if err := graph.Validate(); err != nil || graph.ProjectID() != input.ProjectID {
-		return Bundle{}, errors.New("serving graph is invalid or project-mismatched")
+	if err := graph.Validate(); err != nil {
+		return Bundle{}, errors.New("serving graph is invalid")
 	}
 	identity := projectgraph.ServingIdentity{ProjectID: input.ProjectID, Environment: string(input.Environment), GenerationID: gen.String()}
 	if _, err := projectgraph.NewArtifactEnvelope(identity, graph); err != nil {

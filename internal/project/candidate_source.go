@@ -47,21 +47,14 @@ type CandidateSourceScope struct {
 }
 
 type CandidateSourceSnapshot struct {
-	ProjectID               projectgraph.ResourceID
-	ArtifactDigest          string
-	SourceAttestationDigest string
-	// ProjectFile is the logical authored manifest path. It is never a host
-	// filesystem path and is safe to carry across native object-backed ports.
-	ProjectFile              string
+	ProjectID                projectgraph.ResourceID
+	ArtifactDigest           string
+	SourceAttestationDigest  string
 	ProjectArtifactObjectKey string
 	ManifestObjectKey        string
-	ProjectPath              string
 	ProjectDigest            string
-	ProjectArtifactPath      string
-	// SourceRoot is the canonical portable source-root identity when the
-	// retained snapshot originated from a Project-free source bundle.
-	SourceRoot     string
-	SourceRevision *CandidateSourceRevision
+	SourceRoot               string
+	SourceRevision           *CandidateSourceRevision
 }
 
 // CandidateSourceObjectRef is an immutable object-store reference. ObjectKey

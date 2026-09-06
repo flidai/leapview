@@ -14,7 +14,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-func TestEmbeddedGooseBaselineIsTheOnlyImmutableMigration(t *testing.T) {
+func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testing.T) {
 	entries, err := fs.ReadDir(MigrationFS(), ".")
 	if err != nil {
 		t.Fatal(err)
@@ -25,10 +25,10 @@ func TestEmbeddedGooseBaselineIsTheOnlyImmutableMigration(t *testing.T) {
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if len(sqlFiles) != 1 || sqlFiles[0] != "001_control_plane.sql" {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
-	contents, err := fs.ReadFile(MigrationFS(), sqlFiles[0])
+	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +45,40 @@ func TestEmbeddedGooseBaselineIsTheOnlyImmutableMigration(t *testing.T) {
 	for _, forbidden := range []string{"platform.schema_revision", "watermill", "cache.cache_l3", "CREATE SCHEMA IF NOT EXISTS cache"} {
 		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
 			t.Errorf("Goose baseline retains removed contract %q", forbidden)
+		}
+	}
+}
+
+func TestProjectFreeSourceBundleQuarantinesLegacyLineageVersions(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "002_project_free_source_bundle.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"ADD CONSTRAINT graphs_graph_version_v2_ck",
+		"CHECK (graph_version >= 2) NOT VALID",
+		"ALTER TABLE lineage.graphs",
+		"DROP INDEX IF EXISTS lineage.lineage_edges_project_from_idx",
+		"ALTER TABLE project.source_snapshot",
+		"source_snapshot_source_identity_version_v2_ck",
+		"ALTER TABLE project.source_sync_plan",
+		"source_sync_plan_source_identity_version_v2_ck",
+		"CHECK (source_identity_version >= 2) NOT VALID",
+		"source_identity_version = 2",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("forward migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"source_blob_source_identity_version",
+		"source_snapshot_entry_source_identity_version",
+		"source_attestation_source_identity_version",
+		"source_sync_plan_entry_source_identity_version",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("forward migration quarantines reusable child/blob evidence %q", forbidden)
 		}
 	}
 }

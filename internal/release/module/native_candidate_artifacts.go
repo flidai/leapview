@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -83,8 +85,8 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	if compiledProject.ProjectID() != request.Scope.ProjectID || compiledProject.Digest() != request.Source.ProjectDigest {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("retained project artifact does not match synchronized project"))
+	if compiledProject.Digest() != request.Source.ProjectDigest {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("retained source bundle does not match synchronized source"))
 	}
 
 	files, err := service.readSourceObjects(ctx, scope, request.Source)
@@ -94,12 +96,17 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 	// The retained source tree and the retained compiler artifact are one
 	// synchronized identity. Compile the logical bytes once to reject a reader
 	// that serves an unrelated source set under the requested digest.
-	authoredProject, err := projectcompiler.CompileProjectFiles(files, request.Source.ProjectFile)
+	sourceRoot, err := materializeNativeSourceRoot(files)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	if authoredProject.ProjectID() != compiledProject.ProjectID() || authoredProject.Digest() != compiledProject.Digest() {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("retained source files do not match project artifact"))
+	defer os.RemoveAll(sourceRoot)
+	authoredProject, err := projectcompiler.Compile(sourceRoot)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if authoredProject.Digest() != compiledProject.Digest() {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("retained source files do not match source bundle"))
 	}
 
 	// Resolve the exact active compiler artifact through the serving-state,
@@ -113,11 +120,11 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
-	var plan projectcompiler.ProjectPlan
+	var plan projectcompiler.BundlePlan
 	if base.active {
-		plan, err = projectcompiler.PlanProjectFilesAgainstArtifact(files, request.Source.ProjectFile, base.artifact)
+		plan, err = projectcompiler.PlanSourceRootAgainstBundle(sourceRoot, base.artifact)
 	} else {
-		plan, err = projectcompiler.PlanProjectFilesAgainstGraph(files, request.Source.ProjectFile, projectgraph.ProjectGraph{})
+		plan, err = projectcompiler.PlanSourceRootAgainstGraph(sourceRoot, projectgraph.ProjectGraph{})
 	}
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
@@ -244,33 +251,31 @@ func (service *nativeCandidateArtifactPhases) nativeGenerationBase(ctx context.C
 	if err != nil {
 		return candidateGenerationBase{}, candidateArtifactInvalid(err)
 	}
-	if validation.Digest != artifact.Digest || validation.ProjectID != identity.ProjectID.String() || validation.ProjectDigest != state.ProjectDigest || !bytes.Equal(validatedManifestJSON, durableManifestJSON) || compiled.ProjectID != identity.ProjectID || compiled.ProjectDigest != state.ProjectDigest {
+	if validation.Digest != artifact.Digest || validation.BundleDigest != state.ProjectDigest || !bytes.Equal(validatedManifestJSON, durableManifestJSON) || compiled.BundleDigest != state.ProjectDigest {
 		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact content identity mismatch"))
 	}
-	baseArtifact, err := projectartifact.NewProject(compiled.Graph, compiled.Manifest)
+	baseArtifact, err := projectartifact.NewSourceBundle(compiled.Graph, compiled.Manifest)
 	if err != nil {
 		return candidateGenerationBase{}, candidateArtifactInvalid(err)
 	}
-	if baseArtifact.ProjectID() != identity.ProjectID || baseArtifact.Digest() != state.ProjectDigest {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base project identity mismatch"))
+	if baseArtifact.Digest() != state.ProjectDigest {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base source bundle identity mismatch"))
 	}
 	if baseProvenance.Artifact.CompilerVersion != projectartifact.CompilerVersion || baseProvenance.Artifact.SchemaVersion != baseArtifact.Version() {
 		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance compiler identity mismatch"))
 	}
-	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocuments(baseArtifact)
-	if err != nil {
-		return candidateGenerationBase{}, candidateArtifactInvalid(err)
-	}
 	for _, document := range []struct {
-		label       string
-		persisted   string
-		regenerated string
+		label     string
+		persisted string
 	}{
-		{label: "access policy", persisted: state.AccessPolicyJSON, regenerated: accessPolicyJSON},
-		{label: "dashboard publications", persisted: state.DashboardPublicationsJSON, regenerated: publicationsJSON},
-		{label: "dashboard appearances", persisted: state.DashboardAppearancesJSON, regenerated: appearancesJSON},
+		{label: "access policy", persisted: state.AccessPolicyJSON},
+		{label: "dashboard publications", persisted: state.DashboardPublicationsJSON},
+		{label: "dashboard appearances", persisted: state.DashboardAppearancesJSON},
 	} {
-		if err := equivalentNativeServingDocuments(document.persisted, document.regenerated, document.label); err != nil {
+		// These documents are target-owned serving state, not source-bundle
+		// identity. Validate their canonical encoding without comparing them to
+		// the portable bundle's intentionally empty placeholders.
+		if err := validateNativeServingDocument(document.persisted, document.label); err != nil {
 			return candidateGenerationBase{}, candidateArtifactInvalid(err)
 		}
 	}
@@ -407,7 +412,7 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 		ContentType:           nativeServingArtifactContentType,
 		MetadataDigest:        nativeServingArtifactMetadataDigest(),
 	}
-	info, err := service.putServingArtifact(ctx, key, bytes.NewReader(content.Bytes()), metadata, request.Scope.ProjectID.String())
+	info, err := service.putServingArtifact(ctx, key, bytes.NewReader(content.Bytes()), metadata, compiledProject.Digest())
 	if err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
@@ -510,7 +515,7 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 	if inspected.Generation.BundleManifestJSON != "" && inspected.Generation.BundleManifestJSON != validation.ManifestJSON {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("inspected native serving artifact bundle manifest changed"))
 	}
-	if validation.Digest != identity.ServingArtifactDigest || validation.ProjectID != request.Scope.ProjectID.String() || validation.ProjectDigest != request.Source.ProjectDigest || compiled.ProjectID != request.Scope.ProjectID || compiled.ProjectDigest != request.Source.ProjectDigest {
+	if validation.Digest != identity.ServingArtifactDigest || validation.BundleDigest != request.Source.ProjectDigest || compiled.BundleDigest != request.Source.ProjectDigest {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native serving artifact compiled identity mismatch"))
 	}
 	if compiled.GraphDigest != inspected.Compiler.Graph.Digest() || !sameNativeJSON(compiled.Plan, inspected.Compiler.Plan) || !sameNativeJSON(compiled.Manifest, inspected.Compiler.Manifest) {
@@ -523,10 +528,10 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 	if err := validateNativeServingDocuments(inspected.Generation, accessPolicyJSON, publicationsJSON, appearancesJSON); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	canonicalProject, err := projectartifact.NewProject(compiled.Graph, compiled.Manifest)
-	if err != nil || canonicalProject.ProjectID() != request.Scope.ProjectID || canonicalProject.Digest() != request.Source.ProjectDigest {
+	canonicalProject, err := projectartifact.NewSourceBundle(compiled.Graph, compiled.Manifest)
+	if err != nil || canonicalProject.Digest() != request.Source.ProjectDigest {
 		if err == nil {
-			err = errors.New("native serving artifact project digest mismatch")
+			err = errors.New("native serving artifact source bundle digest mismatch")
 		}
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -606,19 +611,19 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	if validation.Digest != digest || validation.ProjectID != request.ServingIdentity.ProjectID.String() || validation.ProjectDigest != compiled.ProjectDigest || compiled.ProjectID != request.ServingIdentity.ProjectID || compiled.Graph.ProjectID() != request.ServingIdentity.ProjectID {
+	if validation.Digest != digest || validation.BundleDigest != compiled.BundleDigest {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact content identity mismatch"))
 	}
 	if err := validateNativeBundleManifestJSON(validation.ManifestJSON); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 
-	canonicalProject, err := projectartifact.NewProject(compiled.Graph, compiled.Manifest)
+	canonicalProject, err := projectartifact.NewSourceBundle(compiled.Graph, compiled.Manifest)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	if canonicalProject.ProjectID() != request.ServingIdentity.ProjectID || canonicalProject.Digest() != compiled.ProjectDigest {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered project identity mismatch"))
+	if canonicalProject.Digest() != compiled.BundleDigest {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered source bundle identity mismatch"))
 	}
 	var repacked bytes.Buffer
 	repackedManifest, repackedDigest, err := projectbundle.PackCompiledProject(canonicalProject, compiled.Plan, &repacked)
@@ -665,7 +670,7 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 	// Keep restrictions bound to the concrete serving identity used for this
 	// recovery. The fingerprint itself is governance evidence and must remain
 	// stable when the same artifact is reattached to another generation.
-	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(request.ServingIdentity, canonicalProject.Graph(), canonicalProject.Manifest().Access)
+	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(request.ServingIdentity, canonicalProject.Graph(), projectmanifest.AccessPolicy{})
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -673,7 +678,7 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	policySnapshot, err := projectmanifest.CompileAuthorizationSnapshot(policyIdentity, canonicalProject.Graph(), canonicalProject.Manifest().Access)
+	policySnapshot, err := projectmanifest.CompileAuthorizationSnapshot(policyIdentity, canonicalProject.Graph(), projectmanifest.AccessPolicy{})
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -793,7 +798,7 @@ func sameNativeJSON(left, right any) bool {
 // retainNativeServingDocuments derives serving policy snapshots from the
 // immutable compiled artifact. It deliberately does not inspect source paths
 // or any mutable authoring state.
-func retainNativeServingDocuments(generation *release.CandidateGenerationArtifact, compiled projectartifact.Project) error {
+func retainNativeServingDocuments(generation *release.CandidateGenerationArtifact, compiled projectartifact.SourceBundle) error {
 	if generation == nil {
 		return errors.New("native serving generation evidence is nil")
 	}
@@ -807,25 +812,15 @@ func retainNativeServingDocuments(generation *release.CandidateGenerationArtifac
 	return nil
 }
 
-func nativeServingDocuments(compiled projectartifact.Project) (string, string, string, error) {
+func nativeServingDocuments(compiled projectartifact.SourceBundle) (string, string, string, error) {
 	return nativeServingDocumentsFromManifest(compiled.Manifest())
 }
 
-func nativeServingDocumentsFromManifest(manifest projectmanifest.Project) (string, string, string, error) {
-	access := manifest.Access
-	publications := manifest.Publications
-	accessJSON, err := canonicalNativeServingDocument(access, "access policy")
-	if err != nil {
-		return "", "", "", err
-	}
-	publicationsJSON, err := canonicalNativeServingDocument(publications, "dashboard publications")
-	if err != nil {
-		return "", "", "", err
-	}
-	// Dashboard appearances currently have no authored source in the compiled
-	// manifest. Persist the canonical empty object until that source exists.
-	appearancesJSON := "{}"
-	return accessJSON, publicationsJSON, appearancesJSON, nil
+func nativeServingDocumentsFromManifest(_ projectmanifest.ResourceManifest) (string, string, string, error) {
+	// Portable source bundles intentionally contain no access or publication
+	// authoring. Those control-plane documents are attached by the target during
+	// sealing, so a source-only candidate carries canonical empty placeholders.
+	return "{}", "{}", "{}", nil
 }
 
 func canonicalNativeServingDocument(value any, label string) (string, error) {
@@ -862,21 +857,6 @@ func canonicalNativeServingObject(encoded []byte, label string) ([]byte, error) 
 		return nil, fmt.Errorf("native serving %s exceeds bounded document size", label)
 	}
 	return canonical, nil
-}
-
-func equivalentNativeServingDocuments(persisted, regenerated, label string) error {
-	persistedCanonical, err := canonicalNativeServingObject([]byte(persisted), label)
-	if err != nil {
-		return err
-	}
-	regeneratedCanonical, err := canonicalNativeServingObject([]byte(regenerated), label)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(persistedCanonical, regeneratedCanonical) {
-		return fmt.Errorf("candidate base serving %s identity mismatch", label)
-	}
-	return nil
 }
 
 func validateNativeServingDocument(value, label string) error {
@@ -969,13 +949,10 @@ func validateNativeBundleManifestJSON(value string) error {
 	if string(canonical) != value {
 		return errors.New("native serving artifact bundle manifest is not canonical JSON")
 	}
-	if manifest.Version != 1 || manifest.ProjectID == "" || manifest.ProjectDigest == "" || manifest.GraphDigest == "" || manifest.CatalogPath == "" || manifest.CompiledPath == "" || manifest.CompiledSHA256 == "" {
+	if manifest.Version != 2 || manifest.BundleDigest == "" || manifest.GraphDigest == "" || manifest.CompiledPath == "" || manifest.CompiledSHA256 == "" {
 		return errors.New("native serving artifact bundle manifest is incomplete")
 	}
-	if _, err := projectgraph.NewResourceID(manifest.ProjectID); err != nil {
-		return fmt.Errorf("native serving artifact bundle manifest project id: %w", err)
-	}
-	for field, value := range map[string]string{"project digest": manifest.ProjectDigest, "graph digest": manifest.GraphDigest} {
+	for field, value := range map[string]string{"bundle digest": manifest.BundleDigest, "graph digest": manifest.GraphDigest} {
 		if err := platformdigest.ValidateSHA256Identity(value); err != nil {
 			return fmt.Errorf("native serving artifact bundle manifest %s: %w", field, err)
 		}
@@ -989,9 +966,6 @@ func validateNativeBundleManifestJSON(value string) error {
 	if manifest.CompiledSHA256 != strings.ToLower(manifest.CompiledSHA256) {
 		return errors.New("native serving artifact bundle manifest compiled digest must be lowercase")
 	}
-	if manifest.CatalogPath != projectbundle.ProjectFile && manifest.CatalogPath != projectbundle.CompiledProjectFile {
-		return errors.New("native serving artifact bundle manifest catalog path is invalid")
-	}
 	if manifest.CompiledPath != projectbundle.CompiledProjectFile {
 		return errors.New("native serving artifact bundle manifest compiled path is invalid")
 	}
@@ -999,7 +973,7 @@ func validateNativeBundleManifestJSON(value string) error {
 }
 
 func validateNativeInspectedEvidence(request release.CandidateArtifactRequest, inspected release.CandidateArtifactSet) error {
-	if inspected.Artifact.SourceDigest != request.ArtifactDigest || inspected.Artifact.ProjectDigest != request.Source.ProjectDigest || inspected.Compiler.Artifact.ProjectID() != request.Scope.ProjectID || inspected.Compiler.Artifact.Digest() != request.Source.ProjectDigest || inspected.Compiler.Graph.ProjectID() != request.Scope.ProjectID || inspected.Compiler.Plan.Project != request.Scope.ProjectID.String() {
+	if inspected.Artifact.SourceDigest != request.ArtifactDigest || inspected.Artifact.ProjectDigest != request.Source.ProjectDigest || inspected.Compiler.Artifact.Digest() != request.Source.ProjectDigest || inspected.Compiler.Graph.Validate() != nil {
 		return candidateArtifactInvalid(errors.New("inspected native compiler evidence does not match request"))
 	}
 	if !sameNativeJSON(inspected.Compiler.Manifest, inspected.Compiler.Artifact.Manifest()) {
@@ -1025,7 +999,7 @@ func validateNativeArtifactIdentity(identity release.CandidateArtifactIdentity) 
 	return nil
 }
 
-func (service *nativeCandidateArtifactPhases) putServingArtifact(ctx context.Context, key string, body io.Reader, metadata platformobjectstore.ObjectMetadata, expectedProjectID string) (platformobjectstore.ObjectInfo, error) {
+func (service *nativeCandidateArtifactPhases) putServingArtifact(ctx context.Context, key string, body io.Reader, metadata platformobjectstore.ObjectMetadata, expectedBundleDigest string) (platformobjectstore.ObjectInfo, error) {
 	info, err := service.artifacts.PutImmutable(ctx, key, body, metadata)
 	if err == nil {
 		if validateErr := validateNativeServingArtifactInfo(info, key, metadata); validateErr != nil {
@@ -1054,7 +1028,7 @@ func (service *nativeCandidateArtifactPhases) putServingArtifact(ctx context.Con
 	if validateErr != nil {
 		return platformobjectstore.ObjectInfo{}, candidateArtifactInvalid(validateErr)
 	}
-	if validation.Digest != metadata.Digest || validation.ProjectID != expectedProjectID {
+	if validation.Digest != metadata.Digest || validation.BundleDigest != expectedBundleDigest {
 		return platformobjectstore.ObjectInfo{}, candidateArtifactInvalid(errors.New("native serving artifact replay content identity mismatch"))
 	}
 	return object.Info, nil
@@ -1139,9 +1113,6 @@ func validateNativeInspectRequest(request release.CandidateArtifactRequest, envi
 	if request.Scope.Validate() != nil || request.Scope.Environment != string(environment) || request.Source.ProjectID.Validate() != nil || request.Source.ProjectID != request.Scope.ProjectID || request.Source.ArtifactDigest != request.ArtifactDigest || platformdigest.ValidateSHA256Identity(request.ArtifactDigest) != nil || request.Source.ProjectDigest == "" || request.Source.ProjectDigest != strings.TrimSpace(request.Source.ProjectDigest) || platformdigest.ValidateSHA256Identity(request.Source.ProjectDigest) != nil {
 		return release.ErrCandidateArtifactInvalid
 	}
-	if !nativeInspectLogicalPath(request.Source.ProjectFile) {
-		return candidateArtifactInvalid(errors.New("retained source project file is not canonical"))
-	}
 	if request.GenerationID != "" {
 		if _, err := validateNativeGenerationID(request.GenerationID, false); err != nil {
 			return candidateArtifactInvalid(err)
@@ -1175,9 +1146,8 @@ func (service *nativeCandidateArtifactPhases) readSourceObjects(ctx context.Cont
 	seen := make(map[string]struct{}, len(refs))
 	files := make(map[string][]byte, len(refs))
 	var total int64
-	projectFileFound := false
 	for _, ref := range refs {
-		if !nativeInspectLogicalPath(ref.Path) || ref.SizeBytes < 0 || ref.SizeBytes > maxNativeInspectSourceBytes {
+		if ref.Path == "." || !nativeInspectLogicalPath(ref.Path) || ref.SizeBytes < 0 || ref.SizeBytes > maxNativeInspectSourceBytes {
 			return nil, candidateArtifactInvalid(errors.New("retained source object reference is invalid"))
 		}
 		if _, exists := seen[ref.Path]; exists {
@@ -1204,14 +1174,51 @@ func (service *nativeCandidateArtifactPhases) readSourceObjects(ctx context.Cont
 			return nil, candidateArtifactInvalid(errors.New("retained source object digest mismatch"))
 		}
 		files[ref.Path] = data
-		if ref.Path == source.ProjectFile {
-			projectFileFound = true
-		}
-	}
-	if !projectFileFound {
-		return nil, candidateArtifactInvalid(errors.New("retained source project file is missing"))
 	}
 	return files, nil
+}
+
+// materializeNativeSourceRoot gives the source-root compiler a bounded,
+// checkout-independent view of retained object bytes. The temporary root is
+// never exposed as artifact identity; the compiled SourceBundle and BundlePlan
+// remain path-independent and deterministic.
+func materializeNativeSourceRoot(files map[string][]byte) (string, error) {
+	if len(files) == 0 {
+		return "", errors.New("retained source object set is empty")
+	}
+	root, err := os.MkdirTemp("", "leapview-native-source-root-")
+	if err != nil {
+		return "", fmt.Errorf("create retained source root: %w", err)
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.RemoveAll(root)
+		}
+	}()
+	paths := make([]string, 0, len(files))
+	for name := range files {
+		if !nativeInspectLogicalPath(name) {
+			return "", fmt.Errorf("retained source path %q is not canonical", name)
+		}
+		paths = append(paths, name)
+	}
+	sort.Strings(paths)
+	for _, name := range paths {
+		destination := filepath.Join(root, filepath.FromSlash(name))
+		relative, err := filepath.Rel(root, destination)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+			return "", fmt.Errorf("retained source path %q escapes source root", name)
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+			return "", fmt.Errorf("create retained source directory for %q: %w", name, err)
+		}
+		if err := os.WriteFile(destination, files[name], 0o600); err != nil {
+			return "", fmt.Errorf("write retained source %q: %w", name, err)
+		}
+	}
+	cleanup = false
+	return root, nil
 }
 
 func nativeInspectLogicalPath(value string) bool {

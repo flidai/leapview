@@ -22,6 +22,10 @@ const (
 	BaselineRevision int64 = 1
 	// BaselineMigrationID is the immutable source name of the baseline file.
 	BaselineMigrationID = "001_control_plane"
+	// CurrentRevision is the latest control-plane schema revision understood by
+	// this binary. Serving admission requires every embedded migration through
+	// this revision to be applied.
+	CurrentRevision int64 = 2
 	// AdvisoryLockKey serializes migration attempts across instances. Goose
 	// owns acquisition and release of this session-level PostgreSQL lock. The
 	// combined River+Goose path below uses the same key for one shared fence.

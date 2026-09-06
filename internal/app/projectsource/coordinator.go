@@ -101,7 +101,6 @@ type AdmissionInput struct {
 	StorageSecurityDomain string
 	OwnerID               string
 	CandidateKey          string
-	ProjectFile           string
 	SourceDigest          string
 	RequestDigest         string
 	ExpiresAt             time.Time
@@ -112,7 +111,6 @@ type AdmissionInput struct {
 type CompileInput struct {
 	ProjectID             string
 	StorageSecurityDomain string
-	ProjectFile           string
 	SourceDigest          string
 	Files                 []SourceFile
 }
@@ -186,7 +184,7 @@ func (c *Coordinator) Admit(ctx context.Context, input AdmissionInput) (Admissio
 	if err != nil {
 		return AdmissionResult{}, err
 	}
-	planInput := projectpostgres.SyncPlanInput{PlanID: normalized.PlanID, OperationID: normalized.OperationID, ProjectID: normalized.ProjectID, StorageSecurityDomain: normalized.StorageSecurityDomain, OwnerID: normalized.OwnerID, CandidateKey: normalized.CandidateKey, SourceDigest: normalized.SourceDigest, ProjectFile: normalized.ProjectFile, RequestDigest: normalized.RequestDigest, ExpiresAt: normalized.ExpiresAt, Entries: make([]projectpostgres.SourceSyncPlanEntryInput, len(files))}
+	planInput := projectpostgres.SyncPlanInput{PlanID: normalized.PlanID, OperationID: normalized.OperationID, ProjectID: normalized.ProjectID, StorageSecurityDomain: normalized.StorageSecurityDomain, OwnerID: normalized.OwnerID, CandidateKey: normalized.CandidateKey, SourceDigest: normalized.SourceDigest, RequestDigest: normalized.RequestDigest, ExpiresAt: normalized.ExpiresAt, Entries: make([]projectpostgres.SourceSyncPlanEntryInput, len(files))}
 	for i, file := range files {
 		planInput.Entries[i] = projectpostgres.SourceSyncPlanEntryInput{Path: file.Path, Digest: file.Digest, SizeBytes: int64(len(file.Bytes)), Ordinal: i}
 	}
@@ -200,7 +198,7 @@ func (c *Coordinator) Admit(ctx context.Context, input AdmissionInput) (Admissio
 		if snapErr != nil {
 			return AdmissionResult{}, snapErr
 		}
-		if snapshot.SnapshotID != normalized.SnapshotID || snapshot.ProjectID != normalized.ProjectID || snapshot.StorageSecurityDomain != normalized.StorageSecurityDomain || snapshot.SourceDigest != normalized.SourceDigest || snapshot.ProjectFile != normalized.ProjectFile {
+		if snapshot.SnapshotID != normalized.SnapshotID || snapshot.ProjectID != normalized.ProjectID || snapshot.StorageSecurityDomain != normalized.StorageSecurityDomain || snapshot.SourceDigest != normalized.SourceDigest {
 			return AdmissionResult{}, fmt.Errorf("%w: replayed snapshot identity differs", ErrConflict)
 		}
 		return AdmissionResult{Plan: plan, Snapshot: snapshot}, nil
@@ -223,7 +221,7 @@ func (c *Coordinator) Admit(ctx context.Context, input AdmissionInput) (Admissio
 		return AdmissionResult{}, fmt.Errorf("admit source blobs: %w", err)
 	}
 
-	compiled, err := c.compiler.Compile(ctx, CompileInput{ProjectID: normalized.ProjectID, StorageSecurityDomain: normalized.StorageSecurityDomain, ProjectFile: normalized.ProjectFile, SourceDigest: normalized.SourceDigest, Files: cloneFiles(files)})
+	compiled, err := c.compiler.Compile(ctx, CompileInput{ProjectID: normalized.ProjectID, StorageSecurityDomain: normalized.StorageSecurityDomain, SourceDigest: normalized.SourceDigest, Files: cloneFiles(files)})
 	if err != nil {
 		return AdmissionResult{}, fmt.Errorf("compile project: %w", err)
 	}
@@ -240,7 +238,7 @@ func (c *Coordinator) Admit(ctx context.Context, input AdmissionInput) (Admissio
 		return AdmissionResult{}, fmt.Errorf("put source manifest: %w", err)
 	}
 
-	commitInput := projectpostgres.CommitSnapshotInput{PlanID: plan.PlanID, OwnerID: plan.OwnerID, SnapshotID: normalized.SnapshotID, ProjectID: normalized.ProjectID, StorageSecurityDomain: normalized.StorageSecurityDomain, SourceDigest: normalized.SourceDigest, ProjectFile: normalized.ProjectFile, ProjectDigest: compiled.ProjectDigest, ProjectArtifactObjectKey: projectArtifactInfo.Key, ProjectArtifactDigest: projectArtifactInfo.Digest, ProjectArtifactSizeBytes: projectArtifactInfo.SizeBytes, ManifestObjectKey: manifestInfo.Key, ManifestObjectDigest: manifestInfo.Digest, ManifestObjectSizeBytes: manifestInfo.SizeBytes, CompilerVersion: compiled.CompilerVersion, SchemaVersion: compiled.SchemaVersion, Entries: planEntries(plan), Attestation: normalized.Attestation}
+	commitInput := projectpostgres.CommitSnapshotInput{PlanID: plan.PlanID, OwnerID: plan.OwnerID, SnapshotID: normalized.SnapshotID, ProjectID: normalized.ProjectID, StorageSecurityDomain: normalized.StorageSecurityDomain, SourceDigest: normalized.SourceDigest, ProjectDigest: compiled.ProjectDigest, ProjectArtifactObjectKey: projectArtifactInfo.Key, ProjectArtifactDigest: projectArtifactInfo.Digest, ProjectArtifactSizeBytes: projectArtifactInfo.SizeBytes, ManifestObjectKey: manifestInfo.Key, ManifestObjectDigest: manifestInfo.Digest, ManifestObjectSizeBytes: manifestInfo.SizeBytes, CompilerVersion: compiled.CompilerVersion, SchemaVersion: compiled.SchemaVersion, Entries: planEntries(plan), Attestation: normalized.Attestation}
 	snapshot, err := c.commitSnapshot(ctx, commitInput)
 	if err != nil {
 		return AdmissionResult{}, fmt.Errorf("commit source snapshot: %w", err)
@@ -405,8 +403,7 @@ func normalizeInput(input AdmissionInput, now time.Time) (AdmissionInput, []Sour
 	n.StorageSecurityDomain = strings.TrimSpace(n.StorageSecurityDomain)
 	n.OwnerID = strings.TrimSpace(n.OwnerID)
 	n.CandidateKey = strings.TrimSpace(n.CandidateKey)
-	n.ProjectFile = strings.TrimSpace(n.ProjectFile)
-	if n.ProjectID == "" || len(n.ProjectID) > maxProjectIDBytes || n.StorageSecurityDomain == "" || len(n.StorageSecurityDomain) > maxProjectIDBytes || n.OwnerID == "" || len(n.OwnerID) > maxOwnerIDBytes || n.CandidateKey == "" || len(n.CandidateKey) > maxCandidateKeyBytes || !validText(n.ProjectID) || !validText(n.StorageSecurityDomain) || !validText(n.OwnerID) || !validText(n.CandidateKey) || !canonicalPath(n.ProjectFile) {
+	if n.ProjectID == "" || len(n.ProjectID) > maxProjectIDBytes || n.StorageSecurityDomain == "" || len(n.StorageSecurityDomain) > maxProjectIDBytes || n.OwnerID == "" || len(n.OwnerID) > maxOwnerIDBytes || n.CandidateKey == "" || len(n.CandidateKey) > maxCandidateKeyBytes || !validText(n.ProjectID) || !validText(n.StorageSecurityDomain) || !validText(n.OwnerID) || !validText(n.CandidateKey) {
 		return AdmissionInput{}, nil, ErrInvalid
 	}
 	if len(n.Files) == 0 || len(n.Files) > maxSourceFiles {
@@ -464,7 +461,7 @@ func normalizeInput(input AdmissionInput, now time.Time) (AdmissionInput, []Sour
 	for i, file := range files {
 		digestEntries[i] = projectpostgres.SourceSnapshotEntryInput{Path: file.Path, Digest: file.Digest, SizeBytes: int64(len(file.Bytes)), Ordinal: i}
 	}
-	n.SourceDigest = projectpostgres.CanonicalSourceDigest(n.ProjectID, n.ProjectFile, digestEntries)
+	n.SourceDigest = projectpostgres.CanonicalSourceDigest(digestEntries)
 	if strings.TrimSpace(input.SourceDigest) != "" && strings.TrimSpace(input.SourceDigest) != n.SourceDigest {
 		return AdmissionInput{}, nil, ErrInvalid
 	}

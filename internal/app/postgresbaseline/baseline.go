@@ -15,7 +15,8 @@ import (
 const (
 	BaselineRevision    = platformmigrations.BaselineRevision
 	BaselineMigrationID = platformmigrations.BaselineMigrationID
-	LatestRevision      = BaselineRevision
+	CurrentRevision     = platformmigrations.CurrentRevision
+	LatestRevision      = CurrentRevision
 )
 
 // Apply is the explicit initialization/upgrade path. Goose owns migration

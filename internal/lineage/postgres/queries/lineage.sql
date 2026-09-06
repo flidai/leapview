@@ -4,7 +4,7 @@
 INSERT INTO lineage.graphs
     (graph_digest, graph_version, project_id, node_count, edge_count)
 VALUES (sqlc.arg(graph_digest), sqlc.arg(graph_version), sqlc.arg(project_id), sqlc.arg(node_count), sqlc.arg(edge_count))
-ON CONFLICT (graph_digest) DO NOTHING
+ON CONFLICT (project_id, graph_digest) DO NOTHING
 RETURNING graph_digest;
 
 -- name: InsertNode :exec
@@ -20,7 +20,9 @@ VALUES (sqlc.arg(graph_digest), sqlc.arg(project_id), sqlc.arg(from_node_id), sq
 -- name: GetGraphProjectID :one
 SELECT project_id
 FROM lineage.graphs
-WHERE graph_digest = sqlc.arg(graph_digest);
+WHERE project_id = sqlc.arg(project_id)
+  AND graph_digest = sqlc.arg(graph_digest)
+  AND graph_version = 2;
 
 -- name: InsertBinding :one
 INSERT INTO lineage.bindings
@@ -30,10 +32,14 @@ ON CONFLICT (delivery_id, generation_id) DO NOTHING
 RETURNING graph_digest;
 
 -- name: GetBinding :one
-SELECT graph_digest, project_id
-FROM lineage.bindings
-WHERE delivery_id = sqlc.arg(delivery_id)
-  AND generation_id = sqlc.arg(generation_id);
+SELECT b.graph_digest, b.project_id
+FROM lineage.bindings b
+JOIN lineage.graphs g
+  ON g.project_id = b.project_id
+ AND g.graph_digest = b.graph_digest
+ AND g.graph_version = 2
+WHERE b.delivery_id = sqlc.arg(delivery_id)
+  AND b.generation_id = sqlc.arg(generation_id);
 
 -- name: PublishRevision :one
 WITH published(row) AS (
@@ -49,58 +55,91 @@ SELECT ((row).project_id)::text AS project_id,
 FROM published;
 
 -- name: GetCurrentRevision :one
-SELECT project_id, scope_id, revision_id, graph_digest, valid_from, valid_to, created_at
-FROM lineage.revisions
-WHERE project_id = sqlc.arg(project_id)
-  AND scope_id = sqlc.arg(scope_id)
-  AND valid_to IS NULL;
+SELECT r.project_id, r.scope_id, r.revision_id, r.graph_digest, r.valid_from, r.valid_to, r.created_at
+FROM lineage.revisions r
+JOIN lineage.graphs g
+  ON g.project_id = r.project_id
+ AND g.graph_digest = r.graph_digest
+ AND g.graph_version = 2
+WHERE r.project_id = sqlc.arg(project_id)
+  AND r.scope_id = sqlc.arg(scope_id)
+  AND r.valid_to IS NULL;
 
 -- name: GetRevision :one
-SELECT project_id, scope_id, revision_id, graph_digest, valid_from, valid_to, created_at
-FROM lineage.revisions
-WHERE project_id = sqlc.arg(project_id)
-  AND scope_id = sqlc.arg(scope_id)
-  AND revision_id = sqlc.arg(revision_id);
+SELECT r.project_id, r.scope_id, r.revision_id, r.graph_digest, r.valid_from, r.valid_to, r.created_at
+FROM lineage.revisions r
+JOIN lineage.graphs g
+  ON g.project_id = r.project_id
+ AND g.graph_digest = r.graph_digest
+ AND g.graph_version = 2
+WHERE r.project_id = sqlc.arg(project_id)
+  AND r.scope_id = sqlc.arg(scope_id)
+  AND r.revision_id = sqlc.arg(revision_id);
 
 -- name: GetGraphMetadata :one
 SELECT graph_version, project_id, node_count, edge_count
 FROM lineage.graphs
-WHERE graph_digest = sqlc.arg(graph_digest);
+WHERE project_id = sqlc.arg(project_id)
+  AND graph_digest = sqlc.arg(graph_digest)
+  AND graph_version = 2;
 
 -- name: ListNodes :many
-SELECT project_id, node_id, resource_kind, identity_digest, properties
-FROM lineage.nodes
-WHERE graph_digest = sqlc.arg(graph_digest)
-ORDER BY node_id
+SELECT n.project_id, n.node_id, n.resource_kind, n.identity_digest, n.properties
+FROM lineage.nodes n
+JOIN lineage.graphs g
+  ON g.project_id = n.project_id
+ AND g.graph_digest = n.graph_digest
+ AND g.graph_version = 2
+WHERE n.project_id = sqlc.arg(project_id)
+  AND n.graph_digest = sqlc.arg(graph_digest)
+ORDER BY n.node_id
 LIMIT sqlc.arg(row_limit);
 
 -- name: ListEdges :many
-SELECT project_id, from_node_id, to_node_id, relation
-FROM lineage.edges
-WHERE graph_digest = sqlc.arg(graph_digest)
-ORDER BY from_node_id, to_node_id
+SELECT e.project_id, e.from_node_id, e.to_node_id, e.relation
+FROM lineage.edges e
+JOIN lineage.graphs g
+  ON g.project_id = e.project_id
+ AND g.graph_digest = e.graph_digest
+ AND g.graph_version = 2
+WHERE e.project_id = sqlc.arg(project_id)
+  AND e.graph_digest = sqlc.arg(graph_digest)
+ORDER BY e.from_node_id, e.to_node_id
 LIMIT sqlc.arg(row_limit);
 
 -- name: GetRevisionDigest :one
-SELECT graph_digest
-FROM lineage.revisions
-WHERE project_id = sqlc.arg(project_id)
-  AND scope_id = sqlc.arg(scope_id)
-  AND valid_to IS NULL;
+SELECT r.graph_digest
+FROM lineage.revisions r
+JOIN lineage.graphs g
+  ON g.project_id = r.project_id
+ AND g.graph_digest = r.graph_digest
+ AND g.graph_version = 2
+WHERE r.project_id = sqlc.arg(project_id)
+  AND r.scope_id = sqlc.arg(scope_id)
+  AND r.valid_to IS NULL;
 
 -- name: GetBindingDigestForProject :one
-SELECT graph_digest
-FROM lineage.bindings
-WHERE project_id = sqlc.arg(project_id)
-  AND delivery_id = sqlc.arg(delivery_id)
-  AND generation_id = sqlc.arg(generation_id);
+SELECT b.graph_digest
+FROM lineage.bindings b
+JOIN lineage.graphs g
+  ON g.project_id = b.project_id
+ AND g.graph_digest = b.graph_digest
+ AND g.graph_version = 2
+WHERE b.project_id = sqlc.arg(project_id)
+  AND b.delivery_id = sqlc.arg(delivery_id)
+  AND b.generation_id = sqlc.arg(generation_id);
 
 -- name: NodeExists :one
 SELECT EXISTS (
     SELECT 1
-    FROM lineage.nodes
-    WHERE graph_digest = sqlc.arg(graph_digest)
-      AND node_id = sqlc.arg(node_id)
+    FROM lineage.nodes n
+    JOIN lineage.graphs g
+      ON g.project_id = n.project_id
+     AND g.graph_digest = n.graph_digest
+     AND g.graph_version = 2
+    WHERE n.project_id = sqlc.arg(project_id)
+      AND n.graph_digest = sqlc.arg(graph_digest)
+      AND n.node_id = sqlc.arg(node_id)
 );
 
 -- name: TraverseUpstream :many

@@ -68,7 +68,7 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 	leaseID := "0198f2c0-7c7a-7f00-8a11-000000000107"
 	pool := "pool-admission"
 	artifactDigest := admissionDigest('e')
-	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "project_admission", Kind: projectgraph.KindProject, Name: "project"}, {ID: "dashboard", Kind: projectgraph.KindDashboard, Name: "dashboard"}}, []projectgraph.Edge{{From: "project_admission", To: "dashboard", Relation: "contains"}})
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "dashboard", Kind: projectgraph.KindDashboard, Name: "dashboard"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +368,7 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	if managedData.calls < 1 || managedData.pins == nil || len(managedData.pins) != 0 {
 		t.Fatalf("managed-data binding admission calls=%d pins=%#v, want nonnil empty pins", managedData.calls, managedData.pins)
 	}
-	expectedLineage, err := lineagepostgres.FromGraph(input.Graph)
+	expectedLineage, err := lineagepostgres.FromGraph(input.Bundle.ProjectID, input.Graph)
 	if err != nil {
 		t.Fatalf("project lineage graph: %v", err)
 	}

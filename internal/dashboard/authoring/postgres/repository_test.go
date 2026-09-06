@@ -458,7 +458,7 @@ func TestRepositoryPostgreSQL18AuthoringLifecycleCASReplayRollbackAndFence(t *te
 		t.Fatalf("rollback lifecycle = %#v (%v)", got, err)
 	}
 
-	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: f.project, Kind: projectgraph.KindProject, Name: "sales"}, {ID: f.dashboard, Kind: projectgraph.KindDashboard, Name: "sales-dashboard"}, {ID: "sales", Kind: projectgraph.KindSemanticModel, Name: "sales-model"}}, []projectgraph.Edge{{From: f.dashboard, To: "sales"}})
+	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: f.dashboard, Kind: projectgraph.KindDashboard, Name: "sales-dashboard"}, {ID: "sales", Kind: projectgraph.KindSemanticModel, Name: "sales-model"}}, []projectgraph.Edge{{From: f.dashboard, To: "sales"}})
 	if err != nil {
 		t.Fatal(err)
 	}

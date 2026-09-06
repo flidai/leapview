@@ -157,8 +157,7 @@ func TestRuntimeProjectManifestMatchesActivationPlannerSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer service.Close()
-	runtime := dashboardRuntimeWithGraph{Service: service, projectManifest: projectmanifest.Project{
-		ID:             projectID.String(),
+	runtime := dashboardRuntimeWithGraph{Service: service, projectManifest: projectmanifest.ResourceManifest{
 		SemanticModels: map[string]*semanticmodel.Model{modelID.String(): model},
 	}}
 	manifest := runtime.ProjectManifest()

@@ -57,103 +57,8 @@ func TestQualificationAuthoringUsesUnprivilegedClientProjectCopy(t *testing.T) {
 	options := normalizeQualificationAuthoringOptions(qualificationAuthoringOptions{
 		Image: "leapview:test",
 	})
-	require.Equal(t, "/qualification/evaluation/project/leapview.yaml", options.Project)
-}
-
-func TestRewriteQualificationRecoveryProjectForcesDistinctNativeBuilds(t *testing.T) {
-	writeProject := func(root string) {
-		t.Helper()
-		require.NoError(t, os.MkdirAll(filepath.Join(root, "models"), 0o700))
-		require.NoError(t, os.MkdirAll(filepath.Join(root, "access"), 0o700))
-		require.NoError(t, os.WriteFile(filepath.Join(root, "leapview.yaml"), []byte("metadata:\n  name: leapview-evaluation\n"), 0o600))
-		require.NoError(t, os.WriteFile(filepath.Join(root, "models", "orders.yaml"), []byte("    sql: |\n      SELECT *\n      FROM source.\"sample.orders\"\n"), 0o600))
-		for name, placeholder := range map[string]string{
-			"qualification-author-admin.yaml":   qualificationAuthorPrincipalPlaceholder,
-			"qualification-reviewer-admin.yaml": qualificationReviewerPrincipalPlaceholder,
-		} {
-			require.NoError(t, os.WriteFile(
-				filepath.Join(root, "access", name),
-				[]byte("spec:\n  subject:\n    principalId: "+placeholder+"\n"), 0o600,
-			))
-		}
-	}
-	const authorPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000776"
-	const reviewerPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000777"
-	first := filepath.Join(t.TempDir(), "project-a")
-	second := filepath.Join(t.TempDir(), "project-b")
-	writeProject(first)
-	writeProject(second)
-	require.NoError(t, rewriteQualificationRecoveryProject(first, "recovery-release-project", "qualification_release_orders", authorPrincipalID, reviewerPrincipalID))
-	require.NoError(t, rewriteQualificationRecoveryProject(second, "recovery-deployment-project", "qualification_deployment_orders", authorPrincipalID, reviewerPrincipalID))
-
-	firstProject, err := os.ReadFile(filepath.Join(first, "leapview.yaml"))
-	require.NoError(t, err)
-	firstModel, err := os.ReadFile(filepath.Join(first, "models", "orders.yaml"))
-	require.NoError(t, err)
-	secondModel, err := os.ReadFile(filepath.Join(second, "models", "orders.yaml"))
-	require.NoError(t, err)
-	require.Contains(t, string(firstProject), "name: recovery-release-project")
-	require.Contains(t, string(firstModel), `FROM source."sample.orders" AS qualification_release_orders`)
-	require.Contains(t, string(secondModel), `FROM source."sample.orders" AS qualification_deployment_orders`)
-	require.NotEqual(t, string(firstModel), string(secondModel))
-}
-
-func TestRewriteQualificationRecoveryProjectBindsRuntimePrincipals(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "project")
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "models"), 0o700))
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "access"), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "leapview.yaml"), []byte("metadata:\n  name: leapview-evaluation\n"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "models", "orders.yaml"), []byte("    sql: |\n      SELECT *\n      FROM source.\"sample.orders\"\n"), 0o600))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(root, "access", "qualification-author-admin.yaml"),
-		[]byte("spec:\n  subject:\n    principalId: "+qualificationAuthorPrincipalPlaceholder+"\n"), 0o600,
-	))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(root, "access", "qualification-reviewer-admin.yaml"),
-		[]byte("spec:\n  subject:\n    principalId: "+qualificationReviewerPrincipalPlaceholder+"\n"), 0o600,
-	))
-
-	const authorPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000776"
-	const reviewerPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000777"
-	require.NoError(t, rewriteQualificationRecoveryProject(
-		root,
-		"recovery-project",
-		"qualification_recovery_orders",
-		authorPrincipalID,
-		reviewerPrincipalID,
-	))
-	authorContents, err := os.ReadFile(filepath.Join(root, "access", "qualification-author-admin.yaml"))
-	require.NoError(t, err)
-	reviewerContents, err := os.ReadFile(filepath.Join(root, "access", "qualification-reviewer-admin.yaml"))
-	require.NoError(t, err)
-	require.Contains(t, string(authorContents), "principalId: "+authorPrincipalID)
-	require.Contains(t, string(reviewerContents), "principalId: "+reviewerPrincipalID)
-	require.NotContains(t, string(authorContents), qualificationAuthorPrincipalPlaceholder)
-	require.NotContains(t, string(reviewerContents), qualificationReviewerPrincipalPlaceholder)
-}
-
-func TestRewriteQualificationRecoveryProjectRejectsMissingOrInvalidPrincipals(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "project")
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "models"), 0o700))
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "access"), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "leapview.yaml"), []byte("metadata:\n  name: leapview-evaluation\n"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "models", "orders.yaml"), []byte("    sql: |\n      SELECT *\n      FROM source.\"sample.orders\"\n"), 0o600))
-	for name, placeholder := range map[string]string{
-		"qualification-author-admin.yaml":   qualificationAuthorPrincipalPlaceholder,
-		"qualification-reviewer-admin.yaml": qualificationReviewerPrincipalPlaceholder,
-	} {
-		require.NoError(t, os.WriteFile(
-			filepath.Join(root, "access", name),
-			[]byte("spec:\n  subject:\n    principalId: "+placeholder+"\n"), 0o600,
-		))
-	}
-	const reviewerPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000777"
-	if err := rewriteQualificationRecoveryProject(root, "recovery-project", "qualification_recovery_orders", "", reviewerPrincipalID); err == nil {
-		t.Fatal("missing author principal was accepted")
-	}
-	if err := rewriteQualificationRecoveryProject(root, "recovery-project", "qualification_recovery_orders", "not-a-uuid", reviewerPrincipalID); err == nil {
-		t.Fatal("invalid author principal was accepted")
-	}
+	require.Equal(t, "/app/evaluation/project", options.SourceRoot)
+	require.Equal(t, "project:leapview-evaluation", options.ProjectID)
 }
 
 func TestQualificationLoginKeepsDiagnosticsOutOfJSONEventStream(t *testing.T) {
@@ -169,7 +74,7 @@ printf '%s\n' '{"schemaVersion":1,"type":"authenticated"}'
 
 	var challenge qualificationLoginChallenge
 	err := runQualificationLogin(t.Context(), os.Environ(), QualificationClientWorkerOptions{
-		Target: "https://example.test", Project: "dashboards/leapview.yaml",
+		Target: "https://example.test", SourceRoot: "dashboards", ProjectID: "project:example",
 	}, func(value qualificationLoginChallenge) error {
 		challenge = value
 		return nil
@@ -192,7 +97,7 @@ exit 1
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	err := runQualificationLogin(t.Context(), os.Environ(), QualificationClientWorkerOptions{
-		Target: "https://example.test", Project: "dashboards/leapview.yaml",
+		Target: "https://example.test", SourceRoot: "dashboards", ProjectID: "project:example",
 	}, func(qualificationLoginChallenge) error { return nil })
 	require.ErrorContains(t, err, "native credential storage unavailable")
 	require.NotContains(t, err.Error(), "login event stream is incomplete")
@@ -451,67 +356,6 @@ func TestQualificationWorkloadCapabilitiesAreReadAndExecuteOnly(t *testing.T) {
 func TestQualificationProjectDataCapabilitiesAreReadOnly(t *testing.T) {
 	if got, want := qualificationProjectDataCapabilities(), []string{"RESOURCE_READ"}; !slices.Equal(got, want) {
 		t.Fatalf("project-data capabilities = %v, want %v", got, want)
-	}
-}
-
-func TestConfigureQualificationPrincipalsBindRuntimeUUIDs(t *testing.T) {
-	projectDir := filepath.Join(t.TempDir(), "project")
-	grantDir := filepath.Join(projectDir, "access")
-	require.NoError(t, os.MkdirAll(grantDir, 0o700))
-	projectPath := filepath.Join(projectDir, "leapview.yaml")
-	require.NoError(t, os.WriteFile(projectPath, []byte("apiVersion: leapview.dev/v1\n"), 0o600))
-	authorGrantPath := filepath.Join(grantDir, "qualification-author-admin.yaml")
-	reviewerGrantPath := filepath.Join(grantDir, "qualification-reviewer-admin.yaml")
-	require.NoError(t, os.WriteFile(authorGrantPath, []byte("spec:\n  subject:\n    principalId: "+qualificationAuthorPrincipalPlaceholder+"\n"), 0o600))
-	require.NoError(t, os.WriteFile(reviewerGrantPath, []byte("spec:\n  subject:\n    principalId: "+qualificationReviewerPrincipalPlaceholder+"\n"), 0o600))
-
-	const authorPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000776"
-	const reviewerPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000777"
-	require.NoError(t, configureQualificationPrincipals(projectPath, authorPrincipalID, reviewerPrincipalID))
-	authorContents, err := os.ReadFile(authorGrantPath)
-	require.NoError(t, err)
-	reviewerContents, err := os.ReadFile(reviewerGrantPath)
-	require.NoError(t, err)
-	require.Contains(t, string(authorContents), "principalId: "+authorPrincipalID)
-	require.Contains(t, string(reviewerContents), "principalId: "+reviewerPrincipalID)
-	require.NotContains(t, string(authorContents), qualificationAuthorPrincipalPlaceholder)
-	require.NotContains(t, string(reviewerContents), qualificationReviewerPrincipalPlaceholder)
-
-	if err := configureQualificationPrincipals(projectPath, authorPrincipalID, reviewerPrincipalID); err == nil {
-		t.Fatal("already-bound qualification principal grants were accepted")
-	}
-}
-
-func TestConfigureQualificationPrincipalGrantRejectsInvalidIdentityAndFixture(t *testing.T) {
-	projectDir := t.TempDir()
-	projectPath := filepath.Join(projectDir, "leapview.yaml")
-	if err := configureQualificationPrincipalGrant(projectPath, "qualification-reviewer-admin.yaml", qualificationReviewerPrincipalPlaceholder, "not-a-uuid"); err == nil {
-		t.Fatal("non-UUID qualification principal was accepted")
-	}
-	require.NoError(t, os.MkdirAll(filepath.Join(projectDir, "access"), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "access", "qualification-reviewer-admin.yaml"), []byte("spec: {}\n"), 0o600))
-	if err := configureQualificationPrincipalGrant(projectPath, "qualification-reviewer-admin.yaml", qualificationReviewerPrincipalPlaceholder, "0198f2c0-7c7a-7f00-8a11-000000000778"); err == nil {
-		t.Fatal("qualification fixture without exact principal placeholder was accepted")
-	}
-}
-
-func TestQualificationEvaluationProjectCarriesRuntimeIdentityPlaceholders(t *testing.T) {
-	root := filepath.Join("..", "..", "..", "..")
-	for _, fixture := range []struct {
-		name        string
-		placeholder string
-	}{
-		{name: "qualification-author-admin.yaml", placeholder: qualificationAuthorPrincipalPlaceholder},
-		{name: "qualification-reviewer-admin.yaml", placeholder: qualificationReviewerPrincipalPlaceholder},
-	} {
-		contents, err := os.ReadFile(filepath.Join(root, "evaluation", "project", "access", fixture.name))
-		require.NoError(t, err)
-		if count := bytes.Count(contents, []byte("principalId: "+fixture.placeholder)); count != 1 {
-			t.Fatalf("%s principal placeholder count = %d, want 1", fixture.name, count)
-		}
-		if bytes.Contains(contents, []byte("principalId: email_")) {
-			t.Fatalf("%s retained a SQLite-derived principal identity", fixture.name)
-		}
 	}
 }
 

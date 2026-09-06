@@ -38,9 +38,8 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 	requestDigest, sourceDigest := assemblerDigest('f'), assemblerDigest('0')
 	artifactDigest := assemblerDigest('e')
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: projectID, Kind: projectgraph.KindProject, Name: "project"},
 		{ID: "dashboard-assembler", Kind: projectgraph.KindDashboard, Name: "dashboard"},
-	}, []projectgraph.Edge{{From: projectID, To: "dashboard-assembler", Relation: "contains"}})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
