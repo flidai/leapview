@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 )
@@ -23,6 +24,7 @@ func (m *Model) ExecutionSnapshot() *Model {
 	clone.DefaultConnection = ""
 	clone.Tables = snapshotTables(m.Tables)
 	clone.Datasets = snapshotDatasets(m.Datasets)
+	clone.AccessGrants = snapshotSemanticAccessGrants(m.AccessGrants)
 	// StructuredRelationships is authoring-only state. The lowered runtime
 	// graph is represented by canonical Relationships; retaining the authored
 	// map would let execution consumers accidentally depend on an unvalidated
@@ -275,9 +277,81 @@ func snapshotDatasets(values map[string]SemanticDatasetSpec) map[string]Semantic
 	clone := make(map[string]SemanticDatasetSpec, len(values))
 	for name, value := range values {
 		value.AIContext = nil
+		value.RequiredAccessGrants = snapshotSortedStrings(value.RequiredAccessGrants)
+		value.AccessFilters = snapshotSemanticAccessFilters(value.AccessFilters)
 		clone[name] = value
 	}
 	return clone
+}
+
+func snapshotSemanticAccessGrants(values map[string]SemanticAccessGrantSpec) map[string]SemanticAccessGrantSpec {
+	if values == nil {
+		return nil
+	}
+	clone := make(map[string]SemanticAccessGrantSpec, len(values))
+	for name, value := range values {
+		value.AllowedValues = snapshotAllowedValues(value.AllowedValues)
+		clone[name] = value
+	}
+	return clone
+}
+
+func snapshotSemanticAccessFilters(values []SemanticAccessFilterSpec) []SemanticAccessFilterSpec {
+	if values == nil {
+		return nil
+	}
+	clone := append([]SemanticAccessFilterSpec(nil), values...)
+	sort.SliceStable(clone, func(left, right int) bool {
+		if clone[left].Field != clone[right].Field {
+			return clone[left].Field < clone[right].Field
+		}
+		return clone[left].UserAttribute < clone[right].UserAttribute
+	})
+	return clone
+}
+
+func snapshotSortedStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	clone := make([]string, len(values))
+	copy(clone, values)
+	sort.Strings(clone)
+	return clone
+}
+
+func snapshotAllowedValues(values []any) []any {
+	if values == nil {
+		return nil
+	}
+	clone := make([]any, len(values))
+	for index, value := range values {
+		clone[index] = snapshotLiteral(value)
+	}
+	sort.SliceStable(clone, func(left, right int) bool {
+		return allowedValueSortKey(clone[left]) < allowedValueSortKey(clone[right])
+	})
+	return clone
+}
+
+func allowedValueSortKey(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return "string\x00" + typed
+	case bool:
+		if typed {
+			return "boolean\x00true"
+		}
+		return "boolean\x00false"
+	case json.Number:
+		return "number\x00" + typed.String()
+	default:
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Sprintf("unknown\x00%T", value)
+		}
+		return fmt.Sprintf("unknown\x00%s", encoded)
+	}
 }
 
 func snapshotSemanticDimensions(values map[string]SemanticDimension) map[string]SemanticDimension {
@@ -288,6 +362,7 @@ func snapshotSemanticDimensions(values map[string]SemanticDimension) map[string]
 	for name, value := range values {
 		value.AIContext = nil
 		value.Grains = append([]string(nil), value.Grains...)
+		value.RequiredAccessGrants = snapshotSortedStrings(value.RequiredAccessGrants)
 		bindings := value.Bindings
 		value.Bindings = make(map[string]DimensionBinding, len(bindings))
 		for dataset, binding := range bindings {
@@ -347,6 +422,7 @@ func snapshotMetrics(values map[string]Metric) map[string]Metric {
 			value.Input = &input
 		}
 		value.Where = append([]string(nil), value.Where...)
+		value.RequiredAccessGrants = snapshotSortedStrings(value.RequiredAccessGrants)
 		clone[name] = value
 	}
 	return clone

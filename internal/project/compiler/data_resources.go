@@ -1,8 +1,10 @@
 package compiler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
+	"gopkg.in/yaml.v3"
 )
 
 // decodeConnectionResource is the sole compiler boundary from the generated
@@ -142,48 +145,182 @@ func decodeSemanticModelResource(path string, content []byte) (projectcontracts.
 	if err := configschema.DecodeResource(configschema.KindSemanticModel, path, content, &authored); err != nil {
 		return projectcontracts.SemanticModelSpec{}, nil, err
 	}
+	if err := preserveExactSemanticAccessGrantValues(path, content, &authored.Spec); err != nil {
+		return projectcontracts.SemanticModelSpec{}, nil, err
+	}
 	return authored.Spec, lowerAIContext(authored.AiContext), nil
 }
 
-// rejectSemanticAccessPolicy prevents policy-bearing generated fields from
-// being silently discarded while the runtime policy compiler is still
-// pending. Keep this check at the generated-to-runtime boundary so every
-// compiler path has the same fail-closed behavior.
-func rejectSemanticAccessPolicy(spec projectcontracts.SemanticModelSpec) error {
-	const pending = "compiled access-policy support is not available"
-	if spec.AccessGrants != nil {
-		return fmt.Errorf("SemanticModel spec accessGrants: %s", pending)
+// preserveExactSemanticAccessGrantValues repairs the one generated DTO field
+// that cannot retain JSON number spelling by itself: SemanticAllowedValues is
+// []any, so encoding/json would otherwise decode every number as float64.
+// DecodeResource has already validated the resource; this second pass reads
+// the validated syntax tree so exact decimal tokens are not rounded by the
+// general JSON-compatible normalization path before policy compilation.
+func preserveExactSemanticAccessGrantValues(path string, content []byte, spec *projectcontracts.SemanticModelSpec) error {
+	if spec == nil || spec.AccessGrants == nil {
+		return nil
 	}
-	for name, dataset := range spec.Datasets {
-		if dataset.RequiredAccessGrants != nil {
-			return fmt.Errorf("SemanticModel dataset %q requiredAccessGrants: %s", name, pending)
-		}
-		if dataset.AccessFilters != nil {
-			return fmt.Errorf("SemanticModel dataset %q accessFilters: %s", name, pending)
-		}
+	var document yaml.Node
+	if err := yaml.NewDecoder(bytes.NewReader(content)).Decode(&document); err != nil {
+		return fmt.Errorf("decode %s access grants: %w", path, err)
 	}
-	if spec.Dimensions != nil {
-		for name, dimension := range *spec.Dimensions {
-			if dimension.RequiredAccessGrants != nil {
-				return fmt.Errorf("SemanticModel dimension %q requiredAccessGrants: %s", name, pending)
+	root := yamlDocumentValue(&document)
+	grantsNode := yamlMappingValue(yamlMappingValue(root, "spec"), "accessGrants")
+	if grantsNode == nil || grantsNode.Kind != yaml.MappingNode {
+		return fmt.Errorf("SemanticModel access grants are missing from validated resource")
+	}
+	for _, name := range sortedMapKeys(*spec.AccessGrants) {
+		grant := (*spec.AccessGrants)[name]
+		grantNode := yamlMappingValue(grantsNode, name)
+		valuesNode := yamlMappingValue(grantNode, "allowedValues")
+		if valuesNode == nil || valuesNode.Kind != yaml.SequenceNode {
+			return fmt.Errorf("SemanticModel access grant %q allowedValues are missing from validated resource", name)
+		}
+		values := make(projectcontracts.SemanticAllowedValues, len(valuesNode.Content))
+		for index, literal := range valuesNode.Content {
+			value, err := exactSemanticAccessScalar(literal)
+			if err != nil {
+				return fmt.Errorf("SemanticModel access grant %q allowedValues[%d]: %w", name, index, err)
 			}
+			values[index] = value
 		}
+		grant.AllowedValues = values
+		(*spec.AccessGrants)[name] = grant
 	}
-	for name, metric := range spec.Metrics {
-		var required *[]string
-		switch variant := metric.Value.(type) {
-		case *projectcontracts.SemanticMetricAggregateVariant:
-			required = variant.RequiredAccessGrants
-		case *projectcontracts.SemanticMetricDerivedVariant:
-			required = variant.RequiredAccessGrants
-		case *projectcontracts.SemanticMetricRatioVariant:
-			required = variant.RequiredAccessGrants
-		}
-		if required != nil {
-			return fmt.Errorf("SemanticModel metric %q requiredAccessGrants: %s", name, pending)
+	return nil
+}
+
+func yamlDocumentValue(document *yaml.Node) *yaml.Node {
+	if document == nil {
+		return nil
+	}
+	if document.Kind == yaml.DocumentNode && len(document.Content) == 1 {
+		return document.Content[0]
+	}
+	return document
+}
+
+func yamlMappingValue(mapping *yaml.Node, key string) *yaml.Node {
+	if mapping == nil || mapping.Kind != yaml.MappingNode {
+		return nil
+	}
+	for index := 0; index+1 < len(mapping.Content); index += 2 {
+		if mapping.Content[index].Value == key {
+			return mapping.Content[index+1]
 		}
 	}
 	return nil
+}
+
+func exactSemanticAccessScalar(node *yaml.Node) (any, error) {
+	if node == nil || node.Kind != yaml.ScalarNode {
+		return nil, fmt.Errorf("value must be a scalar")
+	}
+	switch node.Tag {
+	case "!!str", "!!timestamp":
+		// The generated contract treats date/timestamp-shaped YAML scalars as
+		// strings. Preserve their authored spelling for registry-aware typed
+		// validation instead of letting yaml.v3 turn them into time.Time.
+		return node.Value, nil
+	case "!!bool":
+		var value bool
+		if err := node.Decode(&value); err != nil {
+			return nil, err
+		}
+		return value, nil
+	case "!!int":
+		var value any
+		if err := node.Decode(&value); err != nil {
+			return nil, err
+		}
+		switch value := value.(type) {
+		case int:
+			return json.Number(fmt.Sprintf("%d", value)), nil
+		case int64:
+			return json.Number(fmt.Sprintf("%d", value)), nil
+		case uint:
+			return json.Number(fmt.Sprintf("%d", value)), nil
+		case uint64:
+			return json.Number(fmt.Sprintf("%d", value)), nil
+		default:
+			return nil, fmt.Errorf("integer decoded to unsupported value %T", value)
+		}
+	case "!!float":
+		// Reuse the shared exact decimal implementation to normalize YAML-only
+		// syntax (for example exponent notation or a leading decimal point)
+		// without passing through float64. Retain a decimal point for integral
+		// decimal values so an Integer registry definition still rejects them.
+		token := strings.ReplaceAll(strings.TrimSpace(node.Value), "_", "")
+		value, err := semanticmodel.CoerceSemanticLiteral(json.Number(token), semanticmodel.MetricDimension{Datatype: semanticmodel.DataTypeDecimal})
+		if err != nil {
+			return nil, err
+		}
+		canonical, ok := value.(json.Number)
+		if !ok {
+			return nil, fmt.Errorf("decimal decoded to unsupported value %T", value)
+		}
+		if !strings.Contains(canonical.String(), ".") {
+			canonical = json.Number(canonical.String() + ".0")
+		}
+		return canonical, nil
+	case "!!null":
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unsupported scalar tag %q", node.Tag)
+	}
+}
+
+func lowerSemanticAccessGrants(values *map[string]projectcontracts.SemanticAccessGrant) map[string]semanticmodel.SemanticAccessGrantSpec {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]semanticmodel.SemanticAccessGrantSpec, len(*values))
+	for name, value := range *values {
+		result[name] = semanticmodel.SemanticAccessGrantSpec{
+			UserAttribute: value.UserAttribute,
+			AllowedValues: normalizeAllowedValues(value.AllowedValues),
+		}
+	}
+	return result
+}
+
+func normalizeAllowedValues(values projectcontracts.SemanticAllowedValues) []any {
+	if values == nil {
+		return nil
+	}
+	result := make([]any, len(values))
+	for index, value := range values {
+		result[index] = value
+	}
+	return result
+}
+
+func lowerSemanticAccessFilters(values *[]projectcontracts.SemanticAccessFilter) []semanticmodel.SemanticAccessFilterSpec {
+	if values == nil {
+		return nil
+	}
+	result := make([]semanticmodel.SemanticAccessFilterSpec, len(*values))
+	for index, value := range *values {
+		result[index] = semanticmodel.SemanticAccessFilterSpec{Field: value.Field, UserAttribute: value.UserAttribute}
+	}
+	sort.SliceStable(result, func(left, right int) bool {
+		if result[left].Field != result[right].Field {
+			return result[left].Field < result[right].Field
+		}
+		return result[left].UserAttribute < result[right].UserAttribute
+	})
+	return result
+}
+
+func normalizeRequiredAccessGrants(values *[]string) []string {
+	if values == nil {
+		return nil
+	}
+	result := make([]string, len(*values))
+	copy(result, *values)
+	sort.Strings(result)
+	return result
 }
 
 func lowerSemanticDatasets(values map[string]projectcontracts.SemanticDataset) map[string]semanticmodel.SemanticDatasetSpec {
@@ -195,6 +332,8 @@ func lowerSemanticDatasets(values map[string]projectcontracts.SemanticDataset) m
 			DisplayName:          optionalString(value.DisplayName),
 			Description:          optionalString(value.Description),
 			AIContext:            lowerAIContext(value.AiContext),
+			RequiredAccessGrants: normalizeRequiredAccessGrants(value.RequiredAccessGrants),
+			AccessFilters:        lowerSemanticAccessFilters(value.AccessFilters),
 		}
 	}
 	return result
@@ -245,6 +384,7 @@ func lowerSemanticDimensions(values *map[string]projectcontracts.SemanticDimensi
 		dimension := semanticmodel.SemanticDimensionSpec{
 			Label: optionalString(value.Label), Description: optionalString(value.Description), AIContext: lowerAIContext(value.AiContext),
 			Datatype: semanticmodel.LogicalDataType(value.Datatype), Bindings: bindings,
+			RequiredAccessGrants: normalizeRequiredAccessGrants(value.RequiredAccessGrants),
 		}
 		if value.Time != nil {
 			dimension.Time = &semanticmodel.TimeSemanticsSpec{
@@ -334,12 +474,15 @@ func lowerSemanticMetrics(values map[string]projectcontracts.SemanticMetric) (ma
 			metric.Type, metric.Dataset, metric.Aggregation = variant.Type, variant.Dataset, variant.Aggregation
 			metric.Input = &semanticmodel.MetricInput{Field: variant.Input.Field}
 			metric.Where, metric.Empty, metric.TimeDimension = optionalStrings(variant.Where), optionalString(variant.Empty), optionalString(variant.TimeDimension)
+			metric.RequiredAccessGrants = normalizeRequiredAccessGrants(variant.RequiredAccessGrants)
 			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
 		case *projectcontracts.SemanticMetricDerivedVariant:
 			metric.Type, metric.Expression = variant.Type, variant.Expression
+			metric.RequiredAccessGrants = normalizeRequiredAccessGrants(variant.RequiredAccessGrants)
 			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
 		case *projectcontracts.SemanticMetricRatioVariant:
 			metric.Type, metric.Numerator, metric.Denominator = variant.Type, variant.Numerator, variant.Denominator
+			metric.RequiredAccessGrants = normalizeRequiredAccessGrants(variant.RequiredAccessGrants)
 			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
 		case nil:
 			return nil, fmt.Errorf("metric %q variant is required", name)

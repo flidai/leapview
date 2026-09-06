@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -336,7 +337,7 @@ spec:
 	}
 }
 
-func TestTypedSemanticModelLoweringRejectsUncompiledAccessPolicy(t *testing.T) {
+func TestTypedSemanticModelLoweringPreservesAccessPolicy(t *testing.T) {
 	spec, _, err := decodeSemanticModelResource("semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic-model:sales, name: sales}
@@ -344,15 +345,157 @@ spec:
   accessGrants:
     canViewSales: {userAttribute: department, allowedValues: [sales]}
   datasets:
-    orders: {model: orders_model, requiredAccessGrants: [canViewSales]}
+    orders:
+      model: orders_model
+      requiredAccessGrants: [canViewSales]
+      accessFilters: [{field: region, userAttribute: allowedRegions}]
+  dimensions:
+    region:
+      datatype: String
+      bindings: {orders: {field: orders.region}}
+      requiredAccessGrants: [canViewSales]
+  metrics:
+    revenue:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input: {field: orders.revenue}
+      requiredAccessGrants: [canViewSales]
+`))
+	if err != nil {
+		t.Fatalf("structural access policy decode: %v", err)
+	}
+	model := &semanticmodel.Model{
+		Name:   "sales",
+		Tables: map[string]semanticmodel.Table{"orders_model": {}},
+	}
+	if err := applySemanticModelSpec(model, spec); err != nil {
+		t.Fatalf("lower access policy: %v", err)
+	}
+	grant := model.AccessGrants["canViewSales"]
+	if grant.UserAttribute != "department" || len(grant.AllowedValues) != 1 || grant.AllowedValues[0] != "sales" {
+		t.Fatalf("lowered access grant = %#v", grant)
+	}
+	dataset := model.Datasets["orders"]
+	if len(dataset.RequiredAccessGrants) != 1 || dataset.RequiredAccessGrants[0] != "canViewSales" || len(dataset.AccessFilters) != 1 {
+		t.Fatalf("lowered dataset access policy = %#v", dataset)
+	}
+	if filter := dataset.AccessFilters[0]; filter.Field != "region" || filter.UserAttribute != "allowedRegions" {
+		t.Fatalf("lowered access filter = %#v", filter)
+	}
+	if got := model.Dimensions["region"].RequiredAccessGrants; len(got) != 1 || got[0] != "canViewSales" {
+		t.Fatalf("lowered dimension grants = %#v", got)
+	}
+	if got := model.Metrics["revenue"].RequiredAccessGrants; len(got) != 1 || got[0] != "canViewSales" {
+		t.Fatalf("lowered metric grants = %#v", got)
+	}
+}
+
+func TestTypedSemanticModelLoweringRejectsUnknownAccessGrant(t *testing.T) {
+	spec, _, err := decodeSemanticModelResource("semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  datasets: {orders: {model: orders_model, requiredAccessGrants: [missingGrant]}}
   metrics: {}
 `))
 	if err != nil {
 		t.Fatalf("structural access policy decode: %v", err)
 	}
-	err = applySemanticModelSpec(&semanticmodel.Model{Name: "sales"}, spec)
-	if err == nil || !strings.Contains(err.Error(), "compiled access-policy support is not available") {
-		t.Fatalf("uncompiled access policy error = %v", err)
+	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders_model": {}}}
+	err = applySemanticModelSpec(model, spec)
+	if err == nil || !strings.Contains(err.Error(), `dataset orders references unknown access grant "missingGrant"`) {
+		t.Fatalf("unknown grant error = %v", err)
+	}
+}
+
+func TestTypedSemanticModelLoweringPreservesExactAccessGrantNumber(t *testing.T) {
+	const token = "9007199254740993"
+	spec, _, err := decodeSemanticModelResource("semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  accessGrants:
+    large:
+      userAttribute: account
+      allowedValues: [`+token+`]
+  datasets: {orders: {model: orders_model}}
+  metrics: {}
+`))
+	if err != nil {
+		t.Fatalf("decode semantic model: %v", err)
+	}
+	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders_model": {}}}
+	if err := applySemanticModelSpec(model, spec); err != nil {
+		t.Fatalf("lower semantic model: %v", err)
+	}
+	number, ok := model.AccessGrants["large"].AllowedValues[0].(json.Number)
+	if !ok || number.String() != token {
+		t.Fatalf("lowered access-grant number = %#v (%T), want json.Number(%q)", model.AccessGrants["large"].AllowedValues[0], model.AccessGrants["large"].AllowedValues[0], token)
+	}
+}
+
+func TestTypedSemanticModelLoweringPreservesExactAccessGrantDecimal(t *testing.T) {
+	const token = "0.123456789012345678901"
+	spec, _, err := decodeSemanticModelResource("semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  accessGrants:
+    precise:
+      userAttribute: threshold
+      allowedValues: [`+token+`]
+  datasets: {orders: {model: orders_model}}
+  metrics: {}
+`))
+	if err != nil {
+		t.Fatalf("decode semantic model: %v", err)
+	}
+	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders_model": {}}}
+	if err := applySemanticModelSpec(model, spec); err != nil {
+		t.Fatalf("lower semantic model: %v", err)
+	}
+	number, ok := model.AccessGrants["precise"].AllowedValues[0].(json.Number)
+	if !ok || number.String() != token {
+		t.Fatalf("lowered access-grant decimal = %#v (%T), want json.Number(%q)", model.AccessGrants["precise"].AllowedValues[0], model.AccessGrants["precise"].AllowedValues[0], token)
+	}
+}
+
+func TestTypedSemanticModelLoweringRejectsInvalidAccessFilter(t *testing.T) {
+	base := `apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  datasets:
+    orders:
+      model: orders_model
+      accessFilters: [{field: %s, userAttribute: allowedRegions}]
+  dimensions:
+    region:
+      datatype: String
+      bindings: %s
+  metrics: {}
+`
+	for _, tc := range []struct {
+		name     string
+		field    string
+		bindings string
+		want     string
+	}{
+		{name: "unknown dimension", field: "other", bindings: "{orders: {field: orders.other}}", want: `references unknown dimension "other"`},
+		{name: "unbound dimension", field: "region", bindings: "{customers: {field: customers.region}}", want: `dimension "region" is not bound to the dataset`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, _, err := decodeSemanticModelResource("semantic-model.yaml", []byte(fmt.Sprintf(base, tc.field, tc.bindings)))
+			if err != nil {
+				t.Fatalf("structural access policy decode: %v", err)
+			}
+			model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders_model": {}}}
+			err = applySemanticModelSpec(model, spec)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("invalid access filter error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,10 @@
 package model
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestExecutionSnapshotOmitsAuthoringAndConnectionState(t *testing.T) {
 	modelContext := &AIContext{Instructions: "model"}
@@ -47,6 +51,96 @@ func TestExecutionSnapshotOmitsAuthoringAndConnectionState(t *testing.T) {
 	model.Metrics["order_count"] = metric
 	if _, ok := snapshot.Tables["orders"].Dimensions["id"]; !ok || snapshot.Metrics["order_count"].Where[0] != "owned" {
 		t.Fatal("snapshot executable state aliases authored model")
+	}
+}
+
+func TestExecutionSnapshotPreservesExactAccessGrantNumbersThroughJSON(t *testing.T) {
+	const literal = "9007199254740993"
+	model := &Model{AccessGrants: map[string]SemanticAccessGrantSpec{
+		"large": {UserAttribute: "account", AllowedValues: []any{json.Number(literal)}},
+	}}
+
+	snapshot := model.ExecutionSnapshot()
+	if snapshot == nil {
+		t.Fatal("snapshot is nil")
+	}
+	value, ok := snapshot.AccessGrants["large"].AllowedValues[0].(json.Number)
+	if !ok || value.String() != literal {
+		t.Fatalf("snapshot access grant value = %#v (%T), want json.Number(%q)", snapshot.AccessGrants["large"].AllowedValues[0], snapshot.AccessGrants["large"].AllowedValues[0], literal)
+	}
+
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"AllowedValues":[`+literal+`]`) {
+		t.Fatalf("snapshot JSON lost exact number: %s", encoded)
+	}
+	var roundTripped Model
+	if err := json.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+	value, ok = roundTripped.AccessGrants["large"].AllowedValues[0].(json.Number)
+	if !ok || value.String() != literal {
+		t.Fatalf("round-tripped access grant value = %#v (%T), want json.Number(%q)", roundTripped.AccessGrants["large"].AllowedValues[0], roundTripped.AccessGrants["large"].AllowedValues[0], literal)
+	}
+}
+
+func TestExecutionSnapshotDetachesAndOrdersSemanticAccessPolicy(t *testing.T) {
+	model := &Model{
+		AccessGrants: map[string]SemanticAccessGrantSpec{
+			"region": {UserAttribute: "regions", AllowedValues: []any{"west", "east"}},
+		},
+		Datasets: map[string]SemanticDatasetSpec{
+			"orders": {
+				RequiredAccessGrants: []string{"z_grant", "a_grant"},
+				AccessFilters: []SemanticAccessFilterSpec{
+					{Field: "tier", UserAttribute: "tiers"},
+					{Field: "region", UserAttribute: "regions"},
+				},
+			},
+			"empty": {RequiredAccessGrants: []string{}},
+		},
+		Dimensions: map[string]SemanticDimension{
+			"region": {RequiredAccessGrants: []string{"z_grant", "a_grant"}},
+		},
+		Metrics: map[string]Metric{
+			"revenue": {RequiredAccessGrants: []string{"z_grant", "a_grant"}},
+		},
+	}
+
+	snapshot := model.ExecutionSnapshot()
+	if got := snapshot.AccessGrants["region"].AllowedValues; len(got) != 2 || got[0] != "east" || got[1] != "west" {
+		t.Fatalf("snapshot allowed values = %#v, want deterministic order", got)
+	}
+	if got := snapshot.Datasets["orders"].RequiredAccessGrants; len(got) != 2 || got[0] != "a_grant" || got[1] != "z_grant" {
+		t.Fatalf("snapshot dataset grants = %#v, want deterministic order", got)
+	}
+	if got := snapshot.Datasets["orders"].AccessFilters; len(got) != 2 || got[0].Field != "region" || got[1].Field != "tier" {
+		t.Fatalf("snapshot access filters = %#v, want deterministic order", got)
+	}
+	if got := snapshot.Datasets["empty"].RequiredAccessGrants; got == nil || len(got) != 0 {
+		t.Fatalf("snapshot collapsed an explicitly empty required grant list: %#v", got)
+	}
+
+	model.AccessGrants["region"].AllowedValues[0] = "changed"
+	dataset := model.Datasets["orders"]
+	dataset.RequiredAccessGrants[0] = "changed"
+	dataset.AccessFilters[0].Field = "changed"
+	model.Datasets["orders"] = dataset
+	dimension := model.Dimensions["region"]
+	dimension.RequiredAccessGrants[0] = "changed"
+	model.Dimensions["region"] = dimension
+	metric := model.Metrics["revenue"]
+	metric.RequiredAccessGrants[0] = "changed"
+	model.Metrics["revenue"] = metric
+
+	if snapshot.AccessGrants["region"].AllowedValues[1] != "west" ||
+		snapshot.Datasets["orders"].RequiredAccessGrants[1] != "z_grant" ||
+		snapshot.Datasets["orders"].AccessFilters[1].Field != "tier" ||
+		snapshot.Dimensions["region"].RequiredAccessGrants[1] != "z_grant" ||
+		snapshot.Metrics["revenue"].RequiredAccessGrants[1] != "z_grant" {
+		t.Fatal("snapshot semantic access policy aliases authored state")
 	}
 }
 

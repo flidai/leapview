@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
@@ -197,6 +198,10 @@ type CompiledModel struct {
 	// reject a stale planner paired with a different manifest without
 	// recompiling that definition.
 	sourceFingerprint string
+	// semanticAccess is present only when the explicit registry-aware compile
+	// boundary was used. It is immutable activation metadata, not an
+	// authorization decision or an authorized query plan.
+	semanticAccess *CompiledSemanticAccessPolicy
 
 	// The DAG is intentionally private. Returning detached nodes prevents a
 	// consumer from mutating serving-state metadata after activation.
@@ -209,8 +214,19 @@ type CompiledModel struct {
 // project sources or connection credentials, so activation cannot admit a
 // malformed relationship, dimension, filter, or metric definition.
 func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
+	return compileModel(model, nil)
+}
+
+// compileModel is the shared activation implementation. A nil registry means
+// ordinary compilation; protected semantic models must use the explicit
+// context-aware entrypoint so a missing control-plane definition can never be
+// mistaken for an unrestricted model.
+func compileModel(model *semanticmodel.Model, registry *access.SemanticAttributeRegistrySnapshot) (*CompiledModel, error) {
 	if model == nil {
 		return nil, fmt.Errorf("semantic model is required")
+	}
+	if registry == nil && semanticAccessPolicyPresent(model) {
+		return nil, fmt.Errorf("semantic model %q contains protected access policy but no semantic attribute registry context was supplied", model.Name)
 	}
 	sourceFingerprint := semanticModelFingerprint(model)
 	validated := model.ExecutionSnapshot()
@@ -312,6 +328,13 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 		node.Lineage.Entries = cloneLineageEntries(node.Lineage.Entries)
 		compiled.metrics[name] = node
 	}
+	if registry != nil {
+		policy, err := compileSemanticAccessPolicy(model, *registry, compiled)
+		if err != nil {
+			return nil, err
+		}
+		compiled.semanticAccess = policy
+	}
 	return compiled, nil
 }
 
@@ -364,6 +387,38 @@ func CompileDatasetBindings(model *semanticmodel.Model) (*CompiledModel, error) 
 	// lineage. Full lineage facts are activation inputs for CompileModel and
 	// serving planners; read-model callers only need executable dataset metadata.
 	return &CompiledModel{datasets: datasets, sourceFingerprint: semanticModelFingerprint(model)}, nil
+}
+
+// The following narrow projections keep activation-time semantic policy
+// compilation behind the same physical-model boundary as the rest of this
+// file. Request/runtime query code must consume CompiledModel facts instead of
+// reading authored maps directly.
+func semanticAccessGrantSpecs(model *semanticmodel.Model) map[string]semanticmodel.SemanticAccessGrantSpec {
+	if model == nil {
+		return nil
+	}
+	return model.AccessGrants
+}
+
+func semanticAccessDatasetSpecs(model *semanticmodel.Model) map[string]semanticmodel.SemanticDatasetSpec {
+	if model == nil {
+		return nil
+	}
+	return model.Datasets
+}
+
+func semanticAccessDimensionSpecs(model *semanticmodel.Model) map[string]semanticmodel.SemanticDimension {
+	if model == nil {
+		return nil
+	}
+	return model.Dimensions
+}
+
+func semanticAccessMetricSpecs(model *semanticmodel.Model) map[string]semanticmodel.Metric {
+	if model == nil {
+		return nil
+	}
+	return model.Metrics
 }
 
 func compileLineageBindings(model *semanticmodel.Model) (map[string]map[string]CompiledDimensionBinding, map[string]map[string]CompiledFieldBinding, error) {
@@ -471,6 +526,16 @@ func (c *CompiledModel) SourceFingerprint() string {
 		return ""
 	}
 	return c.sourceFingerprint
+}
+
+// SemanticAccessPolicy returns a detached copy of the activation-compiled
+// semantic access policy. Ordinary CompileModel results return nil because
+// they do not carry registry context.
+func (c *CompiledModel) SemanticAccessPolicy() *CompiledSemanticAccessPolicy {
+	if c == nil {
+		return nil
+	}
+	return c.semanticAccess.Clone()
 }
 
 // SemanticModelFingerprint returns the deterministic fingerprint used to bind

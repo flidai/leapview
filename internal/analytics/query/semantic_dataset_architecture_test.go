@@ -9,7 +9,7 @@ import (
 )
 
 // TestSemanticDatasetRuntimeDoesNotDualRead guards the serving boundary that
-// keeps semantic aliases in CompiledDataset. Authoring/compiler code and
+// keeps semantic aliases and access policy in CompiledModel. Authoring/compiler code and
 // explicitly physical project-model helpers are intentionally outside this
 // check; query/runtime/API projections must resolve aliases through compiled
 // accessors instead.
@@ -69,9 +69,9 @@ func TestSemanticDatasetRuntimeDoesNotDualRead(t *testing.T) {
 				t.Fatal(err)
 			}
 			text := string(data)
-			semanticRead := strings.Contains(text, "model.Tables") || strings.Contains(text, "model.Datasets") || strings.Contains(text, "semantic.Tables") || strings.Contains(text, "semantic.Datasets") || strings.Contains(text, "p.model.Tables") || strings.Contains(text, "p.model.Datasets") || strings.Contains(text, "p.model.Dimensions") || strings.Contains(text, "p.model.Relationships") || strings.Contains(text, "p.model.Filters") || strings.Contains(text, "p.model.Metrics") || strings.Contains(text, "r.model.Tables") || strings.Contains(text, "r.model.Datasets") || strings.Contains(text, "r.model.Dimensions") || strings.Contains(text, "r.model.Relationships") || strings.Contains(text, "r.model.Filters") || strings.Contains(text, "r.model.Metrics")
+			semanticRead := strings.Contains(text, "model.Tables") || strings.Contains(text, "model.Datasets") || strings.Contains(text, "model.AccessGrants") || strings.Contains(text, "semantic.Tables") || strings.Contains(text, "semantic.Datasets") || strings.Contains(text, "semantic.AccessGrants") || strings.Contains(text, "p.model.Tables") || strings.Contains(text, "p.model.Datasets") || strings.Contains(text, "p.model.AccessGrants") || strings.Contains(text, "p.model.Dimensions") || strings.Contains(text, "p.model.Relationships") || strings.Contains(text, "p.model.Filters") || strings.Contains(text, "p.model.Metrics") || strings.Contains(text, "r.model.Tables") || strings.Contains(text, "r.model.Datasets") || strings.Contains(text, "r.model.AccessGrants") || strings.Contains(text, "r.model.Dimensions") || strings.Contains(text, "r.model.Relationships") || strings.Contains(text, "r.model.Filters") || strings.Contains(text, "r.model.Metrics")
 			if semanticRead {
-				t.Errorf("%s reads semantic authoring maps (Tables, Datasets, Dimensions, Relationships, Filters, or Metrics) directly; use activation-owned compiled facts", filepath.ToSlash(filepath.Join(relative, filepath.Base(path))))
+				t.Errorf("%s reads semantic authoring maps (Tables, Datasets, AccessGrants, Dimensions, Relationships, Filters, or Metrics) directly; use activation-owned compiled facts", filepath.ToSlash(filepath.Join(relative, filepath.Base(path))))
 			}
 		}
 	}

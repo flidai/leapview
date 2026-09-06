@@ -3,14 +3,19 @@
 FAI-637 adds the access-owned control-plane half of the
 `leapview.semantic-access/v1` profile. The registry defines what an attribute
 is; control rows record which subjects receive canonical values and which
-trusted provider claims may supply a value. This is stewardship state, not the
-semantic query authorization engine. The SemanticModel compiler, planner,
-catalog filtering, consumer adapters, cache invalidation, and
-generation-reference checks remain pending under
-[ADR-0017](../../../adr/0017-adopt-a-looker-aligned-semantic-access-contract.md)
-and are the FAI-639 contextual-resolution boundary. The PostgreSQL implementation
-and contract tests in this document are source-level evidence only; no live
-PostgreSQL qualification/pass is claimed here.
+trusted provider claims may supply a value. FAI-639 now compiles SemanticModel
+grant/filter policy against an explicit registry snapshot, binds evaluation to
+the exact registry state, requires valid control-state identity, evaluates
+FAI-637 effective values fail-closed, emits
+redacted outcomes, and lowers filters to typed PlanIR predicates and
+relationship routes. This is still not the complete semantic query
+authorization engine: SecurityBarrier placement (FAI-641), consumer/discovery
+routing (FAI-642), cache/lifecycle/audit policy identity (FAI-645), provider
+admission, and full VAL-11 remain pending under
+[ADR-0017](../../../adr/0017-adopt-a-looker-aligned-semantic-access-contract.md).
+The PostgreSQL implementation and contract tests in this document are
+source-level evidence only; no live PostgreSQL qualification/pass is claimed
+here.
 
 ## Capability ownership and authority
 
@@ -192,10 +197,12 @@ evidence; callers cannot forge an envelope by constructing its fields.
 
 The four source names are vocabulary and boundary checks only in this slice.
 No SAML, OIDC, embed, or service-token provider integration is claimed. The
-durable mapping repository and effective resolver are intended to consume
-claims only through the opaque `trustedclaims.Envelope`; wiring real provider
-adapters through `Verify`, deriving a principal context, and passing that
-context to semantic consumers remain pending.
+durable mapping repository and effective resolver consume claims only through
+the opaque `trustedclaims.Envelope`; FAI-637 effective direct/group resolution
+is implemented, and FAI-639 evaluates that effective-value projection at the
+semantic policy boundary. Wiring real provider adapters through `Verify`,
+deriving a principal context in consumers, and passing that context through
+consumer routes remain pending.
 
 ## Registry, effective values, and consumers
 
@@ -213,27 +220,42 @@ trusted mappings (source identity + exact claim -> definition)
 effective subject attributes (canonical values, source conflict checked)
         |
         v
-SemanticModel grants/filters and governed semantic consumers (pending)
+FAI-639 compiled grants/filters + exact registry-state match
+        |
+        v
+redacted outcomes + typed PlanIR predicates/routes
+        |
+        v
+governed semantic consumers/discovery (FAI-642 pending)
 ```
 
-The current FAI-637 implementation provides the first three boxes, shared
-canonical value validation, durable control identities, effective direct/group
-resolution behind the opaque `trustedclaims.Envelope` boundary, and
-platform-admin management APIs. It does not
-yet make those values the authority for SemanticModel `accessGrants`,
-`requiredAccessGrants`, or `accessFilters`; it does not filter catalogs or
-execute queries for dashboards, Explore, agents, exports, APIs, MCP, or
-embedding. The existing generic/legacy access paths therefore must not be
-described as FAI-637 semantic-consumer evidence.
+The current FAI-637 implementation provides the registry, direct assignment,
+trusted mapping, shared canonical value validation, durable control
+identities, effective direct/group resolution behind the opaque
+`trustedclaims.Envelope` boundary, and platform-admin management APIs. FAI-639
+now makes those effective values available to a compiled SemanticModel grant/
+filter policy, requires an exact registry-state match and valid control-state
+identity at runtime, and
+returns redacted grant/filter outcomes plus typed PlanIR predicates and
+relationship routes. It does not place SecurityBarriers, filter catalogs or
+route dashboards, Explore, agents, exports, APIs, MCP, or embedding through
+the governed policy. Cache/lifecycle/audit policy identity under FAI-645 and
+provider admission also remain pending. Effective values do not yet carry a
+control-revision binding into this evaluator; consumer integration must obtain
+the values and control identity atomically and FAI-645 must incorporate that
+identity into cache and lifecycle evidence. The existing generic/legacy access
+paths therefore must not be described as semantic-consumer evidence.
 
 ## Immediate invalidation identity
 
-FAI-637 establishes the durable inputs needed for immediate invalidation but
-does not publish cache events or implement consumer caches. A future effective
-attribute-set identity must be derived from an ordered, profile-qualified
-projection of `(instance, subject, definition ID/version/type/shape,
-valueDigest, source)` and must never contain raw values. Runtime trusted input
-also binds its source credential/token fingerprint and validity interval.
+FAI-637 establishes the durable inputs needed for immediate invalidation, and
+FAI-639 binds compiled policy/evaluation to registry state and requires control
+state, but neither slice publishes cache events or implements consumer caches.
+A future effective attribute-set identity must be derived from an ordered,
+profile-qualified projection of `(instance, subject, definition
+ID/version/type/shape, valueDigest, source)` and must never contain raw values.
+Runtime trusted input also binds its source credential/token fingerprint and
+validity interval.
 
 Every authorization-sensitive cache key must include at least the instance
 identity, semantic generation, principal identity, registry
@@ -243,9 +265,9 @@ identity, and normalized semantic policy identity. A committed definition
 change invalidates by registry identity; a committed assignment or mapping
 change invalidates by control identity and, when known, affected definition and
 subject. A digest mismatch is a conservative immediate invalidation signal,
-not permission to continue with stale state. Cache/event propagation and
-consumer use of this identity are LIF- and consumer-integration work still
-pending under ADR-0017.
+not permission to continue with stale state. Cache/event propagation, policy
+identity, and consumer use of this identity are FAI-645 and
+consumer-integration work still pending under ADR-0017.
 
 ## Current evidence and limits
 
@@ -254,12 +276,17 @@ registration/replay, metadata versioning, disablement, type immutability,
 canonical values, and transactional audit evidence. The trustedclaims tests
 cover the opaque verifier envelope, source binding, temporal checks, exact
 claims, copying, fingerprints, and structural value rejection. FAI-637's
-assignment/mapping repositories and migration are implementation scope, but
-their downstream semantic authorization and full integration qualification are
-not complete.
+assignment/mapping repositories and effective-value resolution are implemented;
+FAI-639's compiler/evaluator tests cover registry-state binding, scalar/list
+grant and filter evaluation, redacted outcomes, typed PlanIR predicates, and
+relationship routes. SecurityBarrier placement, consumer/discovery routing,
+cache/lifecycle/audit policy identity, provider admission, and full integration
+qualification are not complete.
 
 VAL-11 therefore remains **Partial**: the shared `internal/semanticvalue`
 canonicalizer is used at registry/assignment/mapping ingress and semantic-value
-tests provide cross-path fixtures, while generated canonicalization,
-candidate validation, runtime planner evaluation, cache identity/invalidation,
-and complete audit projection evidence remain unqualified.
+tests provide cross-path fixtures. FAI-639 also uses the shared canonicalizer
+for effective-value evaluation and typed PlanIR literals, while generated
+canonicalization, provider claim-ingestion/admission, candidate validation,
+full runtime equivalence, cache identity/invalidation, and complete audit
+projection evidence remain unqualified.

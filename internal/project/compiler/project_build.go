@@ -451,10 +451,8 @@ func addSourceAlias(aliases map[string]string, keyOwners map[string]string, key,
 }
 
 func applySemanticModelSpec(model *semanticmodel.Model, spec projectcontracts.SemanticModelSpec) error {
-	if err := rejectSemanticAccessPolicy(spec); err != nil {
-		return err
-	}
 	datasets := lowerSemanticDatasets(spec.Datasets)
+	accessGrants := lowerSemanticAccessGrants(spec.AccessGrants)
 	relationshipsSpec, err := lowerSemanticRelationships(spec.Relationships)
 	if err != nil {
 		return err
@@ -466,6 +464,9 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectcontracts.Se
 	}
 	metricsSpec, err := lowerSemanticMetrics(spec.Metrics)
 	if err != nil {
+		return err
+	}
+	if err := validateSemanticAccessPolicy(accessGrants, datasets, dimensionsSpec, metricsSpec); err != nil {
 		return err
 	}
 	if len(datasets) == 0 {
@@ -500,7 +501,7 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectcontracts.Se
 	sort.SliceStable(relationships, func(i, j int) bool { return relationships[i].ID < relationships[j].ID })
 	dimensions := map[string]semanticmodel.SemanticDimension{}
 	for name, dimension := range dimensionsSpec {
-		converted := semanticmodel.SemanticDimension{Label: dimension.Label, Description: dimension.Description, Type: canonicalDimensionTypeName(string(dimension.Datatype)), Datatype: dimension.Datatype, Bindings: dimension.Bindings, AIContext: dimension.AIContext}
+		converted := semanticmodel.SemanticDimension{Label: dimension.Label, Description: dimension.Description, Type: canonicalDimensionTypeName(string(dimension.Datatype)), Datatype: dimension.Datatype, Bindings: dimension.Bindings, AIContext: dimension.AIContext, RequiredAccessGrants: append([]string(nil), dimension.RequiredAccessGrants...)}
 		if dimension.Time != nil {
 			converted.NativeGrain = dimension.Time.NativeGrain
 			converted.Grains = append([]string(nil), dimension.Time.Grains...)
@@ -511,7 +512,7 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectcontracts.Se
 	}
 	metrics := map[string]semanticmodel.Metric{}
 	for name, metric := range metricsSpec {
-		common := semanticmodel.Metric{Label: metric.Label, Description: metric.Description, Unit: metric.Unit, Format: metric.Format, Hidden: metric.Hidden, AIContext: metric.AIContext}
+		common := semanticmodel.Metric{Label: metric.Label, Description: metric.Description, Unit: metric.Unit, Format: metric.Format, Hidden: metric.Hidden, AIContext: metric.AIContext, RequiredAccessGrants: append([]string(nil), metric.RequiredAccessGrants...)}
 		switch metric.Type {
 		case "aggregate":
 			if metric.Input == nil {
@@ -539,11 +540,66 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectcontracts.Se
 	}
 	model.Tables = tables
 	model.Datasets = datasets
+	model.AccessGrants = accessGrants
 	model.StructuredRelationships = relationshipsSpec
 	model.Relationships = relationships
 	model.Dimensions = dimensions
 	model.Metrics = metrics
 	model.Filters = filters
+	return nil
+}
+
+// validateSemanticAccessPolicy checks the references introduced while
+// lowering a SemanticModel. The generated contract validates the policy's
+// shape; this boundary validates references between the lowered semantic
+// members so a serving model cannot retain a dangling grant or an access
+// filter that cannot be applied to its dataset.
+func validateSemanticAccessPolicy(
+	accessGrants map[string]semanticmodel.SemanticAccessGrantSpec,
+	datasets map[string]semanticmodel.SemanticDatasetSpec,
+	dimensions map[string]semanticmodel.SemanticDimensionSpec,
+	metrics map[string]semanticmodel.SemanticMetricSpec,
+) error {
+	for _, datasetName := range sortedMapKeys(datasets) {
+		dataset := datasets[datasetName]
+		if err := validateRequiredSemanticAccessGrants("dataset "+datasetName, dataset.RequiredAccessGrants, accessGrants); err != nil {
+			return err
+		}
+		for filterIndex, filter := range dataset.AccessFilters {
+			dimension, ok := dimensions[filter.Field]
+			if !ok {
+				return fmt.Errorf("dataset %q access filter %d references unknown dimension %q", datasetName, filterIndex, filter.Field)
+			}
+			if _, ok := dimension.Bindings[datasetName]; !ok {
+				return fmt.Errorf("dataset %q access filter %d dimension %q is not bound to the dataset", datasetName, filterIndex, filter.Field)
+			}
+		}
+	}
+
+	for _, dimensionName := range sortedMapKeys(dimensions) {
+		if err := validateRequiredSemanticAccessGrants("dimension "+dimensionName, dimensions[dimensionName].RequiredAccessGrants, accessGrants); err != nil {
+			return err
+		}
+	}
+	for _, metricName := range sortedMapKeys(metrics) {
+		if err := validateRequiredSemanticAccessGrants("metric "+metricName, metrics[metricName].RequiredAccessGrants, accessGrants); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateRequiredSemanticAccessGrants(scope string, required []string, known map[string]semanticmodel.SemanticAccessGrantSpec) error {
+	// Required grants are normalized by lowering, but sort a detached copy as
+	// well so direct callers receive deterministic diagnostics and this helper
+	// remains safe if its inputs are assembled outside that path.
+	grants := append([]string(nil), required...)
+	sort.Strings(grants)
+	for _, grant := range grants {
+		if _, ok := known[grant]; !ok {
+			return fmt.Errorf("%s references unknown access grant %q", scope, grant)
+		}
+	}
 	return nil
 }
 

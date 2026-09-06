@@ -1,10 +1,13 @@
 package model
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
-	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"regexp"
 	"time"
+
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 )
 
 var (
@@ -64,12 +67,47 @@ type GrainDefinition struct {
 	Entity string `yaml:"entity"`
 }
 
+// SemanticAccessGrantSpec is the runtime form of one SemanticModel access
+// grant. Allowed values remain scalar interface values so generated numeric
+// literals can be retained as json.Number through artifact serialization.
+type SemanticAccessGrantSpec struct {
+	UserAttribute string `yaml:"userAttribute"`
+	AllowedValues []any  `yaml:"allowedValues"`
+}
+
+// UnmarshalJSON keeps numeric access-grant literals exact when an executable
+// model is detached through the project-artifact JSON representation.
+func (value *SemanticAccessGrantSpec) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal SemanticAccessGrantSpec into nil receiver")
+	}
+	type grant SemanticAccessGrantSpec
+	var decoded grant
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*value = SemanticAccessGrantSpec(decoded)
+	return nil
+}
+
+// SemanticAccessFilterSpec binds a principal attribute to a semantic
+// dimension at one dataset boundary.
+type SemanticAccessFilterSpec struct {
+	Field         string `yaml:"field"`
+	UserAttribute string `yaml:"userAttribute"`
+}
+
 type SemanticDatasetSpec struct {
-	Model                string     `yaml:"model"`
-	DefaultTimeDimension string     `yaml:"defaultTimeDimension"`
-	DisplayName          string     `yaml:"displayName"`
-	Description          string     `yaml:"description"`
-	AIContext            *AIContext `yaml:"aiContext"`
+	Model                string                     `yaml:"model"`
+	DefaultTimeDimension string                     `yaml:"defaultTimeDimension"`
+	DisplayName          string                     `yaml:"displayName"`
+	Description          string                     `yaml:"description"`
+	AIContext            *AIContext                 `yaml:"aiContext"`
+	RequiredAccessGrants []string                   `yaml:"requiredAccessGrants"`
+	AccessFilters        []SemanticAccessFilterSpec `yaml:"accessFilters"`
 }
 
 type RelationshipEndpointSpec struct {
@@ -93,12 +131,13 @@ type TimeSemanticsSpec struct {
 }
 
 type SemanticDimensionSpec struct {
-	Label       string                      `yaml:"label"`
-	Description string                      `yaml:"description"`
-	AIContext   *AIContext                  `yaml:"aiContext"`
-	Datatype    LogicalDataType             `yaml:"datatype"`
-	Time        *TimeSemanticsSpec          `yaml:"time"`
-	Bindings    map[string]DimensionBinding `yaml:"bindings"`
+	Label                string                      `yaml:"label"`
+	Description          string                      `yaml:"description"`
+	AIContext            *AIContext                  `yaml:"aiContext"`
+	Datatype             LogicalDataType             `yaml:"datatype"`
+	Time                 *TimeSemanticsSpec          `yaml:"time"`
+	Bindings             map[string]DimensionBinding `yaml:"bindings"`
+	RequiredAccessGrants []string                    `yaml:"requiredAccessGrants"`
 }
 
 type SemanticFilterSpec struct {
@@ -143,34 +182,36 @@ type MetricCommonSpec struct {
 }
 
 type SemanticMetricSpec struct {
-	MetricCommonSpec `yaml:",inline"`
-	Type             string       `yaml:"type"`
-	Dataset          string       `yaml:"dataset"`
-	Aggregation      string       `yaml:"aggregation"`
-	Input            *MetricInput `yaml:"input"`
-	Where            []string     `yaml:"where"`
-	Empty            string       `yaml:"empty"`
-	TimeDimension    string       `yaml:"timeDimension"`
-	Expression       string       `yaml:"expression"`
-	Numerator        string       `yaml:"numerator"`
-	Denominator      string       `yaml:"denominator"`
+	MetricCommonSpec     `yaml:",inline"`
+	Type                 string       `yaml:"type"`
+	Dataset              string       `yaml:"dataset"`
+	Aggregation          string       `yaml:"aggregation"`
+	Input                *MetricInput `yaml:"input"`
+	Where                []string     `yaml:"where"`
+	Empty                string       `yaml:"empty"`
+	TimeDimension        string       `yaml:"timeDimension"`
+	Expression           string       `yaml:"expression"`
+	Numerator            string       `yaml:"numerator"`
+	Denominator          string       `yaml:"denominator"`
+	RequiredAccessGrants []string     `yaml:"requiredAccessGrants"`
 }
 
 type Model struct {
-	Name                    string                         `yaml:"-"`
-	Title                   string                         `yaml:"-"`
-	Description             string                         `yaml:"-"`
-	AIContext               *AIContext                     `yaml:"aiContext,omitempty" json:"-"`
-	DefaultConnection       string                         `yaml:"-"`
-	Connections             map[string]Connection          `yaml:"-"`
-	Sources                 map[string]Source              `yaml:"-"`
-	Tables                  map[string]Table               `yaml:"-"`
-	Datasets                map[string]SemanticDatasetSpec `yaml:"-"`
-	StructuredRelationships map[string]RelationshipSpec    `yaml:"-"`
-	Relationships           []Relationship                 `yaml:"-"`
-	Dimensions              map[string]SemanticDimension   `yaml:"-"`
-	Filters                 map[string]SemanticFilterSpec  `yaml:"-"`
-	Metrics                 map[string]Metric              `yaml:"-"`
+	Name                    string                             `yaml:"-"`
+	Title                   string                             `yaml:"-"`
+	Description             string                             `yaml:"-"`
+	AIContext               *AIContext                         `yaml:"aiContext,omitempty" json:"-"`
+	DefaultConnection       string                             `yaml:"-"`
+	Connections             map[string]Connection              `yaml:"-"`
+	Sources                 map[string]Source                  `yaml:"-"`
+	Tables                  map[string]Table                   `yaml:"-"`
+	Datasets                map[string]SemanticDatasetSpec     `yaml:"-"`
+	AccessGrants            map[string]SemanticAccessGrantSpec `yaml:"-"`
+	StructuredRelationships map[string]RelationshipSpec        `yaml:"-"`
+	Relationships           []Relationship                     `yaml:"-"`
+	Dimensions              map[string]SemanticDimension       `yaml:"-"`
+	Filters                 map[string]SemanticFilterSpec      `yaml:"-"`
+	Metrics                 map[string]Metric                  `yaml:"-"`
 }
 
 type Connection struct {
@@ -469,18 +510,19 @@ type MetricInput struct {
 }
 
 type SemanticDimension struct {
-	Name        string                      `yaml:"-"`
-	Label       string                      `yaml:"label"`
-	Description string                      `yaml:"description"`
-	AIContext   *AIContext                  `yaml:"aiContext,omitempty" json:"-"`
-	Type        string                      `yaml:"type"`
-	Datatype    LogicalDataType             `yaml:"datatype,omitempty"`
-	Grains      []string                    `yaml:"grains"`
-	NativeGrain string                      `yaml:"native_grain,omitempty"`
-	Timezone    string                      `yaml:"timezone,omitempty"`
-	Calendar    string                      `yaml:"calendar,omitempty"`
-	WeekStart   string                      `yaml:"week_start,omitempty"`
-	Bindings    map[string]DimensionBinding `yaml:"bindings"`
+	Name                 string                      `yaml:"-"`
+	Label                string                      `yaml:"label"`
+	Description          string                      `yaml:"description"`
+	AIContext            *AIContext                  `yaml:"aiContext,omitempty" json:"-"`
+	Type                 string                      `yaml:"type"`
+	Datatype             LogicalDataType             `yaml:"datatype,omitempty"`
+	Grains               []string                    `yaml:"grains"`
+	NativeGrain          string                      `yaml:"native_grain,omitempty"`
+	Timezone             string                      `yaml:"timezone,omitempty"`
+	Calendar             string                      `yaml:"calendar,omitempty"`
+	WeekStart            string                      `yaml:"week_start,omitempty"`
+	Bindings             map[string]DimensionBinding `yaml:"bindings"`
+	RequiredAccessGrants []string                    `yaml:"requiredAccessGrants,omitempty"`
 }
 
 type DimensionBinding struct {
@@ -489,23 +531,24 @@ type DimensionBinding struct {
 }
 
 type Metric struct {
-	Name          string       `yaml:"-"`
-	Type          string       `yaml:"type"`
-	Dataset       string       `yaml:"dataset,omitempty"`
-	Aggregation   string       `yaml:"aggregation,omitempty"`
-	Input         *MetricInput `yaml:"input,omitempty"`
-	Where         []string     `yaml:"where,omitempty"`
-	Empty         string       `yaml:"empty,omitempty"`
-	TimeDimension string       `yaml:"timeDimension,omitempty"`
-	Expression    string       `yaml:"expression,omitempty"`
-	Numerator     string       `yaml:"numerator,omitempty"`
-	Denominator   string       `yaml:"denominator,omitempty"`
-	Label         string       `yaml:"label"`
-	Description   string       `yaml:"description"`
-	Unit          string       `yaml:"unit"`
-	Format        string       `yaml:"format"`
-	Hidden        bool         `yaml:"hidden"`
-	AIContext     *AIContext   `yaml:"aiContext,omitempty"`
+	Name                 string       `yaml:"-"`
+	Type                 string       `yaml:"type"`
+	Dataset              string       `yaml:"dataset,omitempty"`
+	Aggregation          string       `yaml:"aggregation,omitempty"`
+	Input                *MetricInput `yaml:"input,omitempty"`
+	Where                []string     `yaml:"where,omitempty"`
+	Empty                string       `yaml:"empty,omitempty"`
+	TimeDimension        string       `yaml:"timeDimension,omitempty"`
+	Expression           string       `yaml:"expression,omitempty"`
+	Numerator            string       `yaml:"numerator,omitempty"`
+	Denominator          string       `yaml:"denominator,omitempty"`
+	Label                string       `yaml:"label"`
+	Description          string       `yaml:"description"`
+	Unit                 string       `yaml:"unit"`
+	Format               string       `yaml:"format"`
+	Hidden               bool         `yaml:"hidden"`
+	RequiredAccessGrants []string     `yaml:"requiredAccessGrants,omitempty"`
+	AIContext            *AIContext   `yaml:"aiContext,omitempty"`
 }
 
 type Relationship struct {
