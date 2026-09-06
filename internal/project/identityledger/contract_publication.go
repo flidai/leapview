@@ -37,16 +37,18 @@ type ValidationCheck struct {
 }
 
 type ValidationEvidence struct {
-	Version int               `json:"version"`
-	Checks  []ValidationCheck `json:"checks"`
+	Version        int               `json:"version"`
+	Checks         []ValidationCheck `json:"checks"`
+	PolicyEvidence *PolicyEvidence   `json:"policyEvidence,omitempty"`
 }
 
 // ContractPublicationInput binds already-generated projection identity to the
 // existing instance-qualified authored identity ledger.
 type ContractPublicationInput struct {
-	InstanceID string
-	Projection contractprojection.Projection
-	Validation ValidationEvidence
+	InstanceID    string
+	Projection    contractprojection.Projection
+	Validation    ValidationEvidence
+	PolicyContext *PolicyContext
 }
 
 // ContractPublication is immutable exact-replay evidence. VersionBaseline is
@@ -128,7 +130,14 @@ func normalizeValidationEvidence(value ValidationEvidence) (ValidationEvidence, 
 	if value.Version != 1 || len(value.Checks) == 0 || len(value.Checks) > 256 {
 		return ValidationEvidence{}, fmt.Errorf("%w: validation evidence version 1 with checks is required", ErrContractPublicationInvalid)
 	}
-	result := ValidationEvidence{Version: 1, Checks: append([]ValidationCheck(nil), value.Checks...)}
+	result := ValidationEvidence{Version: 1, Checks: append([]ValidationCheck(nil), value.Checks...), PolicyEvidence: value.PolicyEvidence}
+	if value.PolicyEvidence != nil {
+		policy, err := normalizePolicyEvidence(*value.PolicyEvidence)
+		if err != nil {
+			return ValidationEvidence{}, err
+		}
+		result.PolicyEvidence = &policy
+	}
 	for index := range result.Checks {
 		check := &result.Checks[index]
 		if !canonicalEvidenceText(check.Name, 128) || !canonicalEvidenceText(check.Reference, 2048) {
@@ -157,6 +166,14 @@ func normalizeValidationEvidence(value ValidationEvidence) (ValidationEvidence, 
 		return ValidationEvidence{}, fmt.Errorf("%w: validation evidence exceeds publication bounds", ErrContractPublicationInvalid)
 	}
 	return result, nil
+}
+
+// Validate verifies an immutable validation envelope without upgrading
+// historical v1 rows. A v1 envelope without PolicyEvidence is valid history,
+// but it is intentionally not a qualified policy decision.
+func (value ValidationEvidence) Validate() error {
+	_, err := normalizeValidationEvidence(value)
+	return err
 }
 
 func canonicalEvidenceText(value string, limit int) bool {

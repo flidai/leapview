@@ -256,6 +256,14 @@ profile identifier is part of canonical bytes and conformance evidence.
 | VER-01–VER-06 | FAI-622 added one canonical-byte [compatibility classifier](../../internal/project/contractversion/classifier.go) for structural, semantic, and security changes plus SemVer transition enforcement. Immutable [publication evidence](../../internal/project/identityledger/contract_publication.go) reuses the existing instance-qualified identity ledger and the FAI-620 canonical bytes/digest authority. PostgreSQL [revision 3](../../internal/platform/postgres/migrations/003_contract_publication_evidence.sql) stores authored version, profile, exact bytes, digest, database timestamp, and normalized validation evidence behind append-only triggers. FAI-662's intended revision 008 checks are fully installed by additive [revision 014](../../internal/platform/postgres/migrations/014_contract_publication_correction.sql), which adds database-side equality checks for the SHA-256 digest and binds API version, profile, authored ID, resource kind, authored version, and build-metadata-free version baseline to the canonical JSON envelope. Exact retries replay the first row; build-metadata, content, digest, evidence, or envelope drift conflicts. The canonical `task test:go:postgres-conformance` lane now injects its application-owned required/optional decision into the platform harness and includes revision 014 correction, exact-replay, conflicting-replay, and concurrency fixtures. Required Docker PostgreSQL, projection, generator, architecture and generated checks pass without skips. | FAI-662 scoped integrity acceptance QUALIFIED; see the repair evidence below. FAI-622 deployment-plan consumption remains separate. |
 | ODX-01–ODX-07 | FAI-623 added the isolated [ODCS 3.1 export adapter](../../internal/project/contractodcs), pinned upstream schema and checksum, explicit mapping manifest, generated mapping/loss reports, sealed provenance extension, security exclusions, and a CI-only independent CLI oracle. The maintained [ODCS export conformance specification](odcs-export-conformance.md) records the exact document/export claim and known loss boundaries. | Implemented by FAI-623; export/document level only |
 
+The stacked [FAI-645 policy-evidence closure](semantic-access-policy-evidence.md)
+preserves the full FAI-622 classification and security-approval signal in the
+existing publication validation JSON. It adds explicit genesis/update context,
+baseline and lifecycle binding, and a Project-owned graph-impact explanation
+for later approval input. This is not deployment approval or activation;
+FAI-648/649/632 remain unqualified by this slice. No migration, projection,
+artifact or release digest is changed.
+
 The FAI-622 boundary classifies and preserves contract evidence. FAI-662 closes
 the projector, manifest, and database integrity gaps without changing the
 generated wire DTOs, RFC 8785 implementation, compatibility classifier, or

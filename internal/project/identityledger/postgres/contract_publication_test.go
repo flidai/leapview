@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/project/contractprojection"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+	"github.com/flidai/leapview/internal/project/contractversion"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/identityledger"
 )
@@ -40,6 +41,25 @@ func TestContractPublicationIsImmutableAndExactlyReplayable(t *testing.T) {
 	if !bytes.Equal(first.CanonicalBytes, wantBytes) || first.Digest != wantDigest || len(first.Validation.Checks) != 2 {
 		t.Fatalf("publication did not preserve canonical or validation evidence: %#v", first)
 	}
+	if first.Validation.PolicyEvidence == nil || first.Validation.PolicyEvidence.Version != identityledger.PolicyEvidenceVersion || first.Validation.PolicyEvidence.BaselineKind != identityledger.PolicyBaselineGenesis || first.Validation.PolicyEvidence.LifecycleSequence != 1 {
+		t.Fatalf("publication did not preserve server policy evidence: %#v", first.Validation)
+	}
+	forged := input
+	forged.Validation.PolicyEvidence = &identityledger.PolicyEvidence{Version: identityledger.PolicyEvidenceVersion}
+	if _, err := repo.PublishContract(ctx, forged); !errors.Is(err, identityledger.ErrPolicyEvidenceInvalid) {
+		t.Fatalf("client-supplied policy evidence error = %v, want invalid evidence", err)
+	}
+	decision, err := first.PolicyDecision()
+	if err != nil || decision.EvidenceDigest != first.Validation.PolicyEvidence.EvidenceDigest {
+		t.Fatalf("policy decision = %#v, %v", decision, err)
+	}
+	forgedEvidence := *first.Validation.PolicyEvidence
+	forgedEvidence.ApprovalState = identityledger.PolicyApprovalRequired
+	forgedPublication := first
+	forgedPublication.Validation.PolicyEvidence = &forgedEvidence
+	if _, err := forgedPublication.PolicyDecision(); !errors.Is(err, identityledger.ErrPolicyEvidenceInvalid) {
+		t.Fatalf("approval-state forgery error = %v, want invalid evidence", err)
+	}
 	if _, err := repo.Activate(ctx, candidate("instance-contract-other", "bundle-1", "", resource("source:orders", projectgraph.KindSource))); err != nil {
 		t.Fatal(err)
 	}
@@ -68,17 +88,52 @@ func TestContractPublicationIsImmutableAndExactlyReplayable(t *testing.T) {
 		t.Fatalf("build-metadata/content conflict error = %v", err)
 	}
 	changedValidation := input
+	changedValidation.Validation.Checks = append([]identityledger.ValidationCheck(nil), input.Validation.Checks...)
 	changedValidation.Validation.Checks[0].Reference = "different validation command"
 	if _, err := repo.PublishContract(ctx, changedValidation); !errors.Is(err, identityledger.ErrContractPublicationConflict) {
 		t.Fatalf("validation evidence conflict error = %v", err)
 	}
 	older := publicationInput("instance-contract", "source:orders", "1.2.2", "strict")
+	older.PolicyContext = existingPolicyContext(first)
 	if _, err := repo.PublishContract(ctx, older); !errors.Is(err, identityledger.ErrContractPublicationConflict) {
 		t.Fatalf("older version publication error = %v", err)
 	}
 	newer := publicationInput("instance-contract", "source:orders", "1.2.4", "strict")
-	if _, err := repo.PublishContract(ctx, newer); err != nil {
+	newer.PolicyContext = existingPolicyContext(first)
+	second, err := repo.PublishContract(ctx, newer)
+	if err != nil {
 		t.Fatalf("newer exact-content version publication: %v", err)
+	}
+	// Replaying the original version after a later publication must use its
+	// original genesis context and immutable row, never the latest baseline.
+	replayedAfterNewer, err := repo.PublishContract(ctx, input)
+	if err != nil || !identityledger.EqualContractPublicationContent(first, replayedAfterNewer) {
+		t.Fatalf("original replay after newer publication = %#v, %v", replayedAfterNewer, err)
+	}
+	third := publicationInput("instance-contract", "source:orders", "1.2.5", "strict")
+	third.PolicyContext = existingPolicyContext(second)
+	if _, err := repo.PublishContract(ctx, third); err != nil {
+		t.Fatalf("third publication from current baseline: %v", err)
+	}
+	replayedAfterThird, err := repo.PublishContract(ctx, newer)
+	if err != nil || !identityledger.EqualContractPublicationContent(second, replayedAfterThird) {
+		t.Fatalf("original newer replay after third publication = %#v, %v", replayedAfterThird, err)
+	}
+	wrongReplay := newer
+	wrongReplay.PolicyContext = existingPolicyContext(second)
+	if _, err := repo.PublishContract(ctx, wrongReplay); !errors.Is(err, identityledger.ErrContractPublicationConflict) {
+		t.Fatalf("replay with self-baseline context error = %v, want immutable evidence conflict", err)
+	}
+	stale := publicationInput("instance-contract", "source:orders", "1.2.6", "strict")
+	stale.PolicyContext = existingPolicyContext(first)
+	if _, err := repo.PublishContract(ctx, stale); !errors.Is(err, identityledger.ErrPolicyEvidenceConflict) {
+		t.Fatalf("stale earlier baseline error = %v, want policy conflict", err)
+	}
+	changedBaseline := publicationInput("instance-contract", "source:orders", "1.2.5", "strict")
+	changedBaseline.PolicyContext = existingPolicyContext(first)
+	changedBaseline.PolicyContext.Baseline.Digest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	if _, err := repo.PublishContract(ctx, changedBaseline); !errors.Is(err, identityledger.ErrPolicyEvidenceConflict) {
+		t.Fatalf("changed baseline publication error = %v, want policy conflict", err)
 	}
 
 	if _, err := admin.Exec(ctx, `UPDATE project.contract_publication SET canonical_digest=canonical_digest WHERE instance_id='instance-contract'`); err == nil {
@@ -95,10 +150,9 @@ func TestContractPublicationIsImmutableAndExactlyReplayable(t *testing.T) {
 func TestContractPublicationConcurrency(t *testing.T) {
 	repo, _ := newLedgerDatabase(t)
 	ctx := t.Context()
-	for _, id := range []string{"source:replay", "source:conflict"} {
-		if _, err := repo.Activate(ctx, candidate("instance-race-contract", "bundle-"+id, activeBundleFor(id), resource(id, projectgraph.KindSource))); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := repo.Activate(ctx, candidate("instance-race-contract", "bundle-initial", "",
+		resource("source:replay", projectgraph.KindSource), resource("source:conflict", projectgraph.KindSource))); err != nil {
+		t.Fatal(err)
 	}
 
 	exact := publicationInput("instance-race-contract", "source:replay", "1.0.0", "strict")
@@ -166,6 +220,62 @@ func TestContractPublicationConcurrency(t *testing.T) {
 	}
 }
 
+func TestScanContractPublicationRejectsUnknownValidationEvidence(t *testing.T) {
+	for _, validation := range []string{
+		`{"version":1,"checks":[{"name":"projection","outcome":"passed","reference":"test"}],"unknown":true}`,
+		`{"version":1,"checks":[{"name":"projection","outcome":"passed","reference":"test"}],"policyEvidence":{"version":2,"unknown":true}}`,
+	} {
+		row := publicationScanFixture{validation: validation}
+		if _, err := scanContractPublication(row); err == nil {
+			t.Fatalf("unknown stored validation evidence was accepted: %s", validation)
+		}
+	}
+}
+
+func TestContractPublicationPreservesSecurityWideningApproval(t *testing.T) {
+	repo, _ := newLedgerDatabase(t)
+	ctx := t.Context()
+	const instanceID = "instance-policy-publication"
+	const authoredID = "semantic:orders"
+	if _, err := repo.Activate(ctx, candidate(instanceID, "bundle-policy", "", resource(authoredID, projectgraph.KindSemanticModel))); err != nil {
+		t.Fatal(err)
+	}
+	baselineInput := semanticPublicationInput(instanceID, authoredID, "1.0.0", []string{"emea"})
+	baseline, err := repo.PublishContract(ctx, baselineInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	widened := semanticPublicationInput(instanceID, authoredID, "1.1.0", []string{"emea", "amer"})
+	widened.PolicyContext = existingPolicyContext(baseline)
+	publication, err := repo.PublishContract(ctx, widened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := publication.PolicyDecision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.ApprovalRequired || decision.ApprovalState != identityledger.PolicyApprovalRequired || decision.Classification.SecurityImpact != contractversion.SecurityWidening {
+		t.Fatalf("security widening approval evidence = %#v", decision)
+	}
+}
+
+type publicationScanFixture struct{ validation string }
+
+func (row publicationScanFixture) Scan(dest ...any) error {
+	*dest[0].(*string) = "instance-scan"
+	*dest[1].(*string) = "source:orders"
+	*dest[2].(*string) = "source"
+	*dest[3].(*string) = "1.0.0"
+	*dest[4].(*string) = "1.0.0"
+	*dest[5].(*string) = contractprojection.Profile
+	*dest[6].(*[]byte) = []byte(`{"apiVersion":"leapview.dev/v1"}`)
+	*dest[7].(*string) = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	*dest[8].(*time.Time) = time.Now()
+	*dest[9].(*string) = row.validation
+	return nil
+}
+
 func publicationInput(instance, authoredID, version, mode string) identityledger.ContractPublicationInput {
 	encoded, _ := json.Marshal(map[string]any{
 		"apiVersion": "leapview.dev/v1", "kind": "Source",
@@ -186,10 +296,50 @@ func publicationInput(instance, authoredID, version, mode string) identityledger
 	}
 	return identityledger.ContractPublicationInput{
 		InstanceID: instance, Projection: projection,
+		PolicyContext: &identityledger.PolicyContext{BaselineKind: identityledger.PolicyBaselineGenesis, ExpectedLifecycleSequence: 1},
 		Validation: identityledger.ValidationEvidence{Version: 1, Checks: []identityledger.ValidationCheck{
 			{Name: "generated-contract", Outcome: identityledger.ValidationPassed, Reference: "task generated:check"},
 			{Name: "projection-tests", Outcome: identityledger.ValidationPassed, Reference: "go test ./internal/project/contractprojection"},
 		}},
+	}
+}
+
+func semanticPublicationInput(instance, authoredID, version string, allowedValues []string) identityledger.ContractPublicationInput {
+	document := map[string]any{
+		"apiVersion": "leapview.dev/v1", "kind": "SemanticModel",
+		"metadata": map[string]any{"id": authoredID, "name": "orders"},
+		"spec": map[string]any{
+			"datasets":      map[string]any{"orders": map[string]any{"model": "orders", "requiredAccessGrants": []any{"region_access"}}},
+			"accessGrants":  map[string]any{"region_access": map[string]any{"userAttribute": "region", "allowedValues": allowedValues}},
+			"relationships": map[string]any{}, "dimensions": map[string]any{}, "filters": map[string]any{}, "metrics": map[string]any{},
+		},
+	}
+	encoded, _ := json.Marshal(document)
+	var authored projectcontracts.SemanticModel
+	if err := json.Unmarshal(encoded, &authored); err != nil {
+		panic(err)
+	}
+	projection, err := contractprojection.ProjectSemanticModel(authored, contractprojection.Contract{Version: version, Compatibility: "backward"})
+	if err != nil {
+		panic(err)
+	}
+	return identityledger.ContractPublicationInput{
+		InstanceID: instance, Projection: projection,
+		PolicyContext: &identityledger.PolicyContext{BaselineKind: identityledger.PolicyBaselineGenesis, ExpectedLifecycleSequence: 1},
+		Validation:    identityledger.ValidationEvidence{Version: 1, Checks: []identityledger.ValidationCheck{{Name: "generated-contract", Outcome: identityledger.ValidationPassed, Reference: "test"}}},
+	}
+}
+
+func existingPolicyContext(publication identityledger.ContractPublication) *identityledger.PolicyContext {
+	return &identityledger.PolicyContext{
+		BaselineKind:              identityledger.PolicyBaselineExisting,
+		ExpectedLifecycleSequence: 1,
+		Baseline: &identityledger.PolicyPublicationIdentity{
+			InstanceID: publication.InstanceID, AuthoredID: publication.AuthoredID,
+			ResourceKind: publication.ResourceKind, Version: publication.Version,
+			VersionBaseline: publication.VersionBaseline, ProjectionProfile: publication.ProjectionProfile,
+			Digest: publication.Digest,
+		},
 	}
 }
 

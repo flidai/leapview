@@ -26,6 +26,18 @@ const (
 	SecuritySensitive Class = "security-sensitive"
 )
 
+// Compatibility is the compatibility dimension of a contract change. It is
+// deliberately independent from Class, which is retained for the historical
+// security-sensitive classification surface.
+type Compatibility string
+
+const (
+	CompatibilityAdditive      Compatibility = "additive"
+	CompatibilityBehavioral    Compatibility = "behavioral"
+	CompatibilityBreaking      Compatibility = "breaking"
+	CompatibilityIndeterminate Compatibility = "indeterminate"
+)
+
 type Domain string
 
 const (
@@ -45,10 +57,11 @@ const (
 type SecurityImpact string
 
 const (
-	SecurityNone       SecurityImpact = "none"
-	SecurityTightening SecurityImpact = "tightening"
-	SecurityWidening   SecurityImpact = "widening"
-	SecurityMixed      SecurityImpact = "mixed"
+	SecurityNone          SecurityImpact = "none"
+	SecurityTightening    SecurityImpact = "tightening"
+	SecurityWidening      SecurityImpact = "widening"
+	SecurityMixed         SecurityImpact = "mixed"
+	SecurityIndeterminate SecurityImpact = "indeterminate"
 )
 
 var (
@@ -56,6 +69,8 @@ var (
 	ErrIdentityMismatch     = errors.New("contract identity mismatch")
 	ErrVersionReuseConflict = errors.New("published contract version reused with different content")
 	ErrVersionPolicy        = errors.New("contract version policy not satisfied")
+	ErrInvalidResult        = errors.New("invalid contract classification result")
+	ErrIndeterminate        = errors.New("contract classification is indeterminate")
 )
 
 type Change struct {
@@ -63,6 +78,7 @@ type Change struct {
 	Operation      Operation      `json:"operation"`
 	Domain         Domain         `json:"domain"`
 	Class          Class          `json:"class"`
+	Compatibility  Compatibility  `json:"compatibility"`
 	SecurityImpact SecurityImpact `json:"securityImpact,omitempty"`
 	RequiresMajor  bool           `json:"requiresMajor,omitempty"`
 	Reason         string         `json:"reason"`
@@ -70,10 +86,60 @@ type Change struct {
 
 type Result struct {
 	Class                    Class          `json:"class"`
+	Compatibility            Compatibility  `json:"compatibility"`
+	StructuralCompatibility  Compatibility  `json:"structuralCompatibility"`
+	SemanticCompatibility    Compatibility  `json:"semanticCompatibility"`
 	SecurityImpact           SecurityImpact `json:"securityImpact"`
 	RequiresMajor            bool           `json:"requiresMajor,omitempty"`
 	RequiresSecurityApproval bool           `json:"requiresSecurityApproval,omitempty"`
 	Changes                  []Change       `json:"changes"`
+}
+
+// Validate verifies every aggregate field against the per-change evidence.
+// Callers must not be able to clear an approval or major-version requirement
+// after classification by editing only the summary fields.
+func (r Result) Validate() error {
+	if !validClass(r.Class) {
+		return fmt.Errorf("%w: invalid class %q", ErrInvalidResult, r.Class)
+	}
+	if !validCompatibility(r.Compatibility) || !validCompatibility(r.StructuralCompatibility) || !validCompatibility(r.SemanticCompatibility) {
+		return fmt.Errorf("%w: compatibility dimensions are required", ErrInvalidResult)
+	}
+	if !validSecurityImpact(r.SecurityImpact) {
+		return fmt.Errorf("%w: invalid security impact %q", ErrInvalidResult, r.SecurityImpact)
+	}
+	for index, change := range r.Changes {
+		if index > 0 && r.Changes[index-1].Path >= change.Path {
+			return fmt.Errorf("%w: changes must be strictly sorted by path", ErrInvalidResult)
+		}
+		if err := validateChange(change); err != nil {
+			return fmt.Errorf("%w: change %d: %v", ErrInvalidResult, index, err)
+		}
+	}
+	expected := aggregate(r.Changes)
+	if r.Class != expected.Class || r.Compatibility != expected.Compatibility ||
+		r.StructuralCompatibility != expected.StructuralCompatibility ||
+		r.SemanticCompatibility != expected.SemanticCompatibility ||
+		r.SecurityImpact != expected.SecurityImpact ||
+		r.RequiresMajor != expected.RequiresMajor ||
+		r.RequiresSecurityApproval != expected.RequiresSecurityApproval {
+		return fmt.Errorf("%w: aggregate fields do not match changes", ErrInvalidResult)
+	}
+	return nil
+}
+
+// ValidatePublication applies the result integrity checks and rejects any
+// compatibility or security state that cannot be safely admitted for
+// publication. Direct Classify callers may inspect an indeterminate result;
+// publication and version-transition callers must fail closed.
+func (r Result) ValidatePublication() error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	if r.Compatibility == CompatibilityIndeterminate || r.SecurityImpact == SecurityIndeterminate || r.SecurityImpact == SecurityMixed {
+		return fmt.Errorf("%w: publication requires determinate compatibility and security impact", ErrIndeterminate)
+	}
+	return nil
 }
 
 type document struct {
@@ -120,7 +186,74 @@ func Classify(baseline, candidate []byte) (Result, error) {
 		changes = append(changes, classifyChange(before, after, item))
 	}
 	sort.Slice(changes, func(i, j int) bool { return changes[i].Path < changes[j].Path })
-	return aggregate(changes), nil
+	result := aggregate(changes)
+	if err := result.Validate(); err != nil {
+		return Result{}, err
+	}
+	return result, nil
+}
+
+// ClassifyInitial classifies an explicitly initial publication against an
+// empty contract envelope carrying the candidate identity. It is separate
+// from Classify so callers cannot accidentally treat a missing baseline as a
+// valid comparison.
+func ClassifyInitial(candidate []byte) (Result, error) {
+	after, err := decodeDocument(candidate)
+	if err != nil {
+		return Result{}, err
+	}
+	contract := emptyContract(after.Kind)
+	metadata := map[string]any{}
+	if authoredMetadata, ok := after.Value["metadata"].(map[string]any); ok {
+		for key, value := range authoredMetadata {
+			metadata[key] = value
+		}
+	}
+	metadataContract := map[string]any{"version": after.Version, "compatibility": "backward"}
+	if authoredContract, ok := metadata["contract"].(map[string]any); ok {
+		metadataContract = map[string]any{}
+		for key, value := range authoredContract {
+			metadataContract[key] = value
+		}
+		metadataContract["version"] = after.Version
+		metadataContract["compatibility"] = "backward"
+	}
+	metadata["contract"] = metadataContract
+	baseline, err := json.Marshal(map[string]any{
+		"profile":    after.Profile,
+		"apiVersion": after.APIVersion,
+		"kind":       after.Kind,
+		"metadata":   metadata,
+		"contract":   contract,
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("%w: initial baseline: %v", ErrInvalidContract, err)
+	}
+	result, err := Classify(baseline, candidate)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := result.ValidatePublication(); err != nil {
+		return Result{}, err
+	}
+	return result, nil
+}
+
+func emptyContract(kind string) map[string]any {
+	switch kind {
+	case "Source":
+		return map[string]any{"schema": map[string]any{"fields": map[string]any{}}}
+	case "Model":
+		return map[string]any{"fields": map[string]any{}}
+	case "SemanticModel":
+		return map[string]any{
+			"datasets": map[string]any{}, "accessGrants": map[string]any{},
+			"relationships": map[string]any{}, "dimensions": map[string]any{},
+			"filters": map[string]any{}, "metrics": map[string]any{},
+		}
+	default:
+		return map[string]any{}
+	}
 }
 
 // ValidateVersionTransition applies SemVer policy to the same unified result.
@@ -136,6 +269,12 @@ func ValidateVersionTransition(baseline, candidate []byte) (Result, error) {
 	}
 	result, err := Classify(baseline, candidate)
 	if err != nil {
+		return Result{}, err
+	}
+	if err := result.ValidatePublication(); err != nil {
+		if errors.Is(err, ErrIndeterminate) {
+			return result, fmt.Errorf("%w: %w", ErrVersionPolicy, err)
+		}
 		return Result{}, err
 	}
 	baselineVersion, err := semverBaseline(before.Version)
@@ -268,12 +407,7 @@ func diffObject(prefix string, before, after map[string]any, result *[]rawChange
 
 func classifyChange(before, after document, change rawChange) Change {
 	if securityPath(change.Path) {
-		if unreferencedGrantChange(before, after, change) {
-			return Change{Path: change.Path, Operation: change.Operation, Domain: DomainSecurity, Class: Compatible, SecurityImpact: SecurityNone, Reason: "unreferenced access grant does not change effective access"}
-		}
-		impact := securityImpact(change)
-		major := impact == SecurityTightening && (strings.Contains(change.Path, "requiredAccessGrants") || strings.Contains(change.Path, "accessFilters"))
-		return Change{Path: change.Path, Operation: change.Operation, Domain: DomainSecurity, Class: SecuritySensitive, SecurityImpact: impact, RequiresMajor: major, Reason: securityReason(impact)}
+		return classifySecurityChange(before, after, change)
 	}
 
 	domain := DomainStructural
@@ -284,36 +418,41 @@ func classifyChange(before, after document, change rawChange) Change {
 	switch {
 	case fieldRootChange(after.Kind, change.Path):
 		if change.Operation == OperationAdded && nullableField(change.After) {
-			classified.Class, classified.Reason = Compatible, "optional nullable field added"
+			classified.Class, classified.Compatibility, classified.Reason = Compatible, CompatibilityAdditive, "optional nullable field added"
 		} else if change.Operation == OperationAdded {
-			classified.Class, classified.RequiresMajor, classified.Reason = Breaking, true, "required field added"
+			classified.Class, classified.Compatibility, classified.RequiresMajor, classified.Reason = Breaking, CompatibilityBreaking, true, "required field added"
 		} else {
-			classified.Class, classified.RequiresMajor, classified.Reason = Breaking, true, "published field removed"
+			classified.Class, classified.Compatibility, classified.RequiresMajor, classified.Reason = Breaking, CompatibilityBreaking, true, "published field removed"
 		}
 	case strings.HasSuffix(change.Path, ".datatype"):
-		classified.Class, classified.RequiresMajor, classified.Reason = Breaking, true, "logical datatype changed"
+		classified.Class, classified.Compatibility, classified.RequiresMajor, classified.Reason = Breaking, CompatibilityBreaking, true, "logical datatype changed"
 	case strings.HasSuffix(change.Path, ".nullable"):
 		if nullabilityStrengthened(change) {
-			classified.Class, classified.Reason = Compatible, "field strengthened from nullable to non-null"
+			classified.Class, classified.Compatibility, classified.Reason = Compatible, CompatibilityAdditive, "field strengthened from nullable to non-null"
 		} else {
-			classified.Class, classified.RequiresMajor, classified.Reason = Breaking, true, "field may now return null"
+			classified.Class, classified.Compatibility, classified.RequiresMajor, classified.Reason = Breaking, CompatibilityBreaking, true, "field may now return null"
 		}
 	case behavioralMetadataPath(change.Path):
-		classified.Class, classified.Reason = Warning, "behavioral or governance metadata changed"
+		classified.Class, classified.Compatibility, classified.Reason = Warning, CompatibilityBehavioral, "behavioral or governance metadata changed"
 	case semanticMemberRoot(change.Path):
 		if change.Operation == OperationAdded {
-			classified.Class, classified.Reason = Compatible, "semantic member added"
+			classified.Class, classified.Compatibility, classified.Reason = Compatible, CompatibilityAdditive, "semantic member added"
+			if unprotectedSemanticMember(after.Kind, change.Path, change.After) {
+				classified.Class = SecuritySensitive
+				classified.SecurityImpact = SecurityWidening
+				classified.Reason = "new unprotected semantic member widens discoverable access"
+			}
 		} else {
-			classified.Class, classified.RequiresMajor, classified.Reason = Breaking, true, "published semantic member removed"
+			classified.Class, classified.Compatibility, classified.RequiresMajor, classified.Reason = Breaking, CompatibilityBreaking, true, "published semantic member removed"
 		}
 	case domain == DomainSemantic:
-		classified.Class, classified.RequiresMajor, classified.Reason = Breaking, true, "published semantic behavior changed"
+		classified.Class, classified.Compatibility, classified.RequiresMajor, classified.Reason = Breaking, CompatibilityBreaking, true, "published semantic behavior changed"
 	case change.Operation == OperationAdded:
-		classified.Class, classified.Reason = Compatible, "contract member added"
+		classified.Class, classified.Compatibility, classified.Reason = Compatible, CompatibilityAdditive, "contract member added"
 	case change.Operation == OperationRemoved:
-		classified.Class, classified.RequiresMajor, classified.Reason = Breaking, true, "contract member removed"
+		classified.Class, classified.Compatibility, classified.RequiresMajor, classified.Reason = Breaking, CompatibilityBreaking, true, "contract member removed"
 	default:
-		classified.Class, classified.RequiresMajor, classified.Reason = Breaking, true, "structural contract changed"
+		classified.Class, classified.Compatibility, classified.RequiresMajor, classified.Reason = Breaking, CompatibilityBreaking, true, "structural contract changed"
 	}
 	return classified
 }
@@ -329,18 +468,114 @@ func expandCollection(path string) bool {
 }
 
 func aggregate(changes []Change) Result {
-	result := Result{Class: Compatible, SecurityImpact: SecurityNone, Changes: changes}
+	result := Result{
+		Class:                   Compatible,
+		Compatibility:           CompatibilityAdditive,
+		StructuralCompatibility: CompatibilityAdditive,
+		SemanticCompatibility:   CompatibilityAdditive,
+		SecurityImpact:          SecurityNone,
+		Changes:                 changes,
+	}
 	for _, change := range changes {
 		if classRank(change.Class) > classRank(result.Class) {
 			result.Class = change.Class
 		}
+		result.Compatibility = mergeCompatibility(result.Compatibility, change.Compatibility)
+		switch change.Domain {
+		case DomainStructural:
+			result.StructuralCompatibility = mergeCompatibility(result.StructuralCompatibility, change.Compatibility)
+		case DomainSemantic, DomainSecurity:
+			result.SemanticCompatibility = mergeCompatibility(result.SemanticCompatibility, change.Compatibility)
+		}
 		result.RequiresMajor = result.RequiresMajor || change.RequiresMajor
-		if change.Class == SecuritySensitive {
-			result.RequiresSecurityApproval = result.RequiresSecurityApproval || change.SecurityImpact == SecurityWidening || change.SecurityImpact == SecurityMixed
+		if change.SecurityImpact != SecurityNone {
+			result.RequiresSecurityApproval = result.RequiresSecurityApproval || change.SecurityImpact == SecurityWidening || change.SecurityImpact == SecurityMixed || change.SecurityImpact == SecurityIndeterminate
 			result.SecurityImpact = mergeSecurityImpact(result.SecurityImpact, change.SecurityImpact)
 		}
 	}
 	return result
+}
+
+func classifySecurityChange(before, after document, change rawChange) Change {
+	classified := Change{
+		Path: change.Path, Operation: change.Operation, Domain: DomainSecurity,
+		Class: SecuritySensitive, SecurityImpact: SecurityNone,
+		Compatibility: CompatibilityBehavioral,
+	}
+	if unreferencedGrantChange(before, after, change) {
+		if change.Operation == OperationRemoved {
+			classified.Class = Warning
+			classified.Compatibility = CompatibilityBehavioral
+			classified.Reason = "unreferenced access grant removal is behavioral"
+		} else {
+			classified.Class = Compatible
+			classified.Compatibility = CompatibilityAdditive
+			classified.Reason = "unreferenced access grant does not change effective access"
+		}
+		return classified
+	}
+	if wholeAccessGrantChange(change.Path) {
+		switch change.Operation {
+		case OperationAdded:
+			classified.Compatibility = CompatibilityBreaking
+			classified.SecurityImpact = SecurityTightening
+			classified.RequiresMajor = true
+			classified.Reason = "referenced access grant addition tightens access"
+		case OperationRemoved:
+			classified.Compatibility = CompatibilityBehavioral
+			classified.SecurityImpact = SecurityWidening
+			classified.Reason = "referenced access grant removal widens access"
+		default:
+			classified.Compatibility = CompatibilityIndeterminate
+			classified.SecurityImpact = SecurityIndeterminate
+			classified.RequiresMajor = true
+			classified.Reason = securityReason(SecurityIndeterminate)
+		}
+		return classified
+	}
+
+	classified.SecurityImpact = securityImpact(change)
+	switch {
+	case securityAttributeTransition(change.Path) || accessFilterFieldTransition(change):
+		classified.Compatibility = CompatibilityBreaking
+		classified.RequiresMajor = true
+		classified.SecurityImpact = SecurityIndeterminate
+		classified.Reason = "security attribute transition cannot be classified without registry evidence"
+	case strings.Contains(change.Path, "allowedValues"):
+		switch classified.SecurityImpact {
+		case SecurityWidening:
+			classified.Compatibility = CompatibilityBehavioral
+			classified.Reason = securityReason(classified.SecurityImpact)
+		case SecurityTightening:
+			classified.Compatibility = CompatibilityBreaking
+			classified.RequiresMajor = true
+			classified.Reason = securityReason(classified.SecurityImpact)
+		default:
+			classified.Compatibility = CompatibilityIndeterminate
+			classified.SecurityImpact = SecurityIndeterminate
+			classified.RequiresMajor = true
+			classified.Reason = securityReason(classified.SecurityImpact)
+		}
+	case strings.Contains(change.Path, "requiredAccessGrants") || strings.Contains(change.Path, "accessFilters"):
+		switch classified.SecurityImpact {
+		case SecurityTightening:
+			classified.Compatibility = CompatibilityBreaking
+			classified.RequiresMajor = true
+		case SecurityWidening:
+			classified.Compatibility = CompatibilityBehavioral
+		default:
+			classified.Compatibility = CompatibilityIndeterminate
+			classified.SecurityImpact = SecurityIndeterminate
+			classified.RequiresMajor = true
+		}
+		classified.Reason = securityReason(classified.SecurityImpact)
+	default:
+		classified.Compatibility = CompatibilityIndeterminate
+		classified.SecurityImpact = SecurityIndeterminate
+		classified.RequiresMajor = true
+		classified.Reason = securityReason(classified.SecurityImpact)
+	}
+	return classified
 }
 
 func classRank(value Class) int {
@@ -356,12 +591,93 @@ func classRank(value Class) int {
 	}
 }
 
+func validClass(value Class) bool {
+	switch value {
+	case Compatible, Warning, Breaking, SecuritySensitive:
+		return true
+	default:
+		return false
+	}
+}
+
+func validCompatibility(value Compatibility) bool {
+	switch value {
+	case CompatibilityAdditive, CompatibilityBehavioral, CompatibilityBreaking, CompatibilityIndeterminate:
+		return true
+	default:
+		return false
+	}
+}
+
+func validSecurityImpact(value SecurityImpact) bool {
+	switch value {
+	case SecurityNone, SecurityTightening, SecurityWidening, SecurityMixed, SecurityIndeterminate:
+		return true
+	default:
+		return false
+	}
+}
+
+func validateChange(change Change) error {
+	if strings.TrimSpace(change.Path) == "" {
+		return errors.New("change path is required")
+	}
+	if change.Operation != OperationAdded && change.Operation != OperationRemoved && change.Operation != OperationModified {
+		return fmt.Errorf("invalid operation %q", change.Operation)
+	}
+	if change.Domain != DomainStructural && change.Domain != DomainSemantic && change.Domain != DomainSecurity {
+		return fmt.Errorf("invalid domain %q", change.Domain)
+	}
+	if !validClass(change.Class) {
+		return fmt.Errorf("invalid class %q", change.Class)
+	}
+	if !validCompatibility(change.Compatibility) {
+		return fmt.Errorf("invalid compatibility %q", change.Compatibility)
+	}
+	if !validSecurityImpact(change.SecurityImpact) {
+		return fmt.Errorf("invalid security impact %q", change.SecurityImpact)
+	}
+	if change.RequiresMajor && change.Compatibility != CompatibilityBreaking && change.Compatibility != CompatibilityIndeterminate {
+		return errors.New("major-version requirement has non-breaking compatibility")
+	}
+	if change.Compatibility == CompatibilityBreaking && !change.RequiresMajor {
+		return errors.New("breaking compatibility requires a major-version requirement")
+	}
+	if strings.TrimSpace(change.Reason) == "" {
+		return errors.New("change reason is required")
+	}
+	return nil
+}
+
+func compatibilityRank(value Compatibility) int {
+	switch value {
+	case CompatibilityBehavioral:
+		return 1
+	case CompatibilityBreaking:
+		return 2
+	case CompatibilityIndeterminate:
+		return 3
+	default:
+		return 0
+	}
+}
+
+func mergeCompatibility(left, right Compatibility) Compatibility {
+	if compatibilityRank(right) > compatibilityRank(left) {
+		return right
+	}
+	return left
+}
+
 func mergeSecurityImpact(left, right SecurityImpact) SecurityImpact {
 	if right == SecurityNone {
 		return left
 	}
 	if left == SecurityNone || left == right {
 		return right
+	}
+	if left == SecurityIndeterminate || right == SecurityIndeterminate {
+		return SecurityIndeterminate
 	}
 	return SecurityMixed
 }
@@ -370,14 +686,21 @@ func securityPath(path string) bool {
 	return strings.Contains(path, ".requiredAccessGrants") || strings.Contains(path, ".accessFilters") || strings.HasPrefix(path, "contract.accessGrants.") || strings.HasSuffix(path, ".classification")
 }
 
+func wholeAccessGrantChange(path string) bool {
+	parts := strings.Split(path, ".")
+	return len(parts) == 3 && parts[0] == "contract" && parts[1] == "accessGrants"
+}
+
 func securityImpact(change rawChange) SecurityImpact {
 	switch {
+	case securityAttributeTransition(change.Path) || accessFilterFieldTransition(change):
+		return SecurityIndeterminate
 	case strings.Contains(change.Path, "allowedValues"):
 		return setImpact(change, SecurityWidening, SecurityTightening)
 	case strings.Contains(change.Path, "requiredAccessGrants"), strings.Contains(change.Path, "accessFilters"):
 		return setImpact(change, SecurityTightening, SecurityWidening)
 	case strings.HasSuffix(change.Path, ".classification"):
-		return SecurityMixed
+		return SecurityIndeterminate
 	case change.Operation == OperationAdded:
 		return SecurityTightening
 	case change.Operation == OperationRemoved:
@@ -385,6 +708,57 @@ func securityImpact(change rawChange) SecurityImpact {
 	default:
 		return SecurityMixed
 	}
+}
+
+func securityAttributeTransition(path string) bool {
+	if strings.HasPrefix(path, "contract.accessGrants.") && strings.HasSuffix(path, ".userAttribute") {
+		return true
+	}
+	if strings.Contains(path, ".accessFilters.") && (strings.HasSuffix(path, ".field") || strings.HasSuffix(path, ".userAttribute")) {
+		return true
+	}
+	return false
+}
+
+func accessFilterFieldTransition(change rawChange) bool {
+	if !strings.Contains(change.Path, ".accessFilters") || change.Operation != OperationModified {
+		return false
+	}
+	before, beforeOK := change.Before.([]any)
+	after, afterOK := change.After.([]any)
+	if !beforeOK || !afterOK || len(before) != len(after) {
+		return false
+	}
+	for index := range before {
+		beforeFilter, beforeOK := before[index].(map[string]any)
+		afterFilter, afterOK := after[index].(map[string]any)
+		if !beforeOK || !afterOK {
+			return true
+		}
+		if !reflect.DeepEqual(beforeFilter["field"], afterFilter["field"]) || !reflect.DeepEqual(beforeFilter["userAttribute"], afterFilter["userAttribute"]) {
+			return true
+		}
+	}
+	return false
+}
+
+func unprotectedSemanticMember(kind, path string, value any) bool {
+	if kind != "SemanticModel" || !semanticMemberRoot(path) || strings.HasPrefix(path, "contract.relationships.") {
+		return false
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return true
+	}
+	if grants, ok := object["requiredAccessGrants"]; ok && len(valueSet(grants)) > 0 {
+		return false
+	}
+	if filters, ok := object["accessFilters"]; ok {
+		if list, ok := filters.([]any); ok && len(list) > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func setImpact(change rawChange, added, removed SecurityImpact) SecurityImpact {
@@ -509,6 +883,8 @@ func securityReason(impact SecurityImpact) string {
 		return "access policy tightens and may deny an existing consumer"
 	case SecurityWidening:
 		return "access policy widens and requires explicit security approval"
+	case SecurityIndeterminate:
+		return "security effect cannot be classified from the contract alone"
 	default:
 		return "security effect is mixed and requires explicit review"
 	}

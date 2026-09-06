@@ -1038,7 +1038,8 @@ tasks:
       - go test ./internal/platform/postgres/migrations -run '^TestContractPublicationIntegrityPostgreSQL18$' -count=1 -v
       - go test ./internal/platform/postgres/migrations -run '^TestContractPublicationCorrectionPostgreSQL18$' -count=1 -v
       - go test ./internal/project/identityledger/postgres -run '^Test(IdentityHistoryPostgreSQL18ParameterTypes|IdentityLedgerPostgreSQL18Lifecycle|PrepareTransitionIDIsScopedToInstance)$' -count=1 -v
-      - go test ./internal/project/identityledger/postgres -run '^TestContractPublication(IsImmutableAndExactlyReplayable|Concurrency)$' -count=1 -v
+      - go test ./internal/project/identityledger/postgres -run '^TestContractPublication(IsImmutableAndExactlyReplayable|Concurrency|PreservesSecurityWideningApproval)$' -count=1 -v
+      - go test ./internal/project/identityledger/postgres -run '^TestReadLifecycleEvidence' -count=1 -v
       - go test ./internal/access/postgres -run '^TestControlAuthorityPostgreSQL18$' -count=1 -v
       - go test ./internal/access/postgres -run '^TestSemanticAttributeRegistryPostgreSQL18' -count=1 -v
 

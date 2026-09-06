@@ -30,6 +30,8 @@ func TestReadLifecycleEvidenceTracksRestoreAndRollback(t *testing.T) {
 	if first.Sequence != 1 || first.Identity.Lifecycle != identityledger.LifecycleActive || first.Identity.ActiveBundleID != "bundle-1" {
 		t.Fatalf("initial lifecycle evidence = %#v", first)
 	}
+	// A publication context leased before the tombstone cannot be reused after
+	// the lifecycle sequence changes; this is the restore/ABA fence.
 	if !identityledger.EqualContractPublicationContent(first.Publication, firstPublication) {
 		t.Fatalf("initial publication evidence changed: got=%#v want=%#v", first.Publication, firstPublication)
 	}
@@ -44,6 +46,9 @@ func TestReadLifecycleEvidenceTracksRestoreAndRollback(t *testing.T) {
 	if tombstoned.Sequence != 2 || tombstoned.Identity.Lifecycle != identityledger.LifecycleTombstoned || tombstoned.Identity.ActiveBundleID != "" {
 		t.Fatalf("tombstoned lifecycle evidence = %#v", tombstoned)
 	}
+	if _, err := repo.PublishContract(ctx, publicationInput(instanceID, authoredID, "1.2.3", "strict")); !errors.Is(err, identityledger.ErrPolicyEvidenceConflict) {
+		t.Fatalf("publication while tombstoned error = %v, want policy conflict", err)
+	}
 
 	if _, err := repo.RestoreAndActivate(ctx, identityledger.Restore{
 		Candidate:   candidate(instanceID, "bundle-3", "bundle-2", resource(authoredID, projectgraph.KindSource)),
@@ -57,6 +62,21 @@ func TestReadLifecycleEvidenceTracksRestoreAndRollback(t *testing.T) {
 	}
 	if restored.Sequence != 3 || restored.Identity.Lifecycle != identityledger.LifecycleActive || restored.Identity.ActiveBundleID != "bundle-3" {
 		t.Fatalf("restored lifecycle evidence = %#v", restored)
+	}
+	restoreReplay := publicationInput(instanceID, authoredID, "1.2.3", "strict")
+	restoreReplay.PolicyContext.ExpectedLifecycleSequence = 3
+	if _, err := repo.PublishContract(ctx, restoreReplay); !errors.Is(err, identityledger.ErrContractPublicationConflict) {
+		t.Fatalf("replay after restore error = %v, want immutable evidence conflict", err)
+	}
+	restoredNext := publicationInput(instanceID, authoredID, "1.2.4", "strict")
+	restoredNext.PolicyContext = existingPolicyContext(firstPublication)
+	restoredNext.PolicyContext.ExpectedLifecycleSequence = 3
+	nextPublication, err := repo.PublishContract(ctx, restoredNext)
+	if err != nil {
+		t.Fatalf("publication after explicit restore = %v", err)
+	}
+	if nextPublication.Validation.PolicyEvidence == nil || nextPublication.Validation.PolicyEvidence.LifecycleSequence != 3 {
+		t.Fatalf("restored publication lost fresh lifecycle evidence = %#v", nextPublication.Validation)
 	}
 
 	if _, err := repo.Rollback(ctx, identityledger.Rollback{

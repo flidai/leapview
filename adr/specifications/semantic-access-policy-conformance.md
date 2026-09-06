@@ -39,7 +39,10 @@ planner SecurityBarrier placement and sealed rewrite validation; see the
 [consumer admission and discovery guards](semantic-access-consumers.md), with
 production activation still deferred to FAI-649. The [FAI-645 cache/lifecycle
 slice](semantic-access-cache-lifecycle.md) adds guarded protected result reuse
-using existing dependency, control and ledger authorities. These slices do
+using existing dependency, control and ledger authorities. Its stacked
+[policy-evidence slice](semantic-access-policy-evidence.md) retains the single
+classifier's independent dimensions and approval requirement in immutable
+publication evidence, with graph-owned affected-resource planning. These slices do
 not complete policy audit/diagnostics, wire real source-provider admission, or qualify full
 VAL-11 equivalence. Those requirements remain normative targets and their
 evidence remains pending or partial below.
@@ -586,8 +589,8 @@ support for those paths. No downstream feature or issue state changes here.
 | PLN-01–PLN-06, PLN-08 | [`security_plan.go`](../../internal/analytics/query/security_plan.go), [`planir/security.go`](../../internal/analytics/query/planir/security.go), and the existing DuckDB renderer enforce scan-local barriers and preserve sealed occurrence identity. [`security_plan_test.go`](../../internal/analytics/query/security_plan_test.go) and [`planir/security_test.go`](../../internal/analytics/query/planir/security_test.go) exercise bound predicates, mixed sources, aliases, routed/reverse/multi-hop filters, member grants, outer joins, self-join occurrences, many-to-many execution, derived plans, bundle sharing, totals, and unsafe rewrites. | Implemented planner slice; focused Go/DuckDB execution qualification, not consumer or PostgreSQL qualification |
 | PLN-07, PLN-09 | Exact outer-join SQL goldens and deterministic typed-plan checks cover the implemented planner slice. Source substitution after sealing is rejected; no protected rollup/cache substitution admission is implemented. See the [transformation audit and remaining boundaries](semantic-access-planner.md). | Partial: consumer suggestions and lifecycle/cache/rollup identity remain FAI-642/645; exhaustive cross-consumer matrix remains FAI-648 |
 | ENF-01–ENF-11 | [FAI-642 consumer checkpoint](semantic-access-consumers.md): coherent Access resolution, private planner admission provenance, materialize result/Arrow gates, API/Explore discovery and same-lease catalog admission. [FAI-645](semantic-access-cache-lifecycle.md) adds guarded protected Arrow reuse; unsupported cache surfaces remain rejected. | Partial; production activation is not enabled (FAI-649). Complete cross-consumer equivalence remains FAI-648; the consolidated FAI-645 lifecycle/audit scope remains partial. |
-| CMP-01–CMP-06 | Policy-diff, compatibility, security-impact, version, and approval fixtures | Pending |
-| LIF-01–LIF-08 | Registry/control identities and transactional control audit are implemented. [FAI-645](semantic-access-cache-lifecycle.md) adds protected dependency identity, activation-bound role/grant revision, ledger history/publication evidence and guarded cache read/write/delivery. Event propagation, full audit/diagnostics, lifecycle approval, trusted-source admission and exhaustive cross-consumer qualification are not claimed. | Partial |
+| CMP-01–CMP-06 | [FAI-645 policy evidence](semantic-access-policy-evidence.md) adds independent structural/semantic compatibility, security impact, indeterminate rejection, exact baseline/lifecycle-bound publication evidence and approval-required planning input. Registry-dependent transitions fail closed rather than guessing; live deployment acceptance and actual approval remain FAI-649 work. | Partial |
+| LIF-01–LIF-08 | Registry/control identities and transactional control audit are implemented. [FAI-645](semantic-access-cache-lifecycle.md) adds protected dependency identity, activation-bound role/grant revision, ledger history/publication evidence and guarded cache read/write/delivery. The [policy-evidence slice](semantic-access-policy-evidence.md) adds publication decision identity, full classification, affected-resource planning and immutable approval-required evidence. Event propagation, full query audit/diagnostics, lifecycle approval, trusted-source admission and exhaustive cross-consumer qualification are not claimed. | Partial |
 | OUT-01–OUT-05 | Negative schema, architecture, and documentation checks | Pending |
 
 ## Maintained verification

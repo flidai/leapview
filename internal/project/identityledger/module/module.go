@@ -23,6 +23,13 @@ type Coordinator = ledger.Coordinator
 type DurableReference = ledger.DurableReference
 type Identity = ledger.Identity
 type LifecycleEvidence = ledger.LifecycleEvidence
+type PolicyAffectedResource = ledger.PolicyAffectedResource
+type PolicyApprovalState = ledger.PolicyApprovalState
+type PolicyBaselineKind = ledger.PolicyBaselineKind
+type PolicyContext = ledger.PolicyContext
+type PolicyDecision = ledger.PolicyDecision
+type PolicyEvidence = ledger.PolicyEvidence
+type PolicyPublicationIdentity = ledger.PolicyPublicationIdentity
 type Outcome = ledger.Outcome
 type OutcomeKind = ledger.OutcomeKind
 type Plan = ledger.Plan
@@ -36,6 +43,13 @@ type TransitionPhase = ledger.TransitionPhase
 const (
 	LifecycleActive     = ledger.LifecycleActive
 	LifecycleTombstoned = ledger.LifecycleTombstoned
+
+	PolicyApprovalRequired      = ledger.PolicyApprovalRequired
+	PolicyApprovalNotRequired   = ledger.PolicyApprovalNotRequired
+	PolicyBaselineGenesis       = ledger.PolicyBaselineGenesis
+	PolicyBaselineExisting      = ledger.PolicyBaselineExisting
+	PolicyEvidenceVersion       = ledger.PolicyEvidenceVersion
+	PolicyAffectedResourceScope = ledger.PolicyAffectedResourceScope
 
 	OperationPublish  = ledger.OperationPublish
 	OperationRollback = ledger.OperationRollback
@@ -56,13 +70,15 @@ const (
 )
 
 var (
-	ErrActivationConflict  = ledger.ErrActivationConflict
-	ErrDuplicateAuthoredID = ledger.ErrDuplicateAuthoredID
-	ErrInvalidInput        = ledger.ErrInvalidInput
-	ErrKindConflict        = ledger.ErrKindConflict
-	ErrPhaseConflict       = ledger.ErrPhaseConflict
-	ErrRestoreRequired     = ledger.ErrRestoreRequired
-	ErrTransitionConflict  = ledger.ErrTransitionConflict
+	ErrActivationConflict     = ledger.ErrActivationConflict
+	ErrDuplicateAuthoredID    = ledger.ErrDuplicateAuthoredID
+	ErrInvalidInput           = ledger.ErrInvalidInput
+	ErrKindConflict           = ledger.ErrKindConflict
+	ErrPhaseConflict          = ledger.ErrPhaseConflict
+	ErrRestoreRequired        = ledger.ErrRestoreRequired
+	ErrTransitionConflict     = ledger.ErrTransitionConflict
+	ErrPolicyEvidenceInvalid  = ledger.ErrPolicyEvidenceInvalid
+	ErrPolicyEvidenceConflict = ledger.ErrPolicyEvidenceConflict
 )
 
 // TransitionRepository is the narrow durable transition contract consumed by

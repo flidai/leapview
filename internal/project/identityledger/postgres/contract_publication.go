@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/flidai/leapview/internal/project/contractversion"
@@ -20,19 +21,33 @@ import (
 // a conflict. The transaction-scoped advisory lock makes both outcomes stable
 // under concurrent publication without adding another identity or store.
 func (r *Repository) PublishContract(ctx context.Context, input identityledger.ContractPublicationInput) (identityledger.ContractPublication, error) {
+	if input.PolicyContext == nil {
+		return identityledger.ContractPublication{}, fmt.Errorf("%w: policy context is required for publication", identityledger.ErrPolicyEvidenceInvalid)
+	}
+	if input.Validation.PolicyEvidence != nil {
+		return identityledger.ContractPublication{}, fmt.Errorf("%w: policy evidence is server-owned", identityledger.ErrPolicyEvidenceInvalid)
+	}
+	// Client-supplied policy fields are never consumed. Keep only the
+	// projection checks as input; the classifier result and policy digest below
+	// are derived from immutable bytes and the locked live identity.
 	prepared, err := identityledger.PrepareContractPublication(input)
 	if err != nil {
 		return identityledger.ContractPublication{}, err
 	}
-	validationJSON, err := json.Marshal(prepared.Validation)
-	if err != nil {
-		return identityledger.ContractPublication{}, fmt.Errorf("marshal contract validation evidence: %w", err)
+	if err := input.PolicyContext.ValidateForPublication(prepared.InstanceID, prepared.AuthoredID, prepared.ResourceKind); err != nil {
+		return identityledger.ContractPublication{}, err
 	}
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return identityledger.ContractPublication{}, fmt.Errorf("begin contract publication: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Identity lifecycle transitions take this instance lock first. Keep that
+	// order here before the narrower publication lock to prevent a publication
+	// from observing a lifecycle transition half-way through restoration.
+	if err := lockInstance(ctx, tx, prepared.InstanceID); err != nil {
+		return identityledger.ContractPublication{}, err
+	}
 	// A JSON string tuple is unambiguous and PostgreSQL-text safe. NUL-delimited
 	// text cannot be sent to PostgreSQL. This key only scopes the advisory lock;
 	// it is not persisted identity or publication digest evidence.
@@ -43,8 +58,39 @@ func (r *Repository) PublishContract(ctx context.Context, input identityledger.C
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, string(lockKey)); err != nil {
 		return identityledger.ContractPublication{}, fmt.Errorf("lock contract publication: %w", err)
 	}
+	lifecycle, sequence, err := policyLifecycleTx(ctx, tx, prepared.InstanceID, prepared.AuthoredID, prepared.ResourceKind)
+	if err != nil {
+		return identityledger.ContractPublication{}, err
+	}
+	if lifecycle.Lifecycle != identityledger.LifecycleActive || lifecycle.ActiveBundleID == "" {
+		return identityledger.ContractPublication{}, fmt.Errorf("%w: resource identity is not active: lifecycle=%q bundle=%q", identityledger.ErrPolicyEvidenceConflict, lifecycle.Lifecycle, lifecycle.ActiveBundleID)
+	}
+	if sequence != input.PolicyContext.ExpectedLifecycleSequence {
+		return identityledger.ContractPublication{}, fmt.Errorf("%w: lifecycle sequence changed: expected=%d current=%d", identityledger.ErrPolicyEvidenceConflict, input.PolicyContext.ExpectedLifecycleSequence, sequence)
+	}
+
+	baseline, err := resolvePolicyBaselineTx(ctx, tx, prepared, *input.PolicyContext)
+	if err != nil {
+		return identityledger.ContractPublication{}, err
+	}
 	existing, err := contractPublicationTx(ctx, tx, prepared.InstanceID, prepared.AuthoredID, prepared.ResourceKind, prepared.VersionBaseline)
 	if err == nil {
+		// Historical v1 rows are replayable immutable history, but cannot be
+		// upgraded or treated as a policy decision by this path.
+		if existing.Validation.PolicyEvidence == nil {
+			if !identityledger.EqualContractPublicationContent(existing, prepared) {
+				return identityledger.ContractPublication{}, fmt.Errorf("%w: %s/%s/%s@%s", identityledger.ErrContractPublicationConflict, prepared.InstanceID, prepared.ResourceKind, prepared.AuthoredID, prepared.VersionBaseline)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return identityledger.ContractPublication{}, mapContractPublicationDatabaseError("commit exact historical replay", err)
+			}
+			return existing, nil
+		}
+		finalValidation, err := derivePolicyValidation(prepared, baseline, sequence, lifecycle.ActiveBundleID, *input.PolicyContext)
+		if err != nil {
+			return identityledger.ContractPublication{}, err
+		}
+		prepared.Validation = finalValidation
 		if !identityledger.EqualContractPublicationContent(existing, prepared) {
 			return identityledger.ContractPublication{}, fmt.Errorf("%w: %s/%s/%s@%s", identityledger.ErrContractPublicationConflict, prepared.InstanceID, prepared.ResourceKind, prepared.AuthoredID, prepared.VersionBaseline)
 		}
@@ -56,14 +102,29 @@ func (r *Repository) PublishContract(ctx context.Context, input identityledger.C
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return identityledger.ContractPublication{}, err
 	}
-	latest, found, err := latestContractPublicationTx(ctx, tx, prepared.InstanceID, prepared.AuthoredID, prepared.ResourceKind)
+	if input.PolicyContext.BaselineKind == identityledger.PolicyBaselineGenesis {
+		if _, found, err := latestContractPublicationTx(ctx, tx, prepared.InstanceID, prepared.AuthoredID, prepared.ResourceKind); err != nil {
+			return identityledger.ContractPublication{}, err
+		} else if found {
+			return identityledger.ContractPublication{}, fmt.Errorf("%w: genesis publication requires an empty publication history", identityledger.ErrPolicyEvidenceConflict)
+		}
+	} else if baseline != nil {
+		latest, found, err := latestContractPublicationTx(ctx, tx, prepared.InstanceID, prepared.AuthoredID, prepared.ResourceKind)
+		if err != nil {
+			return identityledger.ContractPublication{}, err
+		}
+		if !found || latest.VersionBaseline != baseline.VersionBaseline {
+			return identityledger.ContractPublication{}, fmt.Errorf("%w: policy baseline is not the latest publication", identityledger.ErrPolicyEvidenceConflict)
+		}
+	}
+	finalValidation, err := derivePolicyValidation(prepared, baseline, sequence, lifecycle.ActiveBundleID, *input.PolicyContext)
 	if err != nil {
 		return identityledger.ContractPublication{}, err
 	}
-	if found {
-		if _, err := contractversion.ValidateVersionTransition(latest.CanonicalBytes, prepared.CanonicalBytes); err != nil {
-			return identityledger.ContractPublication{}, fmt.Errorf("%w: version transition from %s to %s: %v", identityledger.ErrContractPublicationConflict, latest.Version, prepared.Version, err)
-		}
+	prepared.Validation = finalValidation
+	validationJSON, err := json.Marshal(prepared.Validation)
+	if err != nil {
+		return identityledger.ContractPublication{}, fmt.Errorf("marshal contract validation evidence: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO project.contract_publication(
@@ -181,8 +242,22 @@ func scanContractPublication(row publicationScanner) (identityledger.ContractPub
 	result.AuthoredID = projectgraph.ResourceID(authoredIDText)
 	result.ResourceKind = projectgraph.Kind(resourceKindText)
 	result.PublishedAt = result.PublishedAt.UTC()
-	if err := json.Unmarshal([]byte(validationJSON), &result.Validation); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(validationJSON))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result.Validation); err != nil {
 		return identityledger.ContractPublication{}, fmt.Errorf("decode stored contract validation evidence: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return identityledger.ContractPublication{}, fmt.Errorf("decode stored contract validation evidence: trailing JSON value")
+	}
+	if err := result.Validation.Validate(); err != nil {
+		return identityledger.ContractPublication{}, fmt.Errorf("validate stored contract validation evidence: %w", err)
+	}
+	if result.Validation.PolicyEvidence != nil {
+		if _, err := result.PolicyDecision(); err != nil {
+			return identityledger.ContractPublication{}, fmt.Errorf("validate stored policy evidence binding: %w", err)
+		}
 	}
 	result.CanonicalBytes = append([]byte(nil), result.CanonicalBytes...)
 	return result, nil
