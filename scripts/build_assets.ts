@@ -1,4 +1,5 @@
 import { datastarRuntimeURL } from '../web/components/shared/datastar-runtime'
+import { buildMapLibreWorker } from './build_maplibre_worker'
 
 type BuildOptions = Parameters<typeof Bun.build>[0]
 
@@ -71,6 +72,7 @@ for (const build of builds) {
   await runBuild(build)
 }
 await Bun.write('static/monaco-editor-css.css', Bun.file('static/admin-page.css'))
+await buildMapLibreWorker('static')
 await validateProductionJavaScriptBundles()
 await writeStaticAssetVersion()
 
@@ -103,7 +105,7 @@ async function removePath(path: string): Promise<void> {
 
 async function validateProductionJavaScriptBundles(): Promise<void> {
   const forbiddenHosts = ['cdn.jsdelivr.net', 'unpkg.com', 'esm.sh', 'skypack.dev']
-  const files = new Bun.Glob('static/**/*.js')
+  const files = new Bun.Glob('static/**/*.{js,mjs}')
 
   for await (const path of files.scan({ cwd: '.', dot: true, onlyFiles: true })) {
     const text = await Bun.file(path).text()
@@ -118,7 +120,7 @@ async function validateProductionJavaScriptBundles(): Promise<void> {
 
 async function writeStaticAssetVersion(): Promise<void> {
   const paths: string[] = []
-  for (const pattern of ['static/**/*.css', 'static/**/*.js']) {
+  for (const pattern of ['static/**/*.css', 'static/**/*.{js,mjs}']) {
     const glob = new Bun.Glob(pattern)
     for await (const path of glob.scan({ cwd: '.', dot: true, onlyFiles: true })) {
       paths.push(path)
