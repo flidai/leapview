@@ -1,6 +1,43 @@
 package query
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
+
+func TestResultIdentityMatchesIndependentProjections(t *testing.T) {
+	planner := mustNewCompiledPlanner(t, testModel())
+	plan, err := planner.Plan(Request{
+		Dataset:    "orders",
+		Dimensions: []Field{{Field: "customer_state", Alias: "state"}},
+		Metrics:    []Field{{Field: "order_count", Alias: "count"}},
+		Filters:    []Filter{{Field: "orders.status", Operator: "equals", Values: []any{"paid"}}},
+		Sort:       []Sort{{Field: "count", Direction: "asc"}},
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := plan.ResultIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependencies, err := plan.ResultDependencies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := plan.ResultEquivalenceDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(identity.Dependencies, dependencies) {
+		t.Fatalf("single-pass dependencies = %#v, want %#v", identity.Dependencies, dependencies)
+	}
+	if identity.EquivalenceDigest != digest {
+		t.Fatalf("single-pass equivalence digest = %q, want %q", identity.EquivalenceDigest, digest)
+	}
+}
 
 func TestResultEquivalenceDigestUsesPlannerNormalization(t *testing.T) {
 	planner := mustNewCompiledPlanner(t, testModel())
