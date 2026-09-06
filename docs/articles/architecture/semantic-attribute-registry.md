@@ -323,7 +323,7 @@ at the compiler/evaluator boundary; it does not make repositories or raw claims
 available to portable policy artifacts. It does not yet attach
 predicates to governed scans, filter catalogs, or execute queries for
 dashboards, Explore, agents, exports, APIs, MCP, or embedding. FAI-641 owns
-the [planner barrier boundary](semantic-access-planner.md); FAI-642 separately
+the [planner barrier boundary](/docs/architecture/semantic-access-planner); FAI-642 separately
 owns discovery and consumer integration. Existing generic/legacy access paths
 therefore must not be described as FAI-639 semantic-consumer evidence.
 
