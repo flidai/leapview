@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -79,20 +80,37 @@ func semanticQueryFields(fields []api.SemanticFieldRef) []reportdef.QueryField {
 	return out
 }
 
-func semanticExplainAggregate(metrics Metrics, modelID string, request reportdef.AggregateQuery) (semanticquery.Plan, error) {
-	compiled, ok := semanticPlanner(metrics, modelID)
-	if !ok {
-		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
+func semanticExplainAggregate(ctx context.Context, metrics Metrics, modelID string, request reportdef.AggregateQuery) (semanticquery.Plan, error) {
+	compiled, err := semanticRequestPlanner(ctx, metrics, modelID)
+	if err != nil {
+		return semanticquery.Plan{}, err
 	}
 	return compiled.Plan(reportdef.SemanticAggregateRequest(request))
 }
 
-func semanticExplainRows(metrics Metrics, modelID string, request reportdef.RowQuery) (semanticquery.Plan, error) {
-	compiled, ok := semanticPlanner(metrics, modelID)
-	if !ok {
-		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
+func semanticExplainRows(ctx context.Context, metrics Metrics, modelID string, request reportdef.RowQuery) (semanticquery.Plan, error) {
+	compiled, err := semanticRequestPlanner(ctx, metrics, modelID)
+	if err != nil {
+		return semanticquery.Plan{}, err
 	}
 	return compiled.PlanRows(reportdef.SemanticRowRequest(request))
+}
+
+func semanticRequestPlanner(ctx context.Context, metrics Metrics, modelID string) (*semanticquery.Planner, error) {
+	compiled, ok := semanticPlanner(metrics, modelID)
+	if !ok || compiled.CompiledModel() == nil {
+		return nil, errSemanticModelActivationUnavailable
+	}
+	if compiled.CompiledModel().SemanticAccessPolicy().Protected() || semanticquery.ModelRequiresSemanticAccess(semanticModelForID(metrics, modelID)) {
+		port, ok := metrics.(interface {
+			SemanticPlanner(context.Context, string) (*semanticquery.Planner, error)
+		})
+		if !ok {
+			return nil, errSemanticAuthorizationUnavailable
+		}
+		return port.SemanticPlanner(ctx, modelID)
+	}
+	return compiled, nil
 }
 
 func semanticFilters(filters []api.SemanticFilter) []reportdef.QueryFilter {

@@ -144,24 +144,28 @@ type CreatorCommandInvocation struct {
 }
 
 type BrowserHandler struct {
-	Graph                    GraphReader
-	AssetVersions            AssetVersionsReader
-	RefreshState             AssetRefreshStateReader
-	PhysicalCatalog          PhysicalCatalogReader
-	SourceSchemas            SourceSchemaReader
-	ProjectDefinitionReader  ProjectDefinitionReader
-	DashboardAppearances     DashboardAppearanceStore
-	QueryExecutor            DataQueryExecutor
-	Catalog                  CatalogAuthorizer
-	SearchCatalog            ProductSearchCatalog
-	ResolveProjectID         func(context.Context) (projectgraph.ResourceID, error)
-	Environment              string
-	TargetID                 string
-	ConnectionAdministration connectionadmin.Administration
-	ConnectionCommands       projectui.ConnectionCommandBindings
-	PipelineRunCommand       uicommand.Binding
-	PipelineCancelCommand    uicommand.Binding
-	RunPipeline              func(context.Context, string, string, string) error
+	Graph                   GraphReader
+	AssetVersions           AssetVersionsReader
+	RefreshState            AssetRefreshStateReader
+	PhysicalCatalog         PhysicalCatalogReader
+	SourceSchemas           SourceSchemaReader
+	ProjectDefinitionReader ProjectDefinitionReader
+	// ResolveSemanticAttributes resolves one request-bound access context. The
+	// Explore projection evaluates all protected members against that context
+	// and the compiled policies from its already lease-pinned definition.
+	ResolveSemanticAttributes func(context.Context) (access.SemanticAttributeResolution, error)
+	DashboardAppearances      DashboardAppearanceStore
+	QueryExecutor             DataQueryExecutor
+	Catalog                   CatalogAuthorizer
+	SearchCatalog             ProductSearchCatalog
+	ResolveProjectID          func(context.Context) (projectgraph.ResourceID, error)
+	Environment               string
+	TargetID                  string
+	ConnectionAdministration  connectionadmin.Administration
+	ConnectionCommands        projectui.ConnectionCommandBindings
+	PipelineRunCommand        uicommand.Binding
+	PipelineCancelCommand     uicommand.Binding
+	RunPipeline               func(context.Context, string, string, string) error
 	// CancelPipeline receives both the pipeline and run identifiers from the
 	// command. Implementations must verify that the run belongs to that
 	// pipeline before mutating it; keeping the pipeline ID in this callback
@@ -1531,7 +1535,18 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
-	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels)
+	accessPredicate, accessErr := h.dataExplorerAccessPredicate(r.Context(), definition, compiledModels)
+	if accessErr != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+	}
+	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels, accessPredicate)
+	if projection.SemanticAccessDenied {
+		// Keep denied model/member requests indistinguishable from unknown Explore
+		// targets and, importantly, do not execute a widened sanitized query.
+		stdhttp.NotFound(w, r)
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+	}
 	explorer.Objects = projection.Objects
 	explorer.Explore.Models = projection.Models
 	explorer.Explore.SelectedModel = projection.SelectedModel

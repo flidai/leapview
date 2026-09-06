@@ -13,6 +13,7 @@ import (
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
+	"github.com/flidai/leapview/internal/analytics/materialize"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	queryauditsqlite "github.com/flidai/leapview/internal/analytics/queryaudit/sqlite"
 	"github.com/flidai/leapview/internal/analytics/resource"
@@ -107,6 +108,7 @@ func (s *QueryAuditSurface) Recorder() queryaudit.Recorder {
 }
 
 type Module struct {
+	semanticAccessAuthority      materialize.SemanticAccessAuthority
 	environment                  *analyticsducklake.Environment
 	cache                        *resultcache.Pool
 	queryAudit                   queryaudit.Repository

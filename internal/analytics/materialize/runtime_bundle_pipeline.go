@@ -96,6 +96,9 @@ func (r *Runtime) ExecuteDataQueryBundle(ctx context.Context, requests []dataque
 	if r == nil || r.db == nil {
 		return dataquery.BundleResult{}, fmt.Errorf("materialization runtime is not initialized")
 	}
+	if r.protectedSemanticModel() {
+		return dataquery.BundleResult{}, &dataquery.BundleIncompatibleError{Err: fmt.Errorf("protected semantic bundles require lifecycle qualification; execute governed branches separately")}
+	}
 	if len(requests) < 2 {
 		return dataquery.BundleResult{}, &dataquery.BundleIncompatibleError{Err: fmt.Errorf("bundle requires at least two branches")}
 	}

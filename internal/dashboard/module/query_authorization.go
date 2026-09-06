@@ -15,11 +15,12 @@ type QueryPrincipal struct {
 }
 
 type QueryAuthorizationConfig struct {
-	SnapshotFromContext   func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
-	SubjectsFromContext   func(context.Context, string) ([]access.SubjectRef, error)
-	PrincipalFromContext  func(context.Context) (QueryPrincipal, bool)
-	CredentialFromContext func(context.Context) (access.APICredential, bool)
-	AuditRecorder         access.CanonicalAuditRecorder
+	ResolveSemanticAttributes func(context.Context) (access.SemanticAttributeResolution, error)
+	SnapshotFromContext       func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	SubjectsFromContext       func(context.Context, string) ([]access.SubjectRef, error)
+	PrincipalFromContext      func(context.Context) (QueryPrincipal, bool)
+	CredentialFromContext     func(context.Context) (access.APICredential, bool)
+	AuditRecorder             access.CanonicalAuditRecorder
 }
 
 func WithQueryAuthorization(metrics queryruntime.Metrics, config QueryAuthorizationConfig) queryruntime.Metrics {
@@ -27,8 +28,9 @@ func WithQueryAuthorization(metrics queryruntime.Metrics, config QueryAuthorizat
 		return metrics
 	}
 	return queryauthz.New(metrics, queryauthz.Options{
-		SnapshotFromContext: config.SnapshotFromContext,
-		SubjectsFromContext: config.SubjectsFromContext,
+		ResolveSemanticAttributes: config.ResolveSemanticAttributes,
+		SnapshotFromContext:       config.SnapshotFromContext,
+		SubjectsFromContext:       config.SubjectsFromContext,
 		PrincipalFromContext: func(ctx context.Context) (queryauthz.Principal, bool) {
 			if config.PrincipalFromContext == nil {
 				return queryauthz.Principal{}, false

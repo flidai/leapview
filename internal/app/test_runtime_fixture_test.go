@@ -12,8 +12,11 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -217,6 +220,28 @@ type testPreparedRuntime struct {
 func (r testPreparedRuntime) Close() error { return nil }
 func (r testPreparedRuntime) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
 	return r.authorization
+}
+
+// ProjectManifest and CompiledSemanticModel form the explicit semantic
+// catalog fixture. Keeping both on the serving runtime mirrors the production
+// lease projection and prevents catalog tests from relying on a development
+// bypass when resolving semantic-model metadata.
+func (testPreparedRuntime) ProjectManifest() projectmanifest.Project {
+	return projectmanifest.Project{
+		ID: testProjectID.String(), Name: "test", Title: "Test Project",
+		SemanticModels: map[string]*semanticmodel.Model{"test": testSemanticModel()},
+	}
+}
+
+func (testPreparedRuntime) CompiledSemanticModel(modelID string) (*semanticquery.CompiledModel, bool) {
+	if modelID != "test" {
+		return nil, false
+	}
+	planner, err := semanticquery.NewCompiledPlanner(testSemanticModel())
+	if err != nil {
+		return nil, false
+	}
+	return planner.CompiledModel(), true
 }
 func (r testPreparedRuntime) DuckLakeSnapshotID() int64 { return r.snapshotID }
 

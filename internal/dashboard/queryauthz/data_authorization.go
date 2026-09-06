@@ -33,20 +33,22 @@ type Principal struct {
 }
 
 type Options struct {
-	SnapshotFromContext   func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
-	SubjectsFromContext   func(context.Context, string) ([]access.SubjectRef, error)
-	PrincipalFromContext  func(context.Context) (Principal, bool)
-	CredentialFromContext func(context.Context) (access.APICredential, bool)
-	AuditRecorder         access.CanonicalAuditRecorder
+	ResolveSemanticAttributes func(context.Context) (access.SemanticAttributeResolution, error)
+	SnapshotFromContext       func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	SubjectsFromContext       func(context.Context, string) ([]access.SubjectRef, error)
+	PrincipalFromContext      func(context.Context) (Principal, bool)
+	CredentialFromContext     func(context.Context) (access.APICredential, bool)
+	AuditRecorder             access.CanonicalAuditRecorder
 }
 
 type Metrics struct {
 	queryruntime.Metrics
-	snapshotFromContext   func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
-	subjectsFromContext   func(context.Context, string) ([]access.SubjectRef, error)
-	principalFromContext  func(context.Context) (Principal, bool)
-	credentialFromContext func(context.Context) (access.APICredential, bool)
-	auditRecorder         access.CanonicalAuditRecorder
+	resolveSemanticAttributes func(context.Context) (access.SemanticAttributeResolution, error)
+	snapshotFromContext       func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	subjectsFromContext       func(context.Context, string) ([]access.SubjectRef, error)
+	principalFromContext      func(context.Context) (Principal, bool)
+	credentialFromContext     func(context.Context) (access.APICredential, bool)
+	auditRecorder             access.CanonicalAuditRecorder
 }
 
 // Planner forwards the activation-owned planner exposed by the active runtime.
@@ -89,12 +91,13 @@ func IsDenied(err error) bool {
 
 func New(metrics queryruntime.Metrics, options Options) Metrics {
 	return Metrics{
-		Metrics:               metrics,
-		snapshotFromContext:   options.SnapshotFromContext,
-		subjectsFromContext:   options.SubjectsFromContext,
-		principalFromContext:  options.PrincipalFromContext,
-		credentialFromContext: options.CredentialFromContext,
-		auditRecorder:         options.AuditRecorder,
+		resolveSemanticAttributes: options.ResolveSemanticAttributes,
+		Metrics:                   metrics,
+		snapshotFromContext:       options.SnapshotFromContext,
+		subjectsFromContext:       options.SubjectsFromContext,
+		principalFromContext:      options.PrincipalFromContext,
+		credentialFromContext:     options.CredentialFromContext,
+		auditRecorder:             options.AuditRecorder,
 	}
 }
 

@@ -1061,6 +1061,12 @@ func WithTotalRows(graph *Graph, totalField string) (*Graph, error) {
 	if err := graph.Validate(); err != nil {
 		return nil, err
 	}
+	admission := graph.securityAdmission
+	if admission != nil {
+		if err := validateSecurityAdmissionEnvelope(graph, admission); err != nil {
+			return nil, err
+		}
+	}
 	sortNode, ok := asSortLimit(graph.Nodes[graph.Output])
 	if !ok {
 		return nil, fmt.Errorf("total rows requires SortLimit output, got %s", graph.Nodes[graph.Output].Kind())
@@ -1096,6 +1102,13 @@ func WithTotalRows(graph *Graph, totalField string) (*Graph, error) {
 	copyGraph.NodeMeta = meta
 	if err := copyGraph.Validate(); err != nil {
 		return nil, err
+	}
+	if admission != nil {
+		rendered, err := RenderDuckDB(&copyGraph)
+		if err != nil {
+			return nil, fmt.Errorf("render admitted total rows graph: %w", err)
+		}
+		copyGraph.securityAdmission = &securityAdmission{capability: admission.capability, rendered: cloneRendered(rendered)}
 	}
 	return &copyGraph, nil
 }

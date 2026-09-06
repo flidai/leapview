@@ -99,6 +99,7 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		catalog, err := projectcatalog.NewService(
 			projectCatalogLeaseProvider{provider: options.RuntimeHost.Provider()},
 			projectCatalogSubjectResolver{resolve: options.AccessModule.AuthorizationSubjects},
+			projectcatalog.WithSemanticModelVisibility(semanticCatalogVisibility(options.AccessModule.ResolveSemanticAttributes)),
 		)
 		if err != nil {
 			panic(err)

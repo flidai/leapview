@@ -42,7 +42,7 @@ func rowPlanWithTotal(plan semanticquery.Plan) (semanticquery.Plan, error) {
 
 func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dataquery.Query, transform dataquery.ResultTransformer) (dataquery.Result, error) {
 	cacheStarted := cacheObservationStarted(ctx, time.Now())
-	cacheable := dashboardQueryResultCacheable(request)
+	cacheable := dashboardQueryResultCacheable(request) && !r.protectedSemanticModel()
 	var planned plannedArrowQuery
 	var planErr error
 	admissionReason := dataquery.CacheAdmissionReasonQueryNotCacheable
@@ -205,6 +205,9 @@ func (r *Runtime) dependencyForPlan(plan semanticquery.Plan) (resultidentity.Dep
 }
 
 func (r *Runtime) captureArrowPlan(ctx context.Context, plan semanticquery.Plan) (*arrowresult.Result, error) {
+	if err := r.validateSemanticPlan(ctx, plan); err != nil {
+		return nil, err
+	}
 	db, ok := r.db.(arrowDatabase)
 	if !ok {
 		return nil, fmt.Errorf("analytical database does not support native Arrow execution")

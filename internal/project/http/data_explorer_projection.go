@@ -30,14 +30,26 @@ type DataExplorerProjection struct {
 	Fields          []projectsignals.DataExploreFieldSignal
 	Command         projectsignals.DataExploreCommand
 	Warnings        []string
+	// SemanticAccessDenied prevents a stale or tampered Explore command from
+	// being widened by dropping denied fields before execution.
+	SemanticAccessDenied bool
 }
+
+// SemanticAccessPredicate is computed once for an active-generation
+// projection. It must evaluate targets against the compiled policy and the
+// already-resolved attribute context belonging to that same generation.
+type SemanticAccessPredicate func(string, semanticquery.SemanticAccessTarget) bool
 
 // BuildDataExplorerProjection projects authorized serving assets together
 // with one coherent active-generation manifest and its activation-owned
 // compiled semantic bindings. Asset visibility is authoritative for every
 // output: manifest entries that do not have a visible serving asset are never
 // exposed to the browser.
-func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project projectmanifest.Project, command projectsignals.DataExploreCommand, compiledModels map[string]*semanticquery.CompiledModel) DataExplorerProjection {
+func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project projectmanifest.Project, command projectsignals.DataExploreCommand, compiledModels map[string]*semanticquery.CompiledModel, accessPredicates ...SemanticAccessPredicate) DataExplorerProjection {
+	var accessPredicate SemanticAccessPredicate
+	if len(accessPredicates) > 0 {
+		accessPredicate = accessPredicates[0]
+	}
 	visible := make(map[string]projectview.DevelopAssetView, len(assets))
 	for _, asset := range assets {
 		if strings.TrimSpace(asset.ID) == "" {
@@ -63,19 +75,32 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		if model == nil {
 			continue
 		}
-		modelByID[id] = model
 		asset := visible[id]
 		compiled, ok := compiledModels[id]
-		if !ok || compiled == nil || len(compiled.DatasetNames()) == 0 {
+		compiledPolicy := (*semanticquery.CompiledSemanticAccessPolicy)(nil)
+		if compiled != nil {
+			compiledPolicy = compiled.SemanticAccessPolicy()
+		}
+		authoredProtected := semanticquery.ModelRequiresSemanticAccess(model)
+		compiledProtected := compiledPolicy != nil && compiledPolicy.Protected()
+		if (authoredProtected || compiledProtected) && (compiledProtected != authoredProtected || compiled == nil || !compiled.MatchesModel(model)) {
+			bindingUnavailable = true
+			continue
+		}
+		if (compiledProtected != authoredProtected) || !ok || compiled == nil || !compiled.MatchesModel(model) || len(compiled.DatasetNames()) == 0 {
 			bindingUnavailable = true
 			compiled = &semanticquery.CompiledModel{}
 		}
+		if semanticquery.ModelRequiresSemanticAccess(model) && (accessPredicate == nil || !explorerAnyDatasetAllowed(id, model, compiled, accessPredicate)) {
+			continue
+		}
+		modelByID[id] = model
 		compiledByID[id] = compiled
 		models = append(models, projectsignals.DataExploreModelSignal{
 			ID:          id,
 			Title:       firstExplorerNonEmpty(model.Title, model.Name, asset.Title, id),
 			Description: projectsignals.Optional(firstExplorerNonEmpty(model.Description, asset.Description)),
-			Datasets:    explorerDatasets(model, compiled),
+			Datasets:    explorerDatasetsWithAccess(id, model, compiled, accessPredicate),
 		})
 	}
 
@@ -88,6 +113,9 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		compiled := compiledByID[semanticID]
 		for _, datasetTable := range explorerDatasetTableMap(model, compiled) {
 			tableName := datasetTable.ModelName
+			if model != nil && semanticquery.ModelRequiresSemanticAccess(model) && !explorerTargetAllowed(semanticID, model, accessPredicate, semanticquery.SemanticAccessTarget{Dataset: tableName}) {
+				continue
+			}
 			modelID := project.NameIndex.Models[tableName]
 			if modelID == "" {
 				modelID = explorerModelIDByName(visible, tableName)
@@ -139,7 +167,16 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 			// One object per semantic model keeps field compatibility scoped to
 			// the selected model while preserving a stable canonical asset ID.
 			for _, semanticID := range modelIDs {
-				objects = append(objects, explorerModelTableObject(asset, table, columns, semanticID))
+				semanticModel := modelByID[semanticID]
+				objectColumns := explorerAuthorizedTableColumns(semanticID, semanticModel, asset.Key, columns, accessPredicate)
+				objectTable := table
+				if semanticModel != nil && semanticquery.ModelRequiresSemanticAccess(semanticModel) {
+					_, grainEntity, grainFields := explorerDatasetEntitiesWithAccess(semanticID, semanticModel, asset.Key, table, accessPredicate)
+					if grainEntity == "" || len(grainFields) == 0 {
+						objectTable.GrainEntity = ""
+					}
+				}
+				objects = append(objects, explorerModelTableObject(asset, objectTable, objectColumns, semanticID))
 			}
 		}
 	}
@@ -162,10 +199,15 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	}
 	result := DataExplorerProjection{Objects: objects, Models: models, Command: command, Warnings: warnings}
 	if selectedModelIndex < 0 {
+		result.Command = clearExplorerCommandTargets(command)
+		result.SemanticAccessDenied = selectedModelID != ""
 		return result
 	}
 	selectedModel := models[selectedModelIndex]
 	result.SelectedModel = &selectedModel
+	if selectedModelID != "" && selectedModelID != selectedModel.ID {
+		result.SemanticAccessDenied = true
+	}
 	command.ModelID = projectsignals.Optional(selectedModel.ID)
 	result.Datasets = append([]projectsignals.DataExploreDatasetSignal(nil), selectedModel.Datasets...)
 	selectedDatasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
@@ -180,6 +222,9 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		selected := result.Datasets[0]
 		result.SelectedDataset = &selected
 	}
+	if !result.SemanticAccessDenied {
+		result.SemanticAccessDenied = explorerCommandHasDeniedAccess(selectedModel.ID, modelByID[selectedModel.ID], command, accessPredicate)
+	}
 	baseTable := ""
 	if result.SelectedDataset != nil {
 		baseTable = result.SelectedDataset.ID
@@ -187,6 +232,7 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	}
 	model := modelByID[selectedModel.ID]
 	compiled := compiledByID[selectedModel.ID]
+	command = sanitizeExplorerCommand(selectedModel.ID, model, command, accessPredicate)
 	if resolvedBase, changed := resolveExplorerBase(model, baseTable, command, compiled); changed {
 		previousBase := baseTable
 		baseTable = resolvedBase
@@ -201,11 +247,15 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		result.Warnings = append(result.Warnings, "Grain changed from "+explorerLabel(previousBase)+" to "+explorerLabel(baseTable)+" to support the selected fields.")
 	}
 	result.Command = command
-	result.Fields = explorerFields(model, baseTable, command, compiled)
+	result.Fields = explorerFieldsWithAccess(selectedModel.ID, model, baseTable, command, compiled, accessPredicate)
 	return result
 }
 
 func explorerDatasets(model *semanticmodel.Model, compiled *semanticquery.CompiledModel) []projectsignals.DataExploreDatasetSignal {
+	return explorerDatasetsWithAccess("", model, compiled, nil)
+}
+
+func explorerDatasetsWithAccess(modelID string, model *semanticmodel.Model, compiled *semanticquery.CompiledModel, accessPredicate SemanticAccessPredicate) []projectsignals.DataExploreDatasetSignal {
 	if model == nil {
 		return []projectsignals.DataExploreDatasetSignal{}
 	}
@@ -217,11 +267,22 @@ func explorerDatasets(model *semanticmodel.Model, compiled *semanticquery.Compil
 	sort.Strings(names)
 	out := make([]projectsignals.DataExploreDatasetSignal, 0, len(names))
 	for _, name := range names {
+		if !explorerTargetAllowed(modelID, model, accessPredicate, semanticquery.SemanticAccessTarget{Dataset: name}) {
+			continue
+		}
 		table := tables[name]
-		entities, grainEntity, grainFields := explorerDatasetEntities(table)
-		fieldCount := len(table.Dimensions)
+		entities, grainEntity, grainFields := explorerDatasetEntitiesWithAccess(modelID, model, name, table, accessPredicate)
+		fieldCount := 0
+		for fieldName := range table.Dimensions {
+			if explorerFieldAllowed(modelID, model, name, fieldName, false, accessPredicate) {
+				fieldCount++
+			}
+		}
 		for metricName, metric := range model.Metrics {
 			if metric.Hidden {
+				continue
+			}
+			if !explorerTargetAllowed(modelID, model, accessPredicate, semanticquery.SemanticAccessTarget{Metric: metricName}) {
 				continue
 			}
 			for _, root := range explorerMetricRootDatasets(model, metricName) {
@@ -281,6 +342,10 @@ func explorerDatasetEntities(table semanticmodel.Table) ([]projectsignals.Semant
 }
 
 func explorerFields(model *semanticmodel.Model, baseTable string, command projectsignals.DataExploreCommand, compiled *semanticquery.CompiledModel) []projectsignals.DataExploreFieldSignal {
+	return explorerFieldsRaw(model, baseTable, command, compiled)
+}
+
+func explorerFieldsRaw(model *semanticmodel.Model, baseTable string, command projectsignals.DataExploreCommand, compiled *semanticquery.CompiledModel) []projectsignals.DataExploreFieldSignal {
 	if model == nil {
 		return []projectsignals.DataExploreFieldSignal{}
 	}

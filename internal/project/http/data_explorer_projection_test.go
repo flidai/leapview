@@ -4,11 +4,13 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
+	"github.com/flidai/leapview/internal/semanticvalue"
 )
 
 func TestExplorerDatasetsProjectsCompositeAndUniqueGrains(t *testing.T) {
@@ -292,6 +294,137 @@ func TestBuildDataExplorerProjectionRejectsUnavailableActivationBindings(t *test
 	}
 	if len(projection.Warnings) != 1 || projection.Warnings[0] != "Compiled semantic dataset bindings are unavailable for the active serving generation." {
 		t.Fatalf("warnings = %#v, want activation-binding unavailability", projection.Warnings)
+	}
+}
+
+func TestBuildDataExplorerProjectionFiltersProtectedSemanticMembersAndMetadata(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		AccessGrants: map[string]semanticmodel.SemanticAccessGrantSpec{
+			"tenant": {UserAttribute: "tenant", AllowedValues: []any{"acme"}},
+		},
+		Tables: map[string]semanticmodel.Table{
+			"orders": {
+				ModelName: "orders", GrainEntity: "order",
+				Entities:   map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id", "status"}}},
+				Columns:    map[string]semanticmodel.ModelColumn{"order_id": {Name: "order_id"}, "status": {Name: "status"}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Field: "orders.order_id", Datatype: semanticmodel.DataTypeString}, "status": {Field: "orders.status", Datatype: semanticmodel.DataTypeString}},
+			},
+			"customers": {
+				ModelName: "customers", GrainEntity: "customer",
+				Entities:   map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Field: "customers.customer_id", Datatype: semanticmodel.DataTypeString}, "region": {Field: "customers.region", Datatype: semanticmodel.DataTypeString}},
+			},
+		},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"status": {Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}},
+			"region": {Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"customers": {Field: "customers.region"}}},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count":  {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
+			"secret_count": {Type: "aggregate", Dataset: "customers", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "customers.customer_id"}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
+	}
+	project := projectmanifest.Project{
+		Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"], "model:customers": model.Tables["customers"]},
+		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
+		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},
+	}
+	assets := []projectview.DevelopAssetView{
+		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
+		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
+		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
+	}
+	registry := access.SemanticAttributeRegistrySnapshot{
+		State:       access.SemanticAttributeRegistryState{Profile: semanticvalue.Profile, Revision: 1, Digest: "sha256:registry"},
+		Definitions: []access.SemanticAttributeDefinition{{ID: "def-tenant", Name: "tenant", Type: semanticvalue.TypeString, Shape: access.SemanticAttributeScalar, Profile: semanticvalue.Profile, DefinitionVersion: 1, LifecycleState: access.SemanticAttributeActive, Enabled: true}},
+	}
+	protectedCompiled, err := semanticquery.CompileModelWithSemanticAccess(model, semanticquery.SemanticAccessCompileContext{Registry: registry})
+	if err != nil {
+		t.Fatalf("compile protected model: %v", err)
+	}
+	compiled := map[string]*semanticquery.CompiledModel{"semantic:sales": protectedCompiled}
+	predicate := func(modelID string, target semanticquery.SemanticAccessTarget) bool {
+		if modelID != "semantic:sales" {
+			return false
+		}
+		return target.Dataset == "orders" || target.Dimension == "status" || target.Metric == "order_count"
+	}
+	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{
+		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
+		Dimensions: []string{"customers.region", "orders.status"}, Metrics: []string{"secret_count", "order_count"},
+	}, compiled, predicate)
+	if len(projection.Models) != 1 || len(projection.Datasets) != 1 || projection.Datasets[0].ID != "orders" {
+		t.Fatalf("protected model/datasets = %#v/%#v, want only authorized orders dataset", projection.Models, projection.Datasets)
+	}
+	dataset := projection.Datasets[0]
+	if dataset.GrainEntity != "" || len(dataset.GrainFields) != 0 || len(dataset.Entities) != 0 {
+		t.Fatalf("protected dataset metadata = %#v, want denied grain/entity projection removed", dataset)
+	}
+	if dataset.FieldCount != 2 {
+		t.Fatalf("protected dataset field count = %d, want authorized dimension and metric only", dataset.FieldCount)
+	}
+	if len(projection.Fields) != 2 || projection.Fields[0].ID != "orders.status" || projection.Fields[1].ID != "order_count" {
+		t.Fatalf("protected fields = %#v, want denied members omitted", projection.Fields)
+	}
+	if got := projectsignals.ValueOrZero(projection.Command.DatasetID); got != "orders" || len(projection.Command.Dimensions) != 1 || projection.Command.Dimensions[0] != "orders.status" || len(projection.Command.Metrics) != 1 || projection.Command.Metrics[0] != "order_count" {
+		t.Fatalf("sanitized protected command = %#v, want only authorized members and dataset", projection.Command)
+	}
+	if !projection.SemanticAccessDenied {
+		t.Fatal("protected command containing denied members was not rejected")
+	}
+	for _, object := range projection.Objects {
+		if object.Layer != "model_table" || projectsignals.ValueOrZero(object.ModelID) != "semantic:sales" {
+			continue
+		}
+		if object.Grain != nil && *object.Grain != "" {
+			t.Fatalf("protected object grain = %#v, want hidden denied grain", object.Grain)
+		}
+		if object.Columns == nil || len(*object.Columns) != 1 || (*object.Columns)[0].Key != "status" {
+			t.Fatalf("protected object columns = %#v objects=%#v, want only status", object.Columns, projection.Objects)
+		}
+	}
+}
+
+func TestBuildDataExplorerProjectionFailsClosedForProtectedModelWithoutPredicate(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales", AccessGrants: map[string]semanticmodel.SemanticAccessGrantSpec{"tenant": {}},
+		Tables:   map[string]semanticmodel.Table{"orders": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {}}}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	}
+	project := projectmanifest.Project{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}
+	assets := []projectview.DevelopAssetView{{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"}}
+	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{
+		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
+		Dimensions: []string{"orders.status"}, Metrics: []string{"secret"},
+	}, compiledProjectionModels(t, project))
+	if len(projection.Models) != 0 || len(projection.Datasets) != 0 || len(projection.Fields) != 0 {
+		t.Fatalf("protected projection without predicate = %#v, want empty", projection)
+	}
+	if projection.Command.ModelID != nil || projection.Command.DatasetID != nil || len(projection.Command.Dimensions) != 0 || len(projection.Command.Metrics) != 0 {
+		t.Fatalf("protected command without predicate = %#v, want target fields cleared", projection.Command)
+	}
+	if !projection.SemanticAccessDenied {
+		t.Fatal("protected model without predicate was not rejected")
+	}
+}
+
+func TestBuildDataExplorerProjectionRejectsAuthoredPolicyMutationAgainstCompiledSnapshot(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders"}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.AccessGrants = map[string]semanticmodel.SemanticAccessGrantSpec{"tenant": {}}
+	project := projectmanifest.Project{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}
+	assets := []projectview.DevelopAssetView{{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"}}
+	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled})
+	if len(projection.Models) != 0 || len(projection.Datasets) != 0 || len(projection.Fields) != 0 {
+		t.Fatalf("projection exposed authored model against stale compiled snapshot = %#v", projection)
 	}
 }
 

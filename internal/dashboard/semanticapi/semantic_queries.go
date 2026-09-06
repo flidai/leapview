@@ -1,7 +1,6 @@
 package http
 
 import (
-	"fmt"
 	nethttp "net/http"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
@@ -20,8 +19,8 @@ func (h Handler) QuerySemanticModel(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 	modelID := chi.URLParam(r, "model")
-	if semanticModelForID(metrics, modelID) == nil {
-		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
+	model, modelOK := h.semanticModelForRequest(w, r)
+	if !modelOK {
 		return
 	}
 	snapshot, snapshotErr := servingSnapshotForRequest(r)
@@ -40,7 +39,11 @@ func (h Handler) QuerySemanticModel(w nethttp.ResponseWriter, r *nethttp.Request
 		writeJSONError(w, err, statusForCursorError(err))
 		return
 	}
-	plan, err := semanticExplainAggregate(metrics, modelID, request)
+	if err := h.authorizeSemanticAggregateQuery(r.Context(), modelID, model, request); err != nil {
+		writeSemanticAccessError(w, modelID, err)
+		return
+	}
+	plan, err := semanticExplainAggregate(r.Context(), metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
@@ -71,8 +74,8 @@ func (h Handler) ExplainSemanticModelQuery(w nethttp.ResponseWriter, r *nethttp.
 		return
 	}
 	modelID := chi.URLParam(r, "model")
-	if semanticModelForID(metrics, modelID) == nil {
-		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
+	model, modelOK := h.semanticModelForRequest(w, r)
+	if !modelOK {
 		return
 	}
 	snapshot, snapshotErr := servingSnapshotForRequest(r)
@@ -85,7 +88,11 @@ func (h Handler) ExplainSemanticModelQuery(w nethttp.ResponseWriter, r *nethttp.
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
 	}
-	plan, err := semanticExplainAggregate(metrics, modelID, request)
+	if err := h.authorizeSemanticAggregateQuery(r.Context(), modelID, model, request); err != nil {
+		writeSemanticAccessError(w, modelID, err)
+		return
+	}
+	plan, err := semanticExplainAggregate(r.Context(), metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return

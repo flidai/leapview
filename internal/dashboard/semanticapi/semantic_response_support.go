@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/analytics/query/planir"
 	"github.com/flidai/leapview/internal/dashboard/api"
 	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
@@ -242,6 +243,20 @@ func semanticExplainResponse(mode string, plan semanticquery.Plan, warnings []st
 	if plan.Mode != "" {
 		mode = plan.Mode
 	}
+	args := semanticExplainArgs(plan.Args)
+	if plan.IR != nil {
+		for _, node := range plan.IR.Nodes {
+			if node.Kind() == planir.KindSecurityBarrier {
+				// Policy parameters can contain control-plane attribute values.
+				// Never expose them through consumer explain projections.
+				for _, arg := range args {
+					delete(arg, "value")
+					arg["redacted"] = true
+				}
+				break
+			}
+		}
+	}
 	return api.SemanticExplainResponse{
 		Mode:                 mode,
 		Datasets:             append([]string{}, plan.Datasets...),
@@ -249,7 +264,7 @@ func semanticExplainResponse(mode string, plan semanticquery.Plan, warnings []st
 		PhysicalDependencies: append([]string{}, plan.PhysicalDependencies...),
 		RelationshipPaths:    append([]string{}, plan.RelationshipPaths...),
 		SQL:                  plan.SQL,
-		Args:                 semanticExplainArgs(plan.Args),
+		Args:                 args,
 		Columns:              append([]string{}, plan.Columns...),
 		Warnings:             warnings,
 		EffectiveOrdering:    semanticSortResponse(plan.EffectiveOrdering),

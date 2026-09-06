@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/analytics/masking"
@@ -22,8 +23,11 @@ import (
 )
 
 type RuntimeConfig struct {
-	ModelID string
-	Model   *semanticmodel.Model
+	SemanticAccessAuthority      SemanticAccessAuthority
+	SemanticAccessCompileContext *semanticquery.SemanticAccessCompileContext
+	ServingStateID               string
+	ModelID                      string
+	Model                        *semanticmodel.Model
 	// ResultPartition is the stable production or candidate namespace for
 	// dependency-keyed query result reuse.
 	ResultPartition resultidentity.Partition
@@ -69,36 +73,51 @@ type ModelTableQuery struct {
 }
 
 type Runtime struct {
-	modelID            string
-	model              *semanticmodel.Model
-	planner            *semanticquery.Planner
-	db                 Database
-	sources            SourcePreparer
-	queryCache         *queryResultCache
-	resultPartition    resultidentity.Partition
-	resultLimits       dataquery.ResultLimits
-	dependencyEvidence resultidentity.Evidence
-	requiredExtensions []string
-	lastRefresh        time.Time
-	sourceObservations []SourceObservation
-	snapshotOnly       bool
-	dbOwned            bool
-	closeOnce          sync.Once
-	closeErr           error
+	semanticAccessAuthority SemanticAccessAuthority
+	servingStateID          string
+	semanticConsumer        *semanticquery.SemanticAccessConsumer
+	semanticResolution      access.SemanticAttributeResolution
+	activation              *Runtime
+	closed                  atomic.Bool
+	modelID                 string
+	model                   *semanticmodel.Model
+	planner                 *semanticquery.Planner
+	db                      Database
+	sources                 SourcePreparer
+	queryCache              *queryResultCache
+	resultPartition         resultidentity.Partition
+	resultLimits            dataquery.ResultLimits
+	dependencyEvidence      resultidentity.Evidence
+	requiredExtensions      []string
+	lastRefresh             time.Time
+	sourceObservations      []SourceObservation
+	snapshotOnly            bool
+	dbOwned                 bool
+	closeOnce               sync.Once
+	closeErr                error
 }
 
 // LookupImmutableBytes, StoreImmutableBytes, and CoalesceImmutableBytes expose
 // the serving-generation result-cache scope to byte-oriented consumers such
 // as vector tiles without leaking cache implementation details.
 func (r *Runtime) LookupImmutableBytes(key string) ([]byte, bool, error) {
+	if r.protectedSemanticModel() {
+		return nil, false, fmt.Errorf("protected semantic byte reuse requires lifecycle qualification")
+	}
 	return r.queryCache.lookupBytes(key)
 }
 
 func (r *Runtime) StoreImmutableBytes(key string, value []byte) bool {
+	if r.protectedSemanticModel() {
+		return false
+	}
 	return r.queryCache.storeBytes(key, value) == resultcache.StoreStored
 }
 
 func (r *Runtime) CoalesceImmutableBytes(ctx context.Context, key string, execute func(context.Context) error) (bool, error) {
+	if r.protectedSemanticModel() {
+		return false, fmt.Errorf("protected semantic byte reuse requires lifecycle qualification")
+	}
 	return r.queryCache.coalesceBytes(ctx, key, execute)
 }
 
@@ -178,7 +197,17 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	if config.TableRelation != nil {
 		plannerOptions = append(plannerOptions, semanticquery.WithTableRelation(config.TableRelation))
 	}
-	planner, err := semanticquery.NewCompiledPlanner(config.Model, plannerOptions...)
+	var planner *semanticquery.Planner
+	var err error
+	if config.SemanticAccessCompileContext != nil {
+		var compiled *semanticquery.CompiledModel
+		compiled, err = semanticquery.CompileModelWithSemanticAccess(config.Model, *config.SemanticAccessCompileContext)
+		if err == nil {
+			planner, err = semanticquery.NewSemanticAccessPlanner(compiled, semanticquery.SemanticAccessEvaluationContext{}, plannerOptions...)
+		}
+	} else {
+		planner, err = semanticquery.NewCompiledPlanner(config.Model, plannerOptions...)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("compile semantic model: %w", err)
 	}
@@ -210,6 +239,7 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 		return nil, err
 	}
 	runtime = &Runtime{
+		semanticAccessAuthority: config.SemanticAccessAuthority, servingStateID: config.ServingStateID,
 		modelID: config.ModelID, model: config.Model, planner: planner, db: config.Database,
 		sources: config.Sources, requiredExtensions: normalizedExtensions(config.RequiredExtensions),
 		queryCache: cache, resultPartition: config.ResultPartition,
@@ -272,6 +302,10 @@ func (r *Runtime) Close() error {
 	if r == nil {
 		return nil
 	}
+	r.closed.Store(true)
+	if r.activation != nil {
+		return nil
+	}
 	r.closeOnce.Do(func() {
 		cacheErr := r.queryCache.close()
 		var dbErr error
@@ -293,6 +327,12 @@ func closeDatabase(db Database) error {
 // CloseView releases generation-scoped cache state without closing the
 // process-owned analytical database shared by other runtimes.
 func (r *Runtime) CloseView() error {
+	if r != nil {
+		r.closed.Store(true)
+	}
+	if r != nil && r.activation != nil {
+		return nil
+	}
 	if r == nil || r.queryCache == nil {
 		return nil
 	}
@@ -507,10 +547,21 @@ func (r *Runtime) ExecuteDataQuery(ctx context.Context, request dataquery.Query)
 	if err := request.Validate(); err != nil {
 		return dataquery.Result{}, err
 	}
+	bound, err := r.admitSemanticConsumer(ctx, request)
+	if err != nil {
+		return dataquery.Result{}, err
+	}
+	r = bound
 	if _, ok := r.db.(arrowDatabase); !ok {
 		return dataquery.Result{}, fmt.Errorf("analytical database does not support native Arrow execution")
 	}
-	return r.executeGovernedDataQueryArrow(ctx, request, transform)
+	result, err := r.executeGovernedDataQueryArrow(ctx, request, transform)
+	if err == nil {
+		if checkErr := r.validateSemanticResolution(ctx); checkErr != nil {
+			return dataquery.Result{}, checkErr
+		}
+	}
+	return result, err
 }
 
 // ExecuteDataQueryArrow is the native, streaming execution path for Arrow
@@ -548,6 +599,19 @@ func (r *Runtime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Q
 		return dataquery.Result{}, err
 	}
 
+	bound, err := r.admitSemanticConsumer(ctx, request)
+	if err != nil {
+		return dataquery.Result{}, err
+	}
+	r = bound
+	if r.protectedSemanticModel() {
+		guard := semanticConsumerSink{ctx: ctx, runtime: r, sink: sink}
+		if stats, ok := sink.(arrowquery.SinkStats); ok {
+			sink = semanticConsumerStatsSink{semanticConsumerSink: guard, stats: stats}
+		} else {
+			sink = guard
+		}
+	}
 	executePhysical := func(execCtx context.Context) (dataquery.Result, error) {
 		planningStarted := time.Now()
 		plan, err := r.planArrowQuery(request)
@@ -568,6 +632,9 @@ func (r *Runtime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Q
 		}
 		execCtx, connectionWait := dataquery.WithConnectionWaitCounter(execCtx)
 		databaseStarted := time.Now()
+		if err := r.validateSemanticPlan(execCtx, plan); err != nil {
+			return dataquery.Result{}, err
+		}
 		markPhysicalStatement(execCtx)
 		err = db.QueryArrow(execCtx, plan, sink)
 		databaseMS := elapsedStageMS(databaseStarted)

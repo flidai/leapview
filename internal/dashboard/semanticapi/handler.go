@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/api"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
@@ -29,6 +30,13 @@ type consumerPlannerProvider interface {
 	Planner(modelID string) (consumer.Planner, bool)
 }
 
+// semanticTargetAuthorizer is intentionally optional. Protected semantic
+// models must fail closed when a consumer has not been given this capability;
+// unprotected models retain catalog-only behavior.
+type semanticTargetAuthorizer interface {
+	AuthorizeSemanticTarget(context.Context, string, query.SemanticAccessTarget) error
+}
+
 type Handler struct {
 	Metrics               Metrics
 	ResolveProjectID      func(context.Context) (projectgraph.ResourceID, error)
@@ -39,6 +47,16 @@ type Handler struct {
 
 var errSemanticAuthorizationUnavailable = errors.New("semantic model authorization is unavailable")
 var errSemanticModelActivationUnavailable = errors.New("active semantic model planner is unavailable")
+var errSemanticTargetDenied = errors.New("semantic target is not available")
+
+func writeSemanticAccessError(w nethttp.ResponseWriter, modelID string, err error) {
+	if errors.Is(err, errSemanticAuthorizationUnavailable) {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
+	// Keep denied targets indistinguishable from unknown models or members.
+	writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
+}
 
 func (h Handler) authorizeSemanticModel(r *nethttp.Request, modelID string) (bool, error) {
 	if h.AuthorizeListResource == nil {
@@ -104,6 +122,15 @@ func (h Handler) semanticModelForRequest(w nethttp.ResponseWriter, r *nethttp.Re
 	modelID := chi.URLParam(r, "model")
 	model := semanticModelForID(metrics, modelID)
 	if model == nil {
+		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
+		return nil, false
+	}
+	allowed, err := h.authorizeSemanticModel(r, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return nil, false
+	}
+	if !allowed {
 		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
 		return nil, false
 	}

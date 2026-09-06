@@ -8,6 +8,8 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/materialize"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
@@ -16,6 +18,12 @@ import (
 type projectRuntimeFactory struct {
 	module      *Module
 	environment *analyticsducklake.Environment
+}
+
+// SetSemanticAccessAuthority is composition-only and must precede opening
+// project runtimes. Access retains ownership of principal and control state.
+func (m *Module) SetSemanticAccessAuthority(authority materialize.SemanticAccessAuthority) {
+	m.semanticAccessAuthority = authority
 }
 
 func (m *Module) ProjectRuntimeFactory() analyticsruntime.ProjectFactory {
@@ -74,8 +82,24 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		_ = queryResultCache.Close()
 		return nil, err
 	}
+	var semanticContext *semanticquery.SemanticAccessCompileContext
+	protected := false
+	for _, model := range request.Models {
+		protected = protected || semanticquery.ModelRequiresSemanticAccess(model)
+	}
+	if protected && f.module.semanticAccessAuthority != nil {
+		registry, readErr := f.module.semanticAccessAuthority.SemanticAttributeRegistry(ctx)
+		if readErr != nil {
+			_ = queryResultCache.Close()
+			_ = immutableByteCache.Close()
+			return nil, fmt.Errorf("semantic access activation registry: %w", readErr)
+		}
+		semanticContext = &semanticquery.SemanticAccessCompileContext{Registry: registry}
+	}
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
-		Models: request.Models, Database: environment,
+		SemanticAccessAuthority:      f.module.semanticAccessAuthority,
+		SemanticAccessCompileContext: semanticContext,
+		Models:                       request.Models, Database: environment,
 		CredentialResolver: f.module.credentials,
 		ConnectionResolver: connectionResolver,
 		ResultPartition:    partition, QueryResultCache: queryResultCache,

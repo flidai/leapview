@@ -12,6 +12,11 @@ type Planner struct {
 	compiled              *CompiledModel
 	tableRelation         TableRelation
 	semanticAccessContext *SemanticAccessEvaluationContext
+	// semanticAccessConsumerToken is minted by the protected consumer
+	// boundary. It is intentionally not exposed through Planner or Plan; the
+	// PlanIR graph receives it only after the planner has completed its
+	// existing security placement and seal.
+	semanticAccessConsumerToken any
 }
 
 // datasetTable resolves a semantic alias through the compiled serving

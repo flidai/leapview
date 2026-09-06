@@ -44,6 +44,14 @@ func (h Handler) GetSemanticModel(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 	modelID := chi.URLParam(r, "model")
+	semanticModel, ok := h.semanticModelForRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := h.authorizeWholeSemanticModel(r.Context(), modelID, semanticModel); err != nil {
+		writeSemanticAccessError(w, modelID, err)
+		return
+	}
 	model, ok := SemanticModelProjection(metrics, modelID)
 	if !ok {
 		if semanticModelActivationUnavailable(metrics, modelID) {
@@ -62,6 +70,24 @@ func (h Handler) ListSemanticModelFields(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 	fields := SemanticModelFieldsProjection(model)
+	if _, authErr := h.semanticTargetAuthorizerForModel(chi.URLParam(r, "model"), model); authErr != nil {
+		writeSemanticAccessError(w, chi.URLParam(r, "model"), authErr)
+		return
+	}
+	filtered := fields[:0]
+	modelID := chi.URLParam(r, "model")
+	for _, field := range fields {
+		metric := field.Kind == "metric"
+		if err := h.authorizeSemanticField(r.Context(), modelID, model, field.Dataset, field.Name, metric); err != nil {
+			if err == errSemanticAuthorizationUnavailable {
+				writeSemanticAccessError(w, modelID, err)
+				return
+			}
+			continue
+		}
+		filtered = append(filtered, field)
+	}
+	fields = filtered
 	items, nextCursor, ok := pageSliceForRequest(w, r, fields)
 	if !ok {
 		return
@@ -72,6 +98,11 @@ func (h Handler) ListSemanticModelFields(w nethttp.ResponseWriter, r *nethttp.Re
 func (h Handler) ListSemanticRelationships(w nethttp.ResponseWriter, r *nethttp.Request) {
 	model, ok := h.semanticModelForRequest(w, r)
 	if !ok {
+		return
+	}
+	modelID := chi.URLParam(r, "model")
+	if err := h.authorizeWholeSemanticModel(r.Context(), modelID, model); err != nil {
+		writeSemanticAccessError(w, modelID, err)
 		return
 	}
 	items := make([]api.SemanticRelationshipResponse, 0, len(model.Relationships))
@@ -94,6 +125,11 @@ func (h Handler) ListSemanticRelationships(w nethttp.ResponseWriter, r *nethttp.
 func (h Handler) ListSemanticSources(w nethttp.ResponseWriter, r *nethttp.Request) {
 	model, ok := h.semanticModelForRequest(w, r)
 	if !ok {
+		return
+	}
+	modelID := chi.URLParam(r, "model")
+	if err := h.authorizeWholeSemanticModel(r.Context(), modelID, model); err != nil {
+		writeSemanticAccessError(w, modelID, err)
 		return
 	}
 	names := make([]string, 0, len(model.Sources))

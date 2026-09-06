@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"fmt"
 	nethttp "net/http"
 
@@ -19,8 +20,21 @@ func (h Handler) ListSemanticDatasets(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeJSONError(w, fmt.Errorf("model %q semantic dataset bindings are unavailable", chi.URLParam(r, "model")), nethttp.StatusServiceUnavailable)
 		return
 	}
+	if _, authErr := h.semanticTargetAuthorizerForModel(chi.URLParam(r, "model"), model); authErr != nil {
+		writeSemanticAccessError(w, chi.URLParam(r, "model"), authErr)
+		return
+	}
 	out := make([]api.SemanticDatasetSummary, 0, len(compiled.DatasetNames()))
+	modelID := chi.URLParam(r, "model")
 	for _, datasetID := range compiled.DatasetNames() {
+		allowed, authErr := h.semanticTargetAllowed(r.Context(), modelID, model, semanticDatasetTarget(datasetID))
+		if authErr != nil {
+			writeSemanticAccessError(w, modelID, authErr)
+			return
+		}
+		if !allowed {
+			continue
+		}
 		dataset, _ := compiled.Dataset(datasetID)
 		table := dataset.Table()
 		out = append(out, api.SemanticDatasetSummary{
@@ -30,16 +44,6 @@ func (h Handler) ListSemanticDatasets(w nethttp.ResponseWriter, r *nethttp.Reque
 			FieldCount:  len(table.Dimensions),
 			MetricCount: semanticDatasetMetricCount(model, datasetID),
 		})
-	}
-	modelID := chi.URLParam(r, "model")
-	allowed, err := h.authorizeSemanticModel(r, modelID)
-	if err != nil {
-		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
-		return
-	}
-	if !allowed {
-		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
-		return
 	}
 	items, nextCursor, ok := pageSliceForRequest(w, r, out)
 	if !ok {
@@ -53,6 +57,11 @@ func (h Handler) GetSemanticDataset(w nethttp.ResponseWriter, r *nethttp.Request
 	if !ok {
 		return
 	}
+	modelID := chi.URLParam(r, "model")
+	if err := h.requireSemanticTarget(r.Context(), modelID, model, semanticDatasetTarget(datasetID)); err != nil {
+		writeSemanticAccessError(w, modelID, err)
+		return
+	}
 	writeJSON(w, nethttp.StatusOK, SemanticTableProjection(model, datasetID, table))
 }
 
@@ -62,6 +71,24 @@ func (h Handler) ListSemanticFields(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 	fields := SemanticDatasetFieldsProjection(model, datasetID, table)
+	filtered := fields[:0]
+	modelID := chi.URLParam(r, "model")
+	if err := h.requireSemanticTarget(r.Context(), modelID, model, semanticDatasetTarget(datasetID)); err != nil {
+		writeSemanticAccessError(w, modelID, err)
+		return
+	}
+	for _, field := range fields {
+		metric := field.Kind == "metric"
+		if err := h.authorizeSemanticField(r.Context(), modelID, model, datasetID, field.Name, metric); err != nil {
+			if errors.Is(err, errSemanticAuthorizationUnavailable) {
+				writeSemanticAccessError(w, modelID, err)
+				return
+			}
+			continue
+		}
+		filtered = append(filtered, field)
+	}
+	fields = filtered
 	items, nextCursor, ok := pageSliceForRequest(w, r, fields)
 	if !ok {
 		return
@@ -80,7 +107,8 @@ func (h Handler) QuerySemanticDataset(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 	modelID, datasetID := chi.URLParam(r, "model"), chi.URLParam(r, "dataset")
-	if _, _, _, ok := h.semanticDatasetForRequest(w, r); !ok {
+	model, _, _, ok := h.semanticDatasetForRequest(w, r)
+	if !ok {
 		return
 	}
 	snapshot, snapshotErr := servingSnapshotForRequest(r)
@@ -99,7 +127,11 @@ func (h Handler) QuerySemanticDataset(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeJSONError(w, err, statusForCursorError(err))
 		return
 	}
-	plan, err := semanticExplainAggregate(metrics, modelID, request)
+	if err := h.authorizeSemanticAggregateQuery(r.Context(), modelID, model, request); err != nil {
+		writeSemanticAccessError(w, modelID, err)
+		return
+	}
+	plan, err := semanticExplainAggregate(r.Context(), metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
@@ -130,7 +162,8 @@ func (h Handler) PreviewSemanticDataset(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 	modelID, datasetID := chi.URLParam(r, "model"), chi.URLParam(r, "dataset")
-	if _, _, _, ok := h.semanticDatasetForRequest(w, r); !ok {
+	model, _, _, ok := h.semanticDatasetForRequest(w, r)
+	if !ok {
 		return
 	}
 	snapshot, snapshotErr := servingSnapshotForRequest(r)
@@ -149,7 +182,11 @@ func (h Handler) PreviewSemanticDataset(w nethttp.ResponseWriter, r *nethttp.Req
 		writeJSONError(w, err, statusForCursorError(err))
 		return
 	}
-	plan, err := semanticExplainRows(metrics, modelID, request)
+	if err := h.authorizeSemanticRowQuery(r.Context(), modelID, model, request); err != nil {
+		writeSemanticAccessError(w, modelID, err)
+		return
+	}
+	plan, err := semanticExplainRows(r.Context(), metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
@@ -180,7 +217,8 @@ func (h Handler) ExplainSemanticQuery(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 	modelID, datasetID := chi.URLParam(r, "model"), chi.URLParam(r, "dataset")
-	if _, _, _, ok := h.semanticDatasetForRequest(w, r); !ok {
+	model, _, _, ok := h.semanticDatasetForRequest(w, r)
+	if !ok {
 		return
 	}
 	snapshot, snapshotErr := servingSnapshotForRequest(r)
@@ -193,7 +231,11 @@ func (h Handler) ExplainSemanticQuery(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
 	}
-	plan, err := semanticExplainAggregate(metrics, modelID, request)
+	if err := h.authorizeSemanticAggregateQuery(r.Context(), modelID, model, request); err != nil {
+		writeSemanticAccessError(w, modelID, err)
+		return
+	}
+	plan, err := semanticExplainAggregate(r.Context(), metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
@@ -212,7 +254,8 @@ func (h Handler) ExplainSemanticPreview(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 	modelID, datasetID := chi.URLParam(r, "model"), chi.URLParam(r, "dataset")
-	if _, _, _, ok := h.semanticDatasetForRequest(w, r); !ok {
+	model, _, _, ok := h.semanticDatasetForRequest(w, r)
+	if !ok {
 		return
 	}
 	snapshot, snapshotErr := servingSnapshotForRequest(r)
@@ -225,7 +268,11 @@ func (h Handler) ExplainSemanticPreview(w nethttp.ResponseWriter, r *nethttp.Req
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
 	}
-	plan, err := semanticExplainRows(metrics, modelID, request)
+	if err := h.authorizeSemanticRowQuery(r.Context(), modelID, model, request); err != nil {
+		writeSemanticAccessError(w, modelID, err)
+		return
+	}
+	plan, err := semanticExplainRows(r.Context(), metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return

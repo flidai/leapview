@@ -8,12 +8,36 @@ import (
 
 	lddatastar "github.com/flidai/leapview/internal/dashboard/datastar"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 )
 
 type compiledFilterOptionMetrics interface {
 	QueryCompiledFilterOptions(context.Context, string, dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error)
+}
+
+var errSemanticConsumerAuthorityUnavailable = errors.New("semantic consumer authority is unavailable")
+
+func authorizeSemanticField(ctx context.Context, metrics any, modelID, dataset, field string) error {
+	authorizer, ok := metrics.(interface {
+		AuthorizeSemanticField(context.Context, string, string, string) error
+	})
+	if !ok {
+		return errSemanticConsumerAuthorityUnavailable
+	}
+	return authorizer.AuthorizeSemanticField(ctx, modelID, dataset, field)
+}
+
+func semanticFieldAuthorizationStatus(err error) int {
+	if isSemanticConsumerAuthorityUnavailable(err) {
+		return nethttp.StatusServiceUnavailable
+	}
+	return nethttp.StatusNotFound
+}
+
+func isSemanticConsumerAuthorityUnavailable(err error) bool {
+	return errors.Is(err, errSemanticConsumerAuthorityUnavailable) || errors.Is(err, queryauthz.ErrSemanticConsumerAuthorityUnavailable)
 }
 
 func (h Handler) FilterOptions(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -50,6 +74,14 @@ func (h Handler) FilterOptions(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, "unknown compiled filter definition", nethttp.StatusInternalServerError)
 		return
 	}
+	if err := authorizeSemanticField(r.Context(), metrics, definition.SemanticModel, filterDefinition.Dataset, filterDefinition.Field); err != nil {
+		if isSemanticConsumerAuthorityUnavailable(err) {
+			nethttp.Error(w, err.Error(), semanticFieldAuthorizationStatus(err))
+		} else {
+			nethttp.NotFound(w, r)
+		}
+		return
+	}
 	if h.SessionStore == nil {
 		nethttp.Error(w, "dashboard session store is unavailable", nethttp.StatusServiceUnavailable)
 		return
@@ -70,7 +102,13 @@ func (h Handler) FilterOptions(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	queryMetrics, supportsDynamicOptions := metrics.(compiledFilterOptionMetrics)
-	engine := dashboardfilter.NewOptionEngineWithCache(h.OptionCursorSecret, h.OptionCache, func(ctx context.Context, query dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error) {
+	optionCache := h.OptionCache
+	if admission, ok := metrics.(interface{ SemanticConsumerCacheAllowed(string) bool }); !ok || !admission.SemanticConsumerCacheAllowed(definition.SemanticModel) {
+		// A nil cache creates a request-local engine cache. No protected option
+		// result survives this request; shared lifecycle admission is FAI-645.
+		optionCache = nil
+	}
+	engine := dashboardfilter.NewOptionEngineWithCache(h.OptionCursorSecret, optionCache, func(ctx context.Context, query dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error) {
 		if !supportsDynamicOptions {
 			return dashboardfilter.OptionResult{}, fmt.Errorf("compiled filter options are not supported by this runtime")
 		}

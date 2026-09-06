@@ -585,30 +585,32 @@ func safeSourceError(source string, _ error) error {
 }
 
 type ProjectRuntimeConfig struct {
-	Models              map[string]*semanticmodel.Model
-	ModelTables         map[string]semanticmodel.Table
-	Database            analyticsruntime.ProjectDatabase
-	CredentialResolver  CredentialResolver
-	ConnectionResolver  analyticsruntime.ConnectionResolver
-	ExtensionAdmission  ExtensionAdmission
-	SnapshotID          int64
-	ServingStateID      string
-	ProjectID           projectgraph.ResourceID
-	Environment         string
-	TargetType          string
-	TargetID            string
-	SemanticDigest      string
-	ArtifactDigest      string
-	SourceDataDigest    string
-	RequiredExtensions  []string
-	SkipInitialRefresh  bool
-	MaterializationOnly bool
-	ResultPartition     resultidentity.Partition
-	QueryResultCache    *resultcache.Scope
-	ImmutableByteCache  *resultcache.Scope
-	ExecutionScope      *resultcache.ExecutionScope
-	ResultLimits        dataquery.ResultLimits
-	DependencyEvidence  map[string]resultidentity.Evidence
+	SemanticAccessAuthority      analyticsmaterialize.SemanticAccessAuthority
+	SemanticAccessCompileContext *semanticquery.SemanticAccessCompileContext
+	Models                       map[string]*semanticmodel.Model
+	ModelTables                  map[string]semanticmodel.Table
+	Database                     analyticsruntime.ProjectDatabase
+	CredentialResolver           CredentialResolver
+	ConnectionResolver           analyticsruntime.ConnectionResolver
+	ExtensionAdmission           ExtensionAdmission
+	SnapshotID                   int64
+	ServingStateID               string
+	ProjectID                    projectgraph.ResourceID
+	Environment                  string
+	TargetType                   string
+	TargetID                     string
+	SemanticDigest               string
+	ArtifactDigest               string
+	SourceDataDigest             string
+	RequiredExtensions           []string
+	SkipInitialRefresh           bool
+	MaterializationOnly          bool
+	ResultPartition              resultidentity.Partition
+	QueryResultCache             *resultcache.Scope
+	ImmutableByteCache           *resultcache.Scope
+	ExecutionScope               *resultcache.ExecutionScope
+	ResultLimits                 dataquery.ResultLimits
+	DependencyEvidence           map[string]resultidentity.Evidence
 }
 
 type ProjectRuntime struct {
@@ -756,7 +758,10 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 			return "model." + physical, nil
 		}
 		view, err := analyticsmaterialize.NewRuntimeView(ctx, analyticsmaterialize.RuntimeConfig{
-			ModelID: modelID, Model: model, ResultPartition: config.ResultPartition,
+			SemanticAccessAuthority:      config.SemanticAccessAuthority,
+			SemanticAccessCompileContext: config.SemanticAccessCompileContext,
+			ServingStateID:               config.ServingStateID,
+			ModelID:                      modelID, Model: model, ResultPartition: config.ResultPartition,
 			Database: r.db, Sources: r.sources, Resolver: r.sources,
 			SnapshotOnly: config.SnapshotID > 0, TableRelation: tableRelation,
 			QueryResultCache: config.QueryResultCache, ImmutableByteCache: config.ImmutableByteCache,

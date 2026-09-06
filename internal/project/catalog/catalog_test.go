@@ -13,6 +13,7 @@ import (
 
 type testLease struct {
 	snapshot accesssnapshot.AuthorizationSnapshot
+	marker   *int
 }
 
 func (l testLease) Release()                               {}
@@ -173,6 +174,62 @@ func TestCatalogNeverExposesInternalProjectRoot(t *testing.T) {
 	}
 	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityResourceRead, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("project read resolve = %v, want not found", err)
+	}
+}
+
+func TestSemanticModelVisibilityIsRequiredAndLeasePinnedAcrossCatalogConsumers(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
+		{ID: "semantic_sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := projectgraph.NewServingIdentity(project.ProjectID(), "development", "generation_1")
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := new(int)
+	lease := testLease{snapshot: snapshot, marker: marker}
+	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
+	withoutVisibility, err := NewService(testLeases{lease: lease}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := withoutVisibility.List(context.Background(), ListRequest{PrincipalID: principal.ID, DevAuthBypass: true}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("missing semantic visibility error = %v, want unavailable", err)
+	}
+	if _, err := withoutVisibility.Search(context.Background(), SearchRequest{PrincipalID: principal.ID, DevAuthBypass: true, Query: "sales"}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("missing semantic visibility search error = %v, want unavailable", err)
+	}
+	if _, err := withoutVisibility.Resolve(context.Background(), principal.ID, Ref{ID: "semantic_sales", Kind: projectgraph.KindSemanticModel}, access.CapabilityResourceRead, true); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("missing semantic visibility resolve error = %v, want unavailable", err)
+	}
+
+	calls := 0
+	service, err := NewService(testLeases{lease: lease}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}}, WithSemanticModelVisibility(func(_ context.Context, got Lease, modelID projectgraph.ResourceID) (bool, error) {
+		calls++
+		gotLease, ok := got.(testLease)
+		if !ok || gotLease.Identity() != identity || gotLease.marker != marker || modelID != "semantic_sales" {
+			t.Fatalf("visibility callback received lease=%#v model=%q; want exact active lease/model", got.Identity(), modelID)
+		}
+		return false, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.List(context.Background(), ListRequest{PrincipalID: principal.ID, DevAuthBypass: true}); err != nil {
+		t.Fatalf("dev list error = %v", err)
+	}
+	if _, err := service.Search(context.Background(), SearchRequest{PrincipalID: principal.ID, DevAuthBypass: true, Query: "sales"}); err != nil {
+		t.Fatalf("dev search error = %v", err)
+	}
+	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: "semantic_sales", Kind: projectgraph.KindSemanticModel}, access.CapabilityResourceRead, true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("denied dev resolve error = %v, want not found", err)
+	}
+	if calls != 3 {
+		t.Fatalf("semantic visibility calls = %d, want one per List/Search/Resolve", calls)
 	}
 }
 

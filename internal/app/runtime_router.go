@@ -552,8 +552,9 @@ func buildApplicationSurfaces(
 	}
 	if metrics != nil && authorizationSnapshot != nil && capabilities.AccessModule != nil {
 		metrics = dashboardmodule.WithQueryAuthorization(metrics, dashboardmodule.QueryAuthorizationConfig{
-			SnapshotFromContext: authorizationSnapshot,
-			SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
+			ResolveSemanticAttributes: capabilities.AccessModule.ResolveSemanticAttributes,
+			SnapshotFromContext:       authorizationSnapshot,
+			SubjectsFromContext:       capabilities.AccessModule.AuthorizationSubjects,
 			PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 				principal, ok := accessmodule.PrincipalFromContext(ctx)
 				devBypass := principal.DevBypass
@@ -624,8 +625,9 @@ func buildApplicationSurfaces(
 		}
 		if authorizationSnapshot != nil && capabilities.AccessModule != nil {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{
-				SnapshotFromContext: authorizationSnapshot,
-				SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
+				ResolveSemanticAttributes: capabilities.AccessModule.ResolveSemanticAttributes,
+				SnapshotFromContext:       authorizationSnapshot,
+				SubjectsFromContext:       capabilities.AccessModule.AuthorizationSubjects,
 				PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 					principal, ok := accessmodule.PrincipalFromContext(ctx)
 					devBypass := principal.DevBypass
@@ -761,7 +763,8 @@ func buildApplicationSurfaces(
 		projectAssetVersions = reader
 	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
+		ResolveSemanticAttributes: routes.accessModule.ResolveSemanticAttributes,
+		Graph:                     capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardmodule.NewAppearanceStore(data.Database),

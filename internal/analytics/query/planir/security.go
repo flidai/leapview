@@ -8,6 +8,98 @@ import (
 	"strings"
 )
 
+// BindSecurityAdmission attaches an opaque in-process consumer capability to
+// a graph after its security seal has been established. It also captures the
+// exact renderer envelope for this graph. The capability and envelope are not
+// serialized or exposed by any graph projection. A graph can only retain the
+// admission by ordinary in-memory cloning (for example WithTotalRows).
+func BindSecurityAdmission(graph *Graph, capability any) error {
+	if graph == nil {
+		return fmt.Errorf("security admission graph is nil")
+	}
+	if len(graph.securitySeal) == 0 {
+		return fmt.Errorf("security admission requires an established security seal")
+	}
+	if !admissionComparable(capability) {
+		return fmt.Errorf("security admission capability is invalid")
+	}
+	if err := graph.Validate(); err != nil {
+		return fmt.Errorf("validate security admission graph: %w", err)
+	}
+	if graph.securityAdmission != nil && !sameAdmissionCapability(graph.securityAdmission.capability, capability) {
+		return fmt.Errorf("security admission capability is already bound")
+	}
+	rendered, err := RenderDuckDB(graph)
+	if err != nil {
+		return fmt.Errorf("render security admission graph: %w", err)
+	}
+	if graph.securityAdmission != nil && !sameRendered(graph.securityAdmission.rendered, rendered) {
+		return fmt.Errorf("security admission graph changed after binding")
+	}
+	graph.securityAdmission = &securityAdmission{capability: capability, rendered: cloneRendered(rendered)}
+	return nil
+}
+
+// CheckSecurityAdmission reports whether graph carries the exact opaque
+// capability supplied by its protected consumer and still renders to the
+// exact envelope captured when admission was bound. It intentionally has no
+// projection that lets callers retrieve the capability or envelope.
+func CheckSecurityAdmission(graph *Graph, capability any) bool {
+	if graph == nil || graph.securityAdmission == nil || !admissionComparable(capability) || !sameAdmissionCapability(graph.securityAdmission.capability, capability) {
+		return false
+	}
+	rendered, err := RenderDuckDB(graph)
+	return err == nil && sameRendered(graph.securityAdmission.rendered, rendered)
+}
+
+// securityAdmission is intentionally private: callers can supply a capability
+// to BindSecurityAdmission/CheckSecurityAdmission, but cannot inspect or
+// manufacture the admitted renderer envelope.
+type securityAdmission struct {
+	capability any
+	rendered   Rendered
+}
+
+func cloneRendered(rendered Rendered) Rendered {
+	return Rendered{
+		SQL: rendered.SQL, Args: append([]any(nil), rendered.Args...), Columns: append([]string(nil), rendered.Columns...),
+	}
+}
+
+func sameRendered(left, right Rendered) bool {
+	return left.SQL == right.SQL && reflect.DeepEqual(left.Args, right.Args) && reflect.DeepEqual(left.Columns, right.Columns)
+}
+
+func validateSecurityAdmissionEnvelope(graph *Graph, admission *securityAdmission) error {
+	if graph == nil || admission == nil || !admissionComparable(admission.capability) {
+		return fmt.Errorf("security admission is invalid")
+	}
+	rendered, err := RenderDuckDB(graph)
+	if err != nil {
+		return fmt.Errorf("render admitted graph: %w", err)
+	}
+	if !sameRendered(admission.rendered, rendered) {
+		return fmt.Errorf("security admission graph changed after binding")
+	}
+	return nil
+}
+
+func admissionComparable(value any) bool {
+	if value == nil {
+		return false
+	}
+	typeOf := reflect.TypeOf(value)
+	return typeOf.Comparable()
+}
+
+func sameAdmissionCapability(left, right any) bool {
+	if !admissionComparable(left) || !admissionComparable(right) {
+		return false
+	}
+	leftType, rightType := reflect.TypeOf(left), reflect.TypeOf(right)
+	return leftType == rightType && reflect.ValueOf(left).Interface() == reflect.ValueOf(right).Interface()
+}
+
 // SecurityBarrier is a scan-local security operation, never an ordinary
 // FilterRows node. The private requirement binds its source and predicates
 // independently of the exported, inspectable plan. Renderers may not weaken it.

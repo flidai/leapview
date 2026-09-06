@@ -1199,6 +1199,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	projectCatalog, err := projectcatalog.NewService(
 		projectCatalogLeaseProvider{provider: runtimeHostModule.Provider()},
 		projectCatalogSubjectResolver{resolve: accessModule.AuthorizationSubjects},
+		projectcatalog.WithSemanticModelVisibility(semanticCatalogVisibility(accessModule.ResolveSemanticAttributes)),
 	)
 	if err != nil {
 		return fail(fmt.Errorf("build project catalog: %w", err))

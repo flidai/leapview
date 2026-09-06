@@ -45,7 +45,13 @@ func (p *Planner) securePlanGraph(g *planir.Graph) error {
 	}
 	for _, node := range g.Nodes {
 		if node.Kind() == planir.KindSecurityBarrier {
-			return g.SealSecurity()
+			if err := g.SealSecurity(); err != nil {
+				return err
+			}
+			if p.semanticAccessConsumerToken != nil {
+				return planir.BindSecurityAdmission(g, p.semanticAccessConsumerToken)
+			}
+			return nil
 		}
 	}
 	context := *p.semanticAccessContext
@@ -222,7 +228,13 @@ func (p *Planner) securePlanGraph(g *planir.Graph) error {
 		}
 	}
 	sort.Strings(g.Roots)
-	return g.SealSecurity()
+	if err := g.SealSecurity(); err != nil {
+		return err
+	}
+	if p.semanticAccessConsumerToken != nil {
+		return planir.BindSecurityAdmission(g, p.semanticAccessConsumerToken)
+	}
+	return nil
 }
 
 func sortedSecurityKeys[V any](values map[string]V) []string {

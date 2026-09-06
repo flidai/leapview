@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -97,6 +99,10 @@ func (h Handler) GetDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request) 
 }
 
 func (h Handler) GetDashboardFilter(w nethttp.ResponseWriter, r *nethttp.Request) {
+	metrics, ok := h.biMetrics(w, r)
+	if !ok {
+		return
+	}
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
 		return
@@ -110,6 +116,14 @@ func (h Handler) GetDashboardFilter(w nethttp.ResponseWriter, r *nethttp.Request
 	filter, exists := report.FilterDefinitions[binding.Filter]
 	if !exists {
 		writeJSONError(w, fmt.Errorf("filter definition %q not found", binding.Filter), nethttp.StatusNotFound)
+		return
+	}
+	if err := authorizeSemanticField(r.Context(), metrics, report.SemanticModel, filter.Dataset, filter.Field); err != nil {
+		if isSemanticConsumerAuthorityUnavailable(err) {
+			writeJSONError(w, err, semanticFieldAuthorizationStatus(err))
+		} else {
+			writeJSONError(w, fmt.Errorf("filter %q not found", filterID), nethttp.StatusNotFound)
+		}
 		return
 	}
 	component, _ := pageComponentForFilter(page, binding.Scope, binding.ID)
@@ -148,6 +162,10 @@ func (h Handler) GetDashboardFilter(w nethttp.ResponseWriter, r *nethttp.Request
 }
 
 func (h Handler) GetDashboardVisual(w nethttp.ResponseWriter, r *nethttp.Request) {
+	metrics, ok := h.biMetrics(w, r)
+	if !ok {
+		return
+	}
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
 		return
@@ -163,7 +181,28 @@ func (h Handler) GetDashboardVisual(w nethttp.ResponseWriter, r *nethttp.Request
 		writeJSONError(w, fmt.Errorf("visual %q not found on page %q", visualID, page.ID), nethttp.StatusNotFound)
 		return
 	}
+	if err := authorizeSemanticModelProjection(r.Context(), metrics, report.SemanticModel); err != nil {
+		writeJSONError(w, err, semanticModelProjectionAuthorizationStatus(err))
+		return
+	}
 	writeJSON(w, nethttp.StatusOK, DashboardVisualProjection(definition, component))
+}
+
+func authorizeSemanticModelProjection(ctx context.Context, metrics any, modelID string) error {
+	authorizer, ok := metrics.(interface {
+		AuthorizeSemanticModelProjection(context.Context, string) error
+	})
+	if !ok {
+		return errSemanticConsumerAuthorityUnavailable
+	}
+	return authorizer.AuthorizeSemanticModelProjection(ctx, modelID)
+}
+
+func semanticModelProjectionAuthorizationStatus(err error) int {
+	if errors.Is(err, errSemanticConsumerAuthorityUnavailable) || errors.Is(err, queryauthz.ErrSemanticConsumerAuthorityUnavailable) {
+		return nethttp.StatusServiceUnavailable
+	}
+	return nethttp.StatusNotFound
 }
 
 func (h Handler) QueryDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -390,6 +429,14 @@ func (h Handler) ListDashboardFilterOptions(w nethttp.ResponseWriter, r *nethttp
 	definition, exists := report.FilterDefinitions[binding.Filter]
 	if !exists {
 		writeJSONError(w, fmt.Errorf("filter definition %q not found", binding.Filter), nethttp.StatusNotFound)
+		return
+	}
+	if err := authorizeSemanticField(r.Context(), metrics, report.SemanticModel, definition.Dataset, definition.Field); err != nil {
+		if isSemanticConsumerAuthorityUnavailable(err) {
+			writeJSONError(w, err, semanticFieldAuthorizationStatus(err))
+		} else {
+			writeJSONError(w, fmt.Errorf("filter %q not found", filterID), nethttp.StatusNotFound)
+		}
 		return
 	}
 	filters, err := dashboardQueryFilters(report, page.ID, input.FilterState, input.InteractionSelections, input.SpatialSelections)

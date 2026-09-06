@@ -938,6 +938,11 @@ type Graph struct {
 	Roots        []string        `json:"roots,omitempty"`
 	Output       string          `json:"output"`
 	securitySeal map[string]string
+	// securityAdmission is an in-process capability minted by the protected
+	// query consumer together with the exact renderer envelope admitted for
+	// this graph. It is deliberately omitted from every public/canonical
+	// representation and cannot be manufactured by JSON reconstruction.
+	securityAdmission *securityAdmission
 }
 
 func sortedStrings(values []string) []string {

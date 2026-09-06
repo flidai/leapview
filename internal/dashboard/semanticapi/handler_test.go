@@ -16,6 +16,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -206,6 +207,36 @@ func (m semanticProjectionMetrics) Planner(string) (consumer.Planner, bool) {
 	return m.planner, m.plannerOkay
 }
 
+type semanticTargetMetrics struct {
+	semanticProjectionMetrics
+	authorizeTarget func(context.Context, string, semanticquery.SemanticAccessTarget) error
+}
+
+func (m semanticTargetMetrics) AuthorizeSemanticTarget(ctx context.Context, modelID string, target semanticquery.SemanticAccessTarget) error {
+	if m.authorizeTarget == nil {
+		return nil
+	}
+	return m.authorizeTarget(ctx, modelID, target)
+}
+
+func semanticModelRequest(modelID string) *http.Request {
+	route := chi.NewRouteContext()
+	route.URLParams.Add("model", modelID)
+	request := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(context.WithValue(context.Background(), chi.RouteCtxKey, route))
+	request.Header.Set("X-Serving-Snapshot", "state-1")
+	return request
+}
+
+func semanticModelHandler(metrics Metrics) Handler {
+	return Handler{
+		Metrics:          metrics,
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		AuthorizeListResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
+			return true, nil
+		},
+	}
+}
+
 func TestGetSemanticModelReturnsServiceUnavailableWhenActivationPlannerMissing(t *testing.T) {
 	model := &semanticmodel.Model{Name: "sales"}
 	metrics := semanticProjectionMetrics{model: model, catalog: dashboard.Catalog{Models: []dashboard.CatalogModel{{ID: "semantic:sales"}}}}
@@ -217,6 +248,113 @@ func TestGetSemanticModelReturnsServiceUnavailableWhenActivationPlannerMissing(t
 	handler.GetSemanticModel(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want service unavailable; body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGetSemanticModelHidesUnauthorizedModel(t *testing.T) {
+	model := &semanticmodel.Model{Name: "sales"}
+	metrics := semanticProjectionMetrics{model: model, catalog: dashboard.Catalog{Models: []dashboard.CatalogModel{{ID: "semantic:sales"}}}}
+	handler := semanticModelHandler(metrics)
+	handler.AuthorizeListResource = func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
+		return false, nil
+	}
+	recorder := httptest.NewRecorder()
+	handler.GetSemanticModel(recorder, semanticModelRequest("semantic:sales"))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want not found; body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestSemanticDiscoveryFailsClosedWhenProtectedModelHasNoTargetAuthority(t *testing.T) {
+	model := &semanticmodel.Model{Name: "sales", AccessGrants: map[string]semanticmodel.SemanticAccessGrantSpec{"sales": {}}}
+	metrics := semanticProjectionMetrics{model: model}
+	recorder := httptest.NewRecorder()
+	semanticModelHandler(metrics).ListSemanticModelFields(recorder, semanticModelRequest("sales"))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want service unavailable; body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestSemanticDiscoveryFiltersDeniedMemberWithoutDisclosure(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name:         "sales",
+		AccessGrants: map[string]semanticmodel.SemanticAccessGrantSpec{"sales": {}},
+		Metrics:      map[string]semanticmodel.Metric{"revenue": {Type: "aggregate", Dataset: "sales"}},
+	}
+	metrics := semanticTargetMetrics{
+		semanticProjectionMetrics: semanticProjectionMetrics{model: model},
+		authorizeTarget: func(context.Context, string, semanticquery.SemanticAccessTarget) error {
+			return errors.New("denied")
+		},
+	}
+	recorder := httptest.NewRecorder()
+	semanticModelHandler(metrics).ListSemanticModelFields(recorder, semanticModelRequest("sales"))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want OK; body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response api.SemanticFieldListResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Items) != 0 {
+		t.Fatalf("denied fields = %#v, want empty", response.Items)
+	}
+}
+
+func TestSemanticDiscoveryChecksAllSemanticAliasesForPhysicalField(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name:         "sales",
+		AccessGrants: map[string]semanticmodel.SemanticAccessGrantSpec{"sales": {}},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"public_state":  {Bindings: map[string]semanticmodel.DimensionBinding{"sales": {Field: "sales.status"}}},
+			"private_state": {Bindings: map[string]semanticmodel.DimensionBinding{"sales": {Field: "sales.status"}}},
+		},
+	}
+	metrics := semanticTargetMetrics{
+		semanticProjectionMetrics: semanticProjectionMetrics{model: model},
+		authorizeTarget: func(_ context.Context, _ string, target semanticquery.SemanticAccessTarget) error {
+			if target.Dimension == "private_state" {
+				return errors.New("denied")
+			}
+			return nil
+		},
+	}
+	handler := Handler{Metrics: metrics}
+	if err := handler.authorizeSemanticField(context.Background(), "sales", model, "sales", "status", false); !errors.Is(err, errSemanticTargetDenied) {
+		t.Fatalf("authorize duplicated physical field error = %v, want denied", err)
+	}
+}
+
+func TestGetSemanticModelReturnsUnknownForDeniedMemberProjection(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{"sales": {
+			ModelName:   "sales",
+			Dimensions:  map[string]semanticmodel.MetricDimension{"id": {Type: "number", Datatype: semanticmodel.DataTypeInteger}},
+			Entities:    map[string]semanticmodel.EntityDefinition{"sale": {Type: "primary", Fields: []string{"id"}}},
+			GrainEntity: "sale",
+		}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"sales": {Model: "sales"}},
+		Metrics: map[string]semanticmodel.Metric{"revenue": {
+			Type: "aggregate", Dataset: "sales", Aggregation: "sum",
+			Input: &semanticmodel.MetricInput{Field: "sales.id"},
+		}},
+	}
+	planner, err := semanticquery.NewCompiledPlanner(model, semanticquery.WithTableRelation(func(table string) (string, error) { return "model." + table, nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.AccessGrants = map[string]semanticmodel.SemanticAccessGrantSpec{"sales": {}}
+	metrics := semanticTargetMetrics{
+		semanticProjectionMetrics: semanticProjectionMetrics{
+			model: model, catalog: dashboard.Catalog{Models: []dashboard.CatalogModel{{ID: "semantic:sales"}}}, planner: planner, plannerOkay: true,
+		},
+		authorizeTarget: func(context.Context, string, semanticquery.SemanticAccessTarget) error { return errors.New("denied") },
+	}
+	recorder := httptest.NewRecorder()
+	semanticModelHandler(metrics).GetSemanticModel(recorder, semanticModelRequest("semantic:sales"))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want not found; body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 
