@@ -171,6 +171,7 @@ type Model struct {
 	Dimensions              map[string]SemanticDimension   `yaml:"-"`
 	Filters                 map[string]SemanticFilterSpec  `yaml:"-"`
 	Metrics                 map[string]Metric              `yaml:"-"`
+	AccessPolicy            SemanticAccessPolicy           `yaml:"-" json:"accessPolicy,omitempty"`
 }
 
 type Connection struct {

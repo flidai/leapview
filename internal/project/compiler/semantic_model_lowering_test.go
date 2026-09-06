@@ -1,7 +1,6 @@
 package compiler
 
 import (
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -104,106 +103,65 @@ func TestSemanticModelLoweringRelationshipEndpointValidation(t *testing.T) {
 	}
 }
 
-func TestSemanticModelLoweringRejectsEveryAccessPolicyBoundary(t *testing.T) {
-	grants := []string{"can_view"}
-	dimensions := map[string]projectcontracts.SemanticDimension{"region": {RequiredAccessGrants: &grants}}
-	cases := []struct {
-		name string
-		spec projectcontracts.SemanticModelSpec
-	}{
-		{name: "dataset grants", spec: projectcontracts.SemanticModelSpec{Datasets: map[string]projectcontracts.SemanticDataset{"orders": {RequiredAccessGrants: &grants}}}},
-		{name: "dataset filters", spec: projectcontracts.SemanticModelSpec{Datasets: map[string]projectcontracts.SemanticDataset{"orders": {AccessFilters: &[]projectcontracts.SemanticAccessFilter{{Field: "orders.region", UserAttribute: "region"}}}}}},
-		{name: "dimension grants", spec: projectcontracts.SemanticModelSpec{Dimensions: &dimensions}},
-		{name: "aggregate grants", spec: projectcontracts.SemanticModelSpec{Metrics: map[string]projectcontracts.SemanticMetric{"revenue": {Value: &projectcontracts.SemanticMetricAggregateVariant{AggregateSemanticMetric: projectcontracts.AggregateSemanticMetric{RequiredAccessGrants: &grants}}}}}},
-		{name: "derived grants", spec: projectcontracts.SemanticModelSpec{Metrics: map[string]projectcontracts.SemanticMetric{"margin": {Value: &projectcontracts.SemanticMetricDerivedVariant{DerivedSemanticMetric: projectcontracts.DerivedSemanticMetric{RequiredAccessGrants: &grants}}}}}},
-		{name: "ratio grants", spec: projectcontracts.SemanticModelSpec{Metrics: map[string]projectcontracts.SemanticMetric{"margin_rate": {Value: &projectcontracts.SemanticMetricRatioVariant{RatioSemanticMetric: projectcontracts.RatioSemanticMetric{RequiredAccessGrants: &grants}}}}}},
+func TestSemanticModelLoweringRetainsEveryAccessPolicyBoundary(t *testing.T) {
+	required := []string{"can_view"}
+	grants := map[string]projectcontracts.SemanticAccessGrant{
+		"can_view": {UserAttribute: "department", AllowedValues: projectcontracts.SemanticAllowedValues{"sales"}},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := rejectSemanticAccessPolicy(tc.spec); err == nil || !strings.Contains(err.Error(), "compiled access-policy support is not available") {
-				t.Fatalf("access policy was accepted: %v", err)
-			}
-		})
+	dimensions := map[string]projectcontracts.SemanticDimension{"region": {RequiredAccessGrants: &required}}
+	spec := projectcontracts.SemanticModelSpec{
+		AccessGrants: &grants,
+		Datasets: map[string]projectcontracts.SemanticDataset{"orders": {
+			RequiredAccessGrants: &required,
+			AccessFilters:        &[]projectcontracts.SemanticAccessFilter{{Field: "region", UserAttribute: "allowedRegions"}},
+		}},
+		Dimensions: &dimensions,
+		Metrics: map[string]projectcontracts.SemanticMetric{
+			"revenue":     {Value: &projectcontracts.SemanticMetricAggregateVariant{AggregateSemanticMetric: projectcontracts.AggregateSemanticMetric{RequiredAccessGrants: &required}}},
+			"margin":      {Value: &projectcontracts.SemanticMetricDerivedVariant{DerivedSemanticMetric: projectcontracts.DerivedSemanticMetric{RequiredAccessGrants: &required}}},
+			"margin_rate": {Value: &projectcontracts.SemanticMetricRatioVariant{RatioSemanticMetric: projectcontracts.RatioSemanticMetric{RequiredAccessGrants: &required}}},
+		},
 	}
-
-	_, err := lowerSemanticMetrics(map[string]projectcontracts.SemanticMetric{"missing": {}})
-	if err == nil || !strings.Contains(err.Error(), `metric "missing" variant is required`) {
-		t.Fatalf("missing metric variant error = %v", err)
+	policy, err := lowerSemanticAccessPolicy(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.AccessGrants["can_view"].UserAttribute != "department" || len(policy.AccessGrants["can_view"].AllowedValues) != 1 {
+		t.Fatalf("grant lowering = %#v", policy.AccessGrants)
+	}
+	if len(policy.Datasets["orders"].RequiredAccessGrants) != 1 || len(policy.Datasets["orders"].AccessFilters) != 1 || len(policy.Dimensions["region"]) != 1 {
+		t.Fatalf("dataset/dimension policy lowering = %#v", policy)
+	}
+	for _, name := range []string{"revenue", "margin", "margin_rate"} {
+		if !reflect.DeepEqual(policy.Metrics[name], required) {
+			t.Fatalf("metric %q grants = %#v", name, policy.Metrics[name])
+		}
 	}
 }
 
 func TestSemanticModelAccessPolicyDiagnosticsAreDeterministic(t *testing.T) {
-	grants := []string{"can_view"}
-	dimensions := map[string]projectcontracts.SemanticDimension{
-		"zeta":  {RequiredAccessGrants: &grants},
-		"alpha": {RequiredAccessGrants: &grants},
-	}
-	cases := []struct {
-		name string
-		spec projectcontracts.SemanticModelSpec
-		want string
-	}{
-		{
-			name: "datasets",
-			spec: projectcontracts.SemanticModelSpec{Datasets: map[string]projectcontracts.SemanticDataset{
-				"zeta":  {RequiredAccessGrants: &grants},
-				"alpha": {RequiredAccessGrants: &grants},
-			}},
-			want: `SemanticModel dataset "alpha" requiredAccessGrants: compiled access-policy support is not available`,
-		},
-		{
-			name: "dimensions",
-			spec: projectcontracts.SemanticModelSpec{Dimensions: &dimensions},
-			want: `SemanticModel dimension "alpha" requiredAccessGrants: compiled access-policy support is not available`,
-		},
-		{
-			name: "metrics",
-			spec: projectcontracts.SemanticModelSpec{Metrics: map[string]projectcontracts.SemanticMetric{
-				"zeta":  {Value: &projectcontracts.SemanticMetricAggregateVariant{AggregateSemanticMetric: projectcontracts.AggregateSemanticMetric{RequiredAccessGrants: &grants}}},
-				"alpha": {Value: &projectcontracts.SemanticMetricAggregateVariant{AggregateSemanticMetric: projectcontracts.AggregateSemanticMetric{RequiredAccessGrants: &grants}}},
-			}},
-			want: `SemanticModel metric "alpha" requiredAccessGrants: compiled access-policy support is not available`,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			for run := 0; run < 100; run++ {
-				err := rejectSemanticAccessPolicy(tc.spec)
-				if err == nil || err.Error() != tc.want {
-					t.Fatalf("run %d diagnostic = %v, want %q", run, err, tc.want)
-				}
-			}
-		})
+	required := []string{"missing"}
+	spec := projectcontracts.SemanticModelSpec{Datasets: map[string]projectcontracts.SemanticDataset{
+		"zeta": {RequiredAccessGrants: &required}, "alpha": {RequiredAccessGrants: &required},
+	}}
+	want := `SemanticModel dataset "alpha" references unknown access grant "missing"`
+	for run := 0; run < 100; run++ {
+		_, err := lowerSemanticAccessPolicy(spec)
+		if err == nil || err.Error() != want {
+			t.Fatalf("run %d diagnostic = %v, want %q", run, err, want)
+		}
 	}
 }
 
-func TestProjectManifestSemanticAccessPolicyDiagnosticsAreDeterministic(t *testing.T) {
-	grants := []string{"can_view"}
-	project := sourceAssembly{
-		SemanticModels: map[string]projectcontracts.SemanticModelSpec{
-			"zeta":  {Datasets: map[string]projectcontracts.SemanticDataset{"orders": {RequiredAccessGrants: &grants}}},
-			"alpha": {Datasets: map[string]projectcontracts.SemanticDataset{"orders": {RequiredAccessGrants: &grants}}},
-		},
-		SemanticModelIDs: map[string]string{
-			"zeta":  "semantic-model:zeta",
-			"alpha": "semantic-model:alpha",
-		},
-		SemanticModelPaths: map[string]string{
-			"zeta":  "semantic-models/zeta.yaml",
-			"alpha": "semantic-models/alpha.yaml",
-		},
+func TestSemanticModelAccessPolicyRejectsEmptyAndDuplicateRequirements(t *testing.T) {
+	empty := []string{}
+	if _, err := lowerSemanticAccessPolicy(projectcontracts.SemanticModelSpec{Datasets: map[string]projectcontracts.SemanticDataset{"orders": {RequiredAccessGrants: &empty}}}); err == nil || !strings.Contains(err.Error(), "non-empty") {
+		t.Fatalf("empty required grants error = %v", err)
 	}
-	wantMessage := `SemanticModel dataset "orders" requiredAccessGrants: compiled access-policy support is not available`
-	for run := 0; run < 100; run++ {
-		_, err := buildResourceManifest(project)
-		var diagnostic ResourceError
-		if !errors.As(err, &diagnostic) {
-			t.Fatalf("run %d diagnostic = %T(%v), want ResourceError", run, err, err)
-		}
-		if diagnostic.Path != "semantic-models/alpha.yaml" || diagnostic.ResourceID != "semantic-model:alpha" || diagnostic.FieldPath != "spec" || diagnostic.Message != wantMessage {
-			t.Fatalf("run %d diagnostic = %#v, want alpha resource and %q", run, diagnostic, wantMessage)
-		}
+	duplicate := []string{"can_view", "can_view"}
+	grants := map[string]projectcontracts.SemanticAccessGrant{"can_view": {UserAttribute: "department", AllowedValues: projectcontracts.SemanticAllowedValues{"sales"}}}
+	if _, err := lowerSemanticAccessPolicy(projectcontracts.SemanticModelSpec{AccessGrants: &grants, Datasets: map[string]projectcontracts.SemanticDataset{"orders": {RequiredAccessGrants: &duplicate}}}); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate required grants error = %v", err)
 	}
 }
 
