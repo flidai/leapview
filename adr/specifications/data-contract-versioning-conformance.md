@@ -453,6 +453,57 @@ Whole-repair closure remains PARTIAL solely as a combined-CI claim; the PostgreS
 repair and FAI-662 scoped acceptance remain qualified. The outstanding broader
 FAI-617/641 evidence is not silently replaced by isolated browser passes.
 
+## Normal-configuration CI qualification (2026-09-06)
+
+The subsequent stabilization pass ran **unchanged `task ci`** at
+`ac00d5b028a495d3f5bbfc8e102f3909d2016b38`, with the existing process-local
+toolchain/Docker-group setup and `LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1`.
+It passed with exit **0** from 09:59:46 to 10:19:24 UTC, wall time **19:38.26**.
+Frontend, APIGen, the Go package sweep, all four application shards, external
+service/required PostgreSQL gates and final generated checks completed. This
+supersedes the prior combined-CI blocker, not the remaining ADR feature/evidence
+boundaries. No test, timeout, assertion, concurrency, migration or PostgreSQL
+gate configuration changed.
+
+The original admin case passed in 509.08 ms and the Mermaid case in 598.03 ms;
+the site suite passed 51/51. Both wait for real readiness: custom-element
+registration/Lit completion for admin, visible SVG and theme completion for
+Mermaid. The suites create fresh pages/contexts and run sequentially in the
+frontend lane. No primary order dependency or deterministic readiness race was
+established. The shared browser explains cascaded errors after a timeout, not
+the cause of the first timeout. The visual Playwright config is not the runner
+for these Bun tests.
+
+Classification of the prior failures: **A, intermittent infrastructure/resource
+contention is the leading explanation, not proven causation**. No deterministic
+CI regression (B) reproduced and no insufficient timeout/resource budget (C) was
+established. Local CI overlaps Go and browser lanes; GitHub assigns separate
+Ubuntu runners. Five-second resource samples captured a competing Go test process
+from another worktree, 2,324–4,739 MiB available host memory, CPU/memory/I/O PSI
+avg10 peaks of 21.52/2.32/13.32 percent, no swap, and non-full temporary filesystems
+(`/dev/shm` approximately 75%; `/var/tmp` backing filesystem approximately 86%).
+These are contention observations, not evidence of CPU/OOM/filesystem exhaustion.
+One green run does not establish a long-run flake rate or justify larger limits.
+
+A separate **D, test cleanup weakness**, was observed: after the successful site
+suite, its `go run` child `leapview-site` remained orphaned (PID 2335950, matching
+this worktree and run start). Only that verified test process was terminated.
+Its small memory footprint and successful browser tests do not establish it as
+the timeout cause. Under the requested pass outcome, this is recorded for a
+focused cleanup follow-up, not silently mixed into a passing qualification run.
+
+Local diagnostic artifacts are retained in
+`/var/tmp/leapview-ci-qualification.IdxFKa/`: `ci.log`, `resources.log`,
+`timing.txt`, `start.txt`, `end.txt`, `exit.txt`, and the sampler `run.sh`.
+The sampler observed the normal command; it did not override test budgets or
+introduce retries. These are local diagnostic files, not publication evidence.
+
+FAI-662 remains QUALIFIED. FAI-617/641 remain IMPLEMENTED / PARTIAL for their
+previously documented evidence boundaries; only the combined-CI blocker is now
+cleared. Linear receives evidence comments only. FAI-642 remains Backlog behind
+FAI-641 and FAI-639; this CI pass does not complete those dependencies or start
+FAI-642/645/648/649/632.
+
 Operational paths, exact lineage checksums and downgrade restrictions are in the
 [migration authority guide](../../internal/platform/postgres/migrations/README.md).
 Deployment status remains unknown; synthetic historical fixtures are not proof of
