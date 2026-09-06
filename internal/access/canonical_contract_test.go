@@ -293,6 +293,58 @@ func TestCanonicalReferencesMustMatchAuthoritativeGraph(t *testing.T) {
 	}
 }
 
+func TestCanonicalProjectNamespaceAndGraphBinding(t *testing.T) {
+	project := canonicalTestProject(t)
+	namespace, err := NewResourceRef("project_demo", graph.KindProjectNamespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := namespace.ValidateAgainst(project); err != nil {
+		t.Fatalf("project namespace rejected against portable graph: %v", err)
+	}
+	identity := graph.ServingIdentity{ProjectID: "project_demo", Environment: "production", GenerationID: "generation_1"}
+	if err := ValidateProjectNamespace(namespace, identity); err != nil {
+		t.Fatalf("project namespace rejected for owning serving identity: %v", err)
+	}
+	identity.ProjectID = "other_project"
+	if err := ValidateProjectNamespace(namespace, identity); !errors.Is(err, ErrInvalidCanonicalGrant) {
+		t.Fatalf("project namespace accepted for another serving identity: %v", err)
+	}
+
+	subject, err := NewSubjectRef(SubjectKindPrincipal, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := NewResourceRef("dashboard_main", graph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := NewCanonicalGrant(project, subject, resource, CapabilityResourceRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := grant.ValidateAgainst(project); err != nil {
+		t.Fatalf("grant rejected against its bound graph: %v", err)
+	}
+	changedProject, err := graph.NewProjectGraph([]graph.Resource{
+		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "renamed"},
+		{ID: "model_orders", Kind: graph.KindModel, Name: "orders"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := grant.ValidateAgainst(changedProject); !errors.Is(err, ErrInvalidCanonicalGrant) {
+		t.Fatalf("grant accepted against a graph with a different digest: %v", err)
+	}
+
+	if _, err := NewCanonicalGrant(graph.ProjectGraph{}, subject, namespace, CapabilityProjectAdmin); !errors.Is(err, ErrInvalidCanonicalGrant) {
+		t.Fatalf("grant accepted an uninitialized graph: %v", err)
+	}
+	if err := namespace.ValidateAgainst(graph.ProjectGraph{}); !errors.Is(err, ErrInvalidResourceRef) {
+		t.Fatalf("namespace accepted an uninitialized graph: %v", err)
+	}
+}
+
 func TestCanonicalJSONRejectsDuplicateAndTrailingValues(t *testing.T) {
 	var resource ResourceRef
 	if err := json.Unmarshal([]byte(`{"id":"model_orders","id":"model_orders","kind":"model"}`), &resource); err == nil {

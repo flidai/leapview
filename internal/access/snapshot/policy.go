@@ -134,7 +134,10 @@ func (s AuthorizationSnapshot) EffectiveCapabilities(subjects []access.SubjectRe
 	// role bindings are project-wide, so a captured capability is effective if
 	// at least one graph resource supports it; direct grants are already
 	// validated against their concrete resource by the snapshot constructor.
+	// PROJECT_ADMIN is the serving-identity's external project-namespace
+	// capability, which is intentionally absent from portable FAI-666 graphs.
 	supported := make(map[access.Capability]struct{})
+	supported[access.CapabilityProjectAdmin] = struct{}{}
 	for _, graphResource := range s.project.Resources() {
 		for _, capability := range access.CapabilitiesForKind(graphResource.Kind) {
 			supported[capability] = struct{}{}

@@ -40,6 +40,30 @@ func TestCanonicalAuditEventRequiresExactServingIdentityAndResource(t *testing.T
 	}
 }
 
+func TestCanonicalAuditEventChecksProjectNamespaceServingIdentity(t *testing.T) {
+	project, err := graph.NewProjectGraph([]graph.Resource{
+		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "main"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := NewResourceRef("project_demo", graph.KindProjectNamespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := CanonicalAuditEvent{
+		Identity:    graph.ServingIdentity{ProjectID: "project_demo", Environment: "production", GenerationID: "generation_7"},
+		PrincipalID: "alice", Action: "project.admin", Resource: resource, Capability: CapabilityProjectAdmin,
+	}
+	if err := event.ValidateAgainst(project); err != nil {
+		t.Fatalf("project namespace audit event rejected for owning identity: %v", err)
+	}
+	event.Identity.ProjectID = "other_project"
+	if err := event.ValidateAgainst(project); err == nil {
+		t.Fatal("project namespace audit event accepted for another serving identity")
+	}
+}
+
 func TestCanonicalAuditEventValidatesRequestIdentities(t *testing.T) {
 	resource, err := NewResourceRef("dashboard_main", graph.KindDashboard)
 	if err != nil {
