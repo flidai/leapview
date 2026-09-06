@@ -3,10 +3,10 @@ package compiler
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
+	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	"gopkg.in/yaml.v3"
@@ -19,16 +19,20 @@ type sourceFileReader interface {
 
 type osSourceReader struct{ document.OSFragmentReader }
 
-func loadConnections(project *sourceAssembly, paths []string) error {
+func (osSourceReader) ReadFile(path string) ([]byte, error) {
+	return securefs.ReadCanonicalFile(path)
+}
+
+func loadConnections(project *sourceAssembly, paths []string, reader sourceFileReader) error {
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelope(reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "Connection" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Connection", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -63,16 +67,16 @@ func loadConnections(project *sourceAssembly, paths []string) error {
 	return nil
 }
 
-func loadSources(project *sourceAssembly, paths []string) error {
+func loadSources(project *sourceAssembly, paths []string, reader sourceFileReader) error {
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelope(reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "Source" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Source", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -108,8 +112,8 @@ func loadSources(project *sourceAssembly, paths []string) error {
 	return nil
 }
 
-func readEnvelope(path string) (resourceEnvelope, error) {
-	content, err := os.ReadFile(path)
+func readEnvelope(reader sourceFileReader, path string) (resourceEnvelope, error) {
+	content, err := reader.ReadFile(path)
 	if err != nil {
 		return resourceEnvelope{}, err
 	}
@@ -178,7 +182,7 @@ func schemaKindForEnvelope(content []byte) (configschema.Kind, bool) {
 }
 
 func projectConfigFile(path string) bool {
-	content, err := os.ReadFile(path)
+	content, err := securefs.ReadCanonicalFile(path)
 	if err != nil {
 		return false
 	}

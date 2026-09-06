@@ -3,6 +3,7 @@ package compiler
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,6 +11,16 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+)
+
+// Keep the direct compiler boundary aligned with the native source admission
+// limits. Native callers already enforce these limits, but the CLI and package
+// API may compile a local checkout directly.
+const (
+	maxAuthoredSourceFiles           = 10_000
+	maxAuthoredSourceEntries         = 100_000
+	maxAuthoredSourceBytes     int64 = 64 << 20
+	maxAuthoredSourceFileBytes       = 16 << 20
 )
 
 // authoredResourceDirectory is the complete public analytics authoring
@@ -36,41 +47,46 @@ type discoveredAuthoredResource struct {
 
 type authoredResourceDiscovery struct {
 	root      string
+	reader    *snapshotSourceReader
 	resources []discoveredAuthoredResource
 }
 
+type snapshottedSourceFile struct {
+	relative string
+	content  []byte
+}
+
 // discoverAuthoredResources discovers YAML resources recursively beneath the
-// six fixed authoring directories. Discovery is deterministic and independent
-// of file names or include globs. Removed access/publication authoring is
-// rejected explicitly so it cannot be silently omitted from a bundle.
+// six fixed authoring directories. The source tree is read through one
+// descriptor-bound os.Root and snapshotted before decoding. A concurrent
+// rename or symlink swap therefore cannot redirect a later compiler read.
 func discoverAuthoredResources(sourceRoot string) (authoredResourceDiscovery, error) {
-	root, err := authoredSourceRoot(sourceRoot)
+	rootPath, root, err := openAuthoredSourceRoot(sourceRoot)
 	if err != nil {
 		return authoredResourceDiscovery{}, err
 	}
-	if err := rejectLegacyProjectManifest(root); err != nil {
+	defer root.Close()
+
+	if err := validateAuthoredDirectories(rootPath, root); err != nil {
 		return authoredResourceDiscovery{}, err
 	}
-	if err := rejectUnownedLeapViewResources(root); err != nil {
+	if err := rejectLegacyProjectManifest(rootPath, root); err != nil {
+		return authoredResourceDiscovery{}, err
+	}
+	reader, files, err := snapshotYAMLFiles(rootPath, root)
+	if err != nil {
 		return authoredResourceDiscovery{}, err
 	}
 
-	result := authoredResourceDiscovery{root: root}
-	for _, owned := range authoredResourceDirectories {
-		paths, discoverErr := discoverYAMLFiles(root, owned.directory)
-		if discoverErr != nil {
-			return authoredResourceDiscovery{}, discoverErr
-		}
-		for _, path := range paths {
-			kind, recognized, headerErr := authoredResourceKind(path)
-			if headerErr != nil {
-				return authoredResourceDiscovery{}, headerErr
-			}
-			// Owned directories may contain source-layout YAML fragments (for
-			// example dashboard visual/page includes). Only LeapView envelopes
-			// are standalone resources; unrelated YAML is left for its owning
-			// resource's include expansion.
-			if !recognized {
+	result := authoredResourceDiscovery{root: rootPath, reader: reader}
+	for _, file := range files {
+		path := reader.absolutePath(file.relative)
+		owned, isOwned := authoredDirectoryForPath(file.relative)
+		if !isOwned {
+			kind, isLeapView, headerErr := resourceHeaderBytes(file.content)
+			if headerErr != nil || !isLeapView {
+				// Outside an owned directory this is only an envelope probe;
+				// malformed unrelated YAML remains outside compiler ownership.
 				continue
 			}
 			if kind == "Project" {
@@ -79,128 +95,238 @@ func discoverAuthoredResources(sourceRoot string) (authoredResourceDiscovery, er
 			if isRemovedAuthoringKind(kind) {
 				return authoredResourceDiscovery{}, removedAuthoringKindError(path, kind)
 			}
-			if kind != owned.kind {
-				return authoredResourceDiscovery{}, fmt.Errorf("%s: authored kind %q belongs in %s/, not %s/", path, kind, directoryForAuthoredKind(kind), owned.directory)
-			}
-			result.resources = append(result.resources, discoveredAuthoredResource{kind: kind, path: path})
+			continue
 		}
+
+		kind, recognized, headerErr := authoredResourceKindBytes(path, file.content)
+		if headerErr != nil {
+			return authoredResourceDiscovery{}, headerErr
+		}
+		// Owned directories may contain dashboard fragments. Only LeapView
+		// envelopes are standalone resources.
+		if !recognized {
+			continue
+		}
+		if kind == "Project" {
+			return authoredResourceDiscovery{}, projectAuthoringRemovedError(path)
+		}
+		if isRemovedAuthoringKind(kind) {
+			return authoredResourceDiscovery{}, removedAuthoringKindError(path, kind)
+		}
+		if kind != owned.kind {
+			return authoredResourceDiscovery{}, fmt.Errorf("%s: authored kind %q belongs in %s/, not %s/", path, kind, directoryForAuthoredKind(kind), owned.directory)
+		}
+		result.resources = append(result.resources, discoveredAuthoredResource{kind: kind, path: path})
 	}
 	sortDiscoveredResources(result.resources)
 	return result, nil
 }
 
-func authoredSourceRoot(sourceRoot string) (string, error) {
+func openAuthoredSourceRoot(sourceRoot string) (string, *os.Root, error) {
 	sourceRoot = strings.TrimSpace(sourceRoot)
 	if sourceRoot == "" {
-		return "", fmt.Errorf("analytics source root is required")
+		return "", nil, fmt.Errorf("analytics source root is required")
 	}
 	absolute, err := filepath.Abs(sourceRoot)
 	if err != nil {
-		return "", fmt.Errorf("resolve analytics source root: %w", err)
-	}
-	info, err := os.Stat(absolute)
-	if err != nil {
-		return "", fmt.Errorf("stat analytics source root %q: %w", absolute, err)
-	}
-	if !info.IsDir() {
-		if projectConfigFile(absolute) {
-			return "", fmt.Errorf("Project authoring was removed; pass the source root directory %q instead of %q", filepath.Dir(absolute), absolute)
-		}
-		return "", fmt.Errorf("analytics source root %q is not a directory", absolute)
+		return "", nil, fmt.Errorf("resolve analytics source root: %w", err)
 	}
 	resolved, err := filepath.EvalSymlinks(absolute)
 	if err != nil {
-		return "", fmt.Errorf("resolve analytics source root %q: %w", absolute, err)
+		if projectConfigFile(absolute) {
+			return "", nil, fmt.Errorf("Project authoring was removed; pass the source root directory %q instead of %q", filepath.Dir(absolute), absolute)
+		}
+		return "", nil, fmt.Errorf("resolve analytics source root %q: %w", absolute, err)
 	}
-	return filepath.Clean(resolved), nil
+	resolved = filepath.Clean(resolved)
+	root, err := os.OpenRoot(resolved)
+	if err != nil {
+		if projectConfigFile(resolved) {
+			return "", nil, fmt.Errorf("Project authoring was removed; pass the source root directory %q instead of %q", filepath.Dir(absolute), absolute)
+		}
+		return "", nil, fmt.Errorf("open analytics source root %q: %w", absolute, err)
+	}
+	info, err := root.Stat(".")
+	if err != nil {
+		root.Close()
+		return "", nil, fmt.Errorf("stat analytics source root %q: %w", absolute, err)
+	}
+	if !info.IsDir() {
+		root.Close()
+		return "", nil, fmt.Errorf("analytics source root %q is not a directory", absolute)
+	}
+	return resolved, root, nil
 }
 
-func rejectLegacyProjectManifest(root string) error {
-	for _, name := range []string{"leapview.yaml", "leapview.yml"} {
-		path := filepath.Join(root, name)
-		_, err := os.Lstat(path)
+func validateAuthoredDirectories(rootPath string, root *os.Root) error {
+	for _, owned := range authoredResourceDirectories {
+		entry, err := root.Lstat(owned.directory)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("inspect legacy Project manifest %q: %w", path, err)
+			return fmt.Errorf("inspect authored resource directory %q: %w", filepath.Join(rootPath, owned.directory), err)
 		}
-		return fmt.Errorf("Project authoring was removed; pass the source root directory %q and delete %q", root, path)
+		if entry.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("authored resource directory symlink %q is not supported; use a directory within the source root", filepath.Join(rootPath, owned.directory))
+		}
+		if !entry.IsDir() {
+			return fmt.Errorf("authored resource directory %q is not a directory", filepath.Join(rootPath, owned.directory))
+		}
 	}
 	return nil
 }
 
-// rejectUnownedLeapViewResources prevents a legacy or removed LeapView
-// envelope from disappearing merely because it lives outside one of the six
-// conventional directories. Unrelated YAML (for example dbt configuration)
-// is ignored unless it declares LeapView's API version.
-func rejectUnownedLeapViewResources(root string) error {
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return fmt.Errorf("scan source root at %q: %w", path, walkErr)
+func rejectLegacyProjectManifest(rootPath string, root *os.Root) error {
+	for _, name := range []string{"leapview.yaml", "leapview.yml"} {
+		_, err := root.Lstat(name)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
 		}
-		if path == root {
+		if err != nil {
+			return fmt.Errorf("inspect legacy Project manifest %q: %w", name, err)
+		}
+		return fmt.Errorf("Project authoring was removed; pass the source root directory %q and delete %q", rootPath, filepath.Join(rootPath, name))
+	}
+	return nil
+}
+
+func snapshotYAMLFiles(rootPath string, root *os.Root) (*snapshotSourceReader, []snapshottedSourceFile, error) {
+	reader := &snapshotSourceReader{root: rootPath, files: make(map[string][]byte), paths: make(map[string]struct{})}
+	files := make([]snapshottedSourceFile, 0)
+	var total int64
+	entryCount := 0
+	fileCount := 0
+	err := fs.WalkDir(root.FS(), ".", func(relative string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("scan source root at %q: %w", displaySourcePath(relative), walkErr)
+		}
+		if relative == "." {
 			return nil
 		}
+		entryCount++
+		if entryCount > maxAuthoredSourceEntries {
+			return fmt.Errorf("analytics source exceeds %d filesystem entries", maxAuthoredSourceEntries)
+		}
+		relative = filepath.ToSlash(relative)
 		if entry.Type()&os.ModeSymlink != 0 {
-			resolved, resolveErr := filepath.EvalSymlinks(path)
-			if resolveErr != nil {
-				return fmt.Errorf("resolve source-root entry %q: %w", sourceRootRelative(root, path), resolveErr)
+			info, err := root.Stat(filepath.FromSlash(relative))
+			if err != nil {
+				return fmt.Errorf("source-root entry %q resolves outside source root", displaySourcePath(relative))
 			}
-			if err := ensureInsideSourceRoot(root, resolved); err != nil {
-				return fmt.Errorf("source-root entry %q: %w", sourceRootRelative(root, path), err)
+			if info.IsDir() {
+				return fmt.Errorf("authored resource directory symlink %q is not supported; use a directory within the source root", displaySourcePath(relative))
 			}
-			if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
-				return filepath.SkipDir
-			}
+			return fmt.Errorf("authored source symlink %q is not supported; use a regular file within the source root", displaySourcePath(relative))
 		}
 		if entry.IsDir() {
 			return nil
 		}
+		fileCount++
+		if fileCount > maxAuthoredSourceFiles {
+			return fmt.Errorf("analytics source exceeds %d files", maxAuthoredSourceFiles)
+		}
+		targetInfo, err := root.Lstat(filepath.FromSlash(relative))
+		if err != nil {
+			return fmt.Errorf("inspect authored source %q: %w", displaySourcePath(relative), err)
+		}
+		reader.paths[relative] = struct{}{}
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
 		if ext != ".yaml" && ext != ".yml" {
 			return nil
 		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil || filepath.IsAbs(relative) {
-			return fmt.Errorf("source-root entry %q cannot be made relative to source root", relative)
+		if !targetInfo.Mode().IsRegular() {
+			return fmt.Errorf("authored source %q is not a regular file", displaySourcePath(relative))
 		}
-		if isOwnedAuthoredPath(relative) {
-			return nil
+		content, err := readRootRegularFile(root, relative)
+		if err != nil {
+			return fmt.Errorf("read authored source %q: %w", displaySourcePath(relative), err)
 		}
-		kind, isLeapView, headerErr := resourceHeader(path)
-		if headerErr != nil {
-			// This scan is intentionally only a LeapView envelope probe. The
-			// owning directory loader reports malformed authored YAML precisely.
-			return nil
+		if int64(len(content)) > maxAuthoredSourceFileBytes {
+			return fmt.Errorf("authored source %q exceeds %d byte file limit", displaySourcePath(relative), maxAuthoredSourceFileBytes)
 		}
-		if !isLeapView {
-			return nil
+		if int64(len(content)) > maxAuthoredSourceBytes-total {
+			return fmt.Errorf("analytics source exceeds %d byte total limit", maxAuthoredSourceBytes)
 		}
-		if kind == "Project" {
-			return projectAuthoringRemovedError(path)
-		}
-		if isRemovedAuthoringKind(kind) {
-			return removedAuthoringKindError(path, kind)
-		}
-		// Supported resources outside the six root-owned directories belong to
-		// another nested source root or unrelated example and are not discovered
-		// by this compilation. Project and removed control-plane kinds are still
-		// rejected anywhere beneath the selected root above.
+		total += int64(len(content))
+		reader.files[relative] = content
+		files = append(files, snapshottedSourceFile{relative: relative, content: content})
 		return nil
 	})
-	return err
+	if err != nil {
+		return nil, nil, err
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].relative < files[j].relative })
+	return reader, files, nil
+}
+
+func readRootRegularFile(root *os.Root, relative string) ([]byte, error) {
+	file, err := root.Open(filepath.FromSlash(relative))
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("path is not a regular file")
+	}
+	if info.Size() > maxAuthoredSourceFileBytes {
+		return nil, fmt.Errorf("path exceeds %d byte file limit", maxAuthoredSourceFileBytes)
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxAuthoredSourceFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	return content, nil
+}
+
+func authoredDirectoryForPath(relative string) (authoredResourceDirectory, bool) {
+	relative = filepath.ToSlash(filepath.Clean(relative))
+	for _, owned := range authoredResourceDirectories {
+		if strings.HasPrefix(relative, owned.directory+"/") {
+			return owned, true
+		}
+	}
+	return authoredResourceDirectory{}, false
+}
+
+func cleanSourceRelativePath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" || filepath.IsAbs(path) || isWindowsAbsolute(path) {
+		return "", fmt.Errorf("path escapes source root")
+	}
+	for _, component := range strings.Split(filepath.ToSlash(path), "/") {
+		if component == ".." {
+			return "", fmt.Errorf("path escapes source root")
+		}
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("path escapes source root")
+	}
+	return clean, nil
+}
+
+func isWindowsAbsolute(path string) bool {
+	return len(path) >= 3 && ((path[0] >= 'a' && path[0] <= 'z') || (path[0] >= 'A' && path[0] <= 'Z')) && path[1] == ':' && (path[2] == '\\' || path[2] == '/')
+}
+
+func displaySourcePath(relative string) string {
+	relative = filepath.ToSlash(relative)
+	if relative == "." || relative == "" {
+		return "."
+	}
+	return relative
 }
 
 func projectAuthoringRemovedError(path string) error {
 	return fmt.Errorf("%s: Project authoring was removed; place supported resources under their conventional directories and remove this Project manifest", path)
 }
 
-func resourceHeader(path string) (kind string, leapview bool, err error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", false, err
-	}
+func resourceHeaderBytes(content []byte) (kind string, leapview bool, err error) {
 	var header struct {
 		APIVersion string `yaml:"apiVersion"`
 		Kind       string `yaml:"kind"`
@@ -214,115 +340,7 @@ func resourceHeader(path string) (kind string, leapview bool, err error) {
 	return strings.TrimSpace(header.Kind), true, nil
 }
 
-func isOwnedAuthoredPath(path string) bool {
-	path = filepath.ToSlash(filepath.Clean(path))
-	for _, owned := range authoredResourceDirectories {
-		prefix := owned.directory + "/"
-		if strings.HasPrefix(path, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func isRemovedAuthoringKind(kind string) bool {
-	switch kind {
-	case "Group", "RoleBinding", "Grant", "DataPolicy", "DashboardPublication":
-		return true
-	default:
-		return false
-	}
-}
-
-// discoverYAMLFiles walks all descendant directories, rather than using a
-// shallow glob. Every encountered symlink is resolved and must remain inside
-// the canonical source root; this includes YAML files linked from elsewhere.
-func discoverYAMLFiles(root, directory string) ([]string, error) {
-	base := filepath.Join(root, directory)
-	info, err := os.Stat(base)
-	if errors.Is(err, fs.ErrNotExist) {
-		return []string{}, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("inspect authored resource directory %q: %w", base, err)
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("authored resource directory %q is not a directory", base)
-	}
-	paths := []string{}
-	err = filepath.WalkDir(base, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return fmt.Errorf("discover authored resources at %q: %w", path, walkErr)
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			resolved, resolveErr := filepath.EvalSymlinks(path)
-			if resolveErr != nil {
-				return fmt.Errorf("resolve authored resource %q: %w", sourceRootRelative(root, path), resolveErr)
-			}
-			if err := ensureInsideSourceRoot(root, resolved); err != nil {
-				return fmt.Errorf("authored resource %q: %w", sourceRootRelative(root, path), err)
-			}
-			// WalkDir deliberately does not follow directory symlinks. Rejecting
-			// them avoids an apparently successful, but incomplete, source set.
-			resolvedInfo, statErr := os.Stat(path)
-			if statErr != nil {
-				return fmt.Errorf("inspect authored resource %q: %w", sourceRootRelative(root, path), statErr)
-			}
-			if resolvedInfo.IsDir() {
-				return fmt.Errorf("authored resource directory symlink %q is not supported; use a directory within the source root", path)
-			}
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		if ext != ".yaml" && ext != ".yml" {
-			return nil
-		}
-		if err := ensureInsideSourceRoot(root, path); err != nil {
-			return fmt.Errorf("authored resource %q: %w", sourceRootRelative(root, path), err)
-		}
-		paths = append(paths, path)
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(paths, func(i, j int) bool {
-		return filepath.ToSlash(paths[i]) < filepath.ToSlash(paths[j])
-	})
-	return paths, nil
-}
-
-func ensureInsideSourceRoot(root, path string) error {
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return fmt.Errorf("resolve source root %q: %w", root, err)
-	}
-	resolvedPath, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return fmt.Errorf("resolve path %q: %w", path, err)
-	}
-	relative, err := filepath.Rel(resolvedRoot, resolvedPath)
-	if err != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("resolves outside source root")
-	}
-	return nil
-}
-
-func sourceRootRelative(root, path string) string {
-	relative, err := filepath.Rel(root, path)
-	if err == nil && !filepath.IsAbs(relative) {
-		return filepath.ToSlash(relative)
-	}
-	return filepath.ToSlash(filepath.Base(path))
-}
-
-func authoredResourceKind(path string) (string, bool, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", false, fmt.Errorf("read authored resource %q: %w", path, err)
-	}
+func authoredResourceKindBytes(path string, content []byte) (string, bool, error) {
 	var header struct {
 		APIVersion string `yaml:"apiVersion"`
 		Kind       string `yaml:"kind"`
@@ -332,9 +350,6 @@ func authoredResourceKind(path string) (string, bool, error) {
 	}
 	apiVersion := strings.TrimSpace(header.APIVersion)
 	kind := strings.TrimSpace(header.Kind)
-	// Source-layout fragments are deliberately allowed only when neither
-	// envelope field is present. A non-empty apiVersion is unambiguously a
-	// resource document and must not be silently ignored when it is wrong.
 	if apiVersion == "" && kind == "" {
 		return "", false, nil
 	}
@@ -345,6 +360,15 @@ func authoredResourceKind(path string) (string, bool, error) {
 		return "", true, fmt.Errorf("%s: kind is required", path)
 	}
 	return kind, true, nil
+}
+
+func isRemovedAuthoringKind(kind string) bool {
+	switch kind {
+	case "Group", "RoleBinding", "Grant", "DataPolicy", "DashboardPublication":
+		return true
+	default:
+		return false
+	}
 }
 
 func removedAuthoringKindError(path, kind string) error {

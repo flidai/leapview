@@ -216,10 +216,14 @@ func localSourceName(sourceID string) string {
 // wrong physical source. Iterating names in sorted order keeps diagnostics
 // deterministic.
 func sourceAliasesForAssembly(project sourceAssembly) (map[string]string, map[string]string, error) {
-	aliases := make(map[string]string, len(project.Sources)*2)
+	aliasCapacity, err := checkedCapacitySum(len(project.Sources), len(project.Sources))
+	if err != nil {
+		return nil, nil, fmt.Errorf("runtime source alias capacity: %w", err)
+	}
+	aliases := make(map[string]string, aliasCapacity)
 	reverse := make(map[string]string, len(project.Sources))
 	aliasOwners := make(map[string]string, len(project.Sources))
-	keyOwners := make(map[string]string, len(project.Sources)*2)
+	keyOwners := make(map[string]string, aliasCapacity)
 	names := make([]string, 0, len(project.Sources))
 	for name := range project.Sources {
 		names = append(names, name)

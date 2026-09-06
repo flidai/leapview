@@ -26,6 +26,31 @@ func TestBundlePlanCompilerDeclaresDeterminismFromVolatileExpressions(t *testing
 	}
 }
 
+func TestCheckedCapacitySumRejectsOverflow(t *testing.T) {
+	maximumInt := int(^uint(0) >> 1)
+	if got, err := checkedCapacitySum(3, 4); err != nil || got != 7 {
+		t.Fatalf("checkedCapacitySum(3, 4) = %d, %v; want 7, nil", got, err)
+	}
+	if got, err := checkedCapacitySum(0, 0); err != nil || got != 0 {
+		t.Fatalf("checkedCapacitySum(0, 0) = %d, %v; want 0, nil", got, err)
+	}
+	if got, err := checkedCapacitySum(maximumInt-1, 1); err != nil || got != maximumInt {
+		t.Fatalf("checkedCapacitySum(max-1, 1) = %d, %v; want max, nil", got, err)
+	}
+	if got, err := checkedCapacitySum(maximumInt, 1); err == nil || got != 0 {
+		t.Fatalf("checkedCapacitySum(max, 1) = %d, %v; want 0, error", got, err)
+	}
+	if got, err := checkedCapacitySum(1, maximumInt); err == nil || got != 0 {
+		t.Fatalf("checkedCapacitySum(1, max) = %d, %v; want 0, error", got, err)
+	}
+	if got, err := checkedCapacitySum(-1, 1); err == nil || got != 0 {
+		t.Fatalf("checkedCapacitySum(-1, 1) = %d, %v; want 0, error", got, err)
+	}
+	if got, err := checkedCapacitySum(1, -1); err == nil || got != 0 {
+		t.Fatalf("checkedCapacitySum(1, -1) = %d, %v; want 0, error", got, err)
+	}
+}
+
 func TestPlanSourceRootAgainstBundleDetectsSQLChangeWithStableGraphIdentity(t *testing.T) {
 	files := map[string]string{
 		"connections/warehouse.yaml": "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: managed}\n",

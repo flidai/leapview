@@ -6,7 +6,6 @@ package compiler
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -83,16 +82,16 @@ func flatResourceIdentity(project *sourceAssembly, envelope resourceEnvelope, pa
 	return id, name, nil
 }
 
-func loadFlatModels(project *sourceAssembly, paths []string) error {
+func loadFlatModels(project *sourceAssembly, paths []string, reader sourceFileReader) error {
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelope(reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "Model" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Model", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -118,16 +117,16 @@ func loadFlatModels(project *sourceAssembly, paths []string) error {
 	return nil
 }
 
-func loadFlatSemanticModels(project *sourceAssembly, paths []string) error {
+func loadFlatSemanticModels(project *sourceAssembly, paths []string, reader sourceFileReader) error {
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelope(reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "SemanticModel" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want SemanticModel", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -150,16 +149,16 @@ func loadFlatSemanticModels(project *sourceAssembly, paths []string) error {
 	return nil
 }
 
-func loadFlatPipelines(project *sourceAssembly, paths []string) error {
+func loadFlatPipelines(project *sourceAssembly, paths []string, reader sourceFileReader) error {
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelope(reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "Pipeline" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Pipeline", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -167,7 +166,7 @@ func loadFlatPipelines(project *sourceAssembly, paths []string) error {
 		if err != nil {
 			return err
 		}
-		pipeline, err := LoadRefreshPipeline(path)
+		pipeline, err := LoadRefreshPipelineWithReader(reader, path)
 		if err != nil {
 			return resourceError(path, id, "spec", "Pipeline %q: %v", name, err)
 		}
@@ -179,9 +178,9 @@ func loadFlatPipelines(project *sourceAssembly, paths []string) error {
 	return nil
 }
 
-func loadFlatDashboards(project *sourceAssembly, paths []string) error {
+func loadFlatDashboards(project *sourceAssembly, paths []string, reader sourceFileReader) error {
 	for _, path := range paths {
-		document, err := LoadDashboardDocumentForSourceRoot(path, project.BaseDir)
+		document, err := loadDashboardDocumentForSourceRootWithReader(path, project.BaseDir, reader)
 		if err != nil {
 			return err
 		}

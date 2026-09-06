@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 
@@ -92,7 +93,11 @@ func PlanSourceRootAgainstBundle(sourceRoot string, active projectartifact.Sourc
 	}
 	plan := planForSourceAssembly(project)
 	changes, dependencyChanges, summary := diffResourceGraphs(project.Graph, active.Graph())
-	for _, materialization := range diffCompiledMaterialization(candidate, active) {
+	materializationChanges, err := diffCompiledMaterialization(candidate, active)
+	if err != nil {
+		return BundlePlan{}, err
+	}
+	for _, materialization := range materializationChanges {
 		merged := false
 		for i := range changes {
 			if changes[i].ID == materialization.ID && changes[i].Action == materialization.Action {
@@ -136,7 +141,7 @@ func PlanSourceRootAgainstBundle(sourceRoot string, active projectartifact.Sourc
 	return plan, nil
 }
 
-func diffCompiledMaterialization(candidate, active projectartifact.SourceBundle) []BundlePlanChange {
+func diffCompiledMaterialization(candidate, active projectartifact.SourceBundle) ([]BundlePlanChange, error) {
 	changes := make([]BundlePlanChange, 0)
 	candidateGraph := candidate.Graph()
 	activeManifest := active.Manifest()
@@ -147,7 +152,11 @@ func diffCompiledMaterialization(candidate, active projectartifact.SourceBundle)
 	// comparing a pre-artifact manifest against that projection reports false
 	// changes for an otherwise identical source root.
 	authoredTables := candidateManifest.Models
-	seen := make(map[string]struct{}, len(activeTables)+len(authoredTables))
+	capacity, err := checkedCapacitySum(len(activeTables), len(authoredTables))
+	if err != nil {
+		return nil, fmt.Errorf("compiled materialization table set: %w", err)
+	}
+	seen := make(map[string]struct{}, capacity)
 	for id := range authoredTables {
 		seen[id] = struct{}{}
 	}
@@ -175,7 +184,11 @@ func diffCompiledMaterialization(candidate, active projectartifact.SourceBundle)
 	}
 	activeSources := activeManifest.Sources
 	authoredSources := candidateManifest.Sources
-	seen = make(map[string]struct{}, len(activeSources)+len(authoredSources))
+	capacity, err = checkedCapacitySum(len(activeSources), len(authoredSources))
+	if err != nil {
+		return nil, fmt.Errorf("compiled materialization source set: %w", err)
+	}
+	seen = make(map[string]struct{}, capacity)
 	for id := range authoredSources {
 		seen[id] = struct{}{}
 	}
@@ -198,7 +211,18 @@ func diffCompiledMaterialization(candidate, active projectartifact.SourceBundle)
 		}
 		changes = append(changes, BundlePlanChange{Action: action, ID: id, Type: string(projectgraph.KindSource), Key: resource.Name, Reason: "compiled source definition changed", MaterializationImpact: true})
 	}
-	return changes
+	return changes, nil
+}
+
+func checkedCapacitySum(left, right int) (int, error) {
+	if left < 0 || right < 0 {
+		return 0, fmt.Errorf("capacity cannot be negative")
+	}
+	maximumInt := int(^uint(0) >> 1)
+	if left > maximumInt-right {
+		return 0, fmt.Errorf("capacity overflows platform int")
+	}
+	return left + right, nil
 }
 
 func planForSourceAssembly(project sourceAssembly) BundlePlan {

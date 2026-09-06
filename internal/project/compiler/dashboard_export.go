@@ -79,21 +79,28 @@ func ExportDashboardSource(path, sourceRoot string, mode DashboardExportMode) (D
 	if err != nil {
 		return DashboardSourceExport{}, fmt.Errorf("resolve dashboard path: %w", err)
 	}
-	if info, statErr := os.Stat(canonicalPath); statErr != nil {
-		return DashboardSourceExport{}, fmt.Errorf("resolve dashboard path: %w", statErr)
-	} else if info.IsDir() {
-		return DashboardSourceExport{}, fmt.Errorf("dashboard path %q is a directory", path)
-	}
 	mainPath, err := projectRelativePathChecked(root, canonicalPath)
 	if err != nil {
 		return DashboardSourceExport{}, err
 	}
-
-	input, err := LoadDashboardDocument(canonicalPath)
+	rootFS, err := os.OpenRoot(root)
+	if err != nil {
+		return DashboardSourceExport{}, fmt.Errorf("open source root: %w", err)
+	}
+	reader, _, err := snapshotYAMLFiles(root, rootFS)
+	closeErr := rootFS.Close()
 	if err != nil {
 		return DashboardSourceExport{}, err
 	}
-	expanded, err := document.ExpandDashboardFragments(input, canonicalPath, root)
+	if closeErr != nil {
+		return DashboardSourceExport{}, fmt.Errorf("close source root: %w", closeErr)
+	}
+
+	input, err := LoadDashboardDocumentWithReader(reader, canonicalPath)
+	if err != nil {
+		return DashboardSourceExport{}, err
+	}
+	expanded, err := document.ExpandDashboardFragmentsWithReader(input, canonicalPath, root, reader)
 	if err != nil {
 		return DashboardSourceExport{}, err
 	}
@@ -122,7 +129,7 @@ func ExportDashboardSource(path, sourceRoot string, mode DashboardExportMode) (D
 		if err != nil {
 			return DashboardSourceExport{}, err
 		}
-		content, err := os.ReadFile(filePath)
+		content, err := reader.ReadFile(filePath)
 		if err != nil {
 			return DashboardSourceExport{}, fmt.Errorf("read dashboard source %q: %w", relative, err)
 		}

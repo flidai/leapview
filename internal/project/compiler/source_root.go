@@ -17,10 +17,11 @@ func LoadSourceRoot(sourceRoot string) (sourceAssembly, error) {
 		return sourceAssembly{}, err
 	}
 	project := newSourceAssembly(discovered.root)
+	reader := discovered.reader
 
 	loaders := []struct {
 		kind string
-		load func(*sourceAssembly, []string) error
+		load func(*sourceAssembly, []string, sourceFileReader) error
 	}{
 		{kind: "Connection", load: loadConnections},
 		{kind: "Source", load: loadSources},
@@ -34,7 +35,7 @@ func LoadSourceRoot(sourceRoot string) (sourceAssembly, error) {
 		if pathErr != nil {
 			return sourceAssembly{}, pathErr
 		}
-		if loadErr := loader.load(&project, paths); loadErr != nil {
+		if loadErr := loader.load(&project, paths, reader); loadErr != nil {
 			return sourceAssembly{}, loadErr
 		}
 	}
