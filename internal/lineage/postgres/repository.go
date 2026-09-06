@@ -31,7 +31,7 @@ import (
 const (
 	// CanonicalVersion is bumped whenever the canonical lineage wire format
 	// changes.  A version is part of the digest input and never inferred.
-	CanonicalVersion   = 1
+	CanonicalVersion   = 2
 	maxProjectionNodes = 100000
 	maxProjectionEdges = 500000
 	maxPropertyBytes   = 65536
@@ -97,9 +97,9 @@ type Projection struct {
 	canonical []byte
 }
 
-// Binding binds a graph to one explicit delivery/generation identity. Both
-// values are required; a generation without its delivery is not a serving
-// scope in this capability.
+// Binding binds a graph to one explicit project and delivery/generation
+// identity. All values are required; a generation without its delivery or
+// project is not a serving scope in this capability.
 type Binding struct {
 	DeliveryID   string `json:"delivery_id"`
 	GenerationID string `json:"generation_id"`
@@ -205,10 +205,14 @@ func (r *Repository) Configured() bool {
 	}
 }
 
-// FromGraph projects the validated compiler graph into the canonical
-// lineage representation. The compiler graph remains authoritative: no
-// names, paths, or serving metadata are accepted as alternate identity.
-func FromGraph(g projectgraph.ProjectGraph) (Projection, error) {
+// FromGraph projects the validated rootless compiler graph into the canonical
+// lineage representation. Project identity is supplied by the caller from
+// the control-plane/serving scope; the compiler graph remains authoritative
+// for portable resources and edges.
+func FromGraph(projectID projectgraph.ResourceID, g projectgraph.ProjectGraph) (Projection, error) {
+	if _, err := projectgraph.NewResourceID(projectID.String()); err != nil {
+		return Projection{}, fmt.Errorf("%w: project id: %v", ErrInvalid, err)
+	}
 	if err := g.Validate(); err != nil {
 		return Projection{}, fmt.Errorf("%w: compiler graph: %v", ErrInvalid, err)
 	}
@@ -232,13 +236,13 @@ func FromGraph(g projectgraph.ProjectGraph) (Projection, error) {
 	for _, edge := range g.Edges() {
 		edges = append(edges, Edge{From: edge.From.String(), To: edge.To.String(), Relation: edge.Relation})
 	}
-	return NewProjectionFromRows(g.ProjectID().String(), nodes, edges)
+	return NewProjectionFromRows(projectID.String(), nodes, edges)
 }
 
 // GraphDigest computes the projection digest for a compiler graph without
 // persisting it.
-func GraphDigest(g projectgraph.ProjectGraph) (string, error) {
-	p, err := FromGraph(g)
+func GraphDigest(projectID projectgraph.ResourceID, g projectgraph.ProjectGraph) (string, error) {
+	p, err := FromGraph(projectID, g)
 	if err != nil {
 		return "", err
 	}
@@ -290,21 +294,18 @@ func CompilerGraphDigest(p Projection) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: reconstruct compiler graph: %v", ErrInvalid, err)
 	}
-	if graph.ProjectID().String() != p.ProjectID {
-		return "", fmt.Errorf("%w: compiler graph project differs from lineage projection", ErrTampered)
-	}
 	return graph.Digest(), nil
 }
 
 // FromArtifact projects the graph carried by an immutable compiler artifact.
 // No serving identity or manifest projection is inferred here.
-func FromArtifact(a interface {
+func FromArtifact(projectID projectgraph.ResourceID, a interface {
 	Graph() projectgraph.ProjectGraph
 }) (Projection, error) {
 	if a == nil {
 		return Projection{}, ErrInvalid
 	}
-	return FromGraph(a.Graph())
+	return FromGraph(projectID, a.Graph())
 }
 
 // NewProjectionFromRows validates and canonicalizes already projected rows.
@@ -362,7 +363,6 @@ func (p *Projection) validateAndCanonicalize() error {
 	}
 	sort.Slice(p.Nodes, func(i, j int) bool { return p.Nodes[i].ID < p.Nodes[j].ID })
 	seen := make(map[string]struct{}, len(p.Nodes))
-	projectRoots := 0
 	for i := range p.Nodes {
 		n := &p.Nodes[i]
 		id, err := projectgraph.NewResourceID(n.ID)
@@ -382,11 +382,8 @@ func (p *Projection) validateAndCanonicalize() error {
 			return fmt.Errorf("%w: node %q", ErrDuplicate, n.ID)
 		}
 		seen[n.ID] = struct{}{}
-		if n.ResourceKind == string(projectgraph.KindProject) {
-			projectRoots++
-			if n.ID != p.ProjectID {
-				return fmt.Errorf("%w: project root %q does not match %q", ErrInvalid, n.ID, p.ProjectID)
-			}
+		if n.ResourceKind == string(projectgraph.KindProjectNamespace) {
+			return fmt.Errorf("%w: project namespace is not a portable lineage node", ErrInvalid)
 		}
 		if !validDigest(n.IdentityDigest) {
 			return fmt.Errorf("%w: node %q identity digest", ErrInvalid, n.ID)
@@ -407,9 +404,6 @@ func (p *Projection) validateAndCanonicalize() error {
 			return fmt.Errorf("%w: node %q properties: %v", ErrInvalid, n.ID, err)
 		}
 		n.Properties = canonical
-	}
-	if projectRoots != 1 {
-		return fmt.Errorf("%w: graph must contain exactly one project root", ErrInvalid)
 	}
 	if len(p.Edges) > 0 {
 		sort.Slice(p.Edges, func(i, j int) bool {
@@ -631,7 +625,10 @@ func Persist(ctx context.Context, tx Tx, p Projection) error {
 // PersistGraph projects and stores a compiler graph and atomically records its
 // delivery/generation binding in the caller-owned transaction.
 func PersistGraph(ctx context.Context, tx Tx, g projectgraph.ProjectGraph, b Binding) (Projection, error) {
-	p, err := FromGraph(g)
+	if b.ProjectID == "" {
+		return Projection{}, fmt.Errorf("%w: binding project is required for a rootless graph", ErrInvalid)
+	}
+	p, err := FromGraph(projectgraph.ResourceID(b.ProjectID), g)
 	if err != nil {
 		return Projection{}, err
 	}
@@ -641,9 +638,7 @@ func PersistGraph(ctx context.Context, tx Tx, g projectgraph.ProjectGraph, b Bin
 	if b.GraphDigest != p.Digest {
 		return Projection{}, fmt.Errorf("%w: binding digest does not match projection", ErrConflict)
 	}
-	if b.ProjectID == "" {
-		b.ProjectID = p.ProjectID
-	} else if b.ProjectID != p.ProjectID {
+	if b.ProjectID != p.ProjectID {
 		return Projection{}, fmt.Errorf("%w: binding project does not match projection", ErrConflict)
 	}
 	if err := Persist(ctx, tx, p); err != nil {
@@ -670,23 +665,10 @@ func (r *Repository) PersistGraph(ctx context.Context, tx Tx, g projectgraph.Pro
 
 // PersistBinding records one immutable binding and verifies exact replay.
 func PersistBinding(ctx context.Context, tx Tx, b Binding) error {
-	if tx == nil || !validScope(b.DeliveryID) || !validScope(b.GenerationID) || !validDigest(b.GraphDigest) {
+	if tx == nil || !validScope(b.DeliveryID) || !validScope(b.GenerationID) || !validScope(b.ProjectID) || !validDigest(b.GraphDigest) {
 		return ErrInvalid
 	}
 	q := lineagedb.New(tx)
-	if b.ProjectID == "" {
-		projectID, err := q.GetGraphProjectID(ctx, b.GraphDigest)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			}
-			return err
-		}
-		b.ProjectID = projectID
-	}
-	if !validScope(b.ProjectID) {
-		return ErrInvalid
-	}
 	_, err := q.InsertBinding(ctx, lineagedb.InsertBindingParams{
 		DeliveryID: b.DeliveryID, GenerationID: b.GenerationID,
 		ProjectID: b.ProjectID, GraphDigest: b.GraphDigest,
@@ -847,7 +829,7 @@ func isUniqueViolation(err error) bool {
 }
 
 func verifyStoredProjection(ctx context.Context, db DB, want Projection) error {
-	got, err := loadDigest(ctx, db, want.Digest)
+	got, err := loadDigest(ctx, db, want.ProjectID, want.Digest)
 	if err != nil {
 		return err
 	}
@@ -860,38 +842,42 @@ func verifyStoredProjection(ctx context.Context, db DB, want Projection) error {
 	return nil
 }
 
-// Load fetches and verifies a graph by digest. Missing rows, altered rows,
-// endpoint closure failures, cycles, and digest mismatches all fail closed.
-func Load(ctx context.Context, db DB, digest string) (Projection, error) {
-	if db == nil || !validDigest(digest) {
+// Load fetches and verifies a graph by project and digest. Missing rows,
+// altered rows, endpoint closure failures, cycles, and digest mismatches all
+// fail closed.
+func Load(ctx context.Context, db DB, projectID, digest string) (Projection, error) {
+	if db == nil || !validScope(projectID) || !validDigest(digest) {
 		return Projection{}, ErrInvalid
 	}
-	return loadDigest(ctx, db, digest)
+	return loadDigest(ctx, db, projectID, digest)
 }
 
-func (r *Repository) Load(ctx context.Context, digest string) (Projection, error) {
+func (r *Repository) Load(ctx context.Context, projectID, digest string) (Projection, error) {
 	if r == nil {
 		return Projection{}, ErrInvalid
 	}
-	return Load(ctx, r.db, digest)
+	return Load(ctx, r.db, projectID, digest)
 }
 
-func loadDigest(ctx context.Context, db DB, digest string) (Projection, error) {
+func loadDigest(ctx context.Context, db DB, projectID, digest string) (Projection, error) {
 	q := lineagedb.New(db)
-	metadata, err := q.GetGraphMetadata(ctx, digest)
+	metadata, err := q.GetGraphMetadata(ctx, lineagedb.GetGraphMetadataParams{ProjectID: projectID, GraphDigest: digest})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Projection{}, ErrNotFound
 		}
 		return Projection{}, err
 	}
-	version, projectID := int(metadata.GraphVersion), metadata.ProjectID
+	if metadata.ProjectID != projectID {
+		return Projection{}, fmt.Errorf("%w: graph project mismatch", ErrTampered)
+	}
+	version := int(metadata.GraphVersion)
 	nodeCount, edgeCount := int(metadata.NodeCount), int(metadata.EdgeCount)
 	if version != CanonicalVersion || nodeCount < 1 || nodeCount > maxProjectionNodes || edgeCount < 0 || edgeCount > maxProjectionEdges {
 		return Projection{}, fmt.Errorf("%w: stored graph metadata exceeds bounds", ErrTampered)
 	}
 	nodes := make([]Node, 0, nodeCount)
-	nodeRows, err := q.ListNodes(ctx, lineagedb.ListNodesParams{GraphDigest: digest, RowLimit: int32(nodeCount + 1)})
+	nodeRows, err := q.ListNodes(ctx, lineagedb.ListNodesParams{ProjectID: projectID, GraphDigest: digest, RowLimit: int32(nodeCount + 1)})
 	if err != nil {
 		return Projection{}, err
 	}
@@ -905,7 +891,7 @@ func loadDigest(ctx context.Context, db DB, digest string) (Projection, error) {
 		nodes = append(nodes, n)
 	}
 	edges := make([]Edge, 0, edgeCount)
-	edgeRows, err := q.ListEdges(ctx, lineagedb.ListEdgesParams{GraphDigest: digest, RowLimit: int32(edgeCount + 1)})
+	edgeRows, err := q.ListEdges(ctx, lineagedb.ListEdgesParams{ProjectID: projectID, GraphDigest: digest, RowLimit: int32(edgeCount + 1)})
 	if err != nil {
 		return Projection{}, err
 	}
@@ -949,7 +935,7 @@ func LoadBound(ctx context.Context, db DB, deliveryID, generationID string) (Pro
 		}
 		return Projection{}, err
 	}
-	p, err := Load(ctx, db, binding.GraphDigest)
+	p, err := Load(ctx, db, binding.ProjectID, binding.GraphDigest)
 	if err != nil {
 		return Projection{}, err
 	}
@@ -1061,11 +1047,11 @@ func Traverse(ctx context.Context, db DB, in TraversalInput) ([]TraversalNode, e
 	}
 	// Traversal is a read of the compiler artifact, never a second source of
 	// graph truth. Verify the complete projection before exposing any node.
-	if _, err := Load(ctx, db, digest); err != nil {
+	if _, err := Load(ctx, db, in.ProjectID, digest); err != nil {
 		return nil, err
 	}
 	// Validate the root exists in this generation before running the walk.
-	exists, err := q.NodeExists(ctx, lineagedb.NodeExistsParams{GraphDigest: digest, NodeID: in.RootID})
+	exists, err := q.NodeExists(ctx, lineagedb.NodeExistsParams{ProjectID: in.ProjectID, GraphDigest: digest, NodeID: in.RootID})
 	if err != nil {
 		return nil, err
 	}

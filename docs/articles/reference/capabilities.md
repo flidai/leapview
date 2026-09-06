@@ -6,13 +6,11 @@ This page maps the supported product surface. Generated configuration, CLI, API,
 
 LeapView supports these versioned YAML resource families:
 
-- project discovery: Project;
 - project data access: Connection and Source;
-- analytical data: Model and SemanticModel;
+- analytical data and refresh: Model, SemanticModel, and Pipeline;
 - presentation: Dashboard;
-- access: Group, RoleBinding, Grant, and DataPolicy;
 
-All resources use the `apiVersion`, `kind`, `metadata`, and `spec` envelope. JSON Schemas and generated reference pages define required fields and accepted values.
+These six source-root resources use the `apiVersion`, `kind`, `metadata`, and `spec` envelope. JSON Schemas and generated reference pages define required fields and accepted values. Durable Project identity, access policy, and publication state are target-owned.
 
 ## Data access and lifecycle
 
@@ -60,4 +58,4 @@ The supported Hetzner module provides a single-node production topology with Cad
 
 LeapView is dashboards-as-code: browser edits are not the durable authoring source. Browser clients do not receive unrestricted SQL or credentials. DuckLake snapshots are internal serving consistency and cleanup boundaries, not a general customer-facing time-travel/version browser. The provided single-node deployment is not horizontal high availability.
 
-Use the generated [Configuration](/docs/config/project), [CLI](/docs/cli/reference), [API](/docs/api), and [visual](/docs/visuals/overview) catalogs to confirm exact support in the current version.
+Use the generated [Configuration](/docs/config), [CLI](/docs/cli/reference), [API](/docs/api), and [visual](/docs/visuals/overview) catalogs to confirm exact support in the current version.

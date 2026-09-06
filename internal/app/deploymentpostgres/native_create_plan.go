@@ -713,9 +713,9 @@ func validateNativePlanInspection(request deploymentmodule.NativeDeliveryPlanReq
 	identity := inspected.Generation.Identity
 	if inspected.Artifact.SourceDigest != request.SourceDigest || inspected.Artifact.SourceDigest != source.ArtifactDigest ||
 		inspected.Artifact.ProjectDigest != source.ProjectDigest || platformdigest.ValidateSHA256Identity(inspected.Artifact.ProjectDigest) != nil ||
-		compilerArtifact.ProjectID() != request.ProjectID || compilerArtifact.Digest() != source.ProjectDigest ||
-		compilerGraph.ProjectID() != request.ProjectID || compilerGraph.Digest() != compilerArtifact.Graph().Digest() || compilerGraph.Validate() != nil ||
-		inspected.Compiler.Plan.Project != request.ProjectID.String() || !sameNativeValue(inspected.Compiler.Manifest, compilerArtifact.Manifest()) ||
+		compilerArtifact.Digest() != source.ProjectDigest ||
+		compilerGraph.Digest() != compilerArtifact.Graph().Digest() || compilerGraph.Validate() != nil ||
+		!sameNativeValue(inspected.Compiler.Manifest, compilerArtifact.Manifest()) ||
 		identity.Validate() != nil || identity.ProjectID != request.ProjectID || identity.Environment != request.Environment || identity.GenerationID != expectedGenerationID ||
 		platformdigest.ValidateSHA256Identity(inspected.AuthorizationFingerprint) != nil ||
 		platformdigest.ValidateSHA256Identity(inspected.Artifact.ContentDigest) != nil ||

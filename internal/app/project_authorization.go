@@ -336,7 +336,7 @@ func protectProjectAuthoringResource(
 // activeProjectResource binds project-level actions to the active serving
 // generation's exact project identity.
 func activeProjectResource(_ *http.Request, projectID projectgraph.ResourceID) []access.ResourceRef {
-	resource, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+	resource, err := access.NewResourceRef(projectID, projectgraph.KindProjectNamespace)
 	if err != nil {
 		return nil
 	}

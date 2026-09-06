@@ -301,6 +301,12 @@ func (s *Service) Resolve(ctx context.Context, principalID string, ref Ref, capa
 	}
 	defer lease.Release()
 	resource, ok := graph.Resource(ref.ID)
+	if !ok && ref.Kind == projectgraph.KindProjectNamespace && ref.ID == snapshot.Identity().ProjectID {
+		// Project is an external serving namespace, so it is intentionally not
+		// present in the portable graph. Resolve it from the leased identity.
+		resource = projectgraph.Resource{ID: ref.ID, Kind: ref.Kind, Name: ref.ID.String()}
+		ok = true
+	}
 	if !ok || resource.Kind != ref.Kind {
 		return Result{}, ErrNotFound
 	}
@@ -375,7 +381,7 @@ func allowsAny(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.
 		return false, err
 	}
 	capability := access.CapabilityResourceRead
-	if resource.Kind == projectgraph.KindProject {
+	if resource.Kind == projectgraph.KindProjectNamespace {
 		capability = access.CapabilityProjectAdmin
 	}
 	for _, subject := range subjects {

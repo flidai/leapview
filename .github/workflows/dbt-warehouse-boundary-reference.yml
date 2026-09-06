@@ -172,25 +172,7 @@ jobs:
           sed -i 's/type: managed/type: azure_blob/' "$bundle/connections/warehouse.yaml"
           sed -i "s|path: dim_customers.parquet|path: az://$AZURE_PUBLICATION_CONTAINER/$PUBLICATION_PREFIX/dim_customers.parquet|" "$bundle/sources/dim_customers.yaml"
           sed -i "s|path: fct_orders.parquet|path: az://$AZURE_PUBLICATION_CONTAINER/$PUBLICATION_PREFIX/fct_orders.parquet|" "$bundle/sources/fct_orders.yaml"
-          printf 'LEAPVIEW_PROJECT_FILE=%s/leapview.yaml\n' "$bundle" >> "$GITHUB_ENV"
-
-      - name: Assert authored current-profile Project identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          project_id="$(awk '
-            $0 == "kind: Project" { in_project = 1; next }
-            in_project && $0 == "metadata:" { in_metadata = 1; next }
-            in_project && in_metadata && $0 ~ /^  id:[[:space:]]*/ {
-              sub(/^  id:[[:space:]]*/, "")
-              print
-              exit
-            }
-          ' "$LEAPVIEW_PROJECT_FILE")"
-          test -n "$project_id" && test "$project_id" = "$LEAPVIEW_WORKLOAD_PROJECT" || {
-            echo "authored current-profile Project id does not match LEAPVIEW_WORKLOAD_PROJECT" >&2
-            exit 1
-          }
+          printf 'LEAPVIEW_SOURCE_ROOT=%s\n' "$bundle" >> "$GITHUB_ENV"
 
       - name: Set up the cached LeapView CI toolchain
         uses: ./.github/actions/setup-ci
@@ -211,7 +193,7 @@ jobs:
           set -euo pipefail
           candidate_key="github:dbt-warehouse:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           candidate_json="$("$RUNNER_TEMP/leapview" dev --once --no-browser --format json \
-            --project "$LEAPVIEW_PROJECT_FILE" \
+            --source-root "$LEAPVIEW_SOURCE_ROOT" \
             --target "$LEAPVIEW_TARGET" \
             --candidate-key "$candidate_key" \
             --source-repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \

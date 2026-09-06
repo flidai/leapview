@@ -11,7 +11,6 @@ import (
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/securestore"
-	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 )
 
 const authoringCredentialService = "com.leapview.cli.authoring.v1"
@@ -61,19 +60,6 @@ func (applicationTargetDiscovery) Discover(ctx context.Context, target string) (
 	return accesscli.TargetMetadata{
 		Origin: strings.TrimRight(instance.CanonicalOrigin, "/"), InstanceID: instance.Id, Environment: instance.Environment,
 	}, nil
-}
-
-type applicationProjectIdentity struct{}
-
-func (applicationProjectIdentity) ProjectID(path string) (string, error) {
-	project, err := projectcompiler.LoadProject(path)
-	if err != nil {
-		return "", err
-	}
-	// Authoring credentials are scoped to the immutable graph root. The
-	// metadata name is only an executable-facing label and must not be used as
-	// the server-bound project assertion.
-	return project.ID.String(), nil
 }
 
 func openSystemBrowser(uri string) error {

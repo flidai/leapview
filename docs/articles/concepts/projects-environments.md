@@ -1,28 +1,22 @@
 # Projects and environments
 
-A LeapView project is the atomic configuration graph. An instance is permanently bound to one environment, such as `dev`, `staging`, or `prod`; activation selects the validated project generation and managed-data revisions that serve that instance.
+A LeapView project is the atomic configuration graph. An instance is permanently bound to one environment, such as `dev`, `staging`, or `prod`; activation selects the validated project generation and managed-data revisions that serve that instance. The authored source root contains resource files; the durable Project identity is target-bound.
 
 ## Project graph
 
-The project manifest discovers every authored resource kind from one root:
+The source root discovers the authored analytical resources from conventional directories:
 
-```yaml
-apiVersion: leapview.dev/v1
-kind: Project
-metadata:
-  id: project:commerce
-  name: commerce
-spec:
-  connections: {include: [connections/*.yaml]}
-  sources: {include: [sources/*.yaml]}
-  models: {include: [models/*.yaml]}
-  semanticModels: {include: [semantic-models/*.yaml]}
-  pipelines: {include: [pipelines/*.yaml]}
-  dashboards: {include: [dashboards/*.yaml]}
-  access: {include: [access/*.yaml]}
+```text
+dashboards/
+  connections/*.yaml
+  sources/*.yaml
+  models/*.yaml
+  semantic-models/*.yaml
+  pipelines/*.yaml
+  dashboards/*.yaml
 ```
 
-The graph has exactly seven kinds: `project`, `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`. Access declarations and publication declarations are project inputs compiled into authorization/publication snapshots; they are not additional graph nodes. Stable IDs make dependencies explicit, so a semantic model can reuse a shared Model or dimension without copying files into another container.
+The graph has exactly six authored kinds: `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`. Access declarations and publication state are target policy and publication concerns, not additional source-root catalog kinds. Stable IDs make dependencies explicit, so a semantic model can reuse a shared Model or dimension without copying files into another container.
 
 ## Environment
 
@@ -49,4 +43,4 @@ Ask these questions when organizing a repository:
 - Does only infrastructure or serving state differ? Use separate environment targets, not copied YAML trees.
 - Must several changes become visible together? Deliver them in one project deployment.
 
-See [Project configuration](/docs/config/project) and [Targets and environments](/docs/cli/targets) for the exact contracts and workflow.
+See [Project structure](/docs/project-structure) and [Targets and environments](/docs/cli/targets) for the exact source-root workflow and durable target identity.

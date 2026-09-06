@@ -35,10 +35,10 @@ func TestServicePlanDiscoversExactAndRecursiveSourcesDeterministically(t *testin
 	}}
 
 	got, err := service.Plan(context.Background(), Request{
-		ProjectPath: "project.yaml",
-		Connection:  "warehouse",
-		From:        from,
-		Previous:    &previous,
+		SourceRoot: "project.yaml",
+		Connection: "warehouse",
+		From:       from,
+		Previous:   &previous,
 	})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
@@ -68,7 +68,7 @@ func TestServicePlanDiscoversExactAndRecursiveSourcesDeterministically(t *testin
 		t.Fatalf("Diff.Removed = %#v", got.Diff.Removed)
 	}
 
-	second, err := service.Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse", From: from})
+	second, err := service.Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse", From: from})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestServicePlanResolvesNameAndCanonicalConnectionID(t *testing.T) {
 	})
 
 	byName, err := testService(project).Plan(context.Background(), Request{
-		ProjectPath: "project.yaml", Connection: "warehouse", From: from,
+		SourceRoot: "project.yaml", Connection: "warehouse", From: from,
 	})
 	if err != nil {
 		t.Fatalf("Plan(name) error = %v", err)
@@ -99,7 +99,7 @@ func TestServicePlanResolvesNameAndCanonicalConnectionID(t *testing.T) {
 	}
 
 	byID, err := testService(project).Plan(context.Background(), Request{
-		ProjectPath: "project.yaml", Connection: "connection:orders", From: from,
+		SourceRoot: "project.yaml", Connection: "connection:orders", From: from,
 	})
 	if err != nil {
 		t.Fatalf("Plan(ID) error = %v", err)
@@ -127,7 +127,7 @@ func TestServicePlanRejectsMissingOrInvalidConnectionID(t *testing.T) {
 			})
 			project.Connections["warehouse"] = Connection{ID: test.id, Kind: "managed"}
 			_, err := testService(project).Plan(context.Background(), Request{
-				ProjectPath: "project.yaml", Connection: "warehouse", From: from,
+				SourceRoot: "project.yaml", Connection: "warehouse", From: from,
 			})
 			assertErrorContains(t, err, test.want)
 		})
@@ -144,7 +144,7 @@ func TestServicePlanRejectsPathsOutsideConnectionRoot(t *testing.T) {
 		"warehouse.escape": {Connection: "warehouse", Path: "../outside.csv", Format: "csv"},
 	})
 
-	_, err := testService(project).Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
+	_, err := testService(project).Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
 	assertErrorContains(t, err, "escapes connection root")
 }
 
@@ -157,7 +157,7 @@ func TestServicePlanRejectsAbsoluteManagedSourcePath(t *testing.T) {
 		"warehouse.absolute": {Connection: "warehouse", Path: file, Format: "csv"},
 	})
 
-	_, err := testService(project).Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse", From: from})
+	_, err := testService(project).Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse", From: from})
 	assertErrorContains(t, err, "managed path must be relative")
 }
 
@@ -174,7 +174,7 @@ func TestServicePlanDoesNotFollowSymlinks(t *testing.T) {
 		"warehouse.link": {Connection: "warehouse", Path: "linked.csv", Format: "csv"},
 	})
 
-	_, err := testService(project).Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
+	_, err := testService(project).Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
 	assertErrorContains(t, err, "symbolic link")
 }
 
@@ -189,7 +189,7 @@ func TestServicePlanRecursiveGlobDoesNotTraverseDirectorySymlinks(t *testing.T) 
 		"warehouse.files": {Connection: "warehouse", Path: "**/*.csv", Format: "csv"},
 	})
 
-	result, err := testService(project).Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
+	result, err := testService(project).Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -208,7 +208,7 @@ func TestServicePlanRejectsNonRegularAndUnmatchedSources(t *testing.T) {
 			"warehouse.directory": {Connection: "warehouse", Path: "folder.csv", Format: "csv"},
 		})
 
-		_, err := testService(project).Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
+		_, err := testService(project).Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
 		assertErrorContains(t, err, "regular file")
 	})
 
@@ -221,7 +221,7 @@ func TestServicePlanRejectsNonRegularAndUnmatchedSources(t *testing.T) {
 			"warehouse.empty": {Connection: "warehouse", Path: "**/*.csv", Format: "csv"},
 		})
 
-		_, err := testService(project).Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
+		_, err := testService(project).Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
 		assertErrorContains(t, err, "matched no files")
 	})
 }
@@ -230,17 +230,17 @@ func TestServicePlanValidatesConnectionAndRequest(t *testing.T) {
 	root := t.TempDir()
 	service := testService(testProject(root, Connection{Kind: "s3"}, nil))
 
-	_, err := service.Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse"})
+	_, err := service.Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse"})
 	assertErrorContains(t, err, "cannot plan managed data")
 
-	_, err = service.Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "missing"})
+	_, err = service.Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "missing"})
 	assertErrorContains(t, err, "unknown connection")
 
 	_, err = service.Plan(context.Background(), Request{Connection: "warehouse"})
-	assertErrorContains(t, err, "project path is required")
+	assertErrorContains(t, err, "source root is required")
 
 	managed := testService(testProject(root, Connection{Kind: "managed"}, nil))
-	_, err = managed.Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse"})
+	_, err = managed.Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse"})
 	assertErrorContains(t, err, "from is required")
 
 	for name, connection := range map[string]Connection{
@@ -249,7 +249,7 @@ func TestServicePlanValidatesConnectionAndRequest(t *testing.T) {
 	} {
 		t.Run("managed authored "+name, func(t *testing.T) {
 			service := testService(testProject(root, connection, nil))
-			_, err := service.Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse", From: root})
+			_, err := service.Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse", From: root})
 			assertErrorContains(t, err, "cannot define root or scope")
 		})
 	}
@@ -262,7 +262,7 @@ func TestServicePlanRejectsRemovedLocalConnection(t *testing.T) {
 		"warehouse.file": {Connection: "warehouse", Path: "file.csv", Format: "csv"},
 	})
 
-	_, err := testService(project).Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse", From: root})
+	_, err := testService(project).Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse", From: root})
 	assertErrorContains(t, err, `connection kind "local" cannot plan managed data`)
 }
 
@@ -274,10 +274,10 @@ func TestServicePlanHonorsManifestLimits(t *testing.T) {
 	})
 
 	_, err := testService(project).Plan(context.Background(), Request{
-		ProjectPath: "project.yaml",
-		Connection:  "warehouse",
-		From:        filepath.Join(root, "data"),
-		Limits:      manageddata.Limits{MaxFileBytes: 4},
+		SourceRoot: "project.yaml",
+		Connection: "warehouse",
+		From:       filepath.Join(root, "data"),
+		Limits:     manageddata.Limits{MaxFileBytes: 4},
 	})
 	assertErrorContains(t, err, "maximum file size")
 }
@@ -292,28 +292,28 @@ func TestServicePlanRejectsFileMutationWhileHashing(t *testing.T) {
 	service := testService(project)
 	service.files = mutatingFileSystem{path: file}
 
-	_, err := service.Plan(context.Background(), Request{ProjectPath: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
+	_, err := service.Plan(context.Background(), Request{SourceRoot: "project.yaml", Connection: "warehouse", From: filepath.Join(root, "data")})
 	assertErrorContains(t, err, "changed while hashing")
 }
 
 func TestServicePlanPropagatesProjectLoadErrors(t *testing.T) {
-	service := NewService(func(string) (Project, error) {
-		return Project{}, errors.New("load failed")
+	service := NewService(func(string) (SourceCatalog, error) {
+		return SourceCatalog{}, errors.New("load failed")
 	})
 	_, err := service.Plan(context.Background(), Request{
-		ProjectPath: filepath.Join(t.TempDir(), "missing.yaml"),
-		Connection:  "warehouse",
+		SourceRoot: filepath.Join(t.TempDir(), "missing.yaml"),
+		Connection: "warehouse",
 	})
 	if err == nil {
 		t.Fatal("Plan() error = nil, want project load error")
 	}
 }
 
-func testProject(_ string, connection Connection, sources map[string]Source) Project {
+func testProject(_ string, connection Connection, sources map[string]Source) SourceCatalog {
 	if connection.ID == "" {
 		connection.ID = "connection:warehouse"
 	}
-	return Project{
+	return SourceCatalog{
 		Connections: map[string]Connection{
 			"warehouse": connection,
 			"other":     {ID: "connection:other", Kind: "managed"},
@@ -322,8 +322,8 @@ func testProject(_ string, connection Connection, sources map[string]Source) Pro
 	}
 }
 
-func testService(project Project) *Service {
-	return NewService(func(string) (Project, error) { return project, nil })
+func testService(project SourceCatalog) *Service {
+	return NewService(func(string) (SourceCatalog, error) { return project, nil })
 }
 
 func writeFile(t *testing.T, path, contents string) {

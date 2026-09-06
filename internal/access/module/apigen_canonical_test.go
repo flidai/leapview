@@ -70,7 +70,7 @@ func apigenRequest(method, path string, params map[string]string) *http.Request 
 func apigenResolver(parameter string, kind projectgraph.Kind) APIGenResourceResolver {
 	return func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
 		id, err := projectgraph.NewResourceID(chi.URLParam(r, parameter))
-		if err != nil || (kind == projectgraph.KindProject && id != active) {
+		if err != nil || (kind == projectgraph.KindProjectNamespace && id != active) {
 			return nil
 		}
 		resource, err := access.NewResourceRef(id, kind)
@@ -87,8 +87,8 @@ func apigenSnapshot(t *testing.T, principalID, groupID string, resourceID projec
 	if err != nil {
 		t.Fatal(err)
 	}
-	resources := []projectgraph.Resource{{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"}}
-	if resourceID != "project_demo" || resourceKind != projectgraph.KindProject {
+	resources := []projectgraph.Resource{}
+	if resourceID != "project_demo" || resourceKind != projectgraph.KindProjectNamespace {
 		resources = append(resources, projectgraph.Resource{ID: resourceID, Kind: resourceKind, Name: resourceID.String()})
 	}
 	graph, err := projectgraph.NewProjectGraph(resources, nil)
@@ -100,7 +100,7 @@ func apigenSnapshot(t *testing.T, principalID, groupID string, resourceID projec
 		t.Fatal(err)
 	}
 	capability := access.CapabilityResourceRead
-	if resourceKind == projectgraph.KindProject {
+	if resourceKind == projectgraph.KindProjectNamespace {
 		capability = access.CapabilityProjectAdmin
 	}
 	grants := make([]accesssnapshot.Grant, 0, 2)
@@ -184,13 +184,13 @@ func apigenResourceAuthorizer(t *testing.T, principal Principal, groups []string
 		return snapshot.EffectiveCapabilities(subjects)
 	})
 	parameter, scope := "dashboard", "dashboard"
-	resolvers := APIGenResourceResolvers{Dashboard: apigenResolver("dashboard", projectgraph.KindDashboard), SemanticModel: apigenResolver("model", projectgraph.KindSemanticModel), Connection: apigenResolver("connection", projectgraph.KindConnection), Project: apigenResolver("project", projectgraph.KindProject)}
+	resolvers := APIGenResourceResolvers{Dashboard: apigenResolver("dashboard", projectgraph.KindDashboard), SemanticModel: apigenResolver("model", projectgraph.KindSemanticModel), Connection: apigenResolver("connection", projectgraph.KindConnection), Project: apigenResolver("project", projectgraph.KindProjectNamespace)}
 	switch resourceKind {
 	case projectgraph.KindSemanticModel:
 		parameter, scope = "model", "semantic-model"
 	case projectgraph.KindConnection:
 		parameter, scope = "connection", "connection"
-	case projectgraph.KindProject:
+	case projectgraph.KindProjectNamespace:
 		parameter, scope = "project", "project"
 	}
 	contract := APIGenOperationContract{
@@ -199,7 +199,7 @@ func apigenResourceAuthorizer(t *testing.T, principal Principal, groups []string
 		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ"},
 		Extensions: map[string]any{apiGenObjectScopeExtension: scope},
 	}
-	if resourceKind == projectgraph.KindProject {
+	if resourceKind == projectgraph.KindProjectNamespace {
 		contract.Command.Privilege = "PROJECT_ADMIN"
 	}
 	authorizer, err := module.APIGenAuthorizer(apigenRuntimeFake{project: "project_demo", lease: lease, err: runtimeErr}, map[string]APIGenOperationContract{"readResource": contract}, resolvers)
@@ -222,7 +222,7 @@ func TestAPIGenResourceSelectorsAndSubjectResolution(t *testing.T) {
 		{name: "dashboard", id: "dashboard_sales", kind: projectgraph.KindDashboard, parameter: "dashboard", scope: "dashboard"},
 		{name: "semantic model", id: "model_sales", kind: projectgraph.KindSemanticModel, parameter: "model", scope: "semantic-model"},
 		{name: "connection", id: "connection_sales", kind: projectgraph.KindConnection, parameter: "connection", scope: "connection"},
-		{name: "project", id: "project_demo", kind: projectgraph.KindProject, parameter: "project", scope: "project"},
+		{name: "project", id: "project_demo", kind: projectgraph.KindProjectNamespace, parameter: "project", scope: "project"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			resourceID := test.id
@@ -230,7 +230,7 @@ func TestAPIGenResourceSelectorsAndSubjectResolution(t *testing.T) {
 			lease := apigenLeaseFake{identity: identity, snapshot: snapshot}
 			authorizer := apigenResourceAuthorizer(t, Principal{ID: principalID}, nil, resourceID, test.kind, snapshot, nil, lease)
 			path := "/api/v1/projects/project_demo/" + test.scope + "/" + resourceID.String()
-			if test.kind == projectgraph.KindProject {
+			if test.kind == projectgraph.KindProjectNamespace {
 				path = "/api/v1/projects/" + resourceID.String() + "/project/" + resourceID.String()
 			}
 			recorder := httptest.NewRecorder()
@@ -485,7 +485,7 @@ func TestAPIGenEveryGeneratedOperationConstructsWithCanonicalResolvers(t *testin
 		Dashboard:     apigenResolver("dashboard", projectgraph.KindDashboard),
 		SemanticModel: apigenResolver("model", projectgraph.KindSemanticModel),
 		Connection:    apigenResolver("connection", projectgraph.KindConnection),
-		Project:       apigenResolver("project", projectgraph.KindProject),
+		Project:       apigenResolver("project", projectgraph.KindProjectNamespace),
 	})
 	if err != nil {
 		t.Fatalf("generated operation contracts are not constructible: %v", err)
@@ -551,7 +551,6 @@ func TestAPIGenPublicationReplayRechecksRevokedResourcePublishGrant(t *testing.T
 		t.Fatal(err)
 	}
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "dashboard_website", Kind: projectgraph.KindDashboard, Name: "website"},
 	}, nil)
 	if err != nil {
@@ -585,7 +584,7 @@ func TestAPIGenPublicationReplayRechecksRevokedResourcePublishGrant(t *testing.T
 			Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_PUBLISH", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
 			Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
 		},
-	}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProject)})
+	}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProjectNamespace)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +665,7 @@ func TestAPIGenProjectPrivilegeRequiresRuntime(t *testing.T) {
 }
 
 func TestAPIGenDeliveryCandidateActivePathKeepsNormalSessionSnapshotAuthorization(t *testing.T) {
-	identity, snapshot := apigenSnapshot(t, "principal", "", "project_demo", projectgraph.KindProject, true, false)
+	identity, snapshot := apigenSnapshot(t, "principal", "", "project_demo", projectgraph.KindProjectNamespace, true, false)
 	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{ID: "principal"}, true)
 	module.SetCurrentEffectiveCapabilities(func(context.Context, string) ([]access.Capability, error) {
 		return snapshot.EffectiveCapabilities([]access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: "principal"}})
@@ -698,7 +697,7 @@ func TestAPIGenDeliveryCandidateActivePathKeepsNormalSessionSnapshotAuthorizatio
 }
 
 func TestAPIGenDeliveryAuthorizerUsesTargetOwnedRoleDecision(t *testing.T) {
-	identity, snapshot := apigenSnapshot(t, "principal", "", "project_demo", projectgraph.KindProject, true, false)
+	identity, snapshot := apigenSnapshot(t, "principal", "", "project_demo", projectgraph.KindProjectNamespace, true, false)
 	module := browserGuardModule(nil, Principal{ID: "principal"}, true)
 	contract := APIGenOperationContract{
 		OperationID: "createDeliveryPlan", Method: http.MethodPost,
@@ -1383,7 +1382,7 @@ func TestAPIGenSourcePlanPreActivationRequiresExplicitRESTTokenPlatformAdmin(t *
 	}
 	newAuthorizer := func(admin bool) *APIGenAuthorizer {
 		module := browserGuardModule(browserGuardRepository{admin: admin}, Principal{ID: "admin"}, true)
-		authorizer, err := module.APIGenAuthorizer(nil, map[string]APIGenOperationContract{"planProjectCandidateSynchronization": contract}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProject)})
+		authorizer, err := module.APIGenAuthorizer(nil, map[string]APIGenOperationContract{"planProjectCandidateSynchronization": contract}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProjectNamespace)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1435,7 +1434,7 @@ func TestAPIGenSourcePlanPreActivationRequiresExplicitRESTTokenPlatformAdmin(t *
 		t.Fatalf("non-admin status = %d, want %d", status, http.StatusForbidden)
 	}
 	adminError := browserGuardModule(browserGuardRepository{admin: true, err: errors.New("role store unavailable")}, Principal{ID: "admin"}, true)
-	errorAuthorizer, err := adminError.APIGenAuthorizer(nil, map[string]APIGenOperationContract{"planProjectCandidateSynchronization": contract}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProject)})
+	errorAuthorizer, err := adminError.APIGenAuthorizer(nil, map[string]APIGenOperationContract{"planProjectCandidateSynchronization": contract}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProjectNamespace)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1454,7 +1453,6 @@ func TestAPIGenActiveDeliveryCapabilityUsesRoleBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: projectID, Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
 	}, nil)
 	if err != nil {
@@ -1524,7 +1522,6 @@ func TestAPIGenDeliveryStatusUsesActiveSnapshotForSessionAndProjectToken(t *test
 		t.Fatal(err)
 	}
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: projectID, Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
 	}, nil)
 	if err != nil {

@@ -22,7 +22,7 @@ After `Main artifacts` builds and qualifies the `main` revision,
 2. authenticates to `/api/v1/capabilities` and admits the running runtime only
    when it reports API v1, native PostgreSQL delivery, a clean production
    build, and a canonical immutable build revision;
-3. publishes `dashboards/leapview.yaml` through the normal candidate,
+3. publishes the `dashboards/` source root through the normal candidate,
    approval, and activation APIs; and
 4. verifies the Visual Showcase and public readiness.
 

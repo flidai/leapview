@@ -13,12 +13,11 @@ import (
 
 func TestDemoUsesCanonicalOlistShowcase(t *testing.T) {
 	root := filepath.Join("..", "..")
-	projectPath := filepath.Join(root, "dashboards", "leapview.yaml")
-	compiled, err := projectcompiler.CompileProject(projectPath)
+	sourceRoot := filepath.Join(root, "dashboards")
+	_, err := projectcompiler.Compile(sourceRoot)
 	require.NoError(t, err)
-	require.Equal(t, "project:leapview-showcase", compiled.ProjectID().String())
 
-	paths, err := projectcompiler.SourceFiles(projectPath)
+	paths, err := projectcompiler.SourceFiles(sourceRoot)
 	require.NoError(t, err)
 	require.NotEmpty(t, paths)
 	var source strings.Builder
@@ -41,37 +40,13 @@ func TestDemoUsesCanonicalOlistShowcase(t *testing.T) {
 	require.NotContains(t, project, "kind: quack")
 }
 
-func TestDemoSharedLoginIsDashboardOnly(t *testing.T) {
+func TestDemoBundleDoesNotCarryControlPlaneAccessPolicy(t *testing.T) {
 	root := filepath.Join("..", "..")
-	compiled, err := projectcompiler.CompileProject(filepath.Join(root, "dashboards", "leapview.yaml"))
+	compiled, err := projectcompiler.Compile(filepath.Join(root, "dashboards"))
 	require.NoError(t, err)
-
-	var capabilities []string
-	var objects []string
-	const demoPrincipalID = "email_2a7d2952c0d423cf3ea7b39428fb9420"
-	for _, grant := range compiled.Manifest().Access.Grants {
-		if grant.Subject.PrincipalID != demoPrincipalID {
-			continue
-		}
-		require.Equal(t, "principal", grant.Subject.Kind)
-		require.Contains(t, []string{"semantic_model", "dashboard"}, grant.Object.Kind)
-		require.NotEmpty(t, grant.Object.ID)
-		capabilities = append(capabilities, grant.Capability)
-		objects = append(objects, grant.Object.ID)
-	}
-	require.ElementsMatch(t, []string{
-		"RESOURCE_USE", "RESOURCE_USE",
-		"RESOURCE_READ", "RESOURCE_READ", "RESOURCE_READ", "RESOURCE_READ", "RESOURCE_READ",
-	}, capabilities)
-	require.ElementsMatch(t, []string{
-		"semantic-model:sales", "semantic-model:sales",
-		"semantic-model:operations", "semantic-model:operations",
-		"dashboard:executive-sales", "dashboard:fulfillment-operations", "dashboard:visual-showcase",
-	}, objects)
-	for _, binding := range compiled.Manifest().Access.RoleBindings {
-		require.NotEqual(t, demoPrincipalID, binding.Subject.PrincipalID,
-			"shared demo login must not inherit a role that enables chat or mutations")
-	}
+	canonical := string(compiled.Canonical())
+	require.NotContains(t, canonical, `"access"`)
+	require.NotContains(t, canonical, `"publications"`)
 }
 
 func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
@@ -94,7 +69,8 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 
 	script := read(t, filepath.Join(root, "scripts", "deploy_demo.sh"))
 	for _, required := range []string{
-		"dashboards/leapview.yaml",
+		"source_root=\"$repo_root/dashboards\"",
+		"--source-root \"$source_root\"",
 		"bootstrapolist",
 		"cd -P",
 		"data sync",

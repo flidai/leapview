@@ -32,7 +32,7 @@ flowchart LR
 2. Models and semantic models turn those inputs into reusable analytical concepts.
 3. Dashboards compose semantic queries into filters, KPIs, charts, tables, and report pages.
 
-Access and publication resources apply alongside those layers. The global agent and MCP execute the same governed tools against authorized project resources. Separate dev, staging, and production instances can run the same validated project source without requiring a second copy of the YAML tree.
+Access policy and publication state apply alongside those layers as target-owned controls. The global agent and MCP execute the same governed tools against authorized project resources. Separate dev, staging, and production instances can run the same validated source root without requiring a second copy of the YAML tree.
 
 ## How a request is served
 
@@ -42,6 +42,6 @@ This division keeps credentials, unrestricted SQL, authorization, and query trut
 
 ## What lives in the repository
 
-A typical project contains one manifest and flat include lists for connections, sources, Models, semantic models, refresh pipelines, dashboards, access, and publications. Generated JSON Schemas describe the exact shape of every resource.
+A typical project contains one source root with conventional directories for connections, sources, Models, semantic models, refresh pipelines, and dashboards. Generated JSON Schemas describe the exact shape of each source-root resource.
 
 Start with [Get started with LeapView](/docs/getting-started) to run the included project. Then read [Projects and environments](/docs/concepts/projects-environments) before creating a project of your own.

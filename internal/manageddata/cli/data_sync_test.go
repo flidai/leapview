@@ -47,7 +47,7 @@ func TestDataSyncDeduplicatesAndUsesStableIdempotencyKey(t *testing.T) {
 	for range 2 {
 		var out bytes.Buffer
 		err := runDataSync(context.Background(), dataSyncRequest{
-			ProjectPath: "/catalog/leapview.yaml", ProjectID: "demo", Connection: "orders", Root: root,
+			SourceRoot: "/catalog", ProjectID: "demo", Connection: "orders", Root: root,
 			Target: server.URL, Token: "secret-token", Plan: plan, Out: &out, HTTPClient: server.Client(),
 		})
 		if err != nil {

@@ -102,7 +102,7 @@ type searchResultResponse struct {
 }
 
 var publicSearchKinds = []projectgraph.Kind{
-	projectgraph.KindProject, projectgraph.KindConnection, projectgraph.KindSource,
+	projectgraph.KindProjectNamespace, projectgraph.KindConnection, projectgraph.KindSource,
 	projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline,
 	projectgraph.KindDashboard,
 }
@@ -173,7 +173,7 @@ func searchResult(item projectcatalog.Result) searchResultResponse {
 func searchResultHref(item projectcatalog.Result) string {
 	id := url.PathEscape(item.Ref.ID.String())
 	switch item.Ref.Kind {
-	case projectgraph.KindProject:
+	case projectgraph.KindProjectNamespace:
 		return "/"
 	case projectgraph.KindConnection:
 		return "/connections/" + id + "/details"

@@ -96,9 +96,9 @@ CREATE TABLE IF NOT EXISTS project.source_blob (
 CREATE TABLE IF NOT EXISTS project.source_snapshot (
     snapshot_id                    uuid PRIMARY KEY,
     project_id                     text NOT NULL,
+    source_identity_version        integer NOT NULL DEFAULT 2,
     storage_security_domain        text NOT NULL,
     source_digest                  text NOT NULL,
-    project_file                   text NOT NULL,
     project_digest                 text NOT NULL,
     project_artifact_object_key    text NOT NULL,
     project_artifact_digest        text NOT NULL,
@@ -115,9 +115,9 @@ CREATE TABLE IF NOT EXISTS project.source_snapshot (
     UNIQUE (snapshot_id, project_id, storage_security_domain),
     UNIQUE (snapshot_id, source_digest),
     CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 255),
+    CHECK (source_identity_version >= 2),
     CHECK (storage_security_domain = btrim(storage_security_domain) AND octet_length(storage_security_domain) BETWEEN 1 AND 255),
     CHECK (source_digest ~ '^sha256:[0-9a-f]{64}$'),
-    CHECK (project_file = btrim(project_file) AND octet_length(project_file) BETWEEN 1 AND 1024),
     CHECK (project_digest ~ '^sha256:[0-9a-f]{64}$'),
     CHECK (project_artifact_object_key = btrim(project_artifact_object_key) AND octet_length(project_artifact_object_key) BETWEEN 1 AND 2048),
     CHECK (project_artifact_digest ~ '^sha256:[0-9a-f]{64}$' AND project_artifact_size_bytes BETWEEN 0 AND 67108864),
@@ -175,22 +175,22 @@ CREATE TABLE IF NOT EXISTS project.source_sync_plan (
     plan_id                    uuid PRIMARY KEY,
     operation_id               uuid NOT NULL UNIQUE,
     project_id                 text NOT NULL,
+    source_identity_version    integer NOT NULL DEFAULT 2,
     storage_security_domain    text NOT NULL,
     owner_id                   text NOT NULL,
     candidate_key              text NOT NULL,
     source_digest              text NOT NULL,
-    project_file               text NOT NULL,
     request_digest             text NOT NULL,
     state                      text NOT NULL DEFAULT 'open',
     expires_at                 timestamptz NOT NULL,
     created_at                 timestamptz NOT NULL DEFAULT clock_timestamp(),
     committed_at               timestamptz,
     CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 255),
+    CHECK (source_identity_version >= 2),
     CHECK (storage_security_domain = btrim(storage_security_domain) AND octet_length(storage_security_domain) BETWEEN 1 AND 255),
     CHECK (owner_id = btrim(owner_id) AND octet_length(owner_id) BETWEEN 1 AND 255),
     CHECK (candidate_key = btrim(candidate_key) AND octet_length(candidate_key) BETWEEN 1 AND 512),
     CHECK (source_digest ~ '^sha256:[0-9a-f]{64}$'),
-    CHECK (project_file = btrim(project_file) AND octet_length(project_file) BETWEEN 1 AND 1024),
     CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
     CHECK (state IN ('open', 'committed', 'expired')),
     CHECK (expires_at > created_at AND expires_at <= created_at + interval '5 minutes'),
@@ -224,13 +224,15 @@ RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, project AS $$
 BEGIN
     IF NEW.plan_id IS DISTINCT FROM OLD.plan_id OR NEW.operation_id IS DISTINCT FROM OLD.operation_id
        OR NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.storage_security_domain IS DISTINCT FROM OLD.storage_security_domain
+       OR NEW.source_identity_version IS DISTINCT FROM OLD.source_identity_version
        OR NEW.owner_id IS DISTINCT FROM OLD.owner_id OR NEW.candidate_key IS DISTINCT FROM OLD.candidate_key
-       OR NEW.source_digest IS DISTINCT FROM OLD.source_digest OR NEW.project_file IS DISTINCT FROM OLD.project_file
+       OR NEW.source_digest IS DISTINCT FROM OLD.source_digest
        OR NEW.request_digest IS DISTINCT FROM OLD.request_digest OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
        OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
         RAISE EXCEPTION 'source synchronization plan identity is immutable';
     END IF;
-    IF OLD.state <> 'open' OR NEW.state NOT IN ('committed', 'expired') OR NEW.state = OLD.state THEN
+    IF OLD.source_identity_version <> 2 OR NEW.source_identity_version <> 2
+       OR OLD.state <> 'open' OR NEW.state NOT IN ('committed', 'expired') OR NEW.state = OLD.state THEN
         RAISE EXCEPTION 'source synchronization plan transition is invalid';
     END IF;
     IF NEW.state = 'committed' AND NEW.committed_at IS NULL THEN
@@ -251,7 +253,7 @@ RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, project AS $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM project.source_sync_plan p
-        WHERE p.plan_id = NEW.plan_id AND p.state = 'open'
+        WHERE p.plan_id = NEW.plan_id AND p.source_identity_version = 2 AND p.state = 'open'
           AND p.expires_at > clock_timestamp()
     ) THEN
         RAISE EXCEPTION 'source synchronization plan is not open';
@@ -267,8 +269,9 @@ BEGIN
         RAISE EXCEPTION 'project source history is immutable';
     END IF;
     IF NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id OR NEW.project_id IS DISTINCT FROM OLD.project_id
+       OR NEW.source_identity_version IS DISTINCT FROM OLD.source_identity_version
        OR NEW.storage_security_domain IS DISTINCT FROM OLD.storage_security_domain OR NEW.source_digest IS DISTINCT FROM OLD.source_digest
-       OR NEW.project_file IS DISTINCT FROM OLD.project_file OR NEW.project_digest IS DISTINCT FROM OLD.project_digest
+       OR NEW.project_digest IS DISTINCT FROM OLD.project_digest
        OR NEW.project_artifact_object_key IS DISTINCT FROM OLD.project_artifact_object_key
        OR NEW.project_artifact_digest IS DISTINCT FROM OLD.project_artifact_digest
        OR NEW.project_artifact_size_bytes IS DISTINCT FROM OLD.project_artifact_size_bytes
@@ -279,7 +282,8 @@ BEGIN
        OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
         RAISE EXCEPTION 'project source snapshot identity is immutable';
     END IF;
-    IF OLD.state <> 'building' OR NEW.state <> 'sealed' OR NEW.sealed_at IS NOT NULL THEN
+    IF OLD.source_identity_version <> 2 OR NEW.source_identity_version <> 2
+       OR OLD.state <> 'building' OR NEW.state <> 'sealed' OR NEW.sealed_at IS NOT NULL THEN
         RAISE EXCEPTION 'project source snapshot transition is invalid';
     END IF;
     NEW.sealed_at := clock_timestamp();
@@ -294,7 +298,7 @@ BEGIN
     parent_id := NEW.snapshot_id;
     IF NOT EXISTS (
         SELECT 1 FROM project.source_snapshot s
-        WHERE s.snapshot_id = parent_id AND s.state = 'building'
+        WHERE s.snapshot_id = parent_id AND s.source_identity_version = 2 AND s.state = 'building'
     ) THEN
         RAISE EXCEPTION 'project source snapshot is not building';
     END IF;

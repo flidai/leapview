@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -49,7 +48,7 @@ func (e *DeliveryError) Unwrap() error {
 // The source digest is deliberately returned by the remote source snapshot
 // synchronizer; callers must not invent a digest from arbitrary local bytes.
 type DeliveryPlanOptions struct {
-	ProjectPath             string
+	SourceRoot              string
 	Credentials             cliapi.Credentials
 	TargetID                string
 	Operation               string
@@ -144,7 +143,7 @@ type DeliveryPlanOperations interface {
 // DeliveryPlanCommand constructs the canonical target-owned plan command.
 func DeliveryPlanCommand(ctx context.Context, operations DeliveryPlanOperations) *cobra.Command {
 	values := DeliveryPlanOptions{
-		ProjectPath:       filepath.Join("dashboards", "leapview.yaml"),
+		SourceRoot:        "dashboards",
 		TargetID:          "",
 		Operation:         "code_change",
 		CandidateKey:      "plan",
@@ -152,7 +151,7 @@ func DeliveryPlanCommand(ctx context.Context, operations DeliveryPlanOperations)
 		Format:            "text",
 	}
 	command := &cobra.Command{
-		Use:   "plan [project]",
+		Use:   "plan [source-root]",
 		Short: "Capture an exact source snapshot and create a target-owned delivery plan",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -160,10 +159,10 @@ func DeliveryPlanCommand(ctx context.Context, operations DeliveryPlanOperations)
 				return fmt.Errorf("delivery plan operations are required")
 			}
 			if len(args) == 1 {
-				if command.Flags().Changed("project") {
-					return fmt.Errorf("choose either --project or positional project, not both")
+				if command.Flags().Changed("source-root") {
+					return fmt.Errorf("choose either --source-root or positional source root, not both")
 				}
-				values.ProjectPath = args[0]
+				values.SourceRoot = args[0]
 			}
 			if values.Format != "text" && values.Format != "json" {
 				return fmt.Errorf("plan format must be text or json")
@@ -175,9 +174,10 @@ func DeliveryPlanCommand(ctx context.Context, operations DeliveryPlanOperations)
 			return writeDeliveryPlanResult(command.OutOrStdout(), values.Format, result)
 		},
 	}
-	command.Flags().StringVar(&values.ProjectPath, "project", values.ProjectPath, "project manifest path")
+	command.Flags().StringVar(&values.SourceRoot, "source-root", values.SourceRoot, "analytics source root")
 	command.Flags().StringVar(&values.Credentials.Target, "target", "", "LeapView target profile or URL (bound into this plan)")
 	command.Flags().StringVar(&values.Credentials.Token, "token", "", "ephemeral API token for one-shot automation")
+	command.Flags().StringVar(&values.Credentials.ProjectID, "project-id", "", "target-bound Project identity")
 	command.Flags().StringVar(&values.Operation, "operation", values.Operation, "delivery operation: code_change, restatement, binding_change, or policy_change")
 	command.Flags().StringVar(&values.CandidateKey, "candidate-key", values.CandidateKey, "stable source synchronization key")
 	command.Flags().IntVar(&values.UploadConcurrency, "upload-concurrency", values.UploadConcurrency, "maximum parallel source uploads (1-16)")

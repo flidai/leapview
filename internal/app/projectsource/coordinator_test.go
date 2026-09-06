@@ -65,7 +65,7 @@ func (s *coordinatorSource) CreateSyncPlanTx(_ context.Context, _ projectpostgre
 		}
 		return s.plan, nil
 	}
-	s.plan = projectpostgres.SyncPlan{PlanID: in.PlanID, OperationID: in.OperationID, ProjectID: in.ProjectID, StorageSecurityDomain: in.StorageSecurityDomain, OwnerID: in.OwnerID, CandidateKey: in.CandidateKey, SourceDigest: in.SourceDigest, ProjectFile: in.ProjectFile, RequestDigest: in.RequestDigest, State: "open", ExpiresAt: in.ExpiresAt, CreatedAt: time.Now().UTC()}
+	s.plan = projectpostgres.SyncPlan{PlanID: in.PlanID, OperationID: in.OperationID, ProjectID: in.ProjectID, StorageSecurityDomain: in.StorageSecurityDomain, OwnerID: in.OwnerID, CandidateKey: in.CandidateKey, SourceDigest: in.SourceDigest, RequestDigest: in.RequestDigest, State: "open", ExpiresAt: in.ExpiresAt, CreatedAt: time.Now().UTC()}
 	s.plan.Entries = make([]projectpostgres.SourceSyncPlanEntry, len(in.Entries))
 	for i, e := range in.Entries {
 		s.plan.Entries[i] = projectpostgres.SourceSyncPlanEntry{PlanID: in.PlanID, Path: e.Path, Digest: e.Digest, SizeBytes: e.SizeBytes, Ordinal: i}
@@ -117,7 +117,7 @@ func (s *coordinatorSource) CommitSnapshotTx(_ context.Context, _ projectpostgre
 		}
 		return s.snapshot, nil
 	}
-	s.snapshot = projectpostgres.SourceSnapshot{SnapshotID: in.SnapshotID, ProjectID: in.ProjectID, StorageSecurityDomain: in.StorageSecurityDomain, SourceDigest: in.SourceDigest, ProjectFile: in.ProjectFile, ProjectDigest: in.ProjectDigest, ProjectArtifactObjectKey: in.ProjectArtifactObjectKey, ProjectArtifactDigest: in.ProjectArtifactDigest, ProjectArtifactSizeBytes: in.ProjectArtifactSizeBytes, ManifestObjectKey: in.ManifestObjectKey, ManifestObjectDigest: in.ManifestObjectDigest, ManifestObjectSizeBytes: in.ManifestObjectSizeBytes, CompilerVersion: in.CompilerVersion, SchemaVersion: in.SchemaVersion, CreatedAt: time.Now().UTC()}
+	s.snapshot = projectpostgres.SourceSnapshot{SnapshotID: in.SnapshotID, ProjectID: in.ProjectID, StorageSecurityDomain: in.StorageSecurityDomain, SourceDigest: in.SourceDigest, ProjectDigest: in.ProjectDigest, ProjectArtifactObjectKey: in.ProjectArtifactObjectKey, ProjectArtifactDigest: in.ProjectArtifactDigest, ProjectArtifactSizeBytes: in.ProjectArtifactSizeBytes, ManifestObjectKey: in.ManifestObjectKey, ManifestObjectDigest: in.ManifestObjectDigest, ManifestObjectSizeBytes: in.ManifestObjectSizeBytes, CompilerVersion: in.CompilerVersion, SchemaVersion: in.SchemaVersion, CreatedAt: time.Now().UTC()}
 	s.plan.State = "committed"
 	return s.snapshot, nil
 }
@@ -299,13 +299,13 @@ func TestCoordinatorCanonicalizesPathsBeforeSorting(t *testing.T) {
 		{Path: files[0].Path, Digest: files[0].Digest, SizeBytes: int64(len(files[0].Bytes)), Ordinal: 0},
 		{Path: files[1].Path, Digest: files[1].Digest, SizeBytes: int64(len(files[1].Bytes)), Ordinal: 1},
 	}
-	if want := projectpostgres.CanonicalSourceDigest(normalized.ProjectID, normalized.ProjectFile, entries); normalized.SourceDigest != want {
+	if want := projectpostgres.CanonicalSourceDigest(entries); normalized.SourceDigest != want {
 		t.Fatalf("source digest = %q, want %q", normalized.SourceDigest, want)
 	}
 }
 
 func testAdmissionInput() AdmissionInput {
 	body := []byte("source")
-	return AdmissionInput{PlanID: uuid.New(), OperationID: uuid.New(), SnapshotID: uuid.New(), ProjectID: "project:test", StorageSecurityDomain: "runtime", OwnerID: "owner", CandidateKey: "default", ProjectFile: "leapview.yaml", ExpiresAt: time.Now().Add(time.Minute), Files: []SourceFile{{Path: "leapview.yaml", Bytes: body}}, Attestation: projectpostgres.SourceAttestationInput{AttestationID: uuid.New(), Payload: []byte(`{"source":true}`)}}
+	return AdmissionInput{PlanID: uuid.New(), OperationID: uuid.New(), SnapshotID: uuid.New(), ProjectID: "project:test", StorageSecurityDomain: "runtime", OwnerID: "owner", CandidateKey: "default", ExpiresAt: time.Now().Add(time.Minute), Files: []SourceFile{{Path: "models/orders.yaml", Bytes: body}}, Attestation: projectpostgres.SourceAttestationInput{AttestationID: uuid.New(), Payload: []byte(`{"source":true}`)}}
 }
 func testDigest(ch string) string { return "sha256:" + strings.Repeat(ch, 64) }

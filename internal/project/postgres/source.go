@@ -109,7 +109,6 @@ type SyncPlanInput struct {
 	OwnerID               string
 	CandidateKey          string
 	SourceDigest          string
-	ProjectFile           string
 	RequestDigest         string
 	ExpiresAt             time.Time
 	Entries               []SourceSyncPlanEntryInput
@@ -147,7 +146,6 @@ type SyncPlan struct {
 	OwnerID               string
 	CandidateKey          string
 	SourceDigest          string
-	ProjectFile           string
 	RequestDigest         string
 	State                 string
 	ExpiresAt, CreatedAt  time.Time
@@ -197,7 +195,6 @@ type CommitSnapshotInput struct {
 	ProjectID                string
 	StorageSecurityDomain    string
 	SourceDigest             string
-	ProjectFile              string
 	ProjectDigest            string
 	ProjectArtifactObjectKey string
 	ProjectArtifactDigest    string
@@ -216,7 +213,6 @@ type SourceSnapshot struct {
 	ProjectID                string
 	StorageSecurityDomain    string
 	SourceDigest             string
-	ProjectFile              string
 	ProjectDigest            string
 	ProjectArtifactObjectKey string
 	ProjectArtifactDigest    string
@@ -262,7 +258,7 @@ func (r *Repository) CreateSyncPlanTx(ctx context.Context, tx SourceTx, input Sy
 	if err := q.InsertSourceSyncPlan(ctx, projectdb.InsertSourceSyncPlanParams{
 		PlanID: dbUUID(normalized.PlanID), OperationID: dbUUID(normalized.OperationID), ProjectID: normalized.ProjectID,
 		StorageSecurityDomain: normalized.StorageSecurityDomain, OwnerID: normalized.OwnerID, CandidateKey: normalized.CandidateKey,
-		SourceDigest: normalized.SourceDigest, ProjectFile: normalized.ProjectFile, RequestDigest: normalized.RequestDigest,
+		SourceDigest: normalized.SourceDigest, RequestDigest: normalized.RequestDigest,
 		ExpiresAt: pgtype.Timestamptz{Time: normalized.ExpiresAt, Valid: true},
 	}); err != nil {
 		return SyncPlan{}, err
@@ -371,7 +367,7 @@ func (r *Repository) PlanSourceObjectRefsTx(ctx context.Context, tx SourceTx, pl
 	// The plan row is immutable except for its state transition, but validate
 	// all shared identity fields before trusting the joined projection. Any
 	// impossible/mutated row is a repository conflict, not caller input.
-	if _, _, identityErr := normalizeSourceReadIdentity(plan.ProjectID, plan.StorageSecurityDomain); identityErr != nil || !canonicalSourcePath(plan.ProjectFile) || digest.ValidateSHA256Identity(plan.SourceDigest) != nil || digest.ValidateSHA256Identity(plan.RequestDigest) != nil || !plan.ExpiresAt.Valid {
+	if _, _, identityErr := normalizeSourceReadIdentity(plan.ProjectID, plan.StorageSecurityDomain); identityErr != nil || digest.ValidateSHA256Identity(plan.SourceDigest) != nil || digest.ValidateSHA256Identity(plan.RequestDigest) != nil || !plan.ExpiresAt.Valid {
 		return nil, ErrSourceConflict
 	}
 	rows, err := q.ListSourceSyncPlanObjectRefs(ctx, dbUUID(planID))
@@ -400,7 +396,7 @@ func (r *Repository) PlanSourceObjectRefsTx(ctx context.Context, tx SourceTx, pl
 		entries[i] = SourceSnapshotEntryInput{Path: row.Path, Digest: row.Digest, SizeBytes: row.SizeBytes, Ordinal: int(row.Ordinal)}
 		out[i] = SourceSyncPlanObjectRef{PlanID: rowPlanID, ProjectID: row.ProjectID, StorageSecurityDomain: row.StorageSecurityDomain, Path: row.Path, Digest: row.Digest, SizeBytes: row.SizeBytes, Ordinal: int(row.Ordinal), ObjectKey: row.ObjectKey, ContentType: row.ContentType, MetadataDigest: row.MetadataDigest}
 	}
-	if sourceDigest(plan.ProjectID, plan.ProjectFile, entries) != plan.SourceDigest {
+	if sourceDigest(entries) != plan.SourceDigest {
 		return nil, fmt.Errorf("%w: source digest does not match canonical plan entries", ErrSourceConflict)
 	}
 	return out, nil
@@ -544,7 +540,7 @@ func (r *Repository) CommitSnapshotTx(ctx context.Context, tx SourceTx, input Co
 	if plan.OwnerID != n.OwnerID {
 		return SourceSnapshot{}, ErrSourceWrongOwner
 	}
-	if plan.ProjectID != n.ProjectID || plan.StorageSecurityDomain != n.StorageSecurityDomain || plan.SourceDigest != n.SourceDigest || plan.ProjectFile != n.ProjectFile {
+	if plan.ProjectID != n.ProjectID || plan.StorageSecurityDomain != n.StorageSecurityDomain || plan.SourceDigest != n.SourceDigest {
 		return SourceSnapshot{}, ErrSourceConflict
 	}
 	if plan.State != "open" && plan.State != "committed" {
@@ -568,7 +564,7 @@ func (r *Repository) CommitSnapshotTx(ctx context.Context, tx SourceTx, input Co
 	if !entriesMatchPlan(entries, plan.Entries) {
 		return SourceSnapshot{}, ErrSourceConflict
 	}
-	if actual := sourceDigest(n.ProjectID, n.ProjectFile, entries); actual != n.SourceDigest {
+	if actual := sourceDigest(entries); actual != n.SourceDigest {
 		return SourceSnapshot{}, fmt.Errorf("%w: source digest does not match canonical entries", ErrSourceInvalid)
 	}
 	entryBatch, err := snapshotEntryBatch(entries)
@@ -583,7 +579,7 @@ func (r *Repository) CommitSnapshotTx(ctx context.Context, tx SourceTx, input Co
 		return SourceSnapshot{}, fmt.Errorf("%w: missing or size-mismatched source blob %s for %s", ErrSourceConflict, invalidBlobs[0].Digest, invalidBlobs[0].Path)
 	}
 	q := projectdb.New(tx)
-	row, insertErr := q.InsertSourceSnapshot(ctx, projectdb.InsertSourceSnapshotParams{SnapshotID: dbUUID(n.SnapshotID), ProjectID: n.ProjectID, StorageSecurityDomain: n.StorageSecurityDomain, SourceDigest: n.SourceDigest, ProjectFile: n.ProjectFile, ProjectDigest: n.ProjectDigest, ProjectArtifactObjectKey: n.ProjectArtifactObjectKey, ProjectArtifactDigest: n.ProjectArtifactDigest, ProjectArtifactSizeBytes: n.ProjectArtifactSizeBytes, ManifestObjectKey: n.ManifestObjectKey, ManifestObjectDigest: n.ManifestObjectDigest, ManifestObjectSizeBytes: n.ManifestObjectSizeBytes, CompilerVersion: n.CompilerVersion, SchemaVersion: n.SchemaVersion})
+	row, insertErr := q.InsertSourceSnapshot(ctx, projectdb.InsertSourceSnapshotParams{SnapshotID: dbUUID(n.SnapshotID), ProjectID: n.ProjectID, StorageSecurityDomain: n.StorageSecurityDomain, SourceDigest: n.SourceDigest, ProjectDigest: n.ProjectDigest, ProjectArtifactObjectKey: n.ProjectArtifactObjectKey, ProjectArtifactDigest: n.ProjectArtifactDigest, ProjectArtifactSizeBytes: n.ProjectArtifactSizeBytes, ManifestObjectKey: n.ManifestObjectKey, ManifestObjectDigest: n.ManifestObjectDigest, ManifestObjectSizeBytes: n.ManifestObjectSizeBytes, CompilerVersion: n.CompilerVersion, SchemaVersion: n.SchemaVersion})
 	var snapshot SourceSnapshot
 	inserted := insertErr == nil
 	if errors.Is(insertErr, pgx.ErrNoRows) {
@@ -804,7 +800,7 @@ func loadPlanForUpdate(ctx context.Context, db DBTX, id uuid.UUID) (SyncPlan, er
 	return planFromModel(ctx, db, row)
 }
 func planFromModel(ctx context.Context, db DBTX, row projectdb.ProjectSourceSyncPlan) (SyncPlan, error) {
-	p := SyncPlan{PlanID: uuidFromDB(row.PlanID), OperationID: uuidFromDB(row.OperationID), ProjectID: row.ProjectID, StorageSecurityDomain: row.StorageSecurityDomain, OwnerID: row.OwnerID, CandidateKey: row.CandidateKey, SourceDigest: row.SourceDigest, ProjectFile: row.ProjectFile, RequestDigest: row.RequestDigest, State: row.State, ExpiresAt: row.ExpiresAt.Time, CreatedAt: row.CreatedAt.Time}
+	p := SyncPlan{PlanID: uuidFromDB(row.PlanID), OperationID: uuidFromDB(row.OperationID), ProjectID: row.ProjectID, StorageSecurityDomain: row.StorageSecurityDomain, OwnerID: row.OwnerID, CandidateKey: row.CandidateKey, SourceDigest: row.SourceDigest, RequestDigest: row.RequestDigest, State: row.State, ExpiresAt: row.ExpiresAt.Time, CreatedAt: row.CreatedAt.Time}
 	if row.CommittedAt.Valid {
 		t := row.CommittedAt.Time
 		p.CommittedAt = &t
@@ -832,8 +828,7 @@ func normalizeSyncPlan(input SyncPlanInput) (SyncPlanInput, []SourceSyncPlanEntr
 	}
 	n.OwnerID = strings.TrimSpace(n.OwnerID)
 	n.CandidateKey = strings.TrimSpace(n.CandidateKey)
-	n.ProjectFile = strings.TrimSpace(n.ProjectFile)
-	if n.OwnerID == "" || n.CandidateKey == "" || !canonicalSourcePath(n.ProjectFile) {
+	if n.OwnerID == "" || n.CandidateKey == "" {
 		return SyncPlanInput{}, nil, ErrSourceInvalid
 	}
 	if digest.ValidateSHA256Identity(n.SourceDigest) != nil || digest.ValidateSHA256Identity(n.RequestDigest) != nil {
@@ -848,7 +843,7 @@ func normalizeSyncPlan(input SyncPlanInput) (SyncPlanInput, []SourceSyncPlanEntr
 	if err != nil {
 		return SyncPlanInput{}, nil, err
 	}
-	if len(entries) == 0 || sourceDigest(n.ProjectID, n.ProjectFile, snapshotEntries(entries)) != n.SourceDigest {
+	if len(entries) == 0 || sourceDigest(snapshotEntries(entries)) != n.SourceDigest {
 		return SyncPlanInput{}, nil, ErrSourceInvalid
 	}
 	return n, entries, nil
@@ -918,8 +913,7 @@ func normalizeCommit(in CommitSnapshotInput) (CommitSnapshotInput, []SourceSnaps
 		return CommitSnapshotInput{}, nil, SourceAttestationInput{}, err
 	}
 	n.OwnerID = strings.TrimSpace(n.OwnerID)
-	n.ProjectFile = strings.TrimSpace(n.ProjectFile)
-	if !canonicalSourcePath(n.ProjectFile) || digest.ValidateSHA256Identity(n.SourceDigest) != nil || digest.ValidateSHA256Identity(n.ProjectDigest) != nil || digest.ValidateSHA256Identity(n.ProjectArtifactDigest) != nil || digest.ValidateSHA256Identity(n.ManifestObjectDigest) != nil || n.ProjectArtifactSizeBytes < 0 || n.ManifestObjectSizeBytes < 0 || n.ProjectArtifactSizeBytes > maxSourceSnapshotBytes || n.ManifestObjectSizeBytes > maxSourceSnapshotBytes || !validObjectKey(n.ProjectArtifactObjectKey) || !validObjectKey(n.ManifestObjectKey) || strings.TrimSpace(n.CompilerVersion) == "" || n.SchemaVersion <= 0 {
+	if digest.ValidateSHA256Identity(n.SourceDigest) != nil || digest.ValidateSHA256Identity(n.ProjectDigest) != nil || digest.ValidateSHA256Identity(n.ProjectArtifactDigest) != nil || digest.ValidateSHA256Identity(n.ManifestObjectDigest) != nil || n.ProjectArtifactSizeBytes < 0 || n.ManifestObjectSizeBytes < 0 || n.ProjectArtifactSizeBytes > maxSourceSnapshotBytes || n.ManifestObjectSizeBytes > maxSourceSnapshotBytes || !validObjectKey(n.ProjectArtifactObjectKey) || !validObjectKey(n.ManifestObjectKey) || strings.TrimSpace(n.CompilerVersion) == "" || n.SchemaVersion <= 0 {
 		return CommitSnapshotInput{}, nil, SourceAttestationInput{}, ErrSourceInvalid
 	}
 	entries := n.Entries
@@ -976,10 +970,11 @@ func canonicalSourcePath(v string) bool {
 func validObjectKey(v string) bool {
 	return v != "" && len(v) <= maxObjectKeyBytes && !strings.HasPrefix(v, "/") && !strings.Contains(v, `\`) && path.Clean(v) == v && v != ".." && !strings.HasPrefix(v, "../")
 }
-func sourceDigest(projectID, projectFile string, entries []SourceSnapshotEntryInput) string {
+func sourceDigest(entries []SourceSnapshotEntryInput) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%d:%s:%d:%s:", len(projectID), projectID, len(projectFile), projectFile)
-	for _, e := range entries {
+	canonical := append([]SourceSnapshotEntryInput(nil), entries...)
+	sort.Slice(canonical, func(i, j int) bool { return canonical[i].Path < canonical[j].Path })
+	for _, e := range canonical {
 		fmt.Fprintf(h, "%d:%s:%d:%s:%d:", len(e.Path), e.Path, len(e.Digest), e.Digest, e.SizeBytes)
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
@@ -988,8 +983,8 @@ func sourceDigest(projectID, projectFile string, entries []SourceSnapshotEntryIn
 // CanonicalSourceDigest returns the exact source identity enforced by snapshot
 // admission. Application coordinators use this helper so the pre-object-write
 // digest cannot drift from the repository's final transaction check.
-func CanonicalSourceDigest(projectID, projectFile string, entries []SourceSnapshotEntryInput) string {
-	return sourceDigest(projectID, projectFile, entries)
+func CanonicalSourceDigest(entries []SourceSnapshotEntryInput) string {
+	return sourceDigest(entries)
 }
 func sha256Identity(b []byte) string {
 	sum := sha256.Sum256(b)
@@ -1018,16 +1013,16 @@ func sameBlob(a SourceBlob, b SourceBlob) bool {
 	return a.ProjectID == b.ProjectID && a.StorageSecurityDomain == b.StorageSecurityDomain && a.Digest == b.Digest && a.SizeBytes == b.SizeBytes && a.ObjectKey == b.ObjectKey && a.ContentType == b.ContentType && a.MetadataDigest == b.MetadataDigest
 }
 func snapshotFromGet(row projectdb.GetSourceSnapshotRow) SourceSnapshot {
-	return sourceSnapshot(row.SnapshotID, row.ProjectID, row.StorageSecurityDomain, row.SourceDigest, row.ProjectFile, row.ProjectDigest, row.ProjectArtifactObjectKey, row.ProjectArtifactDigest, row.ProjectArtifactSizeBytes, row.ManifestObjectKey, row.ManifestObjectDigest, row.ManifestObjectSizeBytes, row.CompilerVersion, row.SchemaVersion, row.CreatedAt)
+	return sourceSnapshot(row.SnapshotID, row.ProjectID, row.StorageSecurityDomain, row.SourceDigest, row.ProjectDigest, row.ProjectArtifactObjectKey, row.ProjectArtifactDigest, row.ProjectArtifactSizeBytes, row.ManifestObjectKey, row.ManifestObjectDigest, row.ManifestObjectSizeBytes, row.CompilerVersion, row.SchemaVersion, row.CreatedAt)
 }
 func snapshotFromInsert(row projectdb.InsertSourceSnapshotRow) SourceSnapshot {
-	return sourceSnapshot(row.SnapshotID, row.ProjectID, row.StorageSecurityDomain, row.SourceDigest, row.ProjectFile, row.ProjectDigest, row.ProjectArtifactObjectKey, row.ProjectArtifactDigest, row.ProjectArtifactSizeBytes, row.ManifestObjectKey, row.ManifestObjectDigest, row.ManifestObjectSizeBytes, row.CompilerVersion, row.SchemaVersion, row.CreatedAt)
+	return sourceSnapshot(row.SnapshotID, row.ProjectID, row.StorageSecurityDomain, row.SourceDigest, row.ProjectDigest, row.ProjectArtifactObjectKey, row.ProjectArtifactDigest, row.ProjectArtifactSizeBytes, row.ManifestObjectKey, row.ManifestObjectDigest, row.ManifestObjectSizeBytes, row.CompilerVersion, row.SchemaVersion, row.CreatedAt)
 }
-func sourceSnapshot(snapshotID pgtype.UUID, projectID, domain, sourceDigest, projectFile, projectDigest, artifactKey, artifactDigest string, artifactSize int64, manifestKey, manifestDigest string, manifestSize int64, compilerVersion string, schemaVersion int64, createdAt pgtype.Timestamptz) SourceSnapshot {
-	return SourceSnapshot{SnapshotID: uuidFromDB(snapshotID), ProjectID: projectID, StorageSecurityDomain: domain, SourceDigest: sourceDigest, ProjectFile: projectFile, ProjectDigest: projectDigest, ProjectArtifactObjectKey: artifactKey, ProjectArtifactDigest: artifactDigest, ProjectArtifactSizeBytes: artifactSize, ManifestObjectKey: manifestKey, ManifestObjectDigest: manifestDigest, ManifestObjectSizeBytes: manifestSize, CompilerVersion: compilerVersion, SchemaVersion: schemaVersion, CreatedAt: createdAt.Time}
+func sourceSnapshot(snapshotID pgtype.UUID, projectID, domain, sourceDigest, projectDigest, artifactKey, artifactDigest string, artifactSize int64, manifestKey, manifestDigest string, manifestSize int64, compilerVersion string, schemaVersion int64, createdAt pgtype.Timestamptz) SourceSnapshot {
+	return SourceSnapshot{SnapshotID: uuidFromDB(snapshotID), ProjectID: projectID, StorageSecurityDomain: domain, SourceDigest: sourceDigest, ProjectDigest: projectDigest, ProjectArtifactObjectKey: artifactKey, ProjectArtifactDigest: artifactDigest, ProjectArtifactSizeBytes: artifactSize, ManifestObjectKey: manifestKey, ManifestObjectDigest: manifestDigest, ManifestObjectSizeBytes: manifestSize, CompilerVersion: compilerVersion, SchemaVersion: schemaVersion, CreatedAt: createdAt.Time}
 }
 func sameSnapshot(a SourceSnapshot, b CommitSnapshotInput) bool {
-	return a.ProjectID == b.ProjectID && a.StorageSecurityDomain == b.StorageSecurityDomain && a.SourceDigest == b.SourceDigest && a.ProjectFile == b.ProjectFile && a.ProjectDigest == b.ProjectDigest && a.ProjectArtifactObjectKey == b.ProjectArtifactObjectKey && a.ProjectArtifactDigest == b.ProjectArtifactDigest && a.ProjectArtifactSizeBytes == b.ProjectArtifactSizeBytes && a.ManifestObjectKey == b.ManifestObjectKey && a.ManifestObjectDigest == b.ManifestObjectDigest && a.ManifestObjectSizeBytes == b.ManifestObjectSizeBytes && a.CompilerVersion == b.CompilerVersion && a.SchemaVersion == b.SchemaVersion
+	return a.ProjectID == b.ProjectID && a.StorageSecurityDomain == b.StorageSecurityDomain && a.SourceDigest == b.SourceDigest && a.ProjectDigest == b.ProjectDigest && a.ProjectArtifactObjectKey == b.ProjectArtifactObjectKey && a.ProjectArtifactDigest == b.ProjectArtifactDigest && a.ProjectArtifactSizeBytes == b.ProjectArtifactSizeBytes && a.ManifestObjectKey == b.ManifestObjectKey && a.ManifestObjectDigest == b.ManifestObjectDigest && a.ManifestObjectSizeBytes == b.ManifestObjectSizeBytes && a.CompilerVersion == b.CompilerVersion && a.SchemaVersion == b.SchemaVersion
 }
 func attestationFromModel(row projectdb.GetSourceAttestationRow) (SourceAttestation, error) {
 	payload, err := canonicalJSON([]byte(row.Payload))
@@ -1037,5 +1032,5 @@ func attestationFromModel(row projectdb.GetSourceAttestationRow) (SourceAttestat
 	return SourceAttestation{AttestationID: uuidFromDB(row.AttestationID), SnapshotID: uuidFromDB(row.SnapshotID), SourceDigest: row.SourceDigest, AttestationDigest: row.AttestationDigest, Payload: payload, Revision: row.Revision, Repository: row.Repository, Ref: row.Ref, ChangeID: row.ChangeID, CreatedAt: row.CreatedAt.Time}, nil
 }
 func samePlanIdentity(row projectdb.ProjectSourceSyncPlan, in SyncPlanInput) bool {
-	return uuidFromDB(row.PlanID) == in.PlanID && uuidFromDB(row.OperationID) == in.OperationID && row.ProjectID == in.ProjectID && row.StorageSecurityDomain == in.StorageSecurityDomain && row.OwnerID == in.OwnerID && row.CandidateKey == in.CandidateKey && row.SourceDigest == in.SourceDigest && row.ProjectFile == in.ProjectFile && row.RequestDigest == in.RequestDigest
+	return uuidFromDB(row.PlanID) == in.PlanID && uuidFromDB(row.OperationID) == in.OperationID && row.ProjectID == in.ProjectID && row.StorageSecurityDomain == in.StorageSecurityDomain && row.OwnerID == in.OwnerID && row.CandidateKey == in.CandidateKey && row.SourceDigest == in.SourceDigest && row.RequestDigest == in.RequestDigest
 }

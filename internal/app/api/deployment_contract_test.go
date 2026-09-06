@@ -104,8 +104,11 @@ func TestPrivateProjectCandidateSynchronizationContract(t *testing.T) {
 
 	schemas := openAPIMap(t, openAPIMap(t, spec, "components"), "schemas")
 	request := openAPISchema(t, schemas, "CandidateSynchronizationRequest")
-	for _, field := range []string{"projectFile", "artifactDigest", "artifacts"} {
+	for _, field := range []string{"artifactDigest", "artifacts"} {
 		_ = schemaProperty(t, request, field)
+	}
+	if _, exists := openAPIMap(t, request, "properties")["projectFile"]; exists {
+		t.Fatal("candidate synchronization contract accepts obsolete projectFile")
 	}
 	reference := openAPISchema(t, schemas, "CandidateSourceArtifact")
 	for _, field := range []string{"path", "digest"} {

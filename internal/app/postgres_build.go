@@ -106,8 +106,8 @@ func candidateApprovalCapabilities(
 	if err != nil {
 		return "", "", nil, fmt.Errorf("load candidate approval artifact: %w", err)
 	}
-	if compiled.ProjectID != state.ProjectID || compiled.ProjectDigest != state.ProjectDigest {
-		return "", "", nil, errors.New("candidate approval compiled project differs from its generation")
+	if compiled.BundleDigest != state.ProjectDigest {
+		return "", "", nil, errors.New("candidate approval compiled source bundle differs from its generation")
 	}
 	identity, err := projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID))
 	if err != nil {

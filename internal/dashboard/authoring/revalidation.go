@@ -58,9 +58,6 @@ func (g RevalidationGeneration) Validate() error {
 	if err := g.Graph.Validate(); err != nil {
 		return fmt.Errorf("revalidation graph: %w", err)
 	}
-	if g.Identity.ProjectID != g.Graph.ProjectID() {
-		return fmt.Errorf("revalidation identity project %q does not match graph %q", g.Identity.ProjectID, g.Graph.ProjectID())
-	}
 	if err := g.Authorization.Validate(g.Graph); err != nil {
 		return fmt.Errorf("revalidation authorization snapshot: %w", err)
 	}

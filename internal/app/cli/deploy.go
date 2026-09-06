@@ -65,8 +65,9 @@ func (operations projectDeployOperations) Deploy(
 			asserted,
 		)
 	}
+	sourceRoot := strings.TrimSpace(options.SourceRoot)
 	plan, err := operations.planner.Create(ctx, projectcli.DeliveryPlanOptions{
-		ProjectPath:       options.ProjectPath,
+		SourceRoot:        sourceRoot,
 		Credentials:       options.Credentials,
 		Operation:         "code_change",
 		CandidateKey:      projectDeploymentCandidateKey,
@@ -88,7 +89,7 @@ func (operations projectDeployOperations) Deploy(
 		return fmt.Errorf("build %s is %s and has not produced a sealed candidate; run leapview publish after the build is sealed", build.BuildID, build.Status)
 	}
 	checkpoint := projectcli.CandidateCheckpoint{
-		ProjectPath: options.ProjectPath, TargetOrigin: options.Credentials.Target,
+		SourceRoot: sourceRoot, TargetOrigin: options.Credentials.Target,
 		TargetID: plan.TargetID, Environment: plan.Environment, ProjectID: plan.ProjectID,
 		CandidateID: build.CandidateID, CandidateKey: projectDeploymentCandidateKey,
 		ArtifactDigest: plan.SourceDigest, PlanID: plan.PlanID, PlanDigest: plan.PlanDigest,
@@ -100,7 +101,7 @@ func (operations projectDeployOperations) Deploy(
 		}
 	}
 	if err := operations.publisher.Publish(ctx, projectcli.PublishOptions{
-		ProjectPath: options.ProjectPath, ProjectID: plan.ProjectID, Credentials: options.Credentials,
+		ProjectID: plan.ProjectID, Credentials: options.Credentials,
 		Checkpoint: checkpoint, CandidateID: build.CandidateID,
 		Format: "text",
 	}, out); err != nil {

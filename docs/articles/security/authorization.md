@@ -6,48 +6,19 @@ LeapView authorization assigns privileges on securable resources to principals, 
 
 Securable objects include projects, dashboards, semantic models, sources, Models, datasets, tables, and columns. Objects participate in a parent hierarchy, so effective access may include inherited privileges as well as direct grants.
 
-The authored project graph has exactly seven kinds: `project`, `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`. Groups, role bindings, grants, data policies, and dashboard-publication declarations are project inputs compiled into authorization and publication snapshots; they are not additional catalog graph nodes.
+The authored project graph has exactly six source-root kinds: `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`. Groups, role bindings, grants, data policies, and dashboard-publication declarations are target policy or publication inputs compiled into authorization and publication snapshots; they are not additional source-root catalog nodes.
 
 Review the effective privilege result rather than assuming a direct binding is the only source of access. The Current User and Access APIs expose effective-privilege views for this purpose.
 
 ## Project roles
 
-Project role bindings apply reusable privilege sets such as viewer, member, editor, contributor, deployer, admin, or owner. Bind a stable group wherever access follows team membership:
-
-```yaml
-apiVersion: leapview.dev/v1
-kind: RoleBinding
-metadata:
-  id: role-binding:analysts-viewer
-  name: analysts-viewer
-spec:
-  role: viewer
-  subject:
-    kind: group
-    group: analysts
-```
+Project role bindings apply reusable privilege sets such as viewer, member, editor, contributor, deployer, admin, or owner. Bind a stable group wherever access follows team membership. Role bindings are administered on the target through **Admin → Access** or the [Access API](/docs/api/access); they are not files in the analytics source root.
 
 Roles express common responsibilities. Owners and grant managers should be rare; routine project deployment should use a dedicated deployer identity rather than an owner token.
 
 ## Explicit grants
 
-Use a Grant when one subject needs one privilege on a specific securable object outside the standard role shape:
-
-```yaml
-apiVersion: leapview.dev/v1
-kind: Grant
-metadata:
-  id: grant:analysts-dashboard-read
-  name: analysts-dashboard-read
-spec:
-  object:
-    kind: dashboard
-    id: dashboard:executive
-  subject:
-    kind: group
-    group: analysts
-  capability: RESOURCE_READ
-```
+Use a target-owned grant when one subject needs one privilege on a specific securable object outside the standard role shape. Create and review grants through **Admin → Access** or the [Access API](/docs/api/access), using the exact compiled resource ID and the narrowest supported capability.
 
 Choose the narrowest object and privilege that supports the task. Avoid accumulating one-off direct user grants; they are harder to review and can survive team changes.
 
@@ -113,4 +84,4 @@ Use this periodic review:
 7. Remove or deactivate obsolete identities and revoke credentials.
 8. Audit every binding, policy, and ownership change.
 
-Validate project access resources before deployment and test with a non-owner principal afterward. See [Role Binding](/docs/config/role-binding), [Grant](/docs/config/grant), [Data Policy](/docs/config/data-policy), and the [Access API](/docs/api/access).
+Validate target access policy before deployment and test with a non-owner principal afterward. Use the [Access API](/docs/api/access) and the effective-privilege views to review role bindings, grants, and data policies.

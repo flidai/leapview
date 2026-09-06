@@ -47,6 +47,10 @@ var visualShortcodePattern = regexp.MustCompile(`^\s*\{\{<\s*visual\s+id="([a-z0
 var visualFencePattern = regexp.MustCompile("^```ya?ml[ \\t]+visual-example=([a-z0-9_]+)[ \\t]*$")
 
 const (
+	// Source roots are portable and deliberately do not carry Project
+	// identity. This fixture binds its runtime explicitly to a target-shaped
+	// identity so generated examples exercise the same route contract.
+	visualDocsProjectID   projectgraph.ResourceID = "project:visual-docs"
 	visualDocsDashboardID projectgraph.ResourceID = "dashboard:visual-docs"
 )
 
@@ -171,13 +175,13 @@ type visualExampleReference = visualdocs.ExampleReference
 
 func main() {
 	docsDir := flag.String("docs", "docs/visuals", "visual documentation directory")
-	project := flag.String("project", "internal/app/tools/visualdocgen/testdata/project/leapview.yaml", "fixture project")
+	sourceRoot := flag.String("source-root", "internal/app/tools/visualdocgen/testdata/project", "fixture analytics source root")
 	data := flag.String("data", "internal/app/tools/visualdocgen/testdata/data", "fixture managed-data root")
 	out := flag.String("out", "docs/visuals/examples.gen.json", "generated artifact")
 	check := flag.Bool("check", false, "verify the generated artifact is current")
 	flag.Parse()
 
-	artifact, err := generateVisualExamples(*docsDir, *project, *data)
+	artifact, err := generateVisualExamples(*docsDir, *sourceRoot, *data)
 	if err == nil {
 		err = persistVisualExamples(*out, artifact, *check)
 	}
@@ -206,7 +210,7 @@ func persistVisualExamples(path string, artifact visualExamplesArtifact, check b
 	return nil
 }
 
-func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExamplesArtifact, error) {
+func generateVisualExamples(docsDir, sourceRoot, dataRoot string) (visualExamplesArtifact, error) {
 	catalogContents, err := os.ReadFile(filepath.Join(docsDir, "catalog.json"))
 	if err != nil {
 		return visualExamplesArtifact{}, err
@@ -240,7 +244,7 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		examplesByPage[document.Source] = examples
 	}
 
-	compiled, err := projectcompiler.CompileProject(projectPath)
+	compiled, err := projectcompiler.Compile(sourceRoot)
 	if err != nil {
 		return visualExamplesArtifact{}, fmt.Errorf("compile fixture project: %w", err)
 	}
@@ -272,7 +276,7 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		modelDefinitions[resourceID] = model
 	}
 	definition, err := dashboardruntime.NewProjectDefinition(
-		compiled.ProjectID(), manifest.Title, manifest.Description, modelDefinitions,
+		visualDocsProjectID, manifest.Title, manifest.Description, modelDefinitions,
 		map[projectgraph.ResourceID]dashboarddefinition.Definition{visualDocsDashboardID: compiledDashboard},
 	)
 	if err != nil {
@@ -329,12 +333,12 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 			SourceDataDigest: request.SourceDataDigest, ResultLimits: request.ResultLimits,
 		})
 	})
-	identity, err := projectgraph.NewServingIdentity(compiled.ProjectID(), "development", "visual-docs")
+	identity, err := projectgraph.NewServingIdentity(visualDocsProjectID, "development", "visual-docs")
 	if err != nil {
 		refreshLease.Release()
 		return visualExamplesArtifact{}, fmt.Errorf("build fixture serving identity: %w", err)
 	}
-	service, err := dashboardruntime.NewFromGeneration(refreshLease.Context(), runtimeDir, dashboardadapter.NewFactory(dashboardadapter.Options{Projects: projects, TargetID: "visual-docs", SnapshotSealID: "visual-docs", ProjectID: compiled.ProjectID(), Environment: "development"}), identity, definition)
+	service, err := dashboardruntime.NewFromGeneration(refreshLease.Context(), runtimeDir, dashboardadapter.NewFactory(dashboardadapter.Options{Projects: projects, TargetID: "visual-docs", SnapshotSealID: "visual-docs", ProjectID: visualDocsProjectID, Environment: "development"}), identity, definition)
 	refreshLease.Release()
 	if err != nil {
 		return visualExamplesArtifact{}, fmt.Errorf("open fixture runtime: %w", err)

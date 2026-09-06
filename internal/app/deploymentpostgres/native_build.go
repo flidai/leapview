@@ -837,7 +837,7 @@ func (c *NativeBuildCoordinator) nativeSourceRevision(ctx context.Context, plan 
 }
 
 func validateNativeBuildArtifacts(artifacts release.CandidateArtifactSet, request deploymentmodule.NativeDeliveryBuildRequest, plan deploymentdomain.DeliveryPlan) error {
-	if artifacts.Artifact.SourceDigest != plan.SourceDigest || artifacts.Compiler.Graph.ProjectID() != request.ProjectID || artifacts.Compiler.Graph.Validate() != nil || artifacts.Compiler.Artifact.ProjectID() != request.ProjectID || artifacts.Compiler.Artifact.Digest() != artifacts.Artifact.ProjectDigest {
+	if artifacts.Artifact.SourceDigest != plan.SourceDigest || artifacts.Compiler.Graph.Validate() != nil || artifacts.Compiler.Artifact.Digest() != artifacts.Artifact.ProjectDigest {
 		return fmt.Errorf("%w: candidate artifact compiler identity differs from plan", deploymentdomain.ErrDeliveryConflict)
 	}
 	if platformdigest.ValidateSHA256Identity(artifacts.Artifact.ProjectDigest) != nil {

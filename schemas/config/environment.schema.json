@@ -2378,9 +2378,9 @@
       "x-lifecycle": "development",
       "x-scope": "dev server"
     },
-    "LEAPVIEW_DEV_PROJECT": {
-      "default": "dashboards/leapview.yaml",
-      "description": "Project published by the managed development server.",
+    "LEAPVIEW_DEV_PROJECT_ID": {
+      "default": "project:leapview-showcase",
+      "description": "Project identifier used by the managed development server and agent end-to-end workflow.",
       "type": "string",
       "x-lifecycle": "development",
       "x-scope": "dev server"
@@ -2413,6 +2413,13 @@
       "default": "false",
       "description": "Skip automatic project publishing in the managed development server.",
       "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
+    "LEAPVIEW_DEV_SOURCE_ROOT": {
+      "default": "dashboards",
+      "description": "Analytics source root published by the managed development server.",
       "type": "string",
       "x-lifecycle": "development",
       "x-scope": "dev server"

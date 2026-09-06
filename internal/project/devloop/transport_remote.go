@@ -18,7 +18,6 @@ type ArtifactReference struct {
 
 type SynchronizationPlanRequest struct {
 	ProjectID      projectgraph.ResourceID
-	ProjectFile    string
 	ArtifactDigest string
 	// SourceOnly asks the target to retain bytes without candidate preparation.
 	// It is used by canonical delivery plan before Build performs physical work.
@@ -112,7 +111,7 @@ func (remote *TransportRemote) RetainSource(ctx context.Context, snapshot Snapsh
 		return RetainedSource{}, err
 	}
 	if retainer, ok := remote.transport.(SourceRetentionTransport); ok {
-		planRequest := SynchronizationPlanRequest{ProjectID: snapshot.ProjectID, ProjectFile: snapshot.ProjectFile, ArtifactDigest: snapshot.Digest, SourceOnly: true, CandidateKey: snapshot.CandidateKey, Artifacts: make([]ArtifactReference, len(snapshot.Artifacts)), SourceRevision: snapshot.SourceRevision}
+		planRequest := SynchronizationPlanRequest{ProjectID: snapshot.ProjectID, ArtifactDigest: snapshot.Digest, SourceOnly: true, CandidateKey: snapshot.CandidateKey, Artifacts: make([]ArtifactReference, len(snapshot.Artifacts)), SourceRevision: snapshot.SourceRevision}
 		artifactsByDigest := make(map[string]Artifact, len(snapshot.Artifacts))
 		for index, artifact := range snapshot.Artifacts {
 			planRequest.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes}

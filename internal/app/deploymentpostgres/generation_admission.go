@@ -684,8 +684,8 @@ func normalizeInput(input GenerationAdmissionInput) (GenerationAdmissionInput, e
 	if err := canonicalProjectAndEnvironment(ctx.Bundle.ProjectID, ctx.Bundle.Environment); err != nil {
 		return GenerationAdmissionInput{}, err
 	}
-	if err := ctx.Graph.Validate(); err != nil || ctx.Graph.ProjectID() != ctx.Bundle.ProjectID {
-		return GenerationAdmissionInput{}, fmt.Errorf("%w: serving graph is invalid or project-mismatched", deploymentnative.ErrInvalid)
+	if err := ctx.Graph.Validate(); err != nil {
+		return GenerationAdmissionInput{}, fmt.Errorf("%w: serving graph is invalid", deploymentnative.ErrInvalid)
 	}
 	if ctx.Generation.CompiledGraphDigest != ctx.Graph.Digest() {
 		return GenerationAdmissionInput{}, conflict("generation and graph digests differ")

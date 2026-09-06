@@ -1,17 +1,14 @@
 package compiler
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-
-	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 )
 
-func TestCompileProjectFilesParityWithFilesystemAndNestedFragments(t *testing.T) {
+func TestCompileSourceRootAndNestedFragmentsAreDeterministic(t *testing.T) {
 	files := map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
@@ -38,7 +35,7 @@ kind: Pipeline
 metadata: {id: pipeline:sales-refresh, name: sales-refresh}
 spec: {selection: {semanticModel: sales}}
 `,
-		"dashboards/shared.yaml": `visuals:
+		"dashboards/fragments/visuals.yaml": `visuals:
   order_count:
     type: kpi
     query: {type: aggregate, dimensions: [], metrics: [order_count]}
@@ -49,106 +46,69 @@ spec: {selection: {semanticModel: sales}}
     title: Overview
     components: []
 `,
-		"dashboards/nested/sales.yaml": `apiVersion: leapview.dev/v1
+		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard}
 spec:
   semanticModel: sales
   filters: []
   includes:
-    visuals: [../shared.yaml]
-    pages: [../fragments/pages.yaml]
+    visuals: [fragments/visuals.yaml]
+    pages: [fragments/pages.yaml]
   visuals: {}
   pages: []
 `,
 	}
-	projectYAML := strings.Replace(flatProjectFixtureYAML(), "pipelines: {include: []}", "pipelines: {include: [pipelines/*.yaml]}", 1)
-	projectYAML = strings.Replace(projectYAML, "dashboards: {include: []}", "dashboards: {include: [dashboards/nested/*.yaml]}", 1)
-	files["leapview.yaml"] = projectYAML
-	projectPath := writeFlatProjectFixtureWithProject(t, projectYAML, files)
-	filesystemArtifact, err := CompileProject(projectPath)
+	firstRoot := writeSourceFixture(t, files)
+	secondRoot := writeSourceFixture(t, files)
+
+	first, err := Compile(firstRoot)
 	if err != nil {
-		t.Fatalf("CompileProject: %v", err)
+		t.Fatalf("Compile(source root): %v", err)
 	}
-	t.Chdir(filepath.Dir(projectPath))
-	relativeArtifact, err := CompileProject("leapview.yaml")
+	second, err := Compile(secondRoot)
 	if err != nil {
-		t.Fatalf("CompileProject(relative): %v", err)
+		t.Fatalf("Compile(second source root): %v", err)
 	}
-	if relativeArtifact.Digest() != filesystemArtifact.Digest() {
-		for i := 0; i < len(relativeArtifact.Canonical()) && i < len(filesystemArtifact.Canonical()); i++ {
-			if relativeArtifact.Canonical()[i] != filesystemArtifact.Canonical()[i] {
-				t.Logf("first artifact difference at %d: relative=%q absolute=%q", i, relativeArtifact.Canonical()[i:i+80], filesystemArtifact.Canonical()[i:i+80])
-				break
-			}
-		}
-		t.Fatalf("relative filesystem artifact digest = %s, want %s", relativeArtifact.Digest(), filesystemArtifact.Digest())
+	if first.Digest() != second.Digest() || string(first.Canonical()) != string(second.Canonical()) {
+		t.Fatalf("source-root bundles differ: %s / %s", first.Digest(), second.Digest())
 	}
-	logical := make(map[string][]byte, len(files)+1)
-	if err := filepath.WalkDir(filepath.Dir(projectPath), func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		relative, err := filepath.Rel(filepath.Dir(projectPath), path)
-		if err != nil {
-			return err
-		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		logical[filepath.ToSlash(relative)] = body
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	inMemoryArtifact, err := CompileProjectFiles(logical, "leapview.yaml")
+
+	plan, err := PlanSourceRootAgainstBundle(firstRoot, first)
 	if err != nil {
-		t.Fatalf("CompileProjectFiles: %v", err)
+		t.Fatalf("PlanSourceRootAgainstBundle: %v", err)
 	}
-	if filesystemArtifact.Digest() != inMemoryArtifact.Digest() || !bytes.Equal(filesystemArtifact.Canonical(), inMemoryArtifact.Canonical()) {
-		t.Fatalf("filesystem/in-memory artifacts differ: %s / %s", filesystemArtifact.Digest(), inMemoryArtifact.Digest())
-	}
-	decoded, err := projectartifact.Decode(inMemoryArtifact.Canonical())
-	if err != nil {
-		t.Fatalf("artifact.Decode: %v", err)
-	}
-	if decoded.Digest() != inMemoryArtifact.Digest() || decoded.Version() != projectartifact.Version || decoded.ProjectID() != inMemoryArtifact.ProjectID() {
-		t.Fatalf("decoded artifact identity/version = %s/%d, want %s/%d", decoded.Digest(), decoded.Version(), inMemoryArtifact.Digest(), projectartifact.Version)
-	}
-	if strings.Contains(string(inMemoryArtifact.Canonical()), filepath.Dir(projectPath)) {
-		t.Fatalf("in-memory artifact contains host project path")
-	}
-	filesystemPlan, err := PlanProjectAgainstArtifact(projectPath, filesystemArtifact)
-	if err != nil {
-		t.Fatalf("PlanProjectAgainstArtifact: %v", err)
-	}
-	inMemoryPlan, err := PlanProjectFilesAgainstArtifact(logical, "leapview.yaml", filesystemArtifact)
-	if err != nil {
-		t.Fatalf("PlanProjectFilesAgainstArtifact: %v", err)
-	}
-	if !reflect.DeepEqual(filesystemPlan, inMemoryPlan) {
-		t.Fatalf("filesystem/in-memory plans differ: %#v / %#v", filesystemPlan, inMemoryPlan)
+	if !reflect.DeepEqual(plan, BundlePlan{
+		Connections:    []string{"connection:warehouse"},
+		Sources:        []string{"source:orders"},
+		Models:         []string{"model:orders"},
+		SemanticModels: []string{"semantic:sales"},
+		Pipelines:      []string{"pipeline:sales-refresh"},
+		Dashboards:     []string{"dashboard:sales"},
+		Deterministic:  true,
+	}) {
+		t.Fatalf("unchanged source-root plan = %#v", plan)
 	}
 }
 
-func TestLoadProjectFilesRejectsUnsafeAndMissingIncludes(t *testing.T) {
-	base := flatProjectFixtureYAML()
-	base = strings.Replace(base, "connections: {include: [connections/*.yaml]}", "connections: {include: [../outside/*.yaml]}", 1)
-	if _, err := LoadProjectFiles(map[string][]byte{"leapview.yaml": []byte(base)}, "leapview.yaml"); err == nil || !strings.Contains(err.Error(), "escapes project boundary") {
-		t.Fatalf("unsafe include error = %v", err)
+func TestSourceRootRejectsLegacyProjectManifestWithMigrationGuidance(t *testing.T) {
+	root := writeSourceFixture(t, map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed}
+`,
+	})
+	if err := os.WriteFile(filepath.Join(root, "leapview.yaml"), []byte(`apiVersion: leapview.dev/v1
+kind: Project
+metadata: {id: project:legacy, name: legacy}
+spec: {}
+`), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	base = flatProjectFixtureYAML()
-	if _, err := LoadProjectFiles(map[string][]byte{"leapview.yaml": []byte(base)}, "leapview.yaml"); err == nil || !strings.Contains(err.Error(), "matched no files") {
-		t.Fatalf("missing include error = %v", err)
-	}
-	if _, err := LoadProjectFiles(map[string][]byte{"leapview.yaml": []byte(base)}, " ./leapview.yaml"); err == nil {
-		t.Fatal("noncanonical project path accepted")
-	}
-	if _, err := LoadProjectFiles(map[string][]byte{"./leapview.yaml": []byte(base)}, "leapview.yaml"); err == nil {
-		t.Fatal("noncanonical source path accepted")
+	if _, err := Compile(root); err == nil {
+		t.Fatal("Compile(source root) accepted legacy Project manifest")
+	} else if message := err.Error(); !strings.Contains(message, "Project authoring was removed") || !strings.Contains(message, "delete") {
+		t.Fatalf("Compile(source root) error = %q, want removal and migration guidance", message)
 	}
 }

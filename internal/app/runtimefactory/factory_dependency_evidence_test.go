@@ -93,14 +93,14 @@ func TestPrepareDashboardUsesValidatedCandidateRuntimeEvidenceWithoutActiveSourc
 func runtimeDependencyEvidenceArtifact(t *testing.T) (servingstate.Artifact, projectgraph.ServingIdentity, runtimehost.ManagedDataResolution) {
 	t.Helper()
 	graphValue, manifest := dependencyEvidenceProjectFixture(t)
-	project, err := projectartifact.NewProject(graphValue, manifest)
+	project, err := projectartifact.NewSourceBundle(graphValue, manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var content bytes.Buffer
 	plan := projectbundle.Plan{
-		Project: "project:demo", Connections: []string{"connection:warehouse"},
-		Sources: []string{"source:orders"}, Models: []string{"model:orders"},
+		Connections: []string{"connection:warehouse"},
+		Sources:     []string{"source:orders"}, Models: []string{"model:orders"},
 		SemanticModels: []string{"semantic:sales"},
 	}
 	_, digest, err := projectbundle.PackCompiledProject(project, plan, &content)

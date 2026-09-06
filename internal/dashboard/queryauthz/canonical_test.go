@@ -87,7 +87,6 @@ func (r *canonicalAuditRecorder) RecordCanonicalAuditEvent(_ context.Context, ev
 func canonicalGraph(t testing.TB) (projectgraph.ProjectGraph, projectgraph.ServingIdentity, access.ResourceRef, access.ResourceRef, access.ResourceRef) {
 	t.Helper()
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: canonicalProject, Kind: projectgraph.KindProject, Name: "sales_project"},
 		{ID: "semantic_sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
 		{ID: "dashboard:dash", Kind: projectgraph.KindDashboard, Name: "dash"},
@@ -595,7 +594,7 @@ func TestCanonicalCandidateBootstrapAuthorityIsOwnerBound(t *testing.T) {
 func TestCanonicalViewAsRequiresProjectAdmin(t *testing.T) {
 	_, _, _, _, _ = canonicalGraph(t)
 	graph, identity, _, _, _ := canonicalGraph(t)
-	projectRef, _ := access.NewResourceRef(canonicalProject, projectgraph.KindProject)
+	projectRef, _ := access.NewResourceRef(canonicalProject, projectgraph.KindProjectNamespace)
 	subject, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "alice")
 	grant, err := access.NewCanonicalGrant(graph, subject, projectRef, access.CapabilityProjectAdmin)
 	if err != nil {

@@ -547,7 +547,7 @@ func validateNativeCandidateValuesWithPolicy(input NativeSealEvidenceAssemblerIn
 	if input.AttemptAdmission.Artifact.ServingArtifactID != input.Artifacts.Generation.ServingArtifactID || input.AttemptAdmission.Artifact.ServingArtifactDigest != input.Artifacts.Generation.ArtifactDigest || input.AttemptAdmission.Artifact.ServingStateID != identity.GenerationID {
 		return conflict("serving artifact admission differs from candidate artifact")
 	}
-	if input.Artifacts.Compiler.Graph.ProjectID() != identity.ProjectID || input.Artifacts.Compiler.Graph.Digest() == "" {
+	if input.Artifacts.Compiler.Graph.Digest() == "" || input.Artifacts.Compiler.Graph.Validate() != nil {
 		return conflict("candidate compiler graph identity differs")
 	}
 	if input.Plan.Execution.SourceArtifactDigest != input.Artifacts.Artifact.SourceDigest {

@@ -29,7 +29,7 @@ func TestPromotionReplansPortableArtifactForEachDestinationTarget(t *testing.T) 
 		Generation: release.CandidateGenerationArtifact{
 			Identity: identity, DataRevision: "sources:portable", DataMode: release.GenerationDataRefreshSources, Deterministic: true,
 		},
-		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{Project: "project_promotion"}},
+		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.BundlePlan{}},
 	}
 	newInput := func(targetID, candidateID string) deployment.DeliveryCandidateBuildInput {
 		return deployment.DeliveryCandidateBuildInput{

@@ -180,7 +180,7 @@ func TestSemanticModelAccessPolicyDiagnosticsAreDeterministic(t *testing.T) {
 
 func TestProjectManifestSemanticAccessPolicyDiagnosticsAreDeterministic(t *testing.T) {
 	grants := []string{"can_view"}
-	project := Project{
+	project := sourceAssembly{
 		SemanticModels: map[string]projectcontracts.SemanticModelSpec{
 			"zeta":  {Datasets: map[string]projectcontracts.SemanticDataset{"orders": {RequiredAccessGrants: &grants}}},
 			"alpha": {Datasets: map[string]projectcontracts.SemanticDataset{"orders": {RequiredAccessGrants: &grants}}},
@@ -196,7 +196,7 @@ func TestProjectManifestSemanticAccessPolicyDiagnosticsAreDeterministic(t *testi
 	}
 	wantMessage := `SemanticModel dataset "orders" requiredAccessGrants: compiled access-policy support is not available`
 	for run := 0; run < 100; run++ {
-		_, err := projectManifest(project)
+		_, err := buildResourceManifest(project)
 		var diagnostic ResourceError
 		if !errors.As(err, &diagnostic) {
 			t.Fatalf("run %d diagnostic = %T(%v), want ResourceError", run, err, err)

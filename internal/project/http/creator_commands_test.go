@@ -241,8 +241,8 @@ func TestPipelineAssetCommandSuccessPreservesDetailProjection(t *testing.T) {
 			ID: assetID, ProjectID: projectID, ServingStateID: "state:test", Type: "refresh_pipeline", Key: "sales", Title: "Sales refresh", PayloadJSON: `{}`,
 		}}}},
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
-			ID: projectID, RefreshPipelines: map[string]refreshschedule.Definition{assetID: {ID: assetID, Name: "Sales refresh"}},
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
+			RefreshPipelines: map[string]refreshschedule.Definition{assetID: {ID: assetID, Name: "Sales refresh"}},
 		}},
 		RefreshState: browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{
 			Latest: refreshpresentation.AssetRefreshRun{ID: "run:queued", Status: "queued"},

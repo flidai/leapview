@@ -71,8 +71,8 @@ func sourceObjectRefsPlan(t *testing.T, db *pgxpool.Pool, r *Repository, expires
 	}
 	canonical := append([]SourceSyncPlanEntryInput(nil), entries...)
 	sort.Slice(canonical, func(i, j int) bool { return canonical[i].Path < canonical[j].Path })
-	source := sourceDigest("project:object-refs", "leapview.yaml", snapshotEntries(canonical))
-	input := SyncPlanInput{PlanID: uuid.New(), OperationID: uuid.New(), ProjectID: "project:object-refs", StorageSecurityDomain: "runtime", OwnerID: "object-owner", CandidateKey: "candidate-" + uuid.NewString(), SourceDigest: source, ProjectFile: "leapview.yaml", RequestDigest: sourceTestDigest("c"), ExpiresAt: expiresAt, Entries: entries}
+	source := sourceDigest(snapshotEntries(canonical))
+	input := SyncPlanInput{PlanID: uuid.New(), OperationID: uuid.New(), ProjectID: "project:object-refs", StorageSecurityDomain: "runtime", OwnerID: "object-owner", CandidateKey: "candidate-" + uuid.NewString(), SourceDigest: source, RequestDigest: sourceTestDigest("c"), ExpiresAt: expiresAt, Entries: entries}
 	tx, err := db.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -216,9 +216,9 @@ func TestSourcePlanBlobSnapshotLifecycle(t *testing.T) {
 	db := sourceTestDB(t)
 	r := New(db)
 	digestA, digestB := sourceTestDigest("a"), sourceTestDigest("b")
-	entries := []SourceSyncPlanEntryInput{{Path: "leapview.yaml", Digest: digestA, SizeBytes: 3}, {Path: "models/orders.yaml", Digest: digestB, SizeBytes: 4}}
-	source := sourceDigest("project:sales", "leapview.yaml", snapshotEntries(entries))
-	planInput := SyncPlanInput{PlanID: uuid.New(), OperationID: uuid.New(), ProjectID: "project:sales", StorageSecurityDomain: "runtime", OwnerID: "owner-1", CandidateKey: "default", SourceDigest: source, ProjectFile: "leapview.yaml", RequestDigest: sourceTestDigest("c"), ExpiresAt: time.Now().Add(2 * time.Minute), Entries: entries}
+	entries := []SourceSyncPlanEntryInput{{Path: "models/customers.yaml", Digest: digestA, SizeBytes: 3}, {Path: "models/orders.yaml", Digest: digestB, SizeBytes: 4}}
+	source := sourceDigest(snapshotEntries(entries))
+	planInput := SyncPlanInput{PlanID: uuid.New(), OperationID: uuid.New(), ProjectID: "project:sales", StorageSecurityDomain: "runtime", OwnerID: "owner-1", CandidateKey: "default", SourceDigest: source, RequestDigest: sourceTestDigest("c"), ExpiresAt: time.Now().Add(2 * time.Minute), Entries: entries}
 	tx, err := db.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +261,7 @@ func TestSourcePlanBlobSnapshotLifecycle(t *testing.T) {
 	}
 	attestationPayload := []byte(`{"sourceDigest":"` + source + `"}`)
 	attestationDigest := sha256Identity(attestationPayload)
-	commit := CommitSnapshotInput{PlanID: plan.PlanID, OwnerID: plan.OwnerID, SnapshotID: uuid.New(), ProjectID: plan.ProjectID, StorageSecurityDomain: plan.StorageSecurityDomain, SourceDigest: source, ProjectFile: plan.ProjectFile, ProjectDigest: sourceTestDigest("e"), ProjectArtifactObjectKey: "artifacts/project.json", ProjectArtifactDigest: sourceTestDigest("f"), ProjectArtifactSizeBytes: 10, ManifestObjectKey: "manifests/source.json", ManifestObjectDigest: sourceTestDigest("1"), ManifestObjectSizeBytes: 20, CompilerVersion: "compiler:v1", SchemaVersion: 1, Entries: []SourceSnapshotEntryInput{{Path: entries[0].Path, Digest: entries[0].Digest, SizeBytes: entries[0].SizeBytes}, {Path: entries[1].Path, Digest: entries[1].Digest, SizeBytes: entries[1].SizeBytes}}, Attestation: SourceAttestationInput{AttestationID: uuid.New(), SourceDigest: source, AttestationDigest: attestationDigest, Payload: attestationPayload}}
+	commit := CommitSnapshotInput{PlanID: plan.PlanID, OwnerID: plan.OwnerID, SnapshotID: uuid.New(), ProjectID: plan.ProjectID, StorageSecurityDomain: plan.StorageSecurityDomain, SourceDigest: source, ProjectDigest: sourceTestDigest("e"), ProjectArtifactObjectKey: "artifacts/project.json", ProjectArtifactDigest: sourceTestDigest("f"), ProjectArtifactSizeBytes: 10, ManifestObjectKey: "manifests/source.json", ManifestObjectDigest: sourceTestDigest("1"), ManifestObjectSizeBytes: 20, CompilerVersion: "compiler:v1", SchemaVersion: 1, Entries: []SourceSnapshotEntryInput{{Path: entries[0].Path, Digest: entries[0].Digest, SizeBytes: entries[0].SizeBytes}, {Path: entries[1].Path, Digest: entries[1].Digest, SizeBytes: entries[1].SizeBytes}}, Attestation: SourceAttestationInput{AttestationID: uuid.New(), SourceDigest: source, AttestationDigest: attestationDigest, Payload: attestationPayload}}
 	tx, err = db.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -378,11 +378,11 @@ func TestSourcePlanAndSnapshotNearLimitUseBoundedQueries(t *testing.T) {
 	projectID := "project:source-near-limit"
 	domain := "runtime"
 	ownerID := "near-limit-owner"
-	source := sourceDigest(projectID, planEntries[0].Path, snapshotEntries)
+	source := sourceDigest(snapshotEntries)
 	planInput := SyncPlanInput{
 		PlanID: uuid.New(), OperationID: uuid.New(), ProjectID: projectID,
 		StorageSecurityDomain: domain, OwnerID: ownerID, CandidateKey: "near-limit",
-		SourceDigest: source, ProjectFile: planEntries[0].Path,
+		SourceDigest:  source,
 		RequestDigest: sourceTestDigest("a"), ExpiresAt: time.Now().Add(5 * time.Minute),
 		Entries: planEntries,
 	}
@@ -427,7 +427,7 @@ func TestSourcePlanAndSnapshotNearLimitUseBoundedQueries(t *testing.T) {
 	attestationPayload := []byte(`{"sourceDigest":"` + source + `"}`)
 	commit := CommitSnapshotInput{
 		PlanID: plan.PlanID, OwnerID: ownerID, SnapshotID: uuid.New(), ProjectID: projectID,
-		StorageSecurityDomain: domain, SourceDigest: source, ProjectFile: plan.ProjectFile,
+		StorageSecurityDomain: domain, SourceDigest: source,
 		ProjectDigest: sourceTestDigest("c"), ProjectArtifactObjectKey: "artifacts/project.json",
 		ProjectArtifactDigest: sourceTestDigest("d"), ProjectArtifactSizeBytes: 10,
 		ManifestObjectKey: "manifests/source.json", ManifestObjectDigest: sourceTestDigest("e"),
@@ -505,12 +505,11 @@ func TestSourcePlanRollbackAndValidation(t *testing.T) {
 func TestSourceSyncPlanAllowsDistinctPlansForSameRequest(t *testing.T) {
 	db := sourceTestDB(t)
 	r := New(db)
-	entries := []SourceSyncPlanEntryInput{{Path: "leapview.yaml", Digest: sourceTestDigest("a"), SizeBytes: 1}}
+	entries := []SourceSyncPlanEntryInput{{Path: "models/orders.yaml", Digest: sourceTestDigest("a"), SizeBytes: 1}}
 	input := SyncPlanInput{
 		PlanID: uuid.New(), OperationID: uuid.New(), ProjectID: "project:source-plans",
 		StorageSecurityDomain: "runtime", OwnerID: "owner-1", CandidateKey: "default",
-		SourceDigest: sourceDigest("project:source-plans", "leapview.yaml", snapshotEntries(entries)),
-		ProjectFile:  "leapview.yaml", RequestDigest: sourceTestDigest("b"),
+		SourceDigest: sourceDigest(snapshotEntries(entries)), RequestDigest: sourceTestDigest("b"),
 		ExpiresAt: time.Now().Add(2 * time.Minute), Entries: entries,
 	}
 	create := func(in SyncPlanInput) SyncPlan {
@@ -591,12 +590,11 @@ func TestSourceSchemaRoleBoundaryAndImmutableRows(t *testing.T) {
 		t.Fatalf("source sync-plan test connected as %q, want %q", currentUser, runtimeRole.Name)
 	}
 	runtimeRepo := New(runtimeDB)
-	entries := []SourceSyncPlanEntryInput{{Path: "leapview.yaml", Digest: sourceTestDigest("a"), SizeBytes: 1}}
+	entries := []SourceSyncPlanEntryInput{{Path: "models/orders.yaml", Digest: sourceTestDigest("a"), SizeBytes: 1}}
 	runtimePlanInput := SyncPlanInput{
 		PlanID: uuid.New(), OperationID: uuid.New(), ProjectID: "project:runtime",
 		StorageSecurityDomain: "runtime", OwnerID: "principal:runtime", CandidateKey: "default",
-		SourceDigest: sourceDigest("project:runtime", "leapview.yaml", snapshotEntries(entries)),
-		ProjectFile:  "leapview.yaml", RequestDigest: sourceTestDigest("b"),
+		SourceDigest: sourceDigest(snapshotEntries(entries)), RequestDigest: sourceTestDigest("b"),
 		ExpiresAt: time.Now().Add(2 * time.Minute), Entries: entries,
 	}
 	runtimeTx, err := runtimeDB.Begin(t.Context())
@@ -656,7 +654,7 @@ func TestSourceSchemaRoleBoundaryAndImmutableRows(t *testing.T) {
 	_, err = runtimeRepo.CommitSnapshotTx(t.Context(), runtimeTx, CommitSnapshotInput{
 		PlanID: plan.PlanID, OwnerID: plan.OwnerID, SnapshotID: uuid.New(),
 		ProjectID: plan.ProjectID, StorageSecurityDomain: plan.StorageSecurityDomain,
-		SourceDigest: plan.SourceDigest, ProjectFile: plan.ProjectFile,
+		SourceDigest:  plan.SourceDigest,
 		ProjectDigest: sourceTestDigest("e"), ProjectArtifactObjectKey: "artifacts/project.json",
 		ProjectArtifactDigest: sourceTestDigest("f"), ProjectArtifactSizeBytes: 10,
 		ManifestObjectKey: "manifests/source.json", ManifestObjectDigest: sourceTestDigest("1"),

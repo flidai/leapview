@@ -295,7 +295,6 @@ type postgresPublicJourneyRuntime struct {
 func newPostgresPublicJourneyRuntime(t *testing.T, projectID projectgraph.ResourceID, principalID string) *runtimehostmodule.Module {
 	t.Helper()
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: projectID, Kind: projectgraph.KindProject, Name: "project"},
 		{ID: "test", Kind: projectgraph.KindSemanticModel, Name: "test"},
 		{ID: "executive-sales", Kind: projectgraph.KindDashboard, Name: "executive_sales"},
 		{ID: "model.orders", Kind: projectgraph.KindModel, Name: "orders"},

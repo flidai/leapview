@@ -244,9 +244,8 @@ func (synchronizer *candidateSourceSynchronizer) Commit(
 	return project.CandidateSourceSnapshot{
 		ProjectID: stored.ProjectID, ArtifactDigest: stored.Digest,
 		SourceAttestationDigest: stored.SourceAttestationDigest,
-		ProjectPath:             stored.ProjectPath, ProjectDigest: stored.ProjectDigest,
-		ProjectArtifactPath: stored.ProjectArtifactPath,
-		SourceRevision:      cloneCandidateSourceRevisionFromDevloop(stored.SourceRevision),
+		SourceRoot:              stored.SourceRoot, ProjectDigest: stored.ProjectDigest,
+		SourceRevision: cloneCandidateSourceRevisionFromDevloop(stored.SourceRevision),
 	}, nil
 }
 
@@ -271,9 +270,8 @@ func (synchronizer *candidateSourceSynchronizer) Snapshot(
 	return project.CandidateSourceSnapshot{
 		ProjectID: stored.ProjectID, ArtifactDigest: stored.Digest,
 		SourceAttestationDigest: stored.SourceAttestationDigest,
-		ProjectPath:             stored.ProjectPath, ProjectDigest: stored.ProjectDigest,
-		ProjectArtifactPath: stored.ProjectArtifactPath,
-		SourceRevision:      cloneCandidateSourceRevisionFromDevloop(stored.SourceRevision),
+		SourceRoot:              stored.SourceRoot, ProjectDigest: stored.ProjectDigest,
+		SourceRevision: cloneCandidateSourceRevisionFromDevloop(stored.SourceRevision),
 	}, nil
 }
 
@@ -295,9 +293,8 @@ func (synchronizer *candidateSourceSynchronizer) SnapshotAttestation(
 	return project.CandidateSourceSnapshot{
 		ProjectID: stored.ProjectID, ArtifactDigest: stored.Digest,
 		SourceAttestationDigest: stored.SourceAttestationDigest,
-		ProjectPath:             stored.ProjectPath, ProjectDigest: stored.ProjectDigest,
-		ProjectArtifactPath: stored.ProjectArtifactPath,
-		SourceRevision:      cloneCandidateSourceRevisionFromDevloop(stored.SourceRevision),
+		SourceRoot:              stored.SourceRoot, ProjectDigest: stored.ProjectDigest,
+		SourceRevision: cloneCandidateSourceRevisionFromDevloop(stored.SourceRevision),
 	}, nil
 }
 
@@ -491,7 +488,7 @@ func synchronizationPlanRequest(
 	request project.CandidateSynchronizationRequest,
 ) projectdevloop.SynchronizationPlanRequest {
 	result := projectdevloop.SynchronizationPlanRequest{
-		ProjectID: scope.ProjectID, ProjectFile: request.ProjectFile,
+		ProjectID:      scope.ProjectID,
 		SourceOnly:     request.SourceOnly,
 		CandidateKey:   request.CandidateKey,
 		ArtifactDigest: request.ArtifactDigest,

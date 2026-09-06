@@ -44,7 +44,7 @@ func (client capabilityAPIClient) Resolve(ctx context.Context, credentials cliap
 	if token != "" {
 		return client.resolveResult(
 			ctx,
-			cliapi.Credentials{Target: target, Token: token},
+			cliapi.Credentials{Target: target, Token: token, ProjectID: strings.TrimSpace(credentials.ProjectID)},
 			nil,
 		)
 	}
@@ -115,6 +115,9 @@ func (client capabilityAPIClient) resolveResult(
 	credentials cliapi.Credentials,
 	expected *cliapi.TargetProfile,
 ) (cliapi.Credentials, error) {
+	if expected != nil {
+		credentials.ProjectID = strings.TrimSpace(expected.ProjectID)
+	}
 	if !client.validateAuthoring {
 		return credentials, nil
 	}
@@ -217,6 +220,12 @@ func (client capabilityAPIClient) validateAuthoringTarget(
 		Target: target, Token: token,
 		CanonicalOrigin: instance.CanonicalOrigin,
 		DeliveryMode:    deliveryMode,
+		ProjectID: func() string {
+			if expected != nil {
+				return strings.TrimSpace(expected.ProjectID)
+			}
+			return strings.TrimSpace(credentials.ProjectID)
+		}(),
 	}, nil
 }
 

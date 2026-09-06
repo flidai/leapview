@@ -24,7 +24,7 @@ func (f *productSearchCatalogFake) Search(_ context.Context, request projectcata
 		{Ref: projectcatalog.Ref{ID: projectgraph.ResourceID("connection:warehouse"), Kind: projectgraph.KindConnection}, Name: "warehouse"},
 		{Ref: projectcatalog.Ref{ID: projectgraph.ResourceID("semantic-model:sales"), Kind: projectgraph.KindSemanticModel}, Name: "sales semantics"},
 		{Ref: projectcatalog.Ref{ID: projectgraph.ResourceID("pipeline:refresh"), Kind: projectgraph.KindPipeline}, Name: "refresh"},
-		{Ref: projectcatalog.Ref{ID: projectgraph.ResourceID("project:demo"), Kind: projectgraph.KindProject}, Name: "demo"},
+		{Ref: projectcatalog.Ref{ID: projectgraph.ResourceID("project:demo"), Kind: projectgraph.KindProjectNamespace}, Name: "demo"},
 	}}, nil
 }
 

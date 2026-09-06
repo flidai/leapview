@@ -133,7 +133,7 @@ func nativeRecoveredArtifactFixture(t *testing.T) (release.CandidateArtifactSet,
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := graph.NewProjectGraph([]graph.Resource{{ID: projectID, Kind: graph.KindProject, Name: "project"}}, nil)
+	project, err := graph.NewProjectGraph(nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

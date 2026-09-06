@@ -121,7 +121,7 @@ func TestCandidateRelationContextScopesPinChangesToDependentRelation(t *testing.
 	}
 	changedManifest := artifact.Manifest()
 	changedManifest.Connections["connection:orders"] = semanticmodel.Connection{Kind: "managed", Description: "eu-west-1"}
-	changedArtifact, err := projectartifact.NewProject(artifact.Graph(), changedManifest)
+	changedArtifact, err := projectartifact.NewSourceBundle(artifact.Graph(), changedManifest)
 	require.NoError(t, err)
 	changedContexts, err := candidateRelationContexts(map[string]string{"connection:orders": "revision-a", "connection:customers": "revision-a"}, changedArtifact)
 	require.NoError(t, err)
@@ -154,10 +154,9 @@ func TestRelationExecutionDigestsResolveCanonicalIDTransitiveModelDependencies(t
 	require.NotEqual(t, base["model:summary"], changed["model:summary"])
 }
 
-func relationContextFixture(t *testing.T) projectartifact.Project {
+func relationContextFixture(t *testing.T) projectartifact.SourceBundle {
 	t.Helper()
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project:context", Kind: projectgraph.KindProject, Name: "context"},
 		{ID: "connection:orders", Kind: projectgraph.KindConnection, Name: "orders_connection"},
 		{ID: "connection:customers", Kind: projectgraph.KindConnection, Name: "customers_connection"},
 		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders_source"},
@@ -167,8 +166,7 @@ func relationContextFixture(t *testing.T) projectartifact.Project {
 		{ID: "model:summary", Kind: projectgraph.KindModel, Name: "summary_model"},
 	}, []projectgraph.Edge{{From: "source:orders", To: "connection:orders"}, {From: "source:customers", To: "connection:customers"}, {From: "model:orders", To: "source:orders"}, {From: "model:customers", To: "source:customers"}, {From: "model:summary", To: "model:orders"}})
 	require.NoError(t, err)
-	artifact, err := projectartifact.NewProject(graphValue, projectmanifest.Project{
-		ID:          "project:context",
+	artifact, err := projectartifact.NewSourceBundle(graphValue, projectmanifest.ResourceManifest{
 		Connections: map[string]semanticmodel.Connection{"connection:orders": {Kind: "managed"}, "connection:customers": {Kind: "managed"}},
 		Sources:     map[string]semanticmodel.Source{"source:orders": {Connection: "connection:orders", Format: "csv"}, "source:customers": {Connection: "connection:customers", Format: "csv"}},
 		Models:      map[string]semanticmodel.Table{"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}, SourceDependencies: []string{"source:orders"}}, "model:customers": {Execution: semanticmodel.ExecutionDefinition{Source: "source:customers"}, SourceDependencies: []string{"source:customers"}}, "model:summary": {Execution: semanticmodel.ExecutionDefinition{SQL: "select * from model.orders"}, ModelDependencies: []string{"model:orders"}}},

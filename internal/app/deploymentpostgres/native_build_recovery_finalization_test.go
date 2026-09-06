@@ -11,6 +11,7 @@ import (
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	deploymentaudit "github.com/flidai/leapview/internal/app/deploymentaudit"
 	deploymentevents "github.com/flidai/leapview/internal/app/deploymentevents"
 	deploymentoperation "github.com/flidai/leapview/internal/app/deploymentoperation"
@@ -95,18 +96,27 @@ func recoveryFinalizeDB(t *testing.T) (*pgxpool.Pool, *deploymentnative.Reposito
 func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	db, delivery, ducklake := recoveryFinalizeDB(t)
 	base := validNativeSealAssemblerInput(t)
-	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: base.Plan.ProjectID, Kind: projectgraph.KindProject, Name: "recovery_finalization"}}, nil)
+	// Project-free bundles have no project namespace node, but lineage still
+	// requires at least one portable resource node. Keep this recovery fixture
+	// minimal with a manifest-backed connection resource.
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{
+		ID: "connection:recovery", Kind: projectgraph.KindConnection, Name: "recovery",
+	}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	portableArtifact, err := projectartifact.NewProject(graph, projectmanifest.Project{ID: base.Plan.ProjectID.String(), Name: "recovery_finalization"})
+	portableArtifact, err := projectartifact.NewSourceBundle(graph, projectmanifest.ResourceManifest{
+		Connections: map[string]semanticmodel.Connection{
+			"connection:recovery": {Kind: "managed"},
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	base.Artifacts.Compiler.Graph = graph
 	base.Artifacts.Compiler.Artifact = portableArtifact
 	base.Artifacts.Compiler.Manifest = portableArtifact.Manifest()
-	base.Artifacts.Compiler.Plan = projectcompiler.ProjectPlan{Project: base.Plan.ProjectID.String(), Deterministic: true}
+	base.Artifacts.Compiler.Plan = projectcompiler.BundlePlan{Deterministic: true}
 	base.Artifacts.Artifact.ProjectDigest = portableArtifact.Digest()
 	base.Plan.ServingArtifactDigest = base.Artifacts.Generation.ArtifactDigest
 	base.Plan.Digest = ""

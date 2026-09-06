@@ -6,27 +6,28 @@
 CREATE SCHEMA IF NOT EXISTS lineage;
 
 CREATE TABLE IF NOT EXISTS lineage.graphs (
-    graph_digest TEXT PRIMARY KEY,
-    graph_version INTEGER NOT NULL,
     project_id TEXT NOT NULL,
+    graph_digest TEXT NOT NULL,
+    graph_version INTEGER NOT NULL,
     node_count INTEGER NOT NULL CHECK (node_count BETWEEN 1 AND 100000),
     edge_count INTEGER NOT NULL CHECK (edge_count BETWEEN 0 AND 500000),
     compiler_version INTEGER NOT NULL DEFAULT 1 CHECK (compiler_version > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (project_id, graph_digest),
     CHECK (graph_digest ~ '^sha256:[0-9a-f]{64}$'),
-    CHECK (graph_version > 0),
+    -- Canonical v2 projections are the only graphs admitted by a fresh
+    -- capability schema. Upgrade migrations retain v1 rows separately but
+    -- quarantine them from all serving reads.
+    CHECK (graph_version >= 2),
     CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 256)
 );
 
--- A graph digest is immutable, while a scope advances through revisions.  A
+-- A project-scoped graph digest is immutable, while a scope advances through revisions. A
 -- scope is deliberately explicit (for example a target or serving lane); it
 -- is never inferred from a delivery or environment name.  valid_from and
 -- valid_to form a non-overlapping half-open validity interval.  PostgreSQL
 -- owns all timestamps so callers cannot back-date or forge publication
 -- evidence.
-CREATE UNIQUE INDEX IF NOT EXISTS lineage_graphs_project_digest_uq
-    ON lineage.graphs (project_id, graph_digest);
-
 CREATE TABLE IF NOT EXISTS lineage.revisions (
     project_id   TEXT NOT NULL,
     scope_id     TEXT NOT NULL,
@@ -36,8 +37,8 @@ CREATE TABLE IF NOT EXISTS lineage.revisions (
     valid_to     TIMESTAMPTZ,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (project_id, scope_id, revision_id),
-    FOREIGN KEY (graph_digest, project_id)
-        REFERENCES lineage.graphs(graph_digest, project_id) ON DELETE RESTRICT,
+    FOREIGN KEY (project_id, graph_digest)
+        REFERENCES lineage.graphs(project_id, graph_digest) ON DELETE RESTRICT,
     CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 256),
     CHECK (scope_id = btrim(scope_id) AND octet_length(scope_id) BETWEEN 1 AND 256),
     CHECK (revision_id > 0),
@@ -51,7 +52,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS lineage_revisions_current_uq
 CREATE INDEX IF NOT EXISTS lineage_revisions_scope_validity_idx
     ON lineage.revisions (project_id, scope_id, valid_from DESC, revision_id DESC);
 CREATE INDEX IF NOT EXISTS lineage_revisions_graph_idx
-    ON lineage.revisions (graph_digest, project_id);
+    ON lineage.revisions (project_id, graph_digest);
 
 CREATE OR REPLACE FUNCTION lineage.enforce_revision_validity()
 RETURNS trigger
@@ -123,12 +124,25 @@ BEGIN
     IF p_project_id IS NULL OR p_scope_id IS NULL OR p_graph_digest IS NULL THEN
         RAISE EXCEPTION 'lineage publication identity is required';
     END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM lineage.graphs g
+        WHERE g.project_id = p_project_id
+          AND g.graph_digest = p_graph_digest
+          AND g.graph_version = 2
+    ) THEN
+        RAISE EXCEPTION 'lineage graph is not a canonical v2 projection';
+    END IF;
     PERFORM pg_advisory_xact_lock(hashtextextended(p_project_id || '|' || p_scope_id, 0));
-    SELECT * INTO current_row
-      FROM lineage.revisions
-     WHERE lineage.revisions.project_id = p_project_id
-       AND lineage.revisions.scope_id = p_scope_id
-       AND lineage.revisions.valid_to IS NULL;
+    SELECT r.* INTO current_row
+      FROM lineage.revisions r
+      JOIN lineage.graphs g
+        ON g.project_id = r.project_id
+       AND g.graph_digest = r.graph_digest
+       AND g.graph_version = 2
+     WHERE r.project_id = p_project_id
+       AND r.scope_id = p_scope_id
+       AND r.valid_to IS NULL;
     IF FOUND AND current_row.graph_digest = p_graph_digest THEN
         project_id := current_row.project_id;
         scope_id := current_row.scope_id;
@@ -165,9 +179,9 @@ CREATE TABLE IF NOT EXISTS lineage.nodes (
     resource_kind TEXT NOT NULL,
     identity_digest TEXT NOT NULL,
     properties JSONB NOT NULL,
-    PRIMARY KEY (graph_digest, node_id),
-    FOREIGN KEY (graph_digest, project_id)
-        REFERENCES lineage.graphs(graph_digest, project_id) ON DELETE CASCADE,
+    PRIMARY KEY (project_id, graph_digest, node_id),
+    FOREIGN KEY (project_id, graph_digest)
+        REFERENCES lineage.graphs(project_id, graph_digest) ON DELETE CASCADE,
     CHECK (node_id = btrim(node_id) AND octet_length(node_id) BETWEEN 1 AND 256),
     CHECK (resource_kind = btrim(resource_kind) AND octet_length(resource_kind) BETWEEN 1 AND 128),
     CHECK (identity_digest ~ '^sha256:[0-9a-f]{64}$'),
@@ -181,13 +195,13 @@ CREATE TABLE IF NOT EXISTS lineage.edges (
     from_node_id TEXT NOT NULL,
     to_node_id TEXT NOT NULL,
     relation TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (graph_digest, from_node_id, to_node_id),
-    FOREIGN KEY (graph_digest, project_id)
-        REFERENCES lineage.graphs(graph_digest, project_id) ON DELETE CASCADE,
-    FOREIGN KEY (graph_digest, from_node_id)
-        REFERENCES lineage.nodes(graph_digest, node_id) ON DELETE CASCADE,
-    FOREIGN KEY (graph_digest, to_node_id)
-        REFERENCES lineage.nodes(graph_digest, node_id) ON DELETE CASCADE,
+    PRIMARY KEY (project_id, graph_digest, from_node_id, to_node_id),
+    FOREIGN KEY (project_id, graph_digest)
+        REFERENCES lineage.graphs(project_id, graph_digest) ON DELETE CASCADE,
+    FOREIGN KEY (project_id, graph_digest, from_node_id)
+        REFERENCES lineage.nodes(project_id, graph_digest, node_id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id, graph_digest, to_node_id)
+        REFERENCES lineage.nodes(project_id, graph_digest, node_id) ON DELETE CASCADE,
     CHECK (from_node_id <> to_node_id),
     CHECK (relation = btrim(relation) AND octet_length(relation) <= 128),
     CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 256)
@@ -345,21 +359,13 @@ CREATE TABLE IF NOT EXISTS lineage.bindings (
     graph_digest TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (delivery_id, generation_id),
-    FOREIGN KEY (graph_digest, project_id)
-        REFERENCES lineage.graphs(graph_digest, project_id) ON DELETE RESTRICT,
+    FOREIGN KEY (project_id, graph_digest)
+        REFERENCES lineage.graphs(project_id, graph_digest) ON DELETE RESTRICT,
     CHECK (delivery_id = btrim(delivery_id) AND octet_length(delivery_id) BETWEEN 1 AND 256),
     CHECK (generation_id = btrim(generation_id) AND octet_length(generation_id) BETWEEN 1 AND 256),
     CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 256)
 );
 
-CREATE INDEX IF NOT EXISTS lineage_edges_from_idx
-    ON lineage.edges (graph_digest, from_node_id, to_node_id);
-CREATE INDEX IF NOT EXISTS lineage_edges_to_idx
-    ON lineage.edges (graph_digest, to_node_id, from_node_id);
-CREATE INDEX IF NOT EXISTS lineage_nodes_project_idx
-    ON lineage.nodes (project_id, graph_digest, node_id);
-CREATE INDEX IF NOT EXISTS lineage_edges_project_from_idx
-    ON lineage.edges (project_id, graph_digest, from_node_id, to_node_id);
 CREATE INDEX IF NOT EXISTS lineage_edges_project_to_idx
     ON lineage.edges (project_id, graph_digest, to_node_id, from_node_id);
 CREATE INDEX IF NOT EXISTS lineage_bindings_graph_idx

@@ -32,7 +32,6 @@ type SourceRevision struct {
 
 type Snapshot struct {
 	ProjectID      projectgraph.ResourceID
-	ProjectFile    string
 	Digest         string
 	Artifacts      []Artifact
 	SourceRevision *SourceRevision
@@ -155,11 +154,10 @@ func (service *Service) result(status Status) Result {
 }
 
 func normalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
-	snapshot.ProjectFile = strings.TrimSpace(snapshot.ProjectFile)
 	snapshot.CandidateKey = strings.TrimSpace(snapshot.CandidateKey)
 	snapshot.Digest = strings.TrimSpace(snapshot.Digest)
-	if err := snapshot.ProjectID.Validate(); err != nil || !canonicalArtifactPath(snapshot.ProjectFile) || len(snapshot.Artifacts) == 0 {
-		return Snapshot{}, fmt.Errorf("project snapshot requires project, canonical entrypoint, and artifacts")
+	if err := snapshot.ProjectID.Validate(); err != nil || len(snapshot.Artifacts) == 0 {
+		return Snapshot{}, fmt.Errorf("project snapshot requires target Project identity and artifacts")
 	}
 	if err := digest.ValidateSHA256Identity(snapshot.Digest); err != nil {
 		return Snapshot{}, fmt.Errorf("project snapshot digest is invalid: %w", err)
@@ -195,10 +193,7 @@ func normalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
 	sort.Slice(snapshot.Artifacts, func(i, j int) bool {
 		return snapshot.Artifacts[i].Path < snapshot.Artifacts[j].Path
 	})
-	if _, exists := seen[snapshot.ProjectFile]; !exists {
-		return Snapshot{}, fmt.Errorf("project snapshot entrypoint %q is not an artifact", snapshot.ProjectFile)
-	}
-	if actual := candidateSetDigest(snapshot.ProjectID, snapshot.ProjectFile, snapshot.Artifacts); snapshot.Digest != actual {
+	if actual := candidateSetDigest(snapshot.Artifacts); snapshot.Digest != actual {
 		return Snapshot{}, fmt.Errorf("project snapshot content does not match candidate-set digest")
 	}
 	var err error
@@ -255,8 +250,8 @@ func normalizeCandidate(candidate Candidate, snapshot Snapshot) (Candidate, erro
 
 func cloneSnapshot(snapshot Snapshot) Snapshot {
 	out := Snapshot{
-		ProjectID: snapshot.ProjectID, ProjectFile: snapshot.ProjectFile,
-		Digest: snapshot.Digest, Artifacts: make([]Artifact, len(snapshot.Artifacts)),
+		ProjectID: snapshot.ProjectID,
+		Digest:    snapshot.Digest, Artifacts: make([]Artifact, len(snapshot.Artifacts)),
 		CandidateKey: snapshot.CandidateKey,
 	}
 	if snapshot.SourceRevision != nil {
@@ -299,6 +294,7 @@ func canonicalArtifactPath(value string) bool {
 	return value != "" &&
 		!path.IsAbs(value) &&
 		path.Clean(value) == value &&
+		value != "." &&
 		value != ".." &&
 		!strings.HasPrefix(value, "../") &&
 		!strings.Contains(value, `\`)

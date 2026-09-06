@@ -120,7 +120,7 @@ func (s *NativeCandidateSourceSynchronizer) Plan(ctx context.Context, scope proj
 		PlanID: planID, OperationID: operationID,
 		ProjectID: scope.ProjectID.String(), StorageSecurityDomain: s.storageDomain,
 		OwnerID: scope.OwnerID, CandidateKey: normalized.CandidateKey,
-		SourceDigest: normalized.ArtifactDigest, ProjectFile: normalized.ProjectFile,
+		SourceDigest:  normalized.ArtifactDigest,
 		RequestDigest: requestDigest, ExpiresAt: now.Add(s.planLifetime),
 		Entries: entries,
 	}
@@ -303,7 +303,7 @@ func (s *NativeCandidateSourceSynchronizer) Commit(ctx context.Context, scope pr
 	if err != nil {
 		return project.CandidateSourceSnapshot{}, err
 	}
-	compiled, err := s.compileSourceSet(ctx, CompileInput{ProjectID: scope.ProjectID.String(), StorageSecurityDomain: s.storageDomain, ProjectFile: plan.ProjectFile, SourceDigest: plan.SourceDigest, Files: files})
+	compiled, err := s.compileSourceSet(ctx, CompileInput{ProjectID: scope.ProjectID.String(), StorageSecurityDomain: s.storageDomain, SourceDigest: plan.SourceDigest, Files: files})
 	if err != nil {
 		return project.CandidateSourceSnapshot{}, fmt.Errorf("%w: compile project: %v", project.ErrCandidateSourceConflict, err)
 	}
@@ -321,7 +321,7 @@ func (s *NativeCandidateSourceSynchronizer) Commit(ctx context.Context, scope pr
 	}
 	snapshotID := deterministicUUID("source-snapshot", plan.ProjectID, plan.StorageSecurityDomain, plan.SourceDigest)
 	attestation := nativeAttestation(snapshotID, plan.SourceDigest, request.SourceRevision)
-	commitInput := projectpostgres.CommitSnapshotInput{PlanID: plan.PlanID, OwnerID: plan.OwnerID, SnapshotID: snapshotID, ProjectID: plan.ProjectID, StorageSecurityDomain: plan.StorageSecurityDomain, SourceDigest: plan.SourceDigest, ProjectFile: plan.ProjectFile, ProjectDigest: compiled.ProjectDigest, ProjectArtifactObjectKey: compiled.ProjectArtifactObjectKey, ProjectArtifactDigest: artifactMeta.Digest, ProjectArtifactSizeBytes: artifactMeta.SizeBytes, ManifestObjectKey: compiled.ManifestObjectKey, ManifestObjectDigest: manifestMeta.Digest, ManifestObjectSizeBytes: manifestMeta.SizeBytes, CompilerVersion: compiled.CompilerVersion, SchemaVersion: compiled.SchemaVersion, Entries: nativePlanEntries(plan), Attestation: attestation}
+	commitInput := projectpostgres.CommitSnapshotInput{PlanID: plan.PlanID, OwnerID: plan.OwnerID, SnapshotID: snapshotID, ProjectID: plan.ProjectID, StorageSecurityDomain: plan.StorageSecurityDomain, SourceDigest: plan.SourceDigest, ProjectDigest: compiled.ProjectDigest, ProjectArtifactObjectKey: compiled.ProjectArtifactObjectKey, ProjectArtifactDigest: artifactMeta.Digest, ProjectArtifactSizeBytes: artifactMeta.SizeBytes, ManifestObjectKey: compiled.ManifestObjectKey, ManifestObjectDigest: manifestMeta.Digest, ManifestObjectSizeBytes: manifestMeta.SizeBytes, CompilerVersion: compiled.CompilerVersion, SchemaVersion: compiled.SchemaVersion, Entries: nativePlanEntries(plan), Attestation: attestation}
 	tx, err = s.beginTx(ctx)
 	if err != nil {
 		return project.CandidateSourceSnapshot{}, err
@@ -634,11 +634,11 @@ func (s *NativeCandidateSourceSynchronizer) exactSnapshotResult(ctx context.Cont
 }
 
 func sourceSnapshotResult(snapshot projectpostgres.SourceSnapshot) project.CandidateSourceSnapshot {
-	return project.CandidateSourceSnapshot{ProjectID: projectgraph.ResourceID(snapshot.ProjectID), ArtifactDigest: snapshot.SourceDigest, ProjectFile: snapshot.ProjectFile, ProjectArtifactObjectKey: snapshot.ProjectArtifactObjectKey, ManifestObjectKey: snapshot.ManifestObjectKey, ProjectDigest: snapshot.ProjectDigest}
+	return project.CandidateSourceSnapshot{ProjectID: projectgraph.ResourceID(snapshot.ProjectID), ArtifactDigest: snapshot.SourceDigest, ProjectArtifactObjectKey: snapshot.ProjectArtifactObjectKey, ManifestObjectKey: snapshot.ManifestObjectKey, ProjectDigest: snapshot.ProjectDigest}
 }
 
 func validateNativeSnapshot(snapshot projectpostgres.SourceSnapshot, scope project.CandidateSourceScope, sourceDigest, domain string) error {
-	if snapshot.SnapshotID == uuid.Nil || snapshot.ProjectID != scope.ProjectID.String() || snapshot.StorageSecurityDomain != domain || snapshot.SourceDigest != sourceDigest || !canonicalNativePath(snapshot.ProjectFile) || !validNativeDigest(snapshot.ProjectDigest) || !validNativeObjectKey(snapshot.ProjectArtifactObjectKey) || !validNativeDigest(snapshot.ProjectArtifactDigest) || snapshot.ProjectArtifactSizeBytes <= 0 || !validNativeObjectKey(snapshot.ManifestObjectKey) || !validNativeDigest(snapshot.ManifestObjectDigest) || snapshot.ManifestObjectSizeBytes <= 0 || strings.TrimSpace(snapshot.CompilerVersion) == "" || !validNativeText(snapshot.CompilerVersion) || snapshot.SchemaVersion <= 0 {
+	if snapshot.SnapshotID == uuid.Nil || snapshot.ProjectID != scope.ProjectID.String() || snapshot.StorageSecurityDomain != domain || snapshot.SourceDigest != sourceDigest || !validNativeDigest(snapshot.ProjectDigest) || !validNativeObjectKey(snapshot.ProjectArtifactObjectKey) || !validNativeDigest(snapshot.ProjectArtifactDigest) || snapshot.ProjectArtifactSizeBytes <= 0 || !validNativeObjectKey(snapshot.ManifestObjectKey) || !validNativeDigest(snapshot.ManifestObjectDigest) || snapshot.ManifestObjectSizeBytes <= 0 || strings.TrimSpace(snapshot.CompilerVersion) == "" || !validNativeText(snapshot.CompilerVersion) || snapshot.SchemaVersion <= 0 {
 		return project.ErrCandidateSourceConflict
 	}
 	return nil
@@ -659,7 +659,6 @@ func normalizeNativeRequest(scope project.CandidateSourceScope, request project.
 		return project.CandidateSynchronizationRequest{}, nil, "", err
 	}
 	r := request
-	r.ProjectFile = strings.TrimSpace(r.ProjectFile)
 	r.ArtifactDigest = strings.TrimSpace(r.ArtifactDigest)
 	r.CandidateKey = strings.TrimSpace(r.CandidateKey)
 	r.IdempotencyKey = strings.TrimSpace(r.IdempotencyKey)
@@ -673,7 +672,7 @@ func normalizeNativeRequest(scope project.CandidateSourceScope, request project.
 	if r.CandidateKey != scopeKey {
 		return project.CandidateSynchronizationRequest{}, nil, "", fmt.Errorf("%w: candidate key scope mismatch", project.ErrCandidateSourceConflict)
 	}
-	if !canonicalNativePath(r.ProjectFile) || !validNativeText(r.CandidateKey) || !validNativeText(r.IdempotencyKey) {
+	if !validNativeText(r.CandidateKey) || !validNativeText(r.IdempotencyKey) {
 		return project.CandidateSynchronizationRequest{}, nil, "", project.ErrCandidateSourceInvalid
 	}
 	if r.SourceRevision != nil {
@@ -716,7 +715,7 @@ func normalizeNativeRequest(scope project.CandidateSourceScope, request project.
 	for i, entry := range entries {
 		snapshotEntries[i] = projectpostgres.SourceSnapshotEntryInput{Path: entry.Path, Digest: entry.Digest, SizeBytes: entry.SizeBytes, Ordinal: i}
 	}
-	canonicalDigest := projectpostgres.CanonicalSourceDigest(scope.ProjectID.String(), r.ProjectFile, snapshotEntries)
+	canonicalDigest := projectpostgres.CanonicalSourceDigest(snapshotEntries)
 	if r.ArtifactDigest == "" {
 		r.ArtifactDigest = canonicalDigest
 	}
@@ -744,7 +743,7 @@ func nativeRequestDigest(request project.CandidateSynchronizationRequest) string
 }
 
 func samePlanRequest(plan projectpostgres.SyncPlan, input projectpostgres.SyncPlanInput) bool {
-	if plan.PlanID != input.PlanID || plan.OperationID != input.OperationID || plan.ProjectID != input.ProjectID || plan.StorageSecurityDomain != input.StorageSecurityDomain || plan.OwnerID != input.OwnerID || plan.CandidateKey != input.CandidateKey || plan.SourceDigest != input.SourceDigest || plan.ProjectFile != input.ProjectFile || plan.RequestDigest != input.RequestDigest {
+	if plan.PlanID != input.PlanID || plan.OperationID != input.OperationID || plan.ProjectID != input.ProjectID || plan.StorageSecurityDomain != input.StorageSecurityDomain || plan.OwnerID != input.OwnerID || plan.CandidateKey != input.CandidateKey || plan.SourceDigest != input.SourceDigest || plan.RequestDigest != input.RequestDigest {
 		return false
 	}
 	return sameEntries(plan.Entries, input.Entries)

@@ -17,7 +17,6 @@ import (
 
 func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedModels(t *testing.T) {
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project:managed", Kind: projectgraph.KindProject, Name: "managed"},
 		{ID: "connection:sample", Kind: projectgraph.KindConnection, Name: "sample"},
 		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders"},
 		{ID: "semantic-model:sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
@@ -25,8 +24,7 @@ func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedM
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest := projectmanifest.Project{
-		ID: "project:managed", Name: "managed",
+	manifest := projectmanifest.ResourceManifest{
 		Connections: map[string]semanticmodel.Connection{"connection:sample": {Kind: "managed"}},
 		SemanticModels: map[string]*semanticmodel.Model{
 			"semantic-model:sales": {Name: "sales", Connections: map[string]semanticmodel.Connection{"sample": {Kind: "managed"}}},
@@ -37,7 +35,7 @@ func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedM
 		}},
 		NameIndex: projectmanifest.NameIndex{Connections: map[string]string{"sample": "connection:sample"}, Models: map[string]string{"orders": "model:orders"}},
 	}
-	artifact, err := projectartifact.NewProject(graph, manifest)
+	artifact, err := projectartifact.NewSourceBundle(graph, manifest)
 	if err != nil {
 		t.Fatal(err)
 	}

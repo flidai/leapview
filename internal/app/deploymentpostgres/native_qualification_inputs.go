@@ -144,7 +144,7 @@ func nativeQualificationInputs(
 // alias collision is rejected even when the compiler artifact should already
 // have ruled it out; qualification remains fail-closed when handed a forged
 // artifact value.
-func nativeQualificationSourceIndex(manifest projectmanifest.Project) (map[string]string, map[string]string, error) {
+func nativeQualificationSourceIndex(manifest projectmanifest.ResourceManifest) (map[string]string, map[string]string, error) {
 	canonical := make(map[string]string, len(manifest.Sources))
 	sourceIDs := make([]string, 0, len(manifest.Sources))
 	for id := range manifest.Sources {

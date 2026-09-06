@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -25,13 +24,9 @@ type TargetDiscovery interface {
 	Discover(context.Context, string) (TargetMetadata, error)
 }
 
-type ProjectIdentityResolver interface {
-	ProjectID(string) (string, error)
-}
-
-func LoginCommand(ctx context.Context, authentication AuthenticationService, discovery TargetDiscovery, projects ProjectIdentityResolver) *cobra.Command {
+func LoginCommand(ctx context.Context, authentication AuthenticationService, discovery TargetDiscovery) *cobra.Command {
 	var name string
-	projectPath := filepath.Join("dashboards", "leapview.yaml")
+	var projectID string
 	var headless bool
 	format := "text"
 	command := &cobra.Command{
@@ -39,7 +34,7 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 		Short: "Sign in to a LeapView target for project authoring",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			if authentication == nil || discovery == nil || projects == nil {
+			if authentication == nil || discovery == nil {
 				return fmt.Errorf("login dependencies are unavailable")
 			}
 			origin := strings.TrimRight(strings.TrimSpace(args[0]), "/")
@@ -47,12 +42,9 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 			if err != nil {
 				return fmt.Errorf("discover LeapView target: %w", err)
 			}
-			projectID, err := projects.ProjectID(projectPath)
-			if err != nil {
-				return fmt.Errorf("read authoring project identity: %w", err)
-			}
-			if strings.TrimSpace(projectID) == "" {
-				return fmt.Errorf("authoring project %q has no identity", projectPath)
+			boundProjectID := strings.TrimSpace(projectID)
+			if boundProjectID == "" {
+				return fmt.Errorf("target-bound Project identity is required; provide --project-id")
 			}
 			profileName := strings.TrimSpace(name)
 			if profileName == "" {
@@ -65,7 +57,7 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 			var eventErr error
 			result, err := authentication.Login(ctx, LoginRequest{
 				Name: profileName, Origin: metadata.Origin, InstanceID: metadata.InstanceID,
-				Environment: metadata.Environment, ProjectID: projectID,
+				Environment: metadata.Environment, ProjectID: boundProjectID,
 				Capabilities: []string{
 					"RESOURCE_USE",
 					"RESOURCE_READ",
@@ -96,16 +88,16 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 					"schemaVersion": 1,
 					"type":          "authenticated",
 					"origin":        metadata.Origin,
-					"projectId":     projectID,
+					"projectId":     boundProjectID,
 					"sessionId":     result.SessionID,
 				})
 			}
-			fmt.Fprintf(command.OutOrStdout(), "Signed in to %s for project %s (session %s)\n", metadata.Origin, projectID, result.SessionID)
+			fmt.Fprintf(command.OutOrStdout(), "Signed in to %s for project %s (session %s)\n", metadata.Origin, boundProjectID, result.SessionID)
 			return nil
 		},
 	}
 	command.Flags().StringVar(&name, "name", "", "stable local name for this target")
-	command.Flags().StringVar(&projectPath, "project", projectPath, "project entrypoint used to scope authoring credentials")
+	command.Flags().StringVar(&projectID, "project-id", "", "target-bound Project identity")
 	command.Flags().BoolVar(&headless, "no-browser", false, "show the verification URL and code without opening a browser")
 	command.Flags().StringVar(&format, "format", format, "output format: text or json")
 	return command

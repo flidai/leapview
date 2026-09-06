@@ -241,7 +241,7 @@ func seedBundle(t *testing.T, admin *pgxpool.Pool, generation, digest, graphDige
 }
 
 func testGraph(t *testing.T) projectgraph.ProjectGraph {
-	g, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "project_demo", Kind: projectgraph.KindProject, Name: "project"}, {ID: "dashboard", Kind: projectgraph.KindDashboard, Name: "dashboard"}}, []projectgraph.Edge{{From: "project_demo", To: "dashboard", Relation: "contains"}})
+	g, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "dashboard", Kind: projectgraph.KindDashboard, Name: "dashboard"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +580,7 @@ func TestConflictingReplayCommitsWithoutWritingIncomingChildren(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	extra, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "project_demo", Kind: projectgraph.KindProject, Name: "project"}, {ID: "dashboard", Kind: projectgraph.KindDashboard, Name: "dashboard"}, {ID: "model_extra", Kind: projectgraph.KindModel, Name: "extra"}}, []projectgraph.Edge{{From: "project_demo", To: "dashboard", Relation: "contains"}, {From: "project_demo", To: "model_extra", Relation: "contains"}})
+	extra, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "dashboard", Kind: projectgraph.KindDashboard, Name: "dashboard"}, {ID: "model_extra", Kind: projectgraph.KindModel, Name: "extra"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

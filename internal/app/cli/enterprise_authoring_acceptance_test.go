@@ -31,7 +31,7 @@ func TestLocalhostAndProtectedTargetsUseTheSamePublicAuthoringCommands(t *testin
 		}
 	}
 
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	sourceRoot := filepath.Join("..", "..", "..", "dashboards")
 	journeys := []authoringJourney{
 		{
 			name: "localhost evaluation", target: "http://localhost:8080",
@@ -79,7 +79,8 @@ func TestLocalhostAndProtectedTargetsUseTheSamePublicAuthoringCommands(t *testin
 			dev.SetErr(&output)
 			dev.SetArgs([]string{
 				"--once",
-				"--project", projectPath,
+				"--source-root", sourceRoot,
+				"--project-id", "project:analytics",
 				"--target", journey.target,
 			})
 			if err := dev.Execute(); err != nil {
@@ -129,8 +130,9 @@ func (client authoringJourneyClient) Resolve(
 		return cliapi.Credentials{}, fmt.Errorf("unexpected target %q", credentials.Target)
 	}
 	return cliapi.Credentials{
-		Target: client.journey.target,
-		Token:  "ephemeral-authoring-token",
+		Target:    client.journey.target,
+		Token:     "ephemeral-authoring-token",
+		ProjectID: credentials.ProjectID,
 	}, nil
 }
 

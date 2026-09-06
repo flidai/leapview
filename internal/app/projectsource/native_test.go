@@ -54,7 +54,7 @@ func (r *nativeTestRepo) CreateSyncPlanTx(_ context.Context, _ projectpostgres.S
 		}
 		return old, nil
 	}
-	p := projectpostgres.SyncPlan{PlanID: in.PlanID, OperationID: in.OperationID, ProjectID: in.ProjectID, StorageSecurityDomain: in.StorageSecurityDomain, OwnerID: in.OwnerID, CandidateKey: in.CandidateKey, SourceDigest: in.SourceDigest, ProjectFile: in.ProjectFile, RequestDigest: in.RequestDigest, State: "open", ExpiresAt: in.ExpiresAt, CreatedAt: time.Now().UTC()}
+	p := projectpostgres.SyncPlan{PlanID: in.PlanID, OperationID: in.OperationID, ProjectID: in.ProjectID, StorageSecurityDomain: in.StorageSecurityDomain, OwnerID: in.OwnerID, CandidateKey: in.CandidateKey, SourceDigest: in.SourceDigest, RequestDigest: in.RequestDigest, State: "open", ExpiresAt: in.ExpiresAt, CreatedAt: time.Now().UTC()}
 	p.Entries = make([]projectpostgres.SourceSyncPlanEntry, len(in.Entries))
 	for i, e := range in.Entries {
 		p.Entries[i] = projectpostgres.SourceSyncPlanEntry{PlanID: in.PlanID, Path: e.Path, Digest: e.Digest, SizeBytes: e.SizeBytes, Ordinal: i}
@@ -157,7 +157,7 @@ func (r *nativeTestRepo) CommitSnapshotTx(_ context.Context, _ projectpostgres.S
 		r.attestations[in.Attestation.AttestationDigest] = projectpostgres.SourceAttestation{AttestationID: in.Attestation.AttestationID, SnapshotID: in.SnapshotID, SourceDigest: in.SourceDigest, AttestationDigest: in.Attestation.AttestationDigest, Payload: in.Attestation.Payload, Revision: in.Attestation.Revision, Repository: in.Attestation.Repository, Ref: in.Attestation.Ref, ChangeID: in.Attestation.ChangeID}
 		return old, nil
 	}
-	snap := projectpostgres.SourceSnapshot{SnapshotID: in.SnapshotID, ProjectID: in.ProjectID, StorageSecurityDomain: in.StorageSecurityDomain, SourceDigest: in.SourceDigest, ProjectFile: in.ProjectFile, ProjectDigest: in.ProjectDigest, ProjectArtifactObjectKey: in.ProjectArtifactObjectKey, ProjectArtifactDigest: in.ProjectArtifactDigest, ProjectArtifactSizeBytes: in.ProjectArtifactSizeBytes, ManifestObjectKey: in.ManifestObjectKey, ManifestObjectDigest: in.ManifestObjectDigest, ManifestObjectSizeBytes: in.ManifestObjectSizeBytes, CompilerVersion: in.CompilerVersion, SchemaVersion: in.SchemaVersion}
+	snap := projectpostgres.SourceSnapshot{SnapshotID: in.SnapshotID, ProjectID: in.ProjectID, StorageSecurityDomain: in.StorageSecurityDomain, SourceDigest: in.SourceDigest, ProjectDigest: in.ProjectDigest, ProjectArtifactObjectKey: in.ProjectArtifactObjectKey, ProjectArtifactDigest: in.ProjectArtifactDigest, ProjectArtifactSizeBytes: in.ProjectArtifactSizeBytes, ManifestObjectKey: in.ManifestObjectKey, ManifestObjectDigest: in.ManifestObjectDigest, ManifestObjectSizeBytes: in.ManifestObjectSizeBytes, CompilerVersion: in.CompilerVersion, SchemaVersion: in.SchemaVersion}
 	r.snapshots[key] = snap
 	refs := make([]projectpostgres.SourceSnapshotObjectRef, len(in.Entries))
 	for i, e := range in.Entries {
@@ -224,7 +224,7 @@ func (t *nativeTestTx) Rollback(context.Context) error                          
 func nativeTestRequest() (project.CandidateSynchronizationRequest, []byte) {
 	body := []byte("source")
 	digest := sha256Identity(body)
-	return project.CandidateSynchronizationRequest{ProjectFile: "leapview.yaml", ArtifactDigest: "", IdempotencyKey: "idem-1", Artifacts: []project.CandidateSourceArtifact{{Path: "leapview.yaml", Digest: digest, SizeBytes: int64(len(body))}}}, body
+	return project.CandidateSynchronizationRequest{ArtifactDigest: "", IdempotencyKey: "idem-1", Artifacts: []project.CandidateSourceArtifact{{Path: "models/orders.yaml", Digest: digest, SizeBytes: int64(len(body))}}}, body
 }
 func newNativeTestAdapter(repo *nativeTestRepo, store objectstore.ImmutableStore, compile CompileFunc, now *time.Time) *NativeCandidateSourceSynchronizer {
 	var active bool
@@ -374,7 +374,7 @@ func TestNativeUploadCommitReplayAndReaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.ProjectPath != "" || snap.ProjectArtifactPath != "" || snap.ProjectFile != "leapview.yaml" || snap.SourceAttestationDigest == "" {
+	if snap.SourceRoot != "" || snap.SourceAttestationDigest == "" {
 		t.Fatalf("snapshot path/provenance contract: %#v", snap)
 	}
 	if compileCalls != 1 {

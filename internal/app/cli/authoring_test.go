@@ -15,42 +15,22 @@ import (
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
 	"github.com/stretchr/testify/require"
 )
 
-func TestProjectIdentityUsesCanonicalGraphID(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "leapview.yaml")
-	if err := os.WriteFile(path, []byte(`apiVersion: leapview.dev/v1
-kind: Project
-metadata:
-  id: project:canonical
-  name: executable-name
-spec:
-  connections: {include: []}
-  sources: {include: []}
-  models: {include: []}
-  semanticModels: {include: []}
-  pipelines: {include: []}
-  dashboards: {include: []}
-  access: {include: []}
-  publications: {include: []}
-`), 0o644); err != nil {
+func TestSourceRootDoesNotDeriveProjectIdentity(t *testing.T) {
+	path := t.TempDir()
+	if _, err := projectcompiler.Compile(path); err != nil {
+		t.Fatalf("compile empty source root: %v", err)
+	}
+	legacy := filepath.Join(path, "project.yaml")
+	if err := os.WriteFile(legacy, []byte("apiVersion: leapview.dev/v1\nkind: Project\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := loadProjectID(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "project:canonical" {
-		t.Fatalf("project identity = %q, want graph ID project:canonical", got)
-	}
-	identity, err := (applicationProjectIdentity{}).ProjectID(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if identity != got {
-		t.Fatalf("authoring identity = %q, want %q", identity, got)
+	if _, err := projectcompiler.Compile(path); err == nil {
+		t.Fatal("source loader accepted an authored Project file")
 	}
 }
 
@@ -68,16 +48,16 @@ func TestNativeSynchronizationProjectsCanonicalDeliveryCandidate(t *testing.T) {
 		execution   = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 		evidence    = "sha256:9999999999999999999999999999999999999999999999999999999999999999"
 	)
-	source := nativeCandidateSetDigestForTest(projectID, "leapview.yaml", artifact, 6)
+	source := nativeCandidateSetDigestForTest("models/orders.yaml", artifact, 6)
 	generic := &nativeDeliveryTransportStub{sourceDigest: source}
 	transport := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(generic))
 	transport.principalClient = accessgen.NewGenClient(generic)
 	transport.canonicalOrigin = "https://target.example"
 	candidate, err := transport.SynchronizeNative(t.Context(), projectdevloop.SyncRequest{
 		Snapshot: projectdevloop.Snapshot{
-			ProjectID: projectID, ProjectFile: "leapview.yaml", Digest: source,
+			ProjectID: projectID, Digest: source,
 			CandidateKey: "native", Artifacts: []projectdevloop.Artifact{{
-				Path: "leapview.yaml", Digest: artifact, SizeBytes: 6, Content: []byte("source"),
+				Path: "models/orders.yaml", Digest: artifact, SizeBytes: 6, Content: []byte("source"),
 			}},
 		},
 	}, 2)
@@ -130,12 +110,11 @@ func TestSourceSynchronizationKeysAreStableAcrossTransportInstances(t *testing.T
 	_, source := nativeDeliverySyncRequestForTest()
 	base := projectdevloop.SynchronizationPlanRequest{
 		ProjectID:      "finance",
-		ProjectFile:    "leapview.yaml",
 		ArtifactDigest: source,
 		SourceOnly:     true,
 		CandidateKey:   "native",
 		Artifacts: []projectdevloop.ArtifactReference{{
-			Path: "leapview.yaml", Digest: "sha256:41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d", SizeBytes: 6,
+			Path: "models/orders.yaml", Digest: "sha256:41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d", SizeBytes: 6,
 		}},
 		SourceRevision: &projectdevloop.SourceRevision{
 			Revision: "rev-a", Repository: "https://code.example/finance", Ref: "refs/heads/main", ChangeID: "change-a",
@@ -143,7 +122,7 @@ func TestSourceSynchronizationKeysAreStableAcrossTransportInstances(t *testing.T
 	}
 	run := func(request projectdevloop.SynchronizationPlanRequest) (string, string) {
 		t.Helper()
-		stub := &nativeDeliveryTransportStub{sourceDigest: source}
+		stub := &nativeDeliveryTransportStub{sourceDigest: request.ArtifactDigest}
 		transport := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(stub))
 		plan, err := transport.Plan(t.Context(), request)
 		require.NoError(t, err)
@@ -180,7 +159,9 @@ func TestSourceSynchronizationKeysAreStableAcrossTransportInstances(t *testing.T
 	}
 
 	changedRequest := base
-	changedRequest.ProjectFile = "other.yaml"
+	changedRequest.Artifacts = append([]projectdevloop.ArtifactReference(nil), base.Artifacts...)
+	changedRequest.Artifacts[0].Path = "models/other.yaml"
+	changedRequest.ArtifactDigest = nativeCandidateSetDigestForTest(changedRequest.Artifacts[0].Path, changedRequest.Artifacts[0].Digest, changedRequest.Artifacts[0].SizeBytes)
 	changedPlanKey, changedRetainKey = run(changedRequest)
 	if changedPlanKey == firstPlanKey || changedRetainKey == firstRetainKey {
 		t.Fatal("source request change reused source synchronization identity")
@@ -201,9 +182,9 @@ func TestRetainSourceRejectsMismatchedProjectIdentity(t *testing.T) {
 	stub := &nativeDeliveryTransportStub{sourceDigest: source, retainedProjectID: "other-project"}
 	transport := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(stub))
 	request := projectdevloop.SynchronizationPlanRequest{
-		ProjectID: "finance", ArtifactDigest: source, ProjectFile: "leapview.yaml",
+		ProjectID: "finance", ArtifactDigest: source,
 		CandidateKey: "native", PlanID: "source-plan",
-		Artifacts: []projectdevloop.ArtifactReference{{Path: "leapview.yaml", Digest: "sha256:41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d", SizeBytes: 6}},
+		Artifacts: []projectdevloop.ArtifactReference{{Path: "models/orders.yaml", Digest: "sha256:41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d", SizeBytes: 6}},
 	}
 	if _, err := transport.RetainSource(t.Context(), request); err == nil {
 		t.Fatal("retained source accepted a mismatched project identity")
@@ -216,7 +197,7 @@ func TestDevCommandExposesOneAuthenticatedRemoteWorkflow(t *testing.T) {
 		t.Fatalf("dev command = %q %q", command.Name(), command.Short)
 	}
 	for _, flag := range []string{
-		"project", "target", "token", "upload-concurrency", "once",
+		"source-root", "project-id", "target", "token", "upload-concurrency", "once",
 		"candidate-key", "source-revision", "source-repository", "source-ref", "source-change",
 	} {
 		if command.Flags().Lookup(flag) == nil {
@@ -342,21 +323,19 @@ func testPointer[T any](value T) *T {
 	return &value
 }
 
-func nativeCandidateSetDigestForTest(projectID, projectFile, artifactDigest string, size int64) string {
+func nativeCandidateSetDigestForTest(path, artifactDigest string, size int64) string {
 	hash := sha256.New()
-	_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:", len(projectID), projectID, len(projectFile), projectFile)
-	path := "leapview.yaml"
 	_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:%d:", len(path), path, len(artifactDigest), artifactDigest, size)
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
 }
 
 func nativeDeliverySyncRequestForTest() (projectdevloop.SyncRequest, string) {
 	const artifact = "sha256:41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d"
-	source := nativeCandidateSetDigestForTest("finance", "leapview.yaml", artifact, 6)
+	source := nativeCandidateSetDigestForTest("models/orders.yaml", artifact, 6)
 	return projectdevloop.SyncRequest{Snapshot: projectdevloop.Snapshot{
-		ProjectID: "finance", ProjectFile: "leapview.yaml", Digest: source,
+		ProjectID: "finance", Digest: source,
 		CandidateKey: "native", Artifacts: []projectdevloop.Artifact{{
-			Path: "leapview.yaml", Digest: artifact, SizeBytes: 6, Content: []byte("source"),
+			Path: "models/orders.yaml", Digest: artifact, SizeBytes: 6, Content: []byte("source"),
 		}},
 	}}, source
 }

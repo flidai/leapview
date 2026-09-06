@@ -20,7 +20,7 @@ export LEAPVIEW_WORKLOAD_PROJECT=analytics
 Compile the complete project first and retain structured diagnostics as a job artifact:
 
 ```sh
-leapview validate --project dashboards/leapview.yaml --json
+leapview validate --source-root dashboards --json
 ```
 
 Stop the pipeline on any non-zero exit status. Do not allow a later deployment job to replace or edit the project after validation.
@@ -31,7 +31,7 @@ Create a durable plan from the exact source snapshot, then build only that
 plan:
 
 ```sh
-PLAN_JSON=$(leapview plan dashboards/leapview.yaml --target "$LEAPVIEW_TARGET" --format json)
+PLAN_JSON=$(leapview plan --source-root dashboards --target "$LEAPVIEW_TARGET" --format json)
 PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -r .planId)
 BUILD_JSON=$(leapview build "$PLAN_ID" --format json)
 CANDIDATE_ID=$(printf '%s' "$BUILD_JSON" | jq -r .candidateId)
@@ -41,11 +41,11 @@ The target retains the portable bytes and source-attestation digest before
 physical work. `build` resolves target policy, leases, and credentials, and
 returns a candidate only after its catalog is sealed. `dev` remains an optional
 private watch/preview loop; it is not a second CI deployment path. For a local
-candidate preview, use `leapview dev --once --project dashboards/leapview.yaml`.
+candidate preview, use `leapview dev --once --source-root dashboards`.
 
 ## Publish an immutable deployment request
 
-Run publication from a protected job using the same project path and target used by `dev`:
+Run publication from a protected job using the same source root and target used by `dev`:
 
 ```sh
 leapview publish "$CANDIDATE_ID"

@@ -17,7 +17,7 @@ const port = await availablePort()
 const origin = `http://127.0.0.1:${port}`
 await rm(join(root, '.tmp', 'dev-server.port'), { force: true })
 await rm(join(root, '.tmp', 'dev-server.pid'), { force: true })
-const server = Bun.spawn(['./scripts/dev-server.sh', 'start', 'dashboards/leapview.yaml', 'olist', '.data/olist'], {
+const server = Bun.spawn(['./scripts/dev-server.sh', 'start', 'dashboards', 'olist', '.data/olist'], {
   cwd: root,
   env: {
     ...process.env,
@@ -25,6 +25,7 @@ const server = Bun.spawn(['./scripts/dev-server.sh', 'start', 'dashboards/leapvi
     LEAPVIEW_ADDR: `127.0.0.1:${port}`,
     LEAPVIEW_DEV_AUTH_BYPASS: 'true',
     LEAPVIEW_DEV_RESTART: '1',
+    LEAPVIEW_DEV_PROJECT_ID: 'project:leapview-showcase',
     LEAPVIEW_ENVIRONMENT: 'dev',
     LEAPVIEW_PRODUCTION: 'false',
     LEAPVIEW_HOME: home,

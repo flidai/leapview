@@ -63,7 +63,7 @@ func TestServingArtifactLoaderRejectsSemanticallyTamperedManifestJSON(t *testing
 	if err := json.Unmarshal([]byte(artifact.ManifestJSON), &manifest); err != nil {
 		t.Fatalf("unmarshal manifest JSON: %v", err)
 	}
-	manifest["projectId"] = json.RawMessage(`"tampered-project"`)
+	manifest["bundleDigest"] = json.RawMessage(`"sha256:` + strings.Repeat("f", 64) + `"`)
 	tampered, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatalf("marshal tampered manifest JSON: %v", err)
@@ -113,7 +113,7 @@ func TestRefreshArtifactLoaderLoadsNativeLocatorFromMemoryStore(t *testing.T) {
 
 func nativeServingArtifactFixture(t *testing.T) (*platformobjectstore.MemoryStore, servingstate.Artifact, CompiledProjectArtifact) {
 	t.Helper()
-	project := bundleProject(t)
+	project := sourceBundleFixture(t)
 	var content bytes.Buffer
 	manifest, digest, err := PackCompiledProject(project, bundlePlan(project), &content)
 	if err != nil {

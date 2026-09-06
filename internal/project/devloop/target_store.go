@@ -44,7 +44,7 @@ type StoredSnapshot struct {
 	ProjectID               projectgraph.ResourceID
 	Digest                  string
 	SourceAttestationDigest string
-	ProjectPath             string
+	SourceRoot              string
 	ProjectDigest           string
 	ProjectArtifactPath     string
 	// SourceRevision is carried only when resolving an exact source attestation;
@@ -65,17 +65,16 @@ type sourceAttestation struct {
 // retry, candidate-concurrency, and operation fields are intentionally absent.
 type retainedSourceManifest struct {
 	ProjectID      projectgraph.ResourceID `json:"projectId"`
-	ProjectFile    string                  `json:"projectFile"`
 	ArtifactDigest string                  `json:"artifactDigest"`
 	Artifacts      []ArtifactReference     `json:"artifacts"`
 }
 
 func sourceManifest(request SynchronizationPlanRequest) retainedSourceManifest {
-	return retainedSourceManifest{ProjectID: request.ProjectID, ProjectFile: request.ProjectFile, ArtifactDigest: request.ArtifactDigest, Artifacts: append([]ArtifactReference(nil), request.Artifacts...)}
+	return retainedSourceManifest{ProjectID: request.ProjectID, ArtifactDigest: request.ArtifactDigest, Artifacts: append([]ArtifactReference(nil), request.Artifacts...)}
 }
 
 func sourceManifestRequest(manifest retainedSourceManifest) SynchronizationPlanRequest {
-	return SynchronizationPlanRequest{ProjectID: manifest.ProjectID, ProjectFile: manifest.ProjectFile, ArtifactDigest: manifest.ArtifactDigest, Artifacts: append([]ArtifactReference(nil), manifest.Artifacts...)}
+	return SynchronizationPlanRequest{ProjectID: manifest.ProjectID, ArtifactDigest: manifest.ArtifactDigest, Artifacts: append([]ArtifactReference(nil), manifest.Artifacts...)}
 }
 
 // Snapshot returns one previously committed immutable snapshot by digest. The
@@ -331,7 +330,6 @@ func (store *TargetStore) Commit(
 	if err := store.mkdirAll(sourceRootRelative); err != nil {
 		return StoredSnapshot{}, err
 	}
-	sourceFiles := make(map[string][]byte, len(request.Artifacts))
 	var total int64
 	for _, reference := range request.Artifacts {
 		if err := ctx.Err(); err != nil {
@@ -349,21 +347,14 @@ func (store *TargetStore) Commit(
 		if total > maxTargetSnapshotBytes {
 			return StoredSnapshot{}, fmt.Errorf("project snapshot exceeds %d bytes", maxTargetSnapshotBytes)
 		}
-		content, err := store.readFile(targetRelative)
-		if err != nil {
-			return StoredSnapshot{}, err
-		}
-		sourceFiles[reference.Path] = content
 	}
-	compiled, err := projectcompiler.CompileProjectFiles(sourceFiles, request.ProjectFile)
+	sourceRoot, err := store.absolutePath(sourceRootRelative)
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
-	if compiled.ProjectID() != request.ProjectID {
-		return StoredSnapshot{}, fmt.Errorf(
-			"compiled project id %q does not match synchronized project %q",
-			compiled.ProjectID(), request.ProjectID,
-		)
+	compiled, err := projectcompiler.Compile(sourceRoot)
+	if err != nil {
+		return StoredSnapshot{}, err
 	}
 	if err := store.writePrivateFile(filepath.Join(stagingRelative, targetProjectArtifact), compiled.Canonical()); err != nil {
 		return StoredSnapshot{}, err
@@ -417,7 +408,6 @@ func (store *TargetStore) verifyStoredSnapshot(
 		return StoredSnapshot{}, fmt.Errorf("retained project snapshot identity does not match request")
 	}
 	sourceRoot := filepath.Join(directory, "source")
-	sourceFiles := make(map[string][]byte, len(request.Artifacts))
 	for _, reference := range request.Artifacts {
 		if err := ctx.Err(); err != nil {
 			return StoredSnapshot{}, err
@@ -429,18 +419,14 @@ func (store *TargetStore) verifyStoredSnapshot(
 		); err != nil {
 			return StoredSnapshot{}, fmt.Errorf("verify stored project source %q: %w", reference.Path, err)
 		}
-		content, err := store.readFile(filepath.Join(sourceRoot, filepath.FromSlash(reference.Path)))
-		if err != nil {
-			return StoredSnapshot{}, err
-		}
-		sourceFiles[reference.Path] = content
 	}
-	compiled, err := projectcompiler.CompileProjectFiles(sourceFiles, request.ProjectFile)
+	sourceRootPath, err := store.absolutePath(filepath.Join(directory, "source"))
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
-	if compiled.ProjectID() != request.ProjectID {
-		return StoredSnapshot{}, fmt.Errorf("stored project identity changed")
+	compiled, err := projectcompiler.Compile(sourceRootPath)
+	if err != nil {
+		return StoredSnapshot{}, err
 	}
 	retainedArtifact, err := store.readFile(filepath.Join(directory, targetProjectArtifact))
 	if os.IsNotExist(err) {
@@ -536,9 +522,8 @@ func sourceAttestationDigest(request SynchronizationPlanRequest) string {
 
 func normalizePlanRequest(request SynchronizationPlanRequest) (SynchronizationPlanRequest, error) {
 	request = clonePlanRequest(request)
-	request.ProjectFile = strings.TrimSpace(request.ProjectFile)
 	request.ArtifactDigest = strings.TrimSpace(request.ArtifactDigest)
-	if err := request.ProjectID.Validate(); err != nil || !canonicalArtifactPath(request.ProjectFile) ||
+	if err := request.ProjectID.Validate(); err != nil ||
 		len(request.Artifacts) == 0 || len(request.Artifacts) > maxTargetSnapshotFiles {
 		return SynchronizationPlanRequest{}, fmt.Errorf("project synchronization manifest is incomplete")
 	}
@@ -566,13 +551,10 @@ func normalizePlanRequest(request SynchronizationPlanRequest) (SynchronizationPl
 		}
 		artifacts[index] = Artifact{Path: reference.Path, Digest: reference.Digest, SizeBytes: reference.SizeBytes}
 	}
-	if _, exists := seen[request.ProjectFile]; !exists {
-		return SynchronizationPlanRequest{}, fmt.Errorf("project entrypoint is absent from synchronization manifest")
-	}
 	sort.Slice(request.Artifacts, func(i, j int) bool {
 		return request.Artifacts[i].Path < request.Artifacts[j].Path
 	})
-	if actual := candidateSetDigest(request.ProjectID, request.ProjectFile, artifacts); actual != request.ArtifactDigest {
+	if actual := candidateSetDigest(artifacts); actual != request.ArtifactDigest {
 		return SynchronizationPlanRequest{}, fmt.Errorf("project synchronization manifest does not match digest")
 	}
 	return clonePlanRequest(request), nil
@@ -926,7 +908,7 @@ func (store *TargetStore) storedSnapshot(
 	request SynchronizationPlanRequest,
 	directory, projectDigest string,
 ) (StoredSnapshot, error) {
-	projectPath, err := store.absolutePath(filepath.Join(directory, "source", filepath.FromSlash(request.ProjectFile)))
+	sourceRoot, err := store.absolutePath(filepath.Join(directory, "source"))
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
@@ -937,7 +919,7 @@ func (store *TargetStore) storedSnapshot(
 	return StoredSnapshot{
 		ProjectID: request.ProjectID, Digest: request.ArtifactDigest,
 		SourceAttestationDigest: sourceAttestationDigest(request),
-		ProjectPath:             projectPath,
+		SourceRoot:              sourceRoot,
 		ProjectDigest:           projectDigest, ProjectArtifactPath: artifactPath,
 		SourceRevision: cloneSourceRevision(request.SourceRevision),
 	}, nil

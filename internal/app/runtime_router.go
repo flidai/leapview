@@ -807,7 +807,7 @@ func buildApplicationSurfaces(
 			if principal.DevBypass {
 				return true, nil
 			}
-			project, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+			project, err := access.NewResourceRef(projectID, projectgraph.KindProjectNamespace)
 			if err != nil {
 				return false, err
 			}
@@ -1040,7 +1040,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if principal.DevBypass {
 				return true, nil
 			}
-			project, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+			project, err := access.NewResourceRef(projectID, projectgraph.KindProjectNamespace)
 			if err != nil {
 				return false, err
 			}
@@ -1523,16 +1523,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return groupIDs, nil
 				},
 				PlatformAdmin: func(ctx context.Context, principalID string) (bool, error) {
-					capabilities, err := routes.accessModule.CurrentEffectiveCapabilities(ctx, principalID)
-					if err != nil {
-						return false, err
-					}
-					for _, capability := range capabilities {
-						if capability == access.CapabilityProjectAdmin {
-							return true, nil
-						}
-					}
-					return false, nil
+					return routes.accessModule.IsPlatformAdmin(ctx, principalID)
 				},
 				CSRFToken:        routes.accessModule.CSRFToken,
 				CurrentRoleLabel: routes.accessModule.CurrentRoleLabel,
@@ -1695,7 +1686,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if err != nil || requested != active {
 				return nil
 			}
-			resource, err := access.NewResourceRef(active, projectgraph.KindProject)
+			resource, err := access.NewResourceRef(active, projectgraph.KindProjectNamespace)
 			if err != nil {
 				return nil
 			}

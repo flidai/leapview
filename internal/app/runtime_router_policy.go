@@ -254,7 +254,7 @@ func deliveryRoleAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects 
 // resource operations, approval decisions intentionally accept either an
 // explicit project role or a canonical grant on the project resource.
 func deliveryProjectAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
-	project, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+	project, err := access.NewResourceRef(projectID, projectgraph.KindProjectNamespace)
 	if err != nil {
 		return false, err
 	}
@@ -340,7 +340,7 @@ func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subje
 // PROJECT_ADMIN as direct grants, so a resource capability scoped to the root
 // must be satisfied by an explicit project role bundle.
 func projectRootRoleDecision(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resource access.ResourceRef, capability access.Capability) (handled, allowed bool) {
-	if resource.Kind() != projectgraph.KindProject || access.SupportsCapability(resource.Kind(), capability) {
+	if resource.Kind() != projectgraph.KindProjectNamespace || access.SupportsCapability(resource.Kind(), capability) {
 		return false, false
 	}
 	return true, deliveryRoleAllows(snapshot, subjects, capability)

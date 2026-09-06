@@ -132,7 +132,7 @@ type browserDraftCreator interface {
 // selected by composition. It is deliberately exported for the module router
 // so a create action cannot smuggle a project selector through the URL.
 func ProjectObjectRefs(_ *nethttp.Request, projectID projectgraph.ResourceID) []access.ResourceRef {
-	ref, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+	ref, err := access.NewResourceRef(projectID, projectgraph.KindProjectNamespace)
 	if err != nil {
 		return nil
 	}

@@ -11,7 +11,6 @@ import (
 func compileTestGraph(t *testing.T) graph.ProjectGraph {
 	t.Helper()
 	project, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_demo", Kind: graph.KindProject, Name: "demo"},
 		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "main"},
 		{ID: "model_orders", Kind: graph.KindModel, Name: "orders"},
 	}, nil)
@@ -41,7 +40,6 @@ func TestCompileAuthorizationSnapshotBindsExactIdentityAndGraph(t *testing.T) {
 		t.Fatalf("snapshot grants = %#v", got)
 	}
 	for _, bad := range []graph.ServingIdentity{
-		{ProjectID: "other", Environment: "production", GenerationID: "generation_7"},
 		{ProjectID: "project_demo", Environment: "", GenerationID: "generation_7"},
 		{ProjectID: "project_demo", Environment: "production", GenerationID: ""},
 	} {

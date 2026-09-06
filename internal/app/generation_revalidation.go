@@ -61,9 +61,6 @@ func activatedRevalidationGeneration(
 	if err != nil {
 		return authoring.RevalidationGeneration{}, fmt.Errorf("load activated project artifact %q: %w", deploymentIdentity.GenerationID, err)
 	}
-	if current.ProjectID != deploymentIdentity.ProjectID || current.Graph.ProjectID() != deploymentIdentity.ProjectID {
-		return authoring.RevalidationGeneration{}, fmt.Errorf("activated project artifact identity does not match deployment identity")
-	}
 	changed, err := changedGraphResources(ctx, states, deploymentIdentity, priorGenerationID, current)
 	if err != nil {
 		return authoring.RevalidationGeneration{}, err
@@ -79,7 +76,7 @@ func changedGraphResources(
 	},
 	identity projectgraph.ServingIdentity,
 	priorGenerationID string,
-	current projectbundle.CompiledProjectArtifact,
+	current projectbundle.CompiledSourceBundleArtifact,
 ) ([]projectgraph.ResourceID, error) {
 	if priorGenerationID == "" {
 		ids := make([]projectgraph.ResourceID, 0, len(current.Graph.Resources()))
@@ -106,21 +103,21 @@ func changedGraphResources(
 	return diffCompiledArtifacts(prior, current), nil
 }
 
-func loadCompiledArtifact(path string) (projectbundle.CompiledProjectArtifact, error) {
+func loadCompiledArtifact(path string) (projectbundle.CompiledSourceBundleArtifact, error) {
 	if path == "" {
-		return projectbundle.CompiledProjectArtifact{}, errors.New("serving artifact path is empty")
+		return projectbundle.CompiledSourceBundleArtifact{}, errors.New("serving artifact path is empty")
 	}
 	root, err := os.MkdirTemp("", "leapview-revalidation-")
 	if err != nil {
-		return projectbundle.CompiledProjectArtifact{}, err
+		return projectbundle.CompiledSourceBundleArtifact{}, err
 	}
 	defer os.RemoveAll(root)
 	if err := projectbundle.ExtractArtifact(path, root); err != nil {
-		return projectbundle.CompiledProjectArtifact{}, err
+		return projectbundle.CompiledSourceBundleArtifact{}, err
 	}
-	compiled, _, err := projectbundle.LoadCompiledProjectArtifact(root)
+	compiled, _, err := projectbundle.LoadCompiledSourceBundleArtifact(root)
 	if err != nil {
-		return projectbundle.CompiledProjectArtifact{}, err
+		return projectbundle.CompiledSourceBundleArtifact{}, err
 	}
 	return compiled, nil
 }
@@ -129,7 +126,7 @@ func loadCompiledArtifact(path string) (projectbundle.CompiledProjectArtifact, e
 // and graph topology. Graph metadata/provenance (domain, path, title, etc.) is
 // intentionally excluded: it does not change query execution or authorization
 // dependencies and therefore must not invalidate authored dashboards.
-func diffCompiledArtifacts(prior, current projectbundle.CompiledProjectArtifact) []projectgraph.ResourceID {
+func diffCompiledArtifacts(prior, current projectbundle.CompiledSourceBundleArtifact) []projectgraph.ResourceID {
 	changed := map[projectgraph.ResourceID]struct{}{}
 	compareDefinitions := func(priorDefs, currentDefs any) {
 		priorValue, currentValue := reflect.ValueOf(priorDefs), reflect.ValueOf(currentDefs)

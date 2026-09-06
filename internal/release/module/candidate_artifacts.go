@@ -27,7 +27,7 @@ type candidateArtifactInspector struct {
 
 type candidateGenerationBase struct {
 	graph           projectgraph.ProjectGraph
-	artifact        projectartifact.Project
+	artifact        projectartifact.SourceBundle
 	pins            map[string]string
 	bindings        map[string]string
 	snapshotID      int64
@@ -37,19 +37,12 @@ type candidateGenerationBase struct {
 	active          bool
 }
 
-func planCandidateProject(projectPath string, base candidateGenerationBase) (projectcompiler.ProjectPlan, error) {
-	if base.active {
-		return projectcompiler.PlanProjectAgainstArtifact(projectPath, base.artifact)
-	}
-	return projectcompiler.PlanProjectAgainstGraph(projectPath, projectgraph.ProjectGraph{})
-}
-
 // InspectCandidateArtifacts is the plan-phase, read-only half of candidate
 // preparation. It compiles the retained source, computes graph impact against
 // the exact active base, resolves managed-data pins, and derives authorization
 // evidence. It intentionally does not create serving rows, upload artifacts,
 // acquire connector credentials, or touch physical catalogs.
-func (service *candidateArtifactInspector) inspectCandidateProjectPlan(ctx context.Context, request release.CandidateArtifactRequest, compiledProject projectartifact.Project, plan projectcompiler.ProjectPlan, base candidateGenerationBase) (release.CandidateArtifactSet, error) {
+func (service *candidateArtifactInspector) inspectCandidateProjectPlan(ctx context.Context, request release.CandidateArtifactRequest, compiledProject projectartifact.SourceBundle, plan projectcompiler.BundlePlan, base candidateGenerationBase) (release.CandidateArtifactSet, error) {
 	activations, err := compiledProject.ConnectionActivations()
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
@@ -95,7 +88,10 @@ func (service *candidateArtifactInspector) inspectCandidateProjectPlan(ctx conte
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(policyIdentity, compiledProject.Graph(), compiledProject.Manifest().Access)
+	// Portable source bundles contain no access or publication authoring. The
+	// target/control plane supplies those documents when a generation is sealed;
+	// candidate inspection therefore carries an intentionally empty snapshot.
+	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(policyIdentity, compiledProject.Graph(), projectmanifest.AccessPolicy{})
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -161,7 +157,7 @@ func candidatePolicyIdentity(projectID projectgraph.ResourceID, environment stri
 	return projectgraph.NewServingIdentity(projectID, environment, candidatePolicyGenerationID)
 }
 
-func candidateRelationContexts(pins map[string]string, artifact projectartifact.Project, bindingKinds ...map[string]string) (map[string]string, error) {
+func candidateRelationContexts(pins map[string]string, artifact projectartifact.SourceBundle, bindingKinds ...map[string]string) (map[string]string, error) {
 	var kinds map[string]string
 	if len(bindingKinds) > 0 {
 		kinds = bindingKinds[0]
@@ -232,7 +228,7 @@ func (service *candidateArtifactInspector) collectExtensionEvidence(ctx context.
 	return values, nil
 }
 
-func requiredExtensionNames(activations []projectartifact.ConnectionActivation, manifest projectmanifest.Project) ([]string, error) {
+func requiredExtensionNames(activations []projectartifact.ConnectionActivation, manifest projectmanifest.ResourceManifest) ([]string, error) {
 	set := map[string]struct{}{"ducklake": {}}
 	for _, activation := range activations {
 		profile, ok := projectcontracts.LookupConnector(activation.ConnectorKind)

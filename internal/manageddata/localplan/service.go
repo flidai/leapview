@@ -34,19 +34,19 @@ type Source struct {
 	Format     string
 }
 
-type Project struct {
+type SourceCatalog struct {
 	Connections map[string]Connection
 	Sources     map[string]Source
 }
 
-type ProjectLoader func(string) (Project, error)
+type SourceCatalogLoader func(string) (SourceCatalog, error)
 
 type Request struct {
-	ProjectPath string
-	Connection  string
-	From        string
-	Previous    *manageddata.Manifest
-	Limits      manageddata.Limits
+	SourceRoot string
+	Connection string
+	From       string
+	Previous   *manageddata.Manifest
+	Limits     manageddata.Limits
 }
 
 type Result struct {
@@ -61,20 +61,20 @@ type Result struct {
 }
 
 type Service struct {
-	loadProject ProjectLoader
+	loadCatalog SourceCatalogLoader
 	files       fileSystem
 }
 
-func NewService(loadProject ProjectLoader) *Service {
+func NewService(loadCatalog SourceCatalogLoader) *Service {
 	return &Service{
-		loadProject: loadProject,
+		loadCatalog: loadCatalog,
 		files:       osFileSystem{},
 	}
 }
 
 func (s *Service) Plan(ctx context.Context, request Request) (Result, error) {
-	if strings.TrimSpace(request.ProjectPath) == "" {
-		return Result{}, fmt.Errorf("project path is required")
+	if strings.TrimSpace(request.SourceRoot) == "" {
+		return Result{}, fmt.Errorf("source root is required")
 	}
 	if strings.TrimSpace(request.Connection) == "" {
 		return Result{}, fmt.Errorf("connection is required")
@@ -82,13 +82,13 @@ func (s *Service) Plan(ctx context.Context, request Request) (Result, error) {
 	if ctx == nil {
 		return Result{}, fmt.Errorf("context is required")
 	}
-	if s == nil || s.loadProject == nil || s.files == nil {
+	if s == nil || s.loadCatalog == nil || s.files == nil {
 		return Result{}, fmt.Errorf("local planner service is not configured")
 	}
 
-	project, err := s.loadProject(request.ProjectPath)
+	project, err := s.loadCatalog(request.SourceRoot)
 	if err != nil {
-		return Result{}, fmt.Errorf("load project: %w", err)
+		return Result{}, fmt.Errorf("load source catalog: %w", err)
 	}
 	connectionName, connection, connectionID, err := resolveConnection(project, request.Connection)
 	if err != nil {
@@ -158,7 +158,7 @@ func (s *Service) Plan(ctx context.Context, request Request) (Result, error) {
 // resolveConnection accepts either the authored display name or its explicit
 // stable resource ID. It never derives an ID from the name or from a target
 // lookup; the project projection must carry the authored ID.
-func resolveConnection(project Project, selector string) (string, Connection, string, error) {
+func resolveConnection(project SourceCatalog, selector string) (string, Connection, string, error) {
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
 		return "", Connection{}, "", fmt.Errorf("connection is required")
@@ -221,7 +221,7 @@ func validateRoot(files fileSystem, root string) error {
 	return nil
 }
 
-func selectedSourceNames(project Project, connection string) []string {
+func selectedSourceNames(project SourceCatalog, connection string) []string {
 	names := make([]string, 0)
 	for name, source := range project.Sources {
 		if source.Connection == connection {
@@ -238,7 +238,7 @@ type sourcePattern struct {
 	matched bool
 }
 
-func discoverFiles(files fileSystem, root string, sourceNames []string, project Project) (map[string]string, error) {
+func discoverFiles(files fileSystem, root string, sourceNames []string, project SourceCatalog) (map[string]string, error) {
 	discovered := make(map[string]string)
 	patterns := make([]sourcePattern, 0)
 	for _, sourceName := range sourceNames {

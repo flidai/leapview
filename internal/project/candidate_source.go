@@ -28,7 +28,6 @@ type CandidateSourceRevision struct {
 }
 
 type CandidateSynchronizationRequest struct {
-	ProjectFile    string
 	ArtifactDigest string
 	// SourceOnly retains the immutable source snapshot without invoking
 	// candidate preparation or any physical writer. Delivery plan callers set
@@ -48,17 +47,13 @@ type CandidateSourceScope struct {
 }
 
 type CandidateSourceSnapshot struct {
-	ProjectID               projectgraph.ResourceID
-	ArtifactDigest          string
-	SourceAttestationDigest string
-	// ProjectFile is the logical authored manifest path. It is never a host
-	// filesystem path and is safe to carry across native object-backed ports.
-	ProjectFile              string
+	ProjectID                projectgraph.ResourceID
+	ArtifactDigest           string
+	SourceAttestationDigest  string
 	ProjectArtifactObjectKey string
 	ManifestObjectKey        string
-	ProjectPath              string
 	ProjectDigest            string
-	ProjectArtifactPath      string
+	SourceRoot               string
 	SourceRevision           *CandidateSourceRevision
 }
 

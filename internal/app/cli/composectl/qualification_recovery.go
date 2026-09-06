@@ -33,14 +33,14 @@ const qualificationRecoveryReleaseInterruptionDelay = 15 * time.Second
 const qualificationRecoveryActivationBarrierTimeout = 2 * time.Minute
 
 const (
-	qualificationRecoveryFullCPUs               = "1"
-	qualificationRecoveryInterruptedWorkCPUs    = "0.03"
-	qualificationRecoveryReleaseCandidateKey    = "qualification-recovery-release"
-	qualificationRecoveryDeploymentCandidateKey = "qualification-recovery-deployment"
-	qualificationManagedConnectionID            = "connection:sample"
-	qualificationRefreshPipelineID              = "pipeline:evaluation-refresh"
-	qualificationRecoveryReleaseProjectName     = "recovery-release-project"
-	qualificationRecoveryDeploymentProjectName  = "recovery-deployment-project"
+	qualificationRecoveryFullCPUs                = "1"
+	qualificationRecoveryInterruptedWorkCPUs     = "0.03"
+	qualificationRecoveryReleaseCandidateKey     = "qualification-recovery-release"
+	qualificationRecoveryDeploymentCandidateKey  = "qualification-recovery-deployment"
+	qualificationManagedConnectionID             = "connection:sample"
+	qualificationRefreshPipelineID               = "pipeline:evaluation-refresh"
+	qualificationRecoveryReleaseDashboardName    = "Recovery Release Dashboard"
+	qualificationRecoveryDeploymentDashboardName = "Recovery Deployment Dashboard"
 )
 
 type qualificationRecoveryOptions struct {
@@ -276,7 +276,8 @@ func (c *Controller) runQualificationRecovery(
 			manageddataqualificationbarrier.ProjectIDEnv: options.ProjectID,
 		},
 		"leapview", "data", "sync",
-		"--project", "/work/project-a/leapview.yaml",
+		"--source-root", "/work/project-a",
+		"--project-id", options.ProjectID,
 		"--connection", "sample",
 		"--from", "/work/input",
 		"--format", "json",
@@ -384,7 +385,8 @@ func (c *Controller) runQualificationRecovery(
 	releaseCommand, err := c.startQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken, options.Target, releaseLog,
 		"leapview", "dev", "--once", "--no-browser",
-		"--project", "/work/project-a/leapview.yaml",
+		"--source-root", "/work/project-a",
+		"--project-id", options.ProjectID,
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
 		"--format", "json",
 	)
@@ -407,7 +409,8 @@ func (c *Controller) runQualificationRecovery(
 	releaseOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken, options.Target,
 		"leapview", "dev", "--once", "--no-browser",
-		"--project", "/work/project-a/leapview.yaml",
+		"--source-root", "/work/project-a",
+		"--project-id", options.ProjectID,
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
 		"--format", "json",
 	)
@@ -442,7 +445,8 @@ func (c *Controller) runQualificationRecovery(
 	deploymentCandidateOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken, options.Target,
 		"leapview", "dev", "--once", "--no-browser",
-		"--project", "/work/project-b/leapview.yaml",
+		"--source-root", "/work/project-b",
+		"--project-id", options.ProjectID,
 		"--candidate-key", qualificationRecoveryDeploymentCandidateKey,
 		"--format", "json",
 	)
@@ -732,11 +736,11 @@ func (c *Controller) prepareQualificationRecoveryData(
 	); err != nil {
 		return err
 	}
-	sourceProject := filepath.Join(workDir, "source-project")
+	sourceRoot := filepath.Join(workDir, "source-root")
 	if _, err := c.qualificationDocker(
 		ctx, nil, "cp",
 		options.ContainerID+":/app/evaluation/project",
-		sourceProject,
+		sourceRoot,
 	); err != nil {
 		return err
 	}
@@ -751,26 +755,8 @@ func (c *Controller) prepareQualificationRecoveryData(
 	); err != nil {
 		return err
 	}
-	for name, variant := range map[string]struct {
-		title string
-		alias string
-	}{
-		"project-a": {title: qualificationRecoveryReleaseProjectName, alias: "qualification_release_orders"},
-		"project-b": {title: qualificationRecoveryDeploymentProjectName, alias: "qualification_deployment_orders"},
-	} {
-		target := filepath.Join(workDir, name)
-		if err := copyQualificationTree(sourceProject, target); err != nil {
-			return err
-		}
-		if err := rewriteQualificationRecoveryProject(
-			target,
-			variant.title,
-			variant.alias,
-			options.AuthorPrincipalID,
-			options.ReviewerPrincipalID,
-		); err != nil {
-			return err
-		}
+	if err := prepareQualificationRecoverySourceRoots(sourceRoot, workDir); err != nil {
+		return err
 	}
 	candidate := c.qualificationContainers.Existing(options.ContainerID)
 	_, _ = candidate.Exec(
@@ -799,45 +785,44 @@ func (c *Controller) prepareQualificationRecoveryData(
 	return nil
 }
 
-func rewriteQualificationRecoveryProject(
-	root string,
-	title string,
-	modelAlias string,
-	authorPrincipalID string,
-	reviewerPrincipalID string,
-) error {
-	projectPath := filepath.Join(root, "leapview.yaml")
-	projectContents, err := os.ReadFile(projectPath)
-	if err != nil {
-		return err
+func prepareQualificationRecoverySourceRoots(sourceRoot, workDir string) error {
+	variants := []struct {
+		name        string
+		displayName string
+	}{
+		{name: "project-a", displayName: qualificationRecoveryReleaseDashboardName},
+		{name: "project-b", displayName: qualificationRecoveryDeploymentDashboardName},
 	}
-	projectName := []byte("name: leapview-evaluation")
-	if bytes.Count(projectContents, projectName) != 1 {
-		return fmt.Errorf("qualification recovery project name marker is not unique")
+	for _, variant := range variants {
+		name, displayName := variant.name, variant.displayName
+		target := filepath.Join(workDir, name)
+		if err := copyQualificationTree(sourceRoot, target); err != nil {
+			return err
+		}
+		for _, manifest := range []string{"leapview.yaml", "leapview.yml"} {
+			if _, err := os.Stat(filepath.Join(target, manifest)); err == nil {
+				return fmt.Errorf("recovery source root contains obsolete Project manifest %q", manifest)
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+		}
+		dashboardPath := filepath.Join(target, "dashboards", "sales-overview.yaml")
+		contents, err := os.ReadFile(dashboardPath)
+		if err != nil {
+			return err
+		}
+		const displayNamePrefix = "displayName: "
+		marker := []byte(displayNamePrefix + "Five-minute Sales Evaluation")
+		replacement := []byte(displayNamePrefix + displayName)
+		if !bytes.Contains(contents, marker) {
+			return fmt.Errorf("recovery source root dashboard %q has no evaluation display name", dashboardPath)
+		}
+		contents = bytes.Replace(contents, marker, replacement, 1)
+		if err := os.WriteFile(dashboardPath, contents, 0o600); err != nil {
+			return err
+		}
 	}
-	projectContents = bytes.Replace(projectContents, projectName, []byte("name: "+title), 1)
-	if err := os.WriteFile(projectPath, projectContents, 0o600); err != nil {
-		return err
-	}
-	if err := configureQualificationPrincipals(projectPath, authorPrincipalID, reviewerPrincipalID); err != nil {
-		return fmt.Errorf("configure recovery principals: %w", err)
-	}
-
-	// The recovery journey must exercise a real native build on both sides of
-	// each interruption. A metadata-only rename is eligible for whole-candidate
-	// reuse and can complete before the interruption boundary. Give each copy a
-	// semantically equivalent but distinct model execution identity instead.
-	modelPath := filepath.Join(root, "models", "orders.yaml")
-	modelContents, err := os.ReadFile(modelPath)
-	if err != nil {
-		return err
-	}
-	from := []byte(`      FROM source."sample.orders"`)
-	if bytes.Count(modelContents, from) != 1 {
-		return fmt.Errorf("qualification recovery model source marker is not unique")
-	}
-	modelContents = bytes.Replace(modelContents, from, []byte(`      FROM source."sample.orders" AS `+modelAlias), 1)
-	return os.WriteFile(modelPath, modelContents, 0o600)
+	return nil
 }
 
 func makeQualificationContainerReadable(root string) error {

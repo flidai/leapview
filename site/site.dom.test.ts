@@ -840,7 +840,8 @@ test('getting started route directs users through the first learning path', asyn
     const configurationGroup = sidebar.locator('details[data-site-docs-group="reference-configuration"]')
     expect(await configurationGroup.count()).toBe(1)
     expect(await configurationGroup.getAttribute('open')).toBeNull()
-    expect(await configurationGroup.locator('a[href="/docs/config/project"]').count()).toBe(1)
+    expect(await configurationGroup.locator('a[href="/docs/config/connection"]').count()).toBe(1)
+    expect(await configurationGroup.locator('a[href="/docs/config/project"]').count()).toBe(0)
     expect(await docsNavigation.locator('a[href="/docs/enterprise-auth"]').count()).toBe(1)
     expect(await docsNavigation.locator('a[href="/docs/storage-architecture"]').count()).toBe(1)
     expect(await docsNavigation.getByText('Dashboard demo', { exact: true }).count()).toBe(0)
@@ -1630,7 +1631,7 @@ test('documentation articles provide a readable, navigable reference experience'
     expect(await codeBlock.locator('.shiki').getAttribute('class')).toContain('github-light')
     expect(await codeBlock.getByText('Shell', { exact: true }).isVisible()).toBe(true)
     await codeBlock.getByRole('button', { name: 'Copy code' }).click()
-    await page.waitForFunction(() => document.documentElement.dataset.copiedCode === 'leapview validate --project dashboards/leapview.yaml\nleapview plan dashboards/leapview.yaml\n')
+    await page.waitForFunction(() => document.documentElement.dataset.copiedCode === 'leapview validate --source-root dashboards\nleapview plan --source-root dashboards\n')
     expect(await codeBlock.getByRole('button', { name: 'Code copied' }).isVisible()).toBe(true)
 
     const activeGroup = page.locator('.site-docs-nav-group-active > summary').first()

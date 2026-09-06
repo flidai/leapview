@@ -39,7 +39,6 @@ func lineageTestDB(t *testing.T) *pgxpool.Pool {
 func sampleGraph(t *testing.T) projectgraph.ProjectGraph {
 	t.Helper()
 	resources := []projectgraph.Resource{
-		{ID: projectgraph.ResourceID("project:p"), Kind: projectgraph.KindProject, Name: "project", Metadata: projectgraph.Metadata{Tags: []string{"z", "a"}}},
 		{ID: projectgraph.ResourceID("source:s"), Kind: projectgraph.KindSource, Name: "source"},
 		{ID: projectgraph.ResourceID("model:m"), Kind: projectgraph.KindModel, Name: "model"},
 		{ID: projectgraph.ResourceID("dashboard:d"), Kind: projectgraph.KindDashboard, Name: "dashboard"},
@@ -57,11 +56,11 @@ func sampleGraph(t *testing.T) projectgraph.ProjectGraph {
 
 func TestProjectionDeterministicAndCycleValidation(t *testing.T) {
 	g := sampleGraph(t)
-	a, err := FromGraph(g)
+	a, err := FromGraph("project:p", g)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := FromGraph(g)
+	b, err := FromGraph("project:p", g)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +87,7 @@ func TestProjectionDeterministicAndCycleValidation(t *testing.T) {
 func TestProjectionPersistenceLoadTamperRollbackAndBinding(t *testing.T) {
 	p := lineageTestDB(t)
 	g := sampleGraph(t)
-	projection, err := FromGraph(g)
+	projection, err := FromGraph("project:p", g)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,14 +96,14 @@ func TestProjectionPersistenceLoadTamperRollbackAndBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PersistGraph(ctx, tx, g, Binding{DeliveryID: "delivery-1", GenerationID: "generation-1", GraphDigest: projection.Digest}); err != nil {
+	if _, err := PersistGraph(ctx, tx, g, Binding{DeliveryID: "delivery-1", GenerationID: "generation-1", ProjectID: "project:p", GraphDigest: projection.Digest}); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := Load(ctx, p, projection.Digest)
+	loaded, err := Load(ctx, p, projection.ProjectID, projection.Digest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +115,7 @@ func TestProjectionPersistenceLoadTamperRollbackAndBinding(t *testing.T) {
 	}
 	// Runtime mutation is rejected by the database. Simulate a privileged
 	// storage fault only after proving the immutable-row trigger is active.
-	if _, err := p.Exec(ctx, `UPDATE lineage.nodes SET properties='{"name":"tampered"}'::jsonb WHERE graph_digest=$1 AND node_id='model:m'`, projection.Digest); err != nil {
+	if _, err := p.Exec(ctx, `UPDATE lineage.nodes SET properties='{"name":"tampered"}'::jsonb WHERE project_id=$1 AND graph_digest=$2 AND node_id='model:m'`, projection.ProjectID, projection.Digest); err != nil {
 		// Expected.
 	} else {
 		t.Fatal("lineage node update bypassed immutability trigger")
@@ -124,13 +123,13 @@ func TestProjectionPersistenceLoadTamperRollbackAndBinding(t *testing.T) {
 	if _, err := p.Exec(ctx, `ALTER TABLE lineage.nodes DISABLE TRIGGER lineage_nodes_immutable`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Exec(ctx, `UPDATE lineage.nodes SET properties='{"name":"tampered"}'::jsonb WHERE graph_digest=$1 AND node_id='model:m'`, projection.Digest); err != nil {
+	if _, err := p.Exec(ctx, `UPDATE lineage.nodes SET properties='{"name":"tampered"}'::jsonb WHERE project_id=$1 AND graph_digest=$2 AND node_id='model:m'`, projection.ProjectID, projection.Digest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.Exec(ctx, `ALTER TABLE lineage.nodes ENABLE TRIGGER lineage_nodes_immutable`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(ctx, p, projection.Digest); !errors.Is(err, ErrTampered) {
+	if _, err := Load(ctx, p, projection.ProjectID, projection.Digest); !errors.Is(err, ErrTampered) {
 		t.Fatalf("tamper error = %v", err)
 	}
 	conflictTx, err := p.Begin(ctx)
@@ -154,7 +153,7 @@ func TestProjectionPersistenceLoadTamperRollbackAndBinding(t *testing.T) {
 	if _, err := p.Exec(ctx, `ALTER TABLE lineage.nodes DISABLE TRIGGER lineage_nodes_immutable`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Exec(ctx, `UPDATE lineage.nodes SET properties=$1::jsonb WHERE graph_digest=$2 AND node_id='model:m'`, originalProperties, projection.Digest); err != nil {
+	if _, err := p.Exec(ctx, `UPDATE lineage.nodes SET properties=$1::jsonb WHERE project_id=$2 AND graph_digest=$3 AND node_id='model:m'`, originalProperties, projection.ProjectID, projection.Digest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.Exec(ctx, `ALTER TABLE lineage.nodes ENABLE TRIGGER lineage_nodes_immutable`); err != nil {
@@ -170,7 +169,7 @@ func TestProjectionPersistenceLoadTamperRollbackAndBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rollbackProjection, err := FromGraph(rollbackGraph)
+	rollbackProjection, err := FromGraph("project:p", rollbackGraph)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,15 +183,65 @@ func TestProjectionPersistenceLoadTamperRollbackAndBinding(t *testing.T) {
 	if err := rollback.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(ctx, p, rollbackProjection.Digest); !errors.Is(err, ErrNotFound) {
+	if _, err := Load(ctx, p, rollbackProjection.ProjectID, rollbackProjection.Digest); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("rolled back projection error = %v", err)
+	}
+}
+
+func TestRootlessGraphCanBeStoredForTwoProjects(t *testing.T) {
+	p := lineageTestDB(t)
+	ctx := context.Background()
+	g := sampleGraph(t)
+	one, err := FromGraph("project:one", g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := FromGraph("project:two", g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.Digest != two.Digest {
+		t.Fatalf("portable graph digests differ: %q != %q", one.Digest, two.Digest)
+	}
+
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PersistGraph(ctx, tx, g, Binding{DeliveryID: "delivery-one", GenerationID: "generation-one", ProjectID: one.ProjectID, GraphDigest: one.Digest}); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := PersistGraph(ctx, tx, g, Binding{DeliveryID: "delivery-two", GenerationID: "generation-two", ProjectID: two.ProjectID, GraphDigest: two.Digest}); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []Projection{one, two} {
+		got, err := Load(ctx, p, want.ProjectID, want.Digest)
+		if err != nil {
+			t.Fatalf("load %s: %v", want.ProjectID, err)
+		}
+		if got.ProjectID != want.ProjectID || got.Digest != want.Digest || len(got.Nodes) != len(want.Nodes) || len(got.Edges) != len(want.Edges) {
+			t.Fatalf("loaded %s projection = %#v", want.ProjectID, got)
+		}
+	}
+	var graphCount int
+	if err := p.QueryRow(ctx, `SELECT count(*) FROM lineage.graphs WHERE graph_digest=$1`, one.Digest).Scan(&graphCount); err != nil {
+		t.Fatal(err)
+	}
+	if graphCount != 2 {
+		t.Fatalf("stored graph rows = %d, want 2", graphCount)
 	}
 }
 
 func TestProjectionConcurrentIdempotentPersistenceAndTraversalSecurity(t *testing.T) {
 	p := lineageTestDB(t)
 	g := sampleGraph(t)
-	projection, err := FromGraph(g)
+	projection, err := FromGraph("project:p", g)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +306,7 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 	p := lineageTestDB(t)
 	ctx := context.Background()
 	graph := sampleGraph(t)
-	projection, err := FromGraph(graph)
+	projection, err := FromGraph("project:p", graph)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +314,7 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := PublishRevision(ctx, tx, RevisionInput{ProjectID: graph.ProjectID().String(), ScopeID: "scope-a", Projection: projection})
+	first, err := PublishRevision(ctx, tx, RevisionInput{ProjectID: "project:p", ScopeID: "scope-a", Projection: projection})
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
@@ -276,7 +325,7 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	current, err := CurrentRevision(ctx, p, graph.ProjectID().String(), "scope-a")
+	current, err := CurrentRevision(ctx, p, "project:p", "scope-a")
 	if err != nil || current.RevisionID != 1 {
 		t.Fatalf("current revision = %#v, err=%v", current, err)
 	}
@@ -294,7 +343,7 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 				errCh <- beginErr
 				return
 			}
-			_, publishErr := PublishRevision(ctx, publication, RevisionInput{ProjectID: graph.ProjectID().String(), ScopeID: "scope-concurrent", Projection: projection})
+			_, publishErr := PublishRevision(ctx, publication, RevisionInput{ProjectID: "project:p", ScopeID: "scope-concurrent", Projection: projection})
 			if publishErr == nil {
 				publishErr = publication.Commit(ctx)
 			} else {
@@ -310,7 +359,7 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 			t.Fatal(publishErr)
 		}
 	}
-	if concurrent, err := CurrentRevision(ctx, p, graph.ProjectID().String(), "scope-concurrent"); err != nil || concurrent.RevisionID != 1 {
+	if concurrent, err := CurrentRevision(ctx, p, "project:p", "scope-concurrent"); err != nil || concurrent.RevisionID != 1 {
 		t.Fatalf("concurrent current revision = %#v, err=%v", concurrent, err)
 	}
 
@@ -322,7 +371,7 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	projection2, err := FromGraph(graph2)
+	projection2, err := FromGraph("project:p", graph2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +379,7 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := PublishRevision(ctx, tx, RevisionInput{ProjectID: graph2.ProjectID().String(), ScopeID: "scope-a", Projection: projection2})
+	second, err := PublishRevision(ctx, tx, RevisionInput{ProjectID: "project:p", ScopeID: "scope-a", Projection: projection2})
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
@@ -341,7 +390,7 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := CurrentRevision(ctx, p, graph2.ProjectID().String(), "scope-a"); err != nil || got.GraphDigest != projection2.Digest {
+	if got, err := CurrentRevision(ctx, p, "project:p", "scope-a"); err != nil || got.GraphDigest != projection2.Digest {
 		t.Fatalf("replacement current = %#v, err=%v", got, err)
 	}
 	// Re-publishing a previously active graph is a legitimate new revision
@@ -350,7 +399,7 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := PublishRevision(ctx, tx, RevisionInput{ProjectID: graph.ProjectID().String(), ScopeID: "scope-a", Projection: projection})
+	third, err := PublishRevision(ctx, tx, RevisionInput{ProjectID: "project:p", ScopeID: "scope-a", Projection: projection})
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
@@ -361,11 +410,11 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := CurrentRevision(ctx, p, graph.ProjectID().String(), "scope-a"); err != nil || got.RevisionID != 3 || got.GraphDigest != projection.Digest {
+	if got, err := CurrentRevision(ctx, p, "project:p", "scope-a"); err != nil || got.RevisionID != 3 || got.GraphDigest != projection.Digest {
 		t.Fatalf("rollback current = %#v, err=%v", got, err)
 	}
 	var closed int
-	if err := p.QueryRow(ctx, `SELECT count(*) FROM lineage.revisions WHERE project_id=$1 AND scope_id='scope-a' AND valid_to IS NOT NULL`, graph.ProjectID().String()).Scan(&closed); err != nil {
+	if err := p.QueryRow(ctx, `SELECT count(*) FROM lineage.revisions WHERE project_id=$1 AND scope_id='scope-a' AND valid_to IS NOT NULL`, "project:p").Scan(&closed); err != nil {
 		t.Fatal(err)
 	}
 	if closed != 2 {
@@ -376,14 +425,14 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PublishRevision(ctx, rollback, RevisionInput{ProjectID: graph2.ProjectID().String(), ScopeID: "scope-rollback", Projection: projection2}); err != nil {
+	if _, err := PublishRevision(ctx, rollback, RevisionInput{ProjectID: "project:p", ScopeID: "scope-rollback", Projection: projection2}); err != nil {
 		_ = rollback.Rollback(ctx)
 		t.Fatal(err)
 	}
 	if err := rollback.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CurrentRevision(ctx, p, graph2.ProjectID().String(), "scope-rollback"); !errors.Is(err, ErrNotFound) {
+	if _, err := CurrentRevision(ctx, p, "project:p", "scope-rollback"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("rolled back revision error = %v", err)
 	}
 
@@ -397,7 +446,6 @@ func TestRevisionPublicationReplacementRollbackAndProjectIsolation(t *testing.T)
 func TestTraversalDiamondIsDeduplicatedAndEdgeBounded(t *testing.T) {
 	p := lineageTestDB(t)
 	resources := []projectgraph.Resource{
-		{ID: "project:diamond", Kind: projectgraph.KindProject, Name: "diamond"},
 		{ID: "dashboard:root", Kind: projectgraph.KindDashboard, Name: "root"},
 		{ID: "model:left", Kind: projectgraph.KindModel, Name: "left"},
 		{ID: "model:right", Kind: projectgraph.KindModel, Name: "right"},
@@ -413,7 +461,7 @@ func TestTraversalDiamondIsDeduplicatedAndEdgeBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projection, err := FromGraph(g)
+	projection, err := FromGraph("project:diamond", g)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +519,7 @@ func TestRuntimePublicationRoleBoundaryAndCompositeProjectFK(t *testing.T) {
 	}
 	defer runtimeDB.Close()
 	graph := sampleGraph(t)
-	projection, err := FromGraph(graph)
+	projection, err := FromGraph("project:p", graph)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,14 +550,17 @@ func TestRuntimePublicationRoleBoundaryAndCompositeProjectFK(t *testing.T) {
 	}
 
 	badDigest := "sha256:" + strings.Repeat("0", 64)
-	if _, err := admin.Exec(t.Context(), `INSERT INTO lineage.graphs(graph_digest,graph_version,project_id,node_count,edge_count) VALUES ($1,1,'project:one',1,0)`, badDigest); err != nil {
+	if _, err := admin.Exec(t.Context(), `INSERT INTO lineage.graphs(graph_digest,graph_version,project_id,node_count,edge_count) VALUES ($1,1,'project:legacy',1,0)`, "sha256:"+strings.Repeat("1", 64)); err == nil {
+		t.Fatal("fresh lineage schema admitted a legacy graph version")
+	}
+	if _, err := admin.Exec(t.Context(), `INSERT INTO lineage.graphs(graph_digest,graph_version,project_id,node_count,edge_count) VALUES ($1,2,'project:one',1,0)`, badDigest); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := IdentityDigest(projectgraph.KindProject, projectgraph.ResourceID("project:two"))
+	identity, err := IdentityDigest(projectgraph.KindModel, projectgraph.ResourceID("model:two"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := admin.Exec(t.Context(), `INSERT INTO lineage.nodes(graph_digest,project_id,node_id,resource_kind,identity_digest,properties) VALUES ($1,'project:two','project:two','project',$2,'{}'::jsonb)`, badDigest, identity); err == nil {
+	if _, err := admin.Exec(t.Context(), `INSERT INTO lineage.nodes(graph_digest,project_id,node_id,resource_kind,identity_digest,properties) VALUES ($1,'project:two','model:two','model',$2,'{}'::jsonb)`, badDigest, identity); err == nil {
 		t.Fatal("cross-project node insert bypassed composite foreign key")
 	}
 }

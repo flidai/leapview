@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
@@ -24,8 +26,8 @@ func (Compiler) Compile(ctx context.Context, input CompileInput) (CompileOutput,
 	}
 	if input.ProjectID == "" || len(input.ProjectID) > maxProjectIDBytes || !validText(input.ProjectID) ||
 		input.StorageSecurityDomain == "" || len(input.StorageSecurityDomain) > maxProjectIDBytes || !validText(input.StorageSecurityDomain) ||
-		!canonicalPath(input.ProjectFile) || input.SourceDigest == "" || !validDigest(input.SourceDigest) {
-		return CompileOutput{}, fmt.Errorf("project identity, storage security domain, project file, and source digest are required")
+		input.SourceDigest == "" || !validDigest(input.SourceDigest) {
+		return CompileOutput{}, fmt.Errorf("project identity, storage security domain, and source digest are required")
 	}
 	files := make(map[string][]byte, len(input.Files))
 	entries := make([]projectpostgres.SourceSnapshotEntryInput, 0, len(input.Files))
@@ -49,19 +51,30 @@ func (Compiler) Compile(ctx context.Context, input CompileInput) (CompileOutput,
 		return CompileOutput{}, fmt.Errorf("project source files are required")
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
-	wantSourceDigest := projectpostgres.CanonicalSourceDigest(input.ProjectID, input.ProjectFile, entries)
+	wantSourceDigest := projectpostgres.CanonicalSourceDigest(entries)
 	if input.SourceDigest != wantSourceDigest {
 		return CompileOutput{}, fmt.Errorf("source digest %q does not match canonical source digest %q", input.SourceDigest, wantSourceDigest)
 	}
-	compiled, err := projectcompiler.CompileProjectFiles(files, input.ProjectFile)
+	sourceRoot, err := os.MkdirTemp("", "leapview-source-")
+	if err != nil {
+		return CompileOutput{}, err
+	}
+	defer os.RemoveAll(sourceRoot)
+	for name, body := range files {
+		destination := filepath.Join(sourceRoot, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			return CompileOutput{}, err
+		}
+		if err := os.WriteFile(destination, body, 0o644); err != nil {
+			return CompileOutput{}, err
+		}
+	}
+	compiled, err := projectcompiler.Compile(sourceRoot)
 	if err != nil {
 		return CompileOutput{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return CompileOutput{}, err
-	}
-	if string(compiled.ProjectID()) != input.ProjectID {
-		return CompileOutput{}, fmt.Errorf("project id %q does not match compiled project %q", input.ProjectID, compiled.ProjectID())
 	}
 	manifest, err := json.Marshal(compiled.Manifest())
 	if err != nil {

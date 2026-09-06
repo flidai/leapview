@@ -18,16 +18,15 @@ func TestActivationLineageVerifierAdapterResolvesExactBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_lineage", Kind: projectgraph.KindProject, Name: "project"},
 		{ID: "dashboard", Kind: projectgraph.KindDashboard, Name: "dashboard"},
-	}, []projectgraph.Edge{{From: "project_lineage", To: "dashboard", Relation: "contains"}})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	const targetID = "target-lineage"
 	const generationID = "generation-lineage"
 	const projectID = "project_lineage"
-	projection, err := lineagepostgres.FromGraph(graph)
+	projection, err := lineagepostgres.FromGraph(projectID, graph)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -113,7 +113,7 @@ func (f *warehouseBoundaryFactory) Prepare(ctx context.Context, input runtimehos
 		_ = database.Close()
 		return nil, err
 	}
-	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: input.State.ProjectID, Kind: projectgraph.KindProject, Name: "warehouse-boundary"}}, nil)
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
 	if err != nil {
 		_ = projectRuntime.Close()
 		controller.Close()

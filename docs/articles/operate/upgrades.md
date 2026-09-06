@@ -156,4 +156,7 @@ the need to understand the failed upgrade. A target-level `leapview rollback`
 only selects a retained serving generation and cannot roll back an application
 image or persistent schema.
 
-Project YAML remains on its own delivery cadence unless the new application version requires a resource migration. In that case, version application and project changes together in the promotion record.
+The source root remains on its own delivery cadence unless the new application
+version requires a resource migration. In that case, version application and
+source-root changes together in the promotion record. The durable Project
+identity remains bound to the target instance.

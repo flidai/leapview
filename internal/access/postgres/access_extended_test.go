@@ -74,7 +74,7 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	if err := repo.RecordAuditEvent(t.Context(), access.AuditEventInput{Action: "extended.valid", MetadataJSON: `{}`}); err != nil {
 		t.Fatalf("object audit metadata rejected: %v", err)
 	}
-	projectRef, err := access.NewResourceRef("project_extended", graph.KindProject)
+	projectRef, err := access.NewResourceRef("project_extended", graph.KindProjectNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,6 @@ func TestAccessExtendedPostgreSQL18SnapshotAndPublicationAdapters(t *testing.T) 
 	db := newStandaloneAccessDatabase(t)
 	ctx := t.Context()
 	project, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_adapter", Kind: graph.KindProject, Name: "adapter"},
 		{ID: "dashboard_adapter", Kind: graph.KindDashboard, Name: "dashboard"},
 	}, nil)
 	if err != nil {
@@ -340,14 +339,14 @@ func TestAccessExtendedPostgreSQL18SnapshotAndPublicationAdapters(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ActivateDashboardPublicationPrincipalTx(ctx, tx, project.ProjectID(), "public"); err != nil {
+	if err := ActivateDashboardPublicationPrincipalTx(ctx, tx, identity.ProjectID, "public"); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("activate dashboard publication principal: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	publicationID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("dashboard_publication:"+project.ProjectID().String()+".public")).String()
+	publicationID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("dashboard_publication:"+identity.ProjectID.String()+".public")).String()
 	var principalKind string
 	if err := db.admin.QueryRow(ctx, `SELECT principal_type FROM access.principal WHERE id=$1::uuid`, publicationID).Scan(&principalKind); err != nil {
 		t.Fatal(err)
@@ -359,7 +358,7 @@ func TestAccessExtendedPostgreSQL18SnapshotAndPublicationAdapters(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ActivateDashboardPublicationPrincipalTx(ctx, tx, project.ProjectID(), strings.Repeat("x", 513)); err == nil {
+	if err := ActivateDashboardPublicationPrincipalTx(ctx, tx, identity.ProjectID, strings.Repeat("x", 513)); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("oversized publication name accepted")
 	}

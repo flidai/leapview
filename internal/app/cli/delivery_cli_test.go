@@ -111,8 +111,8 @@ func TestDeliveryPlanInvocationsUseFreshOperationKeys(t *testing.T) {
 func stringPointer(value string) *string { return &value }
 
 func TestDeliveryPlanRetainsSourceWhenCandidateIdentityIsIncomplete(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
-	snapshot, err := (devloop.FilesystemBuilder{ProjectPath: projectPath}).Build(t.Context())
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
+	snapshot, err := (devloop.FilesystemBuilder{SourceRoot: projectPath, ProjectID: "project:leapview-showcase"}).Build(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestDeliveryPlanRetainsSourceWhenCandidateIdentityIsIncomplete(t *testing.T
 		TargetId: "target-1", Environment: "development",
 	}}
 	result, err := (projectDeliveryPlanOperations{client: deliveryPlanSourceHandoffClient{transport: transport}}).Create(t.Context(), projectcli.DeliveryPlanOptions{
-		ProjectPath: projectPath, CandidateID: "candidate-1", ProjectID: snapshot.ProjectID.String(), TargetID: "target-1", SourceDigest: snapshot.Digest,
+		SourceRoot: projectPath, CandidateID: "candidate-1", ProjectID: snapshot.ProjectID.String(), TargetID: "target-1", SourceDigest: snapshot.Digest,
 		UploadConcurrency: 1,
 	})
 	if err != nil {
@@ -239,8 +239,8 @@ func (transport *deliveryBuildRetryTransport) DoAPIGen(_ context.Context, reques
 }
 
 func TestDeliveryPlanRejectsRetainedSourceIdentityMismatch(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
-	snapshot, err := (devloop.FilesystemBuilder{ProjectPath: projectPath}).Build(t.Context())
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
+	snapshot, err := (devloop.FilesystemBuilder{SourceRoot: projectPath, ProjectID: "project:leapview-showcase"}).Build(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestDeliveryPlanRejectsRetainedSourceIdentityMismatch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.options.ProjectPath = projectPath
+			tt.options.SourceRoot = projectPath
 			tt.options.CandidateID = "candidate-1"
 			tt.options.UploadConcurrency = 1
 			transport := &deliveryPlanSourceHandoffTransport{retained: tt.retained}

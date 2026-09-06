@@ -146,17 +146,11 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 #### Configuration
 
 - [Configuration reference](/docs/config): Choose a resource kind and open its generated field reference and JSON Schema.
-- [Project configuration](/docs/config/project): Fields and validation rules for the Project YAML resource.
 - [Connection configuration](/docs/config/connection): Fields and validation rules for the Connection YAML resource.
 - [Source configuration](/docs/config/source): Fields and validation rules for the Source YAML resource.
 - [Model configuration](/docs/config/model): Fields and validation rules for the Model YAML resource.
 - [Semantic Model configuration](/docs/config/semantic-model): Fields and validation rules for the SemanticModel YAML resource.
 - [Pipeline configuration](/docs/config/pipeline): Fields and validation rules for the Pipeline YAML resource.
-- [Group configuration](/docs/config/group): Fields and validation rules for the Group YAML resource.
-- [Role Binding configuration](/docs/config/role-binding): Fields and validation rules for the RoleBinding YAML resource.
-- [Grant configuration](/docs/config/grant): Fields and validation rules for the Grant YAML resource.
-- [Data Policy configuration](/docs/config/data-policy): Fields and validation rules for the DataPolicy YAML resource.
-- [Dashboard Publication configuration](/docs/config/dashboard-publication): Fields and validation rules for the DashboardPublication YAML resource.
 - [Dashboard configuration](/docs/config/dashboard-document): Fields and validation rules for the Dashboard YAML resource.
 
 #### CLI commands
@@ -170,7 +164,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview dashboards](/docs/cli/dashboards): Inspect dashboards
 - [leapview data](/docs/cli/data): Manage project-global data revisions
 - [leapview deploy](/docs/cli/deploy): Deprecated composition of plan, build, and publish
-- [leapview dev](/docs/cli/dev): Synchronize a project into your private target candidate
+- [leapview dev](/docs/cli/dev): Synchronize a source root into your private target candidate
 - [leapview healthcheck](/docs/cli/healthcheck): Check the local LeapView readiness endpoint
 - [leapview login](/docs/cli/login): Sign in to a LeapView target for project authoring
 - [leapview logout](/docs/cli/logout): Revoke a LeapView authoring session and remove local credentials
@@ -182,7 +176,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview semantic-model](/docs/cli/semantic-model): Compile and interchange semantic models
 - [leapview semantic-models](/docs/cli/semantic-models): Inspect semantic models
 - [leapview serve](/docs/cli/serve): Run the LeapView HTTP server
-- [leapview validate](/docs/cli/validate): Validate a configuration-as-code project
+- [leapview validate](/docs/cli/validate): Validate a LeapView source root
 - [leapview version](/docs/cli/version): Report the LeapView build identity
 
 #### API reference

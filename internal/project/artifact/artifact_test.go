@@ -19,10 +19,38 @@ import (
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
-func projectFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Project) {
+func sourceBundleFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.ResourceManifest) {
 	t.Helper()
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project:demo", Kind: projectgraph.KindProject, Name: "demo"},
+		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse"},
+		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},
+		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
+	}, []projectgraph.Edge{
+		{From: "source:orders", To: "connection:warehouse"},
+		{From: "model:orders", To: "source:orders"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return graphValue, manifest.ResourceManifest{
+		Connections: map[string]semanticmodel.Connection{
+			"connection:warehouse": {Kind: "managed"},
+		},
+		Sources: map[string]semanticmodel.Source{
+			"source:orders": {Connection: "connection:warehouse"},
+		},
+		Models: map[string]semanticmodel.Table{
+			"model:orders": {
+				Execution:          semanticmodel.ExecutionDefinition{Source: "source:orders"},
+				SourceDependencies: []string{"source:orders"},
+			},
+		},
+	}
+}
+
+func fullBundleFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.ResourceManifest) {
+	t.Helper()
+	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse"},
 		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},
 		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
@@ -39,17 +67,28 @@ func projectFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Project) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return graphValue, manifest.Project{
-		ID: "project:demo", Name: "demo", Title: "Demo",
+	return graphValue, manifest.ResourceManifest{
+		Title:       "Demo",
 		Connections: map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
-		Sources: map[string]semanticmodel.Source{
-			"source:orders": {Connection: "connection:warehouse"},
-		},
+		Sources:     map[string]semanticmodel.Source{"source:orders": {Connection: "connection:warehouse"}},
 		Models: map[string]semanticmodel.Table{
-			"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}, SourceDependencies: []string{"source:orders"}, Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}}},
+			"model:orders": {
+				Execution:          semanticmodel.ExecutionDefinition{Source: "source:orders"},
+				SourceDependencies: []string{"source:orders"},
+				Dimensions:         map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}},
+			},
 		},
 		SemanticModels: map[string]*semanticmodel.Model{
-			"semantic:sales": {Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}, Tables: map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}}}}},
+			"semantic:sales": {
+				Name:    "sales",
+				Sources: map[string]semanticmodel.Source{"orders": {}},
+				Tables: map[string]semanticmodel.Table{
+					"orders": {
+						Execution:  semanticmodel.ExecutionDefinition{Source: "orders"},
+						Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}},
+					},
+				},
+			},
 		},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{
 			"dashboard:sales": {ID: "dashboard:sales", SemanticModel: "semantic:sales"},
@@ -62,14 +101,20 @@ func projectFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Project) 
 			Sources:        map[string]string{"orders": "source:orders"},
 			Models:         map[string]string{"orders_model": "model:orders"},
 			SemanticModels: map[string]string{"sales": "semantic:sales"},
-			Dashboards:     map[string]string{"sales": "dashboard:sales"},
+			Dashboards:     map[string]string{"sales_dashboard": "dashboard:sales"},
 			Pipelines:      map[string]string{"sales_refresh": "pipeline:sales"},
 		},
 		DashboardSources: map[string]manifest.DashboardSource{
-			"dashboard:sales": {Document: document.DashboardDocument{APIVersion: "leapview.dev/v1", Kind: document.DashboardResourceKindDashboard, Metadata: document.DashboardMetadata{ID: "dashboard:sales", Name: "sales_dashboard"}, Spec: document.DashboardSpec{SemanticModel: "semantic:sales"}}, Path: "dashboards/sales.yaml"},
+			"dashboard:sales": {
+				Document: document.DashboardDocument{
+					APIVersion: "leapview.dev/v1", Kind: document.DashboardResourceKindDashboard,
+					Metadata: document.DashboardMetadata{ID: "dashboard:sales", Name: "sales_dashboard"},
+					Spec:     document.DashboardSpec{SemanticModel: "semantic:sales"},
+				},
+				Path: "dashboards/sales.yaml",
+			},
 		},
 		ResourceFiles: map[string]string{
-			"project:demo":         "leapview.yaml",
 			"connection:warehouse": "connections/warehouse.yaml",
 			"source:orders":        "sources/orders.yaml",
 			"model:orders":         "models/orders.yaml",
@@ -80,72 +125,55 @@ func projectFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Project) 
 	}
 }
 
-func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	first, err := NewProject(graphValue, projectManifest)
+func cloneRelationIdentityManifest(value manifest.ResourceManifest) manifest.ResourceManifest {
+	clone := value
+	clone.Connections = make(map[string]semanticmodel.Connection, len(value.Connections))
+	for id, connection := range value.Connections {
+		clone.Connections[id] = connection
+	}
+	clone.Sources = make(map[string]semanticmodel.Source, len(value.Sources))
+	for id, source := range value.Sources {
+		fields := make(map[string]semanticmodel.SourceField, len(source.Fields))
+		for name, field := range source.Fields {
+			fields[name] = field
+		}
+		source.Fields = fields
+		source.Schema.Columns = append([]semanticmodel.ColumnSchema(nil), source.Schema.Columns...)
+		clone.Sources[id] = source
+	}
+	clone.Models = make(map[string]semanticmodel.Table, len(value.Models))
+	for id, table := range value.Models {
+		columns := make(map[string]semanticmodel.ModelColumn, len(table.Columns))
+		for name, column := range table.Columns {
+			columns[name] = column
+		}
+		dimensions := make(map[string]semanticmodel.MetricDimension, len(table.Dimensions))
+		for name, dimension := range table.Dimensions {
+			dimensions[name] = dimension
+		}
+		table.Columns = columns
+		table.Dimensions = dimensions
+		table.Schema.Columns = append([]semanticmodel.ColumnSchema(nil), table.Schema.Columns...)
+		clone.Models[id] = table
+	}
+	return clone
+}
+
+func mustSourceDataIdentityEvidence(t *testing.T, project SourceBundle, revisions, bindingKinds map[string]string) map[projectgraph.ResourceID]sourcedataidentity.Evidence {
+	t.Helper()
+	evidence, err := project.SourceDataIdentityEvidence(revisions, bindingKinds)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("SourceDataIdentityEvidence() error = %v", err)
 	}
-	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "sqlite"}
-	second, err := NewProject(graphValue, projectManifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Digest() == second.Digest() {
-		t.Fatal("manifest mutation did not change project artifact digest")
-	}
-	decoded, err := Decode(first.Canonical())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decoded.ProjectID() != graphValue.ProjectID() || decoded.Graph().Digest() != graphValue.Digest() {
-		t.Fatalf("project identity = (%q, %q), want (%q, %q)", decoded.ProjectID(), decoded.Graph().Digest(), graphValue.ProjectID(), graphValue.Digest())
-	}
-	models := decoded.Models()
-	model, ok := models["semantic:sales"]
-	if !ok {
-		t.Fatal("semantic model projection missing")
-	}
-	if _, ok := model.Sources["orders"]; !ok {
-		t.Fatalf("semantic runtime symbolic ref was rewritten: %#v", model.Sources)
-	}
-	if got := model.Tables["orders"].Dimensions["order_id"].Datatype; got != semanticmodel.DataTypeString {
-		t.Fatalf("semantic logical datatype = %q, want %q after artifact round trip", got, semanticmodel.DataTypeString)
-	}
-	if got := decoded.ModelTables()["model:orders"].Dimensions["order_id"].Datatype; got != semanticmodel.DataTypeString {
-		t.Fatalf("model logical datatype = %q, want %q after artifact round trip", got, semanticmodel.DataTypeString)
-	}
-	if got := decoded.Manifest().NameIndex.SemanticModels["sales"]; got != "semantic:sales" {
-		t.Fatalf("name index semantic model = %q, want semantic:sales", got)
-	}
-	if got := decoded.RefreshDefinition().ConnectionIDs["warehouse"]; got != "connection:warehouse" {
-		t.Fatalf("refresh connection ID = %q, want connection:warehouse", got)
-	}
-	refreshTable, ok := decoded.RefreshDefinition().ModelTables["orders_model"]
-	if !ok {
-		t.Fatal("refresh projection dropped project Model catalog")
-	}
-	if refreshTable.ModelName != "orders_model" || !reflect.DeepEqual(refreshTable.SourceDependencies, []string{"orders"}) {
-		t.Fatalf("refresh Model = %#v, want authored name with runtime source dependencies", refreshTable)
-	}
-	var wire map[string]any
-	if err := json.Unmarshal(first.Canonical(), &wire); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := wire["workspaces"]; ok {
-		t.Fatalf("project artifact retained workspace key: %#v", wire)
-	}
-	if _, ok := wire["identity"]; ok {
-		t.Fatalf("project artifact retained serving identity: %#v", wire)
-	}
+	return evidence
 }
 
 func TestRelationExecutionDigestsForInputsReuseExactArtifactEvidence(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
+	graphValue, projectManifest := fullBundleFixture(t)
 	projectManifest.SemanticModels["semantic:sales"].Datasets = map[string]semanticmodel.SemanticDatasetSpec{
 		"orders": {Model: "orders_model"},
 	}
-	project, err := NewProject(graphValue, projectManifest)
+	project, err := NewSourceBundle(graphValue, projectManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +209,7 @@ func TestRelationExecutionDigestsForInputsReuseExactArtifactEvidence(t *testing.
 	dashboard := dashboardOnly.DashboardDefinitions["dashboard:sales"]
 	dashboard.Title = "Presentation-only change"
 	dashboardOnly.DashboardDefinitions["dashboard:sales"] = dashboard
-	changedProject, err := NewProject(project.Graph(), dashboardOnly)
+	changedProject, err := NewSourceBundle(project.Graph(), dashboardOnly)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,14 +246,14 @@ func TestRelationExecutionDigestsForInputsReuseExactArtifactEvidence(t *testing.
 }
 
 func TestLegacyRelationContextPreservesSourceDependenciesProjection(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
+	graphValue, projectManifest := fullBundleFixture(t)
 	projectManifest.SemanticModels["semantic:sales"].Datasets = map[string]semanticmodel.SemanticDatasetSpec{
 		"orders": {Model: "orders_model"},
 	}
 	table := projectManifest.Models["model:orders"]
 	table.SourceDependencies = nil
 	projectManifest.Models["model:orders"] = table
-	project, err := NewProject(graphValue, projectManifest)
+	project, err := NewSourceBundle(graphValue, projectManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,25 +285,21 @@ func TestLegacyRelationContextPreservesSourceDependenciesProjection(t *testing.T
 	}
 
 	semanticID, _ := projectgraph.NewResourceID("semantic:sales")
-	missing, err := project.SemanticModelRelationEvidence(
-		semanticID, nil, map[string]string{"connection:warehouse": "managed"},
-	)
+	missing, err := project.SemanticModelRelationEvidence(semanticID, nil, map[string]string{"connection:warehouse": "managed"})
 	if err != nil || len(missing) != 0 {
 		t.Fatalf("result identity accepted missing direct-source evidence: %#v, %v", missing, err)
 	}
 	sourceEvidence := mustSourceDataIdentityEvidence(t, project, map[string]string{
 		"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
 	}, map[string]string{"connection:warehouse": "managed"})
-	available, err := project.SemanticModelRelationEvidence(
-		semanticID, sourceEvidence, map[string]string{"connection:warehouse": "managed"},
-	)
+	available, err := project.SemanticModelRelationEvidence(semanticID, sourceEvidence, map[string]string{"connection:warehouse": "managed"})
 	if err != nil || len(available) != 1 {
 		t.Fatalf("result identity direct-source projection = %#v, %v; want one evidenced relation", available, err)
 	}
 }
 
 func TestResultIdentitySQLLineageRequiresValidatedCompleteEvidence(t *testing.T) {
-	graphValue, baseManifest := projectFixture(t)
+	graphValue, baseManifest := fullBundleFixture(t)
 	baseManifest.SemanticModels["semantic:sales"].Datasets = map[string]semanticmodel.SemanticDatasetSpec{
 		"orders": {Model: "orders_model"},
 	}
@@ -285,16 +309,14 @@ func TestResultIdentitySQLLineageRequiresValidatedCompleteEvidence(t *testing.T)
 		t.Helper()
 		projectManifest := cloneRelationIdentityManifest(baseManifest)
 		projectManifest.Models["model:orders"] = table
-		project, err := NewProject(graphValue, projectManifest)
+		project, err := NewSourceBundle(graphValue, projectManifest)
 		if err != nil {
 			t.Fatal(err)
 		}
 		sourceEvidence := mustSourceDataIdentityEvidence(t, project, map[string]string{
 			"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
 		}, map[string]string{"connection:warehouse": "managed"})
-		relations, err := project.SemanticModelRelationEvidence(
-			semanticID, sourceEvidence, map[string]string{"connection:warehouse": "managed"},
-		)
+		relations, err := project.SemanticModelRelationEvidence(semanticID, sourceEvidence, map[string]string{"connection:warehouse": "managed"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -327,7 +349,7 @@ func TestResultIdentitySQLLineageRequiresValidatedCompleteEvidence(t *testing.T)
 }
 
 func TestResultIdentityRelationEvidenceIgnoresPresentationAndRotatesOnExecution(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
+	graphValue, projectManifest := fullBundleFixture(t)
 	projectManifest.SemanticModels["semantic:sales"].Datasets = map[string]semanticmodel.SemanticDatasetSpec{
 		"orders": {Model: "orders_model"},
 	}
@@ -340,9 +362,9 @@ func TestResultIdentityRelationEvidenceIgnoresPresentationAndRotatesOnExecution(
 	source.Schema.Columns = []semanticmodel.ColumnSchema{{Name: "order_id", PhysicalType: "VARCHAR"}}
 	projectManifest.Sources["source:orders"] = source
 
-	digestFor := func(value manifest.Project) string {
+	digestFor := func(value manifest.ResourceManifest) string {
 		t.Helper()
-		project, err := NewProject(graphValue, value)
+		project, err := NewSourceBundle(graphValue, value)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -350,13 +372,9 @@ func TestResultIdentityRelationEvidenceIgnoresPresentationAndRotatesOnExecution(
 		if err != nil {
 			t.Fatal(err)
 		}
-		evidence, err := project.SemanticModelRelationEvidence(
-			semanticID,
-			mustSourceDataIdentityEvidence(t, project, map[string]string{
-				"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
-			}, map[string]string{"connection:warehouse": "managed"}),
-			map[string]string{"connection:warehouse": "managed"},
-		)
+		evidence, err := project.SemanticModelRelationEvidence(semanticID, mustSourceDataIdentityEvidence(t, project, map[string]string{
+			"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
+		}, map[string]string{"connection:warehouse": "managed"}), map[string]string{"connection:warehouse": "managed"})
 		if err != nil || len(evidence) != 1 {
 			t.Fatalf("SemanticModelRelationEvidence() = %#v, %v", evidence, err)
 		}
@@ -401,57 +419,12 @@ func TestResultIdentityRelationEvidenceIgnoresPresentationAndRotatesOnExecution(
 	}
 }
 
-func cloneRelationIdentityManifest(value manifest.Project) manifest.Project {
-	clone := value
-	clone.Connections = make(map[string]semanticmodel.Connection, len(value.Connections))
-	for id, connection := range value.Connections {
-		clone.Connections[id] = connection
-	}
-	clone.Sources = make(map[string]semanticmodel.Source, len(value.Sources))
-	for id, source := range value.Sources {
-		fields := make(map[string]semanticmodel.SourceField, len(source.Fields))
-		for name, field := range source.Fields {
-			fields[name] = field
-		}
-		source.Fields = fields
-		source.Schema.Columns = append([]semanticmodel.ColumnSchema(nil), source.Schema.Columns...)
-		clone.Sources[id] = source
-	}
-	clone.Models = make(map[string]semanticmodel.Table, len(value.Models))
-	for id, table := range value.Models {
-		columns := make(map[string]semanticmodel.ModelColumn, len(table.Columns))
-		for name, column := range table.Columns {
-			columns[name] = column
-		}
-		dimensions := make(map[string]semanticmodel.MetricDimension, len(table.Dimensions))
-		for name, dimension := range table.Dimensions {
-			dimensions[name] = dimension
-		}
-		table.Columns = columns
-		table.Dimensions = dimensions
-		table.Schema.Columns = append([]semanticmodel.ColumnSchema(nil), table.Schema.Columns...)
-		clone.Models[id] = table
-	}
-	return clone
-}
-
-func TestProjectRejectsRawConnectionSourceFromCompiledManifest(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	projectManifest.AuthoredResourceSources = map[string]string{
-		"connection:warehouse": "kind: Connection\nspec:\n  credentials: leaked\n",
-	}
-	_, err := NewProject(graphValue, projectManifest)
-	if err == nil || !strings.Contains(err.Error(), "forbidden graph kind") {
-		t.Fatalf("NewProject() error = %v, want raw connection source rejection", err)
-	}
-}
-
 func TestConnectionActivationCarriesCanonicalAccessPolicy(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
+	graphValue, projectManifest := fullBundleFixture(t)
 	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed", Access: semanticmodel.ConnectionAccessPublic}
-	project, err := NewProject(graphValue, projectManifest)
+	project, err := NewSourceBundle(graphValue, projectManifest)
 	if err != nil {
-		t.Fatalf("NewProject() public connection: %v", err)
+		t.Fatalf("NewSourceBundle() public connection: %v", err)
 	}
 	activations, err := project.ConnectionActivations()
 	if err != nil {
@@ -461,9 +434,9 @@ func TestConnectionActivationCarriesCanonicalAccessPolicy(t *testing.T) {
 		t.Fatalf("activation access = %#v, want public", activations)
 	}
 	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed"}
-	omitted, err := NewProject(graphValue, projectManifest)
+	omitted, err := NewSourceBundle(graphValue, projectManifest)
 	if err != nil {
-		t.Fatalf("NewProject() omitted connection: %v", err)
+		t.Fatalf("NewSourceBundle() omitted connection: %v", err)
 	}
 	omittedActivations, err := omitted.ConnectionActivations()
 	if err != nil {
@@ -475,8 +448,8 @@ func TestConnectionActivationCarriesCanonicalAccessPolicy(t *testing.T) {
 }
 
 func TestSourceDataIdentityEvidenceAdaptsOnlyManagedContentRevisions(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	project, err := NewProject(graphValue, projectManifest)
+	graphValue, projectManifest := fullBundleFixture(t)
+	project, err := NewSourceBundle(graphValue, projectManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,10 +481,8 @@ func TestSourceDataIdentityEvidenceAdaptsOnlyManagedContentRevisions(t *testing.
 	externalManifest := project.Manifest()
 	externalManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "http"}
 	pathLocation := &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{
-		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{
-			Type: "path", Path: "https://example.test/orders.csv", Format: "csv",
-		},
-		Format: "csv",
+		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: "https://example.test/orders.csv", Format: "csv"},
+		Format:                 "csv",
 	}}
 	source := externalManifest.Sources["source:orders"]
 	source.Path = "https://example.test/orders.csv"
@@ -519,7 +490,7 @@ func TestSourceDataIdentityEvidenceAdaptsOnlyManagedContentRevisions(t *testing.
 	source.PathLocation = pathLocation
 	source.EffectivePathLocation = pathLocation
 	externalManifest.Sources["source:orders"] = source
-	external, err := NewProject(graphValue, externalManifest)
+	external, err := NewSourceBundle(graphValue, externalManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,17 +517,8 @@ func TestSourceDataIdentityAliasCapacityRejectsOverflow(t *testing.T) {
 	}
 }
 
-func mustSourceDataIdentityEvidence(t *testing.T, project Project, revisions, bindingKinds map[string]string) map[projectgraph.ResourceID]sourcedataidentity.Evidence {
-	t.Helper()
-	evidence, err := project.SourceDataIdentityEvidence(revisions, bindingKinds)
-	if err != nil {
-		t.Fatalf("SourceDataIdentityEvidence() error = %v", err)
-	}
-	return evidence
-}
-
-func TestProjectArtifactRoundTripPreservesLoweredSemanticModelBinding(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
+func TestSourceBundleRoundTripPreservesLoweredSemanticModelBinding(t *testing.T) {
+	graphValue, projectManifest := fullBundleFixture(t)
 	projectManifest.SemanticModels["semantic:sales"] = &semanticmodel.Model{
 		Name: "sales",
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
@@ -566,7 +528,7 @@ func TestProjectArtifactRoundTripPreservesLoweredSemanticModelBinding(t *testing
 			"sales_orders": {ModelName: "orders_model", Execution: semanticmodel.ExecutionDefinition{Source: "orders_model"}},
 		},
 	}
-	project, err := NewProject(graphValue, projectManifest)
+	project, err := NewSourceBundle(graphValue, projectManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,8 +549,8 @@ func TestProjectArtifactRoundTripPreservesLoweredSemanticModelBinding(t *testing
 	}
 }
 
-func TestProjectArtifactRoundTripPreservesPrivateRuntimeProjection(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
+func TestSourceBundleRoundTripPreservesPrivateRuntimeProjection(t *testing.T) {
+	graphValue, projectManifest := fullBundleFixture(t)
 	header := true
 	pathLocation := &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{
 		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: "orders.csv", Format: "csv"},
@@ -610,7 +572,7 @@ func TestProjectArtifactRoundTripPreservesPrivateRuntimeProjection(t *testing.T)
 		"orders":     {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, SQLAnalysisEvidence: &semanticmodel.SQLAnalysisEvidence{Validated: true, SourceRefs: []string{"orders"}}, Checks: []semanticmodel.ModelCheck{{Fields: []string{"order_id"}, Minimum: &minimum, Maximum: &maximum}}, SourceDependencies: []string{"orders"}},
 		"sql_orders": {Execution: semanticmodel.ExecutionDefinition{SQL: "SELECT * FROM orders"}},
 	}
-	project, err := NewProject(graphValue, projectManifest)
+	project, err := NewSourceBundle(graphValue, projectManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -686,264 +648,154 @@ func TestProjectArtifactRoundTripPreservesPrivateRuntimeProjection(t *testing.T)
 	}
 }
 
-func TestProjectArtifactRejectsTargetConnectionState(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed", Host: "target.example"}
-	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), "target-owned state") {
-		t.Fatalf("NewProject() error = %v, want target-owned connection rejection", err)
-	}
-}
-
-func TestProjectArtifactRejectsInvalidRuntimePathUnion(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
+func TestSourceBundleRejectsInvalidRuntimePathUnion(t *testing.T) {
+	graphValue, projectManifest := fullBundleFixture(t)
 	model := projectManifest.SemanticModels["semantic:sales"]
 	model.Sources = map[string]semanticmodel.Source{"orders": {PathLocation: &projectcontracts.PathSourceLocation{Value: (*projectcontracts.CSVPathSourceLocation)(nil)}}}
-	if _, err := NewProject(graphValue, projectManifest); err == nil {
+	if _, err := NewSourceBundle(graphValue, projectManifest); err == nil {
 		t.Fatal("invalid runtime path union unexpectedly accepted")
 	}
 }
 
-func TestProjectArtifactRejectsMalformedV2RuntimePayload(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	project, err := NewProject(graphValue, projectManifest)
+func TestSourceBundleIsPortableAndDeterministic(t *testing.T) {
+	graphValue, projectManifest := sourceBundleFixture(t)
+	first, err := NewSourceBundle(graphValue, projectManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := func() map[string]any {
-		var wire map[string]any
-		if err := json.Unmarshal(project.Canonical(), &wire); err != nil {
-			t.Fatal(err)
-		}
-		return wire
-	}
-	decode := func(wire map[string]any) error {
-		data, err := json.Marshal(wire)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = Decode(data)
-		return err
-	}
-	t.Run("version one", func(t *testing.T) {
-		wire := base()
-		wire["version"] = float64(1)
-		var unsupported UnsupportedVersionError
-		if err := decode(wire); !errors.As(err, &unsupported) {
-			t.Fatalf("Decode() error = %v, want unsupported v1", err)
-		}
-	})
-	t.Run("missing runtime key", func(t *testing.T) {
-		wire := base()
-		runtime := wire["runtime"].(map[string]any)
-		delete(runtime, "sources")
-		if err := decode(wire); err == nil || !strings.Contains(err.Error(), "runtime projection") {
-			t.Fatalf("Decode() error = %v, want missing runtime projection", err)
-		}
-	})
-	t.Run("extra runtime key", func(t *testing.T) {
-		wire := base()
-		runtime := wire["runtime"].(map[string]any)
-		sources := runtime["sources"].(map[string]any)
-		sources["unexpected"] = map[string]any{}
-		if err := decode(wire); err == nil || !strings.Contains(err.Error(), "key set") {
-			t.Fatalf("Decode() error = %v, want extra runtime key rejection", err)
-		}
-	})
-	t.Run("zero execution", func(t *testing.T) {
-		wire := base()
-		runtime := wire["runtime"].(map[string]any)
-		models := runtime["models"].(map[string]any)
-		models["model:orders"] = map[string]any{}
-		if err := decode(wire); err == nil || !strings.Contains(err.Error(), "exactly one") {
-			t.Fatalf("Decode() error = %v, want zero execution rejection", err)
-		}
-	})
-	t.Run("both execution", func(t *testing.T) {
-		wire := base()
-		runtime := wire["runtime"].(map[string]any)
-		models := runtime["models"].(map[string]any)
-		models["model:orders"] = map[string]any{"Source": "source:orders", "SQL": "SELECT 1"}
-		if err := decode(wire); err == nil || !strings.Contains(err.Error(), "exactly one") {
-			t.Fatalf("Decode() error = %v, want both execution rejection", err)
-		}
-	})
-	t.Run("target connection state", func(t *testing.T) {
-		wire := base()
-		manifest := wire["manifest"].(map[string]any)
-		connections := manifest["connections"].(map[string]any)
-		connection := connections["connection:warehouse"].(map[string]any)
-		connection["Path"] = "/target/path"
-		if err := decode(wire); err == nil || !strings.Contains(err.Error(), "target-owned state") {
-			t.Fatalf("Decode() error = %v, want target connection rejection", err)
-		}
-	})
-}
-
-func TestProjectAcceptsCompleteGraphManifest(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	project, err := NewProject(graphValue, projectManifest)
-	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
-	}
-	if project.ProjectID() != "project:demo" || len(project.Graph().Resources()) != 7 {
-		t.Fatalf("project = (%q, %d resources), want complete project graph", project.ProjectID(), len(project.Graph().Resources()))
-	}
-}
-
-func TestProjectRejectsManifestSemanticModelMissingFromGraph(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	delete(projectManifest.SemanticModels, "semantic:sales")
-	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `graph resource "semantic:sales" (semantic_model) is absent from manifest semanticModels`) {
-		t.Fatalf("NewProject() error = %v, want deterministic missing semantic model diagnostic", err)
-	}
-}
-
-func TestProjectRejectsManifestSemanticModelWrongGraphKind(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	projectManifest.SemanticModels["connection:warehouse"] = projectManifest.SemanticModels["semantic:sales"]
-	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest semanticModels key "connection:warehouse" resolves to graph kind "connection", want "semantic_model"`) {
-		t.Fatalf("NewProject() error = %v, want deterministic wrong-kind diagnostic", err)
-	}
-}
-
-func TestProjectRejectsDanglingSourceConnectionReference(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	source := projectManifest.Sources["source:orders"]
-	source.Connection = "connection:missing"
-	projectManifest.Sources["source:orders"] = source
-	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest source "source:orders" connection reference "connection:missing" is missing from graph`) {
-		t.Fatalf("NewProject() error = %v, want dangling source connection diagnostic", err)
-	}
-}
-
-func TestProjectRejectsWrongKindModelDependency(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	model := projectManifest.Models["model:orders"]
-	model.ModelDependencies = []string{"semantic:sales"}
-	projectManifest.Models["model:orders"] = model
-	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest model "model:orders" model dependency reference "semantic:sales" resolves to graph kind "semantic_model", want "model"`) {
-		t.Fatalf("NewProject() error = %v, want wrong-kind model dependency diagnostic", err)
-	}
-}
-
-func TestProjectRejectsDashboardIdentityAndSemanticReferenceDrift(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	definition := projectManifest.DashboardDefinitions["dashboard:sales"]
-	definition.SemanticModel = "semantic:missing"
-	projectManifest.DashboardDefinitions["dashboard:sales"] = definition
-	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest dashboard "dashboard:sales" semantic model reference "semantic:missing" is missing from graph`) {
-		t.Fatalf("NewProject() error = %v, want dangling dashboard semantic model diagnostic", err)
-	}
-
-	_, projectManifest = projectFixture(t)
-	source := projectManifest.DashboardSources["dashboard:sales"]
-	source.Document.Metadata.ID = "dashboard:other"
-	projectManifest.DashboardSources["dashboard:sales"] = source
-	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest dashboardSources key "dashboard:sales" does not match document id "dashboard:other"`) {
-		t.Fatalf("NewProject() error = %v, want dashboard identity diagnostic", err)
-	}
-}
-
-func TestProjectDefensivelyCopiesManifestProjections(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	project, err := NewProject(graphValue, projectManifest)
+	second, err := NewSourceBundle(graphValue, projectManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "mutated"}
-	connections := project.Connections()
-	connections["connection:warehouse"] = semanticmodel.Connection{Kind: "mutated"}
-	if got := project.Connections()["connection:warehouse"].Kind; got != "managed" {
-		t.Fatalf("connection projection leaked mutation: %q", got)
+	if !bytes.Equal(first.Canonical(), second.Canonical()) || first.Digest() != second.Digest() {
+		t.Fatal("identical source bundles are not deterministic")
 	}
-	source, ok := project.AuthoredDashboardSource("dashboard:sales")
-	if !ok {
-		t.Fatal("authored dashboard source missing")
+	if strings.Contains(string(first.Canonical()), `"projectId"`) || strings.Contains(string(first.Canonical()), `"projectDigest"`) {
+		t.Fatalf("source bundle retained project identity fields: %s", first.Canonical())
 	}
-	source.Path = "mutated.yaml"
-	if got, _ := project.AuthoredDashboardSource("dashboard:sales"); got.Path != "dashboards/sales.yaml" {
-		t.Fatal("authored source projection leaked mutation")
-	}
-}
-
-func TestProjectRejectsIdentityMismatch(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	projectManifest.ID = "project:other"
-	if _, err := NewProject(graphValue, projectManifest); !errors.Is(err, projectgraph.ErrProjectIdentityMismatch) {
-		t.Fatalf("NewProject() error = %v, want identity mismatch", err)
-	}
-}
-
-func TestDecodeRejectsVersionUnknownDuplicateAndIdentity(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	project, err := NewProject(graphValue, projectManifest)
+	decoded, err := Decode(first.Canonical())
 	if err != nil {
 		t.Fatal(err)
 	}
-	tests := []struct {
-		name string
-		data string
-		want func(error) bool
-	}{
-		{name: "version", data: `{"version":99}`, want: func(err error) bool { var unsupported UnsupportedVersionError; return errors.As(err, &unsupported) }},
-		{name: "unknown", data: strings.Replace(string(project.Canonical()), `{"version":2,`, `{"unknown":true,"version":2,`, 1), want: func(err error) bool { return strings.Contains(err.Error(), "unknown field") }},
-		{name: "duplicate case", data: strings.Replace(string(project.Canonical()), `{"version":2,`, `{"VERSION":2,"version":2,`, 1), want: func(err error) bool { return strings.Contains(err.Error(), "duplicate JSON field") }},
-		{name: "trailing", data: string(project.Canonical()) + ` {"trailing":true}`, want: func(err error) bool { return strings.Contains(err.Error(), "trailing") }},
-		{name: "identity", data: replaceManifestID(string(project.Canonical()), "project:other"), want: func(err error) bool { return errors.Is(err, projectgraph.ErrProjectIdentityMismatch) }},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := Decode([]byte(test.data))
-			if err == nil || !test.want(err) {
-				t.Fatalf("Decode() error = %v", err)
-			}
-		})
+	if !bytes.Equal(first.Canonical(), decoded.Canonical()) || first.Digest() != decoded.Digest() {
+		t.Fatal("source bundle roundtrip changed canonical identity")
 	}
 }
 
-func replaceManifestID(value, replacement string) string {
+func TestSourceBundleHasNoManifestGraphIdentity(t *testing.T) {
+	graphValue, projectManifest := sourceBundleFixture(t)
+	if _, err := NewSourceBundle(graphValue, projectManifest); err != nil {
+		t.Fatalf("portable manifest rejected: %v", err)
+	}
+}
+
+func TestSourceBundleRejectsControlPlaneGraphAndTargetState(t *testing.T) {
+	_, projectManifest := sourceBundleFixture(t)
+	controlPlaneGraph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "project:demo", Kind: projectgraph.KindProjectNamespace, Name: "demo"}}, nil)
+	if err == nil {
+		t.Fatal("graph constructor accepted control-plane Project node")
+	}
+	if _, err := NewSourceBundle(controlPlaneGraph, projectManifest); err == nil {
+		t.Fatal("source bundle accepted invalid control-plane graph")
+	}
+	graphValue, _ := sourceBundleFixture(t)
+	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed", Path: "/target/only"}
+	if _, err := NewSourceBundle(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), "target-owned state") {
+		t.Fatalf("target-owned connection state error = %v", err)
+	}
+}
+
+func TestSourceBundleDecodersRejectTamperingUnknownDuplicateAndLegacyVersion(t *testing.T) {
+	graphValue, projectManifest := sourceBundleFixture(t)
+	bundle, err := NewSourceBundle(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var wire map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(value), &wire); err != nil {
-		return value
-	}
-	var project map[string]any
-	if err := json.Unmarshal(wire["manifest"], &project); err != nil {
-		return value
-	}
-	project["id"] = replacement
-	manifest, err := json.Marshal(project)
-	if err != nil {
-		return value
-	}
-	wire["manifest"] = manifest
-	result, err := json.Marshal(wire)
-	if err != nil {
-		return value
-	}
-	return string(result)
-}
-
-func TestProjectRoundTripRetainsAuthoredSourceProvenance(t *testing.T) {
-	graphValue, projectManifest := projectFixture(t)
-	project, err := NewProject(graphValue, projectManifest)
-	if err != nil {
+	if err := json.Unmarshal(bundle.Canonical(), &wire); err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := Decode(project.Canonical())
-	if err != nil {
+	var version int
+	if err := json.Unmarshal(wire["version"], &version); err != nil {
 		t.Fatal(err)
 	}
-	source, ok := decoded.AuthoredDashboardSource("dashboard:sales")
-	if !ok || source.Path != "dashboards/sales.yaml" || source.Document.Metadata.ID != "dashboard:sales" {
-		t.Fatalf("source = %#v, present = %v", source, ok)
+	wire["version"] = json.RawMessage(`2`)
+	legacy, _ := json.Marshal(wire)
+	var unsupported UnsupportedVersionError
+	if _, err := Decode(legacy); !errors.As(err, &unsupported) {
+		t.Fatalf("legacy source bundle error = %v, want unsupported version", err)
+	}
+	unknown := strings.Replace(string(bundle.Canonical()), `{"version":3,`, `{"unknown":true,"version":3,`, 1)
+	if _, err := Decode([]byte(unknown)); err == nil {
+		t.Fatal("Decode accepted unknown source bundle field")
+	}
+	duplicate := strings.Replace(string(bundle.Canonical()), `{"version":3,`, `{"VERSION":3,"version":3,`, 1)
+	if _, err := Decode([]byte(duplicate)); err == nil {
+		t.Fatal("Decode accepted duplicate source bundle field")
+	}
+	trailing := string(bundle.Canonical()) + ` {"trailing":true}`
+	if _, err := Decode([]byte(trailing)); err == nil {
+		t.Fatal("Decode accepted trailing source bundle JSON")
 	}
 }
 
-func TestCloneValueDoesNotSilentlyReturnZeroOnEncodingFailure(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("cloneValue() did not report an impossible encoding failure")
-		}
-	}()
-	_ = cloneValue(func() {})
+func TestSourceBundleDefensivelyCopiesManifest(t *testing.T) {
+	graphValue, projectManifest := sourceBundleFixture(t)
+	bundle, err := NewSourceBundle(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "sqlite"}
+	if got := bundle.Connections()["connection:warehouse"].Kind; got != "managed" {
+		t.Fatalf("bundle retained mutable manifest input: %q", got)
+	}
+	connections := bundle.Connections()
+	connections["connection:warehouse"] = semanticmodel.Connection{Kind: "mutated"}
+	if got := bundle.Connections()["connection:warehouse"].Kind; got != "managed" {
+		t.Fatalf("bundle connection output escaped: %q", got)
+	}
+}
+
+func TestSourceBundlePreservesRuntimeProjectionAcrossRoundTrip(t *testing.T) {
+	graphValue, projectManifest := sourceBundleFixture(t)
+	bundle, err := NewSourceBundle(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bundle.ModelTables()["model:orders"].Execution.Source; got != "source:orders" {
+		t.Fatalf("model execution projection = %q", got)
+	}
+	projection := bundle.RuntimeProjection()
+	if projection.Models["model:orders"].Source != "source:orders" {
+		t.Fatalf("runtime model projection = %#v", projection.Models["model:orders"])
+	}
+	decoded, err := Decode(bundle.Canonical())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decoded.ModelTables()["model:orders"].Execution.Source; got != "source:orders" {
+		t.Fatalf("decoded model execution projection = %q", got)
+	}
+}
+
+func TestSourceBundleRejectsMalformedRuntimeProjection(t *testing.T) {
+	graphValue, projectManifest := sourceBundleFixture(t)
+	bundle, err := NewSourceBundle(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(bundle.Canonical(), &wire); err != nil {
+		t.Fatal(err)
+	}
+	var runtime map[string]json.RawMessage
+	if err := json.Unmarshal(wire["runtime"], &runtime); err != nil {
+		t.Fatal(err)
+	}
+	delete(runtime, "models")
+	wire["runtime"], _ = json.Marshal(runtime)
+	malformed, _ := json.Marshal(wire)
+	if _, err := Decode(malformed); err == nil || !strings.Contains(err.Error(), "runtime projection") {
+		t.Fatalf("missing runtime projection error = %v", err)
+	}
 }
