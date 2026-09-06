@@ -180,3 +180,15 @@ repair does not claim consumer routing, cache/lifecycle or exhaustive semantic
 access qualification. FAI-617's live repository gates and FAI-662's scoped
 integrity gates are now exercised successfully. No FAI-642/645/648/649/632 work
 is started, and no production deployment or downgrade compatibility is asserted.
+
+### Repair closure audit (2026-09-06)
+
+The [closure evidence](data-contract-versioning-conformance.md#repair-layer-closure-review-2026-09-06)
+separates the now-qualified PostgreSQL repair from remaining planner/consumer
+qualification. The full CI retry passed the previously failing admin browser
+test, then failed at a site Mermaid browser timeout; the remaining Go sweep was
+interrupted. This is not a green CI or a planner regression finding. Timeouts and
+implementation remain unchanged. The normative policy ledger still marks
+PLN-07/PLN-09 broader cache/rollup/suggestion evidence PARTIAL. FAI-641 is not
+promoted; FAI-642 remains Backlog behind FAI-641/639 (FAI-636 is Done). Evidence-only
+Linear comments do not start or complete downstream issues.

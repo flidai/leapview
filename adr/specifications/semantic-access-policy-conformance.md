@@ -555,6 +555,15 @@ use of this identity remain unqualified under FAI-645, so LIF is not complete.
 
 ## Evidence ledger
 
+The PostgreSQL repair qualification at `a63961bb1284` closes the migration,
+publication and live identity/access repository blockers; see the
+[repair evidence](data-contract-versioning-conformance.md#postgresql-qualification-repair-2026-09-06).
+It does not qualify the pending consumer, policy-cache or activation rows below.
+FAI-641 remains IMPLEMENTED / PARTIAL: PLN-07 substitution admission and the
+PLN-09 suggestions/rollup/full consumer evidence remain explicitly bounded by
+FAI-642/645/648. Rejection of unsupported substitution is qualified, not positive
+support for those paths. No downstream feature or issue state changes here.
+
 | Requirement range | Evidence | Status |
 |---|---|---|
 | CHG-01–CHG-04 | Profile-version, historical-policy, and normative-change checks | Pending |

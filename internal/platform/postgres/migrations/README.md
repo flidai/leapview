@@ -77,6 +77,78 @@ rows, so use a maintenance window and caller-owned lock/transaction timeouts.
 
 ## Supported paths and recovery
 
+### Revision 014 operational review
+
+The explicit relation lock is `ACCESS EXCLUSIVE` on
+`project.contract_publication`, across **all instances**, not a row lock or an
+instance-scoped lock. It conflicts with ordinary SELECT as well as publication
+INSERT and DDL, and lasts until the caller commits or rolls back. RESET ROLE does
+not release it. Apply also holds the database-local migration advisory lock;
+recording revision 014 writes `platform.schema_revision` and DDL updates system
+catalogs. Revision 014 does not explicitly lock or rewrite the identity/access
+tables or DuckLake tables. Older pending revisions may acquire their own locks
+in the same transaction. See PostgreSQL 18's [lock modes](https://www.postgresql.org/docs/18/explicit-locking.html)
+and [constraint validation](https://www.postgresql.org/docs/18/sql-altertable.html).
+
+Expect two full-table validation passes: the corruption preflight and ADD CHECK
+validation, with hashing and repeated UTF-8/JSON conversion proportional to stored
+canonical data. No table rewrite or index build is requested. Wall time depends
+on row/byte volume, CPU, I/O and lock contention; fixture suite duration is **not**
+a production estimate. No persistent environment size or production timing was
+available for this review. Measure both passes on a representative restored copy
+before approving a maintenance window.
+
+An operator may run the exact SELECT-only corruption predicate from revision 014
+on a read-only connection before maintenance, and inspect `pg_get_constraintdef`
+and table size. This is advisory only: a successful unlocked check can become
+stale. Do not move/omit the locked preflight or manually install the CHECK ahead
+of the runner. Publishing and replay/read traffic will wait or time out while
+the lock is held; blocked requests can also consume pool slots and affect other
+control operations. Already-running analytics that do not use this relation are
+not directly locked, but uninterrupted application availability is not promised.
+
+Safe maintenance sequence (operator-owned; not executed against production by
+qualification tests):
+
+1. Confirm the exact database, PostgreSQL 18 version, recognized revision prefix,
+   original/replacement 002 lineage and matching deployment artifact. Retain a
+   verified backup/restore point and its matching application/configuration.
+2. Inspect existing constraints and publication volume with an authorized reader;
+   run the advisory corruption check and rehearse the normal migration path on a
+   restored copy. Stop for corruption or unknown ledger history. Do not print
+   canonical publication contents or credentials into general deployment logs.
+3. Drain publication readers/writers, workers and long-running control
+   transactions; prevent old application processes from restarting mid-upgrade.
+   Have an authorized operator inspect `pg_stat_activity`, `pg_locks` and
+   `pg_blocking_pids` if acquisition waits. Do not automatically terminate clients.
+4. Run the matching artifact's existing native initialization/migration path
+   (`leapview admin initialize --format json`, with reviewed production config
+   and protected output). `adminpostgres.prepareSchema` calls Apply in one
+   caller-owned transaction and commits immediately after verification. Use the
+   migrator credential with existing owner-role membership, not runtime or a new
+   superuser authority. Do not execute migration SQL manually without its ledger.
+5. Keep lock and statement budgets explicit and bounded. The native migrator
+   inherits `LEAPVIEW_POSTGRES_CONTROL_LOCK_TIMEOUT` (default 5s),
+   `LEAPVIEW_POSTGRES_CONTROL_STATEMENT_TIMEOUT` (30s), and idle-transaction
+   timeout (1m). Approve any maintenance-process-specific budget from rehearsal;
+   do not globally disable limits. A timeout/error requires rollback, inspection
+   and a fresh runner retry, not a fabricated applied record.
+6. Before reopening traffic, verify the full ledger with the matching artifact,
+   revision 014's ID/checksum, and a validated
+   `contract_publication_evidence_binding_check`. Confirm existing immutable
+   publication evidence is unchanged and exercise approved replay/read smoke
+   checks. Start only the matching runtime artifact and then resume traffic.
+
+Before commit, failure rolls back the new CHECK and revision record; original
+publication data and history remain intact. After commit there is no supported
+down migration or automatic old-binary rollback: older Verify implementations do
+not recognize revision 014. Use a reviewed forward recovery or restore the
+matching pre-upgrade database/application pair (including a plan for any writes
+since backup). Do not delete revision rows, disable validation/immutable guards,
+edit historical checksums, or silently discard corrupt publication evidence.
+
+### Recognized installation paths
+
 - Empty database: 001 → replacement 002 → 003–014.
 - Valid recorded prefix without 002: apply replacement 002 and pending successors.
 - Valid original-002 prefix: retain original evidence and apply pending successors.
