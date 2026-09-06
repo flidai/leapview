@@ -2,7 +2,9 @@ package migrations
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 
@@ -16,17 +18,57 @@ type recordingTx struct {
 	queryErr  error
 }
 
-func (r *recordingTx) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+func (r *recordingTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	r.sqls = append(r.sqls, sql)
+	if strings.Contains(sql, "INSERT INTO platform.schema_revision") {
+		if r.revisions == nil {
+			r.revisions = make(map[int64]recordingRow)
+		}
+		r.revisions[args[0].(int64)] = recordingRow{revision: args[0].(int64), migrationID: args[1].(string), checksum: args[2].(string)}
+	}
 	return pgconn.CommandTag{}, nil
 }
 
-func (r *recordingTx) QueryRow(_ context.Context, _ string, args ...any) pgx.Row {
+func (r *recordingTx) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	if r.queryErr != nil {
 		return recordingRow{err: r.queryErr}
 	}
+	if sql == "SHOW transaction_isolation" {
+		return scalarRow{value: "read committed"}
+	}
+	if strings.Contains(sql, "to_regclass('platform.schema_revision')") {
+		return scalarRow{value: len(r.revisions) > 0}
+	}
+	if strings.Contains(sql, "pg_namespace WHERE") {
+		return scalarRow{value: false}
+	}
+	if strings.Contains(sql, "jsonb_agg") {
+		var records []revisionRecord
+		for _, row := range r.revisions {
+			records = append(records, revisionRecord{row.revision, row.migrationID, row.checksum})
+		}
+		sort.Slice(records, func(i, j int) bool { return records[i].Revision < records[j].Revision })
+		encoded, _ := json.Marshal(records)
+		return scalarRow{value: encoded}
+	}
 	revision, _ := args[0].(int64)
 	return r.revisions[revision]
+}
+
+type scalarRow struct{ value any }
+
+func (r scalarRow) Scan(dest ...any) error {
+	switch p := dest[0].(type) {
+	case *bool:
+		*p = r.value.(bool)
+	case *string:
+		*p = r.value.(string)
+	case *[]byte:
+		*p = r.value.([]byte)
+	default:
+		return errors.New("unexpected scalar destination")
+	}
+	return nil
 }
 
 type recordingRow struct {
@@ -93,8 +135,8 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 24 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() || recorder.sqls[14] != ContractPublicationIntegritySQL() || recorder.sqls[16] != PlatformBootstrapAuthoritySQL() || recorder.sqls[18] != AccessControlAuthoritySQL() || recorder.sqls[20] != TypedAttributeRegistrySQL() || recorder.sqls[22] != SemanticAttributeControlSQL() {
-		t.Fatal("Apply() did not execute the authored migrations in order")
+	if len(recorder.sqls) != 1 || recorder.sqls[0] != migrationLockSQL {
+		t.Fatal("Apply() must lock and skip recognized applied revisions")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
 		t.Fatal("Apply(nil) unexpectedly succeeded")
@@ -487,6 +529,7 @@ func TestAccessControlAuthorityMigrationIsMutableAndSnapshotIndependent(t *testi
 
 func validRevisions() map[int64]recordingRow {
 	return map[int64]recordingRow{
+		IdentityLedgerPrivilegesRevision: {revision: IdentityLedgerPrivilegesRevision, migrationID: IdentityLedgerPrivilegesMigrationID, checksum: IdentityLedgerPrivilegesChecksum()},
 		BaselineRevision: {
 			revision: BaselineRevision, migrationID: BaselineMigrationID, checksum: BaselineChecksum(),
 		},

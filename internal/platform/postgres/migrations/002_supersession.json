@@ -1,0 +1,13 @@
+{
+  "original": {
+    "revision": 2,
+    "migration_id": "002_project_identity_ledger",
+    "checksum": "42f0dc3dacbbf4fa06aef8e2fcbcb6d3559fd97e2907a18fc596c1c4c01152f1"
+  },
+  "replacement": {
+    "revision": 2,
+    "migration_id": "002_project_identity_ledger_replacement",
+    "checksum": "61385b011fa9d235f97dacfc783682a01d869bc06f043013b9ff0988dcd147e4"
+  },
+  "reason": "Original artifact contains invalid PostgreSQL GRANT ON TABLES syntax for named tables. Deployment status is unknown; preserve original evidence and execute a separately identified replacement only when revision 2 is pending."
+}

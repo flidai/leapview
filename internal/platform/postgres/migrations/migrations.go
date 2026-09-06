@@ -30,6 +30,23 @@ var baselineSQL string
 //go:embed 002_project_identity_ledger.sql
 var identityLedgerSQL string
 
+//go:embed 002_project_identity_ledger_replacement.sql
+var identityLedgerReplacementSQL string
+
+//go:embed 013_identity_ledger_privileges.sql
+var identityLedgerPrivilegesSQL string
+
+const IdentityLedgerReplacementMigrationID = "002_project_identity_ledger_replacement"
+const IdentityLedgerPrivilegesRevision int64 = 13
+const IdentityLedgerPrivilegesMigrationID = "013_identity_ledger_privileges"
+
+func IdentityLedgerReplacementChecksum() string { return sqlChecksum(identityLedgerReplacementSQL) }
+func IdentityLedgerPrivilegesChecksum() string  { return sqlChecksum(identityLedgerPrivilegesSQL) }
+func sqlChecksum(sql string) string {
+	sum := sha256.Sum256([]byte(sql))
+	return hex.EncodeToString(sum[:])
+}
+
 //go:embed 003_contract_publication_evidence.sql
 var contractPublicationSQL string
 
@@ -244,7 +261,7 @@ type migration struct {
 func ordered() []migration {
 	return []migration{
 		{BaselineRevision, BaselineMigrationID, baselineSQL, BaselineChecksum()},
-		{IdentityLedgerRevision, IdentityLedgerMigrationID, identityLedgerSQL, IdentityLedgerChecksum()},
+		{IdentityLedgerRevision, IdentityLedgerReplacementMigrationID, identityLedgerReplacementSQL, IdentityLedgerReplacementChecksum()},
 		{ContractPublicationRevision, ContractPublicationMigrationID, contractPublicationSQL, ContractPublicationChecksum()},
 		{ActivationTransitionJournalRevision, ActivationTransitionJournalMigrationID, activationTransitionJournalSQL, ActivationTransitionJournalChecksum()},
 		{ActivationTransitionReferencesRevision, ActivationTransitionReferencesMigrationID, activationTransitionReferencesSQL, ActivationTransitionReferencesChecksum()},
@@ -255,13 +272,13 @@ func ordered() []migration {
 		{AccessControlAuthorityRevision, AccessControlAuthorityMigrationID, accessControlAuthoritySQL, AccessControlAuthorityChecksum()},
 		{TypedAttributeRegistryRevision, TypedAttributeRegistryMigrationID, typedAttributeRegistrySQL, TypedAttributeRegistryChecksum()},
 		{SemanticAttributeControlRevision, SemanticAttributeControlMigrationID, semanticAttributeControlSQL, SemanticAttributeControlChecksum()},
+		{IdentityLedgerPrivilegesRevision, IdentityLedgerPrivilegesMigrationID, identityLedgerPrivilegesSQL, IdentityLedgerPrivilegesChecksum()},
 	}
 }
 
-// Apply executes every authored migration in revision order on a caller-owned
-// transaction and records each exact SHA-256 in platform.schema_revision. The
-// SQL contains no BEGIN/COMMIT so a failed migration can be rolled back by the
-// caller. A pre-existing revision with a different checksum is rejected.
+// Apply serializes, validates and plans the complete history before executing
+// pending SQL. The caller MUST supply a READ COMMITTED transaction and roll it
+// back on any error. The advisory lock is held until that transaction ends.
 func Apply(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return errors.New("postgres migration transaction is nil")
@@ -269,12 +286,33 @@ func Apply(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	for _, migration := range ordered() {
+	declaration, err := identitySupersession()
+	if err != nil {
+		return err
+	}
+	var isolation string
+	if err := tx.QueryRow(ctx, `SHOW transaction_isolation`).Scan(&isolation); err != nil {
+		return fmt.Errorf("inspect migration isolation: %w", err)
+	}
+	if isolation != "read committed" {
+		return errors.New("PostgreSQL migrations require READ COMMITTED isolation")
+	}
+	if _, err := tx.Exec(ctx, migrationLockSQL); err != nil {
+		return fmt.Errorf("acquire PostgreSQL migration lock: %w", err)
+	}
+	records, err := inspectHistory(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err := validateHistory(records, declaration); err != nil {
+		return err
+	}
+	for _, migration := range ordered()[len(records):] {
 		if err := applyOne(ctx, tx, migration.revision, migration.id, migration.sql, migration.checksum); err != nil {
 			return err
 		}
 	}
-	return nil
+	return Verify(ctx, tx)
 }
 
 // Verify proves that a runtime connection sees every exact authored revision.
@@ -286,36 +324,38 @@ func Verify(ctx context.Context, reader RevisionReader) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	for _, want := range ordered() {
-		var revision int64
-		var migrationID, checksum string
-		if err := reader.QueryRow(ctx, `
-			SELECT revision, migration_id, checksum
-			FROM platform.schema_revision WHERE revision = $1`, want.revision).
-			Scan(&revision, &migrationID, &checksum); err != nil {
-			return fmt.Errorf("verify PostgreSQL schema revision %d: %w", want.revision, err)
-		}
-		if revision != want.revision || migrationID != want.id || checksum != want.checksum {
-			return fmt.Errorf("PostgreSQL schema revision mismatch: got revision=%d migration=%q checksum=%q", revision, migrationID, checksum)
-		}
+	declaration, err := identitySupersession()
+	if err != nil {
+		return err
+	}
+	records, err := inspectHistory(ctx, reader)
+	if err != nil {
+		return err
+	}
+	if err := validateHistory(records, declaration); err != nil {
+		return err
+	}
+	if len(records) != len(ordered()) {
+		return errors.New("PostgreSQL migration history is incomplete")
 	}
 	return nil
 }
 
 func applyOne(ctx context.Context, tx Tx, revision int64, migrationID, sql, checksum string) error {
 	if _, err := tx.Exec(ctx, sql); err != nil {
-		return err
+		return fmt.Errorf("apply PostgreSQL migration %d (%s): %w", revision, migrationID, err)
 	}
+	// Cast parameters/results to stable built-in types: bootstrap rollback can
+	// invalidate domain OIDs retained by a pooled connection's prepared plans.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO platform.schema_revision (revision, migration_id, checksum)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (revision) DO NOTHING`, revision, migrationID, checksum); err != nil {
+		VALUES ($1::bigint, $2::text, $3::text)`, revision, migrationID, checksum); err != nil {
 		return fmt.Errorf("record PostgreSQL schema revision: %w", err)
 	}
 	var recordedRevision int64
 	var recordedMigrationID, recordedChecksum string
 	if err := tx.QueryRow(ctx, `
-		SELECT revision, migration_id, checksum
+		SELECT revision, migration_id, checksum::text
 		FROM platform.schema_revision WHERE revision = $1`, revision).
 		Scan(&recordedRevision, &recordedMigrationID, &recordedChecksum); err != nil {
 		return fmt.Errorf("verify PostgreSQL schema revision: %w", err)

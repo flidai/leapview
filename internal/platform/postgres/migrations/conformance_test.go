@@ -82,7 +82,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if revision != BaselineRevision {
 		t.Fatalf("schema revision = %d, want %d", revision, BaselineRevision)
 	}
-	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, IdentityLedgerMigrationID).Scan(&revision); err != nil {
+	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, IdentityLedgerReplacementMigrationID).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
 	if revision != IdentityLedgerRevision {
@@ -352,7 +352,7 @@ func TestAccessAuthorityCompatibilityPostgreSQL18(t *testing.T) {
 		checksum string
 	}{
 		{BaselineRevision, BaselineMigrationID, BaselineSQL(), BaselineChecksum()},
-		{IdentityLedgerRevision, IdentityLedgerMigrationID, IdentityLedgerSQL(), IdentityLedgerChecksum()},
+		{IdentityLedgerRevision, IdentityLedgerReplacementMigrationID, identityLedgerReplacementSQL, IdentityLedgerReplacementChecksum()},
 		{ContractPublicationRevision, ContractPublicationMigrationID, ContractPublicationSQL(), ContractPublicationChecksum()},
 		{ActivationTransitionJournalRevision, ActivationTransitionJournalMigrationID, ActivationTransitionJournalSQL(), ActivationTransitionJournalChecksum()},
 		{ActivationTransitionReferencesRevision, ActivationTransitionReferencesMigrationID, ActivationTransitionReferencesSQL(), ActivationTransitionReferencesChecksum()},

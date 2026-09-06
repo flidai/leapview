@@ -266,6 +266,54 @@ transports remain capability-gated. The earlier STR-08 boundaries also remain: s
 transitional `DataPolicy` rejection and contextual access-reference/type-
 registry changes are not part of this milestone.
 
+## Migration-chain remediation evidence (2026-09-06)
+
+This entry supersedes earlier Docker-unavailable/migration-002 qualification
+notes for the commands below; it does not mark the overall ADR qualified.
+The focused `ganesh/postgres-migration-supersession` layer is based on FAI-641
+dependency tip `fd4b095510ae` and changes migration infrastructure only.
+
+| Requirement | Implementation | Verification / result |
+| --- | --- | --- |
+| Preserve historical migration integrity | Original 002 bytes unchanged; separately named replacement plus exact original/replacement tuples in `002_supersession.json`. | Frozen artifact/declaration tests and checksum comparison; original SHA-256 `42f0dc3dacbbf4fa06aef8e2fcbcb6d3559fd97e2907a18fc596c1c4c01152f1`. |
+| Fresh initialization and recognized upgrades | One verify-before-skip runner accepts only a contiguous known prefix, selects replacement 002 only when pending, and preserves existing original tuples. | Live `TestMigrationSupersessionPostgreSQL18`: fresh, baseline-prefix, replacement and synthetic-original paths; replay preserves all revision rows and timestamps. |
+| Atomicity, retry and concurrency | Caller-owned READ COMMITTED transaction, database-scoped advisory lock, stable built-in parameter/result types across rolled-back domain creation. | Live DDL/revision rollback and same-pool retry; lock timeout; waiting concurrent migrator skips after first commit; independent database proceeds. Focused race run passed. |
+| Fail-closed lineage and privileges | Shared Apply/Verify history validation; revision 013 checks table ownership/keys/guards and effective grants, enables read-only runtime ledger verification, and fences ledger TRUNCATE. | Unknown IDs/checksums/future revisions, gaps, untracked/empty ledgers, unsupported isolation, disabled guard and excess privileges rejected; runtime Verify and immutable UPDATE/DELETE/TRUNCATE tested live. |
+| Preserve generated contracts and architecture | No identity lifecycle, access control, projection, publication or planner implementation edits. | `task generated:check`, architecture and Admin package tests passed. |
+
+Migration package execution now reaches an independent FAI-662 publication
+integrity failure: revision 008's guarded constraint names collide with baseline
+checks from 003, allowing malformed digest/profile/kind/version/baseline inserts;
+the same test subsequently encounters SQLSTATE `42501` reading publication data.
+The required PostgreSQL task passes pool and supersession tests before this
+failure. Neither historical migration is changed here.
+
+The broader identity PostgreSQL tests also expose SQLSTATE `42P08` in the existing
+history append query and an invalid durable-reference fixture. Access PostgreSQL
+tests report revision/identity-conflict expectations and SQLSTATE `42883`
+(`platform.resource_id = uuid`). These are separately scoped qualification
+blockers, not Docker skips; domain, architecture and Admin tests passed. No
+publication, lifecycle or access behavior is repaired by this migration layer.
+
+Final validation commands for this layer (PostgreSQL tests used
+`LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1` and the existing Docker group):
+
+| Command | Result |
+| --- | --- |
+| `go test ./internal/platform/postgres/migrations -run 'TestMigrationSupersessionPostgreSQL18\|TestSupersession\|TestHistorical\|TestApply\|TestVerify\|TestBaselinePostgreSQL18\|TestAccessAuthorityCompatibilityPostgreSQL18' -count=1` | Passed against pinned PostgreSQL 18; no Docker skip. |
+| `go test -race ./internal/platform/postgres/migrations -run 'TestMigrationSupersessionPostgreSQL18\|TestSupersession\|TestHistorical\|TestApply\|TestVerify' -count=1` | Passed; rerun on final migration implementation. |
+| `go test ./internal/platform/postgres/migrations -count=1` | Failed only in the pre-existing publication-integrity test described above; remediation matrix passed. |
+| `go test ./internal/project/identityledger/... ./internal/access/... ./internal/platform/architecture ./internal/app/adminpostgres -count=1` | Domain, architecture and Admin packages passed; identity/access PostgreSQL failures described above remain. |
+| `task test:go:postgres-conformance` | Pool and supersession tests passed; stopped at publication-integrity failure. |
+| `task generated:check`; `task docs:check`; `go vet ./internal/platform/postgres/migrations`; `gofmt -l internal/platform/postgres/migrations`; `git diff --check` | Passed; no generated snapshot changes or formatting findings. |
+| `task ci` | Completed with exit 201: frontend, APIGen and all four application shards passed; Go package sweep failed in `internal/access/postgres`, `internal/platform/postgres/migrations` (publication integrity), and `internal/project/identityledger/postgres`. Later CI steps were not reached. No green full-CI claim. |
+
+Operational paths, exact lineage checksums and downgrade restrictions are in the
+[migration authority guide](../../internal/platform/postgres/migrations/README.md).
+Deployment status remains unknown; synthetic historical fixtures are not proof of
+deployment. No downgrade or upstream-Goose adoption compatibility is claimed.
+FAI-632 and downstream semantic-access milestones remain unopened by this work.
+
 ## Maintained verification
 
 Implementation must add focused identity, canonicalization, cross-language

@@ -129,3 +129,37 @@ requires FAI-648/649 plus its other active ADR-0016 prerequisites. No downstream
 issue is started by this layer. FAI-639 remains In Progress in Linear despite its
 source-reviewed parent commit; this audit does not silently mark earlier layers
 qualified.
+
+### Migration-only dependency remediation (2026-09-06)
+
+The user-approved supersession layer branches from this dependency tip at
+`fd4b095510ae`, without modifying planner/security implementation. Original
+migration 002 remains immutable. Its separately checksummed replacement is
+selected only for pending revision 2; recognized original rows are preserved.
+The shared Apply/Verify planner rejects unknown or gapped history before schema
+execution. Revision 013 checks identity schema prerequisites and effective
+privileges, grants runtime read-only migration-ledger access, and protects the
+ledger against TRUNCATE. Transaction advisory locking serializes migrations.
+
+Live PostgreSQL 18 supersession tests now pass fresh initialization, both declared
+lineages, exact replay, runtime verification, invalid history, schema/privilege
+rejection, DDL/revision rollback with same-pool retry, and concurrent migrators.
+The focused race run passed. `task generated:check`, architecture and Admin tests
+passed. The original migration-002 syntax blocker is therefore remediated without
+editing historical SQL or recording false execution checksums.
+
+Overall dependency qualification is still partial: the required PostgreSQL task
+now reaches an existing publication-integrity constraint collision in revisions
+003/008 and a publication read-permission failure. Broader live identity and
+access suites expose additional SQL/fixture failures. See the
+[ADR-0016 remediation evidence](data-contract-versioning-conformance.md#migration-chain-remediation-evidence-2026-09-06)
+and [migration guide](../../internal/platform/postgres/migrations/README.md).
+These are not planner regressions or Docker-unavailable skips. No publication,
+identity lifecycle or access control behavior is changed here. No downstream
+milestone is started, and no full-stack or downgrade compatibility is claimed.
+
+The remediation's `task ci` run completed with exit 201. Frontend, APIGen and all
+four application shards passed. The Go package sweep failed in the three
+independent PostgreSQL areas recorded above (access, publication integrity and
+identity repository), not in the supersession matrix. Later CI stages were not
+reached; generated, documentation, vet and diff checks passed separately.
