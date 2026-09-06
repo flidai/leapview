@@ -85,8 +85,9 @@ func (p *Planner) securePlanGraph(graph *planir.Graph, members ...semanticAccess
 	}
 
 	refs := append([]semanticAccessMemberRef(nil), members...)
-	refs = append(refs, graphMemberRefs(p, graph)...)
-	refs = expandUnqualifiedSemanticMembers(p, refs)
+	refs = append(refs, graphMemberRefs(p, graph, refs)...)
+	refs = expandSemanticMetricDependencies(p, refs)
+	refs = expandUnqualifiedSemanticMembers(p, refs, graph)
 	refs = canonicalSemanticMemberRefs(refs)
 	if err := admitSemanticMembers(p, decision, refs); err != nil {
 		return semanticAccessAdmission{}, err
@@ -201,19 +202,27 @@ func graphDatasets(graph *planir.Graph) []string {
 	return result
 }
 
-func graphMemberRefs(p *Planner, graph *planir.Graph) []semanticAccessMemberRef {
+// graphMemberRefs derives semantic members from physical lineage. Metric
+// identity comes from request resolution and the compiled dependency DAG; no
+// node metadata is consulted because final SortLimit metadata contains
+// presentation aliases and flat plans may contain synthetic metrics.
+func graphMemberRefs(p *Planner, graph *planir.Graph, selected []semanticAccessMemberRef) []semanticAccessMemberRef {
+	if p == nil || p.compiled == nil || graph == nil {
+		return nil
+	}
+	participating := semanticAccessGraphRoots(graph)
+	for _, ref := range selected {
+		if ref.Dataset != "" {
+			participating[ref.Dataset] = true
+		}
+	}
 	refs := []semanticAccessMemberRef{}
 	for _, node := range graph.Nodes {
-		meta := node.Meta()
-		for _, metric := range meta.AvailableMetrics {
-			if _, ok := p.compiled.metric(metric.Name); ok {
-				refs = append(refs, semanticAccessMemberRef{Kind: "metric", Name: metric.Name})
-			}
-		}
-		for _, lineage := range meta.PhysicalLineage {
+		for _, lineage := range node.Meta().PhysicalLineage {
 			for name, bindings := range p.compiled.dimensionBindings {
 				for dataset, binding := range bindings {
-					if lineage.Dataset != binding.Physical.Table ||
+					if !participating[dataset] ||
+						lineage.Dataset != binding.Physical.Table ||
 						(lineage.Field != binding.Physical.Name && lineage.Field != binding.Physical.Field) ||
 						!sameSemanticAccessRoute(lineage.Route, planIRRouteNames(binding.Path)) {
 						continue
@@ -224,6 +233,57 @@ func graphMemberRefs(p *Planner, graph *planir.Graph) []semanticAccessMemberRef 
 		}
 	}
 	return refs
+}
+
+func semanticAccessGraphRoots(graph *planir.Graph) map[string]bool {
+	roots := map[string]bool{}
+	if graph == nil {
+		return roots
+	}
+	for _, node := range graph.Nodes {
+		for _, dataset := range node.Meta().RootDatasets {
+			if dataset != "" {
+				roots[dataset] = true
+			}
+		}
+	}
+	return roots
+}
+
+func semanticAccessMetricClosure(p *Planner, refs []semanticAccessMemberRef) map[string]bool {
+	closure := map[string]bool{}
+	if p == nil || p.compiled == nil {
+		return closure
+	}
+	queue := []string{}
+	for _, ref := range refs {
+		if ref.Kind != "metric" || closure[ref.Name] {
+			continue
+		}
+		if _, ok := p.compiled.metric(ref.Name); ok {
+			closure[ref.Name] = true
+			queue = append(queue, ref.Name)
+		}
+	}
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		metric, ok := p.compiled.metric(name)
+		if !ok {
+			continue
+		}
+		for _, dependency := range metric.Dependencies {
+			if closure[dependency] {
+				continue
+			}
+			if _, ok := p.compiled.metric(dependency); !ok {
+				continue
+			}
+			closure[dependency] = true
+			queue = append(queue, dependency)
+		}
+	}
+	return closure
 }
 
 func sameSemanticAccessRoute(left, right []string) bool {
@@ -238,9 +298,26 @@ func sameSemanticAccessRoute(left, right []string) bool {
 	return true
 }
 
-func expandUnqualifiedSemanticMembers(p *Planner, refs []semanticAccessMemberRef) []semanticAccessMemberRef {
+func expandSemanticMetricDependencies(p *Planner, refs []semanticAccessMemberRef) []semanticAccessMemberRef {
+	closure := semanticAccessMetricClosure(p, refs)
+	for name := range closure {
+		refs = append(refs, semanticAccessMemberRef{Kind: "metric", Name: name})
+	}
+	return refs
+}
+
+func expandUnqualifiedSemanticMembers(p *Planner, refs []semanticAccessMemberRef, graph *planir.Graph) []semanticAccessMemberRef {
 	if p == nil || p.compiled == nil {
 		return refs
+	}
+	if graph == nil {
+		return refs
+	}
+	participating := semanticAccessGraphRoots(graph)
+	for _, ref := range refs {
+		if ref.Dataset != "" {
+			participating[ref.Dataset] = true
+		}
 	}
 	out := make([]semanticAccessMemberRef, 0, len(refs))
 	for _, ref := range refs {
@@ -251,6 +328,9 @@ func expandUnqualifiedSemanticMembers(p *Planner, refs []semanticAccessMemberRef
 		bindings := p.compiled.dimensionBindings[ref.Name]
 		datasets := make([]string, 0, len(bindings))
 		for dataset := range bindings {
+			if !participating[dataset] {
+				continue
+			}
 			datasets = append(datasets, dataset)
 		}
 		sort.Strings(datasets)
@@ -325,11 +405,18 @@ func appendFilterMemberRefs(p *Planner, refs *[]semanticAccessMemberRef, filters
 	}
 }
 
-func appendSortMemberRefs(p *Planner, refs *[]semanticAccessMemberRef, sorts []Sort, dataset string) {
+func appendSortMemberRefs(p *Planner, refs *[]semanticAccessMemberRef, sorts []Sort, dataset string, selected []Field) {
 	for _, sortSpec := range sorts {
 		name := strings.TrimSpace(sortSpec.Field)
 		if name == "" {
 			continue
+		}
+		for _, field := range selected {
+			alias, err := outputAlias(field)
+			if err == nil && alias == name {
+				name = field.Field
+				break
+			}
 		}
 		if _, ok := p.compiled.metric(name); ok {
 			*refs = append(*refs, semanticAccessMemberRef{Kind: "metric", Name: name})
@@ -347,7 +434,8 @@ func requestRowMemberRefs(p *Planner, request RowRequest) []semanticAccessMember
 		refs = append(refs, semanticAccessMemberRef{Kind: "dimension", Name: dimension.Field, Dataset: request.Dataset})
 	}
 	appendFilterMemberRefs(p, &refs, request.Filters, request.Dataset)
-	appendSortMemberRefs(p, &refs, request.Sort, request.Dataset)
+	selected := append(append([]Field(nil), request.Dimensions...), request.Metrics...)
+	appendSortMemberRefs(p, &refs, request.Sort, request.Dataset, selected)
 	return refs
 }
 
@@ -357,7 +445,11 @@ func requestRawValueMemberRefs(p *Planner, request RawValueRequest) []semanticAc
 		refs = append(refs, semanticAccessMemberRef{Kind: "dimension", Name: dimension.Field, Dataset: request.Dataset})
 	}
 	appendFilterMemberRefs(p, &refs, request.Filters, request.Dataset)
-	appendSortMemberRefs(p, &refs, request.Sort, request.Dataset)
+	selected := append(append([]Field(nil), request.Dimensions...), request.Metric)
+	if selected[len(selected)-1].Field != "" {
+		selected[len(selected)-1].Alias = defaultString(selected[len(selected)-1].Alias, "value")
+	}
+	appendSortMemberRefs(p, &refs, request.Sort, request.Dataset, selected)
 	return refs
 }
 
@@ -417,11 +509,43 @@ func aggregateMemberRefs(p *Planner, request Request, resolved aggregateResoluti
 		dataset = resolved.Datasets[0]
 	}
 	for _, dimension := range resolved.Dimensions {
-		refs = append(refs, semanticAccessMemberRef{Kind: "dimension", Name: dimension.Name, Dataset: dataset})
+		if dataset != "" {
+			refs = append(refs, semanticAccessMemberRef{Kind: "dimension", Name: dimension.Name, Dataset: dataset})
+			continue
+		}
+		for _, participating := range resolved.Datasets {
+			refs = append(refs, semanticAccessMemberRef{Kind: "dimension", Name: dimension.Name, Dataset: participating})
+		}
 	}
 	appendFilterMemberRefs(p, &refs, request.Filters, dataset)
-	appendSortMemberRefs(p, &refs, request.Sort, dataset)
-	return refs
+	selected := make([]Field, 0, len(resolved.Dimensions)+len(resolved.Members))
+	for _, dimension := range resolved.Dimensions {
+		selected = append(selected, Field{Field: dimension.Name, Alias: dimension.Alias})
+	}
+	for _, member := range resolved.Members {
+		selected = append(selected, Field{Field: member.Name, Alias: member.Alias})
+	}
+	appendSortMemberRefs(p, &refs, request.Sort, dataset, selected)
+	return qualifyAggregateDimensionRefs(refs, resolved.Datasets)
+}
+
+func qualifyAggregateDimensionRefs(refs []semanticAccessMemberRef, datasets []string) []semanticAccessMemberRef {
+	if len(datasets) == 0 {
+		return refs
+	}
+	out := make([]semanticAccessMemberRef, 0, len(refs))
+	for _, ref := range refs {
+		if ref.Kind != "dimension" || ref.Dataset != "" {
+			out = append(out, ref)
+			continue
+		}
+		for _, dataset := range datasets {
+			qualified := ref
+			qualified.Dataset = dataset
+			out = append(out, qualified)
+		}
+	}
+	return out
 }
 
 func bundleMemberRefs(p *Planner, requests []BundleRequest, resolutions []aggregateResolution) []semanticAccessMemberRef {
