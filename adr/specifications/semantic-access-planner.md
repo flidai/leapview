@@ -96,6 +96,31 @@ ADR-0016 layers changes.
 | `gofmt -l internal/analytics/query` and `git diff --check` | Passed, no formatting or whitespace findings. |
 | `task test:go:postgres-conformance` | Environment-blocked: required PostgreSQL 18 container cannot access Docker socket (permission denied). Gate unchanged; no live PostgreSQL pass claimed. |
 
+### Resumed live qualification (2026-09-06)
+
+The socket limitation was resolved for the test process with
+`sudo -n -u codex -g docker -- env ... task test:go:postgres-conformance`.
+This keeps UID `codex`, uses the existing Docker group for that process, and
+does not change account membership or socket permissions. The pinned image and
+required-test setting are unchanged.
+
+`TestPostgreSQL18PoolConformance` passed against the live pinned PostgreSQL 18
+container, including concurrent connections, resource release, rollback, lock
+timeout, cancellation, and deadlock SQLSTATE checks. The next test,
+`TestContractPublicationIntegrityPostgreSQL18`, failed while applying migrations
+with SQLSTATE `42601` (syntax error near `project`). Revision
+`002_project_identity_ledger.sql` contains `GRANT ... ON TABLES` at lines 141
+and 148 for explicit table lists; the PostgreSQL 18
+[GRANT grammar](https://www.postgresql.org/docs/18/sql-grant.html) requires
+`ON TABLE` for those lists. This is an existing identity-layer dependency defect,
+not a planner regression or a continuing Docker-access failure.
+
+No migration bytes or checksums were changed. Correcting a historical
+checksum-tracked migration requires an explicit deployment-history/migration
+compatibility decision. The publication, identity-repository and attribute-registry
+live gates are not qualified by the pool pass. Full CI was not rerun after this
+focused prerequisite failed; its prior partial result remains recorded above.
+
 The live Linear audit keeps FAI-641 separate from its consumer successor. FAI-642
 is Backlog and blocked by FAI-641/636/639. FAI-645 is Backlog and blocked by
 FAI-639/636 (it does not currently have a direct FAI-642 blocking edge). FAI-648
