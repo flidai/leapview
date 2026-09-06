@@ -280,12 +280,16 @@ func reconcile(ctx context.Context, tx pgx.Tx, instanceID, bundleID, actorID, re
 	return nil
 }
 
-func appendHistory(ctx context.Context, tx pgx.Tx, instanceID string, resource identityledger.Resource, action, bundleID, actorID, reason string) error {
-	if _, err := tx.Exec(ctx, `
+// Explicit domain typing is necessary when parameters occur in both an INSERT
+// projection and a predicate: PostgreSQL otherwise infers conflicting types.
+const appendHistorySQL = `
 		INSERT INTO project.resource_identity_history
 		(instance_id,authored_id,sequence,resource_kind,action,bundle_id,actor_id,reason)
-		SELECT $1,$2,COALESCE(max(sequence),0)+1,$3,$4,$5,$6,$7
-		FROM project.resource_identity_history WHERE instance_id=$1 AND authored_id=$2`,
+		SELECT $1::platform.resource_id,$2::platform.resource_id,COALESCE(max(sequence),0)+1,$3,$4,$5,$6,$7
+		FROM project.resource_identity_history WHERE instance_id=$1::platform.resource_id AND authored_id=$2::platform.resource_id`
+
+func appendHistory(ctx context.Context, tx pgx.Tx, instanceID string, resource identityledger.Resource, action, bundleID, actorID, reason string) error {
+	if _, err := tx.Exec(ctx, appendHistorySQL,
 		instanceID, resource.AuthoredID.String(), string(resource.Kind), action, bundleID, actorID, reason); err != nil {
 		return fmt.Errorf("append resource identity history %q: %w", resource.AuthoredID, err)
 	}

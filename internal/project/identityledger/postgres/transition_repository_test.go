@@ -191,9 +191,7 @@ func TestPrepareTransitionIDIsScopedToInstance(t *testing.T) {
 	repo, _ := newLedgerDatabase(t)
 	ctx := t.Context()
 	firstInput := testTransition("instance-one", "shared-transition-id", "bundle-one")
-	secondInput := firstInput
-	secondInput.InstanceID = "instance-two"
-	secondInput.BundleID = "bundle-two"
+	secondInput := testTransition("instance-two", "shared-transition-id", "bundle-two")
 
 	first, err := repo.PrepareTransition(ctx, firstInput)
 	if err != nil {

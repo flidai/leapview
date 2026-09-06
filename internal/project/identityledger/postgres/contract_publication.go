@@ -33,8 +33,14 @@ func (r *Repository) PublishContract(ctx context.Context, input identityledger.C
 		return identityledger.ContractPublication{}, fmt.Errorf("begin contract publication: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	lockKey := strings.Join([]string{prepared.InstanceID, prepared.AuthoredID.String(), string(prepared.ResourceKind)}, "\x00")
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+	// A JSON string tuple is unambiguous and PostgreSQL-text safe. NUL-delimited
+	// text cannot be sent to PostgreSQL. This key only scopes the advisory lock;
+	// it is not persisted identity or publication digest evidence.
+	lockKey, err := json.Marshal([]string{prepared.InstanceID, prepared.AuthoredID.String(), string(prepared.ResourceKind)})
+	if err != nil {
+		return identityledger.ContractPublication{}, fmt.Errorf("encode contract publication lock: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, string(lockKey)); err != nil {
 		return identityledger.ContractPublication{}, fmt.Errorf("lock contract publication: %w", err)
 	}
 	existing, err := contractPublicationTx(ctx, tx, prepared.InstanceID, prepared.AuthoredID, prepared.ResourceKind, prepared.VersionBaseline)

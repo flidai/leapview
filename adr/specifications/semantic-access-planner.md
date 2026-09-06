@@ -163,3 +163,20 @@ four application shards passed. The Go package sweep failed in the three
 independent PostgreSQL areas recorded above (access, publication integrity and
 identity repository), not in the supersession matrix. Later CI stages were not
 reached; generated, documentation, vet and diff checks passed separately.
+
+### PostgreSQL qualification repair dependency (2026-09-06)
+
+The child `ganesh/postgres-qualification-hardening` layer repairs history-query
+domain typing, installs publication evidence checks through additive revision
+014, and corrects qualification fixtures. User-approved narrow fixes also remove
+the publication lock's invalid NUL parameter and restore role mutation error
+classification. Historical SQL and planner/barrier implementation are unchanged.
+The migration, identity and access PostgreSQL packages pass with Docker required,
+including race execution. Architecture, projection/generator and focused
+PlanIR/query checks pass. See the [repair evidence](data-contract-versioning-conformance.md#postgresql-qualification-repair-2026-09-06).
+
+FAI-641 remains IMPLEMENTED / PARTIAL for integrated enforcement; this dependency
+repair does not claim consumer routing, cache/lifecycle or exhaustive semantic
+access qualification. FAI-617's live repository gates and FAI-662's scoped
+integrity gates are now exercised successfully. No FAI-642/645/648/649/632 work
+is started, and no production deployment or downgrade compatibility is asserted.

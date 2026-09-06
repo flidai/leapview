@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/identityledger"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -80,6 +81,31 @@ func candidate(instance, bundle, expected string, resources ...identityledger.Re
 
 func resource(id string, kind projectgraph.Kind) identityledger.Resource {
 	return identityledger.Resource{AuthoredID: projectgraph.ResourceID(id), Kind: kind}
+}
+
+func TestIdentityHistoryPostgreSQL18ParameterTypes(t *testing.T) {
+	repo, _ := newLedgerDatabase(t)
+	conn, err := repo.db.(*pgxpool.Pool).Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	statement, err := conn.Conn().Prepare(t.Context(), "identity_history_parameters", appendHistorySQL)
+	if err != nil {
+		t.Fatalf("prepare history query: %v", err)
+	}
+	var domainOID uint32
+	if err := conn.QueryRow(t.Context(), `SELECT 'platform.resource_id'::regtype::oid`).Scan(&domainOID); err != nil {
+		t.Fatal(err)
+	}
+	if statement.ParamOIDs[0] != domainOID || statement.ParamOIDs[1] != domainOID {
+		t.Fatalf("identity parameter OIDs = %v, want resource_id %d", statement.ParamOIDs, domainOID)
+	}
+	_, err = conn.Exec(t.Context(), appendHistorySQL, "", "source:test", "source", "created", "bundle", "actor", "")
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "resource_id_check" {
+		t.Fatalf("invalid resource ID error = %v, want domain CHECK violation", err)
+	}
 }
 
 func TestIdentityLedgerPostgreSQL18Lifecycle(t *testing.T) {

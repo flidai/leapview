@@ -40,6 +40,16 @@ func TestContractPublicationIsImmutableAndExactlyReplayable(t *testing.T) {
 	if !bytes.Equal(first.CanonicalBytes, wantBytes) || first.Digest != wantDigest || len(first.Validation.Checks) != 2 {
 		t.Fatalf("publication did not preserve canonical or validation evidence: %#v", first)
 	}
+	if _, err := repo.Activate(ctx, candidate("instance-contract-other", "bundle-1", "", resource("source:orders", projectgraph.KindSource))); err != nil {
+		t.Fatal(err)
+	}
+	other, err := repo.PublishContract(ctx, publicationInput("instance-contract-other", "source:orders", "1.2.3+build.1", "compatible"))
+	if err != nil {
+		t.Fatalf("independent instance publication: %v", err)
+	}
+	if other.InstanceID == first.InstanceID || other.Digest == first.Digest {
+		t.Fatal("independent instance publication replayed another instance's evidence")
+	}
 
 	replayed, err := repo.PublishContract(ctx, input)
 	if err != nil {

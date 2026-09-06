@@ -529,7 +529,8 @@ func TestAccessControlAuthorityMigrationIsMutableAndSnapshotIndependent(t *testi
 
 func validRevisions() map[int64]recordingRow {
 	return map[int64]recordingRow{
-		IdentityLedgerPrivilegesRevision: {revision: IdentityLedgerPrivilegesRevision, migrationID: IdentityLedgerPrivilegesMigrationID, checksum: IdentityLedgerPrivilegesChecksum()},
+		IdentityLedgerPrivilegesRevision:      {revision: IdentityLedgerPrivilegesRevision, migrationID: IdentityLedgerPrivilegesMigrationID, checksum: IdentityLedgerPrivilegesChecksum()},
+		ContractPublicationCorrectionRevision: {revision: ContractPublicationCorrectionRevision, migrationID: ContractPublicationCorrectionMigrationID, checksum: ContractPublicationCorrectionChecksum()},
 		BaselineRevision: {
 			revision: BaselineRevision, migrationID: BaselineMigrationID, checksum: BaselineChecksum(),
 		},

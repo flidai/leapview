@@ -2,12 +2,14 @@ package migrations
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	apptesting "github.com/flidai/leapview/internal/app/testing"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -688,8 +690,9 @@ func TestContractPublicationIntegrityPostgreSQL18(t *testing.T) {
 					testCase.instance, testCase.authoredID, testCase.storedKind, testCase.storedVersion,
 					versionBaseline, []byte(testCase.canonical), validationJSON)
 			}
-			if err == nil {
-				t.Fatal("malformed publication insert unexpectedly succeeded")
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23514" || !strings.HasPrefix(pgErr.ConstraintName, "contract_publication_") {
+				t.Fatalf("malformed publication error = %v, want publication CHECK violation", err)
 			}
 		})
 	}
@@ -735,12 +738,13 @@ func TestContractPublicationIntegrityPostgreSQL18(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conn.Exec(ctx, `SET ROLE leapview_control_migrator`); err != nil {
+	tx, err = conn.Begin(ctx)
+	if err != nil {
 		conn.Release()
 		t.Fatal(err)
 	}
-	tx, err = conn.Begin(ctx)
-	if err != nil {
+	if _, err := tx.Exec(ctx, `SET LOCAL ROLE leapview_control_migrator`); err != nil {
+		_ = tx.Rollback(ctx)
 		conn.Release()
 		t.Fatal(err)
 	}

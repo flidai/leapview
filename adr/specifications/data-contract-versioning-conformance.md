@@ -308,6 +308,49 @@ Final validation commands for this layer (PostgreSQL tests used
 | `task generated:check`; `task docs:check`; `go vet ./internal/platform/postgres/migrations`; `gofmt -l internal/platform/postgres/migrations`; `git diff --check` | Passed; no generated snapshot changes or formatting findings. |
 | `task ci` | Completed with exit 201: frontend, APIGen and all four application shards passed; Go package sweep failed in `internal/access/postgres`, `internal/platform/postgres/migrations` (publication integrity), and `internal/project/identityledger/postgres`. Later CI steps were not reached. No green full-CI claim. |
 
+## PostgreSQL qualification repair (2026-09-06)
+
+The `ganesh/postgres-qualification-hardening` layer is stacked on
+`ganesh/postgres-migration-supersession` at `e17c4931aa39`. This entry supersedes
+the three PostgreSQL blockers above, not the remaining ADR capability boundaries.
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| RID history parameter typing | Explicit `platform.resource_id` casts on both repeated identity parameters in the handwritten history append query; no domain or lifecycle changes. | Live prepare checks domain parameter OIDs and rejects invalid IDs with domain SQLSTATE 23514; lifecycle, restore, rollback, reference reconciliation and instance isolation tests pass. |
+| VER database evidence integrity | New revision 014 locks publications, inspects existing constraint definitions, preflights rows, and adds a validated CHECK for all seven intended 008 bindings. No historical constraint is renamed/dropped, no publication is rewritten, and revisions 002/003/008 are unchanged. | Fresh install and upgrades from 7/8/12/13 preserve valid evidence; digest/profile/kind/version/baseline corruption aborts with 23514, preserving rows, constraints and revision history. Runtime malformed inserts fail with publication CHECK violations. |
+| Exact replay and concurrency | The existing publication advisory lock uses a JSON string tuple rather than PostgreSQL-invalid NUL-delimited text; it remains a transient lock key, not an identity/digest authority. | Live exact replay, concurrent replay/conflict, build metadata, monotonic version, immutability and independent-instance publication tests pass. |
+| Qualification fixture correctness | Transition references use their own instance; access subtests have independent databases and exact audit counts/revision baselines; resource-ID assertions use domain rather than UUID casts; replay fixture scopes migrator role to the transaction. | Full identity/access PostgreSQL suites pass, including isolated role/grant lifecycles; assertions remain fail-closed. |
+| Role mutation error semantics | Update/revoke recognize the scanner's translated not-found error so existing revision/revocation classification executes. | Live stale update reports revision conflict; repeated delete reports revoked; identity retarget remains rejected. This narrow product correction was explicitly approved after fixture repair exposed it. |
+| Preserve projection and planner authorities | No projection, canonicalization, generated contract, compatibility classifier or planner implementation changes. | Architecture, contractprojection, contractversion, contracts/generate, PlanIR/query tests, generated checks and docs checks pass. |
+
+Validation used the pinned PostgreSQL 18 Docker image and
+`LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1`; these are executed tests, not skips.
+The full migration, identity PostgreSQL and access PostgreSQL packages pass under
+`go test -race ... -count=1`. The expanded `task test:go:postgres-conformance`
+includes the correction matrix, history prepare/lifecycle, and access lifecycle.
+
+| Final command | Result |
+| --- | --- |
+| `task test:go:postgres-conformance` | Passed every required Docker-backed gate, including revision 014 and the added identity/access tests; no skips. |
+| `go test -race ./internal/platform/postgres/migrations ./internal/project/identityledger/postgres ./internal/access/postgres -count=1` | Passed all three packages. Publication replay/concurrency rerun after adding independent-instance evidence also passed. |
+| `go test ./internal/platform/architecture ./internal/project/contractprojection ./internal/project/contractversion ./internal/analytics/query/planir ./internal/analytics/query -count=1` | Passed. |
+| `go test ./internal/project/contracts/generate -count=1`; `go test ./internal/app/tools/configgen -count=1` | Passed. |
+| `task generated:check docs:check`; targeted `go vet`; `git diff --check` | Passed; no generated snapshot changes. |
+| `task ci` | Exit 201: admin browser test `personal API token permissions expose enforceable access levels` exceeded 5 seconds, then the shared browser closed and dependent tests failed. The Go sweep was interrupted; full CI is not qualified. No frontend files were changed. |
+| `bun run test:admin-page` (isolated diagnostic retry) | Passed all 21 tests; original timeout did not reproduce. No timeout/assertion weakening or frontend fix was applied. |
+
+Qualification assessment: FAI-662's scoped publication/projection/generation
+acceptance is QUALIFIED by the evidence above. FAI-617 remains IMPLEMENTED /
+PARTIAL at whole-milestone level: its live repository gates are qualified, but
+this repair does not add an end-to-end production-process qualification.
+FAI-641 remains IMPLEMENTED / PARTIAL for integrated semantic-access enforcement;
+its existing focused planner/architecture tests pass without planner changes.
+These assessments do not mark the entire ADR or downstream issues complete.
+FAI-642/645/648/649/632 are not started. Revision 014 requires a publication-table
+lock and may need a maintenance window; corrupt persistent data requires an
+operator-reviewed recovery plan. Deployment history remains unknown, and upstream
+Goose authority reconciliation remains separate.
+
 Operational paths, exact lineage checksums and downgrade restrictions are in the
 [migration authority guide](../../internal/platform/postgres/migrations/README.md).
 Deployment status remains unknown; synthetic historical fixtures are not proof of

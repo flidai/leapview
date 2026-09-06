@@ -226,7 +226,7 @@ func (r *Repository) UpdateRoleAssignment(ctx context.Context, input access.Role
 			RETURNING id::text,instance_id,project_id,subject_kind,subject_id::text,role,name,revision,created_at,updated_at,revoked_at`,
 			input.InstanceID, input.ID, input.ExpectedRevision, input.Name)
 		result, err = scanRoleAssignment(row)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, access.ErrControlNotFound) {
 			return access.AuditEventInput{}, access.ErrControlRevisionConflict
 		}
 		if err != nil {
@@ -269,7 +269,7 @@ func (r *Repository) revokeRoleAssignment(ctx context.Context, instanceID, assig
 			instanceID, assignmentID, expectedRevision)
 		var err error
 		result, err = scanRoleAssignment(row)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, access.ErrControlNotFound) {
 			return access.AuditEventInput{}, classifyRoleMutationMiss(ctx, tx.db, instanceID, assignmentID)
 		}
 		if err != nil {

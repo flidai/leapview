@@ -86,14 +86,20 @@ func newControlAuthorityDatabase(t *testing.T) controlAuthorityDatabase {
 }
 
 func TestControlAuthorityPostgreSQL18(t *testing.T) {
-	db := newControlAuthorityDatabase(t)
+	setup := func(t *testing.T) controlAuthorityDatabase {
+		t.Helper()
+		db := newControlAuthorityDatabase(t)
+		project := controlAuthorityProject(t)
+		seedControlPrincipal(t, db.admin, controlActorID)
+		seedControlPrincipal(t, db.admin, controlSubjectID)
+		seedControlResources(t, db.admin, controlInstanceA, project)
+		seedControlResources(t, db.admin, controlInstanceB, project)
+		return db
+	}
 	project := controlAuthorityProject(t)
-	seedControlPrincipal(t, db.admin, controlActorID)
-	seedControlPrincipal(t, db.admin, controlSubjectID)
-	seedControlResources(t, db.admin, controlInstanceA, project)
-	seedControlResources(t, db.admin, controlInstanceB, project)
 
 	t.Run("compatibility snapshot import is create-once and replay-safe", func(t *testing.T) {
+		db := setup(t)
 		instanceID := "instance-control-seed"
 		seedControlResources(t, db.admin, instanceID, project)
 		dashboard := mustControlAuthorityResource(t, "dashboard-control", projectgraph.KindDashboard)
@@ -138,6 +144,7 @@ func TestControlAuthorityPostgreSQL18(t *testing.T) {
 	})
 
 	t.Run("role binding lifecycle and instance isolation", func(t *testing.T) {
+		db := setup(t)
 		created, err := db.repo.CreateRoleAssignment(t.Context(), access.RoleAssignmentInput{
 			ID:         "00000000-0000-7000-8000-000000000101",
 			InstanceID: controlInstanceA,
@@ -204,7 +211,7 @@ func TestControlAuthorityPostgreSQL18(t *testing.T) {
 			InstanceID:       controlInstanceA,
 			ProjectID:        controlProject,
 			Subject:          created.Subject,
-			Role:             string(access.ProjectRoleEditor),
+			Role:             created.Role,
 			ExpectedRevision: created.Revision,
 		}); !errors.Is(err, access.ErrControlRevisionConflict) {
 			t.Fatalf("stale role binding update error = %v, want revision conflict", err)
@@ -275,9 +282,11 @@ func TestControlAuthorityPostgreSQL18(t *testing.T) {
 		if otherState.Revision != 1 {
 			t.Fatalf("other-instance control revision = %d, want 1", otherState.Revision)
 		}
+		assertControlAuditCounts(t, db.admin, 2, 0, 0)
 	})
 
 	t.Run("grant lifecycle, immutable target, and semantic conflict", func(t *testing.T) {
+		db := setup(t)
 		dashboard := mustControlAuthorityResource(t, "dashboard-control", projectgraph.KindDashboard)
 		model := mustControlAuthorityResource(t, "model-control", projectgraph.KindModel)
 		created, err := db.repo.CreateGrant(t.Context(), access.ControlGrantInput{
@@ -312,7 +321,7 @@ func TestControlAuthorityPostgreSQL18(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if state.Revision != 4 || len(state.Grants) != 1 {
+		if state.Revision != 1 || len(state.Grants) != 1 {
 			t.Fatalf("state after duplicate grant = revision %d, %d grants", state.Revision, len(state.Grants))
 		}
 
@@ -356,11 +365,11 @@ func TestControlAuthorityPostgreSQL18(t *testing.T) {
 			t.Fatalf("stale grant update error = %v, want revision conflict", err)
 		}
 
-		if _, err := db.admin.Exec(t.Context(), `UPDATE access.control_grant SET resource_id=$1 WHERE id=$2::uuid`, model.ID().String(), created.ID); err == nil {
+		if _, err := db.admin.Exec(t.Context(), `UPDATE access.control_grant SET resource_id=$1 WHERE id=$2::platform.resource_id`, model.ID().String(), created.ID); err == nil {
 			t.Fatal("direct grant target rewrite unexpectedly succeeded")
 		}
 		var target string
-		if err := db.admin.QueryRow(t.Context(), `SELECT resource_id FROM access.control_grant WHERE id=$1::uuid`, created.ID).Scan(&target); err != nil {
+		if err := db.admin.QueryRow(t.Context(), `SELECT resource_id FROM access.control_grant WHERE id=$1::platform.resource_id`, created.ID).Scan(&target); err != nil {
 			t.Fatal(err)
 		}
 		if target != dashboard.ID().String() {
@@ -410,8 +419,8 @@ func TestControlAuthorityPostgreSQL18(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if state.Revision != 6 {
-			t.Fatalf("control revision after grant lifecycle = %d, want 6", state.Revision)
+		if state.Revision != 3 {
+			t.Fatalf("control revision after grant lifecycle = %d, want 3", state.Revision)
 		}
 
 		_, err = db.repo.CreateGrant(t.Context(), access.ControlGrantInput{
@@ -434,9 +443,11 @@ func TestControlAuthorityPostgreSQL18(t *testing.T) {
 		if grants, err := db.repo.ListControlGrants(t.Context(), controlInstanceB, controlProject); err != nil || len(grants) != 1 {
 			t.Fatalf("other-instance grants = %#v, %v", grants, err)
 		}
+		assertControlAuditCounts(t, db.admin, 0, 2, 1)
 	})
 
 	t.Run("tombstone, explicit restore, and revoked reactivation", func(t *testing.T) {
+		db := setup(t)
 		model := mustControlAuthorityResource(t, "model-control", projectgraph.KindModel)
 		tombstoneControlResource(t, db.admin, controlInstanceA, model.ID().String())
 		created, err := db.repo.CreateGrant(t.Context(), access.ControlGrantInput{
@@ -472,9 +483,11 @@ func TestControlAuthorityPostgreSQL18(t *testing.T) {
 		if _, err := db.repo.ReactivateGrant(t.Context(), controlInstanceA, created.ID, revoked.Revision, project, controlActorID); !errors.Is(err, access.ErrControlRevoked) {
 			t.Fatalf("reactivate revoked restored-target grant = %v, want revoked", err)
 		}
+		assertControlAuditCounts(t, db.admin, 0, 1, 1)
 	})
 
 	t.Run("control and audit transactions are atomic", func(t *testing.T) {
+		db := setup(t)
 		rollbackInstance := "instance-control-rollback"
 		rollbackRoleID := "00000000-0000-7000-8000-000000000401"
 		_, err := db.repo.CreateRoleAssignment(t.Context(), access.RoleAssignmentInput{
@@ -490,7 +503,7 @@ func TestControlAuthorityPostgreSQL18(t *testing.T) {
 			t.Fatal("control mutation with invalid audit actor unexpectedly committed")
 		}
 		var roles, states, audits int
-		if err := db.admin.QueryRow(t.Context(), `SELECT count(*) FROM access.control_role_binding WHERE id=$1::uuid`, rollbackRoleID).Scan(&roles); err != nil {
+		if err := db.admin.QueryRow(t.Context(), `SELECT count(*) FROM access.control_role_binding WHERE id=$1::platform.resource_id`, rollbackRoleID).Scan(&roles); err != nil {
 			t.Fatal(err)
 		}
 		if err := db.admin.QueryRow(t.Context(), `SELECT count(*) FROM access.control_state WHERE instance_id=$1`, rollbackInstance).Scan(&states); err != nil {
@@ -548,20 +561,25 @@ func TestControlAuthorityPostgreSQL18(t *testing.T) {
 			t.Fatalf("committed rows = group %d, audit %d; want 1/1", roles, audits)
 		}
 
-		var roleAudit, grantAudit, revokeAudit int
-		if err := db.admin.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE action='role_assignment.created'`).Scan(&roleAudit); err != nil {
-			t.Fatal(err)
-		}
-		if err := db.admin.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE action='grant.created'`).Scan(&grantAudit); err != nil {
-			t.Fatal(err)
-		}
-		if err := db.admin.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE action='grant.deleted'`).Scan(&revokeAudit); err != nil {
-			t.Fatal(err)
-		}
-		if roleAudit < 2 || grantAudit < 3 || revokeAudit < 2 {
-			t.Fatalf("control audit actions = role create %d, grant create %d, grant delete %d", roleAudit, grantAudit, revokeAudit)
-		}
+		assertControlAuditCounts(t, db.admin, 0, 0, 0)
 	})
+}
+
+func assertControlAuditCounts(t *testing.T, db *pgxpool.Pool, wantRole, wantGrant, wantRevoke int) {
+	t.Helper()
+	var roleAudit, grantAudit, revokeAudit int
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE action='role_assignment.created'`).Scan(&roleAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE action='grant.created'`).Scan(&grantAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE action='grant.deleted'`).Scan(&revokeAudit); err != nil {
+		t.Fatal(err)
+	}
+	if roleAudit != wantRole || grantAudit != wantGrant || revokeAudit != wantRevoke {
+		t.Fatalf("control audit actions = role create %d, grant create %d, grant delete %d", roleAudit, grantAudit, revokeAudit)
+	}
 }
 
 func controlAuthorityProject(t *testing.T) projectgraph.ProjectGraph {

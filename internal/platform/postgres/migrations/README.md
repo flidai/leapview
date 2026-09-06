@@ -59,9 +59,25 @@ grants runtime SELECT on the revision ledger for readiness verification and adds
 a TRUNCATE guard alongside the existing UPDATE/DELETE guard. No identity data,
 publication schema, or lifecycle behavior is rewritten.
 
+Revision 014 corrects the publication CHECK-name collision between immutable
+003 and 008. It takes an ACCESS EXCLUSIVE publication-table lock, reports the
+existing constraint definitions, and preflights every row before adding one
+validated evidence-binding CHECK. Historical checks (including any stronger
+deployment-local restrictions) are retained unchanged; their names are not
+treated as proof of their definitions. The new CHECK enforces all seven intended
+008 bindings, including digest equality, with no new canonicalization authority.
+An unexpected collision with the new constraint name fails closed.
+
+Corrupt rows abort the transaction with SQLSTATE `23514`; no row contents are
+included in the error. No schema/revision change commits and no publication is
+rewritten or deleted. Investigate with an authorized operator and use a reviewed
+restore/forward recovery plan; do not disable immutable guards or rewrite ledger
+checksums. This migration can block publication traffic while scanning existing
+rows, so use a maintenance window and caller-owned lock/transaction timeouts.
+
 ## Supported paths and recovery
 
-- Empty database: 001 → replacement 002 → 003–013.
+- Empty database: 001 → replacement 002 → 003–014.
 - Valid recorded prefix without 002: apply replacement 002 and pending successors.
 - Valid original-002 prefix: retain original evidence and apply pending successors.
 - Valid replacement-002 prefix: retain replacement evidence and apply successors.
@@ -86,6 +102,7 @@ Run with Docker available and `LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1`:
 
 ```sh
 go test ./internal/platform/postgres/migrations -run '^TestMigrationSupersessionPostgreSQL18$' -count=1 -v
+go test ./internal/platform/postgres/migrations -run '^TestContractPublicationCorrectionPostgreSQL18$' -count=1 -v
 go test ./internal/platform/postgres/migrations -count=1
 go test ./internal/project/identityledger/... ./internal/access/... ./internal/platform/architecture ./internal/app/adminpostgres -count=1
 task test:go:postgres-conformance

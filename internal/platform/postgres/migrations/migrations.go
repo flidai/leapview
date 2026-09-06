@@ -36,6 +36,16 @@ var identityLedgerReplacementSQL string
 //go:embed 013_identity_ledger_privileges.sql
 var identityLedgerPrivilegesSQL string
 
+//go:embed 014_contract_publication_correction.sql
+var contractPublicationCorrectionSQL string
+
+const ContractPublicationCorrectionRevision int64 = 14
+const ContractPublicationCorrectionMigrationID = "014_contract_publication_correction"
+
+func ContractPublicationCorrectionChecksum() string {
+	return sqlChecksum(contractPublicationCorrectionSQL)
+}
+
 const IdentityLedgerReplacementMigrationID = "002_project_identity_ledger_replacement"
 const IdentityLedgerPrivilegesRevision int64 = 13
 const IdentityLedgerPrivilegesMigrationID = "013_identity_ledger_privileges"
@@ -273,6 +283,7 @@ func ordered() []migration {
 		{TypedAttributeRegistryRevision, TypedAttributeRegistryMigrationID, typedAttributeRegistrySQL, TypedAttributeRegistryChecksum()},
 		{SemanticAttributeControlRevision, SemanticAttributeControlMigrationID, semanticAttributeControlSQL, SemanticAttributeControlChecksum()},
 		{IdentityLedgerPrivilegesRevision, IdentityLedgerPrivilegesMigrationID, identityLedgerPrivilegesSQL, IdentityLedgerPrivilegesChecksum()},
+		{ContractPublicationCorrectionRevision, ContractPublicationCorrectionMigrationID, contractPublicationCorrectionSQL, ContractPublicationCorrectionChecksum()},
 	}
 }
 
