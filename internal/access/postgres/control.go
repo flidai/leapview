@@ -15,6 +15,7 @@ import (
 )
 
 var _ access.ControlStore = (*Repository)(nil)
+var _ access.AuthorizationControlRevisionReader = (*Repository)(nil)
 
 const controlGrantReferencePrefix = "grant:"
 
@@ -546,6 +547,31 @@ func (r *Repository) ControlState(ctx context.Context, instanceID string) (acces
 		return access.ControlState{}, err
 	}
 	return state, nil
+}
+
+// ReadAuthorizationControlRevision reads only the live control-state
+// identity and monotonic revision. It intentionally uses one ordinary row
+// query: lifecycle/cache admission must not take the write/advisory lock used
+// by ControlState's mutation-safe full projection.
+func (r *Repository) ReadAuthorizationControlRevision(ctx context.Context, instanceID string) (access.AuthorizationControlRevision, error) {
+	if err := validateControlInstance(instanceID); err != nil {
+		return access.AuthorizationControlRevision{}, err
+	}
+	if r == nil || r.db == nil {
+		return access.AuthorizationControlRevision{}, errors.New("access PostgreSQL database is unavailable")
+	}
+	var value access.AuthorizationControlRevision
+	if err := r.db.QueryRow(ctx, `SELECT instance_id,project_id,revision FROM access.control_state WHERE instance_id=$1`, instanceID).
+		Scan(&value.InstanceID, &value.ProjectID, &value.Revision); err != nil {
+		return access.AuthorizationControlRevision{}, mapControlNotFound(err)
+	}
+	if value.InstanceID != instanceID {
+		return access.AuthorizationControlRevision{}, fmt.Errorf("%w: control state instance identity does not match lookup", access.ErrControlIdentityConflict)
+	}
+	if err := value.Validate(); err != nil {
+		return access.AuthorizationControlRevision{}, err
+	}
+	return value, nil
 }
 
 func loadControlState(ctx context.Context, db DBTX, instanceID string) (access.ControlState, error) {

@@ -91,6 +91,34 @@ func TestFromControlStateProjectsActiveRowsAndExcludesSuspendedGrants(t *testing
 	if len(snapshot.RoleBindings()) != 1 || len(snapshot.Grants()) != 1 || snapshot.Grants()[0].ID != "grant_active" {
 		t.Fatalf("projection = roles %#v grants %#v", snapshot.RoleBindings(), snapshot.Grants())
 	}
+	if got := snapshot.AuthorizationControlRevision(); got.InstanceID != state.InstanceID || got.ProjectID != state.ProjectID || got.Revision != state.Revision {
+		t.Fatalf("projected control revision = %#v, want instance/project/revision %q/%q/%d", got, state.InstanceID, state.ProjectID, state.Revision)
+	}
+	encoded, err := snapshot.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Decode(encoded, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.AuthorizationControlRevision() != (access.AuthorizationControlRevision{}) {
+		t.Fatal("decoded historical snapshot manufactured live control provenance")
+	}
+	reencoded, err := decoded.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != string(reencoded) {
+		t.Fatal("private control provenance changed serialized snapshot")
+	}
+	compatibility, err := NewAuthorizationSnapshot(testIdentity(), project, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := compatibility.AuthorizationControlRevision(); got != (access.AuthorizationControlRevision{}) {
+		t.Fatalf("compatibility control revision = %#v, want zero", got)
+	}
 }
 
 func TestFromControlStateRejectsCrossInstanceAndProjectRows(t *testing.T) {

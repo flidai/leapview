@@ -30,6 +30,7 @@ type EvidenceInput struct {
 // PlanInput is the small, query-planning-owned projection needed to select
 // the exact relation revisions for one result.
 type PlanInput struct {
+	SemanticAccess *SemanticAccessIdentity
 	Datasets       []string
 	PlannerDigest  string
 	SettingsDigest string
@@ -51,6 +52,12 @@ type Evidence struct {
 // The zero value is deliberately unavailable and therefore cannot authorize
 // result reuse.
 func (e Evidence) Available() bool { return len(e.datasetRelations) > 0 }
+
+// MatchesSemanticModel checks the already-retained activation identity. It
+// does not compute or replace the planner-owned semantic model digest.
+func (e Evidence) MatchesSemanticModel(id projectgraph.ResourceID, digest string) bool {
+	return e.Available() && e.semanticModelID == id && e.semanticModelDigest == digest
+}
 
 // NewEvidence validates and defensively retains complete activation evidence.
 func NewEvidence(input EvidenceInput) (Evidence, error) {
@@ -154,6 +161,7 @@ func (e Evidence) Dependency(input PlanInput) (Dependency, error) {
 	}
 
 	return NewDependency(DependencyInput{
+		SemanticAccess:  input.SemanticAccess,
 		SemanticModelID: e.semanticModelID, SemanticModelDigest: e.semanticModelDigest,
 		Relations: relations, BindingFingerprint: e.bindingFingerprint,
 		Execution: ExecutionIdentity{

@@ -206,5 +206,14 @@ func FromControlState(identity graph.ServingIdentity, project graph.ProjectGraph
 		}
 		grants = append(grants, Grant{ID: stored.ID, Name: stored.Name, Canonical: canonical})
 	}
-	return NewAuthorizationSnapshotWithRoleBindings(identity, project, bindings, grants, transitionalPolicies)
+	projected, err := NewAuthorizationSnapshotWithRoleBindings(identity, project, bindings, grants, transitionalPolicies)
+	if err != nil {
+		return AuthorizationSnapshot{}, err
+	}
+	projected.authorizationControlRevision = access.AuthorizationControlRevision{
+		InstanceID: state.InstanceID,
+		ProjectID:  state.ProjectID,
+		Revision:   state.Revision,
+	}
+	return projected, nil
 }

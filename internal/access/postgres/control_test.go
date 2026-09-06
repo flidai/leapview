@@ -98,6 +98,45 @@ func TestControlAuthorityPostgreSQL18(t *testing.T) {
 	}
 	project := controlAuthorityProject(t)
 
+	t.Run("slim control revision follows role and grant mutations", func(t *testing.T) {
+		db := setup(t)
+		readRevision := func(want int64) {
+			t.Helper()
+			got, err := db.repo.ReadAuthorizationControlRevision(t.Context(), controlInstanceA)
+			if err != nil {
+				t.Fatalf("read control revision: %v", err)
+			}
+			if got.InstanceID != controlInstanceA || got.ProjectID != controlProject || got.Revision != want {
+				t.Fatalf("control revision = %#v, want instance/project/revision %q/%q/%d", got, controlInstanceA, controlProject, want)
+			}
+		}
+		if _, err := db.repo.CreateRoleAssignment(t.Context(), access.RoleAssignmentInput{
+			ID:         "00000000-0000-7000-8000-000000000301",
+			InstanceID: controlInstanceA,
+			ProjectID:  controlProject,
+			Subject:    access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: controlSubjectID},
+			Role:       string(access.ProjectRoleViewer),
+			Name:       "revision viewer",
+			ActorID:    controlActorID,
+		}); err != nil {
+			t.Fatalf("create role binding: %v", err)
+		}
+		readRevision(1)
+		if _, err := db.repo.CreateGrant(t.Context(), access.ControlGrantInput{
+			ID:         "00000000-0000-7000-8000-000000000302",
+			InstanceID: controlInstanceA,
+			ProjectID:  controlProject,
+			Subject:    access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: controlSubjectID},
+			Resource:   mustControlAuthorityResource(t, "dashboard-control", projectgraph.KindDashboard),
+			Capability: access.CapabilityResourceRead,
+			Name:       "revision dashboard read",
+			ActorID:    controlActorID,
+		}, project); err != nil {
+			t.Fatalf("create grant: %v", err)
+		}
+		readRevision(2)
+	})
+
 	t.Run("compatibility snapshot import is create-once and replay-safe", func(t *testing.T) {
 		db := setup(t)
 		instanceID := "instance-control-seed"

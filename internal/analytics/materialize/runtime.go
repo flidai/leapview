@@ -25,6 +25,7 @@ import (
 type RuntimeConfig struct {
 	SemanticAccessAuthority      SemanticAccessAuthority
 	SemanticAccessCompileContext *semanticquery.SemanticAccessCompileContext
+	SemanticCache                *SemanticCacheConfig
 	ServingStateID               string
 	ModelID                      string
 	Model                        *semanticmodel.Model
@@ -74,6 +75,7 @@ type ModelTableQuery struct {
 
 type Runtime struct {
 	semanticAccessAuthority SemanticAccessAuthority
+	semanticCache           *SemanticCacheConfig
 	servingStateID          string
 	semanticConsumer        *semanticquery.SemanticAccessConsumer
 	semanticResolution      access.SemanticAttributeResolution
@@ -184,6 +186,9 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	if config.Sources == nil {
 		return nil, fmt.Errorf("source preparer is required")
 	}
+	if err := validateSemanticCacheConfig(config.SemanticCache); err != nil {
+		return nil, err
+	}
 	resolver := config.Resolver
 	if resolver == nil {
 		resolver = defaultSourcePathResolver{}
@@ -239,7 +244,7 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 		return nil, err
 	}
 	runtime = &Runtime{
-		semanticAccessAuthority: config.SemanticAccessAuthority, servingStateID: config.ServingStateID,
+		semanticAccessAuthority: config.SemanticAccessAuthority, semanticCache: cloneSemanticCacheConfig(config.SemanticCache), servingStateID: config.ServingStateID,
 		modelID: config.ModelID, model: config.Model, planner: planner, db: config.Database,
 		sources: config.Sources, requiredExtensions: normalizedExtensions(config.RequiredExtensions),
 		queryCache: cache, resultPartition: config.ResultPartition,

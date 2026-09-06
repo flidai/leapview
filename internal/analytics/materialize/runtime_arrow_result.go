@@ -42,17 +42,26 @@ func rowPlanWithTotal(plan semanticquery.Plan) (semanticquery.Plan, error) {
 
 func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dataquery.Query, transform dataquery.ResultTransformer) (dataquery.Result, error) {
 	cacheStarted := cacheObservationStarted(ctx, time.Now())
-	cacheable := dashboardQueryResultCacheable(request) && !r.protectedSemanticModel()
+	protected := r.protectedSemanticModel()
+	cacheable := dashboardQueryResultCacheable(request) && (!protected || r.semanticConsumer != nil && r.semanticCache != nil)
 	var planned plannedArrowQuery
 	var planErr error
+	var semanticAccess *resultidentity.SemanticAccessIdentity
 	admissionReason := dataquery.CacheAdmissionReasonQueryNotCacheable
 	if !cacheable {
 		observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionBypassed, admissionReason)
 	}
 	if cacheable {
 		planned, planErr = r.planOwnedArrowQuery(request)
-		if planErr == nil {
-			planned.dependency, planned.reusable = r.dependencyForPlan(planned.plan)
+		if planErr == nil && protected {
+			var eligible bool
+			semanticAccess, eligible, planErr = r.semanticCacheIdentity(ctx, request)
+			if planErr == nil && !eligible {
+				cacheable = false
+			}
+		}
+		if planErr == nil && cacheable {
+			planned.dependency, planned.reusable = r.dependencyForPlanWithSemanticAccess(planned.plan, semanticAccess)
 		}
 		switch {
 		case planErr != nil:
@@ -146,7 +155,27 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		// classification even though planning now precedes cache eligibility.
 		result = dataquery.Result{PlanningMS: planned.planningMS, ExecutionState: dataquery.ExecutionFailed}
 	} else if cacheable && admissionReason == dataquery.CacheAdmissionReasonEligible {
-		result, err = r.queryCache.executeArrow(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, cacheStarted, execute)
+		var guard func(context.Context) error
+		if protected {
+			// Cache reuse must revalidate both the live authority/lifecycle and
+			// the exact admitted plan. In particular, count-only requests may
+			// have authorization fields that are not present in their result IR;
+			// ValidatePlan keeps those requirements attached to every hit,
+			// coalesced delivery, and store boundary.
+			guard = func(checkCtx context.Context) error {
+				if err := r.validateSemanticCache(checkCtx, request); err != nil {
+					return err
+				}
+				if err := r.validateSemanticPlan(checkCtx, planned.plan); err != nil {
+					return err
+				}
+				if planned.countPlan != nil {
+					return r.validateSemanticPlan(checkCtx, *planned.countPlan)
+				}
+				return nil
+			}
+		}
+		result, err = r.queryCache.executeArrow(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, cacheStarted, execute, guard)
 		observeQueryCacheOutcome(ctx, result, err)
 	} else {
 		execution, executeErr := execute(ctx)
@@ -190,6 +219,10 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 }
 
 func (r *Runtime) dependencyForPlan(plan semanticquery.Plan) (resultidentity.Dependency, bool) {
+	return r.dependencyForPlanWithSemanticAccess(plan, nil)
+}
+
+func (r *Runtime) dependencyForPlanWithSemanticAccess(plan semanticquery.Plan, semanticAccess *resultidentity.SemanticAccessIdentity) (resultidentity.Dependency, bool) {
 	if r == nil || !r.dependencyEvidence.Available() {
 		return resultidentity.Dependency{}, false
 	}
@@ -197,7 +230,7 @@ func (r *Runtime) dependencyForPlan(plan semanticquery.Plan) (resultidentity.Dep
 	if err != nil {
 		return resultidentity.Dependency{}, false
 	}
-	dependency, err := r.dependencyEvidence.Dependency(r.dependencyPlanInput(projection))
+	dependency, err := r.dependencyEvidence.Dependency(r.dependencyPlanInputWithSemanticAccess(projection, semanticAccess))
 	if err != nil {
 		return resultidentity.Dependency{}, false
 	}

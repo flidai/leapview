@@ -170,6 +170,28 @@ func TestSemanticModelDigestRotatesForMeaningfulExecutionChange(t *testing.T) {
 	}
 }
 
+func TestSemanticModelDigestBindsAuthoredAccessPolicy(t *testing.T) {
+	base := testModel()
+	base.AccessGrants = map[string]semanticmodel.SemanticAccessGrantSpec{
+		"region": {UserAttribute: "region", AllowedValues: []any{"us"}},
+	}
+	first, err := SemanticModelDigest(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := base.ExecutionSnapshot()
+	grant := changed.AccessGrants["region"]
+	grant.AllowedValues = []any{"eu"}
+	changed.AccessGrants["region"] = grant
+	second, err := SemanticModelDigest(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("authored policy change reused semantic dependency digest")
+	}
+}
+
 func TestSemanticModelDigestPreservesNumericLiteralIdentity(t *testing.T) {
 	digestFor := func(value any) string {
 		model := testModel().ExecutionSnapshot()

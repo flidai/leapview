@@ -65,6 +65,7 @@ func (r *Runtime) admitSemanticConsumer(ctx context.Context, request dataquery.Q
 		requiredExtensions: r.requiredExtensions, snapshotOnly: r.snapshotOnly,
 		semanticAccessAuthority: r.semanticAccessAuthority, servingStateID: r.servingStateID,
 		semanticConsumer: consumer, semanticResolution: resolved, activation: r,
+		semanticCache: cloneSemanticCacheConfig(r.semanticCache),
 	}, nil
 }
 
@@ -83,6 +84,9 @@ func (r *Runtime) validateSemanticResolution(ctx context.Context) error {
 		current.Registry.State != r.semanticResolution.Registry.State || current.ControlState != r.semanticResolution.ControlState ||
 		!reflect.DeepEqual(current.Attributes, r.semanticResolution.Attributes) {
 		return fmt.Errorf("semantic consumer control snapshot is stale")
+	}
+	if err := r.validateSemanticCacheLifecycle(ctx); err != nil {
+		return err
 	}
 	return nil
 }

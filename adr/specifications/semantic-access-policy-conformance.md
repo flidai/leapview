@@ -37,8 +37,10 @@ typed PlanIR predicates and relationship routes. FAI-641 adds explicit typed
 planner SecurityBarrier placement and sealed rewrite validation; see the
 [planner implementation boundary](semantic-access-planner.md). FAI-642 adds
 [consumer admission and discovery guards](semantic-access-consumers.md), with
-production activation still deferred to FAI-649. These slices do not establish cache/lifecycle/audit policy
-identity (FAI-645), wire real source-provider admission, or qualify full
+production activation still deferred to FAI-649. The [FAI-645 cache/lifecycle
+slice](semantic-access-cache-lifecycle.md) adds guarded protected result reuse
+using existing dependency, control and ledger authorities. These slices do
+not complete policy audit/diagnostics, wire real source-provider admission, or qualify full
 VAL-11 equivalence. Those requirements remain normative targets and their
 evidence remains pending or partial below.
 
@@ -508,8 +510,12 @@ definition mutation invalidates by registry identity; an assignment or mapping
 mutation invalidates by control identity and, where known, affected
 definition/subject. A stored/computed digest mismatch is an immediate,
 conservative invalidation signal and never a reason to continue with stale
-authorization state. Cache/event propagation, policy identity, and consumer
-use of this identity remain unqualified under FAI-645, so LIF is not complete.
+authorization state. Protected cache partitioning, policy-bound dependency
+identity and consumer reuse are addressed by the [FAI-645 read-through reconciliation
+slice](semantic-access-cache-lifecycle.md), not a new event system. It retains
+sorted existing value-digest projections within the existing dependency hash,
+adds role/grant revision and ledger/publication sequence binding, and leaves
+unbound trusted-claim cache reuse disabled. Full LIF remains incomplete.
 
 ## Deliberate exclusions
 
@@ -579,9 +585,9 @@ support for those paths. No downstream feature or issue state changes here.
 | FLT-01–FLT-10 | [`semantic_access.go`](../../internal/analytics/query/semantic_access.go) validates bindings and types, evaluates fail-closed filter inputs, and emits parameter-only typed PlanIR predicates with relationship routes; [`semantic_access_test.go`](../../internal/analytics/query/semantic_access_test.go) covers scalar/list AND composition and route evidence. [`security_plan.go`](../../internal/analytics/query/security_plan.go) places those predicates in distinct barriers; [FAI-642](semantic-access-consumers.md) checks their admitted execution envelope. | Partial: compiler/evaluator, planner and consumer slices implemented; production/cross-consumer qualification remains pending |
 | PLN-01–PLN-06, PLN-08 | [`security_plan.go`](../../internal/analytics/query/security_plan.go), [`planir/security.go`](../../internal/analytics/query/planir/security.go), and the existing DuckDB renderer enforce scan-local barriers and preserve sealed occurrence identity. [`security_plan_test.go`](../../internal/analytics/query/security_plan_test.go) and [`planir/security_test.go`](../../internal/analytics/query/planir/security_test.go) exercise bound predicates, mixed sources, aliases, routed/reverse/multi-hop filters, member grants, outer joins, self-join occurrences, many-to-many execution, derived plans, bundle sharing, totals, and unsafe rewrites. | Implemented planner slice; focused Go/DuckDB execution qualification, not consumer or PostgreSQL qualification |
 | PLN-07, PLN-09 | Exact outer-join SQL goldens and deterministic typed-plan checks cover the implemented planner slice. Source substitution after sealing is rejected; no protected rollup/cache substitution admission is implemented. See the [transformation audit and remaining boundaries](semantic-access-planner.md). | Partial: consumer suggestions and lifecycle/cache/rollup identity remain FAI-642/645; exhaustive cross-consumer matrix remains FAI-648 |
-| ENF-01–ENF-11 | [FAI-642 consumer checkpoint](semantic-access-consumers.md): coherent Access resolution, private planner admission provenance, materialize result/Arrow gates, conservative protected-cache rejection, API/Explore discovery and same-lease catalog admission | Partial; production activation is not enabled (FAI-649). Complete cross-consumer equivalence remains FAI-648; protected cache lifecycle remains FAI-645. |
+| ENF-01–ENF-11 | [FAI-642 consumer checkpoint](semantic-access-consumers.md): coherent Access resolution, private planner admission provenance, materialize result/Arrow gates, API/Explore discovery and same-lease catalog admission. [FAI-645](semantic-access-cache-lifecycle.md) adds guarded protected Arrow reuse; unsupported cache surfaces remain rejected. | Partial; production activation is not enabled (FAI-649). Complete cross-consumer equivalence remains FAI-648; the consolidated FAI-645 lifecycle/audit scope remains partial. |
 | CMP-01–CMP-06 | Policy-diff, compatibility, security-impact, version, and approval fixtures | Pending |
-| LIF-01–LIF-08 | Registry/control revision+digest identities and transactional control audit are implemented; FAI-639 registry-state binding is present, but FAI-645 cache partitioning, immediate event invalidation, semantic policy identity, semantic planning, generation references, and complete audit projection are not | Partial |
+| LIF-01–LIF-08 | Registry/control identities and transactional control audit are implemented. [FAI-645](semantic-access-cache-lifecycle.md) adds protected dependency identity, activation-bound role/grant revision, ledger history/publication evidence and guarded cache read/write/delivery. Event propagation, full audit/diagnostics, lifecycle approval, trusted-source admission and exhaustive cross-consumer qualification are not claimed. | Partial |
 | OUT-01–OUT-05 | Negative schema, architecture, and documentation checks | Pending |
 
 ## Maintained verification

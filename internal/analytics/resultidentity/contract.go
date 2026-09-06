@@ -161,9 +161,13 @@ type ResultFormat struct {
 }
 
 // DependencyInput supplies the complete result-affecting dependency set.
-// Dashboard presentation, serving generations, cache storage, and execution
-// engine objects are deliberately absent.
+// Dashboard presentation, cache storage, and execution engine objects are
+// deliberately absent. Protected dependencies additionally bind the admitted
+// serving generation through SemanticAccess.
 type DependencyInput struct {
+	// SemanticAccess is supplied only by an admitted protected consumer.
+	// Nil preserves the historical unprotected dependency representation.
+	SemanticAccess      *SemanticAccessIdentity
 	SemanticModelID     projectgraph.ResourceID
 	SemanticModelDigest string
 	Relations           []RelationRevision
@@ -182,6 +186,13 @@ type Dependency struct {
 // NewDependency validates, orders, serializes, and hashes a complete result
 // dependency set.
 func NewDependency(input DependencyInput) (Dependency, error) {
+	security, err := normalizeSemanticAccess(input.SemanticAccess)
+	if err != nil {
+		return Dependency{}, err
+	}
+	if security != nil && security.Lifecycle.AuthoredID != input.SemanticModelID {
+		return Dependency{}, fmt.Errorf("%w: semantic lifecycle model mismatch", ErrInvalidDependency)
+	}
 	if err := input.SemanticModelID.Validate(); err != nil {
 		return Dependency{}, fmt.Errorf("%w: semantic model ID: %v", ErrInvalidDependency, err)
 	}
@@ -222,7 +233,8 @@ func NewDependency(input DependencyInput) (Dependency, error) {
 	}
 
 	wire := dependencyWire{
-		Version: DependencyVersion,
+		SemanticAccess: security,
+		Version:        DependencyVersion,
 		SemanticModel: semanticModelWire{
 			ID:     input.SemanticModelID.String(),
 			Digest: input.SemanticModelDigest,
@@ -274,12 +286,13 @@ func (d Dependency) Canonical() []byte { return append([]byte(nil), d.canonical.
 func (d Dependency) Digest() string { return d.digest }
 
 type dependencyWire struct {
-	Version            int               `json:"version"`
-	SemanticModel      semanticModelWire `json:"semanticModel"`
-	Relations          []relationWire    `json:"relations"`
-	BindingFingerprint string            `json:"bindingFingerprint"`
-	Execution          executionWire     `json:"execution"`
-	ResultFormat       resultFormatWire  `json:"resultFormat"`
+	SemanticAccess     *SemanticAccessIdentity `json:"semanticAccess,omitempty"`
+	Version            int                     `json:"version"`
+	SemanticModel      semanticModelWire       `json:"semanticModel"`
+	Relations          []relationWire          `json:"relations"`
+	BindingFingerprint string                  `json:"bindingFingerprint"`
+	Execution          executionWire           `json:"execution"`
+	ResultFormat       resultFormatWire        `json:"resultFormat"`
 }
 
 type semanticModelWire struct {

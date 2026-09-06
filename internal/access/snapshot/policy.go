@@ -33,6 +33,10 @@ type AuthorizationSnapshot struct {
 	// project is retained privately so exported fields cannot be replaced with
 	// values from another graph and then serialized as an installable snapshot.
 	project graph.ProjectGraph
+	// authorizationControlRevision is populated only when this snapshot was
+	// projected from live control state. Compatibility/decoded snapshots leave
+	// it zero so they cannot be mistaken for live authorization evidence.
+	authorizationControlRevision access.AuthorizationControlRevision
 }
 
 // Grant is one graph-validated capability binding. Canonical is immutable
@@ -288,6 +292,14 @@ func NewAuthorizationSnapshotWithRoleBindings(identity graph.ServingIdentity, pr
 
 // Identity returns the immutable serving identity by value.
 func (s AuthorizationSnapshot) Identity() graph.ServingIdentity { return s.identity }
+
+// AuthorizationControlRevision returns the live control-state identity that
+// produced this snapshot, when available. Compatibility and decoded
+// snapshots intentionally return the zero value because they have no live
+// control-state revision attached.
+func (s AuthorizationSnapshot) AuthorizationControlRevision() access.AuthorizationControlRevision {
+	return s.authorizationControlRevision
+}
 
 // Project returns the immutable project graph bound to this snapshot. The
 // graph is a value with defensive-copy accessors, so callers cannot replace or

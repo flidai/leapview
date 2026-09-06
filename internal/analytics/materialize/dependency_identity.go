@@ -16,6 +16,10 @@ const (
 )
 
 func (r *Runtime) dependencyPlanInput(projection semanticquery.DependencyProjection) resultidentity.PlanInput {
+	return r.dependencyPlanInputWithSemanticAccess(projection, nil)
+}
+
+func (r *Runtime) dependencyPlanInputWithSemanticAccess(projection semanticquery.DependencyProjection, semanticAccess *resultidentity.SemanticAccessIdentity) resultidentity.PlanInput {
 	limits := r.queryResultLimits()
 	encoded, _ := json.Marshal(struct {
 		Version  int   `json:"version"`
@@ -24,7 +28,8 @@ func (r *Runtime) dependencyPlanInput(projection semanticquery.DependencyProject
 	}{Version: resultDependencySettingsVersion, MaxRows: limits.MaxRows, MaxBytes: limits.MaxBytes})
 	digest := sha256.Sum256(encoded)
 	return resultidentity.PlanInput{
-		Datasets: projection.Datasets, PlannerDigest: projection.PlannerDigest,
+		SemanticAccess: semanticAccess,
+		Datasets:       projection.Datasets, PlannerDigest: projection.PlannerDigest,
 		SettingsDigest: "sha256:" + hex.EncodeToString(digest[:]),
 		ResultFormat: resultidentity.ResultFormat{
 			Name: materializedResultFormatName, Version: materializedResultFormatVersion,

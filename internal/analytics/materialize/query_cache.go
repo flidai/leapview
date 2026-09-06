@@ -49,12 +49,30 @@ type queryCacheAddress struct {
 	generation uint64
 }
 
-func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
+func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, execute func(context.Context) (arrowQueryExecution, error), guards ...func(context.Context) error) (dataquery.Result, error) {
 	if observationStarted.IsZero() {
 		observationStarted = time.Now()
 	}
 	address, err := c.cacheAddress(request, partition, dependency)
 	if err != nil {
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		return dataquery.Result{}, err
+	}
+	var guard func(context.Context) error
+	if len(guards) > 0 {
+		guard = guards[0]
+	}
+	validate := func(checkCtx context.Context) error {
+		if guard == nil {
+			return nil
+		}
+		if err := guard(checkCtx); err != nil {
+			c.scope.Delete(address.key)
+			return err
+		}
+		return nil
+	}
+	if err := validate(ctx); err != nil {
 		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
 		return dataquery.Result{}, err
 	}
@@ -65,6 +83,10 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 		if err != nil {
 			observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
 		} else {
+			if guardErr := validate(ctx); guardErr != nil {
+				observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+				return dataquery.Result{}, guardErr
+			}
 			observeTypedCacheFinalWithSource(ctx, dataquery.CacheObservationHit, lookup.HitSource, time.Since(observationStarted))
 		}
 		return cached, err
@@ -73,6 +95,9 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 	observeTypedCacheLookup(ctx, lookup, firstLookupDuration)
 	var ownerSummary dataquery.Result
 	flight, status, err := c.execution.CoalesceArrow(ctx, fmt.Sprintf("arrow-query:%d:%s", address.generation, address.key), func(flightCtx context.Context) (resultcache.ArrowFlightValue, error) {
+		if err := validate(flightCtx); err != nil {
+			return resultcache.ArrowFlightValue{}, err
+		}
 		if entry, _, ok, observed, lookupErr := c.scope.LookupArrowObserved(address.key, address.family); lookupErr != nil {
 			return resultcache.ArrowFlightValue{}, lookupErr
 		} else if ok {
@@ -98,6 +123,9 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 		if execution.data == nil {
 			return resultcache.ArrowFlightValue{}, fmt.Errorf("Arrow query execution returned no data")
 		}
+		if err := validate(flightCtx); err != nil {
+			return resultcache.ArrowFlightValue{}, err
+		}
 		base, acquireErr := execution.data.Acquire()
 		if acquireErr != nil {
 			return resultcache.ArrowFlightValue{}, acquireErr
@@ -111,6 +139,10 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 		storeOutcome := c.scope.StoreArrowObserved(address.key, address.family, resultcache.Token(address.generation), execution.data, cacheMetadata)
 		dataquery.ObserveCache(ctx, dataquery.CacheObservation{Phase: dataquery.CacheObservationStore, StoreOutcome: dataquery.CacheStoreOutcome(storeOutcome), Duration: time.Since(storeStarted)})
 		c.syncStats()
+		if err := validate(flightCtx); err != nil {
+			base.Release()
+			return resultcache.ArrowFlightValue{}, err
+		}
 		return resultcache.ArrowFlightValue{Data: base, Metadata: cacheMetadata}, nil
 	})
 	if err != nil {
@@ -118,6 +150,10 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 		return dataquery.Result{}, err
 	}
 	defer flight.Release()
+	if err := validate(ctx); err != nil {
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		return dataquery.Result{}, err
+	}
 	outcome := dataquery.CacheMiss
 	if flight.Cached() {
 		outcome = dataquery.CacheHit

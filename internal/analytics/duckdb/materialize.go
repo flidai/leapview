@@ -585,6 +585,9 @@ func safeSourceError(source string, _ error) error {
 }
 
 type ProjectRuntimeConfig struct {
+	// SemanticCacheByModel carries activation-bound evidence; nil retains
+	// protected cache bypass. Production activation remains a separate gate.
+	SemanticCacheByModel         map[string]*analyticsmaterialize.SemanticCacheConfig
 	SemanticAccessAuthority      analyticsmaterialize.SemanticAccessAuthority
 	SemanticAccessCompileContext *semanticquery.SemanticAccessCompileContext
 	Models                       map[string]*semanticmodel.Model
@@ -758,6 +761,7 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 			return "model." + physical, nil
 		}
 		view, err := analyticsmaterialize.NewRuntimeView(ctx, analyticsmaterialize.RuntimeConfig{
+			SemanticCache:                config.SemanticCacheByModel[modelID],
 			SemanticAccessAuthority:      config.SemanticAccessAuthority,
 			SemanticAccessCompileContext: config.SemanticAccessCompileContext,
 			ServingStateID:               config.ServingStateID,

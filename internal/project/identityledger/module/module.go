@@ -18,8 +18,11 @@ import (
 // implementation package while preserving one canonical set of evidence
 // types and validation semantics.
 type Candidate = ledger.Candidate
+type ContractPublication = ledger.ContractPublication
 type Coordinator = ledger.Coordinator
 type DurableReference = ledger.DurableReference
+type Identity = ledger.Identity
+type LifecycleEvidence = ledger.LifecycleEvidence
 type Outcome = ledger.Outcome
 type OutcomeKind = ledger.OutcomeKind
 type Plan = ledger.Plan
@@ -31,6 +34,9 @@ type TransitionOperation = ledger.TransitionOperation
 type TransitionPhase = ledger.TransitionPhase
 
 const (
+	LifecycleActive     = ledger.LifecycleActive
+	LifecycleTombstoned = ledger.LifecycleTombstoned
+
 	OperationPublish  = ledger.OperationPublish
 	OperationRollback = ledger.OperationRollback
 	OperationRestore  = ledger.OperationRestore
@@ -93,6 +99,14 @@ type ReferenceReconciler interface {
 // InFlightTransitionReader is used by production readiness checks.
 type InFlightTransitionReader interface {
 	ListInFlightTransitions(context.Context, string) ([]Transition, error)
+}
+
+// LifecycleEvidenceReader is an optional capability for bounded cache
+// admission. It is intentionally not part of Repository so existing
+// composition fakes and non-cache lifecycle users do not acquire a second
+// identity or publication authority.
+type LifecycleEvidenceReader interface {
+	ReadLifecycleEvidence(context.Context, string, projectgraph.ResourceID, projectgraph.Kind, string) (LifecycleEvidence, error)
 }
 
 // Repository is the complete PostgreSQL identity authority contract required

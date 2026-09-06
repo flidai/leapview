@@ -2,6 +2,11 @@
 
 Status: **IMPLEMENTED / PARTIAL qualification; not enabled for production activation.**
 
+Follow-up: the [FAI-645 cache/lifecycle layer](semantic-access-cache-lifecycle.md)
+adds optional guarded protected result reuse. The bypass behavior and validation
+results below describe the FAI-642 checkpoint; they are not a claim that FAI-645
+is still unstarted in the current stack.
+
 Stack: `ganesh/fai-642-consumer-enforcement` branches from
 `ganesh/postgres-qualification-hardening` at
 `a923b3b9fcb15b9e36914dde2ba6ce8857bac502`. No downstream feature or PR
