@@ -122,7 +122,7 @@ func TestSourceSynchronizationKeysAreStableAcrossTransportInstances(t *testing.T
 	}
 	run := func(request projectdevloop.SynchronizationPlanRequest) (string, string) {
 		t.Helper()
-		stub := &nativeDeliveryTransportStub{sourceDigest: source}
+		stub := &nativeDeliveryTransportStub{sourceDigest: request.ArtifactDigest}
 		transport := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(stub))
 		plan, err := transport.Plan(t.Context(), request)
 		require.NoError(t, err)
@@ -159,6 +159,7 @@ func TestSourceSynchronizationKeysAreStableAcrossTransportInstances(t *testing.T
 	}
 
 	changedRequest := base
+	changedRequest.Artifacts = append([]projectdevloop.ArtifactReference(nil), base.Artifacts...)
 	changedRequest.Artifacts[0].Path = "models/other.yaml"
 	changedRequest.ArtifactDigest = nativeCandidateSetDigestForTest(changedRequest.Artifacts[0].Path, changedRequest.Artifacts[0].Digest, changedRequest.Artifacts[0].SizeBytes)
 	changedPlanKey, changedRetainKey = run(changedRequest)

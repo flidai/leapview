@@ -13,7 +13,7 @@ import (
 // the native PostgreSQL integration suites; the retired SQLite fixture had no
 // canonical delivery authority after the clean cutover.
 func TestCanonicalProjectProvidesRefreshPipelineForEverySemanticModel(t *testing.T) {
-	project, err := projectcompiler.Compile(canonicalProjectPath(t))
+	project, err := projectcompiler.Compile(canonicalSourceRootPath(t))
 	if err != nil {
 		t.Fatalf("compile canonical project: %v", err)
 	}
@@ -28,15 +28,15 @@ func TestCanonicalProjectProvidesRefreshPipelineForEverySemanticModel(t *testing
 	}
 }
 
-func canonicalProjectPath(t *testing.T) string {
+func canonicalSourceRootPath(t *testing.T) string {
 	t.Helper()
 	workingDir, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("resolve test working directory: %v", err)
 	}
 	for dir := workingDir; ; dir = filepath.Dir(dir) {
-		candidate := filepath.Join(dir, "dashboards", "leapview.yaml")
-		if _, err := os.Stat(candidate); err == nil {
+		candidate := filepath.Join(dir, "dashboards")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return candidate
 		}
 		parent := filepath.Dir(dir)
@@ -44,6 +44,6 @@ func canonicalProjectPath(t *testing.T) string {
 			break
 		}
 	}
-	t.Fatalf("canonical project dashboards/leapview.yaml not found from %s", workingDir)
+	t.Fatalf("canonical dashboards source root not found from %s", workingDir)
 	return ""
 }
