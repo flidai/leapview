@@ -252,3 +252,8 @@ DROP INDEX IF EXISTS lineage.lineage_nodes_project_idx;
 -- The composite edge primary key already covers (project_id, graph_digest,
 -- from_node_id, to_node_id); retain only the reverse-direction lookup index.
 DROP INDEX IF EXISTS lineage.lineage_edges_project_from_idx;
+
+-- Return to the migrator login before Goose records version 2 in its standard
+-- table, which is intentionally owned by that login rather than the durable
+-- product-object owner role.
+RESET ROLE;

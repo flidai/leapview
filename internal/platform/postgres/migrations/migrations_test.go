@@ -71,6 +71,9 @@ func TestProjectFreeSourceBundleQuarantinesLegacyLineageVersions(t *testing.T) {
 			t.Errorf("forward migration missing %q", required)
 		}
 	}
+	if !strings.HasSuffix(strings.TrimSpace(text), "RESET ROLE;") {
+		t.Error("forward migration must restore the migrator role before Goose records its version")
+	}
 	for _, forbidden := range []string{
 		"source_blob_source_identity_version",
 		"source_snapshot_entry_source_identity_version",
