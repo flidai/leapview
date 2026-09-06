@@ -11,6 +11,7 @@ import (
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	deploymentaudit "github.com/flidai/leapview/internal/app/deploymentaudit"
 	deploymentevents "github.com/flidai/leapview/internal/app/deploymentevents"
 	deploymentoperation "github.com/flidai/leapview/internal/app/deploymentoperation"
@@ -95,11 +96,20 @@ func recoveryFinalizeDB(t *testing.T) (*pgxpool.Pool, *deploymentnative.Reposito
 func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	db, delivery, ducklake := recoveryFinalizeDB(t)
 	base := validNativeSealAssemblerInput(t)
-	graph, err := projectgraph.NewProjectGraph(nil, nil)
+	// Project-free bundles have no project namespace node, but lineage still
+	// requires at least one portable resource node. Keep this recovery fixture
+	// minimal with a manifest-backed connection resource.
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{
+		ID: "connection:recovery", Kind: projectgraph.KindConnection, Name: "recovery",
+	}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	portableArtifact, err := projectartifact.NewSourceBundle(graph, projectmanifest.ResourceManifest{})
+	portableArtifact, err := projectartifact.NewSourceBundle(graph, projectmanifest.ResourceManifest{
+		Connections: map[string]semanticmodel.Connection{
+			"connection:recovery": {Kind: "managed"},
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
