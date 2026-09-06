@@ -124,7 +124,11 @@ jobs:
         run: task ci:lane:go:application
 
   frontend-validation:
-    name: Frontend tests (PR)
+    name: Frontend tests (PR, ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [core, reports, chat, data, site]
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.pull_request.stack == null ||
@@ -152,7 +156,7 @@ jobs:
         run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare
 
       - name: Run frontend validation
-        run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend
+        run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}
 
       - name: Verify generated artifacts
         run: task generated:check

@@ -39,11 +39,18 @@ compatibility alias for the full current-machine contract.
 
 GitHub Actions distributes those same Taskfile units across clean runners. Pull requests run
 APIGen, the non-application Go packages, sharded application tests, and frontend validation
-concurrently. The three repository lanes execute `task ci:prepare`; the independent APIGen module
+concurrently. The repository validation jobs execute `task ci:prepare`; the independent APIGen module
 does not need generated or embedded application assets and skips that preparation. The merge queue
 adds `task ci:full:extras`, and the daily schedule also runs `task ci:nightly:extras`. Local
 composition remains available through the tier targets; the workflow does not duplicate individual
 test commands or introduce a runner-specific container wrapper.
+
+Frontend validation has five isolated shards: `core`, `reports`, `chat`, `data`, and `site`.
+Each hosted shard runs `task ci:lane:frontend:shard SHARD=<name>` on its own runner with a
+180-second watchdog and at most one retry for a timeout, never for an assertion failure.
+This bounds each independent suite without treating the cumulative runtime of five healthy
+suites as a hang. Every shard must succeed for `CI gate` to pass. Local `task ci` runs the
+same bounded shards sequentially to avoid browser and bundler contention on a shared machine.
 
 ## Toolchain and caches
 
