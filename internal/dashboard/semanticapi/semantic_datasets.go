@@ -1,17 +1,36 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	nethttp "net/http"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard/api"
+	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	"github.com/go-chi/chi/v5"
 )
 
 func (h Handler) ListSemanticDatasets(w nethttp.ResponseWriter, r *nethttp.Request) {
 	model, ok := h.semanticModelForRequest(w, r)
 	if !ok {
+		return
+	}
+	modelID := chi.URLParam(r, "model")
+	ctx, err := semanticConsumerForRequest(r.Context(), h.Metrics, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
+	allowed, err := h.authorizeSemanticModelResource(r, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
+	if !allowed {
+		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
 		return
 	}
 	compiled := compiledSemanticModel(h.Metrics, chi.URLParam(r, "model"))
@@ -31,16 +50,32 @@ func (h Handler) ListSemanticDatasets(w nethttp.ResponseWriter, r *nethttp.Reque
 			MetricCount: semanticDatasetMetricCount(model, datasetID),
 		})
 	}
-	modelID := chi.URLParam(r, "model")
-	allowed, err := h.authorizeSemanticModel(r, modelID)
-	if err != nil {
-		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
-		return
+	filtered := out[:0]
+	for _, item := range out {
+		if err := authorizeSemanticTarget(ctx, h.Metrics, modelID, semanticquery.SemanticAccessTarget{Dataset: item.ID}); err != nil {
+			if protectedSemanticModel(h.Metrics, modelID) && semanticMemberDenied(err) {
+				continue
+			}
+			status := nethttp.StatusServiceUnavailable
+			if !semanticAuthorizationUnavailable(err) {
+				status = nethttp.StatusForbidden
+			}
+			writeJSONError(w, err, status)
+			return
+		}
+		if protectedSemanticModel(h.Metrics, modelID) {
+			dataset, _ := compiled.Dataset(item.ID)
+			if err := authorizeSemanticDatasetMembers(ctx, h.Metrics, modelID, item.ID, model, dataset.Table()); err != nil {
+				if semanticMemberDenied(err) {
+					continue
+				}
+				writeJSONError(w, err, semanticAuthorizationStatus(err))
+				return
+			}
+		}
+		filtered = append(filtered, item)
 	}
-	if !allowed {
-		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
-		return
-	}
+	out = filtered
 	items, nextCursor, ok := pageSliceForRequest(w, r, out)
 	if !ok {
 		return
@@ -53,7 +88,45 @@ func (h Handler) GetSemanticDataset(w nethttp.ResponseWriter, r *nethttp.Request
 	if !ok {
 		return
 	}
+	modelID := chi.URLParam(r, "model")
+	ctx, err := semanticConsumerForRequest(r.Context(), h.Metrics, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
+	if err := authorizeSemanticTarget(ctx, h.Metrics, modelID, semanticquery.SemanticAccessTarget{Dataset: datasetID}); err != nil {
+		writeJSONError(w, err, semanticAuthorizationStatus(err))
+		return
+	}
+	if protectedSemanticModel(h.Metrics, modelID) {
+		if err := authorizeSemanticDatasetMembers(ctx, h.Metrics, modelID, datasetID, model, table); err != nil {
+			writeJSONError(w, err, semanticAuthorizationStatus(err))
+			return
+		}
+	}
 	writeJSON(w, nethttp.StatusOK, SemanticTableProjection(model, datasetID, table))
+}
+
+// authorizeSemanticDatasetMembers protects whole-dataset responses whose
+// counts, entities, or descriptions cannot safely be filtered per member.
+// A denied member therefore denies the complete protected projection.
+func authorizeSemanticDatasetMembers(ctx context.Context, metrics Metrics, modelID, datasetID string, model *semanticmodel.Model, table semanticmodel.Table) error {
+	for _, field := range sortedMapKeys(table.Dimensions) {
+		// Table dimensions are physical fields even when a same-named metric
+		// exists in the semantic namespace; never infer kind from the name.
+		if err := authorizeSemanticField(ctx, metrics, modelID, datasetID, field); err != nil {
+			return err
+		}
+	}
+	for _, metric := range sortedMapKeys(model.Metrics) {
+		if model.Metrics[metric].Dataset != datasetID {
+			continue
+		}
+		if err := authorizeSemanticTarget(ctx, metrics, modelID, semanticquery.SemanticAccessTarget{Dataset: datasetID, Metric: metric}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h Handler) ListSemanticFields(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -62,6 +135,34 @@ func (h Handler) ListSemanticFields(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 	fields := SemanticDatasetFieldsProjection(model, datasetID, table)
+	authorized := fields[:0]
+	modelID := chi.URLParam(r, "model")
+	ctx, err := semanticConsumerForRequest(r.Context(), h.Metrics, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
+	for _, field := range fields {
+		var fieldErr error
+		if field.Kind == "metric" {
+			fieldErr = authorizeSemanticTarget(ctx, h.Metrics, modelID, semanticquery.SemanticAccessTarget{Dataset: datasetID, Metric: field.Name})
+		} else {
+			fieldErr = authorizeSemanticField(ctx, h.Metrics, modelID, datasetID, field.Name)
+		}
+		if fieldErr != nil {
+			if protectedSemanticModel(h.Metrics, modelID) && semanticMemberDenied(fieldErr) {
+				continue
+			}
+			status := nethttp.StatusServiceUnavailable
+			if !semanticAuthorizationUnavailable(fieldErr) {
+				status = nethttp.StatusForbidden
+			}
+			writeJSONError(w, fieldErr, status)
+			return
+		}
+		authorized = append(authorized, field)
+	}
+	fields = authorized
 	items, nextCursor, ok := pageSliceForRequest(w, r, fields)
 	if !ok {
 		return
@@ -80,6 +181,11 @@ func (h Handler) QuerySemanticDataset(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 	modelID, datasetID := chi.URLParam(r, "model"), chi.URLParam(r, "dataset")
+	ctx, err := semanticConsumerForRequest(r.Context(), metrics, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
 	if _, _, _, ok := h.semanticDatasetForRequest(w, r); !ok {
 		return
 	}
@@ -99,12 +205,16 @@ func (h Handler) QuerySemanticDataset(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeJSONError(w, err, statusForCursorError(err))
 		return
 	}
-	plan, err := semanticExplainAggregate(metrics, modelID, request)
+	if err := authorizeSemanticRequest(ctx, metrics, modelID, reportdef.SemanticAggregateRequest(request)); err != nil {
+		writeJSONError(w, err, semanticRequestAuthorizationStatus(metrics, modelID, err))
+		return
+	}
+	plan, err := semanticExplainAggregate(ctx, metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
 	}
-	ctx := dataquery.WithMetadata(r.Context(), h.requestQueryMetadata(r, dataquery.SurfaceAPI, dataquery.OperationAPIQuery, "semantic_dataset", modelID+":"+datasetID))
+	ctx = dataquery.WithMetadata(ctx, h.requestQueryMetadata(r, dataquery.SurfaceAPI, dataquery.OperationAPIQuery, "semantic_dataset", modelID+":"+datasetID))
 	if acceptsMediaType(r.Header.Get("Accept"), arrowStreamMediaType) {
 		writeSemanticArrowResponse(w, r.WithContext(ctx), metrics, aggregateDataQuery(modelID, request), limit, request.Offset, queryID, snapshot, scope)
 		return
@@ -130,6 +240,11 @@ func (h Handler) PreviewSemanticDataset(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 	modelID, datasetID := chi.URLParam(r, "model"), chi.URLParam(r, "dataset")
+	ctx, err := semanticConsumerForRequest(r.Context(), metrics, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
 	if _, _, _, ok := h.semanticDatasetForRequest(w, r); !ok {
 		return
 	}
@@ -149,12 +264,16 @@ func (h Handler) PreviewSemanticDataset(w nethttp.ResponseWriter, r *nethttp.Req
 		writeJSONError(w, err, statusForCursorError(err))
 		return
 	}
-	plan, err := semanticExplainRows(metrics, modelID, request)
+	if err := authorizeSemanticRequest(ctx, metrics, modelID, reportdef.SemanticRowRequest(request)); err != nil {
+		writeJSONError(w, err, semanticRequestAuthorizationStatus(metrics, modelID, err))
+		return
+	}
+	plan, err := semanticExplainRows(ctx, metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
 	}
-	ctx := dataquery.WithMetadata(r.Context(), h.requestQueryMetadata(r, dataquery.SurfaceAPI, dataquery.OperationAPIPreview, "semantic_dataset", modelID+":"+datasetID))
+	ctx = dataquery.WithMetadata(ctx, h.requestQueryMetadata(r, dataquery.SurfaceAPI, dataquery.OperationAPIPreview, "semantic_dataset", modelID+":"+datasetID))
 	if acceptsMediaType(r.Header.Get("Accept"), arrowStreamMediaType) {
 		writeSemanticArrowResponse(w, r.WithContext(ctx), metrics, previewDataQuery(modelID, request), limit, request.Offset, queryID, snapshot, scope)
 		return
@@ -180,6 +299,11 @@ func (h Handler) ExplainSemanticQuery(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 	modelID, datasetID := chi.URLParam(r, "model"), chi.URLParam(r, "dataset")
+	ctx, err := semanticConsumerForRequest(r.Context(), metrics, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
 	if _, _, _, ok := h.semanticDatasetForRequest(w, r); !ok {
 		return
 	}
@@ -193,7 +317,11 @@ func (h Handler) ExplainSemanticQuery(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
 	}
-	plan, err := semanticExplainAggregate(metrics, modelID, request)
+	if err := authorizeSemanticRequest(ctx, metrics, modelID, reportdef.SemanticAggregateRequest(request)); err != nil {
+		writeJSONError(w, err, semanticRequestAuthorizationStatus(metrics, modelID, err))
+		return
+	}
+	plan, err := semanticExplainAggregate(ctx, metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
@@ -212,6 +340,11 @@ func (h Handler) ExplainSemanticPreview(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 	modelID, datasetID := chi.URLParam(r, "model"), chi.URLParam(r, "dataset")
+	ctx, err := semanticConsumerForRequest(r.Context(), metrics, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
 	if _, _, _, ok := h.semanticDatasetForRequest(w, r); !ok {
 		return
 	}
@@ -225,7 +358,11 @@ func (h Handler) ExplainSemanticPreview(w nethttp.ResponseWriter, r *nethttp.Req
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
 	}
-	plan, err := semanticExplainRows(metrics, modelID, request)
+	if err := authorizeSemanticRequest(ctx, metrics, modelID, reportdef.SemanticRowRequest(request)); err != nil {
+		writeJSONError(w, err, semanticRequestAuthorizationStatus(metrics, modelID, err))
+		return
+	}
+	plan, err := semanticExplainRows(ctx, metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return

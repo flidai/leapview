@@ -831,6 +831,25 @@ func (c *CompiledModel) DatasetNames() []string {
 	return names
 }
 
+// SemanticDimensionNames returns activation-owned semantic dimension names in
+// stable order. It intentionally excludes physical table fields.
+func (c *CompiledModel) SemanticDimensionNames() []string {
+	if c == nil {
+		return nil
+	}
+	names := make([]string, 0, len(c.semanticDimensions))
+	for name := range c.semanticDimensions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// MetricNames returns activation-owned metric names in stable order.
+func (c *CompiledModel) MetricNames() []string {
+	return c.metricNames()
+}
+
 // ResolvePhysicalModelName validates a model transform dependency against the
 // compiled model materialization namespace. Semantic dataset aliases are not accepted
 // here: aliases are only valid for selecting a dataset, while transform SQL

@@ -50,6 +50,14 @@ func (h Handler) FilterOptions(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, "unknown compiled filter definition", nethttp.StatusInternalServerError)
 		return
 	}
+	if err := authorizeDashboardFilterField(r.Context(), metrics, dashboardID, filterDefinition.Dataset, filterDefinition.Field); err != nil {
+		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
+		return
+	}
+	if !dashboardSemanticCacheAllowed(metrics, metrics.ModelIDForDashboard(dashboardID)) {
+		writeJSONError(w, requireDashboardSemanticAuthorization(errDashboardSemanticAuthorityUnavailable), nethttp.StatusServiceUnavailable)
+		return
+	}
 	if h.SessionStore == nil {
 		nethttp.Error(w, "dashboard session store is unavailable", nethttp.StatusServiceUnavailable)
 		return

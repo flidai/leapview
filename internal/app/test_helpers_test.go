@@ -36,6 +36,7 @@ import (
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
+	projectmodule "github.com/flidai/leapview/internal/project/module"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -408,6 +409,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		catalog, err := projectcatalog.NewService(
 			projectCatalogLeaseProvider{provider: options.RuntimeHost.Provider()},
 			projectCatalogSubjectResolver{resolve: options.AccessModule.AuthorizationSubjects},
+			projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility(instanceID, options.AccessModule.ResolveSemanticAttributes)),
 		)
 		if err != nil {
 			return nil, err

@@ -553,7 +553,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	graph.ApprovalAuthorizer.SetCandidateResolver(func(resolveCtx context.Context, generationID, principalID string) (string, string, []access.Capability, error) {
 		return candidateApprovalCapabilities(resolveCtx, graph.ServingState, nativeProjectSource.Objects, accessBundle.Module.AuthorizationSubjects, generationID, principalID)
 	})
-	projectCatalogService, err := projectcatalog.NewService(projectCatalogLeaseProvider{provider: runtimeHost.Provider()}, projectCatalogSubjectResolver{resolve: accessBundle.Module.AuthorizationSubjects})
+	projectCatalogService, err := projectcatalog.NewService(projectCatalogLeaseProvider{provider: runtimeHost.Provider()}, projectCatalogSubjectResolver{resolve: accessBundle.Module.AuthorizationSubjects}, projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility(instanceID, accessBundle.Module.ResolveSemanticAttributes)))
 	if err != nil {
 		return fail(err)
 	}

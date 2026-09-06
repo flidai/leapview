@@ -555,6 +555,11 @@ sections:
             type: explanation
             summary: Place typed authorization barriers before protected scans participate in relational operations.
             source: articles/architecture/semantic-access-planner.md
+          - slug: architecture/semantic-access-consumers
+            title: Semantic access discovery and consumers
+            type: explanation
+            summary: Bind protected semantic discovery and execution to authoritative request evidence.
+            source: articles/architecture/semantic-access-consumers.md
           - slug: architecture/arrow-optimization-evidence
             title: Evidence-gated Arrow optimization
             type: explanation

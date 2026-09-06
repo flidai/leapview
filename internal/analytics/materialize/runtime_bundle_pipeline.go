@@ -105,6 +105,13 @@ func (r *Runtime) ExecuteDataQueryBundle(ctx context.Context, requests []dataque
 	if r == nil || r.db == nil {
 		return dataquery.BundleResult{}, fmt.Errorf("materialization runtime is not initialized")
 	}
+	state, err := r.requireSemanticProtectionState()
+	if err != nil {
+		return dataquery.BundleResult{}, err
+	}
+	if state.protected {
+		return dataquery.BundleResult{}, &dataquery.BundleIncompatibleError{Err: fmt.Errorf("protected semantic bundles require lifecycle qualification; execute governed branches separately")}
+	}
 	if len(requests) < 2 {
 		return dataquery.BundleResult{}, &dataquery.BundleIncompatibleError{Err: fmt.Errorf("bundle requires at least two branches")}
 	}
@@ -433,7 +440,7 @@ func (r *Runtime) executeArrowBundle(ctx context.Context, planned plannedBundle)
 	summary := dataquery.Result{PlanningMS: planned.planningMS, SQL: planned.plan.Plan.SQL}
 	// captureArrowPlan transfers one creator-owned reference to this stage.
 	// It is released here after splitting on every success and error path.
-	source, err := r.captureArrowPlan(ctx, planned.plan.Plan)
+	source, err := r.captureArrowPlan(ctx, dataquery.Query{ModelID: r.modelID}, planned.plan.Plan)
 	if source != nil {
 		defer source.Release()
 	}

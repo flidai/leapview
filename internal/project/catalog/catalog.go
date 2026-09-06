@@ -46,6 +46,20 @@ type LeaseProvider interface {
 	Acquire(context.Context) (Lease, error)
 }
 
+// SemanticModelVisibility is evaluated while the catalog's active lease is
+// held. Implementations must use that exact lease when resolving the compiled
+// semantic model, rather than acquiring a second generation snapshot.
+type SemanticModelVisibility func(context.Context, Lease, string, projectgraph.ResourceID) (bool, error)
+
+type ServiceOption func(*Service)
+
+// WithSemanticModelVisibility adds the compiled-semantic access gate used for
+// semantic-model resource discovery. A missing gate fails closed for semantic
+// model resources; non-semantic resources retain ordinary RBAC behavior.
+func WithSemanticModelVisibility(visibility SemanticModelVisibility) ServiceOption {
+	return func(service *Service) { service.semanticModelVisibility = visibility }
+}
+
 // SubjectResolver expands the authenticated principal into the principal plus
 // all group subjects.  Implementations must fail closed when group lookup is
 // unavailable; principal-only fallback would change authorization semantics.
@@ -113,15 +127,32 @@ type ListRequest struct {
 // a mutable graph cache: every operation leases the active generation and
 // reads its bound graph and immutable AuthorizationSnapshot.
 type Service struct {
-	leases   LeaseProvider
-	subjects SubjectResolver
+	leases                  LeaseProvider
+	subjects                SubjectResolver
+	semanticModelVisibility SemanticModelVisibility
 }
 
-func NewService(leasing LeaseProvider, subjects SubjectResolver) (*Service, error) {
+func NewService(leasing LeaseProvider, subjects SubjectResolver, options ...ServiceOption) (*Service, error) {
 	if leasing == nil || subjects == nil {
 		return nil, ErrUnavailable
 	}
-	return &Service{leases: leasing, subjects: subjects}, nil
+	service := &Service{leases: leasing, subjects: subjects}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service, nil
+}
+
+func (s *Service) semanticModelAllowed(ctx context.Context, lease Lease, principalID string, resource projectgraph.Resource) (bool, error) {
+	if resource.Kind != projectgraph.KindSemanticModel {
+		return true, nil
+	}
+	if s.semanticModelVisibility == nil {
+		return false, ErrUnavailable
+	}
+	return s.semanticModelVisibility(ctx, lease, principalID, resource.ID)
 }
 
 func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, error) {
@@ -158,6 +189,13 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, erro
 			continue
 		}
 		if !matches(resource, request.Query) {
+			continue
+		}
+		semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
+		if err != nil {
+			return Page{}, err
+		}
+		if !semanticAllowed {
 			continue
 		}
 		allowed := request.DevAuthBypass
@@ -206,6 +244,13 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 		if !ok || resource.Kind != request.Parent.Kind {
 			return Page{}, ErrNotFound
 		}
+		semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
+		if err != nil {
+			return Page{}, err
+		}
+		if !semanticAllowed {
+			return Page{}, ErrNotFound
+		}
 		allowed := request.DevAuthBypass
 		if !request.DevAuthBypass {
 			allowed, err = allowsAny(snapshot, subjects, resource)
@@ -229,6 +274,13 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 				continue
 			}
 			if domain != "" && strings.ToLower(resource.Metadata.Domain) != domain {
+				continue
+			}
+			semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
+			if err != nil {
+				return Page{}, err
+			}
+			if !semanticAllowed {
 				continue
 			}
 			allowed := request.DevAuthBypass
@@ -255,6 +307,13 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 				continue
 			}
 			if domain != "" && strings.ToLower(resource.Metadata.Domain) != domain {
+				continue
+			}
+			semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
+			if err != nil {
+				return Page{}, err
+			}
+			if !semanticAllowed {
 				continue
 			}
 			if _, ok := seen[resource.ID]; ok {
@@ -311,6 +370,13 @@ func (s *Service) Resolve(ctx context.Context, principalID string, ref Ref, capa
 		return Result{}, ErrNotFound
 	}
 	if err := access.ValidateCapabilityForKind(resource.Kind, capability); err != nil {
+		return Result{}, ErrNotFound
+	}
+	semanticAllowed, err := s.semanticModelAllowed(ctx, lease, principalID, resource)
+	if err != nil {
+		return Result{}, err
+	}
+	if !semanticAllowed {
 		return Result{}, ErrNotFound
 	}
 	if devAuthBypass {

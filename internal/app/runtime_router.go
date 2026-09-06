@@ -612,8 +612,10 @@ func buildApplicationSurfaces(
 	}
 	if metrics != nil && authorizationSnapshot != nil && capabilities.AccessModule != nil {
 		metrics = dashboardmodule.WithQueryAuthorization(metrics, dashboardmodule.QueryAuthorizationConfig{
-			SnapshotFromContext: authorizationSnapshot,
-			SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
+			InstanceID:                runtimeConfig.InstanceID,
+			ResolveSemanticAttributes: capabilities.AccessModule.ResolveSemanticAttributes,
+			SnapshotFromContext:       authorizationSnapshot,
+			SubjectsFromContext:       capabilities.AccessModule.AuthorizationSubjects,
 			PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 				principal, ok := accessmodule.PrincipalFromContext(ctx)
 				devBypass := principal.DevBypass
@@ -682,8 +684,10 @@ func buildApplicationSurfaces(
 		}
 		if candidateAuthorizationSnapshot != nil && capabilities.AccessModule != nil {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{
-				SnapshotFromContext: candidateAuthorizationSnapshot,
-				SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
+				InstanceID:                runtimeConfig.InstanceID,
+				ResolveSemanticAttributes: capabilities.AccessModule.ResolveSemanticAttributes,
+				SnapshotFromContext:       candidateAuthorizationSnapshot,
+				SubjectsFromContext:       capabilities.AccessModule.AuthorizationSubjects,
 				PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 					principal, ok := accessmodule.PrincipalFromContext(ctx)
 					devBypass := principal.DevBypass
