@@ -271,7 +271,7 @@ spec:
 	}
 }
 
-func TestTypedSemanticModelLoweringRejectsUncompiledAccessPolicy(t *testing.T) {
+func TestTypedSemanticModelLoweringRetainsAccessPolicy(t *testing.T) {
 	spec, _, err := decodeSemanticModelResource("semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic-model:sales, name: sales}
@@ -285,9 +285,16 @@ spec:
 	if err != nil {
 		t.Fatalf("structural access policy decode: %v", err)
 	}
-	err = applySemanticModelSpec(&semanticmodel.Model{Name: "sales"}, spec)
-	if err == nil || !strings.Contains(err.Error(), "compiled access-policy support is not available") {
-		t.Fatalf("uncompiled access policy error = %v", err)
+	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders_model": {}}}
+	if err := applySemanticModelSpec(model, spec); err != nil {
+		t.Fatalf("lower access policy: %v", err)
+	}
+	grant, ok := model.AccessPolicy.AccessGrants["canViewSales"]
+	if !ok || grant.UserAttribute != "department" || len(grant.AllowedValues) != 1 {
+		t.Fatalf("lowered access grant = %#v", model.AccessPolicy.AccessGrants)
+	}
+	if got := model.AccessPolicy.Datasets["orders"].RequiredAccessGrants; len(got) != 1 || got[0] != "canViewSales" {
+		t.Fatalf("lowered dataset requirements = %#v", got)
 	}
 }
 

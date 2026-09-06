@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -146,63 +147,134 @@ func decodeSemanticModelResource(path string, content []byte) (projectcontracts.
 	return authored.Spec, lowerAIContext(authored.AiContext), nil
 }
 
-// rejectSemanticAccessPolicy prevents policy-bearing generated fields from
-// being silently discarded while the runtime policy compiler is still
-// pending. Keep this check at the generated-to-runtime boundary so every
-// compiler path has the same fail-closed behavior.
-func rejectSemanticAccessPolicy(spec projectcontracts.SemanticModelSpec) error {
-	const pending = "compiled access-policy support is not available"
+// lowerSemanticAccessPolicy is the generated-to-runtime boundary for the
+// portable policy contract. Target registry qualification happens later; this
+// step retains exact literals and validates only target-independent structure.
+func lowerSemanticAccessPolicy(spec projectcontracts.SemanticModelSpec) (semanticmodel.SemanticAccessPolicy, error) {
+	policy := semanticmodel.SemanticAccessPolicy{}
+	grantNames := map[string]struct{}{}
 	if spec.AccessGrants != nil {
-		return fmt.Errorf("SemanticModel spec accessGrants: %s", pending)
-	}
-	datasetNames := make([]string, 0, len(spec.Datasets))
-	for name := range spec.Datasets {
-		datasetNames = append(datasetNames, name)
-	}
-	sort.Strings(datasetNames)
-	for _, name := range datasetNames {
-		dataset := spec.Datasets[name]
-		if dataset.RequiredAccessGrants != nil {
-			return fmt.Errorf("SemanticModel dataset %q requiredAccessGrants: %s", name, pending)
+		policy.AccessGrants = make(map[string]semanticmodel.SemanticAccessGrantSpec, len(*spec.AccessGrants))
+		for _, name := range sortedMapKeys(*spec.AccessGrants) {
+			grant := (*spec.AccessGrants)[name]
+			if err := access.ValidateSemanticAttributeName(name); err != nil {
+				return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel access grant %q: %w", name, err)
+			}
+			if err := access.ValidateSemanticAttributeName(grant.UserAttribute); err != nil {
+				return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel access grant %q userAttribute: %w", name, err)
+			}
+			if len(grant.AllowedValues) == 0 || len(grant.AllowedValues) > access.MaxSemanticAttributeValues {
+				return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel access grant %q allowedValues requires between 1 and %d values", name, access.MaxSemanticAttributeValues)
+			}
+			values := make([]semanticmodel.SemanticAccessLiteral, len(grant.AllowedValues))
+			seen := make(map[string]struct{}, len(values))
+			for index, raw := range grant.AllowedValues {
+				literal, err := semanticmodel.NewSemanticAccessLiteral(raw)
+				if err != nil {
+					return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel access grant %q allowedValues[%d]: %w", name, index, err)
+				}
+				keyBytes, _ := json.Marshal(literal)
+				if _, exists := seen[string(keyBytes)]; exists {
+					return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel access grant %q allowedValues contains duplicate value", name)
+				}
+				seen[string(keyBytes)] = struct{}{}
+				values[index] = literal
+			}
+			policy.AccessGrants[name] = semanticmodel.SemanticAccessGrantSpec{UserAttribute: grant.UserAttribute, AllowedValues: values}
+			grantNames[name] = struct{}{}
 		}
+	}
+
+	for _, name := range sortedMapKeys(spec.Datasets) {
+		dataset := spec.Datasets[name]
+		required, err := lowerRequiredAccessGrants("dataset", name, dataset.RequiredAccessGrants, grantNames)
+		if err != nil {
+			return semanticmodel.SemanticAccessPolicy{}, err
+		}
+		var filters []semanticmodel.SemanticAccessFilterSpec
 		if dataset.AccessFilters != nil {
-			return fmt.Errorf("SemanticModel dataset %q accessFilters: %s", name, pending)
+			if len(*dataset.AccessFilters) == 0 {
+				return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel dataset %q accessFilters requires a non-empty list", name)
+			}
+			filters = make([]semanticmodel.SemanticAccessFilterSpec, len(*dataset.AccessFilters))
+			for index, filter := range *dataset.AccessFilters {
+				if err := access.ValidateSemanticAttributeName(filter.Field); err != nil {
+					return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel dataset %q accessFilters[%d] field: %w", name, index, err)
+				}
+				if err := access.ValidateSemanticAttributeName(filter.UserAttribute); err != nil {
+					return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel dataset %q accessFilters[%d] userAttribute: %w", name, index, err)
+				}
+				filters[index] = semanticmodel.SemanticAccessFilterSpec{Field: filter.Field, UserAttribute: filter.UserAttribute}
+			}
+		}
+		if required != nil || filters != nil {
+			if policy.Datasets == nil {
+				policy.Datasets = map[string]semanticmodel.SemanticDatasetAccessSpec{}
+			}
+			policy.Datasets[name] = semanticmodel.SemanticDatasetAccessSpec{RequiredAccessGrants: required, AccessFilters: filters}
 		}
 	}
 	if spec.Dimensions != nil {
-		dimensionNames := make([]string, 0, len(*spec.Dimensions))
-		for name := range *spec.Dimensions {
-			dimensionNames = append(dimensionNames, name)
-		}
-		sort.Strings(dimensionNames)
-		for _, name := range dimensionNames {
-			dimension := (*spec.Dimensions)[name]
-			if dimension.RequiredAccessGrants != nil {
-				return fmt.Errorf("SemanticModel dimension %q requiredAccessGrants: %s", name, pending)
+		for _, name := range sortedMapKeys(*spec.Dimensions) {
+			required, err := lowerRequiredAccessGrants("dimension", name, (*spec.Dimensions)[name].RequiredAccessGrants, grantNames)
+			if err != nil {
+				return semanticmodel.SemanticAccessPolicy{}, err
+			}
+			if required != nil {
+				if policy.Dimensions == nil {
+					policy.Dimensions = map[string][]string{}
+				}
+				policy.Dimensions[name] = required
 			}
 		}
 	}
-	metricNames := make([]string, 0, len(spec.Metrics))
-	for name := range spec.Metrics {
-		metricNames = append(metricNames, name)
-	}
-	sort.Strings(metricNames)
-	for _, name := range metricNames {
-		metric := spec.Metrics[name]
-		var required *[]string
-		switch variant := metric.Value.(type) {
+	for _, name := range sortedMapKeys(spec.Metrics) {
+		var authored *[]string
+		switch variant := spec.Metrics[name].Value.(type) {
 		case *projectcontracts.SemanticMetricAggregateVariant:
-			required = variant.RequiredAccessGrants
+			authored = variant.RequiredAccessGrants
 		case *projectcontracts.SemanticMetricDerivedVariant:
-			required = variant.RequiredAccessGrants
+			authored = variant.RequiredAccessGrants
 		case *projectcontracts.SemanticMetricRatioVariant:
-			required = variant.RequiredAccessGrants
+			authored = variant.RequiredAccessGrants
+		}
+		required, err := lowerRequiredAccessGrants("metric", name, authored, grantNames)
+		if err != nil {
+			return semanticmodel.SemanticAccessPolicy{}, err
 		}
 		if required != nil {
-			return fmt.Errorf("SemanticModel metric %q requiredAccessGrants: %s", name, pending)
+			if policy.Metrics == nil {
+				policy.Metrics = map[string][]string{}
+			}
+			policy.Metrics[name] = required
 		}
 	}
-	return nil
+	return policy, nil
+}
+
+func lowerRequiredAccessGrants(kind, name string, authored *[]string, available map[string]struct{}) ([]string, error) {
+	if authored == nil {
+		return nil, nil
+	}
+	if len(*authored) == 0 {
+		return nil, fmt.Errorf("SemanticModel %s %q requiredAccessGrants requires a non-empty list", kind, name)
+	}
+	seen := make(map[string]struct{}, len(*authored))
+	result := append([]string(nil), (*authored)...)
+	for _, grant := range result {
+		if err := access.ValidateSemanticAttributeName(grant); err != nil {
+			return nil, fmt.Errorf("SemanticModel %s %q requiredAccessGrants: %w", kind, name, err)
+		}
+		if _, exists := available[grant]; !exists {
+			return nil, fmt.Errorf("SemanticModel %s %q references unknown access grant %q", kind, name, grant)
+		}
+		if _, duplicate := seen[grant]; duplicate {
+			return nil, fmt.Errorf("SemanticModel %s %q requiredAccessGrants contains duplicate %q", kind, name, grant)
+		}
+		seen[grant] = struct{}{}
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 func lowerSemanticDatasets(values map[string]projectcontracts.SemanticDataset) map[string]semanticmodel.SemanticDatasetSpec {

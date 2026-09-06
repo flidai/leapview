@@ -2,8 +2,6 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,25 +21,6 @@ const maxSemanticAttributeSearchRows = 1000
 var _ access.SemanticAttributeRegistry = (*Repository)(nil)
 var _ access.VersionedSemanticAttributeRegistry = (*Repository)(nil)
 
-type registryDigestWire struct {
-	Profile     string                         `json:"profile"`
-	Definitions []registryDefinitionDigestWire `json:"definitions"`
-}
-
-type registryDefinitionDigestWire struct {
-	ID                string                                 `json:"id"`
-	Name              string                                 `json:"name"`
-	Type              semanticvalue.Type                     `json:"type"`
-	Shape             access.SemanticAttributeShape          `json:"shape"`
-	DefinitionVersion int64                                  `json:"definitionVersion"`
-	OwnerKind         access.SemanticAttributeOwnerKind      `json:"ownerKind"`
-	OwnerID           string                                 `json:"ownerId"`
-	DisplayName       string                                 `json:"displayName"`
-	Description       string                                 `json:"description"`
-	DocumentationURL  string                                 `json:"documentationUrl"`
-	LifecycleState    access.SemanticAttributeLifecycleState `json:"lifecycleState"`
-}
-
 type semanticAttributeRow struct {
 	ID, Name, ValueType, ValueShape, Profile   string
 	Version                                    int64
@@ -51,38 +30,73 @@ type semanticAttributeRow struct {
 	DisabledAt, CreatedAt, UpdatedAt           string
 }
 
+type semanticAttributeRegistryStateRow struct {
+	Profile, Digest, UpdatedAt string
+	Revision                   int64
+}
+
 func (r *Repository) SemanticAttributeRegistry(ctx context.Context) (access.SemanticAttributeRegistrySnapshot, error) {
 	db, err := r.requireDB()
 	if err != nil {
 		return access.SemanticAttributeRegistrySnapshot{}, err
 	}
 	queries := accessdb.New(db)
-	stateRow, err := queries.GetSemanticAttributeRegistry(ctx)
-	if err != nil {
-		return access.SemanticAttributeRegistrySnapshot{}, fmt.Errorf("read semantic attribute registry state: %w", err)
+	readState := func() (semanticAttributeRegistryStateRow, error) {
+		row, readErr := queries.GetSemanticAttributeRegistry(ctx)
+		return semanticAttributeRegistryStateRow{Profile: row.Profile, Revision: row.RegistryRevision, Digest: row.RegistryDigest, UpdatedAt: row.UpdatedAt}, readErr
 	}
-	rows, err := queries.ListSemanticAttributeDefinitions(ctx)
-	if err != nil {
-		return access.SemanticAttributeRegistrySnapshot{}, fmt.Errorf("list semantic attribute definitions: %w", err)
+	readDefinitions := func() ([]access.SemanticAttributeDefinition, error) {
+		rows, readErr := queries.ListSemanticAttributeDefinitions(ctx)
+		if readErr != nil {
+			return nil, readErr
+		}
+		definitions := make([]access.SemanticAttributeDefinition, len(rows))
+		for index, row := range rows {
+			definitions[index] = semanticAttributeDefinitionFromList(row)
+		}
+		return definitions, nil
 	}
-	definitions := make([]access.SemanticAttributeDefinition, len(rows))
-	for index, row := range rows {
-		definitions[index] = semanticAttributeDefinitionFromList(row)
+	return stableSemanticAttributeRegistrySnapshot(readState, readDefinitions)
+}
+
+func stableSemanticAttributeRegistrySnapshot(readState func() (semanticAttributeRegistryStateRow, error), readDefinitions func() ([]access.SemanticAttributeDefinition, error)) (access.SemanticAttributeRegistrySnapshot, error) {
+	// READ COMMITTED gives each statement its own snapshot. Read the registry
+	// state on both sides of the definition read and retry once if a concurrent
+	// mutation could have produced a mixed projection.
+	for attempt := 0; attempt < 2; attempt++ {
+		before, err := readState()
+		if err != nil {
+			return access.SemanticAttributeRegistrySnapshot{}, fmt.Errorf("read semantic attribute registry state: %w", err)
+		}
+		definitions, err := readDefinitions()
+		if err != nil {
+			return access.SemanticAttributeRegistrySnapshot{}, fmt.Errorf("list semantic attribute definitions: %w", err)
+		}
+		after, err := readState()
+		if err != nil {
+			return access.SemanticAttributeRegistrySnapshot{}, fmt.Errorf("reread semantic attribute registry state: %w", err)
+		}
+		if before.Revision != after.Revision || before.Digest != after.Digest || before.Profile != after.Profile {
+			continue
+		}
+		digest, err := semanticAttributeRegistryDigest(before.Profile, definitions)
+		if err != nil {
+			return access.SemanticAttributeRegistrySnapshot{}, err
+		}
+		if digest != before.Digest {
+			return access.SemanticAttributeRegistrySnapshot{}, fmt.Errorf("%w: semantic attribute registry digest mismatch: stored %q, computed %q", access.ErrSemanticAttributeRegistryCorrupt, before.Digest, digest)
+		}
+		snapshot := access.SemanticAttributeRegistrySnapshot{
+			State: access.SemanticAttributeRegistryState{Profile: before.Profile, Revision: before.Revision,
+				Digest: before.Digest, UpdatedAt: before.UpdatedAt},
+			Definitions: definitions,
+		}
+		if err := access.ValidateSemanticAttributeRegistrySnapshot(snapshot); err != nil {
+			return access.SemanticAttributeRegistrySnapshot{}, err
+		}
+		return snapshot, nil
 	}
-	digest, err := semanticAttributeRegistryDigest(stateRow.Profile, definitions)
-	if err != nil {
-		return access.SemanticAttributeRegistrySnapshot{}, err
-	}
-	if digest != stateRow.RegistryDigest {
-		return access.SemanticAttributeRegistrySnapshot{}, fmt.Errorf("semantic attribute registry digest mismatch: stored %q, computed %q", stateRow.RegistryDigest, digest)
-	}
-	return access.SemanticAttributeRegistrySnapshot{
-		State: access.SemanticAttributeRegistryState{
-			Profile: stateRow.Profile, Revision: stateRow.RegistryRevision,
-			Digest: stateRow.RegistryDigest, UpdatedAt: stateRow.UpdatedAt,
-		},
-		Definitions: definitions,
-	}, nil
+	return access.SemanticAttributeRegistrySnapshot{}, fmt.Errorf("%w: registry state changed during read", access.ErrSemanticAttributeRegistryCorrupt)
 }
 
 func (r *Repository) SemanticAttributeDefinition(ctx context.Context, name string) (access.SemanticAttributeDefinition, error) {
@@ -484,22 +498,7 @@ func refreshSemanticAttributeRegistry(ctx context.Context, queries *accessdb.Que
 }
 
 func semanticAttributeRegistryDigest(profile string, definitions []access.SemanticAttributeDefinition) (string, error) {
-	wire := registryDigestWire{Profile: profile, Definitions: make([]registryDefinitionDigestWire, len(definitions))}
-	for index, definition := range definitions {
-		wire.Definitions[index] = registryDefinitionDigestWire{
-			ID: definition.ID, Name: definition.Name, Type: definition.Type, Shape: definition.Shape,
-			DefinitionVersion: definition.DefinitionVersion,
-			OwnerKind:         definition.Metadata.Owner.Kind, OwnerID: definition.Metadata.Owner.ID,
-			DisplayName: definition.Metadata.DisplayName, Description: definition.Metadata.Description,
-			DocumentationURL: definition.Metadata.DocumentationURL, LifecycleState: definition.LifecycleState,
-		}
-	}
-	encoded, err := json.Marshal(wire)
-	if err != nil {
-		return "", fmt.Errorf("encode semantic attribute registry digest: %w", err)
-	}
-	digest := sha256.Sum256(encoded)
-	return "sha256:" + hex.EncodeToString(digest[:]), nil
+	return access.SemanticAttributeRegistryDigest(profile, definitions)
 }
 
 func semanticAttributeAuditEvent(mutation access.SemanticAttributeMutationContext, actorID, action string, definition access.SemanticAttributeDefinition, revision int64, digest string) access.AuditEventInput {

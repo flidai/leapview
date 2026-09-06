@@ -201,6 +201,12 @@ func TestPostgresAgentAdminJourney(t *testing.T) {
 		t.Fatal("PostgreSQL agent run emitted no durable events")
 	}
 	job, err := fixture.JobsModule.Get(ctx, "agent:"+run.ID+":run")
+	// The domain run commits before the handler returns and River completes
+	// the job. Poll within the existing run deadline, not a new timeout.
+	for err == nil && job.Status == jobs.StatusRunning && time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+		job, err = fixture.JobsModule.Get(ctx, "agent:"+run.ID+":run")
+	}
 	if err != nil {
 		t.Fatalf("read completed PostgreSQL agent job: %v", err)
 	}

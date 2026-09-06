@@ -3,10 +3,13 @@
 FAI-637 adds the PostgreSQL control-plane half of the `leapview.semantic-
 access/v1` profile. The registry defines what an attribute is; control rows
 record which subjects receive canonical values and which trusted provider
-claims may supply a value. This is stewardship state, not the semantic query
-authorization engine. The SemanticModel compiler, planner, catalog filtering,
-consumer adapters, cache invalidation, and generation-reference checks remain
-pending under [ADR-0017](../../../adr/0017-adopt-a-looker-aligned-semantic-access-contract.md).
+claims may supply a value. FAI-639 adds the SemanticModel compiler/evaluator
+boundary that qualifies authored policy against a registry snapshot and
+evaluates it against a trusted effective-value snapshot. This is still not the
+semantic query authorization engine: FAI-641 planner security barriers,
+catalog filtering, consumer adapters, cache invalidation, and generation-
+reference checks remain pending under
+[ADR-0017](../../../adr/0017-adopt-a-looker-aligned-semantic-access-contract.md).
 
 ## Capability ownership and authority
 
@@ -186,6 +189,103 @@ claims only through the opaque `trustedclaims.Envelope`; wiring real provider
 adapters through `Verify`, deriving a principal context, and passing that
 context to semantic consumers remain pending.
 
+## FAI-639 compiler/evaluator boundary
+
+The generated TypeSpec SemanticModel contract remains the authoritative
+portable input. The project compiler lowers it into `SemanticAccessPolicy` as
+a target-independent, detached runtime model. Lowering validates the closed
+shape, attribute and grant names, non-empty grant/filter lists, duplicate
+references, known grant references, and exact literal kinds. JSON number
+tokens retain their authored spelling until a registry type is available;
+instance definitions, assignments, claims, and effective values never enter
+the portable policy. `ExecutionSnapshot` deep-copies the policy's mutable
+maps and slices.
+
+`CompileSemanticAccessPolicy` then qualifies that portable policy against one
+complete registry snapshot and one compiled semantic lineage. It recomputes the
+FAI-636 registry digest before it binds stable
+definition IDs and versions, requires active profile-v1 definitions with
+valid stewardship ownership, canonicalizes grant values using the registered
+logical type, rejects canonical duplicates, and validates that each access
+filter names a directly bound compatible semantic dimension. Required grants
+are propagated through dataset and relationship paths, dimensions, metric
+dependencies, and referenced filter dimensions. The output is immutable
+qualified policy metadata with deterministic canonical bytes and a policy
+digest. Compilation is registry-qualified; it does not read assignment or
+mapping values and it does not evaluate a principal.
+
+Evaluation consumes two explicit inputs:
+
+```text
+compiled policy + effective attribute snapshot + current registry/control authority
+                                  |
+                                  v
+                         SemanticAccessDecision
+```
+
+`SemanticAccessAttributeSnapshot` is a trusted handoff of already-resolved
+effective values. It contains the instance and principal/actor identity,
+complete registry and control snapshots, canonical values, each value's
+definition identity/type/shape/source, and an effective-attribute digest.
+`EvaluateSemanticAccess` recomputes all three digests, checks canonical ordering
+and value digests, rejects invalid sources or definition mismatches, requires
+the authority instance to match the target, and requires captured state to
+match current authority. Claim-derived values additionally carry immutable
+`SemanticAttributeClaimEvidence` created by the access capability from the
+opaque verifier envelope, exact active mappings, mapped canonical values,
+control identity, target/principal, and validity interval. Evaluation checks it
+at the current authority observation time. The evaluator does not fetch
+repositories, verify raw provider tokens, or make a browser value trusted;
+malformed, expired, stale, missing, or tampered snapshots fail closed.
+
+Direct-derived values (`direct` or `direct+trusted_claim`) require opaque
+`SemanticAttributeDirectEvidence` from the access capability. It binds the
+target instance and principal to the exact control snapshot, the principal plus
+active-group subject closure, the active assignment IDs/versions, and the
+effective value identities. An effective-value digest alone is not assignment
+authority. Claim-derived values (`trusted_claim` or `direct+trusted_claim`)
+retain the verified-envelope evidence: opaque claim evidence binds the same
+control state and principal to the exact source, mapping IDs/versions,
+validity interval, and verifier fingerprints. Raw assignments, values, and
+claims remain outside these identity projections.
+
+The subject closure used to seal direct evidence is trusted access-capability
+input. FAI-641 must source it from the authoritative principal/group resolver;
+consumer, request, and browser code must never provide or widen that closure.
+
+For a valid snapshot, scalar grant values use equality and list values use
+overlap; required grants compose with logical AND. A dataset access filter is
+lowered to a typed PlanIR predicate: scalar values become `compare` with `=`,
+list values become `in`, and multiple filters become `and`. The PlanIR field is
+the compiler-resolved physical field and each value is a typed string,
+boolean, integer, decimal, date, or timestamp literal. No SQL, template, or
+author-supplied operator is emitted. Dataset predicates and denials are
+inherited by member decisions. Each multi-dataset dimension or metric decision
+also carries `DatasetPredicates`, a complete map from every required dataset
+(including relationship/dependency datasets) to that dataset's typed predicate;
+`Predicate` is only the primary-dataset convenience view. FAI-641 must not
+infer that one predicate covers a multi-dataset object.
+
+The effective-attribute digest is a deterministic ordered projection of
+definition ID/version/type/shape, value digest, and source; it excludes raw
+values. Policy digest is deterministic canonical policy metadata. Decision
+identity additionally binds the profile, target instance, semantic model and
+generation, principal/actor, registry and control identities, effective
+attribute digest, policy digest, grant results, filter evidence, and sorted
+dataset/dimension/metric outcomes. When present, direct-assignment and
+verified-claim evidence digests are also bound. Filter evidence carries value
+digests and predicate kinds rather than unrestricted values. These identities
+are inputs for later audit and cache partitioning, not evidence that cache
+invalidation or consumer enforcement is wired.
+
+FAI-641 is the deferred planner slice. It must consume the evaluator's typed
+predicates and install security barriers at every protected dataset occurrence
+before joins, outer-join null extension, aggregation, totals, suggestions,
+rewrites, and execution, then apply the same admission to catalogs and every
+semantic consumer. FAI-639 does not perform that placement or enforce a query;
+the existing generic/legacy access paths are not FAI-639 semantic-consumer
+evidence.
+
 ## Registry, effective values, and consumers
 
 The control-plane relationship is:
@@ -202,27 +302,45 @@ trusted mappings (source identity + exact claim -> definition)
 effective subject attributes (canonical values, source conflict checked)
         |
         v
-SemanticModel grants/filters and governed semantic consumers (pending)
+FAI-639 policy compiler/evaluator
+        |
+        v
+typed PlanIR predicates + decisions (planner handoff)
+        |
+        v
+FAI-641 planner barriers and governed semantic consumers (pending)
 ```
 
-The current FAI-637 implementation provides the first three boxes, shared
-canonical value validation, durable control identities, effective direct/group
-resolution behind the opaque `trustedclaims.Envelope` boundary, and
-platform-admin management APIs. It does not
-yet make those values the authority for SemanticModel `accessGrants`,
-`requiredAccessGrants`, or `accessFilters`; it does not filter catalogs or
-execute queries for dashboards, Explore, agents, exports, APIs, MCP, or
-embedding. The existing generic/legacy access paths therefore must not be
-described as FAI-637 semantic-consumer evidence.
+FAI-637 provides the first three boxes, shared canonical value validation,
+durable control identities, effective direct/group resolution behind the
+opaque `trustedclaims.Envelope` boundary, and platform-admin management APIs.
+FAI-639 consumes complete digest-verified registry/control snapshots, trusted
+direct-assignment and verified-claim evidence, and an effective-value snapshot
+at the compiler/evaluator boundary; it does not make repositories or raw claims
+available to portable policy artifacts. It does not yet attach
+predicates to governed scans, filter catalogs, or execute queries for
+dashboards, Explore, agents, exports, APIs, MCP, or embedding. FAI-641 owns
+that planner and consumer integration. Existing generic/legacy access paths
+therefore must not be described as FAI-639 semantic-consumer evidence.
 
 ## Immediate invalidation identity
 
-FAI-637 establishes the durable inputs needed for immediate invalidation but
-does not publish cache events or implement consumer caches. A future effective
-attribute-set identity must be derived from an ordered, profile-qualified
-projection of `(instance, subject, definition ID/version/type/shape,
-valueDigest, source)` and must never contain raw values. Runtime trusted input
+FAI-637 establishes the durable inputs needed for immediate invalidation, and
+FAI-639 computes the effective-attribute digest from an ordered,
+profile-qualified projection of `(definition ID/version/type/shape,
+valueDigest, source)`. It never contains raw values. Runtime trusted input
 also binds its source credential/token fingerprint and validity interval.
+FAI-639 does not publish cache events or implement consumer caches.
+
+PostgreSQL registry and control readers use READ COMMITTED statement snapshots,
+read state before and after the row projection, and retry once when the
+revision, digest, or profile changes during the read. A second change or a
+row/digest mismatch fails closed. Effective-value resolution applies the same
+bounded before/after check across registry and control state. The persisted
+registry/control digest wire projections are unchanged: snapshot admission
+derives and rejects inconsistent lifecycle, owner/name, definition-reference,
+and tombstone projections without adding those derived fields to the digest
+wire.
 
 Every authorization-sensitive cache key must include at least the instance
 identity, semantic generation, principal identity, registry
@@ -242,13 +360,18 @@ The PostgreSQL registry tests cover deterministic registry identity, stable
 registration/replay, metadata versioning, disablement, type immutability,
 canonical values, and transactional audit evidence. The trustedclaims tests
 cover the opaque verifier envelope, source binding, temporal checks, exact
-claims, copying, fingerprints, and structural value rejection. FAI-637's
-assignment/mapping repositories and migration are implementation scope, but
-their downstream semantic authorization and full integration qualification are
-not complete.
+claims, copying, fingerprints, and structural value rejection. FAI-639 tests
+cover authoritative lowering, registry qualification, lineage propagation,
+opaque direct-assignment and verified-claim evidence, trusted snapshot and
+stale-authority rejection, complete multi-dataset predicate maps,
+deterministic policy/decision identities, bounded reader checks, and typed
+PlanIR predicate output. Snapshot admission preserves the digest wire formats
+while validating derived lifecycle/name/tombstone consistency. FAI-641's
+planner barriers and downstream consumer authorization are not implemented.
 
 VAL-11 therefore remains **Partial**: the shared `internal/semanticvalue`
-canonicalizer is used at registry/assignment/mapping ingress and semantic-value
-tests provide cross-path fixtures, while generated canonicalization,
-candidate validation, runtime planner evaluation, cache identity/invalidation,
-and complete audit projection evidence remain unqualified.
+canonicalizer is used at registry/assignment/mapping ingress and FAI-639
+compiler/evaluator paths, while generated canonicalization, complete
+control-plane claim-ingestion equivalence, candidate validation, planner
+evaluation, cache invalidation, and complete audit projection evidence remain
+unqualified.

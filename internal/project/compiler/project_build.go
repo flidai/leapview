@@ -265,7 +265,8 @@ func addSourceAlias(aliases map[string]string, keyOwners map[string]string, key,
 }
 
 func applySemanticModelSpec(model *semanticmodel.Model, spec projectcontracts.SemanticModelSpec) error {
-	if err := rejectSemanticAccessPolicy(spec); err != nil {
+	accessPolicy, err := lowerSemanticAccessPolicy(spec)
+	if err != nil {
 		return err
 	}
 	datasets := lowerSemanticDatasets(spec.Datasets)
@@ -358,6 +359,7 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectcontracts.Se
 	model.Dimensions = dimensions
 	model.Metrics = metrics
 	model.Filters = filters
+	model.AccessPolicy = accessPolicy
 	return nil
 }
 
