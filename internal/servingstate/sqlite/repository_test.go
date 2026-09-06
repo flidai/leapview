@@ -200,7 +200,7 @@ func TestRepositoryRejectsInvalidArtifactDigestAndSize(t *testing.T) {
 	}
 }
 
-func TestRepositorySaveValidatedBindsProjectGraphAndArtifact(t *testing.T) {
+func TestRepositorySaveValidatedBindsProjectToSourceGraphAndArtifact(t *testing.T) {
 	store, repo := openRepo(t)
 	projectID := projectgraph.ResourceID("project")
 	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID, Environment: servingstate.DefaultEnvironment})
@@ -327,7 +327,7 @@ func TestRepositorySaveValidatedRollsBackInvalidGraphAndArtifact(t *testing.T) {
 	assertPendingWithoutArtifacts(t, store, repo, second.ID)
 }
 
-func TestRepositorySaveValidatedRejectsProjectGraphAndArtifactMismatches(t *testing.T) {
+func TestRepositorySaveValidatedRejectsProjectAndArtifactMismatches(t *testing.T) {
 	store, repo := openRepo(t)
 	projectID := projectgraph.ResourceID("project")
 	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID, Environment: servingstate.DefaultEnvironment})
@@ -337,11 +337,6 @@ func TestRepositorySaveValidatedRejectsProjectGraphAndArtifactMismatches(t *test
 	wrongProject := validValidation(projectgraph.ResourceID("other"))
 	if _, err := repo.SaveValidated(t.Context(), created.ID, wrongProject, validArtifact(created.ID)); err == nil {
 		t.Fatal("SaveValidated accepted validation project mismatch")
-	}
-	graphMismatch := validValidation(projectID)
-	graphMismatch.Graph = graphForProject(projectgraph.ResourceID("other"))
-	if _, err := repo.SaveValidated(t.Context(), created.ID, graphMismatch, validArtifact(created.ID)); err == nil {
-		t.Fatal("SaveValidated accepted graph root mismatch")
 	}
 	badDigest := validValidation(projectID)
 	badArtifact := validArtifact(created.ID)
@@ -362,7 +357,7 @@ func TestRepositorySaveValidatedRejectsProjectGraphAndArtifactMismatches(t *test
 	assertPendingWithoutArtifacts(t, store, repo, created.ID)
 }
 
-func TestRepositorySaveValidatedRejectsGraphProjectMismatch(t *testing.T) {
+func TestRepositorySaveValidatedRejectsValidationProjectMismatch(t *testing.T) {
 	_, repo := openRepo(t)
 	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectgraph.ResourceID("project"), Environment: servingstate.DefaultEnvironment})
 	if err != nil {
@@ -370,7 +365,7 @@ func TestRepositorySaveValidatedRejectsGraphProjectMismatch(t *testing.T) {
 	}
 	validation := validValidation(projectgraph.ResourceID("other"))
 	if _, err := repo.SaveValidated(t.Context(), created.ID, validation, validArtifact(created.ID)); err == nil {
-		t.Fatal("SaveValidated() accepted graph project mismatch")
+		t.Fatal("SaveValidated() accepted validation project mismatch")
 	}
 }
 
@@ -675,11 +670,11 @@ func validValidation(projectID projectgraph.ResourceID) servingstate.Validation 
 		ManifestJSON:  "{}",
 		ProjectID:     projectID,
 		ProjectDigest: "sha256:" + strings.Repeat("a", 64),
-		Graph:         graphForProject(projectID),
+		Graph:         validSourceGraph(),
 	}
 }
 
-func graphForProject(projectID projectgraph.ResourceID) projectgraph.ProjectGraph {
+func validSourceGraph() projectgraph.ProjectGraph {
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: projectgraph.ResourceID("dashboard"), Kind: projectgraph.KindDashboard, Name: "dashboard"},
 	}, nil)

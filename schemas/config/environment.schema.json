@@ -2378,6 +2378,13 @@
       "x-lifecycle": "development",
       "x-scope": "dev server"
     },
+    "LEAPVIEW_DEV_PROJECT_ID": {
+      "default": "project:leapview-showcase",
+      "description": "Project identifier used by the managed development server and agent end-to-end workflow.",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
     "LEAPVIEW_DEV_READY_ATTEMPTS": {
       "default": "150",
       "description": "Readiness attempts made by the managed development server.",
