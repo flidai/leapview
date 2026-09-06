@@ -6,8 +6,8 @@ record which subjects receive canonical values and which trusted provider
 claims may supply a value. FAI-639 adds the SemanticModel compiler/evaluator
 boundary that qualifies authored policy against a registry snapshot and
 evaluates it against a trusted effective-value snapshot. This is still not the
-semantic query authorization engine: FAI-641 planner security barriers,
-catalog filtering, consumer adapters, cache invalidation, and generation-
+complete semantic query authorization engine: FAI-641 provides planner barriers,
+while catalog filtering, consumer adapters, cache invalidation, and generation-
 reference checks remain pending under
 [ADR-0017](../../../adr/0017-adopt-a-looker-aligned-semantic-access-contract.md).
 
@@ -250,8 +250,9 @@ validity interval, and verifier fingerprints. Raw assignments, values, and
 claims remain outside these identity projections.
 
 The subject closure used to seal direct evidence is trusted access-capability
-input. FAI-641 must source it from the authoritative principal/group resolver;
-consumer, request, and browser code must never provide or widen that closure.
+input. FAI-642 composition must source it from the authoritative principal/group
+resolver; consumer, request, and browser code must never provide or widen that
+closure.
 
 For a valid snapshot, scalar grant values use equality and list values use
 overlap; required grants compose with logical AND. A dataset access filter is
@@ -278,11 +279,10 @@ digests and predicate kinds rather than unrestricted values. These identities
 are inputs for later audit and cache partitioning, not evidence that cache
 invalidation or consumer enforcement is wired.
 
-FAI-641 is the deferred planner slice. It must consume the evaluator's typed
-predicates and install security barriers at every protected dataset occurrence
-before joins, outer-join null extension, aggregation, totals, suggestions,
-rewrites, and execution, then apply the same admission to catalogs and every
-semantic consumer. FAI-639 does not perform that placement or enforce a query;
+FAI-641 consumes the evaluator's typed predicates and installs security
+barriers at protected scan occurrences before joins, outer-join null extension,
+and aggregation. FAI-642 separately owns discovery, catalogs, and consumer
+composition. FAI-639 does not perform that placement or enforce a query;
 the existing generic/legacy access paths are not FAI-639 semantic-consumer
 evidence.
 
@@ -308,7 +308,10 @@ FAI-639 policy compiler/evaluator
 typed PlanIR predicates + decisions (planner handoff)
         |
         v
-FAI-641 planner barriers and governed semantic consumers (pending)
+FAI-641 planner barriers
+        |
+        v
+FAI-642 discovery and governed semantic consumers (pending)
 ```
 
 FAI-637 provides the first three boxes, shared canonical value validation,
@@ -320,7 +323,8 @@ at the compiler/evaluator boundary; it does not make repositories or raw claims
 available to portable policy artifacts. It does not yet attach
 predicates to governed scans, filter catalogs, or execute queries for
 dashboards, Explore, agents, exports, APIs, MCP, or embedding. FAI-641 owns
-that planner and consumer integration. Existing generic/legacy access paths
+the [planner barrier boundary](/docs/architecture/semantic-access-planner); FAI-642 separately
+owns discovery and consumer integration. Existing generic/legacy access paths
 therefore must not be described as FAI-639 semantic-consumer evidence.
 
 ## Immediate invalidation identity
@@ -366,8 +370,9 @@ opaque direct-assignment and verified-claim evidence, trusted snapshot and
 stale-authority rejection, complete multi-dataset predicate maps,
 deterministic policy/decision identities, bounded reader checks, and typed
 PlanIR predicate output. Snapshot admission preserves the digest wire formats
-while validating derived lifecycle/name/tombstone consistency. FAI-641's
-planner barriers and downstream consumer authorization are not implemented.
+while validating derived lifecycle/name/tombstone consistency. FAI-641 adds
+planner barrier validation and pre-join/aggregation execution coverage;
+downstream consumer authorization remains FAI-642 work.
 
 VAL-11 therefore remains **Partial**: the shared `internal/semanticvalue`
 canonicalizer is used at registry/assignment/mapping ingress and FAI-639

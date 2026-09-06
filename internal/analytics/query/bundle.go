@@ -67,11 +67,15 @@ func (p *Planner) renderBundlePlanIR(requests []BundleRequest, resolutions []agg
 	if err != nil {
 		return BundlePlan{}, err
 	}
+	admission, err := p.securePlanGraph(irGraph, bundleMemberRefs(p, requests, resolutions)...)
+	if err != nil {
+		return BundlePlan{}, err
+	}
 	rendered, err := planir.RenderDuckDB(irGraph)
 	if err != nil {
 		return BundlePlan{}, fmt.Errorf("render bundle plan IR: %w", err)
 	}
-	projections, fingerprints, equivalenceDigests, err := p.bundleBranchDependencyProjections(requests, resolutions)
+	projections, fingerprints, equivalenceDigests, err := p.bundleBranchDependencyProjections(requests, resolutions, admission)
 	if err != nil {
 		return BundlePlan{}, err
 	}
