@@ -1,27 +1,32 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { chromium, type Browser } from '@playwright/test'
+import { startSiteTestServer, type SiteTestServer } from './test_server'
 
 const sitePort = 20000 + (process.pid % 10000)
 const baseURL = `http://127.0.0.1:${sitePort}`
 let browser: Browser
-let siteProcess: ReturnType<typeof Bun.spawn>
+let siteServer: SiteTestServer | undefined
 const siteReadyTimeout = 60_000
 
 beforeAll(async () => {
-  siteProcess = Bun.spawn(['go', 'run', './cmd/leapview-site', '-addr', `127.0.0.1:${sitePort}`], {
-    cwd: process.cwd(),
-    env: process.env,
-    stdout: 'ignore',
-    stderr: 'ignore',
-  })
-  await waitForSite()
-  browser = await chromium.launch()
+  const startupDeadline = Date.now() + siteReadyTimeout
+  try {
+    siteServer = await startSiteTestServer(sitePort, startupDeadline)
+    await waitForSite(siteServer.process, startupDeadline)
+    browser = await chromium.launch()
+  } catch (error) {
+    await siteServer?.stop()
+    siteServer = undefined
+    throw error
+  }
 }, siteReadyTimeout + 10_000)
 
 afterAll(async () => {
-  await browser?.close()
-  siteProcess?.kill()
-  await siteProcess?.exited
+  try {
+    await browser?.close()
+  } finally {
+    await siteServer?.stop()
+  }
 })
 
 test('site explains the product, its workflow, and where it fits in the data stack', async () => {
@@ -2755,8 +2760,7 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
   }
 }, 30_000)
 
-async function waitForSite(): Promise<void> {
-  const deadline = Date.now() + siteReadyTimeout
+async function waitForSite(siteProcess: Bun.Subprocess, deadline: number): Promise<void> {
   while (Date.now() < deadline) {
     if (siteProcess.exitCode !== null) {
       throw new Error(`LeapView site exited before becoming ready (code ${siteProcess.exitCode})`)
@@ -2765,7 +2769,7 @@ async function waitForSite(): Promise<void> {
       const response = await fetch(baseURL)
       if (response.ok) return
     } catch {
-      // The Go command is still compiling or binding its listener.
+      // The directly spawned site is still binding its listener.
     }
     await Bun.sleep(100)
   }
