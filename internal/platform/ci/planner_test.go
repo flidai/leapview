@@ -198,11 +198,11 @@ func TestPlanChanges(t *testing.T) {
 			reason: "production deployment",
 		},
 		{
-			name:  "runtime project",
+			name:  "runtime analytics source",
 			input: Input{Event: "pull_request", PullRequestNumber: 1},
 			changes: []Change{{
 				Status: "M",
-				Paths:  []string{"dashboards/leapview.yaml"},
+				Paths:  []string{"dashboards/models/orders.yaml"},
 			}},
 			want: Jobs{
 				Prepare:         true,
@@ -210,7 +210,7 @@ func TestPlanChanges(t *testing.T) {
 				UIRouteQA:       true,
 				ProductionImage: true,
 			},
-			reason: "runtime project",
+			reason: "runtime analytics source",
 		},
 		{
 			name:  "mixed union",

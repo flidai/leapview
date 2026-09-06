@@ -26,7 +26,8 @@ const (
 
 type QualificationClientWorkerOptions struct {
 	Target          string
-	Project         string
+	SourceRoot      string
+	ProjectID       string
 	SourceRevision  string
 	KeyringPassword string
 }
@@ -177,13 +178,14 @@ func (c *Controller) RunQualificationClientWorker(
 	options QualificationClientWorkerOptions,
 ) error {
 	options.Target = strings.TrimSpace(options.Target)
-	options.Project = strings.TrimSpace(options.Project)
+	options.SourceRoot = strings.TrimSpace(options.SourceRoot)
+	options.ProjectID = strings.TrimSpace(options.ProjectID)
 	options.SourceRevision = strings.TrimSpace(options.SourceRevision)
 	options.KeyringPassword = strings.TrimSpace(options.KeyringPassword)
-	if options.Target == "" || options.Project == "" || options.KeyringPassword == "" {
-		return fmt.Errorf("qualification client worker requires target, project, and keyring password")
+	if options.Target == "" || options.SourceRoot == "" || options.ProjectID == "" || options.KeyringPassword == "" {
+		return fmt.Errorf("qualification client worker requires target, source root, project ID, and keyring password")
 	}
-	if err := configureQualificationPrincipals(options.Project, os.Getenv(qualificationAuthorPrincipalEnv), os.Getenv(qualificationReviewerPrincipalEnv)); err != nil {
+	if err := configureQualificationPrincipals(options.ProjectID, os.Getenv(qualificationAuthorPrincipalEnv), os.Getenv(qualificationReviewerPrincipalEnv)); err != nil {
 		return err
 	}
 	runtimeDir, err := os.MkdirTemp("", "leapview-qualification-keyring-*")
@@ -311,7 +313,8 @@ func qualificationDevArguments(options QualificationClientWorkerOptions) []strin
 	arguments := []string{
 		"--once",
 		"--no-browser",
-		"--project", options.Project,
+		"--source-root", options.SourceRoot,
+		"--project-id", options.ProjectID,
 		"--target", options.Target,
 		"--format", "json",
 	}
@@ -386,7 +389,7 @@ func runQualificationLogin(
 		"leapview",
 		"login",
 		options.Target,
-		"--project", options.Project,
+		"--project-id", options.ProjectID,
 		"--no-browser",
 		"--format", "json",
 	)

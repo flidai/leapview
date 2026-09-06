@@ -75,7 +75,7 @@ func (c CatalogService) Get(ctx context.Context, scope agenttools.Scope, request
 		return agenttools.CatalogGetResult{}, err
 	}
 	capability := access.CapabilityResourceRead
-	if ref.Kind == projectgraph.KindProject {
+	if ref.Kind == projectgraph.KindProjectNamespace {
 		capability = access.CapabilityProjectAdmin
 	}
 	result, err := c.project.Resolve(ctx, scope.PrincipalID, ref, capability, scope.DevAuthBypass)

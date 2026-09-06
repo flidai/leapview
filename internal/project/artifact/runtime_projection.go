@@ -33,9 +33,9 @@ type RuntimeSourceProjection struct {
 	EffectivePathLocation *projectcontracts.PathSourceLocation `json:"effectivePathLocation,omitempty"`
 }
 
-func prepareRuntimeProjection(value manifest.Project) (manifest.Project, RuntimeProjection, error) {
+func prepareRuntimeProjection(value manifest.ResourceManifest) (manifest.ResourceManifest, RuntimeProjection, error) {
 	if err := validatePortableConnections(value); err != nil {
-		return manifest.Project{}, RuntimeProjection{}, err
+		return manifest.ResourceManifest{}, RuntimeProjection{}, err
 	}
 	portable := cloneValue(value)
 	projection := RuntimeProjection{
@@ -46,16 +46,16 @@ func prepareRuntimeProjection(value manifest.Project) (manifest.Project, Runtime
 	for id, source := range value.Sources {
 		runtime, err := runtimeSourceFromModel(source)
 		if err != nil {
-			return manifest.Project{}, RuntimeProjection{}, fmt.Errorf("source %q: %w", id, err)
+			return manifest.ResourceManifest{}, RuntimeProjection{}, fmt.Errorf("source %q: %w", id, err)
 		}
 		if err := validateRuntimeSource("source "+id, source, runtime); err != nil {
-			return manifest.Project{}, RuntimeProjection{}, err
+			return manifest.ResourceManifest{}, RuntimeProjection{}, err
 		}
 		projection.Sources[id] = runtime
 	}
 	for id, table := range value.Models {
 		if err := validateRuntimeExecution("model "+id, table.Execution); err != nil {
-			return manifest.Project{}, RuntimeProjection{}, err
+			return manifest.ResourceManifest{}, RuntimeProjection{}, err
 		}
 		projection.Models[id] = table.Execution
 	}
@@ -66,7 +66,7 @@ func prepareRuntimeProjection(value manifest.Project) (manifest.Project, Runtime
 		}
 		runtime, err := runtimeModelFromModel(model)
 		if err != nil {
-			return manifest.Project{}, RuntimeProjection{}, fmt.Errorf("semantic model %q: %w", id, err)
+			return manifest.ResourceManifest{}, RuntimeProjection{}, fmt.Errorf("semantic model %q: %w", id, err)
 		}
 		projection.SemanticModels[id] = runtime
 	}
@@ -107,7 +107,7 @@ func runtimeSourceFromModel(value semanticmodel.Source) (RuntimeSourceProjection
 	return RuntimeSourceProjection{PathLocation: value.PathLocation, EffectivePathLocation: value.EffectivePathLocation}, nil
 }
 
-func validatePortableConnections(value manifest.Project) error {
+func validatePortableConnections(value manifest.ResourceManifest) error {
 	for id, connection := range value.Connections {
 		if err := validatePortableConnection(id, connection); err != nil {
 			return err
@@ -135,7 +135,7 @@ func validatePortableConnection(id string, value semanticmodel.Connection) error
 	return nil
 }
 
-func applyRuntimeProjection(value *manifest.Project, projection RuntimeProjection) error {
+func applyRuntimeProjection(value *manifest.ResourceManifest, projection RuntimeProjection) error {
 	if value == nil {
 		return fmt.Errorf("manifest is required")
 	}
@@ -206,7 +206,7 @@ func validateRuntimeSource(scope string, source semanticmodel.Source, projection
 	return nil
 }
 
-func validateRuntimeProjectionCoverage(value manifest.Project, projection RuntimeProjection) error {
+func validateRuntimeProjectionCoverage(value manifest.ResourceManifest, projection RuntimeProjection) error {
 	if projection.Sources == nil || projection.Models == nil || projection.SemanticModels == nil {
 		return fmt.Errorf("runtime projection is required")
 	}

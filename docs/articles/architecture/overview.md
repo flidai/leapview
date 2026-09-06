@@ -45,7 +45,11 @@ Avoid introducing a second path around capability use cases. Browser, CLI-backed
 
 ## Configuration and deployment
 
-Project YAML is loaded and validated as one graph. The project manifest discovers connections, sources, models, semantic models, pipelines, dashboards, access, and publications from flat include lists.
+The configured source root is loaded and validated as one graph. Conventional
+resource directories discover connections, sources, models, semantic models,
+pipelines, and dashboards without an authored Project manifest. The target
+binds the durable Project identity; access policy and publication state remain
+target-owned concerns.
 
 Project deployment compiles validated candidates into immutable artifacts and serving metadata, then changes the instance's serving pointers to accepted state. Runtime requests read the active deployment rather than mutable repository files. Managed-data revision pins move with the project candidate.
 

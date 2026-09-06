@@ -30,11 +30,15 @@ func LoadDashboardDocumentWithReader(reader projectFileReader, path string) (doc
 	return value, nil
 }
 
-// LoadDashboardDocumentForProject performs the canonical source decode and
+// LoadDashboardDocumentForSourceRoot performs the canonical source decode and
 // expands dashboard-local fragment includes inside the project boundary. The
 // plain loader remains useful for source-level tests and callers that only
 // need the authored DTO; project compilation must use this entry point so an
 // include-bearing document cannot silently compile with missing visuals/pages.
+func LoadDashboardDocumentForSourceRoot(path, sourceRoot string) (document.DashboardDocument, error) {
+	return LoadDashboardDocumentForProjectWithReader(path, sourceRoot, osProjectReader{})
+}
+
 func LoadDashboardDocumentForProject(path, projectRoot string) (document.DashboardDocument, error) {
 	return LoadDashboardDocumentForProjectWithReader(path, projectRoot, osProjectReader{})
 }

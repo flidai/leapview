@@ -67,7 +67,7 @@ func ensureTestRuntimeHost(ctx context.Context, store *platform.Store, states te
 		return nil, fmt.Errorf("test runtime host already bound to %s/%s", host.ProjectID(), host.Environment())
 	}
 
-	graph, err := testRuntimeGraph(projectID)
+	graph, err := testRuntimeGraph()
 	if err != nil {
 		return nil, err
 	}
@@ -174,9 +174,8 @@ func ensureTestRuntimeHost(ctx context.Context, store *platform.Store, states te
 	return host, nil
 }
 
-func testRuntimeGraph(projectID projectgraph.ResourceID) (projectgraph.ProjectGraph, error) {
+func testRuntimeGraph() (projectgraph.ProjectGraph, error) {
 	resources := []projectgraph.Resource{
-		{ID: projectID, Kind: projectgraph.KindProject, Name: "project"},
 		{ID: projectgraph.ResourceID("test"), Kind: projectgraph.KindSemanticModel, Name: "test"},
 		{ID: projectgraph.ResourceID("executive-sales"), Kind: projectgraph.KindDashboard, Name: "executive_sales"},
 		{ID: projectgraph.ResourceID("model.orders"), Kind: projectgraph.KindModel, Name: "orders"},

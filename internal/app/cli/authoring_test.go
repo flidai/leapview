@@ -15,42 +15,22 @@ import (
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
 	"github.com/stretchr/testify/require"
 )
 
-func TestProjectIdentityUsesCanonicalGraphID(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "leapview.yaml")
-	if err := os.WriteFile(path, []byte(`apiVersion: leapview.dev/v1
-kind: Project
-metadata:
-  id: project:canonical
-  name: executable-name
-spec:
-  connections: {include: []}
-  sources: {include: []}
-  models: {include: []}
-  semanticModels: {include: []}
-  pipelines: {include: []}
-  dashboards: {include: []}
-  access: {include: []}
-  publications: {include: []}
-`), 0o644); err != nil {
+func TestSourceRootDoesNotDeriveProjectIdentity(t *testing.T) {
+	path := t.TempDir()
+	if _, err := projectcompiler.Compile(path); err != nil {
+		t.Fatalf("compile empty source root: %v", err)
+	}
+	legacy := filepath.Join(path, "leapview.yaml")
+	if err := os.WriteFile(legacy, []byte("apiVersion: leapview.dev/v1\nkind: Project\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := loadProjectID(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "project:canonical" {
-		t.Fatalf("project identity = %q, want graph ID project:canonical", got)
-	}
-	identity, err := (applicationProjectIdentity{}).ProjectID(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if identity != got {
-		t.Fatalf("authoring identity = %q, want %q", identity, got)
+	if _, err := projectcompiler.Compile(path); err == nil {
+		t.Fatal("source loader accepted an authored Project file")
 	}
 }
 
@@ -216,7 +196,7 @@ func TestDevCommandExposesOneAuthenticatedRemoteWorkflow(t *testing.T) {
 		t.Fatalf("dev command = %q %q", command.Name(), command.Short)
 	}
 	for _, flag := range []string{
-		"project", "target", "token", "upload-concurrency", "once",
+		"source-root", "project-id", "target", "token", "upload-concurrency", "once",
 		"candidate-key", "source-revision", "source-repository", "source-ref", "source-change",
 	} {
 		if command.Flags().Lookup(flag) == nil {

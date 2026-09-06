@@ -18,7 +18,7 @@ import (
 
 func TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads(t *testing.T) {
 	snapshot, err := (projectdevloop.FilesystemBuilder{
-		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
+		SourceRoot: filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview"), ProjectID: "project:leapview-showcase",
 	}).Build(t.Context())
 	require.NoError(t, err)
 	synchronizer, err := projectmodule.NewCandidateSourceSynchronizer(t.TempDir())
@@ -90,7 +90,7 @@ func TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads(t *testing
 func TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart(t *testing.T) {
 	root := t.TempDir()
 	snapshot, err := (projectdevloop.FilesystemBuilder{
-		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
+		SourceRoot: filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview"), ProjectID: "project:leapview-showcase",
 	}).Build(t.Context())
 	require.NoError(t, err)
 	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID, OwnerID: "principal_1"}
@@ -119,7 +119,7 @@ func TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart(t *testing.T)
 func TestCandidateSourceSnapshotRetainsRevisionAcrossRestart(t *testing.T) {
 	root := t.TempDir()
 	snapshot, err := (projectdevloop.FilesystemBuilder{
-		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
+		SourceRoot: filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview"), ProjectID: "project:leapview-showcase",
 	}).Build(t.Context())
 	require.NoError(t, err)
 	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID, OwnerID: "principal_1"}
@@ -180,7 +180,7 @@ func TestCandidateSourceSnapshotRetainsRevisionAcrossRestart(t *testing.T) {
 
 func TestCandidateSourceSynchronizerRejectsWhitespaceProjectIdentity(t *testing.T) {
 	snapshot, err := (projectdevloop.FilesystemBuilder{
-		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
+		SourceRoot: filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview"), ProjectID: "project:leapview-showcase",
 	}).Build(t.Context())
 	require.NoError(t, err)
 	synchronizer, err := projectmodule.NewCandidateSourceSynchronizer(t.TempDir())
@@ -194,7 +194,7 @@ func TestCandidateSourceSynchronizerRejectsWhitespaceProjectIdentity(t *testing.
 }
 
 func TestCandidateSourceSynchronizerRequiresPlanIdentityAndSize(t *testing.T) {
-	snapshot, err := (projectdevloop.FilesystemBuilder{ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")}).Build(t.Context())
+	snapshot, err := (projectdevloop.FilesystemBuilder{SourceRoot: filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview"), ProjectID: "project:leapview-showcase"}).Build(t.Context())
 	require.NoError(t, err)
 	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID, OwnerID: "principal_1"}
 	request := synchronizationRequest(snapshot)
@@ -216,7 +216,7 @@ func TestCandidateSourceSynchronizerRequiresPlanIdentityAndSize(t *testing.T) {
 }
 
 func TestCandidateSourceSynchronizerPlanReplayAndIndependentPlans(t *testing.T) {
-	snapshot, err := (projectdevloop.FilesystemBuilder{ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")}).Build(t.Context())
+	snapshot, err := (projectdevloop.FilesystemBuilder{SourceRoot: filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview"), ProjectID: "project:leapview-showcase"}).Build(t.Context())
 	require.NoError(t, err)
 	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID, OwnerID: "principal_1"}
 	request := synchronizationRequest(snapshot)
@@ -245,7 +245,7 @@ func TestCandidateSourceSynchronizerPlanReplayAndIndependentPlans(t *testing.T) 
 }
 
 func TestCandidateSourceSynchronizerRejectsMissingIdempotencyKey(t *testing.T) {
-	snapshot, err := (projectdevloop.FilesystemBuilder{ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")}).Build(t.Context())
+	snapshot, err := (projectdevloop.FilesystemBuilder{SourceRoot: filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview"), ProjectID: "project:leapview-showcase"}).Build(t.Context())
 	require.NoError(t, err)
 	request := synchronizationRequest(snapshot)
 	request.IdempotencyKey = ""
@@ -280,7 +280,7 @@ func TestCandidateSourceSynchronizerRejectsMalformedPersistedPlan(t *testing.T) 
 
 func synchronizationRequest(snapshot projectdevloop.Snapshot) project.CandidateSynchronizationRequest {
 	request := project.CandidateSynchronizationRequest{
-		ProjectFile: snapshot.ProjectFile, ArtifactDigest: snapshot.Digest,
+		ArtifactDigest: snapshot.Digest,
 		IdempotencyKey: "test-plan",
 		Artifacts:      make([]project.CandidateSourceArtifact, len(snapshot.Artifacts)),
 	}

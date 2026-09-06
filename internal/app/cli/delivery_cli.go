@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	projectcli "github.com/flidai/leapview/internal/project/cli"
 	"github.com/flidai/leapview/internal/project/devloop"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/spf13/cobra"
 )
 
@@ -49,6 +50,9 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 		return projectcli.DeliveryPlanResult{}, err
 	}
 	projectID, sourceDigest := strings.TrimSpace(options.ProjectID), strings.TrimSpace(options.SourceDigest)
+	if projectID == "" {
+		projectID = strings.TrimSpace(credentials.ProjectID)
+	}
 	sourceAttestationDigest := strings.TrimSpace(options.SourceAttestationDigest)
 	targetID, candidateID := strings.TrimSpace(options.TargetID), strings.TrimSpace(options.CandidateID)
 	environment := strings.TrimSpace(options.Environment)
@@ -69,7 +73,12 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 		if err != nil {
 			return projectcli.DeliveryPlanResult{}, err
 		}
-		builder := devloop.FilesystemBuilder{ProjectPath: options.ProjectPath, CandidateKey: options.CandidateKey}
+		sourceRoot := strings.TrimSpace(options.SourceRoot)
+		boundProjectID, err := projectgraph.NewResourceID(projectID)
+		if err != nil {
+			return projectcli.DeliveryPlanResult{}, fmt.Errorf("target-bound Project identity is required; provide --project-id or use a target profile: %w", err)
+		}
+		builder := devloop.FilesystemBuilder{SourceRoot: sourceRoot, ProjectID: boundProjectID, CandidateKey: options.CandidateKey}
 		snapshot, err := builder.Build(ctx)
 		if err != nil {
 			return projectcli.DeliveryPlanResult{}, fmt.Errorf("capture project source snapshot: %w", err)

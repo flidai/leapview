@@ -28,7 +28,6 @@ type CandidateSourceRevision struct {
 }
 
 type CandidateSynchronizationRequest struct {
-	ProjectFile    string
 	ArtifactDigest string
 	// SourceOnly retains the immutable source snapshot without invoking
 	// candidate preparation or any physical writer. Delivery plan callers set
@@ -59,7 +58,10 @@ type CandidateSourceSnapshot struct {
 	ProjectPath              string
 	ProjectDigest            string
 	ProjectArtifactPath      string
-	SourceRevision           *CandidateSourceRevision
+	// SourceRoot is the canonical portable source-root identity when the
+	// retained snapshot originated from a Project-free source bundle.
+	SourceRoot     string
+	SourceRevision *CandidateSourceRevision
 }
 
 // CandidateSourceObjectRef is an immutable object-store reference. ObjectKey

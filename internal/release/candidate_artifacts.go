@@ -190,8 +190,8 @@ func CandidateSourcesDataRevision(artifactDigest string, pins []ManagedDataPin) 
 
 type CandidateCompilerEvidence struct {
 	Graph    projectgraph.ProjectGraph
-	Manifest projectmanifest.Project
-	Plan     projectcompiler.ProjectPlan
+	Manifest projectmanifest.ResourceManifest
+	Plan     projectcompiler.BundlePlan
 	// RelationExecution and BaseRelationExecution are per-materialization
 	// identities. They let delivery retain unchanged sealed relation refs while
 	// rebuilding only changed/removed relations from the same base snapshot.
@@ -200,7 +200,7 @@ type CandidateCompilerEvidence struct {
 	// Artifact is the decoded portable artifact whose digest is bound by
 	// Artifact.ProjectDigest. It is retained for model projections used by
 	// candidate materialization.
-	Artifact projectartifact.Project
+	Artifact projectartifact.SourceBundle
 }
 
 type CandidateArtifactPreparer interface {

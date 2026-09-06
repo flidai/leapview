@@ -9,9 +9,9 @@ import (
 
 func TestValidateCommandOwnsProjectArgumentRules(t *testing.T) {
 	command := ValidateCommand(context.Background())
-	command.SetArgs([]string{"project.yaml", "--project", "other.yaml"})
+	command.SetArgs([]string{"source-root-a", "--source-root", "source-root-b"})
 	err := command.Execute()
-	if err == nil || !strings.Contains(err.Error(), "choose either --project or positional project") {
+	if err == nil || !strings.Contains(err.Error(), "choose either --source-root or positional source root") {
 		t.Fatalf("error = %v", err)
 	}
 }

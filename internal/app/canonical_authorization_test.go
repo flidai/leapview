@@ -82,7 +82,7 @@ func tusSnapshot(t *testing.T, principalID string, connectionID projectgraph.Res
 	if err != nil {
 		t.Fatal(err)
 	}
-	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "project_demo", Kind: projectgraph.KindProject, Name: "project_demo"}, {ID: connectionID, Kind: projectgraph.KindConnection, Name: "connection_sales"}}, nil)
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: connectionID, Kind: projectgraph.KindConnection, Name: "connection_sales"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,6 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 		t.Fatal(err)
 	}
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "project_demo"},
 		{ID: dashboardA, Kind: projectgraph.KindDashboard, Name: "A"},
 		{ID: dashboardB, Kind: projectgraph.KindDashboard, Name: "B"},
 		{ID: model, Kind: projectgraph.KindModel, Name: "Orders"},
@@ -192,7 +191,7 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 	if deliveryRoleAllows(viewerSnapshot, subjects, access.CapabilityResourcePublish) {
 		t.Fatal("viewer role unexpectedly authorized publish")
 	}
-	projectResource, err := access.NewResourceRef(identity.ProjectID, projectgraph.KindProject)
+	projectResource, err := access.NewResourceRef(identity.ProjectID, projectgraph.KindProjectNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +237,7 @@ func TestActiveProjectResourceIsExactCanonicalReference(t *testing.T) {
 	if len(resources) != 1 {
 		t.Fatalf("resource count = %d, want 1", len(resources))
 	}
-	if resources[0].ID() != "project_demo" || resources[0].Kind() != projectgraph.KindProject {
+	if resources[0].ID() != "project_demo" || resources[0].Kind() != projectgraph.KindProjectNamespace {
 		t.Fatalf("resource = %#v, want project_demo/project", resources[0])
 	}
 	if err := resources[0].Validate(); err != nil {

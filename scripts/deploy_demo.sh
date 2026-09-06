@@ -8,7 +8,7 @@ publisher_client_id="${DEMO_PUBLISHER_CLIENT_ID:?Set DEMO_PUBLISHER_CLIENT_ID}"
 publisher_client_secret="${DEMO_PUBLISHER_CLIENT_SECRET:?Set DEMO_PUBLISHER_CLIENT_SECRET}"
 release_client_id="${DEMO_RELEASE_CLIENT_ID:?Set DEMO_RELEASE_CLIENT_ID}"
 release_client_secret="${DEMO_RELEASE_CLIENT_SECRET:?Set DEMO_RELEASE_CLIENT_SECRET}"
-project_path="$repo_root/dashboards/leapview.yaml"
+source_root="$repo_root/dashboards"
 data_link="$repo_root/.data/olist"
 project_id="project:leapview-showcase"
 candidate_key="hosted-demo"
@@ -86,18 +86,20 @@ go run ./internal/app/tools/configgen
 go run ./internal/app/tools/bootstrapolist --shared-cache --out "$data_link"
 data_path="$(cd -P "$data_link" && pwd)"
 "$leapview" data sync \
-  --project "$project_path" \
+  --source-root "$source_root" \
   --connection olist \
   --from "$data_path" \
   --target "$demo_target" \
+  --project-id "$project_id" \
   --token "$publisher_token"
 
 # Delivery is deliberately split into the target-owned plan, build, and
 # publication commands. Each command persists an immutable checkpoint that
 # the next command resolves, so the candidate cannot be redirected to another
 # project or target by a later invocation.
-plan="$("$leapview" plan "$project_path" \
+plan="$("$leapview" plan --source-root "$source_root" \
   --target "$demo_target" \
+  --project-id "$project_id" \
   --token "$publisher_token" \
   --candidate-key "$candidate_key" \
   --format json)"

@@ -26,30 +26,147 @@ import (
 type FactoryConfig struct {
 	DuckDBDir          string
 	RuntimeDir         string
+	DashboardRuntime   dashboardruntimefactory.Builder
+	SealedLeaseHolder  string
 	ActivationEvidence ActivationEvidenceSource
 }
 
 type servingStateRuntimeFactory struct {
 	duckDBDir          string
 	runtimeDir         string
+	dashboardRuntime   dashboardruntimefactory.Builder
 	activationEvidence ActivationEvidenceSource
 	servingArtifacts   ServingArtifactReader
 }
 
-// ServingArtifactReader is the least-privilege object capability needed by a
-// native runtime. PostgreSQL serving-state rows retain a provider-neutral
-// immutable locator rather than a process-local filesystem path.
+// ServingArtifactReader is the least-privilege object capability needed to
+// read a native content-addressed serving bundle. PostgreSQL serving-state
+// rows retain a provider-neutral immutable locator rather than a filesystem
+// path.
 type ServingArtifactReader = projectbundle.ArtifactObjectReader
 
-// prepareDashboard is the PostgreSQL sealed path project-artifact loader. The
+func NewFactory(config FactoryConfig) runtimehost.RuntimeFactory {
+	return servingStateRuntimeFactory{
+		duckDBDir: config.DuckDBDir, runtimeDir: config.RuntimeDir, dashboardRuntime: config.DashboardRuntime,
+		activationEvidence: config.ActivationEvidence,
+	}
+}
+
+func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
+	duckDBDir := runtimeFirstNonEmpty(input.DuckDBDir, f.duckDBDir)
+	runtimeDir := runtimeFirstNonEmpty(input.RuntimeDir, f.runtimeDir)
+	targetDir := filepath.Join(
+		runtimeDir,
+		runtimeExtractionIdentity(input)+"-"+shortDigest(input.Artifact.Digest),
+	)
+	if err := os.RemoveAll(targetDir); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return nil, err
+	}
+	duckDir := filepath.Join(duckDBDir, string(servingstate.NormalizeEnvironment(input.State.Environment)))
+	compiled, err := f.loadCompiledSourceBundle(ctx, input.Artifact, targetDir)
+	if err != nil {
+		return nil, err
+	}
+	compiledProject, err := projectartifact.NewSourceBundle(compiled.Graph, compiled.Manifest)
+	if err != nil {
+		return nil, fmt.Errorf("compiled project dependency evidence: %w", err)
+	}
+	if err := bindManagedDataRoots(&compiled.Manifest, input.ManagedData.Roots); err != nil {
+		return nil, err
+	}
+	identity, err := projectgraph.NewServingIdentity(input.State.ProjectID, string(servingstate.NormalizeEnvironment(input.State.Environment)), string(input.State.ID))
+	if err != nil {
+		return nil, err
+	}
+	dependencyEvidence, err := dependencyEvidenceForRuntime(ctx, identity, compiled, compiledProject, input.ManagedData, input.Candidate, f.activationEvidence)
+	if err != nil {
+		return nil, fmt.Errorf("resolve runtime dependency evidence: %w", err)
+	}
+	policy := projectmanifest.AccessPolicy{}
+	if value := input.State.AccessPolicyJSON; value != "" {
+		if err := json.Unmarshal([]byte(value), &policy); err != nil {
+			return nil, fmt.Errorf("decode serving authorization policy: %w", err)
+		}
+	}
+	authorization, err := projectmanifest.CompileAuthorizationSnapshot(identity, compiled.Graph, policy)
+	if err != nil {
+		return nil, fmt.Errorf("compile serving authorization snapshot: %w", err)
+	}
+	if f.dashboardRuntime == nil {
+		return nil, fmt.Errorf("dashboard runtime builder is required")
+	}
+	models := make(map[projectgraph.ResourceID]*semanticmodel.Model, len(compiled.Manifest.SemanticModels))
+	for id, model := range compiled.Manifest.SemanticModels {
+		resourceID, err := projectgraph.NewResourceID(id)
+		if err != nil {
+			return nil, fmt.Errorf("semantic model %q: %w", id, err)
+		}
+		models[resourceID] = model
+	}
+	dashboards := make(map[projectgraph.ResourceID]dashboarddefinition.Definition, len(compiled.Manifest.DashboardDefinitions))
+	for id, definition := range compiled.Manifest.DashboardDefinitions {
+		resourceID, err := projectgraph.NewResourceID(id)
+		if err != nil {
+			return nil, fmt.Errorf("dashboard %q: %w", id, err)
+		}
+		dashboards[resourceID] = definition
+	}
+	projectDefinition, err := dashboardruntime.NewTargetBoundProjectDefinition(input.State.ProjectID, compiled.Manifest.Title, compiled.Manifest.Description, models, dashboards)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard project definition: %w", err)
+	}
+	runtimeInput := dashboardruntimefactory.Input{
+		Directory: duckDir, SnapshotID: input.State.DuckLakeSnapshotID,
+		Identity: identity, SemanticModelDigest: input.State.Digest,
+		ArtifactDigest: input.Artifact.Digest, SourceDataDigest: input.ManagedData.RevisionID,
+		Definition: projectDefinition, DependencyEvidence: dependencyEvidence,
+	}
+	if input.Candidate != nil {
+		runtimeInput.CandidateID = input.Candidate.CandidateID
+		runtimeInput.AuthorizationFingerprint = input.Candidate.AuthorizationFingerprint
+		runtimeInput.BindingFingerprint = input.Candidate.BindingFingerprint
+	}
+	service, err := f.dashboardRuntime(ctx, runtimeInput)
+	if err != nil {
+		return nil, err
+	}
+	if input.State.DuckLakeSnapshotID == 0 {
+		snapshotID := service.DuckLakeSnapshotID()
+		if snapshotID > 0 {
+			if err := service.Close(); err != nil {
+				return nil, err
+			}
+			runtimeInput.SnapshotID = snapshotID
+			service, err = f.dashboardRuntime(ctx, runtimeInput)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	authoredSources, err := authoredDashboardSources(compiled.Manifest, input.State.ProjectID)
+	if err != nil {
+		_ = service.Close()
+		return nil, fmt.Errorf("authored dashboard sources: %w", err)
+	}
+	return dashboardRuntimeWithGraph{
+		Service: service, projectID: input.State.ProjectID,
+		servingStateID:  string(input.State.ID),
+		authorization:   authorization,
+		authoredSources: authoredSources,
+		projectManifest: compiled.Manifest,
+	}, nil
+}
+
+// prepareDashboard is the PostgreSQL sealed path source-bundle loader. The
 // catalog environment is supplied by the caller after durable lease/fence
 // acquisition; this helper never opens or writes a DuckLake catalog itself.
 func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input runtimehost.RuntimeInput, builder SealedDashboardRuntimeBuilder, environment *ducklake.Environment, relationNamespace, targetID, snapshotSealID string) (*dashboardRuntimeWithGraph, error) {
 	if builder == nil || environment == nil {
 		return nil, fmt.Errorf("sealed dashboard builder and environment are required")
 	}
-	// PostgreSQL serving roots carry the exact candidate schema selected by
-	// durable delivery state.
 	if environment.IsPostgresCatalog() {
 		if relationNamespace == "" || relationNamespace != strings.TrimSpace(relationNamespace) {
 			return nil, fmt.Errorf("%w: PostgreSQL relation namespace is unavailable", ErrSealedRootUnavailable)
@@ -66,14 +183,11 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return nil, err
 	}
-	compiled, err := f.loadCompiledProjectArtifact(ctx, input.Artifact, targetDir)
+	compiled, err := f.loadCompiledSourceBundle(ctx, input.Artifact, targetDir)
 	if err != nil {
 		return nil, err
 	}
-	if compiled.ProjectID != input.State.ProjectID {
-		return nil, fmt.Errorf("compiled artifact project = %q, want %q", compiled.ProjectID, input.State.ProjectID)
-	}
-	compiledProject, err := projectartifact.NewProject(compiled.Graph, compiled.Manifest)
+	compiledProject, err := projectartifact.NewSourceBundle(compiled.Graph, compiled.Manifest)
 	if err != nil {
 		return nil, fmt.Errorf("compiled project dependency evidence: %w", err)
 	}
@@ -129,9 +243,6 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 		SkipInitialRefresh: true,
 		Definition:         projectDefinition, DependencyEvidence: dependencyEvidence,
 	}
-	// PostgreSQL-backed serving environments pin an exact snapshot at ATTACH;
-	// propagate that identity into the dashboard runtime so it cannot fall back
-	// to the catalog's moving head.
 	if environment.IsPostgresCatalog() {
 		runtimeInput.SnapshotID = environment.PostgresSnapshotVersion()
 		runtimeInput.RelationNamespace = relationNamespace
@@ -148,7 +259,17 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	return &dashboardRuntimeWithGraph{Service: service, projectID: input.State.ProjectID, servingStateID: string(input.State.ID), authorization: authorization, authoredSources: authoredSources, projectManifest: compiled.Manifest}, nil
 }
 
-func (f servingStateRuntimeFactory) loadCompiledProjectArtifact(ctx context.Context, artifact servingstate.Artifact, targetDir string) (projectbundle.CompiledProjectArtifact, error) {
+func (f servingStateRuntimeFactory) loadCompiledSourceBundle(ctx context.Context, artifact servingstate.Artifact, targetDir string) (projectbundle.CompiledSourceBundleArtifact, error) {
+	if artifact.Path != "" {
+		if artifact.Locator != "" {
+			return projectbundle.CompiledSourceBundleArtifact{}, fmt.Errorf("serving artifact cannot have both a filesystem path and native locator")
+		}
+		if err := projectbundle.ExtractArtifact(artifact.Path, targetDir); err != nil {
+			return projectbundle.CompiledSourceBundleArtifact{}, err
+		}
+		compiled, _, err := projectbundle.LoadCompiledSourceBundleArtifact(targetDir)
+		return compiled, err
+	}
 	return (projectbundle.ServingArtifactLoader{Objects: f.servingArtifacts}).LoadCompiled(ctx, artifact, targetDir)
 }
 

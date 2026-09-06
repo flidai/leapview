@@ -16,7 +16,7 @@ permissions:
   pull-requests: read
 
 env:
-  LEAPVIEW_PROJECT_FILE: dashboards/leapview.yaml
+  LEAPVIEW_SOURCE_ROOT: dashboards
   LEAPVIEW_TARGET: ${{ vars.LEAPVIEW_TARGET }}
   LEAPVIEW_WORKLOAD_PROJECT: ${{ vars.LEAPVIEW_PROJECT_ID }}
 
@@ -29,7 +29,7 @@ jobs:
       - name: Verify CLI is available
         run: leapview version
       - name: Validate without target credentials
-        run: leapview validate --project "$LEAPVIEW_PROJECT_FILE" --json
+        run: leapview validate --source-root "$LEAPVIEW_SOURCE_ROOT" --json
 
   candidate:
     if: >-
@@ -49,7 +49,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Create exact source-attested plan for review
         run: |
-          leapview plan "$LEAPVIEW_PROJECT_FILE" --format json
+          leapview plan --source-root "$LEAPVIEW_SOURCE_ROOT" --format json
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -68,7 +68,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Create and build exact protected-branch plan
         run: |
-          plan_json=$(leapview plan "$LEAPVIEW_PROJECT_FILE" --format json)
+          plan_json=$(leapview plan --source-root "$LEAPVIEW_SOURCE_ROOT" --format json)
           plan_id=$(printf '%s' "$plan_json" | jq -r .planId)
           build_json=$(leapview build "$plan_id" --format json)
           status=$(printf '%s' "$build_json" | jq -r .status)

@@ -69,8 +69,7 @@ func compiledPlannerTestModel() *semanticmodel.Model {
 }
 
 func TestProjectManifestReturnsDetachedCompiledDefinition(t *testing.T) {
-	runtime := dashboardRuntimeWithGraph{projectManifest: projectmanifest.Project{
-		ID: "project:demo",
+	runtime := dashboardRuntimeWithGraph{projectManifest: projectmanifest.ResourceManifest{
 		Models: map[string]semanticmodel.Table{
 			"model:orders": {
 				Entities:           map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
@@ -180,7 +179,7 @@ func TestAuthoredDashboardSourcesRetainsDescriptiveDomain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sources, err := authoredDashboardSources(projectmanifest.Project{
+	sources, err := authoredDashboardSources(projectmanifest.ResourceManifest{
 		DashboardSources: map[string]projectmanifest.DashboardSource{
 			string(dashboardID): {
 				Document: dashboarddocument.DashboardDocument{APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1, Kind: dashboarddocument.DashboardResourceKindDashboard, Metadata: dashboarddocument.DashboardMetadata{ID: dashboardID.String(), Name: "sales_dashboard"}, Spec: dashboarddocument.DashboardSpec{SemanticModel: "sales"}},

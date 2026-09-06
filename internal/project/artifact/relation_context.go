@@ -35,7 +35,7 @@ const (
 // deployment/materialization contract based on SourceDependencies. Result
 // identity additionally consumes direct-source and persisted SQL-analysis
 // evidence so missing lineage cannot authorize result reuse.
-func (p Project) relationReferences(projection relationReferenceProjection) (map[string]relationReferenceSet, error) {
+func (p SourceBundle) relationReferences(projection relationReferenceProjection) (map[string]relationReferenceSet, error) {
 	manifest := p.Manifest()
 	modelNames := make(map[string]string)
 	sourceNames := make(map[string]string)
@@ -207,14 +207,14 @@ func cloneStringSet(values map[string]struct{}) map[string]struct{} {
 // connector kinds are selected only for sources reachable from each physical
 // model relation. Unknown lineage fails safe by including all source and
 // connection evidence.
-func (p Project) RelationExecutionContexts(revisions, bindingKinds map[string]string) (map[string]string, error) {
+func (p SourceBundle) RelationExecutionContexts(revisions, bindingKinds map[string]string) (map[string]string, error) {
 	return p.relationExecutionContexts(revisions, bindingKinds, nil, legacyRelationReferences,
 		func(value semanticmodel.Source) any { return value },
 		func(value semanticmodel.Connection) any { return value },
 	)
 }
 
-func (p Project) relationExecutionContexts(
+func (p SourceBundle) relationExecutionContexts(
 	revisions, bindingKinds map[string]string,
 	sourceDataEvidence map[projectgraph.ResourceID]sourcedataidentity.Evidence,
 	referenceProjection relationReferenceProjection,
@@ -284,7 +284,7 @@ func (p Project) relationExecutionContexts(
 // RelationExecutionDigestsForInputs is the shared high-level API for exact
 // per-relation execution identity. It prevents callers from reimplementing
 // source, transitive model, revision, or connector selection.
-func (p Project) RelationExecutionDigestsForInputs(revisions, bindingKinds map[string]string) (map[string]string, error) {
+func (p SourceBundle) RelationExecutionDigestsForInputs(revisions, bindingKinds map[string]string) (map[string]string, error) {
 	contexts, err := p.RelationExecutionContexts(revisions, bindingKinds)
 	if err != nil {
 		return nil, err
@@ -292,7 +292,7 @@ func (p Project) RelationExecutionDigestsForInputs(revisions, bindingKinds map[s
 	return p.RelationExecutionDigestsByContext(contexts)
 }
 
-func (p Project) resultIdentityRelationExecutionDigestsForInputs(sourceDataEvidence map[projectgraph.ResourceID]sourcedataidentity.Evidence, bindingKinds map[string]string) (map[string]string, error) {
+func (p SourceBundle) resultIdentityRelationExecutionDigestsForInputs(sourceDataEvidence map[projectgraph.ResourceID]sourcedataidentity.Evidence, bindingKinds map[string]string) (map[string]string, error) {
 	contexts, err := p.relationExecutionContexts(
 		nil, bindingKinds, sourceDataEvidence, resultIdentityRelationReferences,
 		resultIdentitySourceProjection, resultIdentityConnectionProjection,
@@ -446,7 +446,7 @@ type DatasetRelationEvidence struct {
 // dependency derivation. Datasets whose complete source-data or connector
 // evidence is unavailable are omitted; consumers must treat that absence as a
 // cache-reuse bypass while allowing normal execution to proceed.
-func (p Project) SemanticModelRelationEvidence(semanticModelID projectgraph.ResourceID, sourceDataEvidence map[projectgraph.ResourceID]sourcedataidentity.Evidence, bindingKinds map[string]string) ([]DatasetRelationEvidence, error) {
+func (p SourceBundle) SemanticModelRelationEvidence(semanticModelID projectgraph.ResourceID, sourceDataEvidence map[projectgraph.ResourceID]sourcedataidentity.Evidence, bindingKinds map[string]string) ([]DatasetRelationEvidence, error) {
 	if err := semanticModelID.Validate(); err != nil {
 		return nil, fmt.Errorf("semantic model ID: %w", err)
 	}

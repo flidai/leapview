@@ -464,7 +464,7 @@ sections:
             generated: true
       - id: configuration
         title: Configuration
-        summary: Generated fields and JSON Schemas for every resource kind.
+        summary: Generated fields and JSON Schemas for the six source-root resource kinds.
         collection:
           kind: catalog
           catalog: reference/config/catalog.json

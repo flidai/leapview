@@ -105,11 +105,11 @@ func (event CanonicalAuditEvent) ValidateAgainst(project graph.ProjectGraph) err
 	if err := event.Validate(); err != nil {
 		return err
 	}
-	if event.Identity.ProjectID != project.ProjectID() {
-		return fmt.Errorf("audit project %q does not match graph %q", event.Identity.ProjectID, project.ProjectID())
-	}
 	if err := event.Resource.ValidateAgainst(project); err != nil {
 		return fmt.Errorf("audit resource: %w", err)
+	}
+	if event.Resource.Kind() == graph.KindProjectNamespace && event.Resource.ID() != event.Identity.ProjectID {
+		return fmt.Errorf("audit project namespace %q does not match serving identity %q", event.Resource.ID(), event.Identity.ProjectID)
 	}
 	return nil
 }

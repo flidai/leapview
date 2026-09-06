@@ -131,7 +131,7 @@ func (m *Module) APIGenAuthorizer(runtime apigenRuntimeHost, operations map[stri
 			"dashboard":      {pathParameter: "dashboard", resolver: resolvers.Dashboard, kind: projectgraph.KindDashboard},
 			"semantic-model": {pathParameter: "model", resolver: resolvers.SemanticModel, kind: projectgraph.KindSemanticModel},
 			"connection":     {pathParameter: "connection", resolver: resolvers.Connection, kind: projectgraph.KindConnection},
-			"project":        {pathParameter: "project", resolver: resolvers.Project, kind: projectgraph.KindProject},
+			"project":        {pathParameter: "project", resolver: resolvers.Project, kind: projectgraph.KindProjectNamespace},
 		},
 	}
 	for operationID, contract := range operations {
@@ -707,11 +707,17 @@ func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID s
 		return false, err
 	}
 	for _, resource := range resources {
-		graphResource, exists := snapshot.Project().Resource(resource.ID())
-		if !exists || graphResource.Kind != resource.Kind() {
-			return false, errAPIGenResourceNotFound
+		if resource.Kind() == projectgraph.KindProjectNamespace {
+			if resource.ID() != projectID {
+				return false, errAPIGenResourceNotFound
+			}
+		} else {
+			graphResource, exists := snapshot.Project().Resource(resource.ID())
+			if !exists || graphResource.Kind != resource.Kind() {
+				return false, errAPIGenResourceNotFound
+			}
 		}
-		if resource.Kind() == projectgraph.KindProject && !access.SupportsCapability(resource.Kind(), capability) {
+		if resource.Kind() == projectgraph.KindProjectNamespace && !access.SupportsCapability(resource.Kind(), capability) {
 			if !projectRoleAllowsCapability(snapshot, subjects, capability) {
 				return false, nil
 			}
@@ -946,7 +952,7 @@ func (a *APIGenAuthorizer) boundResourceResolver(definition apiGenResourceScope,
 			if resource.Kind() != definition.kind || resource.Validate() != nil {
 				return nil
 			}
-			if definition.kind == projectgraph.KindProject && resource.ID() != active {
+			if definition.kind == projectgraph.KindProjectNamespace && resource.ID() != active {
 				return nil
 			}
 		}

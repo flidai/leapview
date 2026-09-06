@@ -29,7 +29,7 @@ func BenchmarkFilesystemBuilderCoherentSnapshot(b *testing.B) {
 			if edit.files > len(editable) {
 				b.Fatalf("benchmark fixture has %d editable dashboards, want %d", len(editable), edit.files)
 			}
-			builder := FilesystemBuilder{ProjectPath: projectPath}
+			builder := FilesystemBuilder{SourceRoot: projectPath, ProjectID: "project:devloop"}
 			baseline, err := builder.Build(context.Background())
 			if err != nil {
 				b.Fatal(err)
@@ -90,7 +90,7 @@ func (edit devloopBenchmarkEdit) apply(tb testing.TB, alternate bool) {
 
 func copyBenchmarkProject(b *testing.B) (string, []devloopBenchmarkEdit) {
 	b.Helper()
-	original, err := filepath.Abs(filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"))
+	original, err := filepath.Abs(filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview"))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func copyBenchmarkProject(b *testing.B) (string, []devloopBenchmarkEdit) {
 			}
 		}
 	}
-	return filepath.Join(targetRoot, "leapview.yaml"), editable
+	return targetRoot, editable
 }
 
 func benchmarkDashboardTitleVariant(body []byte) ([]byte, bool) {
@@ -169,16 +169,14 @@ func reportDevloopLatencyPercentiles(b *testing.B, durations []time.Duration) {
 }
 
 func TestFilesystemBuilderProducesDeterministicProjectArtifacts(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
-	builder := FilesystemBuilder{ProjectPath: projectPath}
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
+	builder := FilesystemBuilder{SourceRoot: projectPath, ProjectID: "project:leapview-showcase"}
 
 	first, err := builder.Build(t.Context())
 	require.NoError(t, err)
 	second, err := builder.Build(t.Context())
 	require.NoError(t, err)
-	if first.ProjectID != "project:leapview-showcase" ||
-		first.ProjectFile != "leapview.yaml" ||
-		first.Digest != second.Digest {
+	if first.ProjectID != "project:leapview-showcase" || first.Digest != second.Digest {
 		t.Fatalf(
 			"candidate identities = (%q, %q) and (%q, %q)",
 			first.ProjectID, first.Digest, second.ProjectID, second.Digest,
@@ -199,15 +197,18 @@ func TestFilesystemBuilderProducesDeterministicProjectArtifacts(t *testing.T) {
 	}
 }
 
-func TestCandidateSetDigestIncludesProjectEntrypoint(t *testing.T) {
+func TestCandidateSetDigestUsesOnlyTheArtifactSet(t *testing.T) {
 	artifacts := []Artifact{
-		contentArtifact("leapview.yaml", []byte("one")),
+		contentArtifact("dashboards/sales.yaml", []byte("one")),
 		contentArtifact("alternate.yaml", []byte("two")),
 	}
-	first := candidateSetDigest("project", "leapview.yaml", artifacts)
-	second := candidateSetDigest("project", "alternate.yaml", artifacts)
-	if first == second {
-		t.Fatalf("candidate set digest ignored project entrypoint: %q", first)
+	first := candidateSetDigest(artifacts)
+	second := candidateSetDigest([]Artifact{
+		contentArtifact("dashboards/sales.yaml", []byte("one")),
+		contentArtifact("alternate.yaml", []byte("two")),
+	})
+	if first != second {
+		t.Fatalf("candidate set digest changed for identical artifact set: %q / %q", first, second)
 	}
 }
 
@@ -231,7 +232,7 @@ func TestNormalizeSnapshotRejectsUnsafeArtifactPaths(t *testing.T) {
 	for _, path := range []string{"../secrets.env", "/etc/passwd", `C:\secrets.env`, "models/../leapview.yaml"} {
 		snapshot := testSnapshot("valid")
 		snapshot.Artifacts[0].Path = path
-		snapshot.Digest = candidateSetDigest(snapshot.ProjectID, snapshot.ProjectFile, snapshot.Artifacts)
+		snapshot.Digest = candidateSetDigest(snapshot.Artifacts)
 		if _, err := normalizeSnapshot(snapshot); err == nil {
 			t.Errorf("normalize snapshot accepted unsafe artifact path %q", path)
 		}
@@ -243,9 +244,9 @@ func TestCandidateSetDigestIsIndependentOfArtifactOrder(t *testing.T) {
 		{Path: "sales.yaml", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 		{Path: "operations.yaml", Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 	}
-	first := candidateSetDigest("project", "leapview.yaml", artifacts)
+	first := candidateSetDigest(artifacts)
 	artifacts[0], artifacts[1] = artifacts[1], artifacts[0]
-	if second := candidateSetDigest("project", "leapview.yaml", artifacts); second != first {
+	if second := candidateSetDigest(artifacts); second != first {
 		t.Fatalf("candidate set digests differ: %q / %q", first, second)
 	}
 }

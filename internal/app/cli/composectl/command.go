@@ -139,7 +139,8 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 		},
 	}
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.Target, "target", "", "qualification target")
-	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.Project, "project", "", "qualification project")
+	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.SourceRoot, "source-root", "", "analytics source root")
+	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.ProjectID, "project-id", "", "target-bound Project identity")
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.SourceRevision, "source-revision", "", "staged source revision")
 
 	qualify.AddCommand(qualifyImage, qualifySiteImage, qualifyInstalled, qualifyClientWorker)

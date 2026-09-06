@@ -370,8 +370,8 @@ func candidateSynchronizationBody(
 	request projectdevloop.SynchronizationPlanRequest,
 ) deploymentgen.CandidateSynchronizationRequest {
 	body := deploymentgen.CandidateSynchronizationRequest{
-		ProjectFile: request.ProjectFile, ArtifactDigest: request.ArtifactDigest,
-		Artifacts: make([]deploymentgen.CandidateSourceArtifact, len(request.Artifacts)),
+		ArtifactDigest: request.ArtifactDigest,
+		Artifacts:      make([]deploymentgen.CandidateSourceArtifact, len(request.Artifacts)),
 	}
 	if request.SourceOnly {
 		value := true

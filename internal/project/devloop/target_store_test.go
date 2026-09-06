@@ -15,7 +15,7 @@ func TestTargetStorePlansAndRetainsContentAddressedBlobs(t *testing.T) {
 	store, err := NewTargetStore(t.TempDir())
 	require.NoError(t, err)
 	snapshot := testSnapshotWithArtifacts("store", []Artifact{
-		contentArtifact("leapview.yaml", []byte("project")),
+		contentArtifact("dashboards/sales.yaml", []byte("project")),
 		contentArtifact("models/orders.yaml", []byte("orders")),
 	})
 	request := planRequestForSnapshot(snapshot)
@@ -40,7 +40,7 @@ func TestTargetStorePlansAndRetainsContentAddressedBlobs(t *testing.T) {
 func TestTargetStoreRejectsDigestMismatchWithoutRetainingBlob(t *testing.T) {
 	store, err := NewTargetStore(t.TempDir())
 	require.NoError(t, err)
-	artifact := contentArtifact("leapview.yaml", []byte("expected"))
+	artifact := contentArtifact("dashboards/sales.yaml", []byte("expected"))
 	if err := store.Put(t.Context(), artifact.Digest, bytes.NewReader([]byte("tampered"))); err == nil {
 		t.Fatal("target store accepted bytes that do not match content digest")
 	}
@@ -53,8 +53,8 @@ func TestTargetStoreRejectsDigestMismatchWithoutRetainingBlob(t *testing.T) {
 }
 
 func TestTargetStoreCommitsValidatedSnapshotIdempotently(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
-	snapshot, err := (FilesystemBuilder{ProjectPath: projectPath}).Build(t.Context())
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
+	snapshot, err := (FilesystemBuilder{SourceRoot: projectPath, ProjectID: "project:leapview-showcase"}).Build(t.Context())
 	require.NoError(t, err)
 	root := t.TempDir()
 	store, err := NewTargetStore(root)
@@ -96,11 +96,11 @@ func TestTargetStoreCommitsValidatedSnapshotIdempotently(t *testing.T) {
 			t.Fatalf("stored snapshot omits immutable project artifact: %#v", result)
 		}
 		if committedPath == "" {
-			committedPath = result.ProjectPath
+			committedPath = result.SourceRoot
 			artifactPath = result.ProjectArtifactPath
 			projectDigest = result.ProjectDigest
-		} else if result.ProjectPath != committedPath {
-			t.Fatalf("idempotent commit paths differ: %q / %q", committedPath, result.ProjectPath)
+		} else if result.SourceRoot != committedPath {
+			t.Fatalf("idempotent commit paths differ: %q / %q", committedPath, result.SourceRoot)
 		} else if result.ProjectArtifactPath != artifactPath || result.ProjectDigest != projectDigest {
 			t.Fatalf("idempotent project artifacts differ: %#v", result)
 		}
@@ -118,8 +118,8 @@ func TestTargetStoreCommitsValidatedSnapshotIdempotently(t *testing.T) {
 	require.NoError(t, err)
 	compiled, err := projectartifact.Decode(encoded)
 	require.NoError(t, err)
-	if compiled.ProjectID() != snapshot.ProjectID || compiled.Digest() != projectDigest {
-		t.Fatalf("retained project artifact = id %q digest %q, want %q %q", compiled.ProjectID(), compiled.Digest(), snapshot.ProjectID, projectDigest)
+	if compiled.Digest() != projectDigest {
+		t.Fatalf("retained project artifact = digest %q, want %q", compiled.Digest(), projectDigest)
 	}
 	if bytes.Contains(encoded, []byte(filepath.Dir(committedPath))) {
 		t.Fatalf("retained project artifact contains target filesystem path %q", filepath.Dir(committedPath))
@@ -127,8 +127,8 @@ func TestTargetStoreCommitsValidatedSnapshotIdempotently(t *testing.T) {
 }
 
 func TestTargetStoreRejectsTamperedRetainedProjectArtifact(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
-	snapshot, err := (FilesystemBuilder{ProjectPath: projectPath}).Build(t.Context())
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
+	snapshot, err := (FilesystemBuilder{SourceRoot: projectPath, ProjectID: "project:leapview-showcase"}).Build(t.Context())
 	require.NoError(t, err)
 	store, err := NewTargetStore(t.TempDir())
 	require.NoError(t, err)
@@ -149,8 +149,8 @@ func TestTargetStoreRejectsTamperedRetainedProjectArtifact(t *testing.T) {
 }
 
 func TestTargetStoreRepairsLegacySnapshotMissingRetainedProjectArtifact(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
-	snapshot, err := (FilesystemBuilder{ProjectPath: projectPath}).Build(t.Context())
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
+	snapshot, err := (FilesystemBuilder{SourceRoot: projectPath, ProjectID: "project:leapview-showcase"}).Build(t.Context())
 	require.NoError(t, err)
 	store, err := NewTargetStore(t.TempDir())
 	require.NoError(t, err)
@@ -281,7 +281,7 @@ func TestTargetStoreManifestExcludesSynchronizationProtocolIdentity(t *testing.T
 
 func planRequestForSnapshot(snapshot Snapshot) SynchronizationPlanRequest {
 	request := SynchronizationPlanRequest{
-		ProjectID: snapshot.ProjectID, ProjectFile: snapshot.ProjectFile,
+		ProjectID:      snapshot.ProjectID,
 		ArtifactDigest: snapshot.Digest, Artifacts: make([]ArtifactReference, len(snapshot.Artifacts)),
 	}
 	for index, artifact := range snapshot.Artifacts {

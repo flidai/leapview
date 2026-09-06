@@ -16,7 +16,7 @@ import (
 // boundary resolution are project concerns, while app composition attaches it
 // beneath the dashboard command tree.
 func DashboardExportCommand(ctx context.Context) *cobra.Command {
-	var projectPath, layoutValue, output string
+	var sourceRoot, layoutValue, output string
 	command := &cobra.Command{
 		Use:   "export <dashboard>",
 		Short: "Export a dashboard as expanded or fragmented YAML",
@@ -29,15 +29,11 @@ func DashboardExportCommand(ctx context.Context) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project, err := projectcompiler.LoadProject(projectPath)
+			path, err := projectcompiler.ResolveDashboardSource(sourceRoot, args[0])
 			if err != nil {
 				return err
 			}
-			path, err := dashboardSourcePath(project, args[0])
-			if err != nil {
-				return err
-			}
-			export, err := projectcompiler.ExportDashboardSource(path, project.BaseDir, mode)
+			export, err := projectcompiler.ExportDashboardSource(path, sourceRoot, mode)
 			if err != nil {
 				return err
 			}
@@ -55,7 +51,7 @@ func DashboardExportCommand(ctx context.Context) *cobra.Command {
 			return writeExpandedExport(output, content)
 		},
 	}
-	command.Flags().StringVar(&projectPath, "project", filepath.Join("dashboards", "leapview.yaml"), "project path")
+	command.Flags().StringVar(&sourceRoot, "source-root", "dashboards", "analytics source root")
 	command.Flags().StringVar(&layoutValue, "layout", string(projectcompiler.DashboardExportExpanded), "dashboard export layout: expanded or fragmented")
 	command.Flags().StringVar(&output, "out", "", "expanded output file or empty fragmented output directory")
 	return command
@@ -67,22 +63,6 @@ func parseDashboardExportMode(value string) (projectcompiler.DashboardExportMode
 		return "", err
 	}
 	return mode, nil
-}
-
-func dashboardSourcePath(project projectcompiler.Project, reference string) (string, error) {
-	reference = strings.TrimSpace(reference)
-	if reference == "" {
-		return "", fmt.Errorf("dashboard reference is required")
-	}
-	if path, ok := project.DashboardPaths[reference]; ok {
-		return path, nil
-	}
-	for name, id := range project.DashboardIDs {
-		if id == reference {
-			return project.DashboardPaths[name], nil
-		}
-	}
-	return "", fmt.Errorf("dashboard %q was not found in project", reference)
 }
 
 func writeExpandedExport(path string, content []byte) error {

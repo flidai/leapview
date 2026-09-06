@@ -8,18 +8,18 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/project/devloop"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/schema"
 	"github.com/spf13/cobra"
 )
 
 type DevOptions struct {
-	ProjectPath       string
+	SourceRoot        string
 	Credentials       cliapi.Credentials
 	UploadConcurrency int
 	Once              bool
@@ -51,23 +51,23 @@ func DevCommand(
 	planOperations ...DeliveryPlanOperations,
 ) *cobra.Command {
 	values := DevOptions{
-		ProjectPath:       filepath.Join("dashboards", "leapview.yaml"),
+		SourceRoot:        "dashboards",
 		UploadConcurrency: 4,
 		CandidateKey:      "default",
 		Format:            "text",
 	}
 	command := &cobra.Command{
-		Use:   "dev [project]",
-		Short: "Synchronize a project into your private target candidate",
+		Use:   "dev [source-root]",
+		Short: "Synchronize a source root into your private target candidate",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			if len(args) == 1 {
-				if command.Flags().Changed("project") {
+				if command.Flags().Changed("source-root") {
 					return fmt.Errorf(
-						"choose either --project or positional project, not both",
+						"choose either --source-root or positional source root, not both",
 					)
 				}
-				values.ProjectPath = args[0]
+				values.SourceRoot = args[0]
 			}
 			return RunDev(
 				ctx,
@@ -82,12 +82,7 @@ func DevCommand(
 			)
 		},
 	}
-	command.Flags().StringVar(
-		&values.ProjectPath,
-		"project",
-		values.ProjectPath,
-		"project manifest path",
-	)
+	command.Flags().StringVar(&values.SourceRoot, "source-root", values.SourceRoot, "analytics source root")
 	command.Flags().StringVar(
 		&values.Credentials.Target,
 		"target",
@@ -100,6 +95,7 @@ func DevCommand(
 		"",
 		"ephemeral API token for one-shot automation",
 	)
+	command.Flags().StringVar(&values.Credentials.ProjectID, "project-id", "", "target-bound Project identity")
 	command.Flags().IntVar(
 		&values.UploadConcurrency,
 		"upload-concurrency",
@@ -204,6 +200,14 @@ func RunDev(
 	if err != nil {
 		return err
 	}
+	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(credentials.ProjectID))
+	if err != nil {
+		return fmt.Errorf("target-bound Project identity is required; provide --project-id or use a target profile: %w", err)
+	}
+	sourceRoot := strings.TrimSpace(options.SourceRoot)
+	if sourceRoot == "" {
+		return fmt.Errorf("analytics source root is required")
+	}
 	remote, err := remotes.Remote(
 		ctx,
 		credentials,
@@ -218,7 +222,7 @@ func RunDev(
 	}
 	service, err := devloop.New(
 		devloop.FilesystemBuilder{
-			ProjectPath: options.ProjectPath, SourceRevision: sourceRevision,
+			SourceRoot: sourceRoot, ProjectID: projectID, SourceRevision: sourceRevision,
 			CandidateKey: options.CandidateKey,
 		},
 		remote,
@@ -250,7 +254,7 @@ func RunDev(
 			return err
 		}
 		checkpoint := CandidateCheckpoint{
-			ProjectPath: options.ProjectPath, TargetOrigin: credentials.Target,
+			SourceRoot: sourceRoot, TargetOrigin: credentials.Target,
 			TargetSelector: targetSelector,
 			TargetID:       candidate.TargetID, Environment: candidate.Environment,
 			ProjectID: candidate.ProjectID.String(), CandidateID: candidate.ID,
@@ -270,7 +274,7 @@ func RunDev(
 			checkpoint.EvidenceDigest = candidate.EvidenceDigest
 		} else if len(planOperations) > 0 && planOperations[0] != nil {
 			planResult, err = planOperations[0].Create(ctx, DeliveryPlanOptions{
-				ProjectPath: options.ProjectPath, Credentials: credentials,
+				SourceRoot: sourceRoot, Credentials: credentials,
 				TargetID: candidate.TargetID, Operation: "code_change",
 				CandidateKey: options.CandidateKey, UploadConcurrency: options.UploadConcurrency,
 				CandidateID: candidate.ID, ResolveCandidatePlan: true,
@@ -357,7 +361,7 @@ func RunDev(
 		}
 		return reportErr
 	}
-	watcher, err := devloop.NewWatcher(options.ProjectPath, service)
+	watcher, err := devloop.NewWatcher(sourceRoot, service)
 	if err != nil {
 		return err
 	}

@@ -32,23 +32,14 @@ func (fakeDiscovery) Discover(_ context.Context, origin string) (TargetMetadata,
 	return TargetMetadata{Origin: strings.TrimRight(origin, "/"), InstanceID: "lvinst_prod", Environment: "production"}, nil
 }
 
-type fakeProjectResolver struct{}
-
-func (fakeProjectResolver) ProjectID(path string) (string, error) {
-	if path != "dashboards/leapview.yaml" {
-		return "", nil
-	}
-	return "analytics", nil
-}
-
 func TestLoginCommandDiscoversTargetAndProject(t *testing.T) {
 	service := &fakeAuthService{challenge: DeviceChallenge{
 		UserCode: "ABCD-EFGH", VerificationURI: "https://prod.example.com/device",
 	}}
-	command := LoginCommand(context.Background(), service, fakeDiscovery{}, fakeProjectResolver{})
+	command := LoginCommand(context.Background(), service, fakeDiscovery{})
 	var output strings.Builder
 	command.SetOut(&output)
-	command.SetArgs([]string{"https://prod.example.com/", "--no-browser"})
+	command.SetArgs([]string{"https://prod.example.com/", "--project-id", "analytics", "--no-browser"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +58,8 @@ func TestLoginCommandDiscoversTargetAndProject(t *testing.T) {
 
 func TestLoginCommandSupportsStableProfileAlias(t *testing.T) {
 	service := &fakeAuthService{}
-	command := LoginCommand(context.Background(), service, fakeDiscovery{}, fakeProjectResolver{})
-	command.SetArgs([]string{"https://prod.example.com", "--name", "prod"})
+	command := LoginCommand(context.Background(), service, fakeDiscovery{})
+	command.SetArgs([]string{"https://prod.example.com", "--name", "prod", "--project-id", "analytics"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -81,10 +72,10 @@ func TestLoginCommandEmitsVersionedJSONEvents(t *testing.T) {
 	service := &fakeAuthService{challenge: DeviceChallenge{
 		UserCode: "ABCD-EFGH", VerificationURI: "https://prod.example.com/device",
 	}}
-	command := LoginCommand(context.Background(), service, fakeDiscovery{}, fakeProjectResolver{})
+	command := LoginCommand(context.Background(), service, fakeDiscovery{})
 	var output strings.Builder
 	command.SetOut(&output)
-	command.SetArgs([]string{"https://prod.example.com", "--no-browser", "--format", "json"})
+	command.SetArgs([]string{"https://prod.example.com", "--project-id", "analytics", "--no-browser", "--format", "json"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}

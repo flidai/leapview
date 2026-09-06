@@ -106,7 +106,7 @@ When changing a component, test its cold/unupgraded layout, upgraded behavior, c
 
 Update the example dashboards when a contract changes. A feature is not complete if the code accepts it but schemas, generated references, examples, and docs disagree.
 
-Validate example projects and generated YAML fences. Keep stable identifiers and provide migrations for intentional compatibility breaks.
+Validate the canonical source root and generated YAML fences. Keep stable identifiers and provide migrations for intentional compatibility breaks.
 
 ## Final verification
 

@@ -9,7 +9,6 @@ import (
 
 func TestCanonicalAuditEventRequiresExactServingIdentityAndResource(t *testing.T) {
 	project, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_demo", Kind: graph.KindProject, Name: "demo"},
 		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "main"},
 	}, nil)
 	if err != nil {
@@ -27,7 +26,7 @@ func TestCanonicalAuditEventRequiresExactServingIdentityAndResource(t *testing.T
 		t.Fatal(err)
 	}
 	for _, bad := range []CanonicalAuditEvent{
-		func() CanonicalAuditEvent { copy := event; copy.Identity.ProjectID = "other_project"; return copy }(),
+		func() CanonicalAuditEvent { copy := event; copy.Identity.ProjectID = ""; return copy }(),
 		func() CanonicalAuditEvent {
 			copy := event
 			copy.Resource, _ = NewResourceRef("dashboard_main", graph.KindModel)

@@ -1,40 +1,35 @@
 package compiler
 
 import (
-	"fmt"
 	"reflect"
 	"sort"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-// ProjectPlan is a project-wide, target-independent change plan. Every
+// BundlePlan is a bundle-wide, target-independent change plan. Every
 // resource list contains canonical stable IDs; symbolic names and target
 // scopes are intentionally absent.
-type ProjectPlan struct {
-	Project           string                        `json:"project"`
-	Connections       []string                      `json:"connections,omitempty"`
-	Sources           []string                      `json:"sources,omitempty"`
-	Models            []string                      `json:"models,omitempty"`
-	SemanticModels    []string                      `json:"semanticModels,omitempty"`
-	Pipelines         []string                      `json:"pipelines,omitempty"`
-	Dashboards        []string                      `json:"dashboards,omitempty"`
-	Groups            []string                      `json:"groups,omitempty"`
-	RoleBindings      []string                      `json:"roleBindings,omitempty"`
-	Grants            []string                      `json:"grants,omitempty"`
-	DataPolicies      []string                      `json:"dataPolicies,omitempty"`
-	Changes           []ProjectPlanChange           `json:"changes,omitempty"`
-	DependencyChanges []ProjectPlanDependencyChange `json:"dependencyChanges,omitempty"`
-	// Deterministic is compiler-produced evidence that the project expressions
+type BundlePlan struct {
+	Connections       []string                     `json:"connections,omitempty"`
+	Sources           []string                     `json:"sources,omitempty"`
+	Models            []string                     `json:"models,omitempty"`
+	SemanticModels    []string                     `json:"semanticModels,omitempty"`
+	Pipelines         []string                     `json:"pipelines,omitempty"`
+	Dashboards        []string                     `json:"dashboards,omitempty"`
+	Changes           []BundlePlanChange           `json:"changes,omitempty"`
+	DependencyChanges []BundlePlanDependencyChange `json:"dependencyChanges,omitempty"`
+	// Deterministic is compiler-produced evidence that the source expressions
 	// contain no known volatile SQL functions. Unknown/hand-built plans leave
 	// this false, so reuse remains fail-closed.
-	Deterministic bool               `json:"deterministic,omitempty"`
-	Summary       ProjectPlanSummary `json:"summary,omitempty"`
+	Deterministic bool              `json:"deterministic,omitempty"`
+	Summary       BundlePlanSummary `json:"summary,omitempty"`
 }
 
-type ProjectPlanSummary struct {
+type BundlePlanSummary struct {
 	Added                 int  `json:"added,omitempty"`
 	Changed               int  `json:"changed,omitempty"`
 	Removed               int  `json:"removed,omitempty"`
@@ -43,7 +38,7 @@ type ProjectPlanSummary struct {
 	MaterializationImpact bool `json:"materializationImpact,omitempty"`
 }
 
-type ProjectPlanChange struct {
+type BundlePlanChange struct {
 	Action                string `json:"action"`
 	ID                    string `json:"id"`
 	Type                  string `json:"type"`
@@ -53,7 +48,7 @@ type ProjectPlanChange struct {
 	MaterializationImpact bool   `json:"materializationImpact,omitempty"`
 }
 
-type ProjectPlanDependencyChange struct {
+type BundlePlanDependencyChange struct {
 	Action                string `json:"action"`
 	From                  string `json:"from"`
 	To                    string `json:"to"`
@@ -62,71 +57,39 @@ type ProjectPlanDependencyChange struct {
 	MaterializationImpact bool   `json:"materializationImpact,omitempty"`
 }
 
-func PlanProject(projectPath string) (ProjectPlan, error) {
-	project, err := LoadProject(projectPath)
+func PlanSourceRoot(sourceRoot string) (BundlePlan, error) {
+	project, err := LoadSourceRoot(sourceRoot)
 	if err != nil {
-		return ProjectPlan{}, err
+		return BundlePlan{}, err
 	}
-	return planForProject(project), nil
+	return planForSourceAssembly(project), nil
 }
 
-// PlanProjectAgainstGraph compares authored project graph bytes with an
+// PlanSourceRootAgainstGraph compares authored resource graph bytes with an
 // active graph. The active graph is portable and contains no serving identity.
-func PlanProjectAgainstGraph(projectPath string, active projectgraph.ProjectGraph) (ProjectPlan, error) {
-	project, err := LoadProject(projectPath)
+func PlanSourceRootAgainstGraph(sourceRoot string, active projectgraph.ProjectGraph) (BundlePlan, error) {
+	project, err := LoadSourceRoot(sourceRoot)
 	if err != nil {
-		return ProjectPlan{}, err
+		return BundlePlan{}, err
 	}
-	return planProjectAgainstGraph(project, active), nil
-}
-
-// PlanProjectFilesAgainstGraph is the in-memory counterpart to
-// PlanProjectAgainstGraph.
-func PlanProjectFilesAgainstGraph(files map[string][]byte, projectFile string, active projectgraph.ProjectGraph) (ProjectPlan, error) {
-	project, err := LoadProjectFiles(files, projectFile)
-	if err != nil {
-		return ProjectPlan{}, err
-	}
-	return planProjectAgainstGraph(project, active), nil
-}
-
-func planProjectAgainstGraph(project Project, active projectgraph.ProjectGraph) ProjectPlan {
-	plan := planForProject(project)
-	changes, dependencyChanges, summary := diffProjectGraphs(project.Graph, active)
+	plan := planForSourceAssembly(project)
+	changes, dependencyChanges, summary := diffResourceGraphs(project.Graph, active)
 	plan.Changes, plan.DependencyChanges, plan.Summary = changes, dependencyChanges, summary
-	return plan
+	return plan, nil
 }
 
-// PlanProjectAgainstArtifact compares authored definitions with the exact
+// PlanSourceRootAgainstBundle compares authored definitions with the exact
 // compiled artifact retained by the active serving generation. Graph nodes
 // intentionally carry only identity/metadata, so comparing the graph alone
 // cannot detect SQL, source, or Model materialization changes at an unchanged ID/path.
-func PlanProjectAgainstArtifact(projectPath string, active projectartifact.Project) (ProjectPlan, error) {
-	project, err := LoadProject(projectPath)
+func PlanSourceRootAgainstBundle(sourceRoot string, active projectartifact.SourceBundle) (BundlePlan, error) {
+	project, err := LoadSourceRoot(sourceRoot)
 	if err != nil {
-		return ProjectPlan{}, err
+		return BundlePlan{}, err
 	}
-	return planProjectAgainstArtifact(project, active)
-}
-
-// PlanProjectFilesAgainstArtifact is the in-memory counterpart to
-// PlanProjectAgainstArtifact.
-func PlanProjectFilesAgainstArtifact(files map[string][]byte, projectFile string, active projectartifact.Project) (ProjectPlan, error) {
-	project, err := LoadProjectFiles(files, projectFile)
-	if err != nil {
-		return ProjectPlan{}, err
-	}
-	return planProjectAgainstArtifact(project, active)
-}
-
-func planProjectAgainstArtifact(project Project, active projectartifact.Project) (ProjectPlan, error) {
-	plan := planForProject(project)
-	changes, dependencyChanges, summary := diffProjectGraphs(project.Graph, active.Graph())
-	materializationChanges, err := diffCompiledMaterialization(project, active)
-	if err != nil {
-		return ProjectPlan{}, err
-	}
-	for _, materialization := range materializationChanges {
+	plan := planForSourceAssembly(project)
+	changes, dependencyChanges, summary := diffResourceGraphs(project.Graph, active.Graph())
+	for _, materialization := range diffCompiledMaterialization(project, active) {
 		merged := false
 		for i := range changes {
 			if changes[i].ID == materialization.ID && changes[i].Action == materialization.Action {
@@ -146,7 +109,7 @@ func planProjectAgainstArtifact(project Project, active projectartifact.Project)
 		}
 		return changes[i].Action < changes[j].Action
 	})
-	summary = ProjectPlanSummary{DependencyChanges: len(dependencyChanges)}
+	summary = BundlePlanSummary{DependencyChanges: len(dependencyChanges)}
 	for _, change := range changes {
 		if change.Action == "add" {
 			summary.Added++
@@ -165,24 +128,16 @@ func planProjectAgainstArtifact(project Project, active projectartifact.Project)
 	return plan, nil
 }
 
-func diffCompiledMaterialization(project Project, active projectartifact.Project) ([]ProjectPlanChange, error) {
-	changes := make([]ProjectPlanChange, 0)
+func diffCompiledMaterialization(project sourceAssembly, active projectartifact.SourceBundle) []BundlePlanChange {
+	changes := make([]BundlePlanChange, 0)
 	activeTables := active.ModelTables()
-	// Compare the canonical manifest projection rather than compiler.Project's
-	// authored-name runtime maps. The latter intentionally use symbolic source
-	// and model names, while the artifact manifest uses stable resource IDs and
-	// canonical references; comparing them directly reports every unchanged
-	// model as a materialization change after artifact serialization.
-	authoredArtifact, err := projectartifact.NewProject(project.Graph, project.Manifest)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize authored project materialization: %w", err)
+	authoredTables := make(map[string]semanticmodel.Table, len(project.Models))
+	for name, table := range project.Models {
+		if id := project.ModelIDs[name]; id != "" {
+			authoredTables[id] = table
+		}
 	}
-	authoredTables := authoredArtifact.ModelTables()
-	capacity, err := checkedCapacitySum(len(activeTables), len(authoredTables))
-	if err != nil {
-		return nil, fmt.Errorf("compiled materialization table set: %w", err)
-	}
-	seen := make(map[string]struct{}, capacity)
+	seen := make(map[string]struct{}, len(activeTables)+len(authoredTables))
 	for id := range authoredTables {
 		seen[id] = struct{}{}
 	}
@@ -205,16 +160,17 @@ func diffCompiledMaterialization(project Project, active projectartifact.Project
 		} else if !retainedOK {
 			action, reason = "add", "model definition added to authored artifact"
 		}
-		breaking, _ := projectResourceImpact(projectgraph.KindModel, projectgraph.KindModel, action)
-		changes = append(changes, ProjectPlanChange{Action: action, ID: id, Type: string(projectgraph.KindModel), Key: resource.Name, Reason: reason, Breaking: breaking, MaterializationImpact: true})
+		breaking, _ := resourceImpact(projectgraph.KindModel, projectgraph.KindModel, action)
+		changes = append(changes, BundlePlanChange{Action: action, ID: id, Type: string(projectgraph.KindModel), Key: resource.Name, Reason: reason, Breaking: breaking, MaterializationImpact: true})
 	}
 	activeSources := active.Manifest().Sources
-	authoredSources := authoredArtifact.Manifest().Sources
-	capacity, err = checkedCapacitySum(len(activeSources), len(authoredSources))
-	if err != nil {
-		return nil, fmt.Errorf("compiled materialization source set: %w", err)
+	authoredSources := make(map[string]semanticmodel.Source, len(project.Sources))
+	for name, source := range project.Sources {
+		if id := project.SourceIDs[name]; id != "" {
+			authoredSources[id] = source
+		}
 	}
-	seen = make(map[string]struct{}, capacity)
+	seen = make(map[string]struct{}, len(activeSources)+len(authoredSources))
 	for id := range authoredSources {
 		seen[id] = struct{}{}
 	}
@@ -235,58 +191,23 @@ func diffCompiledMaterialization(project Project, active projectartifact.Project
 		} else if _, retained := activeSources[id]; !retained {
 			action = "add"
 		}
-		changes = append(changes, ProjectPlanChange{Action: action, ID: id, Type: string(projectgraph.KindSource), Key: resource.Name, Reason: "compiled source definition changed", MaterializationImpact: true})
+		changes = append(changes, BundlePlanChange{Action: action, ID: id, Type: string(projectgraph.KindSource), Key: resource.Name, Reason: "compiled source definition changed", MaterializationImpact: true})
 	}
-	return changes, nil
+	return changes
 }
 
-func checkedCapacitySum(left, right int) (int, error) {
-	if left < 0 || right < 0 {
-		return 0, fmt.Errorf("capacity cannot be negative")
-	}
-	maximumInt := int(^uint(0) >> 1)
-	if left > maximumInt-right {
-		return 0, fmt.Errorf("capacity overflows platform int")
-	}
-	return left + right, nil
-}
-
-func planForProject(project Project) ProjectPlan {
-	plan := ProjectPlan{Project: string(project.ID), Deterministic: projectDeterministic(project)}
+func planForSourceAssembly(project sourceAssembly) BundlePlan {
+	plan := BundlePlan{Deterministic: sourceAssemblyDeterministic(project)}
 	plan.Connections = sortedIDValues(project.ConnectionIDs)
 	plan.Sources = sortedIDValues(project.SourceIDs)
 	plan.Models = sortedIDValues(project.ModelIDs)
 	plan.SemanticModels = sortedIDValues(project.SemanticModelIDs)
 	plan.Pipelines = sortedIDValues(project.PipelineIDs)
 	plan.Dashboards = sortedIDValues(project.DashboardIDs)
-	for name := range project.Access.Groups {
-		if id := project.ResourceIDs["group:"+name]; id != "" {
-			plan.Groups = append(plan.Groups, id)
-		}
-	}
-	for name := range project.Access.RoleBindings {
-		if id := project.ResourceIDs["rolebinding:"+name]; id != "" {
-			plan.RoleBindings = append(plan.RoleBindings, id)
-		}
-	}
-	for name := range project.Access.Grants {
-		if id := project.ResourceIDs["grant:"+name]; id != "" {
-			plan.Grants = append(plan.Grants, id)
-		}
-	}
-	for name := range project.Access.DataPolicies {
-		if id := project.ResourceIDs["datapolicy:"+name]; id != "" {
-			plan.DataPolicies = append(plan.DataPolicies, id)
-		}
-	}
-	sort.Strings(plan.Groups)
-	sort.Strings(plan.RoleBindings)
-	sort.Strings(plan.Grants)
-	sort.Strings(plan.DataPolicies)
 	return plan
 }
 
-func projectDeterministic(project Project) bool {
+func sourceAssemblyDeterministic(project sourceAssembly) bool {
 	// SQL volatility cannot be established safely with a substring denylist:
 	// DuckDB exposes a large and evolving function registry, and a new
 	// context-dependent function would otherwise silently become reusable. The
@@ -328,7 +249,7 @@ func sortedIDValues(values map[string]string) []string {
 	return result
 }
 
-func diffProjectGraphs(authored, active projectgraph.ProjectGraph) ([]ProjectPlanChange, []ProjectPlanDependencyChange, ProjectPlanSummary) {
+func diffResourceGraphs(authored, active projectgraph.ProjectGraph) ([]BundlePlanChange, []BundlePlanDependencyChange, BundlePlanSummary) {
 	authoredResources := map[projectgraph.ResourceID]projectgraph.Resource{}
 	activeResources := map[projectgraph.ResourceID]projectgraph.Resource{}
 	for _, resource := range authored.Resources() {
@@ -337,31 +258,31 @@ func diffProjectGraphs(authored, active projectgraph.ProjectGraph) ([]ProjectPla
 	for _, resource := range active.Resources() {
 		activeResources[resource.ID] = resource
 	}
-	changes := make([]ProjectPlanChange, 0)
+	changes := make([]BundlePlanChange, 0)
 	for id, resource := range authoredResources {
 		other, exists := activeResources[id]
 		if !exists {
-			change := ProjectPlanChange{Action: "add", ID: string(id), Type: string(resource.Kind), Key: resource.Name, Reason: "not in active graph"}
-			change.Breaking, change.MaterializationImpact = projectResourceImpact(resource.Kind, resource.Kind, change.Action)
+			change := BundlePlanChange{Action: "add", ID: string(id), Type: string(resource.Kind), Key: resource.Name, Reason: "not in active graph"}
+			change.Breaking, change.MaterializationImpact = resourceImpact(resource.Kind, resource.Kind, change.Action)
 			changes = append(changes, change)
 			continue
 		}
 		if !reflect.DeepEqual(resource, other) {
-			change := ProjectPlanChange{Action: "change", ID: string(id), Type: string(resource.Kind), Key: resource.Name, Reason: "resource descriptor changed"}
-			change.Breaking, change.MaterializationImpact = projectResourceImpact(resource.Kind, other.Kind, change.Action)
+			change := BundlePlanChange{Action: "change", ID: string(id), Type: string(resource.Kind), Key: resource.Name, Reason: "resource descriptor changed"}
+			change.Breaking, change.MaterializationImpact = resourceImpact(resource.Kind, other.Kind, change.Action)
 			changes = append(changes, change)
 		}
 	}
 	for id, resource := range activeResources {
 		if _, exists := authoredResources[id]; !exists {
-			change := ProjectPlanChange{Action: "remove", ID: string(id), Type: string(resource.Kind), Key: resource.Name, Reason: "not in authored graph"}
-			change.Breaking, change.MaterializationImpact = projectResourceImpact(resource.Kind, resource.Kind, change.Action)
+			change := BundlePlanChange{Action: "remove", ID: string(id), Type: string(resource.Kind), Key: resource.Name, Reason: "not in authored graph"}
+			change.Breaking, change.MaterializationImpact = resourceImpact(resource.Kind, resource.Kind, change.Action)
 			changes = append(changes, change)
 		}
 	}
 	sort.Slice(changes, func(i, j int) bool { return changes[i].ID < changes[j].ID })
 	dependencyChanges := diffProjectEdges(authored.Edges(), active.Edges(), authoredResources, activeResources)
-	summary := ProjectPlanSummary{DependencyChanges: len(dependencyChanges)}
+	summary := BundlePlanSummary{DependencyChanges: len(dependencyChanges)}
 	for _, change := range changes {
 		switch change.Action {
 		case "add":
@@ -380,7 +301,7 @@ func diffProjectGraphs(authored, active projectgraph.ProjectGraph) ([]ProjectPla
 	return changes, dependencyChanges, summary
 }
 
-func projectResourceImpact(kind, otherKind projectgraph.Kind, action string) (breaking, materialization bool) {
+func resourceImpact(kind, otherKind projectgraph.Kind, action string) (breaking, materialization bool) {
 	// Metadata/provenance movement is intentionally non-breaking: graph
 	// identity is the stable resource ID. Kind changes and removals are
 	// breaking; removing executable resources also invalidates materialization.
@@ -399,7 +320,7 @@ func diffProjectEdges(
 	active []projectgraph.Edge,
 	authoredResources,
 	activeResources map[projectgraph.ResourceID]projectgraph.Resource,
-) []ProjectPlanDependencyChange {
+) []BundlePlanDependencyChange {
 	key := func(edge projectgraph.Edge) string {
 		return string(edge.From) + "|" + string(edge.To) + "|" + edge.Relation
 	}
@@ -410,7 +331,7 @@ func diffProjectEdges(
 	for _, edge := range active {
 		activeSet[key(edge)] = edge
 	}
-	result := make([]ProjectPlanDependencyChange, 0)
+	result := make([]BundlePlanDependencyChange, 0)
 	for value, edge := range authoredSet {
 		if _, ok := activeSet[value]; !ok {
 			result = append(result, projectDependencyChange("add", edge, authoredResources[edge.To].Kind))
@@ -433,8 +354,8 @@ func diffProjectEdges(
 	return result
 }
 
-func projectDependencyChange(action string, edge projectgraph.Edge, resourceKind projectgraph.Kind) ProjectPlanDependencyChange {
-	return ProjectPlanDependencyChange{
+func projectDependencyChange(action string, edge projectgraph.Edge, resourceKind projectgraph.Kind) BundlePlanDependencyChange {
+	return BundlePlanDependencyChange{
 		Action: action, From: string(edge.From), To: string(edge.To), Type: edge.Relation, ResourceKind: string(resourceKind),
 		MaterializationImpact: edge.Relation == "reads_source" || edge.Relation == "uses_model" || edge.Relation == "refreshes",
 	}

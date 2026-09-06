@@ -204,9 +204,9 @@ func (remote *recordingRemote) Synchronize(_ context.Context, request SyncReques
 }
 
 func testSnapshot(content string) Snapshot {
-	artifacts := []Artifact{contentArtifact("leapview.yaml", []byte(content))}
+	artifacts := []Artifact{contentArtifact("dashboards/sales.yaml", []byte(content))}
 	return Snapshot{
-		ProjectID: "sales_project", ProjectFile: "leapview.yaml",
-		Digest: candidateSetDigest("sales_project", "leapview.yaml", artifacts), Artifacts: artifacts,
+		ProjectID: "sales_project",
+		Digest:    candidateSetDigest(artifacts), Artifacts: artifacts,
 	}
 }

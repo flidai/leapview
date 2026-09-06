@@ -28,7 +28,7 @@ load_postgres_dev_env() {
 }
 
 usage() {
-	echo "Usage: $0 start [project [connection source-root]]|once [project [connection source-root]]|publish [project [connection source-root]]|stop|status|logs"
+	echo "Usage: $0 start [source-root [connection data-root]]|once [source-root [connection data-root]]|publish [source-root [connection data-root]]|stop|status|logs"
 }
 
 is_alive() {
@@ -416,15 +416,16 @@ bootstrap_local_physical_pool() {
 
 publish_project() {
 	local port="$1"
-	local project="${2:-${LEAPVIEW_DEV_PROJECT:-dashboards/leapview.yaml}}"
+	local source_root="${2:-${LEAPVIEW_DEV_SOURCE_ROOT:-dashboards}}"
 	local connection="${3:-}"
+	local project_id="${LEAPVIEW_DEV_PROJECT_ID:-project:leapview-showcase}"
 	local token="${LEAPVIEW_DEV_API_TOKEN:-dev}"
 	local from="${4:-}"
 	if [[ "${LEAPVIEW_DEV_SKIP_PUBLISH:-}" == "1" ]]; then
     echo "Skipping dev candidate publication"
     return 0
   fi
-	if [[ "$project" == "dashboards/leapview.yaml" ]]; then
+	if [[ "$source_root" == "dashboards" ]]; then
 		connection="${connection:-olist}"
 		from="${from:-.data/olist}"
 	fi
@@ -435,7 +436,7 @@ publish_project() {
 		}
 		from="$(canonical_source_root "$from")" || return 1
 		local sync_output revision
-		sync_output="$(go run ./cmd/leapview data sync --project "$project" --connection "$connection" --from "$from" --target "http://localhost:${port}" --token "$token")" || return 1
+		sync_output="$(go run ./cmd/leapview data sync --source-root "$source_root" --connection "$connection" --from "$from" --target "http://localhost:${port}" --project-id "$project_id" --token "$token")" || return 1
     printf '%s\n' "$sync_output"
     revision="$(printf '%s\n' "$sync_output" | awk '$1 == "staged" { print $2 }')"
     [[ "$revision" =~ ^sha256:[0-9a-f]{64}$ ]] || {
@@ -444,7 +445,7 @@ publish_project() {
     }
 	fi
 	local dev_output candidate_id
-	dev_output="$(go run ./cmd/leapview dev --once --no-browser --project "$project" --target "http://localhost:${port}" --token "$token")" || return 1
+	dev_output="$(go run ./cmd/leapview dev --once --no-browser --source-root "$source_root" --target "http://localhost:${port}" --project-id "$project_id" --token "$token")" || return 1
 	printf '%s\n' "$dev_output"
 	candidate_id="$(awk '$1 == "candidate" { print $2; exit }' <<<"$dev_output")"
 	[[ "$candidate_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || {
@@ -456,7 +457,7 @@ publish_project() {
 }
 
 publish_running() {
-	local project="${1:-${LEAPVIEW_DEV_PROJECT:-dashboards/leapview.yaml}}"
+	local source_root="${1:-${LEAPVIEW_DEV_SOURCE_ROOT:-dashboards}}"
 	local connection="${2:-}"
 	local from="${3:-}"
 	local port
@@ -470,7 +471,7 @@ publish_running() {
 		return 1
 	}
 	cd "$ROOT"
-	publish_project "$port" "$project" "$connection" "$from"
+	publish_project "$port" "$source_root" "$connection" "$from"
 }
 
 attach_server() {
@@ -500,7 +501,7 @@ attach_server() {
 }
 
 start() {
-	local project="${1:-${LEAPVIEW_DEV_PROJECT:-dashboards/leapview.yaml}}"
+	local source_root="${1:-${LEAPVIEW_DEV_SOURCE_ROOT:-dashboards}}"
 	local connection="${2:-}"
 	local from="${3:-}"
   load_postgres_dev_env
@@ -515,7 +516,7 @@ start() {
       echo "URL: http://localhost:$existing_port"
       echo "Logs: $LOG_FILE"
       echo "Publishing project candidate to existing target..."
-			publish_project "$existing_port" "$project" "$connection" "$from"
+			publish_project "$existing_port" "$source_root" "$connection" "$from"
       if [[ "${LEAPVIEW_DEV_ONCE:-}" == "1" ]]; then
         echo "One-shot candidate publication completed on the existing target"
         return 0
@@ -608,7 +609,7 @@ start() {
   echo "$port" > "$PORT_FILE"
   echo "$pid" > "$PID_FILE"
 
-	if ! publish_project "$port" "$project" "$connection" "$from"; then
+	if ! publish_project "$port" "$source_root" "$connection" "$from"; then
     stop_pid "$pid" "LeapView dev server"
     exit 1
   fi

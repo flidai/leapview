@@ -613,9 +613,9 @@ func (m *Module) decodeCandidateSynchronizationRequest(
 		return deployment.CandidateSynchronizationRequest{}, false
 	}
 	request := deployment.CandidateSynchronizationRequest{
-		ProjectFile: body.ProjectFile, ArtifactDigest: body.ArtifactDigest,
-		SourceOnly: body.SourceOnly,
-		Artifacts:  make([]deployment.CandidateSourceArtifact, len(body.Artifacts)),
+		ArtifactDigest: body.ArtifactDigest,
+		SourceOnly:     body.SourceOnly,
+		Artifacts:      make([]deployment.CandidateSourceArtifact, len(body.Artifacts)),
 	}
 	if body.CandidateKey != nil {
 		request.CandidateKey = *body.CandidateKey

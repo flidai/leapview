@@ -78,18 +78,16 @@ Avoid silent lossy conversions. `try_cast` can keep a refresh running, but unexp
 
 ### Discover and validate
 
-Ensure the project manifest discovers the model file:
+Place the model file beneath the source root's conventional `models/` directory:
 
-```yaml
-spec:
-  models:
-    include: [models/*.yaml]
+```text
+dashboards/models/*.yaml
 ```
 
 Then validate the project:
 
 ```sh
-leapview validate --project dashboards/leapview.yaml
+leapview validate --source-root dashboards
 ```
 
 Validation checks configuration shape and references. Data-level correctness requires a materialization or preview against actual source data.

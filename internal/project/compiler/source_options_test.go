@@ -203,12 +203,12 @@ func TestEffectivePathLocationAndSchemaEvidencePersistInManifestJSON(t *testing.
 		LocationType: semanticmodel.KindPath, Path: "orders.csv", Format: "csv", Connection: "files", PathLocation: location, EffectivePathLocation: location, SchemaMode: "compatible",
 		Fields: map[string]semanticmodel.SourceField{"id": {Datatype: semanticmodel.DataTypeInteger, Nullable: &nonNull}},
 	}
-	manifest := projectmanifest.Project{Sources: map[string]semanticmodel.Source{"source:orders": source}}
+	manifest := projectmanifest.ResourceManifest{Sources: map[string]semanticmodel.Source{"source:orders": source}}
 	raw, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatalf("marshal manifest: %v", err)
 	}
-	var roundTrip projectmanifest.Project
+	var roundTrip projectmanifest.ResourceManifest
 	if err := json.Unmarshal(raw, &roundTrip); err != nil {
 		t.Fatalf("unmarshal manifest: %v", err)
 	}

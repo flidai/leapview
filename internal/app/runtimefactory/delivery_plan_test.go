@@ -19,7 +19,6 @@ import (
 
 func TestPipelineScopeRelationIDsUsesOpaqueGraphIdentity(t *testing.T) {
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project:delivery", Kind: projectgraph.KindProject, Name: "delivery"},
 		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
 		{ID: "model:customer_orders", Kind: projectgraph.KindModel, Name: "customer_orders"},
 	}, nil)
@@ -43,7 +42,7 @@ func TestPipelineScopeRelationIDsUsesOpaqueGraphIdentity(t *testing.T) {
 }
 
 func TestPipelinePlanRejectsRefreshOfRelationOutsideExactScope(t *testing.T) {
-	artifact := dashboardPhysicalArtifact(t, "Sales", false)
+	artifact := dashboardPhysicalArtifact(t, "Sales")
 	projectID := projectgraph.ResourceID("project:dashboard")
 	sourceDigest := deliveryPlanDigest('a')
 	pipelinePlan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
@@ -62,7 +61,7 @@ func TestPipelinePlanRejectsRefreshOfRelationOutsideExactScope(t *testing.T) {
 		Artifact:   release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: artifact.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version},
 		Generation: release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
 		Compiler: release.CandidateCompilerEvidence{
-			Graph: artifact.Graph(), Artifact: artifact, Plan: projectcompiler.ProjectPlan{Project: projectID.String()},
+			Graph: artifact.Graph(), Artifact: artifact, Plan: projectcompiler.BundlePlan{},
 			RelationExecution:     map[string]string{"model:orders": deliveryPlanDigest('1'), "model:customers": deliveryPlanDigest('2')},
 			BaseRelationExecution: map[string]string{"model:orders": deliveryPlanDigest('1')},
 		},
@@ -80,7 +79,7 @@ func TestPipelinePlanRejectsRefreshOfRelationOutsideExactScope(t *testing.T) {
 }
 
 func TestPipelinePlanRetainsExactUnselectedRelationWithoutReexecutingIt(t *testing.T) {
-	artifact := dashboardPhysicalArtifact(t, "Sales", false)
+	artifact := dashboardPhysicalArtifact(t, "Sales")
 	projectID := projectgraph.ResourceID("project:dashboard")
 	sourceDigest := deliveryPlanDigest('a')
 	pipelinePlan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
@@ -101,7 +100,7 @@ func TestPipelinePlanRetainsExactUnselectedRelationWithoutReexecutingIt(t *testi
 		// relation is retained from the sealed base and is never re-executed.
 		Generation: release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: false},
 		Compiler: release.CandidateCompilerEvidence{
-			Graph: artifact.Graph(), Artifact: artifact, Plan: projectcompiler.ProjectPlan{Project: projectID.String()},
+			Graph: artifact.Graph(), Artifact: artifact, Plan: projectcompiler.BundlePlan{},
 			RelationExecution:     map[string]string{"model:orders": deliveryPlanDigest('1'), "model:customers": deliveryPlanDigest('2')},
 			BaseRelationExecution: map[string]string{"model:orders": deliveryPlanDigest('1'), "model:customers": deliveryPlanDigest('2')},
 		},
@@ -142,7 +141,7 @@ func TestCandidatePlanExecutionIdentityIncludesDataModeAndEffectiveBindings(t *t
 			Identity: identity, DataRevision: "snapshot:7", DataMode: release.GenerationDataReuseBase, Deterministic: true,
 			Connections: []release.CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}},
 		},
-		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{Project: "project_delivery"}},
+		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.BundlePlan{}},
 	}
 	input := deployment.DeliveryCandidateBuildInput{
 		ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: base.Artifact.SourceDigest,
@@ -198,8 +197,8 @@ func TestCandidatePlanPreservesSemanticRelationshipPathsAndQualificationScope(t 
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: deliveryPlanDigest('a'), ProjectDigest: deliveryPlanDigest('b'), CompilerVersion: "compiler:v1", SchemaVersion: 1},
 		AuthorizationFingerprint: deliveryPlanDigest('c'),
 		Generation:               release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
-		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{
-			Project: "project_delivery", DependencyChanges: []projectcompiler.ProjectPlanDependencyChange{{From: "orders", To: "customers", Type: "uses_model", ResourceKind: string(projectgraph.KindModel), Action: "change"}, {From: "customers", To: "regions", Type: "uses_model", ResourceKind: string(projectgraph.KindModel), Action: "change"}},
+		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.BundlePlan{
+			DependencyChanges: []projectcompiler.BundlePlanDependencyChange{{From: "orders", To: "customers", Type: "uses_model", ResourceKind: string(projectgraph.KindModel), Action: "change"}, {From: "customers", To: "regions", Type: "uses_model", ResourceKind: string(projectgraph.KindModel), Action: "change"}},
 		}},
 	}
 	input := deployment.DeliveryCandidateBuildInput{ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: artifacts.Artifact.SourceDigest, Candidate: deployment.Candidate{ID: "candidate_relationships", TargetID: "target_prod", Scope: deployment.CandidateScope{ProjectID: projectID, Environment: "prod"}}}
@@ -233,7 +232,7 @@ func TestCandidatePlanReuseDecisionUsesExactActiveIdentity(t *testing.T) {
 			Identity: identity, DataRevision: "snapshot:7", DataMode: release.GenerationDataReuseBase, Deterministic: true,
 			Connections: []release.CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}},
 		},
-		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{Project: "project_delivery"}},
+		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.BundlePlan{}},
 	}
 	input := deployment.DeliveryCandidateBuildInput{
 		ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: artifacts.Artifact.SourceDigest,
@@ -318,7 +317,7 @@ func TestCandidatePlanEmitsRelationScopedReuseDecisions(t *testing.T) {
 		// while still retaining unchanged base references.
 		Generation: release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:revision", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
 		Compiler: release.CandidateCompilerEvidence{
-			Plan:                  projectcompiler.ProjectPlan{Project: "project_delivery"},
+			Plan:                  projectcompiler.BundlePlan{},
 			RelationExecution:     map[string]string{"model_orders": deliveryPlanDigest('1'), "model_customers": deliveryPlanDigest('2')},
 			BaseRelationExecution: map[string]string{"model_orders": deliveryPlanDigest('1'), "model_customers": deliveryPlanDigest('9')},
 		},
@@ -356,7 +355,7 @@ func TestCandidatePlanPolicyOnlyChangeRetainsPhysicalRelations(t *testing.T) {
 		AuthorizationFingerprint: deliveryPlanDigest('c'),
 		Generation:               release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataReuseBase, Deterministic: true},
 		Compiler: release.CandidateCompilerEvidence{
-			Plan:                  projectcompiler.ProjectPlan{Project: "project_delivery"},
+			Plan:                  projectcompiler.BundlePlan{},
 			RelationExecution:     map[string]string{"model_orders": deliveryPlanDigest('1')},
 			BaseRelationExecution: map[string]string{"model_orders": deliveryPlanDigest('1')},
 		},
@@ -400,8 +399,8 @@ func TestCandidatePlanPolicyOnlyChangeRetainsPhysicalRelations(t *testing.T) {
 }
 
 func TestCandidatePlanDashboardOnlyChangeRetainsPhysicalRelations(t *testing.T) {
-	baseArtifact := dashboardPhysicalArtifact(t, "Dashboard v1", false)
-	changedArtifact := dashboardPhysicalArtifact(t, "Dashboard v2", true)
+	baseArtifact := dashboardPhysicalArtifact(t, "Dashboard v1")
+	changedArtifact := dashboardPhysicalArtifact(t, "Dashboard v2")
 	relationContext := "sha256:" + strings.Repeat("a", 64)
 	baseRelations, err := baseArtifact.RelationExecutionDigests(relationContext)
 	if err != nil {
@@ -426,7 +425,7 @@ func TestCandidatePlanDashboardOnlyChangeRetainsPhysicalRelations(t *testing.T) 
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: deliveryPlanDigest('a'), ProjectDigest: baseArtifact.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version},
 		AuthorizationFingerprint: deliveryPlanDigest('b'),
 		Generation:               release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataReuseBase, Deterministic: true},
-		Compiler:                 release.CandidateCompilerEvidence{Graph: baseArtifact.Graph(), Plan: projectcompiler.ProjectPlan{Project: "project:dashboard"}, Artifact: baseArtifact, RelationExecution: baseRelations, BaseRelationExecution: baseRelations},
+		Compiler:                 release.CandidateCompilerEvidence{Graph: baseArtifact.Graph(), Plan: projectcompiler.BundlePlan{}, Artifact: baseArtifact, RelationExecution: baseRelations, BaseRelationExecution: baseRelations},
 	}
 	input := deployment.DeliveryCandidateBuildInput{ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: base.Artifact.SourceDigest, Candidate: deployment.Candidate{ID: "candidate_dashboard_only", TargetID: "target_prod", Scope: deployment.CandidateScope{ProjectID: projectID, Environment: "prod", BaseGenerationID: "generation_0"}}}
 	baseRequest, err := CandidatePlanRequest(input, base, "runtime:v1", time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC))
@@ -468,14 +467,13 @@ func TestCandidatePlanDashboardOnlyChangeRetainsPhysicalRelations(t *testing.T) 
 	}
 }
 
-func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string, accessVariant bool) projectartifact.Project {
+func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string) projectartifact.SourceBundle {
 	t.Helper()
 	pathLocation := &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{
 		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: "orders.csv", Format: "csv"},
 		Format:                 "csv",
 	}}
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project:dashboard", Kind: projectgraph.KindProject, Name: "dashboard"},
 		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse"},
 		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},
 		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
@@ -490,19 +488,13 @@ func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string, accessVarian
 	if err != nil {
 		t.Fatal(err)
 	}
-	access := projectmanifest.AccessPolicy{}
-	if accessVariant {
-		access = projectmanifest.AccessPolicy{Groups: map[string]projectmanifest.Group{"analysts": {ID: "analysts", Name: "Analysts"}}}
-	}
-	artifact, err := projectartifact.NewProject(graphValue, projectmanifest.Project{
-		ID: "project:dashboard", Name: "dashboard",
+	artifact, err := projectartifact.NewSourceBundle(graphValue, projectmanifest.ResourceManifest{
 		Connections:          map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
 		Sources:              map[string]semanticmodel.Source{"source:orders": {Connection: "connection:warehouse", Format: "csv", Path: "orders.csv", PathLocation: pathLocation, EffectivePathLocation: pathLocation}},
 		Models:               map[string]semanticmodel.Table{"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}}},
 		SemanticModels:       map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}}}}},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{"dashboard:sales": {ID: "dashboard:sales", Title: dashboardTitle, SemanticModel: "semantic:sales"}},
 		DashboardSources:     map[string]projectmanifest.DashboardSource{"dashboard:sales": {Document: dashboarddocument.DashboardDocument{APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1, Kind: dashboarddocument.DashboardResourceKindDashboard, Metadata: dashboarddocument.DashboardMetadata{ID: "dashboard:sales", Name: "sales_dashboard"}, Spec: dashboarddocument.DashboardSpec{SemanticModel: "semantic:sales"}}}},
-		Access:               access,
 	})
 	if err != nil {
 		t.Fatal(err)

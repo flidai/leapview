@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -17,17 +18,36 @@ import (
 const stableCaptureAttempts = 3
 
 type FilesystemBuilder struct {
-	ProjectPath    string
+	// SourceRoot is the directory containing the conventional authoring
+	// directories. Project identity is deliberately supplied by the target
+	// profile, never read from source files.
+	SourceRoot     string
+	ProjectID      projectgraph.ResourceID
 	SourceRevision *SourceRevision
 	CandidateKey   string
 }
 
 func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
-	projectPath, err := filepath.Abs(builder.ProjectPath)
+	sourceRoot := strings.TrimSpace(builder.SourceRoot)
+	if sourceRoot == "" {
+		return Snapshot{}, fmt.Errorf("analytics source root is required")
+	}
+	sourceRoot, err := filepath.Abs(sourceRoot)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	files, err := captureStableProjectSources(ctx, projectPath)
+	info, err := os.Stat(sourceRoot)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if !info.IsDir() {
+		return Snapshot{}, fmt.Errorf("Project authoring was removed; pass the analytics source root directory %q instead of %q", filepath.Dir(sourceRoot), sourceRoot)
+	}
+	sourceRoot, err = filepath.EvalSymlinks(sourceRoot)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("resolve analytics source root: %w", err)
+	}
+	files, err := captureStableProjectSources(ctx, sourceRoot)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -36,7 +56,6 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	defer os.RemoveAll(root)
-	sourceRoot := filepath.Dir(projectPath)
 	artifacts := make([]Artifact, 0, len(files))
 	for path, content := range files {
 		relative, err := filepath.Rel(sourceRoot, path)
@@ -52,15 +71,16 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 		}
 		artifacts = append(artifacts, contentArtifact(filepath.ToSlash(relative), content))
 	}
-	compiled, err := projectcompiler.Compile(filepath.Join(root, filepath.Base(projectPath)))
-	if err != nil {
+	if _, err := projectcompiler.Compile(root); err != nil {
 		return Snapshot{}, err
 	}
-	projectFile := filepath.ToSlash(filepath.Base(projectPath))
-	projectID := compiled.ProjectID()
+	// The source bundle validates source-root resources and intentionally has
+	// no Project identity. The target-bound identity remains on the snapshot so
+	// remote synchronization is scoped to the authenticated target Project.
+	projectID := builder.ProjectID
 	return normalizeSnapshot(Snapshot{
-		ProjectID: projectID, ProjectFile: projectFile,
-		Digest: candidateSetDigest(projectID, projectFile, artifacts), Artifacts: artifacts,
+		ProjectID: projectID,
+		Digest:    candidateSetDigest(artifacts), Artifacts: artifacts,
 		SourceRevision: builder.SourceRevision,
 		CandidateKey:   builder.CandidateKey,
 	})
@@ -118,12 +138,10 @@ func contentArtifact(path string, content []byte) Artifact {
 	return Artifact{Path: path, Digest: "sha256:" + hex.EncodeToString(sum[:]), SizeBytes: int64(len(content)), Content: append([]byte(nil), content...)}
 }
 
-func candidateSetDigest(projectID projectgraph.ResourceID, projectFile string, artifacts []Artifact) string {
+func candidateSetDigest(artifacts []Artifact) string {
 	ordered := append([]Artifact(nil), artifacts...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Path < ordered[j].Path })
 	hash := sha256.New()
-	projectIDValue := projectID.String()
-	_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:", len(projectIDValue), projectIDValue, len(projectFile), projectFile)
 	for _, artifact := range ordered {
 		_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:%d:", len(artifact.Path), artifact.Path, len(artifact.Digest), artifact.Digest, artifact.SizeBytes)
 	}

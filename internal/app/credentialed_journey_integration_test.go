@@ -322,8 +322,8 @@ func credentialedJourneyCatalogResult(kind projectgraph.Kind) (projectcatalog.Re
 
 type credentialedJourneyDefinitionReader struct{}
 
-func (credentialedJourneyDefinitionReader) ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error) {
-	return projectmanifest.Project{ID: "project:test", Connections: map[string]model.Connection{"connection:credentialed": {Kind: "postgres"}}, RefreshPipelines: map[string]refreshschedule.Definition{"pipeline:visuals-refresh": {}}}, nil, nil
+func (credentialedJourneyDefinitionReader) ProjectDefinitionSnapshot(context.Context) (projectmanifest.ResourceManifest, map[string]*semanticquery.CompiledModel, error) {
+	return projectmanifest.ResourceManifest{Connections: map[string]model.Connection{"connection:credentialed": {Kind: "postgres"}}, RefreshPipelines: map[string]refreshschedule.Definition{"pipeline:visuals-refresh": {}}}, nil, nil
 }
 
 func pipelineOrConnectionRequest(t *testing.T, client *http.Client, endpoint, body, operation, requestID, csrf string) *http.Response {

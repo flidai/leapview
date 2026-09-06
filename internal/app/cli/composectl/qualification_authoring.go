@@ -35,7 +35,7 @@ type qualificationAuthoringOptions struct {
 	EvidenceDir     string
 	SourceRevision  string
 	Target          string
-	Project         string
+	SourceRoot      string
 	ProjectID       string
 	Environment     string
 }
@@ -397,7 +397,8 @@ func (c *Controller) runQualificationAuthoring(
 		"/usr/local/libexec/leapviewctl",
 		"qualify", "client-worker",
 		"--target", options.Target,
-		"--project", options.Project,
+		"--source-root", options.SourceRoot,
+		"--project-id", options.ProjectID,
 		"--source-revision", options.SourceRevision,
 	)
 	if err != nil {
@@ -630,11 +631,11 @@ func normalizeQualificationAuthoringOptions(options qualificationAuthoringOption
 	if options.Target == "" {
 		options.Target = "https://localhost"
 	}
-	if options.Project == "" {
-		// The client image copies and re-owns the fixture under /qualification so the
-		// unprivileged author user can traverse and read it. The base image's
-		// /app copy deliberately retains production runtime ownership.
-		options.Project = "/qualification/evaluation/project/leapview.yaml"
+	if options.SourceRoot == "" {
+		// The production container and its authoring client both retain the
+		// bundled evaluation source under /app; this same root is used for the
+		// initial serving bootstrap and the client preview.
+		options.SourceRoot = "/app/evaluation/project"
 	}
 	if options.ProjectID == "" {
 		options.ProjectID = "project:leapview-evaluation"
@@ -654,7 +655,7 @@ func validateQualificationAuthoringOptions(options qualificationAuthoringOptions
 		"Compose project":    options.ComposeProject,
 		"evidence directory": options.EvidenceDir,
 		"target":             options.Target,
-		"project":            options.Project,
+		"source root":        options.SourceRoot,
 		"project ID":         options.ProjectID,
 		"environment":        options.Environment,
 	} {

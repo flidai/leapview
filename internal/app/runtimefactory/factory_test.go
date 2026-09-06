@@ -11,7 +11,7 @@ import (
 )
 
 func TestBindManagedDataRootsUsesTrustedRuntimeResolution(t *testing.T) {
-	definition := &manifest.Project{NameIndex: manifest.NameIndex{Connections: map[string]string{"olist": "connection:olist", "cloud": "connection:cloud"}}, SemanticModels: map[string]*semanticmodel.Model{
+	definition := &manifest.ResourceManifest{NameIndex: manifest.NameIndex{Connections: map[string]string{"olist": "connection:olist", "cloud": "connection:cloud"}}, SemanticModels: map[string]*semanticmodel.Model{
 		"sales": {Connections: map[string]semanticmodel.Connection{
 			"olist": {Kind: "managed"},
 			"cloud": {Kind: "s3", Scope: "s3://warehouse/"},
@@ -33,7 +33,7 @@ func TestBindManagedDataRootsUsesTrustedRuntimeResolution(t *testing.T) {
 }
 
 func TestBindManagedDataRootsRequiresEveryManagedConnection(t *testing.T) {
-	definition := &manifest.Project{NameIndex: manifest.NameIndex{Connections: map[string]string{"olist": "connection:olist"}}, SemanticModels: map[string]*semanticmodel.Model{
+	definition := &manifest.ResourceManifest{NameIndex: manifest.NameIndex{Connections: map[string]string{"olist": "connection:olist"}}, SemanticModels: map[string]*semanticmodel.Model{
 		"sales": {Connections: map[string]semanticmodel.Connection{"olist": {Kind: "managed"}}},
 	}}
 	err := bindManagedDataRoots(definition, nil)

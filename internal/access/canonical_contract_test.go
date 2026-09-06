@@ -150,7 +150,7 @@ func TestCanonicalCapabilitiesRoundTripAndMatrixIsDefensive(t *testing.T) {
 	if third[0] == CapabilityResourcePublish {
 		t.Fatal("canonical capabilities leaked mutable caller state")
 	}
-	for _, kind := range []graph.Kind{graph.KindProject, graph.KindConnection, graph.KindSource, graph.KindModel, graph.KindSemanticModel, graph.KindPipeline, graph.KindDashboard} {
+	for _, kind := range []graph.Kind{graph.KindProjectNamespace, graph.KindConnection, graph.KindSource, graph.KindModel, graph.KindSemanticModel, graph.KindPipeline, graph.KindDashboard} {
 		got := CapabilitiesForKind(kind)
 		if len(got) == 0 {
 			t.Fatalf("CapabilitiesForKind(%q) is empty", kind)
@@ -179,14 +179,14 @@ func TestCanonicalCapabilityMatrixEnforcesKinds(t *testing.T) {
 	if !SupportsCapability(graph.KindDashboard, CapabilityResourceShare) || !SupportsCapability(graph.KindDashboard, CapabilityResourcePublish) {
 		t.Fatal("dashboard does not support sharing and publishing")
 	}
-	if !SupportsCapability(graph.KindProject, CapabilityProjectAdmin) {
+	if !SupportsCapability(graph.KindProjectNamespace, CapabilityProjectAdmin) {
 		t.Fatal("project does not support project admin")
 	}
 	for _, capability := range []Capability{
 		CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit,
 		CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish,
 	} {
-		if SupportsCapability(graph.KindProject, capability) {
+		if SupportsCapability(graph.KindProjectNamespace, capability) {
 			t.Errorf("project unexpectedly supports resource capability %q", capability)
 		}
 	}
@@ -272,7 +272,6 @@ func TestCanonicalConstructorsRejectNonCanonicalLiterals(t *testing.T) {
 
 func TestCanonicalReferencesMustMatchAuthoritativeGraph(t *testing.T) {
 	project, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_demo", Kind: graph.KindProject, Name: "demo"},
 		{ID: "model_orders", Kind: graph.KindModel, Name: "orders"},
 	}, nil)
 	if err != nil {
@@ -339,7 +338,6 @@ func TestCanonicalGrantCannotProduceAuthorizationKeyWithoutGraphBinding(t *testi
 func canonicalTestProject(t *testing.T) graph.ProjectGraph {
 	t.Helper()
 	project, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_demo", Kind: graph.KindProject, Name: "demo"},
 		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "main"},
 		{ID: "model_orders", Kind: graph.KindModel, Name: "orders"},
 	}, nil)

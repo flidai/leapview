@@ -12,7 +12,6 @@ import (
 
 func TestConnectionAuthorizerFromSnapshotDirectGroupAndDeny(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "connection_orders", Kind: projectgraph.KindConnection, Name: "orders"},
 	}, nil)
 	require.NoError(t, err)

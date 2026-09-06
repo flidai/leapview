@@ -44,7 +44,7 @@ type dashboardRuntimeWithGraph struct {
 	servingStateID  string
 	authorization   accesssnapshot.AuthorizationSnapshot
 	authoredSources map[string]dashboardauthoring.AuthoredDashboardSource
-	projectManifest projectmanifest.Project
+	projectManifest projectmanifest.ResourceManifest
 }
 
 // AuthorizationSnapshot returns the immutable authorization policy compiled
@@ -59,14 +59,14 @@ func (r dashboardRuntimeWithGraph) AuthorizationSnapshot() accesssnapshot.Author
 // contains only identity, metadata, and topology; browser detail projections
 // must read their typed definitions from the exact active generation instead
 // of interpreting graph metadata as a resource document.
-func (r dashboardRuntimeWithGraph) ProjectManifest() projectmanifest.Project {
+func (r dashboardRuntimeWithGraph) ProjectManifest() projectmanifest.ResourceManifest {
 	encoded, err := json.Marshal(r.projectManifest)
 	if err != nil {
-		return projectmanifest.Project{}
+		return projectmanifest.ResourceManifest{}
 	}
-	var cloned projectmanifest.Project
+	var cloned projectmanifest.ResourceManifest
 	if err := json.Unmarshal(encoded, &cloned); err != nil {
-		return projectmanifest.Project{}
+		return projectmanifest.ResourceManifest{}
 	}
 	for modelID, model := range cloned.SemanticModels {
 		compiled, ok := r.CompiledSemanticModel(modelID)
@@ -102,7 +102,7 @@ func (r dashboardRuntimeWithGraph) AuthoredDashboardSource(dashboardID string) (
 	return source, true
 }
 
-func authoredDashboardSources(manifest projectmanifest.Project, projectID projectgraph.ResourceID) (map[string]dashboardauthoring.AuthoredDashboardSource, error) {
+func authoredDashboardSources(manifest projectmanifest.ResourceManifest, projectID projectgraph.ResourceID) (map[string]dashboardauthoring.AuthoredDashboardSource, error) {
 	sources := make(map[string]dashboardauthoring.AuthoredDashboardSource, len(manifest.DashboardSources))
 	for id, source := range manifest.DashboardSources {
 		dashboardID, err := projectgraph.NewResourceID(id)

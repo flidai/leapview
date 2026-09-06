@@ -34,7 +34,7 @@ func TestValidateMarkdownChecksYAMLSyntaxAndResourceSchemas(t *testing.T) {
 	if issues[0].File != "docs/example.md" || issues[0].Line != 5 || !strings.Contains(issues[0].Message, "YAML") {
 		t.Errorf("syntax issue = %#v", issues[0])
 	}
-	if issues[1].File != "docs/example.md" || issues[1].Line != 15 || !strings.Contains(issues[1].Message, "unsupported") {
+	if issues[1].File != "docs/example.md" || issues[1].Line != 9 || !strings.Contains(issues[1].Message, "not a supported authored resource") {
 		t.Errorf("schema issue = %#v", issues[1])
 	}
 }
@@ -55,25 +55,12 @@ filters:
 ~~~
 
 ` + "```yaml\n" + `apiVersion: leapview.dev/v1
-kind: Project
+kind: Connection
 metadata:
-  id: project:commerce
-  name: commerce
+  id: connection:warehouse
+  name: warehouse
 spec:
-  connections:
-    include: [connections/*.yaml]
-  sources:
-    include: [sources/*.yaml]
-  models:
-    include: [models/*.yaml]
-  semanticModels:
-    include: [semantic-models/*.yaml]
-  pipelines:
-    include: [pipelines/*.yaml]
-  dashboards:
-    include: [dashboards/*.yaml]
-  access:
-    include: [access/*.yaml]
+  type: managed
 ` + "```\n\n```yaml\n" + `apiVersion: apps/v1
 kind: Deployment
 metadata:

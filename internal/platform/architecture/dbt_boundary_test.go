@@ -302,7 +302,6 @@ func TestDBTWarehouseBoundaryWorkflowPublishesBeforeLeapView(t *testing.T) {
 	}
 	activationOrder := []string{
 		"Render the ordinary Azure-backed LeapView bundle",
-		"Assert authored current-profile Project identity",
 		"Set up the cached LeapView CI toolchain",
 		"Build the ordinary LeapView CLI",
 		"Qualify the physical publication through LeapView",
@@ -382,21 +381,15 @@ func TestDBTWarehouseBoundaryWorkflowPublishesBeforeLeapView(t *testing.T) {
 			t.Errorf("activation step %q can authenticate as the producer", step.Name)
 		}
 	}
-	assertProject := dbtBoundaryStepByName(t, activation.Steps, "Assert authored current-profile Project identity")
-	for _, required := range []string{
-		`"$LEAPVIEW_PROJECT_FILE"`,
-		"kind: Project",
-		"metadata:",
-		"LEAPVIEW_WORKLOAD_PROJECT",
-		"test \"$project_id\"",
-	} {
-		if !strings.Contains(assertProject.Run, required) {
-			t.Errorf("Project identity assertion step is missing %q", required)
-		}
+	if dbtBoundaryStepIndex(activation.Steps, "Assert authored current-profile Project identity") >= 0 {
+		t.Fatal("activation still derives target Project identity from authored source")
 	}
 	render := dbtBoundaryStepByName(t, activation.Steps, "Render the ordinary Azure-backed LeapView bundle")
 	if !strings.Contains(render.Run, "type: azure_blob") {
 		t.Fatal("rendered LeapView bundle does not select the ordinary azure_blob connection")
+	}
+	if !strings.Contains(render.Run, "LEAPVIEW_SOURCE_ROOT") || strings.Contains(render.Run, "LEAPVIEW_PROJECT_FILE") {
+		t.Fatal("rendered LeapView bundle does not expose a Project-free source root")
 	}
 
 	qualify := dbtBoundaryStepByName(t, activation.Steps, "Qualify the physical publication through LeapView")

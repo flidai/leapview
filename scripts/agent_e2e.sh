@@ -62,10 +62,11 @@ export LEAPVIEW_AGENT_BASE_URL="https://api.deepseek.com"
 export LEAPVIEW_AGENT_MODEL="${LEAPVIEW_AGENT_MODEL:-deepseek-v4-flash}"
 
 TOKEN="$LEAPVIEW_DEV_API_TOKEN"
+PROJECT_ID="${LEAPVIEW_DEV_PROJECT_ID:-project:leapview-showcase}"
 export PORT
 export LEAPVIEW_DEV_RESTART=1
 export LEAPVIEW_DEV_SKIP_PUBLISH=1
-./scripts/dev-server.sh start dashboards/leapview.yaml olist .data/olist > "$TMP_DIR/server.log" 2>&1 &
+./scripts/dev-server.sh start dashboards olist .data/olist > "$TMP_DIR/server.log" 2>&1 &
 SERVER_PID="$!"
 
 ready=false
@@ -86,13 +87,13 @@ if [[ "$ready" != true ]]; then
   exit 1
 fi
 
-SYNC_OUTPUT="$("$BIN" data sync --project dashboards/leapview.yaml --connection olist --from .data/olist --target "$TARGET" --token "$TOKEN")"
+SYNC_OUTPUT="$("$BIN" data sync --source-root dashboards --connection olist --from .data/olist --target "$TARGET" --project-id "$PROJECT_ID" --token "$TOKEN")"
 REVISION="$(awk '$1 == "staged" { print $2 }' <<<"$SYNC_OUTPUT")"
 [[ "$REVISION" =~ ^sha256:[0-9a-f]{64}$ ]] || {
   echo "managed data sync did not return a canonical revision" >&2
   exit 1
 }
-DEV_OUTPUT="$("$BIN" dev --once --no-browser --target "$TARGET" --token "$TOKEN" --project dashboards/leapview.yaml)"
+DEV_OUTPUT="$("$BIN" dev --once --no-browser --target "$TARGET" --project-id "$PROJECT_ID" --token "$TOKEN" --source-root dashboards)"
 CANDIDATE_ID="$(awk '$1 == "candidate" { print $2; exit }' <<<"$DEV_OUTPUT")"
 [[ "$CANDIDATE_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || {
   echo "development candidate publication did not return a canonical candidate ID" >&2

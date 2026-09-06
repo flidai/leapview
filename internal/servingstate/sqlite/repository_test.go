@@ -681,9 +681,8 @@ func validValidation(projectID projectgraph.ResourceID) servingstate.Validation 
 
 func graphForProject(projectID projectgraph.ResourceID) projectgraph.ProjectGraph {
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: projectID, Kind: projectgraph.KindProject, Name: "project"},
 		{ID: projectgraph.ResourceID("dashboard"), Kind: projectgraph.KindDashboard, Name: "dashboard"},
-	}, []projectgraph.Edge{{From: projectID, To: "dashboard", Relation: "contains"}})
+	}, nil)
 	if err != nil {
 		panic(err)
 	}

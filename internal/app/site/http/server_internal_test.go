@@ -872,7 +872,7 @@ func TestSiteDocumentationPreservesDiataxisTypes(t *testing.T) {
 		"contributing/repository":   "how-to",
 		"concepts/managed-data":     "explanation",
 		"concepts/semantic-models":  "explanation",
-		"config/project":            "reference",
+		"config/connection":         "reference",
 	}
 	for slug, want := range tests {
 		document, ok := siteDocumentBySlug(slug)
@@ -1376,34 +1376,34 @@ func TestSiteServesGeneratedConfigurationReferenceAndSchema(t *testing.T) {
 	server := httptest.NewServer(NewHandler())
 	defer server.Close()
 
-	article, err := server.Client().Get(server.URL + "/docs/config/project")
+	article, err := server.Client().Get(server.URL + "/docs/config/connection")
 	if err != nil {
-		t.Fatalf("get generated project configuration reference: %v", err)
+		t.Fatalf("get generated connection configuration reference: %v", err)
 	}
 	defer article.Body.Close()
 	if article.StatusCode != http.StatusOK {
-		t.Fatalf("project configuration status = %d, want %d", article.StatusCode, http.StatusOK)
+		t.Fatalf("connection configuration status = %d, want %d", article.StatusCode, http.StatusOK)
 	}
 	body := readBody(t, article)
-	for _, want := range []string{`<h1 id="project-configuration">Project configuration</h1>`, `<h2 id="example">Example</h2>`, `<h2 id="fields">Fields</h2>`, "/docs/schemas/project.schema.json", `href="/docs/config/project"`} {
+	for _, want := range []string{`<h1 id="connection-configuration">Connection configuration</h1>`, `<h2 id="example">Example</h2>`, `<h2 id="fields">Fields</h2>`, "/docs/schemas/connection.schema.json", `href="/docs/config/connection"`} {
 		if !strings.Contains(body, want) {
-			t.Errorf("project configuration reference missing %q:\n%s", want, body)
+			t.Errorf("connection configuration reference missing %q:\n%s", want, body)
 		}
 	}
 
-	schema, err := server.Client().Get(server.URL + "/docs/schemas/project.schema.json")
+	schema, err := server.Client().Get(server.URL + "/docs/schemas/connection.schema.json")
 	if err != nil {
-		t.Fatalf("get project configuration schema: %v", err)
+		t.Fatalf("get connection configuration schema: %v", err)
 	}
 	defer schema.Body.Close()
 	if schema.StatusCode != http.StatusOK {
-		t.Fatalf("project schema status = %d, want %d", schema.StatusCode, http.StatusOK)
+		t.Fatalf("connection schema status = %d, want %d", schema.StatusCode, http.StatusOK)
 	}
 	if got := schema.Header.Get("Content-Type"); !strings.Contains(got, "application/schema+json") {
-		t.Errorf("project schema content type = %q", got)
+		t.Errorf("connection schema content type = %q", got)
 	}
 	if !strings.Contains(readBody(t, schema), `"kind": {`) {
-		t.Error("project schema does not contain the generated contract")
+		t.Error("connection schema does not contain the generated contract")
 	}
 }
 

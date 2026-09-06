@@ -7,6 +7,7 @@ import (
 
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -29,17 +30,14 @@ func ValidateArtifactWithOptions(path string, projectID projectgraph.ResourceID,
 	if err != nil {
 		return servingstate.Validation{}, err
 	}
-	if validation.ProjectID != identity.ProjectID.String() {
-		return servingstate.Validation{}, fmt.Errorf("artifact project %q does not match serving project %q", validation.ProjectID, identity.ProjectID)
-	}
-	publicationsJSON, err := compiledDashboardPublicationsJSON(validation.Manifest.Publications)
+	publicationsJSON, err := compiledDashboardPublicationsJSON(nil)
 	if err != nil {
 		return servingstate.Validation{}, fmt.Errorf("encode compiled dashboard publications: %w", err)
 	}
 	return servingstate.Validation{
 		Digest: validation.Digest, ManifestJSON: validation.ManifestJSON, RootDir: validation.RootDir,
-		ProjectID: identity.ProjectID, ProjectDigest: validation.ProjectDigest,
-		AccessPolicy: validation.Manifest.Access, DashboardPublicationsJSON: publicationsJSON, Graph: validation.Graph,
+		ProjectID: identity.ProjectID, ProjectDigest: validation.BundleDigest,
+		AccessPolicy: projectmanifest.AccessPolicy{}, DashboardPublicationsJSON: publicationsJSON, Graph: validation.Graph,
 	}, nil
 }
 

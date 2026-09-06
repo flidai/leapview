@@ -641,7 +641,7 @@ func (m Metrics) recordDataAccessAudit(ctx context.Context, request dataquery.Qu
 	}
 	resource, ok := canonicalResourceByID(snapshot.Project(), request.ModelID, projectgraph.KindSemanticModel)
 	if !ok {
-		resource, err = access.NewResourceRef(request.ProjectID, projectgraph.KindProject)
+		resource, err = access.NewResourceRef(request.ProjectID, projectgraph.KindProjectNamespace)
 		if err != nil {
 			return err
 		}
@@ -1013,7 +1013,7 @@ func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Qu
 			return effectiveDataPolicySet{}, err
 		}
 	}
-	if projectResource, err := access.NewResourceRef(request.ProjectID, projectgraph.KindProject); err == nil {
+	if projectResource, err := access.NewResourceRef(request.ProjectID, projectgraph.KindProjectNamespace); err == nil {
 		if err := addObject(projectResource); err != nil {
 			return effectiveDataPolicySet{}, err
 		}
@@ -1266,7 +1266,7 @@ func (m Metrics) authorizationSnapshot(ctx context.Context, projectID projectgra
 	if err := snapshot.ValidateBound(); err != nil {
 		return accesssnapshot.AuthorizationSnapshot{}, err
 	}
-	if snapshot.Identity().ProjectID != projectID || snapshot.Project().ProjectID() != projectID || m.Metrics.Catalog().Project.ID != projectID {
+	if snapshot.Identity().ProjectID != projectID || m.Metrics.Catalog().Project.ID != projectID {
 		return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("authorization snapshot project identity does not match active project %q", projectID)
 	}
 	return snapshot, nil

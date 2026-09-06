@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1129,11 +1128,36 @@ func TestQualificationRecoveryUsesIsolatedCandidateKeys(t *testing.T) {
 	}
 }
 
-func TestQualificationRecoveryProjectNamesSatisfyResourceSchema(t *testing.T) {
-	pattern := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
-	for _, name := range []string{qualificationRecoveryReleaseProjectName, qualificationRecoveryDeploymentProjectName} {
-		if !pattern.MatchString(name) {
-			t.Errorf("recovery project name %q does not satisfy the resource-name schema", name)
+func TestQualificationRecoveryDashboardNamesAreDistinct(t *testing.T) {
+	if qualificationRecoveryReleaseDashboardName == qualificationRecoveryDeploymentDashboardName {
+		t.Fatal("recovery dashboard fixtures must produce distinct source roots")
+	}
+}
+
+func TestPrepareQualificationRecoverySourceRootsArePortableAndDistinct(t *testing.T) {
+	sourceRoot := t.TempDir()
+	dashboardRoot := filepath.Join(sourceRoot, "dashboards")
+	require.NoError(t, os.MkdirAll(dashboardRoot, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dashboardRoot, "sales-overview.yaml"),
+		[]byte("displayName: Five-minute Sales Evaluation\n"),
+		0o600,
+	))
+	workDir := t.TempDir()
+	require.NoError(t, prepareQualificationRecoverySourceRoots(sourceRoot, workDir))
+
+	first, err := os.ReadFile(filepath.Join(workDir, "project-a", "dashboards", "sales-overview.yaml"))
+	require.NoError(t, err)
+	second, err := os.ReadFile(filepath.Join(workDir, "project-b", "dashboards", "sales-overview.yaml"))
+	require.NoError(t, err)
+	if bytes.Equal(first, second) {
+		t.Fatal("recovery source roots are identical")
+	}
+	for _, name := range []string{"project-a", "project-b"} {
+		for _, manifest := range []string{"leapview.yaml", "leapview.yml"} {
+			if _, err := os.Stat(filepath.Join(workDir, name, manifest)); !os.IsNotExist(err) {
+				t.Fatalf("recovery source root %s contains Project manifest %s", name, manifest)
+			}
 		}
 	}
 }

@@ -12,7 +12,7 @@ import (
 
 // DashboardExportMode selects the source layout emitted by dashboard export.
 // Expanded is one canonical resource document. Fragmented preserves the
-// project-managed source file arrangement and bytes; it does not introduce a
+// source-managed source file arrangement and bytes; it does not introduce a
 // second dashboard representation or any fragment resource identity.
 type DashboardExportMode string
 
@@ -31,7 +31,7 @@ func (m DashboardExportMode) Validate() error {
 }
 
 // DashboardSourceFile is one authored source file in a fragmented export.
-// Path is always slash-separated and relative to the project root. Content is
+// Path is always slash-separated and relative to the source root. Content is
 // detached so callers may safely write it to a destination of their choice.
 type DashboardSourceFile struct {
 	Path    string
@@ -39,7 +39,7 @@ type DashboardSourceFile struct {
 }
 
 // DashboardSourceExport is the deterministic result of exporting one
-// project-managed dashboard source. Document is always the expanded canonical
+// source-managed dashboard source. Document is always the expanded canonical
 // DTO and is the only semantic value used by compilation/fingerprinting.
 // Files contains either one canonical file (expanded mode) or the original
 // dashboard and all transitively included fragment files (fragmented mode).
@@ -52,24 +52,24 @@ type DashboardSourceExport struct {
 
 // ExportDashboardSource loads a dashboard source from a project checkout and
 // emits either canonical expanded YAML or the original reviewable fragment
-// layout. All source paths are resolved and retained inside projectRoot.
-func ExportDashboardSource(path, projectRoot string, mode DashboardExportMode) (DashboardSourceExport, error) {
+// layout. All source paths are resolved and retained inside sourceRoot.
+func ExportDashboardSource(path, sourceRoot string, mode DashboardExportMode) (DashboardSourceExport, error) {
 	if err := mode.Validate(); err != nil {
 		return DashboardSourceExport{}, err
 	}
 	if strings.TrimSpace(path) == "" {
 		return DashboardSourceExport{}, fmt.Errorf("dashboard path is required")
 	}
-	if strings.TrimSpace(projectRoot) == "" {
-		return DashboardSourceExport{}, fmt.Errorf("project root is required")
+	if strings.TrimSpace(sourceRoot) == "" {
+		return DashboardSourceExport{}, fmt.Errorf("source root is required")
 	}
-	root, err := filepath.Abs(projectRoot)
+	root, err := filepath.Abs(sourceRoot)
 	if err != nil {
-		return DashboardSourceExport{}, fmt.Errorf("resolve project root: %w", err)
+		return DashboardSourceExport{}, fmt.Errorf("resolve source root: %w", err)
 	}
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
-		return DashboardSourceExport{}, fmt.Errorf("resolve project root: %w", err)
+		return DashboardSourceExport{}, fmt.Errorf("resolve source root: %w", err)
 	}
 	sourcePath, err := filepath.Abs(path)
 	if err != nil {
@@ -131,12 +131,6 @@ func ExportDashboardSource(path, projectRoot string, mode DashboardExportMode) (
 	return result, nil
 }
 
-// ExportDashboardForProject is a descriptive alias for callers that prefer
-// the project-boundary wording over the source-oriented name.
-func ExportDashboardForProject(path, projectRoot string, mode DashboardExportMode) (DashboardSourceExport, error) {
-	return ExportDashboardSource(path, projectRoot, mode)
-}
-
 func projectRelativePathChecked(root, path string) (string, error) {
 	relative, err := filepath.Rel(root, path)
 	if err != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
@@ -147,7 +141,7 @@ func projectRelativePathChecked(root, path string) (string, error) {
 
 func projectPathChecked(root, relative string) (string, error) {
 	if filepath.IsAbs(relative) || isWindowsAbsoluteExportPath(relative) {
-		return "", fmt.Errorf("dashboard source path %q must be relative to project root", relative)
+		return "", fmt.Errorf("dashboard source path %q must be relative to source root", relative)
 	}
 	clean := filepath.Clean(filepath.FromSlash(relative))
 	for _, part := range strings.Split(filepath.ToSlash(clean), "/") {

@@ -9,18 +9,17 @@ import (
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 )
 
-func testRevalidationArtifact(t *testing.T, metadata projectgraph.Metadata, provenance projectgraph.Provenance, model *semanticmodel.Model) projectbundle.CompiledProjectArtifact {
+func testRevalidationArtifact(t *testing.T, metadata projectgraph.Metadata, provenance projectgraph.Provenance, model *semanticmodel.Model) projectbundle.CompiledSourceBundleArtifact {
 	t.Helper()
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project", Kind: projectgraph.KindProject, Name: "project"},
 		{ID: "semantic_model:orders", Kind: projectgraph.KindSemanticModel, Name: "orders", Metadata: metadata, Provenance: provenance},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return projectbundle.CompiledProjectArtifact{
-		ProjectID: graph.ProjectID(), Graph: graph,
-		Manifest: projectmanifest.Project{ID: "project", SemanticModels: map[string]*semanticmodel.Model{"semantic_model:orders": model}},
+	return projectbundle.CompiledSourceBundleArtifact{
+		Graph:    graph,
+		Manifest: projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{"semantic_model:orders": model}},
 	}
 }
 

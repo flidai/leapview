@@ -86,7 +86,7 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 	}
-	project := projectmanifest.Project{
+	project := projectmanifest.ResourceManifest{
 		Sources: map[string]semanticmodel.Source{
 			"source:orders": {Description: "Orders source", Fields: map[string]semanticmodel.SourceField{"id": {Name: "id", Type: "integer"}}},
 		},
@@ -139,7 +139,7 @@ func TestBuildDataExplorerProjectionPreservesSemanticDatasetAlias(t *testing.T) 
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"order_facts": {Model: "orders"}},
 	}
-	project := projectmanifest.Project{
+	project := projectmanifest.ResourceManifest{
 		Models:         map[string]semanticmodel.Table{"model:orders": {ModelName: "orders"}},
 		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
@@ -166,7 +166,7 @@ func TestBuildDataExplorerProjectionKeysEachSemanticDatasetBinding(t *testing.T)
 			"order_history": {Model: "orders"},
 		},
 	}
-	project := projectmanifest.Project{
+	project := projectmanifest.ResourceManifest{
 		Models:         map[string]semanticmodel.Table{"model:orders": {ModelName: "orders"}},
 		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
@@ -268,7 +268,7 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 		Metrics:  map[string]semanticmodel.Metric{"revenue": {Type: "aggregate", Dataset: "orders", Label: "Revenue", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}}},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
 	}
-	project := projectmanifest.Project{
+	project := projectmanifest.ResourceManifest{
 		Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"], "model:customers": model.Tables["customers"]},
 		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},
@@ -323,7 +323,7 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 		}},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
 	}
-	project := projectmanifest.Project{
+	project := projectmanifest.ResourceManifest{
 		Models: map[string]semanticmodel.Table{
 			"model:orders": model.Tables["orders"], "model:customers": model.Tables["customers"],
 		},
@@ -370,7 +370,7 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 }
 
 func TestBuildDataExplorerProjectionDoesNotUseGraphPayloadAsSchema(t *testing.T) {
-	project := projectmanifest.Project{
+	project := projectmanifest.ResourceManifest{
 		Models:         map[string]semanticmodel.Table{"model:orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Type: "integer"}}}},
 		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders", Columns: map[string]semanticmodel.ModelColumn{"id": {Type: "integer"}}}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}},
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
@@ -392,7 +392,7 @@ func TestBuildDataExplorerProjectionFailsClosedWhenCompiledBindingsUnavailable(t
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 	}
-	project := projectmanifest.Project{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}
+	project := projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}
 	assets := []projectview.DevelopAssetView{{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"}}
 	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, nil)
 	if len(projection.Datasets) != 0 || len(projection.Fields) != 0 {
@@ -411,7 +411,7 @@ func TestBuildDataExplorerProjectionRejectsUnavailableActivationBindings(t *test
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 	}
-	project := projectmanifest.Project{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}
+	project := projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}
 	assets := []projectview.DevelopAssetView{{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"}}
 	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, nil)
 	if len(projection.Datasets) != 0 || len(projection.Fields) != 0 {
@@ -437,7 +437,7 @@ func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
 	}
-	project := projectmanifest.Project{
+	project := projectmanifest.ResourceManifest{
 		Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"], "model:customers": model.Tables["customers"]},
 		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},
@@ -465,7 +465,7 @@ func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
 	}
 }
 
-func compiledProjectionModels(t *testing.T, project projectmanifest.Project) map[string]*semanticquery.CompiledModel {
+func compiledProjectionModels(t *testing.T, project projectmanifest.ResourceManifest) map[string]*semanticquery.CompiledModel {
 	t.Helper()
 	compiled := make(map[string]*semanticquery.CompiledModel, len(project.SemanticModels))
 	for id, model := range project.SemanticModels {

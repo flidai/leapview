@@ -29,7 +29,9 @@ var contractsCUE string
 type Kind string
 
 const (
-	KindProject              Kind = "project"
+	// KindProjectNamespace classifies rejected control-plane and migration
+	// examples. Project documents are not analytics source-root authoring.
+	KindProjectNamespace     Kind = "project"
 	KindConnection           Kind = "connection"
 	KindSource               Kind = "source"
 	KindModel                Kind = "model"
@@ -101,6 +103,12 @@ func ValidateFile(kind Kind, path string) error {
 }
 
 func ValidateBytes(kind Kind, filename string, content []byte) error {
+	if removedPublicAuthoringKind(kind) {
+		return &Error{Diagnostics: []Diagnostic{{
+			File: filename, Line: 1, Column: 1, Severity: SeverityError, Code: "schema.kind.removed",
+			Message: fmt.Sprintf("%s is not a supported authored resource; administer access, publication, and Project state through the instance control API", kind),
+		}}}
+	}
 	if kind == KindDashboard {
 		return validateDashboardDocument(filename, content)
 	}
@@ -139,6 +147,9 @@ func ValidateBytes(kind Kind, filename string, content []byte) error {
 }
 
 func JSONSchema(kind Kind) ([]byte, error) {
+	if removedPublicAuthoringKind(kind) {
+		return nil, fmt.Errorf("public authoring schema %q was removed; administer access, publication, and Project state through the instance control API", kind)
+	}
 	if kind == KindDashboard {
 		return append([]byte(nil), canonicalschemas.DashboardDocumentSchema...), nil
 	}
@@ -294,7 +305,7 @@ func compiledDefinition(kind Kind) (*cue.Context, cue.Value, string, error) {
 }
 
 func JSONSchemaFiles() (map[string][]byte, error) {
-	kinds := []Kind{KindProject, KindConnection, KindSource, KindModel, KindSemanticModel, KindPipeline, KindDashboard, KindGroup, KindRoleBinding, KindGrant, KindDataPolicy, KindDashboardPublication}
+	kinds := []Kind{KindConnection, KindSource, KindModel, KindSemanticModel, KindPipeline, KindDashboard}
 	files := map[string][]byte{}
 	for _, kind := range kinds {
 		content, err := JSONSchema(kind)
@@ -304,6 +315,15 @@ func JSONSchemaFiles() (map[string][]byte, error) {
 		files[JSONSchemaFilename(kind)] = content
 	}
 	return files, nil
+}
+
+func removedPublicAuthoringKind(kind Kind) bool {
+	switch kind {
+	case KindProjectNamespace, KindGroup, KindRoleBinding, KindGrant, KindDataPolicy, KindDashboardPublication:
+		return true
+	default:
+		return false
+	}
 }
 
 var (
@@ -447,8 +467,6 @@ func validateDashboardDocument(filename string, content []byte) error {
 
 func JSONSchemaFilename(kind Kind) string {
 	switch kind {
-	case KindProject:
-		return "project.schema.json"
 	case KindConnection:
 		return "connection.schema.json"
 	case KindSource:
@@ -461,16 +479,6 @@ func JSONSchemaFilename(kind Kind) string {
 		return "pipeline.schema.json"
 	case KindDashboard:
 		return "dashboard-document.schema.json"
-	case KindGroup:
-		return "group.schema.json"
-	case KindRoleBinding:
-		return "role-binding.schema.json"
-	case KindGrant:
-		return "grant.schema.json"
-	case KindDataPolicy:
-		return "data-policy.schema.json"
-	case KindDashboardPublication:
-		return "dashboard-publication.schema.json"
 	default:
 		return string(kind) + ".schema.json"
 	}
@@ -523,22 +531,10 @@ func dashboardFieldPath(path []string) string {
 
 func definitionName(kind Kind) (string, error) {
 	switch kind {
-	case KindProject:
-		return "Project", nil
 	case KindPipeline:
 		return "PipelineResource", nil
 	case KindDashboard:
 		return "DashboardResource", nil
-	case KindGroup:
-		return "GroupResource", nil
-	case KindRoleBinding:
-		return "RoleBindingResource", nil
-	case KindGrant:
-		return "GrantResource", nil
-	case KindDataPolicy:
-		return "DataPolicyResource", nil
-	case KindDashboardPublication:
-		return "DashboardPublicationResource", nil
 	default:
 		return "", fmt.Errorf("unknown schema kind %q", kind)
 	}
@@ -682,17 +678,6 @@ type schemaPath struct {
 }
 
 var schemaOverlays = map[Kind]schemaOverlay{
-	KindProject: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-		collections: []collectionRule{
-			definitionCollection("#Project", "connections", collectionMapping),
-			definitionCollection("#Project", "sources", collectionMapping),
-			definitionCollection("#Project", "models", collectionMapping),
-			definitionCollection("#Project", "semanticModels", collectionMapping),
-			definitionCollection("#Project", "pipelines", collectionMapping),
-			definitionCollection("#Project", "dashboards", collectionMapping),
-		},
-	},
 	KindConnection: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
 	},
@@ -711,21 +696,6 @@ var schemaOverlays = map[Kind]schemaOverlay{
 			definitionCollection("#DashboardSpec", "visuals", collectionMapping),
 			definitionCollection("#DashboardSpec", "pages", collectionSequence),
 		},
-	},
-	KindGroup: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindRoleBinding: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindGrant: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindDataPolicy: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindDashboardPublication: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
 	},
 }
 

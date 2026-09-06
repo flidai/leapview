@@ -119,7 +119,6 @@ model CandidateSourceRevision {
 }
 
 model CandidateSynchronizationRequest {
-  projectFile: string;
   artifactDigest: string;
   @doc("Retain the exact source snapshot without preparing a candidate or writing physical state. Delivery planning sets this true; Build owns the first writer operation.")
   sourceOnly?: boolean;

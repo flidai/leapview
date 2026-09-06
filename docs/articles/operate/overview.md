@@ -14,13 +14,13 @@ Application releases should use immutable artifacts and should not silently modi
 
 ## Deliver a project
 
-Project delivery changes connections, sources, Models, semantic models, pipelines, dashboards, access declarations, and managed-data revision pins.
+Project delivery changes the source-root connections, sources, Models, semantic models, pipelines, dashboards, and managed-data revision pins; target-owned access policy and publication state remain separate controls.
 
 - Use [Develop, review, and publish](/docs/cli/validate-deploy) for the exact-candidate delivery workflow.
 - Use [Targets and environments](/docs/cli/targets) to keep local, staging, and production identities explicit.
 - Read [Projects and environments](/docs/concepts/projects-environments) for the ownership and activation model behind that workflow.
 
-Promote the same reviewed project commit and managed revision identities through environments rather than maintaining separate dashboard trees.
+Promote the same reviewed source-root commit and managed revision identities through environments rather than maintaining separate dashboard trees.
 
 ## Run and recover the service
 

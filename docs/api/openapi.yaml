@@ -27350,7 +27350,6 @@ paths:
                   path: example
                   sizeBytes: 1
               candidateKey: example
-              projectFile: example
               sourceOnly: true
               sourceRevision:
                 changeId: example
@@ -27702,7 +27701,6 @@ paths:
                   path: example
                   sizeBytes: 1
               candidateKey: example
-              projectFile: example
               sourceOnly: true
               sourceRevision:
                 changeId: example
@@ -61968,13 +61966,9 @@ components:
     CandidateSynchronizationRequest:
       type: object
       required:
-        - projectFile
         - artifactDigest
         - artifacts
       properties:
-        projectFile:
-          type: string
-          example: example
         artifactDigest:
           type: string
           example: example
@@ -62004,7 +61998,6 @@ components:
             path: example
             sizeBytes: 1
         candidateKey: example
-        projectFile: example
         sourceOnly: true
         sourceRevision:
           changeId: example

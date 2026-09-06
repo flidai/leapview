@@ -26,10 +26,9 @@ The integration has three deliberately separate evidence classes:
   Azure reference are YAML-validated for ordering, trusted-ref gating,
   immutable publication, credential scope, and CI-gate wiring. Repository CI
   does not exercise live Azure OIDC, storage retention, or Azure RBAC.
-- **Blocked on ADR-0018** — the current authored profile still contains a
-  `kind: Project` document. The reference workflow temporarily asserts that
-  its authored `metadata.id` matches `LEAPVIEW_WORKLOAD_PROJECT`; this check is
-  required only until ADR-0018 moves the profile to Project-free discovery.
+- **Project-free source root** — the profile is discovered from conventional
+  resource directories. The target-bound Project identity remains supplied by
+  `LEAPVIEW_WORKLOAD_PROJECT`; it is not authored in the source tree.
 
 ## Run the local showcase
 
@@ -98,11 +97,10 @@ a globally namespaced prefix from the repository, workflow run, attempt, and
 Git revision, uploads exactly the selected marts without overwrite, and lists
 the prefix to prove that the complete expected set exists. The producer job
 then ends its Azure session and exposes only the non-secret prefix to a separate
-activation job. That job has no Azure OIDC permission; it asserts that the
-authored current-profile Project ID matches `LEAPVIEW_WORKLOAD_PROJECT` (a
-temporary check until ADR-0018), renders an ordinary Azure-backed
-Connection/Source bundle, and invokes `leapview dev --once --no-browser`
-followed by `leapview publish`.
+activation job. That job has no Azure OIDC permission; it renders an ordinary
+Azure-backed Connection/Source source root and invokes `leapview dev --once
+--no-browser` followed by `leapview publish`. The target binds the durable
+Project identity from `LEAPVIEW_WORKLOAD_PROJECT`.
 
 The LeapView target owns two credentials that are not present in the producer
 workflow:

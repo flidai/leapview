@@ -58,7 +58,7 @@ func (m Metrics) authorizeViewAs(ctx context.Context, actor Principal, request d
 	if err != nil {
 		return request, err
 	}
-	projectRef, err := access.NewResourceRef(capability.ProjectID, projectgraph.KindProject)
+	projectRef, err := access.NewResourceRef(capability.ProjectID, projectgraph.KindProjectNamespace)
 	if err != nil {
 		return deny(err)
 	}
@@ -103,7 +103,7 @@ func (m Metrics) recordViewAsAudit(ctx context.Context, request dataquery.Query,
 	if err != nil {
 		return err
 	}
-	resource, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+	resource, err := access.NewResourceRef(projectID, projectgraph.KindProjectNamespace)
 	if err != nil {
 		return err
 	}

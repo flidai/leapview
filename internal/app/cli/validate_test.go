@@ -11,32 +11,32 @@ import (
 	"github.com/flidai/leapview/internal/project/schema"
 )
 
-func TestValidateCommandRejectsAmbiguousProjectArgs(t *testing.T) {
-	project := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+func TestValidateCommandRejectsAmbiguousSourceRootArgs(t *testing.T) {
+	sourceRoot := filepath.Join("..", "..", "..", "dashboards")
 	opts := &rootOptions{}
 	cmd := validateCommand(context.Background(), opts)
-	cmd.SetArgs([]string{"--project", project, project})
+	cmd.SetArgs([]string{"--source-root", sourceRoot, sourceRoot})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("validate command error = nil, want ambiguity error")
 	}
-	if !strings.Contains(err.Error(), "either --project or positional project") {
+	if !strings.Contains(err.Error(), "either --source-root or positional source root") {
 		t.Fatalf("error = %v, want ambiguity message", err)
 	}
 }
 
-func TestValidateCommandAcceptsShowcaseProject(t *testing.T) {
-	project := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+func TestValidateCommandAcceptsShowcaseSourceRoot(t *testing.T) {
+	sourceRoot := filepath.Join("..", "..", "..", "dashboards")
 	opts := &rootOptions{}
 	cmd := validateCommand(context.Background(), opts)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{project})
+	cmd.SetArgs([]string{sourceRoot})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("validate command error = %v", err)
 	}
-	if !strings.Contains(out.String(), "ok "+project) {
-		t.Fatalf("output = %q, want positional project path", out.String())
+	if !strings.Contains(out.String(), "ok source-root "+sourceRoot) {
+		t.Fatalf("output = %q, want positional source root", out.String())
 	}
 }
 
@@ -47,8 +47,11 @@ func TestRunSchemaExportWritesJSONSchemas(t *testing.T) {
 		t.Fatalf("runSchemaExport() error = %v", err)
 	}
 	for _, name := range []string{
-		configschema.JSONSchemaFilename(configschema.KindProject),
+		configschema.JSONSchemaFilename(configschema.KindConnection),
+		configschema.JSONSchemaFilename(configschema.KindSource),
 		configschema.JSONSchemaFilename(configschema.KindModel),
+		configschema.JSONSchemaFilename(configschema.KindSemanticModel),
+		configschema.JSONSchemaFilename(configschema.KindPipeline),
 		configschema.JSONSchemaFilename(configschema.KindDashboard),
 	} {
 		content, err := os.ReadFile(filepath.Join(outDir, name))

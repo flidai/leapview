@@ -13,7 +13,6 @@ import (
 func installerGraph(t *testing.T) graph.ProjectGraph {
 	t.Helper()
 	project, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_test", Kind: graph.KindProject, Name: "test"},
 		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "main"},
 	}, nil)
 	require.NoError(t, err)
@@ -29,7 +28,7 @@ func installerSnapshot(t *testing.T, project graph.ProjectGraph, generation, nam
 	grant, err := access.NewCanonicalGrant(project, subject, resource, access.CapabilityResourceRead)
 	require.NoError(t, err)
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(graph.ServingIdentity{
-		ProjectID: project.ProjectID(), Environment: "production", GenerationID: generation,
+		ProjectID: "project_test", Environment: "production", GenerationID: generation,
 	}, project, []accesssnapshot.Grant{{ID: "grant_test", Name: name, Canonical: grant}}, nil)
 	require.NoError(t, err)
 	return snapshot
@@ -54,7 +53,6 @@ func TestInstallAuthorizationSnapshotIsIdempotentAndWriteOnce(t *testing.T) {
 	require.NoError(t, install(snapshot))
 	require.NoError(t, install(snapshot))
 	otherProject, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_test", Kind: graph.KindProject, Name: "test"},
 		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "changed"},
 	}, nil)
 	require.NoError(t, err)

@@ -328,7 +328,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 		GraphImpact:           impact,
 		Compatibility:         deployment.DeliveryCompatibilityImpact{Breaking: artifacts.Compiler.Plan.Summary.Breaking, SemanticChanges: []string{fmt.Sprintf("materialization impact=%t", artifacts.Compiler.Plan.Summary.MaterializationImpact)}},
 		PhysicalWork: deployment.DeliveryPhysicalWork{
-			Materializations: []string{artifacts.Compiler.Plan.Project},
+			Materializations: append([]string(nil), artifacts.Compiler.Plan.Models...),
 			Estimates:        []deployment.DeliveryEstimate{{Work: "candidate catalog", LowerBound: 1, UpperBound: float64(maxInt(1, len(artifacts.Compiler.Plan.Models))), Expected: float64(maxInt(1, len(artifacts.Compiler.Plan.Models))), Unit: "relation-set", Basis: "compiled semantic Model count", Confidence: "high"}},
 		},
 		Qualification: deployment.DeliveryQualificationEvidence{Policy: "target-owned exact schema closure and admitted compatibility; core object probes and read-only attach", Steps: qualificationSteps()},
