@@ -3562,9 +3562,14 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 	}
 
 	nodeDeps := taskfileTaskBlock(t, string(taskfile), "node:deps")
-	for _, want := range []string{"method: checksum", "package.json", "bun.lock", "node_modules/.bin/esbuild"} {
+	for _, want := range []string{"run: once", "bun install --frozen-lockfile"} {
 		if !strings.Contains(nodeDeps, want) {
-			t.Errorf("node:deps must cache a verified install across nested preparation tasks: missing %q", want)
+			t.Errorf("node:deps must share one frozen install across nested preparation tasks: missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"sources:", "generates:", "status:", "ignore_error:"} {
+		if strings.Contains(nodeDeps, forbidden) {
+			t.Errorf("node:deps must verify the installed tree on each invocation and propagate failures, found %q", forbidden)
 		}
 	}
 

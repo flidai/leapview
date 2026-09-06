@@ -210,12 +210,10 @@ tasks:
 
   node:deps:
     desc: Install JavaScript dependencies with Bun
-    method: checksum
-    sources:
-      - package.json
-      - bun.lock
-    generates:
-      - node_modules/.bin/esbuild
+    # Nested dependency paths must share one writer to this checkout's tree.
+    # Verify the frozen graph on every Task invocation; a binary's presence
+    # cannot establish that the complete installed dependency tree is sound.
+    run: once
     cmds:
       - bun install --frozen-lockfile
 
@@ -306,6 +304,7 @@ tasks:
     cmds:
       - node --test scripts/ci_watchdog.test.mjs
       - bun test scripts/frontend_ci_contract.test.ts
+      - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/ensure_playwright.test.ts
       - bun run test:primer-primitives
       - bun run test:primer-alignment

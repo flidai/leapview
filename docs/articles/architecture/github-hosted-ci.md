@@ -73,6 +73,13 @@ dependency set, and the package manager or build tool always validates restored 
 main artifact workflow populates the default-branch Bun download cache so new pull requests do
 not inherit an empty cache entry from image qualification.
 
+Each job owns its checkout's installed dependencies. `node:deps` uses Task's `run: once`
+mode so parallel and nested dependency paths await a single `bun install --frozen-lockfile`
+in that Task invocation. A later invocation verifies the tree again; it does not trust a
+cached executable marker. Download caches can be shared, but installed trees are never
+shared between runners. Run independent local Task processes in separate worktrees rather
+than allowing multiple installers to write the same checkout concurrently.
+
 The repository currently works within GitHub's default 10 GB cache allowance. The intended
 operating limit is 50 GB or more so the independent Go, Bun, browser, Terraform, and BuildKit
 caches do not evict one another. Hitting the lower limit may reduce cache hits but cannot
