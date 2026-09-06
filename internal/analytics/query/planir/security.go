@@ -211,6 +211,9 @@ func ApplySecurityBarriers(graph *Graph, policies map[string]SecurityPolicy) err
 			}
 			graph.Nodes[id] = rewritten
 		}
+		if replacement := rootRewrites[graph.Output]; replacement != "" {
+			graph.Output = replacement
+		}
 	}
 
 	// Targets are not graph inputs in the legacy IR; materialize one scan and

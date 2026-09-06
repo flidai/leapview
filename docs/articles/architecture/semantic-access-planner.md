@@ -63,3 +63,13 @@ Authorization is sampled at plan admission. These seals do not constitute a
 runtime revocation watcher or permission to reuse an old plan after authority
 changes. Consumer execution context and policy-aware lifecycle/cache reuse
 remain separate follow-up responsibilities.
+
+One concrete deferred path is `query.PrepareRepresentativePlans`, including
+its explicit-relationship verification helper. It constructs new planners
+without semantic authority; `materialize.Runtime` uses this verification path.
+Policy-bearing models therefore fail closed there until the verification and
+consumer composition work supplies an appropriate trusted context. Even a
+configured planner's explicit-relationship verification currently constructs
+a separate candidate planner. FAI-642 must classify and wire that boundary;
+FAI-641 does not bypass admission for verification or claim protected-model
+deployment qualification.
