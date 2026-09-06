@@ -25,7 +25,7 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-const expectedAPIGenAggregateOperationCount = 191
+const expectedAPIGenAggregateOperationCount = 192
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -414,8 +414,15 @@ func TestAPIGenDeploymentCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenDeploymentCapabilityOwnsItsOperationSurface(t *testing.T) {
 	contracts := deploymentgen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 19; got != want {
+	if got, want := len(contracts), 20; got != want {
 		t.Fatalf("Deployment generated operations = %d, want %d", got, want)
+	}
+	bootstrap, ok := contracts["bootstrapProjectClaim"]
+	if !ok {
+		t.Fatal("Deployment generated operations missing bootstrapProjectClaim")
+	}
+	if bootstrap.Method != http.MethodPost || bootstrap.Path != "/api/v1/instance/project-claim" || bootstrap.Namespace != "LeapViewAPI.Deployment" || len(bootstrap.Tags) != 1 || bootstrap.Tags[0] != "Deployments" {
+		t.Fatalf("bootstrapProjectClaim generated identity = method %q path %q namespace %q tags %v", bootstrap.Method, bootstrap.Path, bootstrap.Namespace, bootstrap.Tags)
 	}
 	appContracts := apigenapi.GetAPIGenOperationContracts()
 	for operationID, contract := range contracts {

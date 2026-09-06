@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/deployment"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
@@ -18,7 +19,7 @@ import (
 
 func TestCandidateSourcePlanUsesNativeClaimAuthority(t *testing.T) {
 	module := nativeSourcePlanModule("principal_1")
-	claims := &candidateProjectClaimRepositoryStub{}
+	claims := &candidateProjectClaimRepositoryStub{claim: deployment.ProjectClaim{ProjectID: "finance", Environment: "prod", ClaimedBy: "bootstrap-admin", ClaimedAt: time.Now().UTC()}}
 	claimService, err := deployment.NewProjectClaimService(claims)
 	require.NoError(t, err)
 	module.projectClaims = claimService
@@ -39,9 +40,10 @@ func TestCandidateSourcePlanUsesNativeClaimAuthority(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), `"planId":"plan-test"`)
-	require.Equal(t, projectgraph.ResourceID("finance"), claims.input.ProjectID)
-	require.Equal(t, "principal_1", claims.input.ClaimedBy)
 	require.Equal(t, projectgraph.ResourceID("finance"), boundProject)
+	// Candidate planning may verify the bootstrap claim, but it must never
+	// claim the instance as a side effect of an ordinary candidate request.
+	require.Empty(t, claims.input.ProjectID)
 }
 
 func TestNativeCandidateSourcePlanRequiresProjectClaimAuthority(t *testing.T) {
@@ -56,6 +58,27 @@ func TestNativeCandidateSourcePlanRequiresProjectClaimAuthority(t *testing.T) {
 
 	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), "CANDIDATE_UNAVAILABLE")
+	require.Zero(t, sources.plans)
+}
+
+func TestNativeCandidateSourcePlanRejectsDifferentClaimBeforePlanning(t *testing.T) {
+	module := nativeSourcePlanModule("principal_1")
+	claims := &candidateProjectClaimRepositoryStub{claim: deployment.ProjectClaim{
+		ProjectID: "other-project", Environment: "prod", ClaimedBy: "bootstrap-admin", ClaimedAt: time.Now().UTC(),
+	}}
+	claimService, err := deployment.NewProjectClaimService(claims)
+	require.NoError(t, err)
+	module.projectClaims = claimService
+	module.instanceEnvironment = "prod"
+	sources := &candidateSourceSynchronizerStub{}
+	module.candidateSources = sources
+	digest := "sha256:" + strings.Repeat("a", 64)
+
+	response := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidate-sync/plan", `{"artifactDigest":"`+digest+`","artifacts":[]}`, func(w http.ResponseWriter, r *http.Request) {
+		module.PlanProjectCandidateSynchronization(w, r, "finance", "plan-idem")
+	})
+
+	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
 	require.Zero(t, sources.plans)
 }
 
@@ -101,6 +124,7 @@ func (*candidateSourceSynchronizerStub) Commit(_ context.Context, _ deployment.C
 
 type candidateProjectClaimRepositoryStub struct {
 	input deployment.ProjectClaimInput
+	claim deployment.ProjectClaim
 }
 
 func (stub *candidateProjectClaimRepositoryStub) ClaimProject(_ context.Context, input deployment.ProjectClaimInput) (deployment.ProjectClaim, error) {
@@ -108,6 +132,9 @@ func (stub *candidateProjectClaimRepositoryStub) ClaimProject(_ context.Context,
 	return deployment.ProjectClaim{ProjectID: input.ProjectID, Environment: input.Environment, ClaimedBy: input.ClaimedBy, ClaimedAt: input.ClaimedAt}, nil
 }
 
-func (*candidateProjectClaimRepositoryStub) GetProjectClaim(context.Context) (deployment.ProjectClaim, error) {
-	return deployment.ProjectClaim{}, deployment.ErrProjectClaimNotFound
+func (stub *candidateProjectClaimRepositoryStub) GetProjectClaim(context.Context) (deployment.ProjectClaim, error) {
+	if stub.claim.ProjectID == "" {
+		return deployment.ProjectClaim{}, deployment.ErrProjectClaimNotFound
+	}
+	return stub.claim, nil
 }

@@ -74,6 +74,25 @@ type NativeDeliveryAuditAppender interface {
 	AppendMutationAudit(context.Context, deploymentpostgres.Tx, NativeDeliveryAuditInput) (deploymentpostgres.AuditEvent, error)
 }
 
+type ProjectClaimAuditInput struct {
+	AuditID, ScopeID, ActorID, ProjectUID, RequestDigest, AggregateKey string
+	Outcome, MetadataJSON                                              string
+}
+
+// ErrProjectClaimAuditNotFound is returned only by the project-claim audit
+// read seam. It lets bootstrap distinguish a first request from an
+// infrastructure failure without weakening the fail-closed audit boundary.
+var ErrProjectClaimAuditNotFound = errors.New("project claim audit not found")
+
+// ProjectClaimAuditAppender is the narrow transactional audit seam for the
+// pre-Project bootstrap command. It is separate from delivery mutation audit
+// because bootstrap must durably record both successful and conflicting
+// claim attempts.
+type ProjectClaimAuditAppender interface {
+	AppendProjectClaimAudit(context.Context, deploymentpostgres.Tx, ProjectClaimAuditInput) (deploymentpostgres.AuditEvent, error)
+	GetProjectClaimAudit(context.Context, deploymentpostgres.Tx, ProjectClaimAuditInput) (deploymentpostgres.AuditEvent, error)
+}
+
 type NativeDeliveryWorkflowRecorder interface {
 	RecordWorkflow(context.Context, deploymentpostgres.Tx, jobs.WorkflowIntent) error
 }
@@ -273,7 +292,6 @@ type NativeProjectClaimRepository interface {
 type NativeCandidateRepository interface {
 	CreateCandidate(context.Context, deploymentpostgres.CandidateInput) (deploymentpostgres.DeliveryCandidate, error)
 	CreateCandidateTx(context.Context, deploymentpostgres.Tx, deploymentpostgres.CandidateInput) (deploymentpostgres.DeliveryCandidate, error)
-	StartCandidateWithClaimTx(context.Context, deploymentpostgres.Tx, deployment.ProjectClaimInput, deploymentpostgres.CandidateInput) (deployment.ProjectClaim, deploymentpostgres.DeliveryCandidate, error)
 	Candidate(context.Context, string) (deploymentpostgres.DeliveryCandidate, error)
 	LoadCandidate(context.Context, string) (deploymentpostgres.DeliveryCandidate, error)
 	QualifyCandidate(context.Context, string, string, string) (deploymentpostgres.DeliveryCandidate, error)

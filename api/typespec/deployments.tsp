@@ -105,6 +105,70 @@ enum DeploymentApprovalStatus {
   expired;
 }
 
+model ProjectClaimBootstrapRequest {
+  projectUid: ResourceId;
+  issuerId: ResourceId;
+  environment: string;
+}
+
+model ProjectClaimBootstrapResponse {
+  projectUid: ResourceId;
+  environment: string;
+  claimedBy: string;
+  claimedAt: utcDateTime;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model ProjectClaimBootstrappedAuditPayload {
+  @apigen.auditPublic
+  projectUid: ResourceId;
+  @apigen.auditInternal
+  issuerId: ResourceId;
+  @apigen.auditPublic
+  environment: string;
+  @apigen.auditPublic
+  result: "claimed" | "conflict";
+}
+
+@apigen.failureDefinition(#{
+  kind: "project_claim_invalid",
+  statusCode: 422,
+  code: "INVALID_PROJECT_CLAIM",
+  publicDetail: "The Project claim is invalid.",
+})
+model ProjectClaimInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "project_claim_conflict",
+  statusCode: 409,
+  code: "PROJECT_CLAIM_CONFLICT",
+  publicDetail: "This instance is already claimed by a different Project or environment.",
+})
+model ProjectClaimConflictFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "project_claim_unavailable",
+  statusCode: 503,
+  code: "PROJECT_CLAIM_UNAVAILABLE",
+  publicDetail: "Project claim bootstrap is temporarily unavailable.",
+})
+model ProjectClaimUnavailableFailure {}
+
+@route("/instance/project-claim")
+@tag("Deployments")
+interface ProjectClaimBootstrap {
+  @summary("Bootstrap this unclaimed instance with an issuer-owned ProjectUID")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "project.claim.bootstrapped", guarantee: "transactional" })
+  @apigen.auditPayload(ProjectClaimBootstrappedAuditPayload)
+  @apigen.failsWith(ProjectClaimInvalidFailure)
+  @apigen.failsWith(ProjectClaimConflictFailure)
+  @apigen.failsWith(ProjectClaimUnavailableFailure)
+  bootstrapProjectClaim(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ProjectClaimBootstrapRequest): OkJson<ProjectClaimBootstrapResponse> | CommonErrors;
+}
+
 model CandidateSourceArtifact {
   path: string;
   digest: string;

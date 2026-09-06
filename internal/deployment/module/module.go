@@ -46,6 +46,8 @@ type Module struct {
 	nativeDeliveryMutations   NativeDeliveryMutationPort
 	nativeDeliveryPublication NativeDeliveryPublicationPort
 	nativeDeliveryApproval    NativeDeliveryApprovalPort
+	projectClaimAudit         ProjectClaimAuditAppender
+	projectClaimBootstrap     ProjectClaimBootstrapFunc
 	persistence               *Persistence
 }
 
@@ -361,7 +363,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		nativeDeliveryReader:    config.NativeDeliveryReader,
 		nativeDeliveryMutations: config.NativeDeliveryMutations, nativeDeliveryPublication: config.NativeDeliveryPublication,
 		nativeDeliveryApproval: config.NativeDeliveryApproval,
-		persistence:            config.Persistence,
+		projectClaimAudit: func() ProjectClaimAuditAppender {
+			audit, _ := config.Persistence.Audit.(ProjectClaimAuditAppender)
+			return audit
+		}(),
+		persistence: config.Persistence,
 	}
 	if m.logger == nil {
 		m.logger = slog.Default()

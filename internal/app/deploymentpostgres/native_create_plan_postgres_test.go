@@ -168,6 +168,21 @@ func nativePlanPostgresFixture(t *testing.T, sourceDigest, attestationDigest str
 
 func nativePlanCoordinator(t *testing.T, db *pgxpool.Pool, source *nativePlanSourceReader, inspector *nativePlanArtifactInspector) *NativeCreatePlanCoordinator {
 	t.Helper()
+	repository := deploymentnative.New(db)
+	if _, err := repository.GetProjectClaim(t.Context()); errors.Is(err, deployment.ErrProjectClaimNotFound) {
+		if _, err := repository.ClaimProject(t.Context(), deployment.ProjectClaimInput{
+			ProjectID: "project_native_plan", Environment: "prod", ClaimedBy: "bootstrap-admin", ClaimedAt: time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	return newNativePlanCoordinator(t, db, source, inspector)
+}
+
+func newNativePlanCoordinator(t *testing.T, db *pgxpool.Pool, source *nativePlanSourceReader, inspector *nativePlanArtifactInspector) *NativeCreatePlanCoordinator {
+	t.Helper()
 	eventRepo := postgres.New()
 	operationRepo := operationpostgres.NewWithConfig(db, time.Second, time.Hour)
 	coord, err := NewNativeCreatePlanCoordinator(NativeCreatePlanConfig{
@@ -186,7 +201,23 @@ func nativePlanRequest() deploymentmodule.NativeDeliveryPlanRequest {
 	return deploymentmodule.NativeDeliveryPlanRequest{ProjectID: projectgraph.ResourceID("project_native_plan"), TargetID: "target_native_plan", Environment: "prod", PrincipalID: "principal-native", SourceOwnerID: "owner-native", Operation: string(deployment.DeliveryOperationCodeChange), SourceDigest: createPlanTestDigest('a'), SourceAttestationDigest: createPlanTestDigest('b'), IdempotencyKey: "native-plan-key"}
 }
 
-func TestNativeCreatePlanPostgresAtomicallyBootstrapsFreshTargetAndClaim(t *testing.T) {
+func TestNativeCreatePlanPostgresRequiresBootstrapBeforeInspection(t *testing.T) {
+	db, _ := nativePlanPostgresDB(t)
+	snapshot, artifacts := nativePlanPostgresFixture(t, createPlanTestDigest('a'), createPlanTestDigest('b'))
+	source := &nativePlanSourceReader{snap: snapshot}
+	inspector := &nativePlanArtifactInspector{set: artifacts}
+	coord := newNativePlanCoordinator(t, db, source, inspector)
+
+	_, err := coord.CreatePlan(t.Context(), nativePlanRequest())
+	if !errors.Is(err, deployment.ErrProjectClaimRequired) {
+		t.Fatalf("CreatePlan error = %v, want bootstrap required", err)
+	}
+	if source.count() != 0 || inspector.count() != 0 {
+		t.Fatalf("unclaimed plan reached source=%d inspector=%d", source.count(), inspector.count())
+	}
+}
+
+func TestNativeCreatePlanPostgresCreatesFreshTargetUnderExistingClaim(t *testing.T) {
 	db, repo := nativePlanPostgresDB(t)
 	snapshot, artifacts := nativePlanPostgresFixture(t, createPlanTestDigest('a'), createPlanTestDigest('b'))
 	coord := nativePlanCoordinator(t, db, &nativePlanSourceReader{snap: snapshot}, &nativePlanArtifactInspector{set: artifacts})
@@ -210,7 +241,7 @@ func TestNativeCreatePlanPostgresAtomicallyBootstrapsFreshTargetAndClaim(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claim.ProjectID != request.ProjectID || string(claim.Environment) != request.Environment || claim.ClaimedBy != request.PrincipalID || claim.ClaimedAt.IsZero() {
+	if claim.ProjectID != request.ProjectID || string(claim.Environment) != request.Environment || claim.ClaimedBy != "bootstrap-admin" || claim.ClaimedAt.IsZero() {
 		t.Fatalf("fresh project claim = %#v", claim)
 	}
 	stored, err := repo.Plan(t.Context(), created.ID.String())

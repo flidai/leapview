@@ -184,7 +184,10 @@ func bootstrapAPIGenDecision(
 	}
 	claim, err := claims.GetProjectClaim(ctx)
 	if errors.Is(err, deployment.ErrProjectClaimNotFound) {
-		return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapOperationAllowedWithoutClaim(operationID)}, nil
+		// Only the platform-scoped Project bootstrap may establish a claim.
+		// Project-scoped source and managed-data operations must not create
+		// target state before that separately authorized boundary succeeds.
+		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
 	}
 	if err != nil {
 		return accessmodule.APIGenBootstrapDecision{}, fmt.Errorf("read bootstrap project claim: %w", err)
@@ -212,18 +215,6 @@ func bootstrapOperationAllowed(operationID string) bool {
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
 		return true
 	case "managedDataTusTransport":
-		return true
-	default:
-		return false
-	}
-}
-
-func bootstrapOperationAllowedWithoutClaim(operationID string) bool {
-	switch operationID {
-	case "planProjectCandidateSynchronization",
-		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
-		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
-		"managedDataTusTransport":
 		return true
 	default:
 		return false

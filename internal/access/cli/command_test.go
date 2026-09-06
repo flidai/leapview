@@ -32,14 +32,46 @@ func (fakeDiscovery) Discover(_ context.Context, origin string) (TargetMetadata,
 	return TargetMetadata{Origin: strings.TrimRight(origin, "/"), InstanceID: "lvinst_prod", Environment: "production"}, nil
 }
 
+type fakeProjectResolver struct{}
+
+func (fakeProjectResolver) ProjectID(_ string) (string, error) {
+	return "analytics", nil
+}
+
+type orderedProjectResolver struct{ events *[]string }
+
+func (resolver orderedProjectResolver) ProjectID(_ string) (string, error) {
+	*resolver.events = append(*resolver.events, "project")
+	return "analytics", nil
+}
+
+type orderedDiscovery struct{ events *[]string }
+
+func (discovery orderedDiscovery) Discover(_ context.Context, origin string) (TargetMetadata, error) {
+	*discovery.events = append(*discovery.events, "discover")
+	return TargetMetadata{Origin: strings.TrimRight(origin, "/"), InstanceID: "lvinst_prod", Environment: "production"}, nil
+}
+
+func TestLoginCommandResolvesProjectBeforeTargetNetwork(t *testing.T) {
+	events := []string{}
+	command := LoginCommand(context.Background(), &fakeAuthService{}, orderedDiscovery{events: &events}, orderedProjectResolver{events: &events})
+	command.SetArgs([]string{"https://prod.example.com", "--no-browser"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(events, ","); got != "project,discover" {
+		t.Fatalf("events = %q, want project,discover", got)
+	}
+}
+
 func TestLoginCommandDiscoversTargetAndProject(t *testing.T) {
 	service := &fakeAuthService{challenge: DeviceChallenge{
 		UserCode: "ABCD-EFGH", VerificationURI: "https://prod.example.com/device",
 	}}
-	command := LoginCommand(context.Background(), service, fakeDiscovery{})
+	command := LoginCommand(context.Background(), service, fakeDiscovery{}, fakeProjectResolver{})
 	var output strings.Builder
 	command.SetOut(&output)
-	command.SetArgs([]string{"https://prod.example.com/", "--project-id", "analytics", "--no-browser"})
+	command.SetArgs([]string{"https://prod.example.com/", "--no-browser"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +90,8 @@ func TestLoginCommandDiscoversTargetAndProject(t *testing.T) {
 
 func TestLoginCommandSupportsStableProfileAlias(t *testing.T) {
 	service := &fakeAuthService{}
-	command := LoginCommand(context.Background(), service, fakeDiscovery{})
-	command.SetArgs([]string{"https://prod.example.com", "--name", "prod", "--project-id", "analytics"})
+	command := LoginCommand(context.Background(), service, fakeDiscovery{}, fakeProjectResolver{})
+	command.SetArgs([]string{"https://prod.example.com", "--name", "prod"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -72,10 +104,10 @@ func TestLoginCommandEmitsVersionedJSONEvents(t *testing.T) {
 	service := &fakeAuthService{challenge: DeviceChallenge{
 		UserCode: "ABCD-EFGH", VerificationURI: "https://prod.example.com/device",
 	}}
-	command := LoginCommand(context.Background(), service, fakeDiscovery{})
+	command := LoginCommand(context.Background(), service, fakeDiscovery{}, fakeProjectResolver{})
 	var output strings.Builder
 	command.SetOut(&output)
-	command.SetArgs([]string{"https://prod.example.com", "--project-id", "analytics", "--no-browser", "--format", "json"})
+	command.SetArgs([]string{"https://prod.example.com", "--no-browser", "--format", "json"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}

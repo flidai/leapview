@@ -11,6 +11,7 @@ import (
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/securestore"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const authoringCredentialService = "com.leapview.cli.authoring.v1"
@@ -60,6 +61,26 @@ func (applicationTargetDiscovery) Discover(ctx context.Context, target string) (
 	return accesscli.TargetMetadata{
 		Origin: strings.TrimRight(instance.CanonicalOrigin, "/"), InstanceID: instance.Id, Environment: instance.Environment,
 	}, nil
+}
+
+type applicationProjectIdentity struct {
+	profiles *cliapi.ProfileStore
+}
+
+func (identity applicationProjectIdentity) ProjectID(externallyIssuedUID string) (string, error) {
+	if identity.profiles == nil {
+		return "", fmt.Errorf("project authority state is unavailable")
+	}
+	authority, err := identity.profiles.ResolveProjectAuthority(externallyIssuedUID, validateProjectAuthorityResourceID)
+	if err != nil {
+		return "", err
+	}
+	return authority.ProjectUID, nil
+}
+
+func validateProjectAuthorityResourceID(value string) error {
+	_, err := projectgraph.NewResourceID(value)
+	return err
 }
 
 func openSystemBrowser(uri string) error {

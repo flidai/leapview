@@ -29,7 +29,6 @@ import (
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
-	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
@@ -197,6 +196,16 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	if err := validateNativeCreatePlanRequest(request); err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err
 	}
+	claim, err := c.repository.GetProjectClaim(ctx)
+	if errors.Is(err, deployment.ErrProjectClaimNotFound) {
+		return deploymentmodule.NativeDeliveryPlan{}, deployment.ErrProjectClaimRequired
+	}
+	if err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	if claim.ProjectID != request.ProjectID || string(claim.Environment) != request.Environment {
+		return deploymentmodule.NativeDeliveryPlan{}, deployment.ErrProjectClaimConflict
+	}
 	sourceOwner := strings.TrimSpace(request.SourceOwnerID)
 	if sourceOwner == "" {
 		sourceOwner = strings.TrimSpace(request.PrincipalID)
@@ -328,11 +337,6 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	}
 
 	if freshTarget {
-		if _, err := c.repository.ClaimProjectTx(ctx, tx, deployment.ProjectClaimInput{
-			ProjectID: request.ProjectID, Environment: servingstate.Environment(request.Environment), ClaimedBy: request.PrincipalID, ClaimedAt: now,
-		}); err != nil {
-			return deploymentmodule.NativeDeliveryPlan{}, err
-		}
 		if _, err := c.repository.CreateTargetTx(ctx, tx, deploymentnative.TargetInput{
 			TargetID: request.TargetID, ProjectID: request.ProjectID.String(), Environment: request.Environment, TargetRevision: 1,
 		}); err != nil {

@@ -418,13 +418,22 @@ publish_project() {
 	local port="$1"
 	local source_root="${2:-${LEAPVIEW_DEV_SOURCE_ROOT:-dashboards}}"
 	local connection="${3:-}"
-	local project_id="${LEAPVIEW_DEV_PROJECT_ID:-project:leapview-showcase}"
+	local project_id="${LEAPVIEW_DEV_PROJECT_ID:-}"
 	local token="${LEAPVIEW_DEV_API_TOKEN:-dev}"
 	local from="${4:-}"
 	if [[ "${LEAPVIEW_DEV_SKIP_PUBLISH:-}" == "1" ]]; then
     echo "Skipping dev candidate publication"
     return 0
   fi
+	# Issuance belongs to the CLI's durable local state, not to source files or
+	# the target. Bootstrap must succeed before data staging or source planning.
+	local bootstrap_output
+	local bootstrap_args=(bootstrap-project "http://localhost:${port}" --token "$token" --format json)
+	if [[ -n "$project_id" ]]; then
+		bootstrap_args+=(--project-uid "$project_id")
+	fi
+	bootstrap_output="$(go run ./cmd/leapview "${bootstrap_args[@]}")" || return 1
+	project_id="$(jq -er '.projectUid | strings | select(length > 0)' <<<"$bootstrap_output")" || return 1
 	if [[ "$source_root" == "dashboards" ]]; then
 		connection="${connection:-olist}"
 		from="${from:-.data/olist}"
