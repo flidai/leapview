@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
 
-GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
+# Match setup-ci's HTTP/1.1 workaround for checksum-service HTTP/2 stream
+# failures; transport only, with sqlc checksums and TLS integrity unchanged.
+GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
 go run ./internal/app/tools/configgen
 go run ./internal/app/tools/layoutcontractgen
 
