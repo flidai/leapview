@@ -1,4 +1,4 @@
-import type { VisualizationCartesianAxis, VisualizationDisplayUnits, VisualizationEnvelope, VisualizationField, VisualizationFieldRef } from '../../../../../generated/visualization'
+import type { VisualizationAxisConfiguration, VisualizationAxisLabelRotation, VisualizationCartesianAxis, VisualizationDateDisplayUnit, VisualizationDisplayUnits, VisualizationEnvelope, VisualizationField, VisualizationFieldRef } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
 import { formatDisplayValue, formatValue, resolveDisplayUnitForFormat, type ResolvedDisplayUnit } from '../../format'
 import { resolveVisualizationMetadata } from '../../metadata'
@@ -165,15 +165,84 @@ export function axis(
   axisID?: VisualizationCartesianAxis,
   scopeRefs?: VisualizationFieldRef[],
 ): EChartsTranslation {
+  const policy = axisPolicy(envelope, axisID)
+  const resolvedType = policy?.type && policy.type !== 'automatic' ? policy.type : type
   const displayUnit = displayUnitForField(envelope, ref, axisID, scopeRefs)
-  return {
-    type,
+  const result: EChartsTranslation = {
+    type: resolvedType,
     axisLine: { lineStyle: { color: context.colors.grid } },
     axisTick: { lineStyle: { color: context.colors.grid } },
     splitLine: { lineStyle: { color: context.colors.grid } },
-    axisLabel: { color: context.colors.muted, formatter: (value: unknown) => type === 'value' ? formatDisplayField(envelope, ref, value, context, displayUnit) : formatField(envelope, ref, value, context) },
+    axisLabel: { color: context.colors.muted, formatter: (value: unknown) => resolvedType === 'value'
+      ? formatDisplayField(envelope, ref, value, context, displayUnit)
+      : resolvedType === 'time' ? formatAxisDate(envelope, ref, value, context, policy?.dateUnit) : formatField(envelope, ref, value, context) },
     nameTextStyle: { color: context.colors.muted },
   }
+  applyAxisVisibility(result, policy)
+  applyAxisRotation(result, policy?.labelRotation)
+  if (policy?.inversion === 'inverted') result.inverse = true
+  return result
+}
+
+function axisPolicy(envelope: VisualizationEnvelope, axisID?: VisualizationCartesianAxis): VisualizationAxisConfiguration | undefined {
+  if (!axisID || (envelope.spec.kind !== 'cartesian' && envelope.spec.kind !== 'point')) return undefined
+  return envelope.spec.axes?.find((candidate) => candidate.id === axisID)
+}
+
+function applyAxisVisibility(axisOption: EChartsTranslation, policy: VisualizationAxisConfiguration | undefined): void {
+  if (policy?.ticks === 'hidden') axisOption.axisTick = { ...axisOption.axisTick, show: false }
+  else if (policy?.ticks === 'visible') axisOption.axisTick = { ...axisOption.axisTick, show: true }
+  if (policy?.grid === 'hidden') axisOption.splitLine = { ...axisOption.splitLine, show: false }
+  else if (policy?.grid === 'visible') axisOption.splitLine = { ...axisOption.splitLine, show: true }
+}
+
+function applyAxisRotation(axisOption: EChartsTranslation, rotation: VisualizationAxisLabelRotation | undefined): void {
+  switch (rotation) {
+    case 'horizontal': axisOption.axisLabel = { ...axisOption.axisLabel, rotate: 0 }; break
+    case 'diagonal': axisOption.axisLabel = { ...axisOption.axisLabel, rotate: 45 }; break
+    case 'vertical': axisOption.axisLabel = { ...axisOption.axisLabel, rotate: 90 }; break
+  }
+}
+
+function formatAxisDate(
+  envelope: VisualizationEnvelope,
+  ref: VisualizationFieldRef,
+  value: unknown,
+  context: RendererContext,
+  unit: VisualizationDateDisplayUnit | undefined,
+): string {
+  if (value === null || value === undefined) return '—'
+  if ((!unit || unit === 'automatic') && field(envelope, ref)?.format) return formatField(envelope, ref, value, context)
+  const date = new Date(typeof value === 'number' ? value : String(value))
+  if (!Number.isFinite(date.getTime())) return formatField(envelope, ref, value, context)
+  const year = date.getUTCFullYear()
+  if (unit === 'quarter') return `Q${Math.floor(date.getUTCMonth() / 3) + 1} ${year}`
+  if (unit === 'week') {
+    const week = isoWeek(date)
+    return `W${week.number} ${week.year}`
+  }
+  const options: Intl.DateTimeFormatOptions = unit === 'year'
+    ? { year: 'numeric' }
+    : unit === 'month'
+      ? { year: 'numeric', month: 'short' }
+      : unit === 'day'
+        ? { year: 'numeric', month: 'short', day: 'numeric' }
+        : unit === 'hour'
+          ? { month: 'short', day: 'numeric', hour: 'numeric', timeZone: 'UTC' }
+          : unit === 'minute'
+            ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }
+            : unit === 'second'
+              ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone: 'UTC' }
+              : { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }
+  return new Intl.DateTimeFormat(context.locale, { ...options, timeZone: 'UTC' }).format(date)
+}
+
+function isoWeek(date: Date): { number: string; year: number } {
+  const thursday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+  thursday.setUTCDate(thursday.getUTCDate() + 4 - (thursday.getUTCDay() || 7))
+  const first = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 1))
+  const week = Math.ceil(((thursday.getTime() - first.getTime()) / 86400000 + 1) / 7)
+  return { number: String(week).padStart(2, '0'), year: thursday.getUTCFullYear() }
 }
 
 export function legend(position: string, context: RendererContext, scroll = false): EChartsTranslation | undefined {

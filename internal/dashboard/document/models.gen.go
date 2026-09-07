@@ -94,15 +94,21 @@ const (
 )
 
 type DashboardAxisConfiguration struct {
-	ID           visualizationir.VisualizationCartesianAxis   `json:"id" yaml:"id"`
-	Title        *string                                      `json:"title,omitempty" yaml:"title,omitempty"`
-	Scale        visualizationir.VisualizationAxisScale       `json:"scale" yaml:"scale"`
-	Zero         visualizationir.VisualizationAxisZeroPolicy  `json:"zero" yaml:"zero"`
-	Minimum      *float64                                     `json:"minimum,omitempty" yaml:"minimum,omitempty"`
-	Maximum      *float64                                     `json:"maximum,omitempty" yaml:"maximum,omitempty"`
-	Unit         *string                                      `json:"unit,omitempty" yaml:"unit,omitempty"`
-	DisplayUnits *visualizationir.VisualizationDisplayUnits   `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
-	TickDensity  visualizationir.VisualizationAxisTickDensity `json:"tickDensity" yaml:"tickDensity"`
+	ID            visualizationir.VisualizationCartesianAxis       `json:"id" yaml:"id"`
+	Title         *string                                          `json:"title,omitempty" yaml:"title,omitempty"`
+	Type          *visualizationir.VisualizationAxisType           `json:"type,omitempty" yaml:"type,omitempty"`
+	Scale         visualizationir.VisualizationAxisScale           `json:"scale" yaml:"scale"`
+	Zero          visualizationir.VisualizationAxisZeroPolicy      `json:"zero" yaml:"zero"`
+	Inversion     *visualizationir.VisualizationAxisInversion      `json:"inversion,omitempty" yaml:"inversion,omitempty"`
+	Minimum       *float64                                         `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum       *float64                                         `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Unit          *string                                          `json:"unit,omitempty" yaml:"unit,omitempty"`
+	DisplayUnits  *visualizationir.VisualizationDisplayUnits       `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	TickDensity   visualizationir.VisualizationAxisTickDensity     `json:"tickDensity" yaml:"tickDensity"`
+	Ticks         *visualizationir.VisualizationAxisTickVisibility `json:"ticks,omitempty" yaml:"ticks,omitempty"`
+	Grid          *visualizationir.VisualizationAxisGridVisibility `json:"grid,omitempty" yaml:"grid,omitempty"`
+	LabelRotation *visualizationir.VisualizationAxisLabelRotation  `json:"labelRotation,omitempty" yaml:"labelRotation,omitempty"`
+	DateUnit      *visualizationir.VisualizationDateDisplayUnit    `json:"dateUnit,omitempty" yaml:"dateUnit,omitempty"`
 }
 
 type DashboardCalculation struct {

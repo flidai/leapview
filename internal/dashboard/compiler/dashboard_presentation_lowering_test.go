@@ -17,7 +17,7 @@ func TestLowerCanonicalCartesianPresentationPreservesEveryField(t *testing.T) {
 	density := document.DashboardLabelDensityDense
 	priority := []document.DashboardLabelPriority{document.DashboardLabelPriorityThreshold}
 	labels := document.DashboardLabelPolicy{Density: density, Priority: &priority}
-	stacking := document.DashboardStackingModePercent
+	stacking := document.DashboardStackingModeNormal
 	orientation := document.DashboardOrientationHorizontal
 	showSymbols, smooth, dataZoom := true, true, true
 	symbolSize := 14.0
@@ -32,7 +32,7 @@ func TestLowerCanonicalCartesianPresentationPreservesEveryField(t *testing.T) {
 	if !ok {
 		t.Fatalf("lowered type = %T", lowered)
 	}
-	if got.Legend != visualizationir.VisualizationLegendPositionRight || got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityDense || len(got.LabelPolicy.Priority) != 1 || got.LabelPolicy.Priority[0] != visualizationir.VisualizationLabelPriorityThreshold || got.Stacking == nil || *got.Stacking != visualizationir.VisualizationStackingModePercent || got.Orientation == nil || *got.Orientation != visualizationir.VisualizationOrientationHorizontal || !got.ShowSymbols || !got.Smooth || !got.DataZoom || got.SymbolSize == nil || *got.SymbolSize != 14 || got.LabelPosition == nil || *got.LabelPosition != visualizationir.VisualizationLabelPositionInside || got.DisplayUnits == nil || *got.DisplayUnits != visualizationir.VisualizationDisplayUnitsMillions {
+	if got.Legend != visualizationir.VisualizationLegendPositionRight || got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityDense || len(got.LabelPolicy.Priority) != 1 || got.LabelPolicy.Priority[0] != visualizationir.VisualizationLabelPriorityThreshold || got.Stacking == nil || *got.Stacking != visualizationir.VisualizationStackingModeNormal || got.Orientation == nil || *got.Orientation != visualizationir.VisualizationOrientationHorizontal || !got.ShowSymbols || !got.Smooth || !got.DataZoom || got.SymbolSize == nil || *got.SymbolSize != 14 || got.LabelPosition == nil || *got.LabelPosition != visualizationir.VisualizationLabelPositionInside || got.DisplayUnits == nil || *got.DisplayUnits != visualizationir.VisualizationDisplayUnitsMillions {
 		t.Fatalf("lowered presentation dropped fields: %#v", got)
 	}
 }

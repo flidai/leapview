@@ -16,13 +16,17 @@ test('ECharts translates supported line presentation controls exactly', () => {
     symbolSize: 16,
     dataZoom: true,
   }
+  envelope.spec.axes = [
+    { id: 'x', type: 'automatic', scale: 'automatic', zero: 'automatic', inversion: 'inverted', tickDensity: 'automatic', ticks: 'hidden', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic' },
+    { id: 'primary_y', type: 'automatic', scale: 'automatic', zero: 'automatic', inversion: 'automatic', tickDensity: 'automatic', ticks: 'automatic', grid: 'hidden', labelRotation: 'vertical', dateUnit: 'automatic' },
+  ]
 
   const option = echartsOption(envelope, defaultRendererContext) as any
 
   expect(option.legend).toMatchObject({ show: true, orient: 'vertical', right: 0 })
   expect(option.grid).toMatchObject({ top: 16, bottom: 58 })
-  expect(option.xAxis).toMatchObject({ type: 'value' })
-  expect(option.yAxis).toMatchObject({ type: 'category' })
+  expect(option.xAxis).toMatchObject({ type: 'value', splitLine: { show: false }, axisLabel: { rotate: 90 } })
+  expect(option.yAxis).toMatchObject({ type: 'category', inverse: true, axisTick: { show: false } })
   expect(option.dataZoom).toEqual([{ type: 'inside' }, { type: 'slider' }])
   expect(option.series).toHaveLength(1)
   expect(option.series[0]).toMatchObject({
@@ -95,7 +99,7 @@ test('ECharts preserves common labels, display units, and axes for heatmap', () 
     labelPosition: 'inside',
     displayUnits: 'millions',
   }
-  envelope.spec.axes = [{ id: 'x', title: 'Period', scale: 'automatic', zero: 'automatic', tickDensity: 'dense' }]
+  envelope.spec.axes = [{ id: 'x', title: 'Period', type: 'automatic', inversion: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic', scale: 'automatic', zero: 'automatic', tickDensity: 'dense' }]
   envelope.dataState.datasets[0].columns = ['label', 'row', 'value']
   envelope.dataState.datasets[0].rows = [['A', 'R1', 1_000_000]]
 
@@ -108,6 +112,25 @@ test('ECharts preserves common labels, display units, and axes for heatmap', () 
   expect(option.series[0]).toMatchObject({ type: 'heatmap', encode: { x: 'label', y: 'row', value: 'value' } })
   expect(option.series[0].label.position).toBe('inside')
   expect(option.series[0].label.formatter({ value: ['A', 'R1', 1_000_000] })).toBe('1M')
+})
+
+test('ECharts applies typed temporal axis policies without leaking renderer fields', () => {
+  const envelope = cartesianPresentationFixture('line') as any
+  envelope.spec.datasets[0].fields[0].dataType = 'temporal'
+  envelope.spec.axes = [{
+    id: 'x', type: 'time', dateUnit: 'month', inversion: 'inverted', ticks: 'visible', grid: 'hidden', labelRotation: 'diagonal',
+    scale: 'automatic', zero: 'automatic', tickDensity: 'normal',
+  }]
+  envelope.dataState.datasets[0].rows = [[Date.UTC(2026, 0, 1), 12]]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+
+  expect(option.xAxis).toMatchObject({ type: 'time', inverse: true, splitNumber: 5, axisTick: { show: true }, splitLine: { show: false }, axisLabel: { rotate: 45 } })
+  expect(option.xAxis.axisLabel.formatter(Date.UTC(2026, 0, 1))).toBe('Jan 2026')
+
+  envelope.spec.axes[0].dateUnit = 'week'
+  const weekOption = echartsOption(envelope, defaultRendererContext) as any
+  expect(weekOption.xAxis.axisLabel.formatter(Date.UTC(2018, 11, 31))).toBe('W01 2019')
 })
 
 function cartesianPresentationFixture(mark: string): VisualizationEnvelope {

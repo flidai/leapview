@@ -35,6 +35,9 @@ func validateCanonicalCartesianPresentationApplicability(variant *document.Carte
 			visualType == document.DashboardVisualTypeCombo); err != nil {
 		return err
 	}
+	if variant.Stacking != nil && *variant.Stacking == document.DashboardStackingModePercent && variant.DisplayUnits != nil {
+		return fmt.Errorf("presentation.displayUnits is incompatible with percent stacking because the renderer owns the percent formatter")
+	}
 	if err := optionSupported("orientation", variant.Orientation != nil,
 		visualType == document.DashboardVisualTypeLine ||
 			visualType == document.DashboardVisualTypeArea ||

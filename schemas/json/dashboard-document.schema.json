@@ -246,11 +246,23 @@
     "DashboardAxisConfiguration": {
       "description": "A renderer-neutral axis policy for Cartesian and point visuals.",
       "properties": {
+        "dateUnit": {
+          "$ref": "#/$defs/VisualizationDateDisplayUnit"
+        },
         "displayUnits": {
           "$ref": "#/$defs/VisualizationDisplayUnits"
         },
+        "grid": {
+          "$ref": "#/$defs/VisualizationAxisGridVisibility"
+        },
         "id": {
           "$ref": "#/$defs/VisualizationCartesianAxis"
+        },
+        "inversion": {
+          "$ref": "#/$defs/VisualizationAxisInversion"
+        },
+        "labelRotation": {
+          "$ref": "#/$defs/VisualizationAxisLabelRotation"
         },
         "maximum": {
           "format": "double",
@@ -266,8 +278,14 @@
         "tickDensity": {
           "$ref": "#/$defs/VisualizationAxisTickDensity"
         },
+        "ticks": {
+          "$ref": "#/$defs/VisualizationAxisTickVisibility"
+        },
         "title": {
           "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/VisualizationAxisType"
         },
         "unit": {
           "type": "string"
@@ -3965,6 +3983,32 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "VisualizationAxisGridVisibility": {
+      "enum": [
+        "automatic",
+        "visible",
+        "hidden"
+      ],
+      "type": "string"
+    },
+    "VisualizationAxisInversion": {
+      "description": "Renderer-neutral axis direction. Automatic keeps the conventional direction.",
+      "enum": [
+        "automatic",
+        "normal",
+        "inverted"
+      ],
+      "type": "string"
+    },
+    "VisualizationAxisLabelRotation": {
+      "enum": [
+        "automatic",
+        "horizontal",
+        "diagonal",
+        "vertical"
+      ],
+      "type": "string"
+    },
     "VisualizationAxisScale": {
       "enum": [
         "automatic",
@@ -3979,6 +4023,24 @@
         "sparse",
         "normal",
         "dense"
+      ],
+      "type": "string"
+    },
+    "VisualizationAxisTickVisibility": {
+      "enum": [
+        "automatic",
+        "visible",
+        "hidden"
+      ],
+      "type": "string"
+    },
+    "VisualizationAxisType": {
+      "description": "Renderer-neutral axis coordinate type. Automatic preserves the established chart-family default while temporal axes remain time axes.",
+      "enum": [
+        "automatic",
+        "category",
+        "value",
+        "time"
       ],
       "type": "string"
     },
@@ -4078,6 +4140,21 @@
         "cell_background",
         "kpi_value",
         "icon"
+      ],
+      "type": "string"
+    },
+    "VisualizationDateDisplayUnit": {
+      "description": "Semantic date granularity for labels on a temporal axis.",
+      "enum": [
+        "automatic",
+        "year",
+        "quarter",
+        "month",
+        "week",
+        "day",
+        "hour",
+        "minute",
+        "second"
       ],
       "type": "string"
     },

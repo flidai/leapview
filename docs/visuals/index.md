@@ -33,6 +33,44 @@ presentation:
 
 Fixed units remain fixed even when the current filtered values are smaller or larger. Use them when comparable visuals must retain the same scale; otherwise prefer `auto`. Label visibility is a separate explicit choice and is never inferred from number formatting.
 
+Axes are renderer-neutral and may also declare `type` (`automatic`, `category`,
+`value`, or `time`), `minimum`/`maximum`, `zero`, and `inversion` (`normal` or
+`inverted`). Numeric bounds, zero policies, log/linear scales, and number
+display units require an effective numeric axis; `dateUnit` is only valid on an
+effective time axis. `ticks` and `grid` can be `automatic`, `visible`, or
+`hidden`, while `labelRotation` supports `automatic`, `horizontal`, `diagonal`,
+and `vertical`. Omitted values resolve to the automatic policy in the compiled
+IR, keeping defaults explicit and renderer-neutral. Percent stacking owns the
+percent formatter, so it cannot be combined with presentation or primary-axis
+`displayUnits`. An explicit `dateUnit` controls axis labels only; governed field
+formatting continues to control tooltip values.
+
+For example, this keeps a time axis readable while inverting a bounded value
+axis and hiding its grid lines:
+
+```yaml
+presentation:
+  axes:
+  - id: x
+    type: time
+    dateUnit: month
+    ticks: visible
+    labelRotation: diagonal
+    scale: automatic
+    zero: automatic
+    tickDensity: normal
+  - id: primary_y
+    type: value
+    scale: linear
+    zero: exclude
+    minimum: 0
+    maximum: 1000000
+    inversion: inverted
+    grid: hidden
+    displayUnits: millions
+    tickDensity: dense
+```
+
 Policies also bound label length by Unicode grapheme, set minimum collision spacing, and declare whether selected, anomalous, or threshold-crossing data should win a collision. The same frame, locale, dimensions, and policy always produce the same label decision. Full untruncated values remain in governed tooltips when `tooltipFallback` is enabled.
 
 ## Per-mark presentation

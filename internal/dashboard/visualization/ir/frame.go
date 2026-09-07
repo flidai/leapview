@@ -610,7 +610,7 @@ func validatePointSpecification(spec VisualizationSpec, schemas map[string]Visua
 		X: point.X, Y: []VisualizationFieldRef{point.Y}, Axes: point.Axes, ReferenceLines: point.ReferenceLines,
 		ReferenceBands: point.ReferenceBands, EventAnnotations: point.EventAnnotations,
 	}}
-	return validateCartesianDecisionContext(decisionContext)
+	return validateCartesianDecisionContextWithPointSemantics(decisionContext, true)
 }
 
 func validateKPISpecification(spec VisualizationSpec, schemas map[string]VisualizationDatasetSchema) error {
@@ -1268,9 +1268,22 @@ func (visitor *specificationReferenceVisitor) VisitGeographicVisualizationSpec(v
 }
 
 func validateCartesianDecisionContext(spec VisualizationSpec) error {
+	return validateCartesianDecisionContextWithPointSemantics(spec, false)
+}
+
+func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, pointSemantics bool) error {
 	value, ok := spec.Value.(*CartesianVisualizationSpec)
 	if !ok {
 		return nil
+	}
+	pointAxisDefaults := pointSemantics
+	base, err := specificationBase(spec)
+	if err != nil {
+		return err
+	}
+	schemas := make(map[string]VisualizationDatasetSchema, len(base.Datasets))
+	for _, dataset := range base.Datasets {
+		schemas[dataset.ID] = dataset
 	}
 	if err := validateCartesianSeriesPresentation(*value); err != nil {
 		return err
@@ -1288,10 +1301,123 @@ func validateCartesianDecisionContext(spec VisualizationSpec) error {
 			if axis.ID == VisualizationCartesianAxisSecondaryY && value.Mark != VisualizationCartesianMarkCombo {
 				return fmt.Errorf("secondary_y axis requires combo mark")
 			}
+			if value.Mark == VisualizationCartesianMarkCombo && axis.ID != VisualizationCartesianAxisX {
+				if _, found := CartesianComboAxisOwner(*value, axis.ID); !found {
+					return fmt.Errorf("axis %q requires a %s combo series", axis.ID, comboAxisOwnerName(axis.ID))
+				}
+			}
+			switch axis.Scale {
+			case VisualizationAxisScaleAutomatic, VisualizationAxisScaleLinear, VisualizationAxisScaleLog:
+			default:
+				return fmt.Errorf("axis %q has unsupported scale %q", axis.ID, axis.Scale)
+			}
+			switch axis.Zero {
+			case VisualizationAxisZeroPolicyAutomatic, VisualizationAxisZeroPolicyInclude, VisualizationAxisZeroPolicyExclude:
+			default:
+				return fmt.Errorf("axis %q has unsupported zero policy %q", axis.ID, axis.Zero)
+			}
+			switch axis.TickDensity {
+			case VisualizationAxisTickDensityAutomatic, VisualizationAxisTickDensitySparse, VisualizationAxisTickDensityNormal, VisualizationAxisTickDensityDense:
+			default:
+				return fmt.Errorf("axis %q has unsupported tick density %q", axis.ID, axis.TickDensity)
+			}
+			if axis.DisplayUnits != nil {
+				switch *axis.DisplayUnits {
+				case VisualizationDisplayUnitsAuto, VisualizationDisplayUnitsNone, VisualizationDisplayUnitsThousands, VisualizationDisplayUnitsMillions, VisualizationDisplayUnitsBillions, VisualizationDisplayUnitsTrillions:
+				default:
+					return fmt.Errorf("axis %q has unsupported display units %q", axis.ID, *axis.DisplayUnits)
+				}
+			}
+			if axis.ID == VisualizationCartesianAxisPrimaryY && value.Presentation.Stacking != nil && *value.Presentation.Stacking == VisualizationStackingModePercent && axis.DisplayUnits != nil {
+				return fmt.Errorf("axis %q display units are incompatible with percent stacking because the renderer owns the percent formatter", axis.ID)
+			}
+			switch axis.Type {
+			case VisualizationAxisTypeAutomatic, VisualizationAxisTypeCategory, VisualizationAxisTypeValue, VisualizationAxisTypeTime:
+			default:
+				return fmt.Errorf("axis %q has unsupported type %q", axis.ID, axis.Type)
+			}
+			switch axis.Inversion {
+			case VisualizationAxisInversionAutomatic, VisualizationAxisInversionNormal, VisualizationAxisInversionInverted:
+			default:
+				return fmt.Errorf("axis %q has unsupported inversion %q", axis.ID, axis.Inversion)
+			}
+			switch axis.Ticks {
+			case VisualizationAxisTickVisibilityAutomatic, VisualizationAxisTickVisibilityVisible, VisualizationAxisTickVisibilityHidden:
+			default:
+				return fmt.Errorf("axis %q has unsupported tick visibility %q", axis.ID, axis.Ticks)
+			}
+			switch axis.Grid {
+			case VisualizationAxisGridVisibilityAutomatic, VisualizationAxisGridVisibilityVisible, VisualizationAxisGridVisibilityHidden:
+			default:
+				return fmt.Errorf("axis %q has unsupported grid visibility %q", axis.ID, axis.Grid)
+			}
+			switch axis.LabelRotation {
+			case VisualizationAxisLabelRotationAutomatic, VisualizationAxisLabelRotationHorizontal, VisualizationAxisLabelRotationDiagonal, VisualizationAxisLabelRotationVertical:
+			default:
+				return fmt.Errorf("axis %q has unsupported label rotation %q", axis.ID, axis.LabelRotation)
+			}
+			switch axis.DateUnit {
+			case VisualizationDateDisplayUnitAutomatic, VisualizationDateDisplayUnitYear, VisualizationDateDisplayUnitQuarter, VisualizationDateDisplayUnitMonth, VisualizationDateDisplayUnitWeek, VisualizationDateDisplayUnitDay, VisualizationDateDisplayUnitHour, VisualizationDateDisplayUnitMinute, VisualizationDateDisplayUnitSecond:
+			default:
+				return fmt.Errorf("axis %q has unsupported date unit %q", axis.ID, axis.DateUnit)
+			}
+			if axis.Minimum != nil && (math.IsNaN(*axis.Minimum) || math.IsInf(*axis.Minimum, 0)) || axis.Maximum != nil && (math.IsNaN(*axis.Maximum) || math.IsInf(*axis.Maximum, 0)) {
+				return fmt.Errorf("axis %q domain bounds must be finite", axis.ID)
+			}
 			if axis.Minimum != nil && axis.Maximum != nil && *axis.Minimum >= *axis.Maximum {
 				return fmt.Errorf("axis %q minimum must be less than maximum", axis.ID)
 			}
+			axisField := value.X
+			if axis.ID != VisualizationCartesianAxisX {
+				if value.Mark == VisualizationCartesianMarkCombo {
+					axisField, _ = CartesianComboAxisOwner(*value, axis.ID)
+				} else if len(value.Y) > 0 {
+					axisField = value.Y[0]
+				}
+			}
+			field, hasField := visualizationField(axisField, schemas)
+			numeric := hasField && numericVisualizationField(field)
+			temporal := hasField && (field.DataType == VisualizationDataTypeDate || field.DataType == VisualizationDataTypeTemporal)
+			effectiveType := VisualizationAxisTypeCategory
+			if temporal {
+				effectiveType = VisualizationAxisTypeTime
+			} else if numeric && (pointAxisDefaults || (value.Mark != VisualizationCartesianMarkHeatmap && axis.ID != VisualizationCartesianAxisX)) {
+				effectiveType = VisualizationAxisTypeValue
+			}
+			switch axis.Type {
+			case VisualizationAxisTypeValue:
+				if !numeric {
+					return fmt.Errorf("axis %q value type requires a numeric field", axis.ID)
+				}
+				effectiveType = VisualizationAxisTypeValue
+			case VisualizationAxisTypeCategory:
+				effectiveType = VisualizationAxisTypeCategory
+			case VisualizationAxisTypeTime:
+				if !temporal {
+					return fmt.Errorf("axis %q time type requires a date or temporal field", axis.ID)
+				}
+				effectiveType = VisualizationAxisTypeTime
+			}
+			effectiveNumeric := effectiveType == VisualizationAxisTypeValue
+			if axis.DisplayUnits != nil && !effectiveNumeric {
+				return fmt.Errorf("axis %q display units require an effective numeric field", axis.ID)
+			}
+			if axis.DateUnit != VisualizationDateDisplayUnitAutomatic && effectiveType != VisualizationAxisTypeTime {
+				return fmt.Errorf("axis %q date unit requires an effective time field", axis.ID)
+			}
+			if axis.Zero != VisualizationAxisZeroPolicyAutomatic && !effectiveNumeric {
+				return fmt.Errorf("axis %q zero policy requires an effective numeric field", axis.ID)
+			}
+			if (axis.Minimum != nil || axis.Maximum != nil) && !effectiveNumeric {
+				return fmt.Errorf("axis %q domain bounds require an effective numeric field", axis.ID)
+			}
+			if (axis.Scale == VisualizationAxisScaleLinear || axis.Scale == VisualizationAxisScaleLog) && !effectiveNumeric {
+				return fmt.Errorf("axis %q %s scale requires an effective numeric field", axis.ID, axis.Scale)
+			}
 			if axis.Scale == VisualizationAxisScaleLog {
+				if !numeric {
+					return fmt.Errorf("axis %q log scale requires a numeric field", axis.ID)
+				}
 				if axis.Zero == VisualizationAxisZeroPolicyInclude {
 					return fmt.Errorf("axis %q log scale cannot include zero", axis.ID)
 				}
@@ -1318,6 +1444,15 @@ func validateCartesianDecisionContext(spec VisualizationSpec) error {
 		}
 		if axis == VisualizationCartesianAxisSecondaryY && value.Mark != VisualizationCartesianMarkCombo {
 			return fmt.Errorf("secondary_y decision context requires combo mark")
+		}
+		if value.Mark == VisualizationCartesianMarkCombo {
+			ownerAxis := axis
+			if ownerAxis == VisualizationCartesianAxisX {
+				ownerAxis = VisualizationCartesianAxisPrimaryY
+			}
+			if _, found := CartesianComboAxisOwner(*value, ownerAxis); !found {
+				return fmt.Errorf("%s decision context requires a %s combo series", axis, comboAxisOwnerName(ownerAxis))
+			}
 		}
 		return nil
 	}
@@ -1369,6 +1504,11 @@ func validateCartesianDecisionContext(spec VisualizationSpec) error {
 			if annotation.Axis != VisualizationCartesianAxisX {
 				return fmt.Errorf("event annotation %q must use x axis", annotation.ID)
 			}
+			if value.Mark == VisualizationCartesianMarkCombo {
+				if _, found := CartesianComboAxisOwner(*value, VisualizationCartesianAxisPrimaryY); !found {
+					return fmt.Errorf("event annotation %q requires a primary_y combo series", annotation.ID)
+				}
+			}
 			if strings.TrimSpace(annotation.Label) == "" {
 				return fmt.Errorf("event annotation %q requires a label", annotation.ID)
 			}
@@ -1399,6 +1539,9 @@ func validateCartesianSeriesPresentation(spec CartesianVisualizationSpec) error 
 		}
 	default:
 		return fmt.Errorf("unsupported stacking mode %q", stacking)
+	}
+	if stacking == VisualizationStackingModePercent && spec.Presentation.DisplayUnits != nil {
+		return fmt.Errorf("percent stacking cannot use presentation display units because the renderer owns the percent formatter")
 	}
 	if stacking == VisualizationStackingModePercent && spec.Series == nil && len(spec.Y) < 2 {
 		return fmt.Errorf("percent stacking requires multiple series")
@@ -1464,6 +1607,46 @@ func cartesianMarkSupportsReferences(mark VisualizationCartesianMark) bool {
 	default:
 		return false
 	}
+}
+
+// CartesianComboAxisOwner returns the first result field that actually owns a
+// combo value axis in canonical Y order. Combo series policies may reorder the
+// ownership relative to Y[0], and a category-series combo owns the value axis
+// when at least one configured category is assigned to it.
+func CartesianComboAxisOwner(spec CartesianVisualizationSpec, axis VisualizationCartesianAxis) (VisualizationFieldRef, bool) {
+	if spec.Mark != VisualizationCartesianMarkCombo || axis == VisualizationCartesianAxisX || len(spec.Y) == 0 {
+		return VisualizationFieldRef{}, false
+	}
+	if spec.Presentation.ComboSeries == nil {
+		return spec.Y[0], axis == VisualizationCartesianAxisPrimaryY
+	}
+	wanted := VisualizationAxisPrimary
+	if axis == VisualizationCartesianAxisSecondaryY {
+		wanted = VisualizationAxisSecondary
+	}
+	if spec.Series != nil {
+		for _, series := range *spec.Presentation.ComboSeries {
+			if series.Axis == wanted {
+				return spec.Y[0], true
+			}
+		}
+		return VisualizationFieldRef{}, false
+	}
+	for _, candidate := range spec.Y {
+		for _, series := range *spec.Presentation.ComboSeries {
+			if series.Axis == wanted && series.SeriesValue == candidate.Field {
+				return candidate, true
+			}
+		}
+	}
+	return VisualizationFieldRef{}, false
+}
+
+func comboAxisOwnerName(axis VisualizationCartesianAxis) string {
+	if axis == VisualizationCartesianAxisSecondaryY {
+		return "secondary_y"
+	}
+	return "primary_y"
 }
 
 func validateVisualizationReferenceValue(value VisualizationReferenceValue) error {
