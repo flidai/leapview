@@ -324,7 +324,7 @@ func canonicalMapHeat(value *document.DashboardMapHeatStyle) (visualizationir.Vi
 }
 
 func canonicalMapLine(value *document.DashboardMapLineStyle) (visualizationir.VisualizationMapLineStyle, error) {
-	out := visualizationir.VisualizationMapLineStyle{Width: 3, Curvature: 0}
+	out := visualizationir.VisualizationMapLineStyle{Width: 3}
 	if value == nil {
 		return out, nil
 	}

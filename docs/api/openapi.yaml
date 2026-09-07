@@ -84972,18 +84972,12 @@ components:
       type: object
       required:
         - width
-        - curvature
       properties:
         width:
           type: number
           format: double
           example: 1
-        curvature:
-          type: number
-          format: double
-          example: 1
       example:
-        curvature: 1
         width: 1
     VisualizationMapSizeScale:
       type: object
@@ -85249,7 +85243,6 @@ components:
           dataset: example
           field: example
         line:
-          curvature: 1
           width: 1
         longitude:
           dataset: example
