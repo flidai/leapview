@@ -180,9 +180,13 @@ func TestValidateSpecEnforcesFixedGeographicCamera(t *testing.T) {
 		{name: "missing center", mutate: func(camera *VisualizationMapCamera) { camera.Center = nil }, want: "presentation.camera.center is required"},
 		{name: "wrong center arity", mutate: func(camera *VisualizationMapCamera) { camera.Center = &[]float64{12.5} }, want: "presentation.camera.center must contain exactly two coordinates"},
 		{name: "nonfinite center", mutate: func(camera *VisualizationMapCamera) { camera.Center = &[]float64{math.NaN(), -3.25} }, want: "presentation.camera.center[0] must be finite"},
+		{name: "longitude range", mutate: func(camera *VisualizationMapCamera) { camera.Center = &[]float64{180.1, -3.25} }, want: "presentation.camera.center[0] must be between -180 and 180"},
+		{name: "latitude range", mutate: func(camera *VisualizationMapCamera) { camera.Center = &[]float64{12.5, 90.1} }, want: "presentation.camera.center[1] must be between -90 and 90"},
 		{name: "missing zoom", mutate: func(camera *VisualizationMapCamera) { camera.Zoom = nil }, want: "presentation.camera.zoom is required"},
 		{name: "nonfinite zoom", mutate: func(camera *VisualizationMapCamera) { value := math.Inf(1); camera.Zoom = &value }, want: "presentation.camera.zoom must be finite"},
 		{name: "zoom range", mutate: func(camera *VisualizationMapCamera) { value := 25.0; camera.Zoom = &value }, want: "presentation.camera.zoom must be between 0 and 24"},
+		{name: "zoom below minimum", mutate: func(camera *VisualizationMapCamera) { camera.MinimumZoom = 6 }, want: "presentation.camera.zoom must be within presentation.camera.minimumZoom and presentation.camera.maximumZoom"},
+		{name: "zoom above maximum", mutate: func(camera *VisualizationMapCamera) { camera.MaximumZoom = 5 }, want: "presentation.camera.zoom must be within presentation.camera.minimumZoom and presentation.camera.maximumZoom"},
 		{name: "negative padding", mutate: func(camera *VisualizationMapCamera) { camera.Padding = -1 }, want: "presentation.camera.padding must be non-negative"},
 		{name: "nonfinite minimum zoom", mutate: func(camera *VisualizationMapCamera) { camera.MinimumZoom = math.Inf(1) }, want: "presentation.camera.minimumZoom must be finite"},
 		{name: "minimum zoom range", mutate: func(camera *VisualizationMapCamera) { camera.MinimumZoom = -1 }, want: "presentation.camera.minimumZoom must be between 0 and 24"},
@@ -192,14 +196,14 @@ func TestValidateSpecEnforcesFixedGeographicCamera(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			camera := VisualizationMapCamera{Mode: VisualizationMapCameraModeFixed, Center: &center, Zoom: &zoom}
+			camera := VisualizationMapCamera{Mode: VisualizationMapCameraModeFixed, Center: &center, Zoom: &zoom, MaximumZoom: 14}
 			test.mutate(&camera)
 			if err := ValidateSpec(makeSpec(camera)); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want path-bearing camera diagnostic containing %q", err, test.want)
 			}
 		})
 	}
-	if err := ValidateSpec(makeSpec(VisualizationMapCamera{Mode: VisualizationMapCameraModeFixed, Center: &center, Zoom: &zoom})); err != nil {
+	if err := ValidateSpec(makeSpec(VisualizationMapCamera{Mode: VisualizationMapCameraModeFixed, Center: &center, Zoom: &zoom, MaximumZoom: 14})); err != nil {
 		t.Fatalf("valid fixed camera rejected: %v", err)
 	}
 }

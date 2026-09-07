@@ -439,6 +439,12 @@ func validateDashboardMapCamera(camera *document.DashboardMapCamera) error {
 			if !finiteDashboardFloat(coordinate) {
 				return fmt.Errorf("presentation.camera.center[%d] must be finite", index)
 			}
+			if index == 0 && (coordinate < -180 || coordinate > 180) {
+				return fmt.Errorf("presentation.camera.center[0] must be between -180 and 180")
+			}
+			if index == 1 && (coordinate < -90 || coordinate > 90) {
+				return fmt.Errorf("presentation.camera.center[1] must be between -90 and 90")
+			}
 		}
 	}
 	if zoom != nil && !finiteDashboardFloat(*zoom) {
@@ -471,6 +477,9 @@ func validateDashboardMapCamera(camera *document.DashboardMapCamera) error {
 		}
 		if zoom == nil {
 			return fmt.Errorf("presentation.camera.zoom is required for fixed camera")
+		}
+		if *zoom < minimumZoom || *zoom > maximumZoom {
+			return fmt.Errorf("presentation.camera.zoom must be within presentation.camera.minimumZoom and presentation.camera.maximumZoom")
 		}
 	}
 	return nil
