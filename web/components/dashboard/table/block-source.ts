@@ -119,6 +119,7 @@ export function normalizeStyle(style: Partial<TableStyle> | undefined): TableSty
     density,
     grid,
     zebra: typeof style?.zebra === 'boolean' ? style.zebra : defaultTableStyle.zebra,
+    showHeader: typeof style?.showHeader === 'boolean' ? style.showHeader : defaultTableStyle.showHeader,
   }
 }
 
