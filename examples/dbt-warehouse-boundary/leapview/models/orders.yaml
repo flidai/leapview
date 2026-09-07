@@ -32,13 +32,14 @@ spec:
     order_status: {datatype: String, description: dbt-normalized order state.}
     revenue: {datatype: Float, description: dbt-aggregated order revenue.}
   checks:
-    - {type: non_null, field: order_id, severity: error}
-    - {type: non_null, field: customer_id, severity: error}
-    - {type: non_null, field: order_date, severity: error}
-    - {type: non_null, field: order_status, severity: error}
-    - {type: non_null, field: revenue, severity: error}
-    - type: accepted_values
+    - {id: orders_order_id_not_null, type: non_null, field: order_id, severity: error}
+    - {id: orders_customer_id_not_null, type: non_null, field: customer_id, severity: error}
+    - {id: orders_order_date_not_null, type: non_null, field: order_date, severity: error}
+    - {id: orders_order_status_not_null, type: non_null, field: order_status, severity: error}
+    - {id: orders_revenue_not_null, type: non_null, field: revenue, severity: error}
+    - id: orders_status_accepted_values
+      type: accepted_values
       field: order_status
       values: [shipped, delivered, processing, cancelled]
       severity: error
-    - {type: row_count, minimum: 1, severity: error}
+    - {id: orders_row_count, type: row_count, minimum: 1, severity: error}
