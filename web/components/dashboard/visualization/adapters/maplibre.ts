@@ -947,7 +947,7 @@ export class MapLibreHandle implements RendererHandle {
         // Cluster expansion is asynchronous. The envelope may have changed
         // while MapLibre was resolving the cluster's target zoom; re-check
         // the current interaction/camera policy before moving the camera.
-        if (!this.envelope || !mapClickCanRefineCamera(this.envelope)) return
+        if (this.disposed || !this.envelope || !mapClickCanRefineCamera(this.envelope)) return
         this.map.easeTo({ center: expansion.center, zoom })
       })
 		}

@@ -491,7 +491,7 @@ test('MapLibre rechecks cluster camera policy after asynchronous expansion', asy
   try {
     let resolveZoom!: (zoom: number) => void
     const pendingZoom = new Promise<number>((resolve) => { resolveZoom = resolve })
-    const roaming = await labelEnvelope('auto', 'sha256:cluster-roaming', { zoom: false, reset: false, compass: false }, true)
+    const roaming = await labelEnvelope('auto', 'sha256:cluster-roaming', { zoom: false, reset: false, compass: false }, true, false, false, undefined, 'preserve')
     const fixed = await labelEnvelope('auto', 'sha256:cluster-fixed', { zoom: false, reset: false, compass: false }, false)
     const point = roaming.spec.kind === 'geographic' ? roaming.spec.layers.find((layer) => layer.kind === 'point') : undefined
     if (!point || roaming.spec.kind !== 'geographic') throw new Error('point map fixture is unavailable')
