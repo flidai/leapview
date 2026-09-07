@@ -23,6 +23,9 @@ export type VisualActionDetail = {
   columns: VisualColumn[]
   rows: VisualRow[]
   selection: string[]
+  totalRows?: number
+  truncated?: boolean
+  dataStatus?: string
   chart?: Record<string, unknown>
   table?: Record<string, unknown>
 }
@@ -293,7 +296,7 @@ export class VisualModal extends LitElement {
     if (columns.length === 0 || rows.length === 0) return html`<div class="empty">No visual data</div>`
     return html`
       <div class="data-shell">
-        <div class="data-summary">${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'} from current visual data</div>
+        <div class="data-summary" role="status">${dataSummary(detail)}</div>
         <div class="data-scroll">
           <lv-record-table
             .table=${{
@@ -515,6 +518,15 @@ function escapeCell(value: unknown, delimiter: ',' | '\t'): string {
 function stringValue(value: unknown): string {
   if (value === null || value === undefined) return ''
   return String(value)
+}
+
+function dataSummary(detail: VisualActionDetail): string {
+  const rows = detail.rows ?? []
+  const totalRows = detail.totalRows ?? rows.length
+  if (detail.dataStatus) return detail.dataStatus
+  const shown = `${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'}`
+  const total = totalRows === rows.length ? shown : `${shown} of ${totalRows.toLocaleString()}`
+  return `${total} from current visual data${detail.truncated ? ' (accessible preview)' : ''}`
 }
 
 function slug(value: string): string {

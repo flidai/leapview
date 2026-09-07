@@ -53,7 +53,7 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
       } },
     }
     if (spec.mark === 'graph') {
-      series.roam = spec.presentation.roam
+      series.roam = spec.presentation.roam === true
       series.layout = graphCircular ? 'circular' : 'none'
       series.left = graphCircular ? '8%' : '30%'
       series.right = graphCircular ? '8%' : '30%'
@@ -91,7 +91,7 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
     ? [{ name: 'All', __lv_dataset: dataset.id, __lv_row_index: -1, __lv_synthetic: true, children: roots }]
     : roots
   const common: EChartsTranslation = {
-    id: `series:hierarchy:${spec.mark}`, type: spec.mark, data, roam: spec.presentation.roam,
+    id: `series:hierarchy:${spec.mark}`, type: spec.mark, data, roam: spec.presentation.roam === true,
     ...labels,
     tooltip: { formatter: (params: { data?: HierarchyNode }) => params.data ? `${escapeHTML(params.data.name)}: ${escapeHTML(hierarchyTooltipValue(envelope, params.data, context))}` : '' },
   }
@@ -126,7 +126,7 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
     }
   }
   if (spec.mark === 'sunburst') {
-    common.nodeClick = spec.presentation.roam ? 'rootToNode' : false
+    common.nodeClick = spec.presentation.roam === true ? 'rootToNode' : false
     common.radius = ['10%', '92%']
     common.label = {
       ...(common.label ?? {}),
@@ -158,7 +158,7 @@ export function hierarchyData(envelope: VisualizationEnvelope): HierarchyNode[] 
   const parentByID = new Map<string, string | undefined>()
   for (let rowIndex = 0; rowIndex < dataset.rows.length; rowIndex++) {
     const row = dataset.rows[rowIndex]!
-    const name = String(row[nodeIndex])
+    const name = row[nodeIndex] === null || row[nodeIndex] === undefined ? '—' : String(row[nodeIndex])
     const parent = parentIndex >= 0 && row[parentIndex] !== null && row[parentIndex] !== undefined && row[parentIndex] !== '' ? String(row[parentIndex]) : undefined
     const id = parent ? `${parent}\u001f${escapeSegment(name)}` : escapeSegment(name)
     if (byID.has(id)) throw new Error(`duplicate hierarchy node ${JSON.stringify(id)}`)

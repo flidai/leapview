@@ -3,7 +3,7 @@ import type { ECharts, EChartsOption } from 'echarts'
 import { Change, defaultRendererContext, normalizeRendererLocale, type RendererAdapter, type RendererContext, type RendererHandle } from '../host-controller'
 import { clearInteractionCommand, interactionCommandForRow } from '../interaction-command'
 import { projectVisualizationHighlights } from '../highlight'
-import { baseOption } from './echarts/common'
+import { baseOption, formatField } from './echarts/common'
 import { CategoryColorRegistry, categoryColorRegistryFor } from './echarts/category-colors'
 import { cartesianOption } from './echarts/cartesian'
 import { hierarchyOption } from './echarts/hierarchy'
@@ -12,6 +12,65 @@ import { pointCategoryRowIndexes, pointOption } from './echarts/point'
 import { proportionalCenterText, proportionalOption } from './echarts/proportional'
 
 export { interactionCommandForRow, normalizeRendererLocale }
+
+export type EChartsNavigationDefaults = Readonly<{ dataZoom: boolean; roam: boolean }>
+export type EChartsViewState = Readonly<{
+  dataZoom?: readonly Readonly<Record<string, unknown>>[]
+  series?: readonly Readonly<{ id: string; center?: readonly unknown[]; zoom?: number }>[]
+}>
+
+export function echartsNavigationDefaults(envelope: VisualizationEnvelope): EChartsNavigationDefaults {
+  return {
+    dataZoom: envelope.spec.kind === 'cartesian' && envelope.spec.presentation.dataZoom === true,
+    roam: envelope.spec.kind === 'hierarchy' && envelope.spec.presentation.roam === true,
+  }
+}
+
+export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
+  if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 || option.grid === undefined) return {}
+  const compact = width < 480 || height < 280
+  const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
+  const grid = grids.map((value: Record<string, any>) => {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+    return {
+      ...source,
+      ...(compact ? { left: compactInset(source.left, 8), right: compactInset(source.right, 8), top: compactInset(source.top, 10), bottom: compactInset(source.bottom, 12) } : {}),
+    }
+  })
+  return { grid: Array.isArray(option.grid) ? grid : grid[0] }
+}
+
+function compactInset(value: unknown, fallback: number): unknown {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.min(value, fallback)
+  if (typeof value === 'string') return value
+  return fallback
+}
+
+export function captureEChartsViewState(option: Record<string, any>): EChartsViewState {
+  if (!option || typeof option !== 'object') return {}
+  const dataZoom = Array.isArray(option.dataZoom)
+    ? option.dataZoom.flatMap((value: Record<string, any>) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+        const state = Object.fromEntries(
+          ['start', 'end', 'startValue', 'endValue'].flatMap((key) => value[key] === undefined ? [] : [[key, value[key]]]),
+        )
+        return Object.keys(state).length > 0 ? [state] : []
+      })
+    : undefined
+  const series = Array.isArray(option.series)
+    ? option.series.flatMap((value: Record<string, any>) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+        if (typeof value.id !== 'string') return []
+        const center = Array.isArray(value.center) ? [...value.center] : undefined
+        const zoom = typeof value.zoom === 'number' && Number.isFinite(value.zoom) ? value.zoom : undefined
+        return center === undefined && zoom === undefined ? [] : [{ id: value.id, ...(center ? { center } : {}), ...(zoom === undefined ? {} : { zoom }) }]
+      })
+    : undefined
+  return {
+    ...(dataZoom && dataZoom.length > 0 ? { dataZoom } : {}),
+    ...(series && series.length > 0 ? { series } : {}),
+  }
+}
 
 export function echartsOption(envelope: VisualizationEnvelope, context: RendererContext = defaultRendererContext, categoryColors = new CategoryColorRegistry()): EChartsOption {
   const base = baseOption(envelope, context)
@@ -48,7 +107,11 @@ function applyCrossHighlight(option: Record<string, any>, envelope: Visualizatio
     item.itemStyle = { ...(item.itemStyle ?? {}), opacity }
     item.lineStyle = { ...(item.lineStyle ?? {}), opacity: 0.55 }
   }
-  option.aria = { ...(option.aria ?? {}), enabled: true, description: projection.announcement }
+  option.aria = {
+    ...(option.aria ?? {}),
+    enabled: true,
+    description: [option.aria?.description, projection.announcement].filter(Boolean).join(' '),
+  }
 }
 
 function seriesRowIndices(
@@ -99,6 +162,7 @@ class EChartsHandle implements RendererHandle {
   private disposed = false
   private readiness: Promise<void> = Promise.resolve()
   private readinessAbort?: AbortController
+  private compactLayout = false
 
   constructor(private readonly container: HTMLElement, private readonly frame: HTMLElement, private readonly chart: ECharts, private readonly categoryColors: CategoryColorRegistry) {
     this.chart.on('click', this.handleClick)
@@ -121,14 +185,25 @@ class EChartsHandle implements RendererHandle {
 
   update(envelope: VisualizationEnvelope, change: Change, context: RendererContext): void {
     if (this.disposed) return
+    const previous = this.envelope
+    const viewState = previous && preservesEChartsViewState(previous, envelope) ? this.captureViewState() : undefined
     this.envelope = envelope
     this.context = context
     const option = echartsOption(envelope, context, this.categoryColors)
     const plan = echartsUpdatePlan(change, option)
     this.chart.setOption(plan.option, plan.settings)
+    if (viewState) this.restoreViewState(viewState)
   }
 
-  resize(width: number, height: number): void { this.chart.resize({ width, height, silent: true }) }
+  resize(width: number, height: number): void {
+    this.chart.resize({ width, height, silent: true })
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+    const compact = width < 480 || height < 280
+    if (compact === this.compactLayout || !this.envelope) return
+    this.compactLayout = compact
+    const patch = responsiveEChartsPatch(echartsOption(this.envelope, this.context ?? defaultRendererContext, this.categoryColors) as Record<string, any>, width, height)
+    if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: true })
+  }
 
   async snapshot(): Promise<Blob> {
     const response = await fetch(this.chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: 'transparent' }))
@@ -147,6 +222,19 @@ class EChartsHandle implements RendererHandle {
     this.chart.off('mouseout', this.handleMouseOut)
     this.chart.dispose()
     removeEChartsRendererFrame(this.container, this.frame)
+  }
+
+  captureViewState(): EChartsViewState {
+    return captureEChartsViewState(this.chart.getOption() as Record<string, any>)
+  }
+
+  restoreViewState(state: unknown): void {
+    if (!state || typeof state !== 'object') return
+    const value = state as EChartsViewState
+    const patch: Record<string, any> = {}
+    if (Array.isArray(value.dataZoom) && value.dataZoom.length > 0) patch.dataZoom = value.dataZoom
+    if (Array.isArray(value.series) && value.series.length > 0) patch.series = value.series
+    if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: false })
   }
 
   private readonly handleClick = (params: unknown) => {
@@ -183,7 +271,7 @@ class EChartsHandle implements RendererHandle {
     const event = params as { name?: unknown }
     if (!envelope || envelope.spec.kind !== 'proportional' || typeof event.name !== 'string') return
     this.chart.dispatchAction({ type: 'legendSelect', name: event.name })
-    const command = legendSelectionCommand(envelope, event.name)
+    const command = legendSelectionCommand(envelope, event.name, this.context ?? defaultRendererContext)
     if (!command) return
     this.container.dispatchEvent(new CustomEvent('lv-interaction-select', { bubbles: true, composed: true, detail: command }))
   }
@@ -211,13 +299,19 @@ class EChartsHandle implements RendererHandle {
 
 }
 
-export function legendSelectionCommand(envelope: VisualizationEnvelope, categoryName: string) {
+function preservesEChartsViewState(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {
+  const oldNavigation = echartsNavigationDefaults(previous)
+  const nextNavigation = echartsNavigationDefaults(next)
+  return oldNavigation.dataZoom && nextNavigation.dataZoom || oldNavigation.roam && nextNavigation.roam
+}
+
+export function legendSelectionCommand(envelope: VisualizationEnvelope, categoryName: string, context: RendererContext = defaultRendererContext) {
   if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') return undefined
   const ref = envelope.spec.category
   const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === ref.dataset)
   const categoryIndex = dataset?.columns.indexOf(ref.field) ?? -1
   if (!dataset || categoryIndex < 0) return undefined
-  const row = dataset.rows.find((candidate) => String(candidate[categoryIndex]) === categoryName)
+  const row = dataset.rows.find((candidate) => String(candidate[categoryIndex]) === categoryName || formatField(envelope, ref, candidate[categoryIndex], context) === categoryName)
   return row ? interactionCommandForRow(envelope, dataset.id, row) : undefined
 }
 

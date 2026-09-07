@@ -113,7 +113,7 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     }],
   }
   const repeatsColors = uniqueValueCount(categoryValues) > context.colors.data.length
-  const decoration = legendDecoration(presentation.legend, context, true, presentation, categoryValues.map((value) => ({ value: String(value), name: String(value) })))
+  const decoration = legendDecoration(presentation.legend, context, true, presentation, categoryValues.map((value) => ({ value: String(value), name: formatField(envelope, spec.category, value, context) })))
   const graphics = [...(decoration.graphic ?? []), ...(center.graphic ?? [])]
   return {
     ...decoration,

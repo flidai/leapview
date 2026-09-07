@@ -42,7 +42,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   const stack = stackingMode(spec)
   if (stack === 'percent') applyPercentAxis(horizontal ? xAxis : yAxis, context)
   const axes = { grid: cartesianGrid(spec), xAxis, yAxis }
-  const dataZoom = spec.presentation.dataZoom ? [{ type: 'inside' }, { type: 'slider', ...(spec.presentation.legend === 'bottom' ? { bottom: 28 } : {}) }] : undefined
+  const dataZoom = spec.presentation.dataZoom === true ? [{ type: 'inside' }, { type: 'slider', ...(spec.presentation.legend === 'bottom' ? { bottom: 28 } : {}) }] : undefined
   if (spec.mark === 'histogram') {
     const value = spec.y.find((item) => item.field === 'value') ?? spec.y.at(-1)
     return { ...axes, dataZoom, series: [{ id: seriesID(value?.dataset, value?.field), type: 'bar', encode: { x: spec.x.field, y: value?.field }, ...chartLabel(envelope, value, spec, context) }] }
@@ -75,13 +75,13 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const categoryIndex = dataset?.columns.indexOf(spec.x.field) ?? -1
     const valueIndices = spec.y.map((item) => dataset?.columns.indexOf(item.field) ?? -1)
     const data = (dataset?.rows ?? []).map((row, rowIndex) => ({
-      name: String(row[categoryIndex]),
+      name: formatField(envelope, spec.x, row[categoryIndex], context),
       value: valueIndices.map((index) => row[index]),
       __lv_dataset: dataset?.id ?? spec.x.dataset,
       __lv_row_index: rowIndex,
     }))
     return {
-      ...axes, xAxis: { ...axes.xAxis, data: (dataset?.rows ?? []).map((row) => String(row[categoryIndex])) }, dataZoom,
+      ...axes, xAxis: { ...axes.xAxis, data: (dataset?.rows ?? []).map((row) => formatField(envelope, spec.x, row[categoryIndex], context)) }, dataZoom,
       ...legendDecoration(spec.presentation.legend, context, false, spec.presentation, [{ value: spec.title, name: spec.title }]),
       series: [{
         id: 'series:primary:candlestick', type: 'candlestick', name: spec.title, data,
@@ -98,7 +98,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       const rawValues = valueIndices.map((index) => row[index])
       const values = rawValues.map(Number)
       if (categoryIndex < 0 || valueIndices.some((index) => index < 0) || rawValues.some((value) => value === null || value === undefined || value === '') || values.some((value) => !Number.isFinite(value))) return []
-      return [{ name: String(row[categoryIndex]), value: values, __lv_dataset: dataset?.id ?? spec.x.dataset, __lv_row_index: rowIndex }]
+      return [{ name: formatField(envelope, spec.x, row[categoryIndex], context), value: values, __lv_dataset: dataset?.id ?? spec.x.dataset, __lv_row_index: rowIndex }]
     })
     data.sort((left, right) => left.value[Math.floor(left.value.length / 2)]! - right.value[Math.floor(right.value.length / 2)]!)
     const primary = context.colors.data[0] ?? context.colors.accent
@@ -443,7 +443,7 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
     left: 12 + (spec.presentation.legend === 'left' ? sideInset : 0),
     right: 16 + (spec.presentation.legend === 'right' ? sideInset : 0),
     top: (spec.presentation.legend === 'top' ? 44 : 16) + (spec.presentation.legend === 'top' ? titleInset : 0),
-    bottom: 16 + (bottomLegend ? 28 : 0) + (spec.presentation.dataZoom ? 42 : 0) + (bottomLegend ? titleInset : 0),
+    bottom: 16 + (bottomLegend ? 28 : 0) + (spec.presentation.dataZoom === true ? 42 : 0) + (bottomLegend ? titleInset : 0),
     containLabel: true,
   }
 }

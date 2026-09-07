@@ -93,11 +93,11 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
   const categoryIndex = spec.category ? dataset.columns.indexOf(spec.category.field) : -1
   const valueIndex = dataset.columns.indexOf(spec.value.field)
   const seriesIndex = spec.series ? dataset.columns.indexOf(spec.series.field) : -1
-  const categories = [...new Set(dataset.rows.map((row, index) => String(categoryIndex >= 0 ? row[categoryIndex] : index + 1)))]
-  const seriesValues = [...new Set(dataset.rows.map((row) => String(seriesIndex >= 0 ? row[seriesIndex] : spec.title)))]
+  const categories = [...new Set(dataset.rows.map((row, index) => displayPolarValue(categoryIndex >= 0 ? row[categoryIndex] : index + 1)))]
+  const seriesValues = [...new Set(dataset.rows.map((row) => displayPolarValue(seriesIndex >= 0 ? row[seriesIndex] : spec.title)))]
   const values = seriesValues.map((series) => ({
     name: series,
-    value: categories.map((category) => dataset.rows.find((row, index) => String(seriesIndex >= 0 ? row[seriesIndex] : spec.title) === series && String(categoryIndex >= 0 ? row[categoryIndex] : index + 1) === category)?.[valueIndex] ?? null),
+    value: categories.map((category) => dataset.rows.find((row, index) => displayPolarValue(seriesIndex >= 0 ? row[seriesIndex] : spec.title) === series && displayPolarValue(categoryIndex >= 0 ? row[categoryIndex] : index + 1) === category)?.[valueIndex] ?? null),
   }))
   const configuredMaximum = spec.presentation.maximum
   const observedMaximum = Math.max(0, ...values.flatMap((series) => series.value.flatMap((value) => {
@@ -123,6 +123,10 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
     },
     series: [{ id: 'series:polar:radar', type: 'radar', data: values, areaStyle: spec.presentation.area ? {} : undefined, ...labels }],
   }
+}
+
+function displayPolarValue(value: unknown): string {
+  return value === null || value === undefined ? '—' : String(value)
 }
 
 function niceRadarMaximum(value: number): number {

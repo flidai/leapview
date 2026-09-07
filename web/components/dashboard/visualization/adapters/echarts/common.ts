@@ -99,7 +99,7 @@ export function baseOption(envelope: VisualizationEnvelope, context: RendererCon
   const dataSummary = labelAccessibilitySummary(envelope, context)
   return {
     animation: false,
-    aria: { enabled: true, description: [description, dataSummary].filter(Boolean).join(' ') },
+    aria: { enabled: true, description: [description, dataSummary, completenessAccessibilitySummary(envelope)].filter(Boolean).join(' ') },
     backgroundColor: 'transparent',
     color: [...context.colors.data],
     textStyle: { color: context.colors.foreground, fontFamily: context.fontFamily },
@@ -131,7 +131,8 @@ function labelAccessibilitySummary(envelope: VisualizationEnvelope, context: Ren
   if (policy.density === 'always' || !policy.tooltipFallback) return ''
   const dataset = inlineDataset(envelope)
   const schema = spec.datasets.find((candidate) => candidate.id === dataset?.id)
-  if (!dataset || !schema || dataset.rows.length === 0) return ''
+  if (!dataset || !schema) return ''
+  if (dataset.rows.length === 0) return 'No data rows are available.'
   const fields = schema.fields.filter((definition) => dataset.columns.includes(definition.id))
   const rowLimit = 6
   const rows = dataset.rows.slice(0, rowLimit).map((row) =>
@@ -145,6 +146,17 @@ function labelAccessibilitySummary(envelope: VisualizationEnvelope, context: Ren
   return `Data values: ${rows.join('; ')}.${remainder > 0 ? ` ${remainder} more rows.` : ''}`
 }
 
+export function completenessAccessibilitySummary(envelope: VisualizationEnvelope): string {
+  if (envelope.dataState.kind !== 'inline') return ''
+  const datasets = envelope.dataState.datasets
+  if (datasets.length === 0 || datasets.every((dataset) => dataset.rows.length === 0 || dataset.completeness === 'empty')) return 'No data rows are available.'
+  const partial = datasets.find((dataset) => dataset.completeness === 'partial')
+  if (partial) return `Data is partial; ${partial.rows.length.toLocaleString()} rows are currently available.`
+  const truncated = datasets.find((dataset) => dataset.completeness === 'truncated')
+  if (truncated) return `Data is truncated; showing ${truncated.rows.length.toLocaleString()} rows.`
+  return ''
+}
+
 function tooltipTrigger(envelope: VisualizationEnvelope): 'axis' | 'item' {
   if (envelope.spec.kind !== 'cartesian') return 'item'
   return envelope.spec.mark === 'heatmap' ? 'item' : 'axis'
@@ -153,6 +165,13 @@ function tooltipTrigger(envelope: VisualizationEnvelope): 'axis' | 'item' {
 function statusGraphic(envelope: VisualizationEnvelope, context: RendererContext): EChartsTranslation[] | undefined {
   if (envelope.status.kind === 'partial') {
     return [{ type: 'text', right: 8, top: 8, silent: true, style: { text: envelope.status.message ?? 'Partial data', fill: context.colors.attention, fontFamily: context.fontFamily, textAlign: 'right' } }]
+  }
+  const inline = envelope.dataState.kind === 'inline'
+  const datasets = inline ? (envelope.dataState as Extract<VisualizationEnvelope['dataState'], { kind: 'inline' }>).datasets : []
+  const truncated = datasets.some((dataset) => dataset.completeness === 'truncated')
+  const partial = datasets.some((dataset) => dataset.completeness === 'partial')
+  if (partial || truncated) {
+    return [{ type: 'text', right: 8, top: 8, silent: true, style: { text: partial ? 'Partial data' : 'Truncated data', fill: context.colors.attention, fontFamily: context.fontFamily, textAlign: 'right' } }]
   }
   if (envelope.status.kind !== 'idle' && envelope.status.kind !== 'loading' && envelope.status.kind !== 'no_data') return undefined
   const text = envelope.status.message ?? (envelope.status.kind === 'no_data' ? 'No data' : 'Loading…')
