@@ -372,7 +372,7 @@ test('MapLibre tiled no-value layers weight raw observations and aggregate count
 	const pointStyle = mapLayer('lv-orders', pointWithoutValue, envelope.dataState, 'lv-map-tiles')
 	const pointWeight = (((pointStyle.paint['circle-radius'][3] as unknown[])[3] as unknown[])[2] as unknown[])[1] as unknown[]
 	expect(pointWeight[3]).toBe(1)
-	expect(JSON.stringify(pointWeight)).toContain('__lv_count')
+	expect(JSON.stringify(pointWeight)).toContain('__lv_coordinate_count')
 	expect(JSON.stringify(pointWeight)).toContain('14999')
 	const density = {
 		id: 'customers', kind: 'density',
@@ -386,13 +386,13 @@ test('MapLibre tiled no-value layers weight raw observations and aggregate count
 	const aggregate = tiledAggregateHeatLayer('lv-customers-aggregate', 'lv-map-tiles', density, envelope.dataState)
 	const rawWeight = (raw.paint['heatmap-weight'] as unknown[])[1] as unknown[]
 	expect(rawWeight[3]).toBe(1)
-	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('__lv_count')
+	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('__lv_coordinate_count')
 	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('14999')
 	const heat = { ...density, kind: 'heat' } as VisualizationGeographicLayer
 	const heatRaw = mapLayer('lv-heat', heat, envelope.dataState, 'lv-map-tiles')
 	const heatAggregate = tiledAggregateHeatLayer('lv-heat-aggregate', 'lv-map-tiles', heat as Extract<VisualizationGeographicLayer, { kind: 'heat' }>, envelope.dataState)
 	expect(((heatRaw.paint['heatmap-weight'] as unknown[])[1] as unknown[])[3]).toBe(1)
-	expect(JSON.stringify(heatAggregate.paint['heatmap-weight'])).toContain('__lv_count')
+	expect(JSON.stringify(heatAggregate.paint['heatmap-weight'])).toContain('__lv_coordinate_count')
 })
 
 test('MapLibre tiled scales merge partial and full authored domains with server domains', () => {
@@ -525,22 +525,22 @@ test('MapLibre refreshes tiled paint domains when governed metadata replaces the
 	expect(tiledLayerPaintUpdates(exact, 'lv-map-tiles').find((update) => update.id === 'lv-orders-aggregate')?.maxzoom).toBe(10)
 })
 
-test('MapLibre tiled point aggregates encode and label the authored business metric', () => {
+test('MapLibre tiled point aggregates encode and label contained coordinate count', () => {
 	const envelope = tiledPointEnvelope()
 	const layer = envelope.spec.kind === 'geographic' ? envelope.spec.layers[0]! : undefined
 	if (!layer || layer.kind !== 'point') throw new Error('point layer fixture is unavailable')
 	if (envelope.dataState.kind !== 'spatial_tiled') throw new Error('tiled state fixture is unavailable')
 	const aggregate = tiledAggregatePointLayer('lv-orders-aggregate', 'lv-map-tiles', layer, envelope.dataState)
 	const count = tiledAggregateCountLayer('lv-orders-aggregate-count', 'lv-map-tiles', layer, envelope.dataState)
-	expect(aggregate.filter).toContainEqual(['==', ['boolean', ['get', '__lv_aggregate'], false], true])
+	expect(aggregate.filter).toEqual(['all', ['==', ['geometry-type'], 'Point'], ['any', ['==', ['boolean', ['get', '__lv_aggregate'], false], true], ['all', ['==', ['boolean', ['get', '__lv_aggregate'], false], false], ['==', ['boolean', ['get', '__lv_clustered'], false], false]]]])
 	expect(aggregate.maxzoom).toBe(10)
 	expect(count['source-layer']).toBe('primary')
-	expect(count.filter).toEqual(['==', ['boolean', ['get', '__lv_aggregate'], false], true])
+	expect(count.filter).toEqual(['all', ['==', ['boolean', ['get', '__lv_aggregate'], false], true], ['==', ['boolean', ['get', '__lv_clustered'], false], true]])
 	expect(count.maxzoom).toBe(10)
-	expect(JSON.stringify(count.layout['text-field'])).toContain('revenue')
+	expect(JSON.stringify(count.layout['text-field'])).toContain('__lv_coordinate_count')
 	expect(JSON.stringify(count.layout['text-field'])).toContain('1000')
 	expect(JSON.stringify(count.layout['text-field'])).toContain('k')
-	expect(JSON.stringify(count.layout['text-field'])).not.toContain('__lv_coordinate_count')
+	expect(JSON.stringify(count.layout['text-field'])).not.toContain('revenue')
 	expect(count.layout['text-size']).toBe(11)
 	expect(count.layout['text-allow-overlap']).toBe(true)
 })
@@ -627,6 +627,14 @@ test('MapLibre tiled stable-identity interactions reject null raw identities', (
   expect(mapInteractionCommand(envelope, [raw], ['lv-orders'])).toBeUndefined()
 })
 
+test('MapLibre keeps below-threshold tiled cluster members raw and selectable', () => {
+  const envelope = tiledPointEnvelope()
+  const member = { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_id: 'raw:low-1', __lv_aggregate: false, __lv_clustered: false, __lv_coordinate_count: 1, order_id: 'low-1' } }
+  const aggregate = { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_id: 'aggregate:0:2:3', __lv_aggregate: true, __lv_clustered: false, __lv_coordinate_count: 2 } }
+  expect(mapInteractionCommand(envelope, [member], ['lv-orders-aggregate'])?.mappings[0]?.value).toBe('low-1')
+  expect(mapInteractionCommand(envelope, [aggregate], ['lv-orders-aggregate'])).toBeUndefined()
+})
+
 test('MapLibre builds the tile-backed picker from unique visible raw points', () => {
   const envelope = tiledPointEnvelope()
   const raw = { layer: { id: 'lv-orders' }, properties: { __lv_id: 11, __lv_aggregate: false, __lv_selected: true, order_id: 'o1' } }
@@ -651,8 +659,8 @@ test('MapLibre marks tile-backed picker options from canonical selection state',
 test('MapLibre offers aggregate refinement areas before raw selectable points are visible', () => {
   const envelope = tiledPointEnvelope()
   const features = [
-    { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_aggregate: true, __lv_west: -54, __lv_south: -18, __lv_east: -36, __lv_north: 0, __lv_target_zoom: 5, revenue: 12_800 } },
-    { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_aggregate: true, __lv_west: -72, __lv_south: -36, __lv_east: -54, __lv_north: -18, __lv_target_zoom: 5, revenue: 2_300 } },
+		{ layer: { id: 'lv-orders-aggregate' }, properties: { __lv_aggregate: true, __lv_coordinate_count: 12_800, __lv_west: -54, __lv_south: -18, __lv_east: -36, __lv_north: 0, __lv_target_zoom: 5, revenue: 12_800 } },
+		{ layer: { id: 'lv-orders-aggregate' }, properties: { __lv_aggregate: true, __lv_coordinate_count: 2_300, __lv_west: -72, __lv_south: -36, __lv_east: -54, __lv_north: -18, __lv_target_zoom: 5, revenue: 2_300 } },
   ]
   const options = mapInteractionOptions(envelope, features, ['lv-orders-aggregate'])
   expect(options.map((option) => option.label)).toEqual(['Zoom to area 1 · 12.8k orders', 'Zoom to area 2 · 2.3k orders'])

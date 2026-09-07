@@ -88,10 +88,7 @@ export function mapInteractionOptions(
   if (envelope.dataState.kind !== 'spatial_tiled') return []
   const unique = new Map<string, InteractionOption>()
   const aggregateOptions: Array<InteractionOption & { value: number }> = []
-  const pointLayer = envelope.spec.kind === 'geographic'
-    ? envelope.spec.layers.find((layer): layer is Extract<VisualizationGeographicLayer, { kind: 'point' }> => layer.kind === 'point')
-    : undefined
-  const valueField = pointLayer?.value?.field ?? '__lv_count'
+	const valueField = '__lv_coordinate_count'
   for (const feature of features) {
     if (feature.properties?.__lv_aggregate === true) {
       const refinement = aggregateExpansionCamera(feature.properties)
@@ -125,7 +122,7 @@ export function mapInteractionOptions(
   const areas = aggregateOptions
     .sort((left, right) => right.value - left.value || left.key.localeCompare(right.key))
     .slice(0, maximumOptions)
-    .map((option, index) => ({ ...option, label: `Zoom to area ${index + 1} · ${abbreviatedSelectionValue(option.value)} ${Math.round(option.value) === 1 ? 'order' : 'orders'}` }))
+		.map((option, index) => ({ ...option, label: `Zoom to area ${index + 1} · ${abbreviatedSelectionValue(option.value)} ${Math.round(option.value) === 1 ? 'order' : 'orders'}` }))
   return labeledOptions.length > 0 ? labeledOptions : areas
 }
 

@@ -23,6 +23,10 @@ func canonicalSpatialBinding(binding visualizationdefinition.QueryBinding, prese
 	latitudeAlias, longitudeAlias := "", ""
 	hasTiled, hasInline := false, false
 	cellRadius := 32.0
+	var clusterPolicy *visualizationdefinition.SpatialClusterBinding
+	clusterLayerIndex := -1
+	clusteredPointLayerIndex := -1
+	heatLayerIndex := -1
 	for index, layer := range *presentation.Layers {
 		switch value := layer.Value.(type) {
 		case *document.DashboardPointGeographicLayer:
@@ -31,31 +35,55 @@ func canonicalSpatialBinding(binding visualizationdefinition.QueryBinding, prese
 				if value.Size != nil && value.Size.MaximumRadius != nil {
 					cellRadius = math.Max(cellRadius, *value.Size.MaximumRadius)
 				}
-				if value.Cluster != nil && value.Cluster.Radius != nil {
-					cellRadius = math.Max(cellRadius, float64(*value.Cluster.Radius))
-				}
 				if err := mergeTiledCoordinates(&latitudeAlias, &longitudeAlias, value.Latitude, value.Longitude); err != nil {
-					return visualizationdefinition.QueryBinding{}, fmt.Errorf("layer %d: %w", index, err)
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("presentation.layers[%d]: %w", index, err)
+				}
+				canonical, clusterErr := canonicalMapCluster(value.Cluster)
+				if clusterErr != nil {
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("presentation.layers[%d].cluster: %w", index, clusterErr)
+				}
+				if canonical.Enabled && canonical.MaximumZoom >= 18 {
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("presentation.layers[%d].cluster.maximumZoom %d must be below tiled terminal zoom 18", index, canonical.MaximumZoom)
+				}
+				candidate := &visualizationdefinition.SpatialClusterBinding{Enabled: canonical.Enabled, Radius: canonical.Radius, MaximumZoom: canonical.MaximumZoom, MinimumPoints: canonical.MinimumPoints, ShowCount: canonical.ShowCount}
+				if candidate.Enabled && heatLayerIndex >= 0 {
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("presentation.layers[%d].cluster: clustered point layer cannot share a tiled source with presentation.layers[%d] heat or density layer", index, heatLayerIndex)
+				}
+				if clusterPolicy == nil {
+					clusterPolicy, clusterLayerIndex = candidate, index
+				} else if !sameSpatialClusterBinding(clusterPolicy, candidate) {
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("presentation.layers[%d].cluster: incompatible with presentation.layers[%d].cluster for shared tiled source", index, clusterLayerIndex)
+				}
+				if candidate.Enabled {
+					clusteredPointLayerIndex = index
 				}
 			}
 		case *document.DashboardHeatGeographicLayer:
 			hasTiled = true
 			if value != nil {
+				if clusteredPointLayerIndex >= 0 {
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("presentation.layers[%d].heat: heat or density layer cannot share a tiled source with presentation.layers[%d].clustered point layer", index, clusteredPointLayerIndex)
+				}
+				heatLayerIndex = index
 				if value.Heat != nil && value.Heat.Radius != nil {
 					cellRadius = math.Max(cellRadius, *value.Heat.Radius)
 				}
 				if err := mergeTiledCoordinates(&latitudeAlias, &longitudeAlias, value.Latitude, value.Longitude); err != nil {
-					return visualizationdefinition.QueryBinding{}, fmt.Errorf("layer %d: %w", index, err)
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("presentation.layers[%d]: %w", index, err)
 				}
 			}
 		case *document.DashboardDensityGeographicLayer:
 			hasTiled = true
 			if value != nil {
+				if clusteredPointLayerIndex >= 0 {
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("presentation.layers[%d].density: heat or density layer cannot share a tiled source with presentation.layers[%d].clustered point layer", index, clusteredPointLayerIndex)
+				}
+				heatLayerIndex = index
 				if value.Heat != nil && value.Heat.Radius != nil {
 					cellRadius = math.Max(cellRadius, *value.Heat.Radius)
 				}
 				if err := mergeTiledCoordinates(&latitudeAlias, &longitudeAlias, value.Latitude, value.Longitude); err != nil {
-					return visualizationdefinition.QueryBinding{}, fmt.Errorf("layer %d: %w", index, err)
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("presentation.layers[%d]: %w", index, err)
 				}
 			}
 		case *document.DashboardChoroplethGeographicLayer, *document.DashboardPathGeographicLayer:
@@ -84,9 +112,17 @@ func canonicalSpatialBinding(binding visualizationdefinition.QueryBinding, prese
 		Latitude: latitude, Longitude: longitude,
 		MinimumZoom: 0, MaximumZoom: 18, RawMinimumZoom: 5,
 		FeatureCap: 5000, MaximumBytes: 512 * 1024, MetatileSize: 4,
+		Cluster:    clusterPolicy,
 		CellRadius: int32(math.Round(math.Max(32, math.Min(64, cellRadius)))),
 	}
 	return result, nil
+}
+
+func sameSpatialClusterBinding(left, right *visualizationdefinition.SpatialClusterBinding) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.Enabled == right.Enabled && left.Radius == right.Radius && left.MaximumZoom == right.MaximumZoom && left.MinimumPoints == right.MinimumPoints && left.ShowCount == right.ShowCount
 }
 
 func mergeTiledCoordinates(latitude, longitude *string, nextLatitude, nextLongitude string) error {

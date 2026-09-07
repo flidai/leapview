@@ -1514,7 +1514,7 @@ spec:
         - field: zip_prefix
           direction: asc
       title: Orders by ZIP area
-      description: Clusters real Olist ZIP-prefix centroids sized by order volume.
+      description: Clusters real Olist ZIP-prefix centroids sized by order volume; labels show contained coordinate counts.
       presentation:
         type: geographic
         labelDensity: normal

@@ -234,6 +234,28 @@ func TestGeographicDefinitionOwnsExplicitSpatialQuery(t *testing.T) {
 	}
 }
 
+func TestSpatialTileBindingRejectsClusterPolicyOutsideTileZoom(t *testing.T) {
+	binding := QueryBinding{
+		Kind: QuerySpatial, ResultShape: ResultGeographicFeatures, ModelID: "sales", DatasetID: "primary", Identity: []string{"orders.order_id"},
+		Spatial: &SpatialQueryBinding{
+			TableID:    "orders",
+			Dimensions: []FieldBinding{{FieldID: "orders.order_id", Alias: "order_id"}, {FieldID: "orders.latitude", Alias: "latitude"}, {FieldID: "orders.longitude", Alias: "longitude"}},
+			Tiles: &SpatialTileBinding{
+				Latitude: FieldBinding{FieldID: "orders.latitude", Alias: "latitude"}, Longitude: FieldBinding{FieldID: "orders.longitude", Alias: "longitude"},
+				FeatureCap: 5000, MaximumBytes: 512 * 1024, MetatileSize: 4, CellRadius: 48, MaximumZoom: 18, RawMinimumZoom: 10,
+				Cluster: &SpatialClusterBinding{Enabled: true, Radius: 40, MaximumZoom: 19, MinimumPoints: 2},
+			},
+		},
+	}
+	if err := binding.Validate(); err == nil {
+		t.Fatal("cluster policy above tile maximum zoom passed validation")
+	}
+	binding.Spatial.Tiles.Cluster.MaximumZoom = 18
+	if err := binding.Validate(); err == nil {
+		t.Fatal("enabled cluster policy at tiled terminal zoom passed validation")
+	}
+}
+
 func tableSpec() ir.VisualizationSpec {
 	return ir.VisualizationSpec{Value: &ir.TableVisualizationSpec{
 		VisualizationSpecBase: ir.VisualizationSpecBase{
