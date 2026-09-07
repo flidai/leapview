@@ -83,9 +83,9 @@ All entries below describe renderer-neutral compiled contracts. Unsupported comb
 Cartesian conditional formatting is mark-aware: `mark_fill`, `series_color`,
 `label_foreground`, and `icon` remain available on supported Cartesian marks;
 `mark_stroke` is supported for bar, column, waterfall, and heatmap marks. Line
-and area marks reject `mark_stroke` during compilation because ECharts cannot
-apply a per-row callback to `lineStyle.color`; use `mark_fill` or a label/icon
-cue instead. The diagnostic includes the conditional-format ID and field path.
+and area marks reject `mark_stroke` during compilation because row-level stroke
+variation is not supported; use `mark_fill` or a label/icon cue instead. The
+diagnostic includes the conditional-format ID and field path.
 
 Decision-context field references use stable dataset and field identities. Gradient domains, rule order, null/default outcomes, series order, colors, scale domains, zero policies, units, and tick density are explicit in the compiled IR. Bound titles, subtitles, descriptions, summaries, reference values, and accessibility text recompute when filters or data revisions change and use authored fallbacks when governed data is empty.
 

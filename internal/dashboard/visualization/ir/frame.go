@@ -845,7 +845,7 @@ func validateConditionalFormattingApplicability(spec VisualizationSpec, format V
 		if format.Target == VisualizationConditionalTargetMarkStroke {
 			switch value.Mark {
 			case VisualizationCartesianMarkLine, VisualizationCartesianMarkArea:
-				return fmt.Errorf("target %q is unsupported for cartesian %q marks because ECharts lineStyle.color cannot apply row callbacks; use %q instead", format.Target, value.Mark, VisualizationConditionalTargetMarkFill)
+				return fmt.Errorf("target %q is unsupported for cartesian %q marks because row-level stroke variation is unavailable; use %q instead", format.Target, value.Mark, VisualizationConditionalTargetMarkFill)
 			}
 		}
 		visible := value.Y
