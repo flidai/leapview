@@ -138,6 +138,9 @@ func canonicalGeographicLayers(value *document.GeographicDashboardPresentation, 
 			if variant == nil {
 				return nil, fmt.Errorf("map layer %d variant is nil", index)
 			}
+			if variant.Tooltip != nil && len(*variant.Tooltip) > 0 {
+				return nil, fmt.Errorf("presentation.layers[%d].tooltip: reference layers do not support tooltip fields because reference geometry has no query-row locator", index)
+			}
 			layer, err = canonicalReferenceGeographicLayer(variant, query)
 		case *document.DashboardHeatGeographicLayer:
 			if variant == nil {

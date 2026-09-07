@@ -160,7 +160,9 @@ visuals:
 ## Reference boundary
 
 Reference layers add immutable, content-addressed geometry without joining
-query values into the shape.
+query values into the shape. Because reference geometry has no query-row
+locator, reference layers do not support `tooltip`; use a data-backed layer
+such as `choropleth` when row-level tooltip context is needed.
 
 {{< visual id="state_reference_map" >}}
 
