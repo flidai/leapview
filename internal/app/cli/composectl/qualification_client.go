@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/handler"
@@ -27,6 +28,26 @@ type QualificationClientWorkerOptions struct {
 type qualificationLoginChallenge struct {
 	VerificationURL string `json:"verificationUrl"`
 	UserCode        string `json:"userCode"`
+}
+
+// qualificationLoginDiagnosticBuffer collects the combined stdout/stderr
+// transcript used when the login command fails. os/exec drains those streams
+// concurrently, so the transcript needs ownership of its bytes.Buffer.
+type qualificationLoginDiagnosticBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *qualificationLoginDiagnosticBuffer) Write(contents []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(contents)
+}
+
+func (b *qualificationLoginDiagnosticBuffer) Snapshot() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.buffer.Bytes()...)
 }
 
 func parseQualificationCandidate(output, sourceRevision string) (QualificationCandidate, error) {
@@ -351,7 +372,7 @@ func runQualificationLogin(
 		"--format", "json",
 	)
 	command.Env = environment
-	var output bytes.Buffer
+	var output qualificationLoginDiagnosticBuffer
 	reader, writer := io.Pipe()
 	command.Stdout = io.MultiWriter(&output, writer)
 	// JSON mode makes stdout a machine protocol. Keep stderr in the bounded
@@ -415,7 +436,7 @@ func runQualificationLogin(
 	scanErr := <-scanned
 	_ = reader.Close()
 	if waitErr != nil {
-		return fmt.Errorf("leapview login: %w: %s", waitErr, redactQualificationLog(output.Bytes(), 100))
+		return fmt.Errorf("leapview login: %w: %s", waitErr, redactQualificationLog(output.Snapshot(), 100))
 	}
 	if scanErr != nil {
 		return fmt.Errorf("read leapview login: %w", scanErr)
