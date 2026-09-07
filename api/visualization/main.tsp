@@ -289,7 +289,6 @@ enum VisualizationColorIntent {
 
 enum VisualizationConditionalTarget {
   markFill: "mark_fill",
-  markStroke: "mark_stroke",
   seriesColor: "series_color",
   labelForeground: "label_foreground",
   visualBackground: "visual_background",
@@ -868,7 +867,6 @@ model PointVisualizationSpec extends VisualizationSpec {
   `y`: VisualizationFieldRef;
   `size`?: VisualizationFieldRef;
   `color`?: VisualizationFieldRef;
-  `series`?: VisualizationFieldRef;
   `label`?: VisualizationFieldRef;
   `tooltip`?: VisualizationFieldRef[];
   `colorScale`?: PointVisualizationColorScale;
@@ -1077,7 +1075,6 @@ model VisualizationMapHeatStyle {
 
 model VisualizationMapLineStyle {
   `width`: float64;
-  `curvature`: float64;
 }
 
 model VisualizationSpatialFieldMapping {

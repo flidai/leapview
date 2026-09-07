@@ -73,12 +73,22 @@ All entries below describe renderer-neutral compiled contracts. Unsupported comb
 | Line, area, bar, column, combo, scatter, waterfall | Yes | Yes | Yes, on the horizontal axis | Yes | Yes |
 | Heatmap | Yes | No | No | Yes | Yes |
 | Histogram, candlestick, boxplot | Yes | No | No | No | Yes |
-| Pie, donut, funnel | No | No | No | No | Yes |
+| Pie, donut, funnel | No | No | No | Yes (`mark_fill`, `series_color`) | Yes |
 | Treemap, sunburst, tree, Sankey, graph | No | No | No | No | Yes |
 | Radar, gauge | No | No | No | No | Yes |
-| KPI | No | No | No | Value, icon, and background | Yes |
+| KPI | No | No | No | Value and background | Yes |
 | Table, matrix, pivot | Table-owned sorting and formatting | No | No | Cell foreground/background and icons | Static titles; governed cell bindings |
 | Map | Renderer-owned geographic contract | No | No | No | No secondary context datasets |
+
+Conditional-format targets are closed by visual family. Point visuals accept only
+`mark_fill`; supported Cartesian marks retain `mark_fill`, `series_color`,
+`label_foreground`, and `icon`. KPI accepts `visual_background`
+and `kpi_value`, while table, matrix, and pivot accept `cell_foreground`,
+`cell_background`, and `icon`. Proportional visuals (`pie`, `donut`, and
+`funnel`) currently accept `mark_fill` and `series_color`. Cartesian conditional
+formatting is mark-aware across its supported marks.
+Row-level mark stroke variation is not part of the rendering contract; use
+`mark_fill` or a label/icon cue instead.
 
 Decision-context field references use stable dataset and field identities. Gradient domains, rule order, null/default outcomes, series order, colors, scale domains, zero policies, units, and tick density are explicit in the compiled IR. Bound titles, subtitles, descriptions, summaries, reference values, and accessibility text recompute when filters or data revisions change and use authored fallbacks when governed data is empty.
 

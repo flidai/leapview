@@ -499,6 +499,9 @@ func validatePointSpecification(spec VisualizationSpec, schemas map[string]Visua
 	if !ok {
 		return nil
 	}
+	if !finite(point.Presentation.Opacity) {
+		return fmt.Errorf("point presentation.overplot.opacity must be finite")
+	}
 	if len(point.Identity) == 0 {
 		return fmt.Errorf("point visualization requires identity fields")
 	}
@@ -532,6 +535,18 @@ func validatePointSpecification(spec VisualizationSpec, schemas map[string]Visua
 		return fmt.Errorf("point size scale requires a size field")
 	}
 	if scale := point.SizeScale; scale != nil {
+		if scale.Minimum != nil && !finite(*scale.Minimum) {
+			return fmt.Errorf("point presentation.sizeScale.minimum must be finite")
+		}
+		if scale.Maximum != nil && !finite(*scale.Maximum) {
+			return fmt.Errorf("point presentation.sizeScale.maximum must be finite")
+		}
+		if !finite(scale.MinimumPixels) {
+			return fmt.Errorf("point presentation.sizeScale.minimumPixels must be finite")
+		}
+		if !finite(scale.MaximumPixels) {
+			return fmt.Errorf("point presentation.sizeScale.maximumPixels must be finite")
+		}
 		if scale.Minimum != nil && scale.Maximum != nil && *scale.Minimum >= *scale.Maximum {
 			return fmt.Errorf("point size scale minimum must be less than maximum")
 		}
@@ -716,7 +731,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 		}
 		targets[targetKey] = struct{}{}
 		if err := validateConditionalFormattingTarget(base.Kind, format); err != nil {
-			return fmt.Errorf("conditional formatting %q: %w", format.ID, err)
+			return fmt.Errorf("conditional formatting %q target: %w", format.ID, err)
 		}
 		if base.Kind == "point" && format.Target == VisualizationConditionalTargetMarkFill {
 			if pointMarkFill {
@@ -725,6 +740,9 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 			pointMarkFill = true
 		}
 		if err := validateFieldRef(format.Field, schemas); err != nil {
+			return fmt.Errorf("conditional formatting %q field: %w", format.ID, err)
+		}
+		if err := validateConditionalFormattingApplicability(spec, format); err != nil {
 			return fmt.Errorf("conditional formatting %q field: %w", format.ID, err)
 		}
 		field, _ := visualizationField(format.Field, schemas)
@@ -781,6 +799,9 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 			if err := validateFieldRef(rule.Source, schemas); err != nil {
 				return fmt.Errorf("conditional formatting %q source: %w", format.ID, err)
 			}
+			if err := validateConditionalFormattingSource(spec, format); err != nil {
+				return fmt.Errorf("conditional formatting %q source: %w", format.ID, err)
+			}
 			if len(rule.Values) == 0 {
 				return fmt.Errorf("conditional formatting %q requires values", format.ID)
 			}
@@ -820,6 +841,126 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 	return nil
 }
 
+// validateConditionalFormattingApplicability keeps authored target bindings
+// honest about the channels a renderer actually emits. Schema membership alone
+// is insufficient: ECharts and the table adapter intentionally omit source
+// fields that do not participate in the visible mark or column.
+func validateConditionalFormattingApplicability(spec VisualizationSpec, format VisualizationConditionalFormat) error {
+	contains := func(refs []VisualizationFieldRef, target VisualizationFieldRef) bool {
+		for _, ref := range refs {
+			if ref.Dataset == target.Dataset && ref.Field == target.Field {
+				return true
+			}
+		}
+		return false
+	}
+	field := format.Field
+	switch value := spec.Value.(type) {
+	case *CartesianVisualizationSpec:
+		visible := value.Y
+		channel := "y"
+		switch value.Mark {
+		case VisualizationCartesianMarkHeatmap:
+			visible = nil
+			if len(value.Y) >= 2 {
+				visible = value.Y[1:2]
+			}
+			channel = "y[1] value"
+		case VisualizationCartesianMarkWaterfall:
+			visible = waterfallMetricRefs(value.Y)
+			channel = "value"
+		}
+		if !contains(visible, field) {
+			return fmt.Errorf("field %q is not rendered by the cartesian %s channel", field.Field, channel)
+		}
+	case *ProportionalVisualizationSpec:
+		if field.Dataset != value.Value.Dataset || field.Field != value.Value.Field {
+			return fmt.Errorf("field %q is not rendered by the proportional value channel", field.Field)
+		}
+	case *TableVisualizationSpec:
+		visible := make([]VisualizationFieldRef, 0, len(value.Columns))
+		for _, column := range value.Columns {
+			visible = append(visible, column.Field)
+		}
+		if !contains(visible, field) {
+			return fmt.Errorf("field %q is not a visible table column", field.Field)
+		}
+	case *MatrixVisualizationSpec:
+		if !contains(value.Rows, field) && !contains(value.Metrics, field) {
+			return fmt.Errorf("field %q is not a visible matrix row or metric alias", field.Field)
+		}
+	case *PivotVisualizationSpec:
+		if !contains(value.Rows, field) && !contains(value.Metrics, field) {
+			return fmt.Errorf("field %q is not a visible pivot row or metric alias", field.Field)
+		}
+	}
+	return nil
+}
+
+// waterfallMetricRefs returns the authored metric channel while tolerating
+// both the compiled [start, value] shape and older direct-IR [value, start]
+// fixtures. A malformed all-start shape falls back to its first reference so
+// validation remains safe and deterministic.
+func waterfallMetricRefs(refs []VisualizationFieldRef) []VisualizationFieldRef {
+	for index, ref := range refs {
+		if ref.Field != "start" {
+			return refs[index : index+1]
+		}
+	}
+	if len(refs) > 0 {
+		return refs[:1]
+	}
+	return nil
+}
+
+// validateConditionalFormattingSource limits field-rule sources to values
+// that are actually delivered in tabular rows. Other renderers intentionally
+// preserve full result rows, so their arbitrary source fields remain valid.
+func validateConditionalFormattingSource(spec VisualizationSpec, format VisualizationConditionalFormat) error {
+	rule, ok := format.Rule.Value.(*FieldVisualizationConditionalRule)
+	if !ok || rule == nil {
+		return nil
+	}
+	contains := func(refs []VisualizationFieldRef, target VisualizationFieldRef) bool {
+		for _, ref := range refs {
+			if ref.Dataset == target.Dataset && ref.Field == target.Field {
+				return true
+			}
+		}
+		return false
+	}
+	field := rule.Source
+	var delivered []VisualizationFieldRef
+	var kind string
+	switch value := spec.Value.(type) {
+	case *TableVisualizationSpec:
+		for _, column := range value.Columns {
+			delivered = append(delivered, column.Field)
+		}
+		kind = "table"
+	case *MatrixVisualizationSpec:
+		if contains(value.Rows, format.Field) && contains(value.Metrics, field) {
+			return fmt.Errorf("metric source %q cannot drive matrix row target %q; metric aliases are emitted only as generated cells", field.Field, format.Field.Field)
+		}
+		delivered = append(delivered, value.Rows...)
+		delivered = append(delivered, value.Metrics...)
+		kind = "matrix"
+	case *PivotVisualizationSpec:
+		if contains(value.Rows, format.Field) && contains(value.Metrics, field) {
+			return fmt.Errorf("metric source %q cannot drive pivot row target %q; metric aliases are emitted only as generated cells", field.Field, format.Field.Field)
+		}
+		delivered = append(delivered, value.Rows...)
+		delivered = append(delivered, value.Metrics...)
+		kind = "pivot"
+	default:
+		return nil
+	}
+	if !contains(delivered, field) {
+		return fmt.Errorf("field %q is not delivered in %s rows", field.Field, kind)
+	}
+	return nil
+}
+
 func specSupportsConditionalFormatting(spec VisualizationSpec) bool {
 	switch value := spec.Value.(type) {
 	case *PointVisualizationSpec, *ProportionalVisualizationSpec:
@@ -841,11 +982,47 @@ func specSupportsConditionalFormatting(spec VisualizationSpec) bool {
 }
 
 func validateConditionalFormattingTarget(kind string, format VisualizationConditionalFormat) error {
-	if kind == "point" && format.Target != VisualizationConditionalTargetMarkFill {
-		return fmt.Errorf("target %q is incompatible with point visualizations; use %q", format.Target, VisualizationConditionalTargetMarkFill)
-	}
 	switch format.Target {
-	case VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetMarkStroke, VisualizationConditionalTargetSeriesColor:
+	case VisualizationConditionalTargetMarkFill,
+		VisualizationConditionalTargetSeriesColor,
+		VisualizationConditionalTargetLabelForeground,
+		VisualizationConditionalTargetVisualBackground,
+		VisualizationConditionalTargetCellForeground,
+		VisualizationConditionalTargetCellBackground,
+		VisualizationConditionalTargetKpiValue,
+		VisualizationConditionalTargetIcon:
+	default:
+		return fmt.Errorf("unsupported target %q", format.Target)
+	}
+
+	// Keep target validation aligned with the renderer-owned channels. These
+	// families intentionally do not inherit every target that happens to be
+	// present in the shared conditional-format enum.
+	switch kind {
+	case "point":
+		if format.Target != VisualizationConditionalTargetMarkFill {
+			return fmt.Errorf("target %q is incompatible with point visualizations; use %q", format.Target, VisualizationConditionalTargetMarkFill)
+		}
+		return nil
+	case "proportional":
+		if format.Target != VisualizationConditionalTargetMarkFill && format.Target != VisualizationConditionalTargetSeriesColor {
+			return fmt.Errorf("target %q is incompatible with proportional visualizations", format.Target)
+		}
+		return nil
+	case "kpi":
+		if format.Target != VisualizationConditionalTargetVisualBackground && format.Target != VisualizationConditionalTargetKpiValue {
+			return fmt.Errorf("target %q is incompatible with KPI visualizations", format.Target)
+		}
+		return nil
+	case "table", "matrix", "pivot":
+		if format.Target != VisualizationConditionalTargetCellForeground && format.Target != VisualizationConditionalTargetCellBackground && format.Target != VisualizationConditionalTargetIcon {
+			return fmt.Errorf("target %q is incompatible with %s visualizations", format.Target, kind)
+		}
+		return nil
+	}
+
+	switch format.Target {
+	case VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetSeriesColor:
 		if kind == "kpi" || kind == "table" || kind == "matrix" || kind == "pivot" {
 			return fmt.Errorf("target %q is incompatible with %s visualizations", format.Target, kind)
 		}
@@ -968,7 +1145,6 @@ func (visitor *specificationReferenceVisitor) VisitPointVisualizationSpec(value 
 	visitor.refs = append(visitor.refs, value.X, value.Y)
 	visitor.add(value.Size)
 	visitor.add(value.Color)
-	visitor.add(value.Series)
 	visitor.add(value.Label)
 	if value.Tooltip != nil {
 		visitor.refs = append(visitor.refs, *value.Tooltip...)
@@ -1328,6 +1504,9 @@ func validateGeographicSpecification(spec VisualizationSpec) error {
 	if !ok {
 		return nil
 	}
+	if err := validateGeographicCamera(value.Presentation.Camera); err != nil {
+		return err
+	}
 	if len(value.Layers) == 0 {
 		return fmt.Errorf("geographic visualization requires at least one layer")
 	}
@@ -1373,6 +1552,66 @@ func validateGeographicSpecification(spec VisualizationSpec) error {
 		asset := value.Presentation.Basemap
 		if asset.ID == "" || asset.StyleURL == "" || asset.ArchiveURL == "" || len(asset.StyleDigest) != 71 || len(asset.ArchiveDigest) != 71 || asset.Attribution == "" {
 			return fmt.Errorf("geographic basemap has incomplete provenance")
+		}
+	}
+	return nil
+}
+
+func validateGeographicCamera(camera VisualizationMapCamera) error {
+	switch camera.Mode {
+	case VisualizationMapCameraModeFitData, VisualizationMapCameraModeFixed, VisualizationMapCameraModePreserve:
+	default:
+		return fmt.Errorf("presentation.camera.mode must be fit_data, fixed, or preserve")
+	}
+	if camera.Center != nil {
+		if len(*camera.Center) != 2 {
+			return fmt.Errorf("presentation.camera.center must contain exactly two coordinates")
+		}
+		for index, coordinate := range *camera.Center {
+			if !finite(coordinate) {
+				return fmt.Errorf("presentation.camera.center[%d] must be finite", index)
+			}
+			if index == 0 && (coordinate < -180 || coordinate > 180) {
+				return fmt.Errorf("presentation.camera.center[0] must be between -180 and 180")
+			}
+			if index == 1 && (coordinate < -90 || coordinate > 90) {
+				return fmt.Errorf("presentation.camera.center[1] must be between -90 and 90")
+			}
+		}
+	}
+	if camera.Zoom != nil && !finite(*camera.Zoom) {
+		return fmt.Errorf("presentation.camera.zoom must be finite")
+	}
+	if camera.Zoom != nil && (*camera.Zoom < 0 || *camera.Zoom > 24) {
+		return fmt.Errorf("presentation.camera.zoom must be between 0 and 24")
+	}
+	if camera.Padding < 0 {
+		return fmt.Errorf("presentation.camera.padding must be non-negative")
+	}
+	if !finite(camera.MinimumZoom) {
+		return fmt.Errorf("presentation.camera.minimumZoom must be finite")
+	}
+	if camera.MinimumZoom < 0 || camera.MinimumZoom > 24 {
+		return fmt.Errorf("presentation.camera.minimumZoom must be between 0 and 24")
+	}
+	if !finite(camera.MaximumZoom) {
+		return fmt.Errorf("presentation.camera.maximumZoom must be finite")
+	}
+	if camera.MaximumZoom < 0 || camera.MaximumZoom > 24 {
+		return fmt.Errorf("presentation.camera.maximumZoom must be between 0 and 24")
+	}
+	if camera.MinimumZoom > camera.MaximumZoom {
+		return fmt.Errorf("presentation.camera.minimumZoom must be less than or equal to maximumZoom")
+	}
+	if camera.Mode == VisualizationMapCameraModeFixed {
+		if camera.Center == nil {
+			return fmt.Errorf("presentation.camera.center is required for fixed camera")
+		}
+		if camera.Zoom == nil {
+			return fmt.Errorf("presentation.camera.zoom is required for fixed camera")
+		}
+		if *camera.Zoom < camera.MinimumZoom || *camera.Zoom > camera.MaximumZoom {
+			return fmt.Errorf("presentation.camera.zoom must be within presentation.camera.minimumZoom and presentation.camera.maximumZoom")
 		}
 	}
 	return nil

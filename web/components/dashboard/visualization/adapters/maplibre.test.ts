@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
-import { aggregateExpansionCamera, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
+import { aggregateExpansionCamera, applyBasemapTheme, applyDataLabelTheme, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, dataLabelLayerID, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapDataLabelColors, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setMapStyleAndWait, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPointLabelFilter, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
 test('MapLibre owns usable shadow-DOM styles for map navigation controls', () => {
@@ -107,6 +107,48 @@ test('MapLibre becomes renderer-ready after a rendered frame without waiting for
 
   expect(listeners.get('idle')?.size).toBe(0)
   expect(listeners.get('render')?.size).toBe(0)
+})
+
+test('MapLibre registers basemap style readiness before swapping the style', async () => {
+  const listeners = new Map<string, Set<(event?: unknown) => void>>()
+  let styleCalls = 0
+  const map = {
+    on: (event: string, listener: (event?: unknown) => void) => { (listeners.get(event) ?? (listeners.set(event, new Set()), listeners.get(event)!)).add(listener) },
+    off: (event: string, listener: (event?: unknown) => void) => listeners.get(event)?.delete(listener),
+    setStyle: () => {
+      styleCalls++
+      expect(listeners.get('styledata')?.size).toBe(1)
+      listeners.get('styledata')?.forEach((listener) => listener())
+    },
+  }
+  await setMapStyleAndWait(map as never, { version: 8, sources: {}, layers: [] } as never)
+  expect(styleCalls).toBe(1)
+  expect([...listeners.values()].every((listenersForEvent) => listenersForEvent.size === 0)).toBe(true)
+})
+
+test('MapLibre rejects basemap style errors and removes readiness listeners', async () => {
+  const listeners = new Map<string, Set<(event?: unknown) => void>>()
+  const map = {
+    on: (event: string, listener: (event?: unknown) => void) => { (listeners.get(event) ?? (listeners.set(event, new Set()), listeners.get(event)!)).add(listener) },
+    off: (event: string, listener: (event?: unknown) => void) => listeners.get(event)?.delete(listener),
+    setStyle: () => { listeners.get('error')?.forEach((listener) => listener({ error: new Error('style failed') })) },
+  }
+  await expect(setMapStyleAndWait(map as never, { version: 8, sources: {}, layers: [] } as never)).rejects.toThrow('style failed')
+  expect([...listeners.values()].every((listenersForEvent) => listenersForEvent.size === 0)).toBe(true)
+})
+
+test('MapLibre settles basemap style readiness when the map is removed', async () => {
+  const listeners = new Map<string, Set<(event?: unknown) => void>>()
+  const map = {
+    on: (event: string, listener: (event?: unknown) => void) => { (listeners.get(event) ?? (listeners.set(event, new Set()), listeners.get(event)!)).add(listener) },
+    off: (event: string, listener: (event?: unknown) => void) => listeners.get(event)?.delete(listener),
+    setStyle: () => {},
+  }
+  const pending = setMapStyleAndWait(map as never, { version: 8, sources: {}, layers: [] } as never)
+  expect(listeners.get('remove')?.size).toBe(1)
+  listeners.get('remove')?.forEach((listener) => listener())
+  await pending
+  expect([...listeners.values()].every((listenersForEvent) => listenersForEvent.size === 0)).toBe(true)
 })
 
 test('MapLibre keeps its frame hidden and inaccessible until the final fitted frame is presented', () => {
@@ -483,24 +525,53 @@ test('MapLibre refreshes tiled paint domains when governed metadata replaces the
 	expect(tiledLayerPaintUpdates(exact, 'lv-map-tiles').find((update) => update.id === 'lv-orders-aggregate')?.maxzoom).toBe(10)
 })
 
-test('MapLibre tiled point aggregates encode and label the authored business metric', () => {
+test('MapLibre tiled point aggregates encode and label contained coordinate count', () => {
 	const envelope = tiledPointEnvelope()
 	const layer = envelope.spec.kind === 'geographic' ? envelope.spec.layers[0]! : undefined
 	if (!layer || layer.kind !== 'point') throw new Error('point layer fixture is unavailable')
 	if (envelope.dataState.kind !== 'spatial_tiled') throw new Error('tiled state fixture is unavailable')
 	const aggregate = tiledAggregatePointLayer('lv-orders-aggregate', 'lv-map-tiles', layer, envelope.dataState)
 	const count = tiledAggregateCountLayer('lv-orders-aggregate-count', 'lv-map-tiles', layer, envelope.dataState)
-	expect(aggregate.filter).toContainEqual(['==', ['boolean', ['get', '__lv_aggregate'], false], true])
+	expect(aggregate.filter).toEqual(['all', ['==', ['geometry-type'], 'Point'], ['any', ['==', ['boolean', ['get', '__lv_aggregate'], false], true], ['all', ['==', ['boolean', ['get', '__lv_aggregate'], false], false], ['==', ['boolean', ['get', '__lv_clustered'], false], false]]]])
 	expect(aggregate.maxzoom).toBe(10)
 	expect(count['source-layer']).toBe('primary')
-	expect(count.filter).toEqual(['==', ['boolean', ['get', '__lv_aggregate'], false], true])
+	expect(count.filter).toEqual(['all', ['==', ['boolean', ['get', '__lv_aggregate'], false], true], ['==', ['boolean', ['get', '__lv_clustered'], false], true]])
 	expect(count.maxzoom).toBe(10)
-	expect(JSON.stringify(count.layout['text-field'])).toContain('revenue')
+	expect(JSON.stringify(count.layout['text-field'])).toContain('__lv_coordinate_count')
 	expect(JSON.stringify(count.layout['text-field'])).toContain('1000')
 	expect(JSON.stringify(count.layout['text-field'])).toContain('k')
-	expect(JSON.stringify(count.layout['text-field'])).not.toContain('__lv_coordinate_count')
+	expect(JSON.stringify(count.layout['text-field'])).not.toContain('revenue')
 	expect(count.layout['text-size']).toBe(11)
 	expect(count.layout['text-allow-overlap']).toBe(true)
+})
+
+test('MapLibre tiled point labels follow their precision family and keep aggregate members authored', () => {
+	const envelope = tiledPointEnvelope()
+	if (envelope.spec.kind !== 'geographic' || envelope.dataState.kind !== 'spatial_tiled') throw new Error('tiled point fixture is unavailable')
+	const layer = envelope.spec.layers[0]
+	if (!layer || layer.kind !== 'point' || !layer.label) throw new Error('labeled point layer fixture is unavailable')
+	const rawLabel = tiledPointLabelFilter(layer.label.field)
+	const aggregateMemberLabel = tiledPointLabelFilter(layer.label.field, true)
+	const member = { __lv_aggregate: false, __lv_clustered: false, order_id: 'low-1' }
+	const aggregate = { __lv_aggregate: true, __lv_clustered: false, order_id: 'aggregate' }
+	// The aggregate member predicate is intentionally stricter than raw labels:
+	// it excludes actual aggregates while retaining below-threshold members.
+	expect(rawLabel).toEqual(['all', ['!', ['has', 'point_count']], ['!', ['boolean', ['get', '__lv_aggregate'], false]], ['!=', ['get', layer.label.field], '']])
+	expect(aggregateMemberLabel).toEqual(['all', ['!', ['has', 'point_count']], ['!', ['boolean', ['get', '__lv_aggregate'], false]], ['==', ['boolean', ['get', '__lv_clustered'], false], false], ['!=', ['get', layer.label.field], '']])
+	expect(member.__lv_aggregate).toBe(false)
+	expect(aggregate.__lv_aggregate).toBe(true)
+})
+
+test('MapLibre gives each tiled point layer distinct raw and aggregate label IDs', () => {
+	const first = dataLabelLayerID('lv-orders')
+	const firstAggregate = dataLabelLayerID('lv-orders', true)
+	const second = dataLabelLayerID('lv-customers')
+	const secondAggregate = dataLabelLayerID('lv-customers', true)
+	expect(new Set([first, firstAggregate, second, secondAggregate]).size).toBe(4)
+	expect([first, firstAggregate, second, secondAggregate]).toEqual([
+		'lv-orders-data-label', 'lv-orders-data-label-aggregate',
+		'lv-customers-data-label', 'lv-customers-data-label-aggregate',
+	])
 })
 
 test('MapLibre tiled density blends occupied aggregate cells without changing raw heat styling', () => {
@@ -543,9 +614,17 @@ test('MapLibre selection maps reserve clicks for data interaction instead of mov
 	if (interactive.spec.kind !== 'geographic') throw new Error('geographic fixture is unavailable')
 	const exploratory = {
 		...interactive,
-		spec: { ...interactive.spec, interactions: [], spatialInteractions: [] },
+		spec: { ...interactive.spec, interactions: [], spatialInteractions: [], presentation: { ...interactive.spec.presentation, roam: true } },
 	} as VisualizationEnvelope
 	expect(mapClickCanRefineCamera(exploratory)).toBe(true)
+	expect(mapClickCanRefineCamera({
+		...exploratory,
+		spec: { ...exploratory.spec, presentation: { ...exploratory.spec.presentation, roam: false } },
+	} as VisualizationEnvelope)).toBe(false)
+	expect(mapClickCanRefineCamera({
+		...exploratory,
+		spec: { ...exploratory.spec, presentation: { ...exploratory.spec.presentation, camera: { ...exploratory.spec.presentation.camera, mode: 'fixed', center: [0, 0], zoom: 2 } } },
+	} as VisualizationEnvelope)).toBe(false)
 })
 
 test('MapLibre tiled accessibility deduplicates visible raw and aggregate features', () => {
@@ -569,6 +648,20 @@ test('MapLibre tiled interaction submits raw identities and never aggregate cell
   const aggregate = { layer: { id: 'lv-orders' }, properties: { __lv_id: 22, __lv_aggregate: true, order_id: 'not-a-row' } }
   expect(mapInteractionCommand(envelope, [raw], ['lv-orders'])?.mappings[0]?.value).toBe('o1')
   expect(mapInteractionCommand(envelope, [aggregate], ['lv-orders'])).toBeUndefined()
+})
+
+test('MapLibre tiled stable-identity interactions reject null raw identities', () => {
+  const envelope = tiledPointEnvelope()
+  const raw = { layer: { id: 'lv-orders' }, properties: { __lv_id: 11, __lv_aggregate: false, order_id: null } }
+  expect(mapInteractionCommand(envelope, [raw], ['lv-orders'])).toBeUndefined()
+})
+
+test('MapLibre keeps below-threshold tiled cluster members raw and selectable', () => {
+  const envelope = tiledPointEnvelope()
+  const member = { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_id: 'raw:low-1', __lv_aggregate: false, __lv_clustered: false, __lv_coordinate_count: 1, order_id: 'low-1' } }
+  const aggregate = { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_id: 'aggregate:0:2:3', __lv_aggregate: true, __lv_clustered: false, __lv_coordinate_count: 2 } }
+  expect(mapInteractionCommand(envelope, [member], ['lv-orders-aggregate'])?.mappings[0]?.value).toBe('low-1')
+  expect(mapInteractionCommand(envelope, [aggregate], ['lv-orders-aggregate'])).toBeUndefined()
 })
 
 test('MapLibre builds the tile-backed picker from unique visible raw points', () => {
@@ -595,8 +688,8 @@ test('MapLibre marks tile-backed picker options from canonical selection state',
 test('MapLibre offers aggregate refinement areas before raw selectable points are visible', () => {
   const envelope = tiledPointEnvelope()
   const features = [
-    { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_aggregate: true, __lv_west: -54, __lv_south: -18, __lv_east: -36, __lv_north: 0, __lv_target_zoom: 5, revenue: 12_800 } },
-    { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_aggregate: true, __lv_west: -72, __lv_south: -36, __lv_east: -54, __lv_north: -18, __lv_target_zoom: 5, revenue: 2_300 } },
+		{ layer: { id: 'lv-orders-aggregate' }, properties: { __lv_aggregate: true, __lv_coordinate_count: 12_800, __lv_west: -54, __lv_south: -18, __lv_east: -36, __lv_north: 0, __lv_target_zoom: 5, revenue: 12_800 } },
+		{ layer: { id: 'lv-orders-aggregate' }, properties: { __lv_aggregate: true, __lv_coordinate_count: 2_300, __lv_west: -72, __lv_south: -36, __lv_east: -54, __lv_north: -18, __lv_target_zoom: 5, revenue: 2_300 } },
   ]
   const options = mapInteractionOptions(envelope, features, ['lv-orders-aggregate'])
   expect(options.map((option) => option.label)).toEqual(['Zoom to area 1 · 12.8k orders', 'Zoom to area 2 · 2.3k orders'])
@@ -639,7 +732,7 @@ test('MapLibre exposes a bounded formatted tabular equivalent without unrelated 
 test('MapLibre paths group and deterministically order valid coordinates', () => {
   const envelope = selectableEnvelope()
   const path = {
-    id: 'route', kind: 'path', latitude: { dataset: 'primary', field: 'lat' }, longitude: { dataset: 'primary', field: 'lon' }, path: { dataset: 'primary', field: 'state' }, order: { dataset: 'primary', field: 'value' }, value: { dataset: 'primary', field: 'value' }, tooltip: [], position: 'below_labels', visibility: { minimumZoom: 0, maximumZoom: 24 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#ccc' }, stroke: { color: '#0969da', width: 3, opacity: 1 }, line: { width: 3, curvature: 0 }, opacity: .8,
+    id: 'route', kind: 'path', latitude: { dataset: 'primary', field: 'lat' }, longitude: { dataset: 'primary', field: 'lon' }, path: { dataset: 'primary', field: 'state' }, order: { dataset: 'primary', field: 'value' }, value: { dataset: 'primary', field: 'value' }, tooltip: [], position: 'below_labels', visibility: { minimumZoom: 0, maximumZoom: 24 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#ccc' }, stroke: { color: '#0969da', width: 3, opacity: 1 }, line: { width: 3 }, opacity: .8,
   } as VisualizationGeographicLayer
   const withCoordinates = { ...envelope, dataState: { ...envelope.dataState, datasets: [{ ...(envelope.dataState as any).datasets[0], columns: ['state', 'value', 'lat', 'lon'], rows: [['SP', 2, -20, -40], ['SP', 1, -21, -41], ['RJ', 1, null, -42]] }] } } as VisualizationEnvelope
   const result = pathGeometry(withCoordinates, path as Extract<VisualizationGeographicLayer, { kind: 'path' }>)
@@ -767,6 +860,57 @@ test('MapLibre auto basemaps follow the resolved application color scheme', () =
   expect(mapThemeColors('auto', 'dark')).toEqual(mapThemeColors('dark', 'light'))
   expect(mapThemeColors('auto', 'light')).toEqual(mapThemeColors('light', 'dark'))
   expect(mapThemeColors('auto', 'dark')).not.toEqual(mapThemeColors('auto', 'light'))
+})
+
+test('MapLibre applies governed basemap label density without hiding primary or custom labels', () => {
+  const ids = ['address_label', 'pois', 'places_subplace', 'roads_labels_minor', 'places_country', 'custom_label']
+  const layers = ids.map((id) => ({ id, type: 'symbol', metadata: { 'leapview:role': 'label' }, layout: {}, paint: {} }))
+  const visibility = new Map<string, string>()
+  const map = {
+    getStyle: () => ({ layers }),
+    getLayer: (id: string) => layers.find((layer) => layer.id === id),
+    setLayoutProperty: (id: string, property: string, value: string) => { if (property === 'visibility') visibility.set(id, value) },
+    setPaintProperty: () => {},
+  }
+  const colors = mapThemeColors('light', 'light')
+  applyBasemapTheme(map as never, colors, '#fff', 'hidden')
+  expect([...visibility.values()].every((value) => value === 'none')).toBe(true)
+  applyBasemapTheme(map as never, colors, '#fff', 'dense')
+  expect([...visibility.values()].every((value) => value === 'visible')).toBe(true)
+  applyBasemapTheme(map as never, colors, '#fff', 'normal')
+  expect(ids.filter((id) => /^(address_label|pois|places_subplace|roads_labels_minor)$/.test(id)).every((id) => visibility.get(id) === 'none')).toBe(true)
+  expect(visibility.get('places_country')).toBe('visible')
+  expect(visibility.get('custom_label')).toBe('visible')
+})
+
+test('MapLibre data labels resolve auto light and dark themes while explicit themes stay stable', () => {
+  expect(mapDataLabelColors('auto', 'light')).toEqual(mapDataLabelColors('light', 'dark'))
+  expect(mapDataLabelColors('auto', 'dark')).toEqual(mapDataLabelColors('dark', 'light'))
+  expect(mapDataLabelColors('dark', 'light')).toEqual(mapDataLabelColors('dark', 'dark'))
+  expect(mapDataLabelColors('light', 'light')).toEqual(mapDataLabelColors('light', 'dark'))
+  expect(mapDataLabelColors('auto', 'light')).not.toEqual(mapDataLabelColors('auto', 'dark'))
+})
+
+test('MapLibre repaints existing point and choropleth data-label layers for context-only theme changes', () => {
+  const paint = new Map<string, string>()
+  const labelLayers = new Set(['lv-points-data-label', 'lv-states-data-label'])
+  const map = {
+    getLayer: (id: string) => labelLayers.has(id) ? { id } : undefined,
+    setPaintProperty: (id: string, property: string, value: string) => paint.set(`${id}:${property}`, value),
+  }
+  applyDataLabelTheme(map as never, ['lv-points-data-label', 'lv-states-data-label', 'lv-missing-data-label'], mapDataLabelColors('auto', 'dark'))
+  expect(paint).toEqual(new Map([
+    ['lv-points-data-label:text-color', '#f0f6fc'],
+    ['lv-points-data-label:text-halo-color', '#0d1821'],
+    ['lv-states-data-label:text-color', '#f0f6fc'],
+    ['lv-states-data-label:text-halo-color', '#0d1821'],
+  ]))
+
+  applyDataLabelTheme(map as never, ['lv-points-data-label', 'lv-states-data-label'], mapDataLabelColors('auto', 'light'))
+  expect(paint.get('lv-points-data-label:text-color')).toBe('#1f2328')
+  expect(paint.get('lv-points-data-label:text-halo-color')).toBe('#ffffff')
+  expect(paint.get('lv-states-data-label:text-color')).toBe('#1f2328')
+  expect(paint.get('lv-states-data-label:text-halo-color')).toBe('#ffffff')
 })
 
 test('MapLibre coalesces unchanged themes and serializes WebGL style mutations by frame', async () => {

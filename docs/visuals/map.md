@@ -7,6 +7,20 @@ directly into the renderer-independent map Visual IR.
 Every preview on this page is generated from the YAML shown below against the
 fixed documentation dataset.
 
+## Basemap label density
+
+Use `presentation.labelDensity` to control the amount of basemap labeling
+without changing geographic data layers. `hidden` suppresses governed labels,
+`normal` keeps the primary labels while reducing secondary detail, and `dense`
+enables the full governed basemap label set. Labels authored on geographic
+data layers are unaffected.
+
+```yaml
+presentation:
+  type: geographic
+  labelDensity: normal
+```
+
 ## Choropleth
 
 Join a result dimension to a pinned geometry asset and color regions by a
@@ -51,6 +65,17 @@ visuals:
 Bind latitude and longitude dimensions to semantic fields. The compiler owns
 the geographic renderer, tile policy, and point styling.
 
+Tiled point layers keep the authored `cluster` policy as renderer-neutral
+contract data. `radius` is the clustering radius in CSS pixels,
+`maximumZoom` is the last zoom at which clusters may be served,
+`minimumPoints` controls the cluster threshold, and `showCount` labels a
+cluster with its contained coordinate count. These settings are shared by
+point layers on one tiled source; incompatible policies are rejected during
+compilation. The transport cell radius is independent and is not silently
+changed by the authored cluster radius. `maximumZoom` must be below the
+tiled terminal zoom (18); at the terminal zoom and above there is no valid
+`maximumZoom + 1` raw transition.
+
 {{< visual id="order_point_map" >}}
 
 ```yaml visual-example=order_point_map
@@ -74,9 +99,6 @@ visuals:
         mode: fit_data
         padding: 32
         maximumZoom: 9
-      labels:
-        density: automatic
-        tooltipFallback: true
       layers:
       - kind: point
         id: orders
@@ -88,6 +110,12 @@ visuals:
         size:
           minimumRadius: 5
           maximumRadius: 28
+        cluster:
+          enabled: true
+          radius: 40
+          maximumZoom: 14
+          minimumPoints: 2
+          showCount: true
         stroke:
           color: "#ffffff"
           width: 1.5
@@ -241,6 +269,5 @@ visuals:
           opacity: 0.9
         line:
           width: 3
-          curvature: 0
         opacity: 0.9
 ```

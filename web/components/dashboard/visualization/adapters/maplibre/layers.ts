@@ -1,9 +1,38 @@
 import type { FeatureCollection } from 'geojson'
-import type { SpatialTiledVisualizationDataState, VisualizationGeographicLayer } from '../../../../../generated/visualization'
+import type { SpatialTiledVisualizationDataState, VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../../generated/visualization'
 
 export function tiledPrecisionLayerIDs(family: 'hidden' | 'raw' | 'aggregate', rawLayerIDs: readonly string[], aggregateLayerIDs: readonly string[], candidates?: readonly string[]): string[] {
 	const layerIDs = family === 'raw' ? [...rawLayerIDs] : family === 'aggregate' ? [...aggregateLayerIDs] : []
 	return candidates ? layerIDs.filter((id) => candidates.includes(id)) : layerIDs
+}
+
+export type TiledLayerStyleUpdate = { id: string; paint?: Record<string, unknown>; filter?: unknown[]; minzoom?: number; maxzoom?: number }
+
+export function tiledLayerPaintUpdates(envelope: VisualizationEnvelope, sourceID: string): TiledLayerStyleUpdate[] {
+	if (envelope.dataState.kind !== 'spatial_tiled' || envelope.spec.kind !== 'geographic') return []
+	const updates: TiledLayerStyleUpdate[] = []
+	for (const layer of envelope.spec.layers) {
+		if (layer.kind !== 'point' && layer.kind !== 'heat' && layer.kind !== 'density') continue
+		const id = `lv-${layer.id}`
+		const raw = mapLayer(id, layer, envelope.dataState, sourceID)
+		updates.push({ id, paint: raw.paint, filter: raw.filter, minzoom: raw.minzoom, maxzoom: raw.maxzoom })
+		if (layer.kind === 'point') {
+			const aggregateID = `${id}-aggregate`
+			const aggregate = tiledAggregatePointLayer(aggregateID, sourceID, layer, envelope.dataState)
+			updates.push({ id: aggregateID, paint: aggregate.paint, filter: aggregate.filter, minzoom: aggregate.minzoom, maxzoom: aggregate.maxzoom })
+			if (layer.cluster.enabled && layer.cluster.showCount) {
+				const countID = `${id}-aggregate-count`
+				const count = tiledAggregateCountLayer(countID, sourceID, layer, envelope.dataState)
+				updates.push({ id: countID, filter: count.filter, minzoom: count.minzoom, maxzoom: count.maxzoom })
+			}
+		}
+		if (layer.kind === 'heat' || layer.kind === 'density') {
+			const aggregateID = `${id}-aggregate`
+			const aggregate = tiledAggregateHeatLayer(aggregateID, sourceID, layer, envelope.dataState)
+			updates.push({ id: aggregateID, paint: aggregate.paint, filter: aggregate.filter, minzoom: aggregate.minzoom, maxzoom: aggregate.maxzoom })
+		}
+	}
+	return updates
 }
 
 export function mapLayer(id: string, layerOrKind: VisualizationGeographicLayer | VisualizationGeographicLayer['kind'], tiled?: SpatialTiledVisualizationDataState, sourceID = id): any {
@@ -53,7 +82,10 @@ export function tiledAggregatePointLayer(id: string, sourceID: string, layer: Ex
 	const result = mapLayer(id, layer, state, sourceID)
 	return {
 		...result,
-		filter: ['all', ['==', ['geometry-type'], 'Point'], ['==', ['boolean', ['get', '__lv_aggregate'], false], true]],
+		// Aggregate precision can also carry below-minimum cluster members. Keep
+		// those exact, selectable observations in this visible family while
+		// reserving the raw family for fully raw tiles.
+		filter: ['all', ['==', ['geometry-type'], 'Point'], ['any', ['==', ['boolean', ['get', '__lv_aggregate'], false], true], ['all', ['==', ['boolean', ['get', '__lv_aggregate'], false], false], ['==', ['boolean', ['get', '__lv_clustered'], false], false]]]],
 		minzoom: layer.visibility.minimumZoom,
 		maxzoom: Math.min(layer.visibility.maximumZoom, state.rawMinimumZoom),
 	}
@@ -95,10 +127,13 @@ function tiledAggregateHeatIntensityExpression(layer: Extract<VisualizationGeogr
 }
 
 export function tiledAggregateCountLayer(id: string, sourceID: string, layer: Extract<VisualizationGeographicLayer, { kind: 'point' }>, state?: SpatialTiledVisualizationDataState): any {
-	const valueField = tiledValueField(layer)
+	// Cluster labels describe contained coordinates, never an authored
+	// business metric. The aggregate SQL exposes this as the stable
+	// __lv_coordinate_count property in both precision families.
+	const valueField = '__lv_coordinate_count'
 	return {
 		id, source: sourceID, 'source-layer': 'primary', type: 'symbol',
-		filter: ['==', ['boolean', ['get', '__lv_aggregate'], false], true],
+		filter: ['all', ['==', ['boolean', ['get', '__lv_aggregate'], false], true], ['==', ['boolean', ['get', '__lv_clustered'], false], true]],
 		minzoom: layer.visibility.minimumZoom, maxzoom: Math.min(layer.visibility.maximumZoom, state?.rawMinimumZoom ?? layer.visibility.maximumZoom),
 		layout: {
 			'text-field': layer.cluster.showCount ? abbreviatedNumberExpression(valueField) : '',
@@ -121,9 +156,8 @@ function tiledWeightExpression(layer: Extract<VisualizationGeographicLayer, { ki
 	const raw = state.rawDomains.find((domain) => domain.field === field)
 	const aggregate = state.aggregateDomains.find((domain) => domain.field === field)
 	if (!layer.value) {
-		// Raw tiles carry one feature per coordinate and do not have a synthetic
-		// count property. Aggregate tiles carry __lv_count, so normalize it against
-		// the exact revision cardinality instead of treating every cell as 1.
+		// Raw tiles represent one observation while aggregate tiles carry the
+		// contained row count. Coordinate counts are reserved for cluster labels.
 		const countDomain = aggregate ?? countFallbackDomain(state)
 		const rawDomain = resolveTiledDomain(raw, authored, { minimum: 1, maximum: 1 })
 		const aggregateDomain = resolveTiledDomain(countDomain, authored, countFallbackDomain(state))

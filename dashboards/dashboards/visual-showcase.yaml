@@ -1514,7 +1514,7 @@ spec:
         - field: zip_prefix
           direction: asc
       title: Orders by ZIP area
-      description: Clusters real Olist ZIP-prefix centroids sized by order volume.
+      description: Clusters real Olist ZIP-prefix centroids sized by order volume; labels show contained coordinate counts.
       presentation:
         type: geographic
         labelDensity: normal
@@ -1734,7 +1734,6 @@ spec:
           path: route_id
           order: point_order
           value: route_revenue
-          label: route_label
           tooltip: [route_label, route_revenue]
           stroke:
             color: "#0969da"
@@ -1742,7 +1741,6 @@ spec:
             opacity: 0.9
           line:
             width: 3
-            curvature: 0
           opacity: 0.9
     delivery_candlestick:
       type: candlestick

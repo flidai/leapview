@@ -105,6 +105,60 @@ func TestDashboardDocumentRejectsUnknownUnionDiscriminator(t *testing.T) {
 	}
 }
 
+func TestDashboardGeographicLabelContractKeepsLabelsOnSupportedLayers(t *testing.T) {
+	var point DashboardGeographicLayer
+	if err := json.Unmarshal([]byte(`{"kind":"point","id":"points","latitude":"latitude","longitude":"longitude","label":"city"}`), &point); err != nil {
+		t.Fatalf("point label rejected by generated contract: %v", err)
+	}
+	pointValue, ok := point.Value.(*DashboardPointGeographicLayer)
+	if !ok || pointValue.Label == nil || *pointValue.Label != "city" {
+		t.Fatalf("point label = %#v, want city", pointValue)
+	}
+
+	var choropleth DashboardGeographicLayer
+	if err := json.Unmarshal([]byte(`{"kind":"choropleth","id":"states","geometryAsset":"brazil_states","join":"state","label":"state"}`), &choropleth); err != nil {
+		t.Fatalf("choropleth label rejected by generated contract: %v", err)
+	}
+	choroplethValue, ok := choropleth.Value.(*DashboardChoroplethGeographicLayer)
+	if !ok || choroplethValue.Label == nil || *choroplethValue.Label != "state" {
+		t.Fatalf("choropleth label = %#v, want state", choroplethValue)
+	}
+}
+
+func TestDashboardGeographicGeneratedDecoderRejectsUnsupportedLabelFields(t *testing.T) {
+	var presentation DashboardPresentation
+	if err := json.Unmarshal([]byte(`{"type":"geographic","labels":{"density":"automatic"}}`), &presentation); err == nil || !strings.Contains(err.Error(), `unknown field "labels"`) {
+		t.Fatalf("geographic presentation labels error = %v, want generated unknown-field diagnostic", err)
+	}
+
+	for _, kind := range []string{"heat", "density", "path", "reference"} {
+		t.Run(kind, func(t *testing.T) {
+			data := `{"kind":"` + kind + `","id":"layer","label":"city"`
+			switch kind {
+			case "heat", "density":
+				data += `,"latitude":"latitude","longitude":"longitude"`
+			case "path":
+				data += `,"latitude":"latitude","longitude":"longitude","path":"route","order":"position"`
+			case "reference":
+				data += `,"geometryAsset":"brazil_states"`
+			}
+			data += `}`
+			var layer DashboardGeographicLayer
+			if err := json.Unmarshal([]byte(data), &layer); err == nil || !strings.Contains(err.Error(), `unknown field "label"`) {
+				t.Fatalf("%s label error = %v, want generated unknown-field diagnostic", kind, err)
+			}
+		})
+	}
+}
+
+func TestDashboardGeographicGeneratedDecoderRejectsRemovedLineCurvature(t *testing.T) {
+	var layer DashboardGeographicLayer
+	err := json.Unmarshal([]byte(`{"kind":"path","id":"route","latitude":"latitude","longitude":"longitude","path":"route_id","order":"point_order","line":{"width":3,"curvature":0}}`), &layer)
+	if err == nil || !strings.Contains(err.Error(), `unknown field "curvature"`) {
+		t.Fatalf("path line curvature error = %v, want generated unknown-field diagnostic", err)
+	}
+}
+
 func TestDashboardKPIGeneratedDecoderRejectsRemovedThresholds(t *testing.T) {
 	var presentation DashboardPresentation
 	err := json.Unmarshal([]byte(`{"type":"kpi","thresholds":[{"value":50,"tone":"warning"}]}`), &presentation)
@@ -262,6 +316,19 @@ func TestDashboardDocumentSchemaRejectsUnknownVisualAndPresentationKinds(t *test
 	presentation["type"] = "unknown"
 	if err := compiled.Validate(document); err == nil {
 		t.Fatal("generated schema accepted unknown presentation type")
+	}
+}
+
+func TestDashboardDocumentSchemaRejectsRemovedPointSeries(t *testing.T) {
+	compiled := loadDashboardDocumentSchema(t)
+	document := loadDashboardDocumentFixture(t)
+	visual := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)
+	visual["type"] = "scatter"
+	visual["presentation"] = map[string]any{
+		"type": "point", "identity": []any{"month"}, "x": "month", "y": "revenue", "series": "month",
+	}
+	if err := compiled.Validate(document); err == nil {
+		t.Fatal("generated dashboard schema accepted removed point presentation.series")
 	}
 }
 

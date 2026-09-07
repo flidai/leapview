@@ -21,6 +21,9 @@ func (p *Planner) PlanSpatialMetadata(request SpatialMetadataRequest) (Plan, err
 	if request.FeatureCap <= 0 || request.RawMinimumZoom < SpatialTileMinimumZoom || request.MaximumZoom < request.RawMinimumZoom || request.MaximumZoom > SpatialTileMaximumZoom {
 		return Plan{}, fmt.Errorf("spatial metadata requires a valid feature cap and zoom range")
 	}
+	if err := validateSpatialClusterPolicy(request.Cluster, request.MaximumZoom); err != nil {
+		return Plan{}, err
+	}
 	latitude, err := outputAlias(request.Latitude)
 	if err != nil {
 		return Plan{}, err
@@ -78,7 +81,7 @@ func (p *Planner) PlanSpatialMetadata(request SpatialMetadataRequest) (Plan, err
 		coordinateInput, totalsInput = bundle.Branches[0].Input, bundle.Branches[1].Input
 		delete(irGraph.Nodes, irGraph.Output)
 	}
-	envelope := planir.SpatialEnvelope{NodeMeta: meta, Operation: planir.SpatialEnvelopeMetadata, InputsList: []string{coordinateInput}, Latitude: latitude, Longitude: longitude, FeatureCap: request.FeatureCap, RawMinimumZoom: request.RawMinimumZoom, MaximumZoom: request.MaximumZoom}
+	envelope := planir.SpatialEnvelope{NodeMeta: meta, Operation: planir.SpatialEnvelopeMetadata, InputsList: []string{coordinateInput}, Latitude: latitude, Longitude: longitude, FeatureCap: request.FeatureCap, RawMinimumZoom: request.RawMinimumZoom, MaximumZoom: request.MaximumZoom, Cluster: spatialPlanIRCluster(request.Cluster)}
 	if totalsInput != "" {
 		envelope.InputsList = append(envelope.InputsList, totalsInput)
 	}

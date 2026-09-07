@@ -197,7 +197,7 @@ test('ECharts applies governed row formatting with theme colors and redundant cu
       },
     },
     {
-      id: 'value-health', target: 'mark_stroke', field: { dataset: 'primary', field: 'value' },
+      id: 'value-health', target: 'label_foreground', field: { dataset: 'primary', field: 'value' },
       rule: {
         kind: 'rules',
         rules: [{ operator: 'less_than', value: 50, style: { color: 'danger', icon: 'arrow_down' } }],
@@ -210,7 +210,6 @@ test('ECharts applies governed row formatting with theme colors and redundant cu
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series[0].itemStyle.color({ value: ['A', 25] })).toBe('rgb(162 57 48)')
   expect(option.series[0].itemStyle.color({ value: ['B', 75] })).toBe('rgb(71 104 53)')
-  expect(option.series[0].itemStyle.borderColor({ value: ['A', 25] })).toBe(defaultRendererContext.colors.danger)
   expect(option.series[0].label.show).toBe(true)
   expect(option.series[0].labelLayout({ dataIndex: 0 }).hideOverlap).toBe(false)
   expect(option.series[0].label.formatter({ value: ['A', 25] })).toBe('↓ 25')
@@ -250,6 +249,38 @@ test('ECharts translates governed heatmap gradients and waterfall rule styles', 
   const waterfallOption = echartsOption(waterfall, defaultRendererContext) as any
   expect(waterfallOption.series[1].itemStyle.color({ value: ['Returns', 10, -4] })).toBe(defaultRendererContext.colors.danger)
   expect(waterfallOption.series[1].label.formatter({ value: ['Returns', 10, -4] })).toBe('↓ -4')
+})
+
+test('ECharts binds waterfall formatting to the authored metric alias', () => {
+  const waterfall = cartesianFixture('waterfall', ['label', 'start', 'order_total']) as any
+  waterfall.spec.conditionalFormatting = [{
+    id: 'delta', target: 'mark_fill', field: { dataset: 'primary', field: 'order_total' },
+    rule: {
+      kind: 'rules', rules: [{ operator: 'less_than', value: 0, style: { color: 'danger', icon: 'arrow_down' } }],
+      nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'arrow_up' },
+    },
+  }]
+  waterfall.dataState.datasets[0].rows = [['Returns', 10, -4]]
+  const waterfallOption = echartsOption(waterfall, defaultRendererContext) as any
+  expect(waterfallOption.series[1].encode.y).toBe('order_total')
+  expect(waterfallOption.series[1].itemStyle.color({ value: ['Returns', 10, -4] })).toBe(defaultRendererContext.colors.danger)
+
+})
+
+test('ECharts keeps direct-IR waterfall metric before the start offset', () => {
+  const waterfall = cartesianFixture('waterfall', ['label', 'value', 'start']) as any
+  waterfall.spec.conditionalFormatting = [{
+    id: 'delta', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'rules', rules: [{ operator: 'less_than', value: 0, style: { color: 'danger', icon: 'arrow_down' } }],
+      nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'arrow_up' },
+    },
+  }]
+  waterfall.dataState.datasets[0].rows = [['Returns', -4, 10]]
+  const option = echartsOption(waterfall, defaultRendererContext) as any
+  expect(option.series[0].encode.y).toBe('start')
+  expect(option.series[1].encode.y).toBe('value')
+  expect(option.series[1].itemStyle.color({ value: ['Returns', -4, 10] })).toBe(defaultRendererContext.colors.danger)
 })
 
 test('ECharts interactions translate stable IR field mappings without renderer row keys', () => {

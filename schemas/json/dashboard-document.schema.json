@@ -400,6 +400,11 @@
           ],
           "type": "string"
         },
+        "label": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "opacity": {
           "format": "double",
           "type": "number"
@@ -1054,11 +1059,6 @@
           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
-        "label": {
-          "minLength": 1,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
         "maximumZoom": {
           "format": "double",
           "type": "number"
@@ -1583,10 +1583,6 @@
     },
     "DashboardMapLineStyle": {
       "properties": {
-        "curvature": {
-          "format": "double",
-          "type": "number"
-        },
         "width": {
           "format": "double",
           "type": "number"
@@ -1950,6 +1946,11 @@
           "enum": [
             "point"
           ],
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "latitude": {
@@ -2802,9 +2803,6 @@
         "labelDensity": {
           "$ref": "#/$defs/VisualizationMapLabelDensity"
         },
-        "labels": {
-          "$ref": "#/$defs/DashboardLabelPolicy"
-        },
         "layers": {
           "items": {
             "$ref": "#/$defs/DashboardGeographicLayer"
@@ -3291,11 +3289,6 @@
             "$ref": "#/$defs/DashboardReferenceLine"
           },
           "type": "array"
-        },
-        "series": {
-          "minLength": 1,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
         },
         "size": {
           "minLength": 1,
@@ -4078,7 +4071,6 @@
     "VisualizationConditionalTarget": {
       "enum": [
         "mark_fill",
-        "mark_stroke",
         "series_color",
         "label_foreground",
         "visual_background",

@@ -305,13 +305,6 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			}
 			point.Color = &value
 		}
-		if variant.Series != nil {
-			value, refErr := pointRef(*variant.Series, "series")
-			if refErr != nil {
-				return visualizationir.VisualizationSpec{}, refErr
-			}
-			point.Series = &value
-		}
 		if variant.Label != nil {
 			value, refErr := pointRef(*variant.Label, "label")
 			if refErr != nil {
@@ -355,11 +348,23 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			if variant.Size == nil {
 				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter sizeScale requires size")
 			}
-			if variant.SizeScale.MinimumPixels <= 0 || variant.SizeScale.MaximumPixels <= 0 || variant.SizeScale.MinimumPixels > variant.SizeScale.MaximumPixels {
-				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter sizeScale pixel bounds are invalid")
+			if variant.SizeScale.Minimum != nil && !finiteDashboardFloat(*variant.SizeScale.Minimum) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale.minimum must be finite")
+			}
+			if variant.SizeScale.Maximum != nil && !finiteDashboardFloat(*variant.SizeScale.Maximum) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale.maximum must be finite")
+			}
+			if !finiteDashboardFloat(variant.SizeScale.MinimumPixels) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale.minimumPixels must be finite")
+			}
+			if !finiteDashboardFloat(variant.SizeScale.MaximumPixels) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale.maximumPixels must be finite")
+			}
+			if variant.SizeScale.MinimumPixels <= 0 || variant.SizeScale.MaximumPixels <= 0 || variant.SizeScale.MinimumPixels >= variant.SizeScale.MaximumPixels {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale pixel bounds are invalid")
 			}
 			if variant.SizeScale.Minimum != nil && variant.SizeScale.Maximum != nil && *variant.SizeScale.Minimum >= *variant.SizeScale.Maximum {
-				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter sizeScale minimum must be less than maximum")
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale.minimum must be less than maximum")
 			}
 			point.SizeScale = &visualizationir.PointVisualizationSizeScale{Minimum: variant.SizeScale.Minimum, Maximum: variant.SizeScale.Maximum, MinimumPixels: variant.SizeScale.MinimumPixels, MaximumPixels: variant.SizeScale.MaximumPixels}
 		}

@@ -86,3 +86,67 @@ test('MapLibre spatial controls preserve the armed button and keyboard focus acr
     dom.window.close()
   }
 })
+
+test('MapLibre spatial drawing restores the latest roam drag-pan state after an envelope update', () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { pretendToBeVisual: true })
+  const previousDocument = globalThis.document
+  const previousWindow = globalThis.window
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: dom.window.document })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window })
+  try {
+    const canvas = document.createElement('canvas')
+    const frame = document.createElement('div')
+    frame.append(canvas)
+    let dragPanEnabled = true
+    const dragPan = {
+      isEnabled: () => dragPanEnabled,
+      enable: () => { dragPanEnabled = true },
+      disable: () => { dragPanEnabled = false },
+    }
+    const map = {
+      getCanvas: () => canvas,
+      on: () => undefined,
+      off: () => undefined,
+      dragPan,
+      project: () => ({ x: 0, y: 0 }),
+      unproject: () => ({ lng: 0, lat: 0 }),
+    }
+    const envelope = {
+      spec: { kind: 'geographic', spatialInteractions: [{ id: 'area', gestures: ['box'] }] },
+      spatialSelection: undefined,
+    } as unknown as VisualizationEnvelope
+    const control = new MapSpatialSelectionControl(map as never, frame, () => {})
+    control.update(envelope)
+    const button = control.element.querySelector<HTMLButtonElement>('[aria-label="Add map area with box"]')!
+    button.click()
+    canvas.dispatchEvent(pointerEvent(dom, 'pointerdown', 7))
+    expect(dragPanEnabled).toBe(false)
+    control.setRoamDragPanEnabled(false)
+    canvas.dispatchEvent(pointerEvent(dom, 'pointerup', 7))
+    expect(dragPanEnabled).toBe(false)
+
+    control.setRoamDragPanEnabled(false)
+    canvas.dispatchEvent(pointerEvent(dom, 'pointerdown', 8))
+    expect(dragPanEnabled).toBe(false)
+    control.setRoamDragPanEnabled(true)
+    expect(dragPanEnabled).toBe(false)
+    canvas.dispatchEvent(pointerEvent(dom, 'pointerup', 8))
+    expect(dragPanEnabled).toBe(true)
+    control.dispose()
+  } finally {
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: previousDocument })
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow })
+    dom.window.close()
+  }
+})
+
+function pointerEvent(dom: JSDOM, type: string, pointerId: number): Event {
+  const event = new dom.window.Event(type, { bubbles: true, cancelable: true })
+  Object.defineProperties(event, {
+    button: { configurable: true, value: 0 },
+    pointerId: { configurable: true, value: pointerId },
+    clientX: { configurable: true, value: 0 },
+    clientY: { configurable: true, value: 0 },
+  })
+  return event
+}

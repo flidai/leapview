@@ -17,6 +17,7 @@ test('ECharts renders deterministic categorical scatter legends without changing
 
   expect(option.legend).toMatchObject({ data: ['(null)', '(empty)', 'A', 'B'], selectedMode: 'multiple' })
   expect(option.series.map((series: any) => series.name)).toEqual(['(null)', '(empty)', 'A', 'B'])
+  expect(option.series.every((series: any) => !Object.hasOwn(series.encode, 'itemGroupId'))).toBe(true)
   expect(option.series.map((series: any) => series.__lv_source_row_indices)).toEqual([[1], [0], [3], [2]])
   expect(option.dataset[0].source).toEqual([source.columns, ...source.rows])
   expect(option.dataset.slice(1).map((dataset: any) => dataset.transform.config['='])).toEqual([null, '', 'A', 'B'])
@@ -117,6 +118,102 @@ test('ECharts partitions large categorical scatter frames without losing source 
   expect(option.series.every((series: any) => series.large === true)).toBe(true)
   expect(option.series.flatMap((series: any) => series.__lv_source_row_indices).sort((a: number, b: number) => a - b)).toEqual(Array.from({ length: 5_000 }, (_, index) => index))
   expect(option.dataset[0].source).toHaveLength(5_001)
+})
+
+test('ECharts accepts canonical decimal strings for quantitative point color domains and size', () => {
+  const rows = [
+    ['p-1', 'unused', '1.25', '10.50'],
+    ['p-2', 'unused', '2.50', '20.00'],
+    ['p-null', 'unused', null, null],
+  ]
+  const envelope = pointCategoricalFixture(rows) as any
+  envelope.spec.color = { dataset: 'primary', field: 'y' }
+  envelope.spec.colorScale = { kind: 'quantitative' }
+  envelope.spec.size = { dataset: 'primary', field: 'x' }
+  envelope.spec.sizeScale = { minimumPixels: 4, maximumPixels: 16 }
+  const option = echartsOption(envelope, defaultRendererContext) as any
+
+  expect(option.visualMap).toMatchObject({ min: 10.5, max: 20 })
+  expect(option.series).toHaveLength(1)
+  expect(option.series[0].symbolSize(rows[0])).toBe(4)
+  expect(option.series[0].symbolSize(rows[1])).toBe(16)
+  expect(option.series[0].symbolSize(rows[2])).toBe(4)
+})
+
+test('ECharts scales point size domains whose finite endpoints have an infinite direct span', () => {
+  const maximum = Number.MAX_VALUE
+  const rows = [
+    ['p-min', 'unused', -maximum, 10],
+    ['p-max', 'unused', maximum, 20],
+  ]
+  const envelope = pointCategoricalFixture(rows) as any
+  envelope.spec.color = undefined
+  envelope.spec.colorScale = undefined
+  envelope.spec.size = { dataset: 'primary', field: 'x' }
+  envelope.spec.sizeScale = { minimumPixels: 4, maximumPixels: 16 }
+  const option = echartsOption(envelope, defaultRendererContext) as any
+
+  expect(Number.isFinite(option.series[0].symbolSize(rows[0]))).toBe(true)
+  expect(option.series[0].symbolSize(rows[0])).toBe(4)
+  expect(option.series[0].symbolSize(rows[1])).toBe(16)
+})
+
+test('ECharts keeps constant maximum point color domains finite', () => {
+  const maximum = Number.MAX_VALUE
+  const rows = [
+    ['p-1', 'unused', 1, maximum],
+    ['p-2', 'unused', 2, maximum],
+  ]
+  const envelope = pointCategoricalFixture(rows) as any
+  envelope.spec.color = { dataset: 'primary', field: 'y' }
+  envelope.spec.colorScale = { kind: 'quantitative' }
+  const option = echartsOption(envelope, defaultRendererContext) as any
+
+  expect(option.visualMap).toMatchObject({ min: 0, max: maximum })
+  expect(Number.isFinite(option.visualMap.min)).toBe(true)
+  expect(Number.isFinite(option.visualMap.max)).toBe(true)
+})
+
+test('ECharts preserves symmetric constant point color domains when expansion is finite', () => {
+  const rows = [
+    ['p-1', 'unused', 1, 10],
+    ['p-2', 'unused', 2, 10],
+  ]
+  const envelope = pointCategoricalFixture(rows) as any
+  envelope.spec.color = { dataset: 'primary', field: 'y' }
+  envelope.spec.colorScale = { kind: 'quantitative' }
+  const option = echartsOption(envelope, defaultRendererContext) as any
+
+  expect(option.visualMap).toMatchObject({ min: 9, max: 11 })
+})
+
+test('ECharts reports field-specific diagnostics for out-of-range canonical decimal strings', () => {
+  const cases: Array<{ rows: unknown[][]; configure: (envelope: any) => void; expected: RegExp }> = [
+    {
+      rows: [['p-1', 'unused', `0.${'0'.repeat(400)}1`, '10.50']],
+      configure: (envelope) => {
+        envelope.spec.color = undefined
+        envelope.spec.colorScale = undefined
+        envelope.spec.size = { dataset: 'primary', field: 'x' }
+        envelope.spec.sizeScale = { minimumPixels: 4, maximumPixels: 16 }
+      },
+      expected: /point size field "x".*outside the JavaScript finite numeric range/,
+    },
+    {
+      rows: [['p-1', 'unused', '1.25', `1${'0'.repeat(400)}`]],
+      configure: (envelope) => {
+        envelope.spec.color = { dataset: 'primary', field: 'y' }
+        envelope.spec.colorScale = { kind: 'quantitative' }
+      },
+      expected: /point color field "y".*outside the JavaScript finite numeric range/,
+    },
+  ]
+
+  for (const testCase of cases) {
+    const envelope = pointCategoricalFixture(testCase.rows) as any
+    testCase.configure(envelope)
+    expect(() => echartsOption(envelope, defaultRendererContext)).toThrow(testCase.expected)
+  }
 })
 
 function pointCategoricalFixture(rows: unknown[][]): VisualizationEnvelope {

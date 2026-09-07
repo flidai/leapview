@@ -230,7 +230,6 @@ type PointVisualizationSpec struct {
 	Y                VisualizationFieldRef             `json:"y" yaml:"y"`
 	Size             *VisualizationFieldRef            `json:"size,omitempty" yaml:"size,omitempty"`
 	Color            *VisualizationFieldRef            `json:"color,omitempty" yaml:"color,omitempty"`
-	Series           *VisualizationFieldRef            `json:"series,omitempty" yaml:"series,omitempty"`
 	Label            *VisualizationFieldRef            `json:"label,omitempty" yaml:"label,omitempty"`
 	Tooltip          *[]VisualizationFieldRef          `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
 	ColorScale       *PointVisualizationColorScale     `json:"colorScale,omitempty" yaml:"colorScale,omitempty"`
@@ -1041,7 +1040,6 @@ type VisualizationConditionalTarget string
 
 const (
 	VisualizationConditionalTargetMarkFill         VisualizationConditionalTarget = "mark_fill"
-	VisualizationConditionalTargetMarkStroke       VisualizationConditionalTarget = "mark_stroke"
 	VisualizationConditionalTargetSeriesColor      VisualizationConditionalTarget = "series_color"
 	VisualizationConditionalTargetLabelForeground  VisualizationConditionalTarget = "label_foreground"
 	VisualizationConditionalTargetVisualBackground VisualizationConditionalTarget = "visual_background"
@@ -2540,8 +2538,7 @@ const (
 )
 
 type VisualizationMapLineStyle struct {
-	Width     float64 `json:"width" yaml:"width"`
-	Curvature float64 `json:"curvature" yaml:"curvature"`
+	Width float64 `json:"width" yaml:"width"`
 }
 
 type VisualizationMapSizeScale struct {

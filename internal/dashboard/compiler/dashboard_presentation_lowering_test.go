@@ -3,6 +3,7 @@ package compiler
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -69,6 +70,19 @@ func TestLowerCanonicalPointPresentationRejectsInvalidOverplot(t *testing.T) {
 	}}, document.DashboardVisualTypeScatter)
 	if err == nil {
 		t.Fatal("invalid point overplot strategy accepted")
+	}
+}
+
+func TestLowerCanonicalPointPresentationRejectsNonFiniteOpacity(t *testing.T) {
+	for _, opacity := range []float64{math.NaN(), math.Inf(1)} {
+		value := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
+			Type: "point", Identity: []string{"id"}, X: "x", Y: "y",
+			Overplot: &document.PointDashboardOverplot{Strategy: visualizationir.VisualizationPointOverplotStrategyOpacity, Opacity: &opacity},
+		}}
+		_, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeScatter)
+		if err == nil || !strings.Contains(err.Error(), "presentation.overplot.opacity") || !strings.Contains(err.Error(), "finite") {
+			t.Fatalf("opacity %v error = %v, want path-bearing finite diagnostic", opacity, err)
+		}
 	}
 }
 
@@ -147,7 +161,7 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 			value: document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{Type: "geographic"}},
 			check: func(t *testing.T, value any) {
 				got := value.(visualizationir.GeographicVisualizationPresentation)
-				if !got.Roam || got.Theme != visualizationir.VisualizationMapThemeAuto || got.LabelDensity != visualizationir.VisualizationMapLabelDensityNormal || got.Camera.Mode != visualizationir.VisualizationMapCameraModeFitData || got.Camera.Padding != 32 || got.Camera.MaximumZoom != 14 || !got.Controls.Zoom || !got.Controls.Reset || !got.Controls.Compass {
+				if !got.Roam || got.Theme != visualizationir.VisualizationMapThemeAuto || got.LabelDensity != visualizationir.VisualizationMapLabelDensityNormal || got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityHidden || len(got.LabelPolicy.Priority) != 0 || got.LabelPolicy.MaxCharacters != 24 || got.LabelPolicy.MinimumSpacing != 0 || !got.LabelPolicy.TooltipFallback || got.Camera.Mode != visualizationir.VisualizationMapCameraModeFitData || got.Camera.Padding != 32 || got.Camera.MaximumZoom != 14 || !got.Controls.Zoom || !got.Controls.Reset || !got.Controls.Compass {
 					t.Fatalf("geographic = %#v", got)
 				}
 			},
@@ -161,6 +175,81 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 			}
 			test.check(t, value)
 		})
+	}
+}
+
+func TestLowerCanonicalGeographicPresentationValidatesFixedCamera(t *testing.T) {
+	finiteCenter := []float64{12.5, -3.25}
+	finiteZoom := 5.5
+	tests := []struct {
+		name  string
+		setup func(*document.DashboardMapCamera)
+		want  string
+	}{
+		{name: "invalid mode", setup: func(camera *document.DashboardMapCamera) {
+			mode := visualizationir.VisualizationMapCameraMode("invalid")
+			camera.Mode = &mode
+		}, want: "presentation.camera.mode must be fit_data, fixed, or preserve"},
+		{name: "missing center", setup: func(camera *document.DashboardMapCamera) { camera.Center = nil }, want: "presentation.camera.center is required"},
+		{name: "wrong center arity", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{12.5} }, want: "presentation.camera.center must contain exactly two coordinates"},
+		{name: "nonfinite center", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{math.NaN(), -3.25} }, want: "presentation.camera.center[0] must be finite"},
+		{name: "longitude range", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{180.1, -3.25} }, want: "presentation.camera.center[0] must be between -180 and 180"},
+		{name: "latitude range", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{12.5, 90.1} }, want: "presentation.camera.center[1] must be between -90 and 90"},
+		{name: "missing zoom", setup: func(camera *document.DashboardMapCamera) { camera.Zoom = nil }, want: "presentation.camera.zoom is required"},
+		{name: "nonfinite zoom", setup: func(camera *document.DashboardMapCamera) { value := math.Inf(1); camera.Zoom = &value }, want: "presentation.camera.zoom must be finite"},
+		{name: "zoom range", setup: func(camera *document.DashboardMapCamera) { value := 25.0; camera.Zoom = &value }, want: "presentation.camera.zoom must be between 0 and 24"},
+		{name: "zoom below minimum", setup: func(camera *document.DashboardMapCamera) { value := 6.0; camera.MinimumZoom = &value }, want: "presentation.camera.zoom must be within presentation.camera.minimumZoom and presentation.camera.maximumZoom"},
+		{name: "zoom above maximum", setup: func(camera *document.DashboardMapCamera) { value := 5.0; camera.MaximumZoom = &value }, want: "presentation.camera.zoom must be within presentation.camera.minimumZoom and presentation.camera.maximumZoom"},
+		{name: "negative padding", setup: func(camera *document.DashboardMapCamera) { value := int32(-1); camera.Padding = &value }, want: "presentation.camera.padding must be non-negative"},
+		{name: "nonfinite minimum zoom", setup: func(camera *document.DashboardMapCamera) { value := math.Inf(1); camera.MinimumZoom = &value }, want: "presentation.camera.minimumZoom must be finite"},
+		{name: "minimum zoom range", setup: func(camera *document.DashboardMapCamera) { value := -1.0; camera.MinimumZoom = &value }, want: "presentation.camera.minimumZoom must be between 0 and 24"},
+		{name: "nonfinite maximum zoom", setup: func(camera *document.DashboardMapCamera) { value := math.Inf(1); camera.MaximumZoom = &value }, want: "presentation.camera.maximumZoom must be finite"},
+		{name: "maximum zoom range", setup: func(camera *document.DashboardMapCamera) { value := 25.0; camera.MaximumZoom = &value }, want: "presentation.camera.maximumZoom must be between 0 and 24"},
+		{name: "zoom order", setup: func(camera *document.DashboardMapCamera) {
+			minimum, maximum := 8.0, 7.0
+			camera.MinimumZoom, camera.MaximumZoom = &minimum, &maximum
+		}, want: "presentation.camera.minimumZoom must be less than or equal to maximumZoom"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mode := visualizationir.VisualizationMapCameraModeFixed
+			camera := &document.DashboardMapCamera{Mode: &mode, Center: &finiteCenter, Zoom: &finiteZoom}
+			test.setup(camera)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{Type: "geographic", Camera: camera}}, document.DashboardVisualTypeMap)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want path-bearing camera diagnostic containing %q", err, test.want)
+			}
+		})
+	}
+
+	mode := visualizationir.VisualizationMapCameraModeFixed
+	lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{
+		Type: "geographic", Camera: &document.DashboardMapCamera{Mode: &mode, Center: &finiteCenter, Zoom: &finiteZoom},
+	}}, document.DashboardVisualTypeMap)
+	if err != nil {
+		t.Fatalf("valid fixed camera rejected: %v", err)
+	}
+	got := lowered.(visualizationir.GeographicVisualizationPresentation)
+	if got.Camera.Mode != mode || got.Camera.Center == nil || !reflect.DeepEqual(*got.Camera.Center, finiteCenter) || got.Camera.Zoom == nil || *got.Camera.Zoom != finiteZoom {
+		t.Fatalf("lowered fixed camera = %#v", got.Camera)
+	}
+}
+
+func TestLowerCanonicalGeographicPresentationPreservesExplicitLabelDensity(t *testing.T) {
+	density := visualizationir.VisualizationMapLabelDensityDense
+	lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{
+		Type:         "geographic",
+		LabelDensity: &density,
+	}}, document.DashboardVisualTypeMap)
+	if err != nil {
+		t.Fatalf("lower geographic presentation: %v", err)
+	}
+	got, ok := lowered.(visualizationir.GeographicVisualizationPresentation)
+	if !ok {
+		t.Fatalf("lowered type = %T", lowered)
+	}
+	if got.LabelDensity != visualizationir.VisualizationMapLabelDensityDense {
+		t.Fatalf("label density = %q, want dense", got.LabelDensity)
 	}
 }
 

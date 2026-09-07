@@ -67239,6 +67239,11 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
           example: example
+        label:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
         color:
           $ref: '#/components/schemas/DashboardMapColorScale'
         stroke:
@@ -67260,6 +67265,7 @@ components:
         geometryAsset: example
         join: example
         kind: example
+        label: example
         opacity: 1
         stroke:
           color: example
@@ -68495,11 +68501,6 @@ components:
           maxLength: 128
           pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
           example: example
-        label:
-          type: string
-          minLength: 1
-          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example: example
         tooltip:
           type: array
           items:
@@ -68520,7 +68521,6 @@ components:
           example: 1
       example:
         id: example
-        label: example
         maximumZoom: 1
         minimumZoom: 1
         position: below_labels
@@ -69261,12 +69261,7 @@ components:
           type: number
           format: double
           example: 1
-        curvature:
-          type: number
-          format: double
-          example: 1
       example:
-        curvature: 1
         width: 1
     DashboardMapSizeScale:
       type: object
@@ -69766,7 +69761,6 @@ components:
         kind: example
         latitude: example
         line:
-          curvature: 1
           width: 1
         longitude: example
         opacity: 1
@@ -69872,6 +69866,11 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
           example: example
+        label:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
         size:
           $ref: '#/components/schemas/DashboardMapSizeScale'
         color:
@@ -69901,6 +69900,7 @@ components:
           palette: example
           reverse: true
         kind: example
+        label: example
         latitude: example
         longitude: example
         opacity: 1
@@ -73415,8 +73415,6 @@ components:
           enum:
             - geographic
           example: example
-        labels:
-          $ref: '#/components/schemas/DashboardLabelPolicy'
         theme:
           $ref: '#/components/schemas/VisualizationMapTheme'
         basemap:
@@ -73451,13 +73449,6 @@ components:
           reset: true
           zoom: true
         labelDensity: hidden
-        labels:
-          density: hidden
-          maxCharacters: 1
-          minimumSpacing: 1
-          priority:
-            - selected
-          tooltipFallback: true
         layers: []
         roam: true
         theme: auto
@@ -75950,11 +75941,6 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
           example: example
-        series:
-          type: string
-          minLength: 1
-          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example: example
         label:
           type: string
           minLength: 1
@@ -76074,7 +76060,6 @@ components:
             id: example
             label: example
             tone: neutral
-        series: example
         size: example
         sizeScale:
           maximum: 1
@@ -76227,8 +76212,6 @@ components:
           $ref: '#/components/schemas/VisualizationFieldRef'
         color:
           $ref: '#/components/schemas/VisualizationFieldRef'
-        series:
-          $ref: '#/components/schemas/VisualizationFieldRef'
         label:
           $ref: '#/components/schemas/VisualizationFieldRef'
         tooltip:
@@ -76334,9 +76317,6 @@ components:
             id: example
             label: example
             tone: neutral
-        series:
-          dataset: example
-          field: example
         size:
           dataset: example
           field: example
@@ -83532,7 +83512,6 @@ components:
       type: string
       enum:
         - mark_fill
-        - mark_stroke
         - series_color
         - label_foreground
         - visual_background
@@ -84958,18 +84937,12 @@ components:
       type: object
       required:
         - width
-        - curvature
       properties:
         width:
           type: number
           format: double
           example: 1
-        curvature:
-          type: number
-          format: double
-          example: 1
       example:
-        curvature: 1
         width: 1
     VisualizationMapSizeScale:
       type: object
@@ -85235,7 +85208,6 @@ components:
           dataset: example
           field: example
         line:
-          curvature: 1
           width: 1
         longitude:
           dataset: example

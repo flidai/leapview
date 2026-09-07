@@ -111,8 +111,11 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 			}
 			out.Overplot = overplot.Strategy
 			if overplot.Opacity != nil {
+				if !finiteDashboardFloat(*overplot.Opacity) {
+					return nil, fmt.Errorf("presentation.overplot.opacity must be finite")
+				}
 				if *overplot.Opacity <= 0 || *overplot.Opacity > 1 {
-					return nil, fmt.Errorf("point overplot opacity must be greater than 0 and at most 1")
+					return nil, fmt.Errorf("presentation.overplot.opacity must be greater than 0 and at most 1")
 				}
 				out.Opacity = *overplot.Opacity
 			}
@@ -313,17 +316,11 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.GeographicDashboardPresentation:
-		base, err := lowerBasePresentation(nil, variant.Labels, nil)
+		base, err := lowerBasePresentation(nil, nil, nil)
 		if err != nil {
 			return nil, err
 		}
 		base.LabelPolicy = visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityHidden, Priority: []visualizationir.VisualizationLabelPriority{}, MaxCharacters: 24, MinimumSpacing: 0, TooltipFallback: true}
-		if variant.Labels != nil {
-			base.LabelPolicy, err = lowerLabelPolicy(*variant.Labels)
-			if err != nil {
-				return nil, err
-			}
-		}
 		out := visualizationir.GeographicVisualizationPresentation{
 			VisualizationPresentation: base,
 			Roam:                      true, Theme: visualizationir.VisualizationMapThemeAuto,
@@ -342,6 +339,9 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		if variant.Camera != nil {
 			camera := variant.Camera
+			if err := validateDashboardMapCamera(camera); err != nil {
+				return nil, err
+			}
 			if camera.Mode != nil {
 				out.Camera.Mode = *camera.Mode
 			}
@@ -403,6 +403,86 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 	default:
 		return nil, fmt.Errorf("unsupported Dashboard presentation variant %T", value.Value)
 	}
+}
+
+func validateDashboardMapCamera(camera *document.DashboardMapCamera) error {
+	mode := visualizationir.VisualizationMapCameraModeFitData
+	center := (*[]float64)(nil)
+	zoom := (*float64)(nil)
+	padding := int32(32)
+	minimumZoom, maximumZoom := float64(0), float64(14)
+	if camera != nil {
+		if camera.Mode != nil {
+			mode = *camera.Mode
+		}
+		center, zoom = camera.Center, camera.Zoom
+		if camera.Padding != nil {
+			padding = *camera.Padding
+		}
+		if camera.MinimumZoom != nil {
+			minimumZoom = *camera.MinimumZoom
+		}
+		if camera.MaximumZoom != nil {
+			maximumZoom = *camera.MaximumZoom
+		}
+	}
+	switch mode {
+	case visualizationir.VisualizationMapCameraModeFitData, visualizationir.VisualizationMapCameraModeFixed, visualizationir.VisualizationMapCameraModePreserve:
+	default:
+		return fmt.Errorf("presentation.camera.mode must be fit_data, fixed, or preserve")
+	}
+	if center != nil {
+		if len(*center) != 2 {
+			return fmt.Errorf("presentation.camera.center must contain exactly two coordinates")
+		}
+		for index, coordinate := range *center {
+			if !finiteDashboardFloat(coordinate) {
+				return fmt.Errorf("presentation.camera.center[%d] must be finite", index)
+			}
+			if index == 0 && (coordinate < -180 || coordinate > 180) {
+				return fmt.Errorf("presentation.camera.center[0] must be between -180 and 180")
+			}
+			if index == 1 && (coordinate < -90 || coordinate > 90) {
+				return fmt.Errorf("presentation.camera.center[1] must be between -90 and 90")
+			}
+		}
+	}
+	if zoom != nil && !finiteDashboardFloat(*zoom) {
+		return fmt.Errorf("presentation.camera.zoom must be finite")
+	}
+	if zoom != nil && (*zoom < 0 || *zoom > 24) {
+		return fmt.Errorf("presentation.camera.zoom must be between 0 and 24")
+	}
+	if padding < 0 {
+		return fmt.Errorf("presentation.camera.padding must be non-negative")
+	}
+	if !finiteDashboardFloat(minimumZoom) {
+		return fmt.Errorf("presentation.camera.minimumZoom must be finite")
+	}
+	if minimumZoom < 0 || minimumZoom > 24 {
+		return fmt.Errorf("presentation.camera.minimumZoom must be between 0 and 24")
+	}
+	if !finiteDashboardFloat(maximumZoom) {
+		return fmt.Errorf("presentation.camera.maximumZoom must be finite")
+	}
+	if maximumZoom < 0 || maximumZoom > 24 {
+		return fmt.Errorf("presentation.camera.maximumZoom must be between 0 and 24")
+	}
+	if minimumZoom > maximumZoom {
+		return fmt.Errorf("presentation.camera.minimumZoom must be less than or equal to maximumZoom")
+	}
+	if mode == visualizationir.VisualizationMapCameraModeFixed {
+		if center == nil {
+			return fmt.Errorf("presentation.camera.center is required for fixed camera")
+		}
+		if zoom == nil {
+			return fmt.Errorf("presentation.camera.zoom is required for fixed camera")
+		}
+		if *zoom < minimumZoom || *zoom > maximumZoom {
+			return fmt.Errorf("presentation.camera.zoom must be within presentation.camera.minimumZoom and presentation.camera.maximumZoom")
+		}
+	}
+	return nil
 }
 
 // ValidateCanonicalPresentationResultReferences keeps any future result-name

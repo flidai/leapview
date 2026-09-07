@@ -57,14 +57,15 @@ export function tableSignal(envelope: VisualizationEnvelope): TableSignal {
 	if (envelope.dataState.kind === 'spatial_tiled') throw new Error('TanStack cannot render spatial map data')
   const schema = envelope.dataState.kind === 'windowed' ? envelope.dataState.schema : spec.datasets[0]
   const fields = new Map((schema?.fields ?? []).map((field) => [field.id, field]))
-  const fieldRefs = spec.kind === 'table' ? spec.columns.map((column) => column.field) : (schema?.fields ?? []).map((field) => ({ dataset: schema?.id ?? 'primary', field: field.id }))
+  const fieldRefs = visibleFieldRefs(spec, schema?.fields ?? [], schema?.id ?? 'primary')
   const columns: TableColumn[] = fieldRefs.map((ref) => {
     const field = fields.get(ref.field)
     const authored = spec.kind === 'table' ? spec.columns.find((column) => column.field.field === ref.field) : undefined
     const metricKey = field?.grid?.metric ?? ref.field
     const metricFormatting = spec.kind === 'matrix' || spec.kind === 'pivot' ? spec.metricFormatting[metricKey] : undefined
     const gridFormatting = field?.grid?.formatting
-    const conditionalFormatting = conditionalFormatsForField(spec.conditionalFormatting ?? [], ref.dataset, ref.field, metricKey)
+    const metricAliases = spec.kind === 'matrix' || spec.kind === 'pivot' ? spec.metrics.map((metric) => metric.field) : []
+    const conditionalFormatting = conditionalFormatsForField(spec.conditionalFormatting ?? [], ref.dataset, ref.field, metricKey, schema?.fields ?? [], metricAliases)
     const grid = authored ?? field?.grid
 	return tableColumn(field, authored?.label, authored?.width, authored?.formatting ?? (gridFormatting?.length ? gridFormatting : metricFormatting), grid ? { ...grid, metric: metricKey } : { metric: metricKey }, conditionalFormatting)
   })
@@ -86,6 +87,34 @@ export function tableSignal(envelope: VisualizationEnvelope): TableSignal {
     rowHeight: spec.presentation.rowHeight, resetVersion: state.kind === 'windowed' ? state.resetVersion : 0,
     sort, blocks, loadingBlock: envelope.status.kind === 'loading' ? 'all' : '', error: envelope.status.kind === 'error' ? envelope.status.message ?? 'Visualization error' : '',
   }
+}
+
+function visibleFieldRefs(
+  spec: Extract<VisualizationEnvelope['spec'], { kind: 'table' | 'matrix' | 'pivot' }>,
+  schemaFields: VisualizationField[],
+  dataset: string,
+): { dataset: string; field: string }[] {
+  if (spec.kind === 'table') return spec.columns.map((column) => column.field)
+
+  const refs: { dataset: string; field: string }[] = []
+  const seen = new Set<string>()
+  const append = (field: string) => {
+    if (seen.has(field)) return
+    seen.add(field)
+    refs.push({ dataset, field })
+  }
+  for (const row of spec.rows) append(row.field)
+
+  // Matrix/pivot result frames retain authored metric aliases in Grid.Metric
+  // while pivot cells receive generated field IDs. Project each alias onto
+  // every generated visible cell and omit the source column dimensions.
+  for (const metric of spec.metrics) {
+    for (const field of schemaFields) {
+      const metricAlias = field.grid?.metric ?? field.id
+      if (metricAlias === metric.field) append(field.id)
+    }
+  }
+  return refs
 }
 
 function tableInteraction(spec: Extract<VisualizationEnvelope['spec'], { kind: 'table' | 'matrix' | 'pivot' }>): TableSignal['interaction'] {
@@ -139,13 +168,34 @@ function tableColumn(
 function conditionalFormatsForField(
   formats: VisualizationConditionalFormat[],
   dataset: string,
-  field: string,
+	field: string,
 	metric: string,
+	schemaFields: VisualizationField[],
+	metricAliases: string[],
 ): VisualizationConditionalFormat[] {
   return formats.flatMap((format) => {
-		if (format.field.dataset !== dataset || (format.field.field !== field && format.field.field !== metric)) return []
-    if (format.field.field === field) return [format]
-    return [{ ...format, field: { dataset, field } }]
+    if (format.field.dataset !== dataset || (format.field.field !== field && format.field.field !== metric)) return []
+    const target = format.field.field === field ? format : { ...format, field: { dataset, field } }
+    if (target.rule.kind !== 'field') return [target]
+    if (target.rule.source.dataset !== dataset || !metricAliases.includes(target.rule.source.field)) return [target]
+
+    // Pivot/matrix result frames replace authored metric aliases with generated
+    // cells. Resolve a field-rule source to the generated cell in the same
+    // pivot category; grid.group is the metric label, not the category.
+    const current = schemaFields.find((candidate) => candidate.id === field)
+    const currentGrid = current?.grid
+    const currentIsGenerated = currentGrid?.metric !== undefined && currentGrid.metric !== current?.id
+    if (!currentIsGenerated) return [target]
+    const sourceField = target.rule.source.field
+    const source = schemaFields.find((candidate) => {
+      const candidateMetric = candidate.grid?.metric ?? candidate.id
+      return candidateMetric === sourceField && candidate.grid?.columnValue !== undefined && candidate.grid.columnValue === currentGrid?.columnValue
+    })
+    if (!source) {
+      throw new Error(`conditional formatting ${JSON.stringify(target.id)} source ${JSON.stringify(sourceField)} cannot be validated for generated column ${JSON.stringify(field)}`)
+    }
+    if (source.id === sourceField) return [target]
+    return [{ ...target, rule: { ...target.rule, source: { dataset, field: source.id } } }]
   })
 }
 

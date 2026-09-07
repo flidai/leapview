@@ -738,7 +738,6 @@ model PointDashboardPresentation extends DashboardPresentation {
   y: DashboardResultField;
   size?: DashboardResultField;
   color?: DashboardResultField;
-  series?: DashboardResultField;
   label?: DashboardResultField;
   tooltip?: DashboardResultField[];
   colorScale?: PointDashboardColorScale;
@@ -802,7 +801,6 @@ model PolarDashboardPresentation extends DashboardPresentation {
 
 model GeographicDashboardPresentation extends DashboardPresentation {
   type: "geographic";
-  labels?: DashboardLabelPolicy;
   theme?: LeapViewVisualization.VisualizationMapTheme;
   basemap?: string;
   labelDensity?: LeapViewVisualization.VisualizationMapLabelDensity;
@@ -866,7 +864,6 @@ model DashboardMapHeatStyle {
 
 model DashboardMapLineStyle {
   width?: float64;
-  curvature?: float64;
 }
 
 model DashboardMapCluster {
@@ -879,7 +876,6 @@ model DashboardMapCluster {
 
 model DashboardGeographicLayerOptions {
   id: DashboardObjectIdentifier;
-  label?: DashboardResultField;
   tooltip?: DashboardResultField[];
   position?: LeapViewVisualization.VisualizationMapLayerPosition;
   minimumZoom?: float64;
@@ -897,6 +893,7 @@ model DashboardPointGeographicLayer extends DashboardGeographicLayer {
   longitude: DashboardResultField;
   value?: DashboardResultField;
   category?: DashboardResultField;
+  label?: DashboardResultField;
   size?: DashboardMapSizeScale;
   color?: DashboardMapColorScale;
   stroke?: DashboardMapStroke;
@@ -910,6 +907,7 @@ model DashboardChoroplethGeographicLayer extends DashboardGeographicLayer {
   join: DashboardResultField;
   value?: DashboardResultField;
   category?: DashboardResultField;
+  label?: DashboardResultField;
   color?: DashboardMapColorScale;
   stroke?: DashboardMapStroke;
   opacity?: float64;

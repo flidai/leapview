@@ -91,6 +91,42 @@ func TestValidateSpecRejectsQuantitativePointColorOnDimension(t *testing.T) {
 	}
 }
 
+func TestValidateSpecRejectsNonFinitePointPresentationValues(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*PointVisualizationSpec)
+		want   string
+	}{
+		{name: "opacity", mutate: func(point *PointVisualizationSpec) { point.Presentation.Opacity = math.NaN() }, want: "presentation.overplot.opacity"},
+		{name: "minimum", mutate: func(point *PointVisualizationSpec) {
+			point.Size = ptrRef(VisualizationFieldRef{Dataset: "primary", Field: "revenue"})
+			point.SizeScale = &PointVisualizationSizeScale{Minimum: floatPtr(math.NaN()), MinimumPixels: 6, MaximumPixels: 24}
+		}, want: "presentation.sizeScale.minimum"},
+		{name: "maximum", mutate: func(point *PointVisualizationSpec) {
+			point.Size = ptrRef(VisualizationFieldRef{Dataset: "primary", Field: "revenue"})
+			point.SizeScale = &PointVisualizationSizeScale{Maximum: floatPtr(math.Inf(1)), MinimumPixels: 6, MaximumPixels: 24}
+		}, want: "presentation.sizeScale.maximum"},
+		{name: "minimumPixels", mutate: func(point *PointVisualizationSpec) {
+			point.Size = ptrRef(VisualizationFieldRef{Dataset: "primary", Field: "revenue"})
+			point.SizeScale = &PointVisualizationSizeScale{MinimumPixels: math.NaN(), MaximumPixels: 24}
+		}, want: "presentation.sizeScale.minimumPixels"},
+		{name: "maximumPixels", mutate: func(point *PointVisualizationSpec) {
+			point.Size = ptrRef(VisualizationFieldRef{Dataset: "primary", Field: "revenue"})
+			point.SizeScale = &PointVisualizationSizeScale{MinimumPixels: 6, MaximumPixels: math.Inf(1)}
+		}, want: "presentation.sizeScale.maximumPixels"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			spec := pointContractSpec("", nil)
+			test.mutate(spec.Value.(*PointVisualizationSpec))
+			err := ValidateSpec(spec)
+			if err == nil || !strings.Contains(err.Error(), test.want) || !strings.Contains(err.Error(), "finite") {
+				t.Fatalf("ValidateSpec() error = %v, want path-bearing finite diagnostic", err)
+			}
+		})
+	}
+}
+
 func TestValidateSpecPointConditionalFormattingTargets(t *testing.T) {
 	t.Parallel()
 
@@ -104,8 +140,12 @@ func TestValidateSpecPointConditionalFormattingTargets(t *testing.T) {
 		t.Fatalf("ValidateSpec() error = %v, want duplicate mark_fill diagnostic", err)
 	}
 
+	removed := pointGradientConditionalFormat("removed-mark-stroke", "revenue", VisualizationConditionalTarget("mark_stroke"))
+	if err := ValidateSpec(pointContractSpec("", nil, removed)); err == nil || !strings.Contains(err.Error(), `unsupported target "mark_stroke"`) {
+		t.Fatalf("ValidateSpec() error = %v, want removed-target diagnostic", err)
+	}
+
 	for _, target := range []VisualizationConditionalTarget{
-		VisualizationConditionalTargetMarkStroke,
 		VisualizationConditionalTargetSeriesColor,
 		VisualizationConditionalTargetLabelForeground,
 		VisualizationConditionalTargetVisualBackground,
@@ -217,3 +257,5 @@ func pointGradientConditionalFormat(id, field string, target VisualizationCondit
 }
 
 func floatPtr(value float64) *float64 { return &value }
+
+func ptrRef(value VisualizationFieldRef) *VisualizationFieldRef { return &value }

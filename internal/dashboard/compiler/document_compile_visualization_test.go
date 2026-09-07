@@ -121,6 +121,160 @@ func TestCompileVisualsAcceptsOnePointMarkFillAndRejectsDuplicate(t *testing.T) 
 	}
 }
 
+func TestCanonicalVisualizationSpecRejectsNonFinitePointSizeScale(t *testing.T) {
+	minimum, maximum := 1.0, 12.0
+	size := "revenue"
+	cases := []struct {
+		name   string
+		mutate func(*document.PointDashboardSizeScale)
+		want   string
+	}{
+		{name: "minimum", mutate: func(scale *document.PointDashboardSizeScale) { scale.Minimum = floatPtr(math.NaN()) }, want: "presentation.sizeScale.minimum"},
+		{name: "maximum", mutate: func(scale *document.PointDashboardSizeScale) { scale.Maximum = floatPtr(math.Inf(1)) }, want: "presentation.sizeScale.maximum"},
+		{name: "minimumPixels", mutate: func(scale *document.PointDashboardSizeScale) { scale.MinimumPixels = math.NaN() }, want: "presentation.sizeScale.minimumPixels"},
+		{name: "maximumPixels", mutate: func(scale *document.PointDashboardSizeScale) { scale.MaximumPixels = math.Inf(1) }, want: "presentation.sizeScale.maximumPixels"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			scale := document.PointDashboardSizeScale{Minimum: &minimum, Maximum: &maximum, MinimumPixels: 6, MaximumPixels: 24}
+			test.mutate(&scale)
+			authored := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
+				Type: "point", Identity: []string{"state"}, X: "revenue", Y: "revenue", Size: &size, SizeScale: &scale,
+			}}
+			lowered, err := LowerCanonicalDashboardPresentation(authored, document.DashboardVisualTypeScatter)
+			if err != nil {
+				t.Fatalf("lower presentation: %v", err)
+			}
+			_, err = canonicalVisualizationSpec("scatter", document.DashboardVisual{Type: document.DashboardVisualTypeScatter, Presentation: authored}, pointQuery(), lowered, nil, dashboardQueryTestModel())
+			if err == nil || !strings.Contains(err.Error(), test.want) || !strings.Contains(err.Error(), "finite") {
+				t.Fatalf("canonicalVisualizationSpec() error = %v, want path-bearing finite diagnostic", err)
+			}
+		})
+	}
+}
+
+func TestCanonicalVisualizationSpecRejectsEqualPointSizeScalePixels(t *testing.T) {
+	minimum, maximum := 1.0, 12.0
+	size := "revenue"
+	scale := document.PointDashboardSizeScale{Minimum: &minimum, Maximum: &maximum, MinimumPixels: 12, MaximumPixels: 12}
+	authored := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
+		Type: "point", Identity: []string{"state"}, X: "revenue", Y: "revenue", Size: &size, SizeScale: &scale,
+	}}
+	lowered, err := LowerCanonicalDashboardPresentation(authored, document.DashboardVisualTypeScatter)
+	if err != nil {
+		t.Fatalf("lower presentation: %v", err)
+	}
+	_, err = canonicalVisualizationSpec("scatter", document.DashboardVisual{Type: document.DashboardVisualTypeScatter, Presentation: authored}, pointQuery(), lowered, nil, dashboardQueryTestModel())
+	if err == nil || !strings.Contains(err.Error(), "presentation.sizeScale pixel bounds are invalid") {
+		t.Fatalf("canonicalVisualizationSpec() error = %v, want equal pixel-bound diagnostic", err)
+	}
+}
+
+func TestCompileVisualsValidatesProportionalConditionalFormattingTargets(t *testing.T) {
+	t.Parallel()
+
+	for _, target := range []visualizationir.VisualizationConditionalTarget{
+		visualizationir.VisualizationConditionalTargetMarkFill,
+		visualizationir.VisualizationConditionalTargetSeriesColor,
+	} {
+		target := target
+		t.Run(string(target), func(t *testing.T) {
+			visual := proportionalDashboardVisual(target)
+			if _, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"orders-share": visual}); err != nil {
+				t.Fatalf("compileVisuals() rejected proportional %s rule: %v", target, err)
+			}
+		})
+	}
+
+	visual := proportionalDashboardVisual(visualizationir.VisualizationConditionalTarget("mark_stroke"))
+	_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"orders-share": visual})
+	if err == nil || !strings.Contains(err.Error(), `visual "orders-share" IR`) || !strings.Contains(err.Error(), `conditional formatting "revenue-gradient"`) || !strings.Contains(err.Error(), `unsupported target "mark_stroke"`) {
+		t.Fatalf("compileVisuals() error = %v, want path-bearing proportional target diagnostic", err)
+	}
+}
+
+func TestCompileVisualsRejectsConditionalFormattingTargetOutsideRenderedChannel(t *testing.T) {
+	format := pointGradientFormat("state", visualizationir.VisualizationConditionalTargetMarkFill)
+	visual := document.DashboardVisual{
+		Type: document.DashboardVisualTypeColumn,
+		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+			Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+			DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian", ConditionalFormatting: &[]document.DashboardConditionalFormat{format}}, Type: "cartesian",
+		}},
+	}
+	_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"orders": visual})
+	if err == nil || !strings.Contains(err.Error(), "conditional formatting \"state-gradient\" field: field \"state\" is not rendered by the cartesian y channel") {
+		t.Fatalf("compileVisuals() error = %v, want path-bearing rendered-channel diagnostic", err)
+	}
+}
+
+func TestCompileVisualsRejectsCartesianMarkStrokeTarget(t *testing.T) {
+	t.Parallel()
+
+	for _, visualType := range []document.DashboardVisualType{document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar} {
+		visualType := visualType
+		t.Run(string(visualType), func(t *testing.T) {
+			visual := document.DashboardVisual{
+				Type: visualType,
+				Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+					Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+				}},
+				Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+					DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian", ConditionalFormatting: &[]document.DashboardConditionalFormat{pointGradientFormat("revenue", visualizationir.VisualizationConditionalTarget("mark_stroke"))}}, Type: "cartesian",
+				}},
+			}
+			_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{string(visualType): visual})
+			if err == nil || !strings.Contains(err.Error(), "conditional formatting \"revenue-gradient\" target: unsupported target \"mark_stroke\"") {
+				t.Fatalf("compileVisuals() error = %v, want conditional-format ID/path mark-stroke diagnostic", err)
+			}
+		})
+	}
+}
+
+func TestCompileVisualsConditionalFormattingPreIRErrorIncludesIDAndPath(t *testing.T) {
+	format := pointGradientFormat("missing", visualizationir.VisualizationConditionalTargetMarkFill)
+	visual := document.DashboardVisual{
+		Type: document.DashboardVisualTypeColumn,
+		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+			Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+			DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian", ConditionalFormatting: &[]document.DashboardConditionalFormat{format}}, Type: "cartesian",
+		}},
+	}
+	_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"orders": visual})
+	if err == nil || !strings.Contains(err.Error(), "conditional formatting \"missing-gradient\" field: reference \"missing\" is not a compiled result field") {
+		t.Fatalf("compileVisuals() error = %v, want conditional-format ID and field path", err)
+	}
+}
+
+func TestCompileVisualsBindsWaterfallConditionalFormattingToMetricAlias(t *testing.T) {
+	alias := "order_total"
+	format := pointGradientFormat(alias, visualizationir.VisualizationConditionalTargetMarkFill)
+	visual := document.DashboardVisual{
+		Type: document.DashboardVisualTypeWaterfall,
+		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+			Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{Reference: &document.DashboardMetricReference{Metric: "revenue", Alias: &alias}}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+			DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian", ConditionalFormatting: &[]document.DashboardConditionalFormat{format}}, Type: "cartesian",
+		}},
+	}
+	compiled, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"waterfall": visual})
+	if err != nil {
+		t.Fatalf("compileVisuals() error = %v", err)
+	}
+	spec := compiled["waterfall"].Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	if len(spec.Y) != 2 || spec.Y[1].Field != alias {
+		t.Fatalf("waterfall metric refs = %#v, want metric alias %q at y[1]", spec.Y, alias)
+	}
+	if formats := spec.ConditionalFormatting; formats == nil || len(*formats) != 1 || (*formats)[0].Field.Field != alias {
+		t.Fatalf("waterfall conditional formats = %#v, want alias-bound format", formats)
+	}
+}
+
 func TestCanonicalGeographicReferenceLayerTooltipContract(t *testing.T) {
 	t.Parallel()
 
@@ -194,6 +348,22 @@ func pointDashboardVisual(color string, scale *document.PointDashboardColorScale
 		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{String: stringPtr("revenue")}}}},
 		Presentation: document.DashboardPresentation{Value: &document.PointDashboardPresentation{
 			Type: "point", Identity: []string{"state"}, X: "revenue", Y: "revenue", Color: &color, ColorScale: scale,
+		}},
+	}
+}
+
+func proportionalDashboardVisual(target visualizationir.VisualizationConditionalTarget) document.DashboardVisual {
+	format := pointGradientFormat("revenue", target)
+	return document.DashboardVisual{
+		Type: document.DashboardVisualTypePie,
+		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+			Type:       "aggregate",
+			Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}},
+			Metrics:    []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{
+			DashboardPresentationBase: document.DashboardPresentationBase{ConditionalFormatting: &[]document.DashboardConditionalFormat{format}},
+			Type:                      "proportional",
 		}},
 	}
 }

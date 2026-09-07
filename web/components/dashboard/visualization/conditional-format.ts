@@ -5,6 +5,7 @@ import type {
   VisualizationConditionalStyle,
   VisualizationIconIntent,
 } from '../../../generated/visualization'
+import { parseDecimal } from './decimal'
 
 export type ResolvedConditionalStyle = Readonly<{
   color?: VisualizationColorIntent
@@ -87,12 +88,13 @@ export function resolveConditionalFormat(
   }
   const value = row[index]
   if (value === null || value === undefined) return { style: resolvedStyle(rule.nullStyle), outcome: 'null' }
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  const numericValue = conditionalNumericValue(value)
+  if (numericValue === undefined) {
     return invalid(format, rule.nullStyle, 'expected a finite numeric value')
   }
 
   if (rule.kind === 'gradient') {
-    const ratio = Math.max(0, Math.min(1, (value - rule.minimum) / (rule.maximum - rule.minimum)))
+    const ratio = Math.max(0, Math.min(1, (numericValue - rule.minimum) / (rule.maximum - rule.minimum)))
     const low = rule.low.color!
     const high = rule.high.color!
     return {
@@ -104,10 +106,21 @@ export function resolveConditionalFormat(
     }
   }
 
-  const match = rule.rules.find((candidate) => comparisonMatches(value, candidate.operator, candidate.value))
+  const match = rule.rules.find((candidate) => comparisonMatches(numericValue, candidate.operator, candidate.value))
   return match
     ? { style: resolvedStyle(match.style), outcome: 'matched' }
     : { style: resolvedStyle(rule.defaultStyle), outcome: 'default' }
+}
+
+function conditionalNumericValue(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value !== 'string') return undefined
+  const parsed = parseDecimal(value)
+  if (!parsed) return undefined
+  const converted = Number(value)
+  const zero = parsed.integer === '0' && /^0*$/.test(parsed.fraction)
+  if (!Number.isFinite(converted) || (converted === 0 && !zero)) return undefined
+  return converted
 }
 
 function comparisonMatches(value: number, operator: VisualizationComparisonOperator, threshold: number): boolean {
