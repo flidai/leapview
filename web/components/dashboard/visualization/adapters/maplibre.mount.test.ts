@@ -6,6 +6,7 @@ import { Change, defaultRendererContext } from '../host-controller'
 
 type Listener = (...args: any[]) => void
 type FakeLayer = { id: string; source?: string; type?: string; metadata?: Record<string, unknown>; paint: Record<string, unknown>; layout?: Record<string, unknown>; filter?: unknown }
+type FakeSource = { setData: (value: unknown) => void; getClusterExpansionZoom?: (clusterID: number) => Promise<number> }
 type FakeHandler = { enabled: boolean; enableCalls: number; disableCalls: number; enable: () => void; disable: () => void; isEnabled: () => boolean }
 
 function fakeHandler(enabled = false): FakeHandler {
@@ -18,7 +19,7 @@ function fakeHandler(enabled = false): FakeHandler {
 
 class FakeMap {
   readonly layers = new Map<string, FakeLayer>()
-  readonly sources = new Map<string, { setData: (value: unknown) => void }>()
+  readonly sources = new Map<string, FakeSource>()
   readonly listeners = new Map<string, Set<Listener>>()
   readonly paintCalls: Array<{ id: string; property: string; value: unknown }> = []
   readonly sourceDataCalls: unknown[] = []
@@ -26,6 +27,8 @@ class FakeMap {
   readonly removedControls: unknown[] = []
   readonly styleCalls: unknown[] = []
   readonly layerBefore = new Map<string, string | undefined>()
+  renderedFeatures: unknown[] = []
+  clusterZoomPromise: Promise<number> = Promise.resolve(8)
   readonly canvas: HTMLCanvasElement
   readonly canvasContainer: HTMLDivElement
   readonly scrollZoom = fakeHandler()
@@ -65,6 +68,7 @@ class FakeMap {
   off(event: string, listener: Listener): this { this.listeners.get(event)?.delete(listener); return this }
 
   private emit(event: string, ...args: any[]): void { for (const listener of [...(this.listeners.get(event) ?? [])]) listener(...args) }
+  fire(event: string, ...args: any[]): void { this.emit(event, ...args) }
 
   triggerRepaint(): void { this.emit('render') }
   getCanvas(): HTMLCanvasElement { return this.canvas }
@@ -89,9 +93,12 @@ class FakeMap {
   }
   setLayoutProperty(id: string, property: string, value: unknown): void { const layer = this.layers.get(id); if (layer) (layer.layout ??= {})[property] = value }
   addSource(id: string, source: { type: string; data?: unknown }): void {
-    this.sources.set(id, { setData: (value) => { source.data = value; this.sourceDataCalls.push(value) } })
+    this.sources.set(id, {
+      setData: (value) => { source.data = value; this.sourceDataCalls.push(value) },
+      getClusterExpansionZoom: () => this.clusterZoomPromise,
+    })
   }
-  getSource(id: string): { setData: (value: unknown) => void } | undefined { return this.sources.get(id) }
+  getSource(id: string): FakeSource | undefined { return this.sources.get(id) }
   removeSource(id: string): void { this.sources.delete(id) }
   addLayer(layer: FakeLayer, before?: string): void { this.layerBefore.set(layer.id, before); this.layers.set(layer.id, { ...layer, paint: { ...(layer.paint ?? {}) } }) }
   removeLayer(id: string): void { this.layers.delete(id) }
@@ -108,7 +115,7 @@ class FakeMap {
   easeTo(options: { center?: [number, number]; zoom?: number }): void { this.jumpTo(options) }
   addControl(control: unknown, _position?: string): void { this.addedControls.push(control) }
   removeControl(control: unknown): void { this.removedControls.push(control) }
-  queryRenderedFeatures(): unknown[] { return [] }
+  queryRenderedFeatures(): unknown[] { return this.renderedFeatures }
   getFilter(_id: string): unknown { return undefined }
   setFilter(_id: string, _filter: unknown): void {}
   setLayerZoomRange(_id: string, _minimum: number, _maximum: number): void {}
@@ -423,6 +430,89 @@ test('MapLibre reconciles navigation and reset controls across spec updates with
     expect(frame.querySelector('.lv-map-reset')).toBeNull()
     handle.dispose()
     expect(map.removedControls).toHaveLength(3)
+  } finally {
+    globalThis.document = previous.document
+    globalThis.window = previous.window
+    globalThis.location = previous.location
+    globalThis.getComputedStyle = previous.getComputedStyle
+    globalThis.requestAnimationFrame = previous.requestAnimationFrame
+    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
+    globalThis.fetch = previous.fetch
+    globalThis.CustomEvent = previous.CustomEvent
+    dom.window.close()
+  }
+})
+
+test('MapLibre applies a fixed camera during tiled placeholder bootstrap', async () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
+  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
+  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
+  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  try {
+    const inline = await labelEnvelope('auto', 'sha256:tiled-bootstrap', { zoom: false, reset: false, compass: false })
+    const tiled = {
+      ...inline,
+      status: { kind: 'loading' },
+      dataState: {
+        kind: 'spatial_tiled', specRevision: inline.specRevision, dataRevision: 1, generation: 1,
+        schema: inline.spec.datasets[0], cardinality: { kind: 'exact', count: 1 }, extent: { west: -180, south: -85, east: 180, north: 85 },
+        rawDomains: [], aggregateDomains: [], tileURL: '/tiles/unavailable/bootstrap/{z}/{x}/{y}.mvt', minimumZoom: 0, maximumZoom: 18, rawMinimumZoom: 10, featureCap: 5000, maximumTileBytes: 524288,
+      },
+    } as unknown as VisualizationEnvelope
+    const container = dom.window.document.createElement('div')
+    const frame = dom.window.document.createElement('div')
+    const attribution = dom.window.document.createElement('div')
+    const map = new FakeMap()
+    const handle = new MapLibreHandle(container, frame, map as never, attribution, context('light'))
+    await handle.update(tiled, Change.All, context('light'))
+    expect(map.getCenter()).toEqual({ lng: 0, lat: 0 })
+    expect(map.getZoom()).toBe(2)
+    handle.dispose()
+  } finally {
+    globalThis.document = previous.document
+    globalThis.window = previous.window
+    globalThis.location = previous.location
+    globalThis.getComputedStyle = previous.getComputedStyle
+    globalThis.requestAnimationFrame = previous.requestAnimationFrame
+    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
+    globalThis.fetch = previous.fetch
+    globalThis.CustomEvent = previous.CustomEvent
+    dom.window.close()
+  }
+})
+
+test('MapLibre rechecks cluster camera policy after asynchronous expansion', async () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
+  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
+  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
+  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  try {
+    let resolveZoom!: (zoom: number) => void
+    const pendingZoom = new Promise<number>((resolve) => { resolveZoom = resolve })
+    const roaming = await labelEnvelope('auto', 'sha256:cluster-roaming', { zoom: false, reset: false, compass: false }, true)
+    const fixed = await labelEnvelope('auto', 'sha256:cluster-fixed', { zoom: false, reset: false, compass: false }, false)
+    const point = roaming.spec.kind === 'geographic' ? roaming.spec.layers.find((layer) => layer.kind === 'point') : undefined
+    if (!point || roaming.spec.kind !== 'geographic') throw new Error('point map fixture is unavailable')
+    const clustered = { ...roaming, spec: { ...roaming.spec, layers: roaming.spec.layers.map((layer) => layer.kind === 'point' ? { ...layer, cluster: { ...layer.cluster, enabled: true } } : layer) } } as VisualizationEnvelope
+    const container = dom.window.document.createElement('div')
+    const frame = dom.window.document.createElement('div')
+    const attribution = dom.window.document.createElement('div')
+    const map = new FakeMap()
+    map.clusterZoomPromise = pendingZoom
+    const handle = new MapLibreHandle(container, frame, map as never, attribution, context('light'))
+    await handle.update(clustered, Change.All, context('light'))
+    map.renderedFeatures = [{ layer: { id: 'lv-points-clusters' }, properties: { cluster_id: 7 }, geometry: { type: 'Point', coordinates: [12, 3] } }]
+    map.fire('click', { point: { x: 0, y: 0 } })
+    await handle.update(fixed, Change.Spec, context('light'))
+    expect(map.getZoom()).toBe(2)
+    resolveZoom(8)
+    await pendingZoom
+    await Promise.resolve()
+    expect(map.getZoom()).toBe(2)
+    expect(map.getCenter()).toEqual({ lng: 0, lat: 0 })
+    handle.dispose()
   } finally {
     globalThis.document = previous.document
     globalThis.window = previous.window

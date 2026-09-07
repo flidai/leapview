@@ -171,11 +171,25 @@ func TestLowerCanonicalGeographicPresentationValidatesFixedCamera(t *testing.T) 
 		setup func(*document.DashboardMapCamera)
 		want  string
 	}{
+		{name: "invalid mode", setup: func(camera *document.DashboardMapCamera) {
+			mode := visualizationir.VisualizationMapCameraMode("invalid")
+			camera.Mode = &mode
+		}, want: "presentation.camera.mode must be fit_data, fixed, or preserve"},
 		{name: "missing center", setup: func(camera *document.DashboardMapCamera) { camera.Center = nil }, want: "presentation.camera.center is required"},
 		{name: "wrong center arity", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{12.5} }, want: "presentation.camera.center must contain exactly two coordinates"},
 		{name: "nonfinite center", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{math.NaN(), -3.25} }, want: "presentation.camera.center[0] must be finite"},
 		{name: "missing zoom", setup: func(camera *document.DashboardMapCamera) { camera.Zoom = nil }, want: "presentation.camera.zoom is required"},
 		{name: "nonfinite zoom", setup: func(camera *document.DashboardMapCamera) { value := math.Inf(1); camera.Zoom = &value }, want: "presentation.camera.zoom must be finite"},
+		{name: "zoom range", setup: func(camera *document.DashboardMapCamera) { value := 25.0; camera.Zoom = &value }, want: "presentation.camera.zoom must be between 0 and 24"},
+		{name: "negative padding", setup: func(camera *document.DashboardMapCamera) { value := int32(-1); camera.Padding = &value }, want: "presentation.camera.padding must be non-negative"},
+		{name: "nonfinite minimum zoom", setup: func(camera *document.DashboardMapCamera) { value := math.Inf(1); camera.MinimumZoom = &value }, want: "presentation.camera.minimumZoom must be finite"},
+		{name: "minimum zoom range", setup: func(camera *document.DashboardMapCamera) { value := -1.0; camera.MinimumZoom = &value }, want: "presentation.camera.minimumZoom must be between 0 and 24"},
+		{name: "nonfinite maximum zoom", setup: func(camera *document.DashboardMapCamera) { value := math.Inf(1); camera.MaximumZoom = &value }, want: "presentation.camera.maximumZoom must be finite"},
+		{name: "maximum zoom range", setup: func(camera *document.DashboardMapCamera) { value := 25.0; camera.MaximumZoom = &value }, want: "presentation.camera.maximumZoom must be between 0 and 24"},
+		{name: "zoom order", setup: func(camera *document.DashboardMapCamera) {
+			minimum, maximum := 8.0, 7.0
+			camera.MinimumZoom, camera.MaximumZoom = &minimum, &maximum
+		}, want: "presentation.camera.minimumZoom must be less than or equal to maximumZoom"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -1362,6 +1362,11 @@ func validateGeographicSpecification(spec VisualizationSpec) error {
 }
 
 func validateGeographicCamera(camera VisualizationMapCamera) error {
+	switch camera.Mode {
+	case VisualizationMapCameraModeFitData, VisualizationMapCameraModeFixed, VisualizationMapCameraModePreserve:
+	default:
+		return fmt.Errorf("presentation.camera.mode must be fit_data, fixed, or preserve")
+	}
 	if camera.Center != nil {
 		if len(*camera.Center) != 2 {
 			return fmt.Errorf("presentation.camera.center must contain exactly two coordinates")
@@ -1374,6 +1379,27 @@ func validateGeographicCamera(camera VisualizationMapCamera) error {
 	}
 	if camera.Zoom != nil && !finite(*camera.Zoom) {
 		return fmt.Errorf("presentation.camera.zoom must be finite")
+	}
+	if camera.Zoom != nil && (*camera.Zoom < 0 || *camera.Zoom > 24) {
+		return fmt.Errorf("presentation.camera.zoom must be between 0 and 24")
+	}
+	if camera.Padding < 0 {
+		return fmt.Errorf("presentation.camera.padding must be non-negative")
+	}
+	if !finite(camera.MinimumZoom) {
+		return fmt.Errorf("presentation.camera.minimumZoom must be finite")
+	}
+	if camera.MinimumZoom < 0 || camera.MinimumZoom > 24 {
+		return fmt.Errorf("presentation.camera.minimumZoom must be between 0 and 24")
+	}
+	if !finite(camera.MaximumZoom) {
+		return fmt.Errorf("presentation.camera.maximumZoom must be finite")
+	}
+	if camera.MaximumZoom < 0 || camera.MaximumZoom > 24 {
+		return fmt.Errorf("presentation.camera.maximumZoom must be between 0 and 24")
+	}
+	if camera.MinimumZoom > camera.MaximumZoom {
+		return fmt.Errorf("presentation.camera.minimumZoom must be less than or equal to maximumZoom")
 	}
 	if camera.Mode == VisualizationMapCameraModeFixed {
 		if camera.Center == nil {

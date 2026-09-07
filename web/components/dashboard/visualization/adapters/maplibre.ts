@@ -550,15 +550,16 @@ export class MapLibreHandle implements RendererHandle {
 
   private initializeViewport(envelope: VisualizationEnvelope, collections: FeatureCollection[]): boolean {
     if (this.viewportInitialized || envelope.spec.kind !== 'geographic') return false
+    const camera = envelope.spec.presentation.camera
     // Bootstrap envelopes use a world-sized placeholder extent. Deferring the
     // home camera until governed metadata arrives prevents ready tiled maps
-    // from remaining at the bootstrap zoom-0 view.
-    if (envelope.dataState.kind === 'spatial_tiled' && (envelope.status.kind === 'loading' || isPlaceholderTileURL(envelope.dataState.tileURL))) return false
+    // from remaining at the bootstrap zoom-0 view. A fixed camera is already
+    // governed by the spec, so it must apply even while tile metadata loads.
+    if (envelope.dataState.kind === 'spatial_tiled' && camera.mode !== 'fixed' && (envelope.status.kind === 'loading' || isPlaceholderTileURL(envelope.dataState.tileURL))) return false
     // The host mounts while its dashboard grid is still settling. Refresh the
     // transform from the laid-out container before calculating fitBounds;
     // otherwise MapLibre can retain its constructor-time zoom-0 dimensions.
     this.map.resize()
-    const camera = envelope.spec.presentation.camera
     const fitted = envelope.dataState.kind === 'spatial_tiled'
       ? fitMapToSpatialExtent(this.map, envelope.dataState.extent, camera)
       : fitMapToGeographicData(this.map, collections, camera)
@@ -585,7 +586,7 @@ export class MapLibreHandle implements RendererHandle {
       (command) => this.dispatchInteraction(command),
       () => this.syncMapSelectionControls(),
       (center, zoom) => {
-        if (!this.envelope || !mapClickCanRefineCamera(this.envelope)) return
+        if (this.disposed || !this.envelope || !mapClickCanRefineCamera(this.envelope)) return
         this.map.easeTo({
           center: [center[0], center[1]],
           zoom: progressiveAggregateRefinementZoom(this.map.getZoom(), zoom),
@@ -942,7 +943,13 @@ export class MapLibreHandle implements RendererHandle {
     if (expansion) {
 		if (canRefineCamera) {
 			const source = this.map.getSource(expansion.sourceID) as GeoJSONSource | undefined
-			void source?.getClusterExpansionZoom(expansion.clusterID).then((zoom) => this.map.easeTo({ center: expansion.center, zoom }))
+      void source?.getClusterExpansionZoom(expansion.clusterID).then((zoom) => {
+        // Cluster expansion is asynchronous. The envelope may have changed
+        // while MapLibre was resolving the cluster's target zoom; re-check
+        // the current interaction/camera policy before moving the camera.
+        if (!this.envelope || !mapClickCanRefineCamera(this.envelope)) return
+        this.map.easeTo({ center: expansion.center, zoom })
+      })
 		}
       return
     }

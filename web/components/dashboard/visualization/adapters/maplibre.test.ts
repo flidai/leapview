@@ -544,6 +544,12 @@ test('MapLibre tiled interaction submits raw identities and never aggregate cell
   expect(mapInteractionCommand(envelope, [aggregate], ['lv-orders'])).toBeUndefined()
 })
 
+test('MapLibre tiled stable-identity interactions reject null raw identities', () => {
+  const envelope = tiledPointEnvelope()
+  const raw = { layer: { id: 'lv-orders' }, properties: { __lv_id: 11, __lv_aggregate: false, order_id: null } }
+  expect(mapInteractionCommand(envelope, [raw], ['lv-orders'])).toBeUndefined()
+})
+
 test('MapLibre builds the tile-backed picker from unique visible raw points', () => {
   const envelope = tiledPointEnvelope()
   const raw = { layer: { id: 'lv-orders' }, properties: { __lv_id: 11, __lv_aggregate: false, __lv_selected: true, order_id: 'o1' } }

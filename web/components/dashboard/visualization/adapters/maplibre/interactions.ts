@@ -68,7 +68,7 @@ export function mapInteractionCommand(
 			const mappings = interaction.mappings.map((mapping) => {
 				const value = interactionSelectionValue(feature.properties?.[mapping.source.field])
 				const label = interactionSelectionValue(feature.properties?.[mapping.label?.field ?? mapping.source.field])
-				if (value === undefined || label === undefined) return undefined
+				if (value === undefined || (interaction.requiresStableIdentity && value === null) || label === undefined) return undefined
 				return { field: mapping.targetFieldID, ...(mapping.targetDatasetID ? { dataset: mapping.targetDatasetID } : {}), ...(mapping.grain ? { grain: mapping.grain } : {}), value, label: interactionSelectionLabel(label) }
 			})
 			if (mappings.some((mapping) => mapping === undefined)) continue
