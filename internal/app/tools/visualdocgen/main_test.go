@@ -161,6 +161,33 @@ func TestVisualDocumentReferenceUsesCompiledRendererAndResultShape(t *testing.T)
 	}
 }
 
+func TestVisualDocumentReferenceProvidesFallbackKeyFieldsForRepeatedChartConfiguration(t *testing.T) {
+	t.Parallel()
+
+	visual := dashboarddocument.DashboardVisual{
+		Type: dashboarddocument.DashboardVisualTypeHeatmap,
+		Query: dashboarddocument.DashboardQuery{Value: &dashboarddocument.AggregateDashboardQuery{
+			Type:       "aggregate",
+			Dimensions: []dashboarddocument.DashboardDimensionSelection{{String: strPtr("category")}, {String: strPtr("status")}},
+			Metrics:    []dashboarddocument.DashboardMetricSelection{{String: strPtr("order_count")}},
+		}},
+		Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.CartesianDashboardPresentation{Type: "cartesian"}},
+	}
+	examples := []visualExample{{ID: "heatmap", Type: string(visual.Type), Visual: visual}, {ID: "heatmap_labels", Type: string(visual.Type), Visual: visual}}
+	compiled := map[string]visualizationdefinition.Definition{
+		"heatmap":        {ID: "heatmap", RendererID: visualizationdefinition.RendererECharts, Query: visualizationdefinition.QueryBinding{ResultShape: visualizationdefinition.ResultCategorySeriesValue}},
+		"heatmap_labels": {ID: "heatmap_labels", RendererID: visualizationdefinition.RendererECharts, Query: visualizationdefinition.QueryBinding{ResultShape: visualizationdefinition.ResultCategorySeriesValue}},
+	}
+
+	reference, err := buildVisualDocumentReference(examples, compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := reference.Examples["heatmap_labels"].KeyFields, []string{"type", "query"}; !slices.Equal(got, want) {
+		t.Fatalf("repeated chart key fields = %#v, want %#v", got, want)
+	}
+}
+
 func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	docsDir := filepath.Join("..", "..", "..", "..", "docs", "visuals")
 	artifact, err := generateVisualExamples(docsDir, filepath.Join("testdata", "project", "leapview.yaml"), filepath.Join("testdata", "data"))

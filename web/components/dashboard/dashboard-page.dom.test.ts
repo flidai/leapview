@@ -57,7 +57,7 @@ test('dashboard coalesces duplicate option requests for one binding context', as
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    const requests = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    const stateFilter = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const seen: unknown[] = []
       element.addEventListener('lv-filter-options-request', (event: CustomEvent) => seen.push(event.detail))
       for (let index = 0; index < 2; index++) {
@@ -68,9 +68,31 @@ test('dashboard coalesces duplicate option requests for one binding context', as
         }))
       }
       await element.updateComplete
-      return seen
+      return {
+        requests: seen,
+        definition: element.signal('filterContract', {}).definitions?.state,
+        binding: element.signal('filterContract', {}).bindings?.fb_state,
+        page: element.signal('filterOptionPages', {}).fb_state,
+        purchaseDateDefinition: element.signal('filterContract', {}).definitions?.purchase_date,
+        purchaseDateBinding: element.signal('filterContract', {}).bindings?.fb_purchase_date,
+      }
     })
-    expect(requests).toHaveLength(1)
+    expect(stateFilter.requests).toHaveLength(1)
+    expect(stateFilter.definition).toMatchObject({
+      field: 'sales_orders.state',
+      options: { kind: 'distinct', limit: 50, values: [] },
+    })
+    expect(stateFilter.binding).toMatchObject({ selectionMode: 'multiple', maxSelectedValues: 50 })
+    expect(stateFilter.page).toMatchObject({
+      bindingKey: 'fb_state', complete: true,
+      items: [{ label: 'SP', available: true }],
+    })
+    expect(stateFilter.purchaseDateDefinition).toMatchObject({
+      field: 'sales_orders.purchase_date', valueKind: 'date',
+      predicates: [{ kind: 'range', operators: [] }],
+      options: { kind: 'none', limit: 0, values: [] },
+    })
+    expect(stateFilter.purchaseDateBinding).toMatchObject({ scope: 'report', default: { kind: 'unfiltered' } })
   } finally {
     await page.close()
   }
@@ -991,6 +1013,7 @@ test('the closed filter control follows scrolling in Mobile layout', async () =>
       localStorage.setItem('leapview:filters-open', 'closed')
     })
     await page.goto(baseURL)
+    await page.waitForLoadState('networkidle')
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
 
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
@@ -3698,17 +3721,28 @@ function testDocument(): string {
     filterContract: {
       applicationMode: 'immediate',
       definitions: {
+        purchase_date: {
+          id: 'purchase_date', label: 'Purchase date', field: 'sales_orders.purchase_date', valueKind: 'date',
+          predicates: [{ kind: 'range', operators: [] }],
+          options: { kind: 'none', limit: 0, values: [] },
+          timezone: 'UTC', calendar: 'gregorian', weekStart: 'monday',
+        },
         state: {
-          id: 'state', label: 'State', field: 'orders.state', valueKind: 'string',
+          id: 'state', label: 'State', field: 'sales_orders.state', valueKind: 'string',
           predicates: [{ kind: 'set', operators: ['in'] }],
           options: { kind: 'distinct', limit: 50, values: [] },
           timezone: 'UTC', calendar: 'gregorian', weekStart: 'monday',
         },
       },
       bindings: {
+        fb_purchase_date: {
+          key: 'fb_purchase_date', id: 'purchase_date', filter: 'purchase_date', scope: 'report',
+          default: { kind: 'unfiltered' }, selectionMode: 'multiple', maxSelectedValues: 0,
+          readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+        },
         fb_state: {
           key: 'fb_state', id: 'state', filter: 'state', scope: 'page', pageID: 'overview',
-          default: { kind: 'unfiltered' }, selectionMode: 'multiple', maxSelectedValues: 0,
+          default: { kind: 'unfiltered' }, selectionMode: 'multiple', maxSelectedValues: 50,
           readerEditable: true, paneVisible: true, paneOrder: 0, targets: ['overview/orders-chart'],
           optionDependencies: [],
         },

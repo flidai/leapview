@@ -18,7 +18,7 @@ spec:
     label: Purchase date
     dimension: purchase_date
     control:
-      type: relativePeriod
+      type: dateRange
     urlParameter: period
     operators: []
   - id: state
@@ -26,6 +26,11 @@ spec:
     dimension: state
     control:
       type: multiSelect
+      maxSelectedValues: 50
+      options:
+        type: distinct
+        dataset: sales_orders
+        limit: 50
     operators:
     - in
     - notIn
