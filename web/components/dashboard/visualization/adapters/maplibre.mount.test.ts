@@ -197,10 +197,37 @@ function pointerEvent(dom: JSDOM, type: string, pointerId: number): Event {
   return event
 }
 
+function installDomGlobals(dom: JSDOM): () => void {
+  const values = {
+    document: dom.window.document,
+    window: dom.window,
+    location: dom.window.location,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
+    cancelAnimationFrame: () => {},
+    fetch: globalThis.fetch,
+    CustomEvent: dom.window.CustomEvent,
+  }
+  const keys = Object.keys(values)
+  const previous = new Map(keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
+  Object.defineProperties(globalThis, Object.fromEntries(keys.map((key) => [key, {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: values[key as keyof typeof values],
+  }])))
+  return () => {
+    for (const key of keys) {
+      const descriptor = previous.get(key)
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor)
+      else Reflect.deleteProperty(globalThis, key)
+    }
+  }
+}
+
 test('MapLibre reconciles basemap styles without replacing controls or stale data', async () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
-  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
-  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
   const styleA = await basemapFixture('streets-a', 'labels-a', 'OSM A')
   const styleB = await basemapFixture('streets-b', 'labels-b', 'OSM B')
@@ -267,22 +294,14 @@ test('MapLibre reconciles basemap styles without replacing controls or stale dat
     expect(map.removedControls).toHaveLength(0)
     handle.dispose()
   } finally {
-    globalThis.document = previous.document
-    globalThis.window = previous.window
-    globalThis.location = previous.location
-    globalThis.getComputedStyle = previous.getComputedStyle
-    globalThis.requestAnimationFrame = previous.requestAnimationFrame
-    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
-    globalThis.fetch = previous.fetch
-    globalThis.CustomEvent = previous.CustomEvent
+    restoreDomGlobals()
     dom.window.close()
   }
 })
 
 test('MapLibre reconciles roam handlers and interactive affordances without context churn', async () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
-  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
-  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
   globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
   try {
@@ -325,22 +344,14 @@ test('MapLibre reconciles roam handlers and interactive affordances without cont
     expect(map.canvas.tabIndex).toBe(0)
     handle.dispose()
   } finally {
-    globalThis.document = previous.document
-    globalThis.window = previous.window
-    globalThis.location = previous.location
-    globalThis.getComputedStyle = previous.getComputedStyle
-    globalThis.requestAnimationFrame = previous.requestAnimationFrame
-    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
-    globalThis.fetch = previous.fetch
-    globalThis.CustomEvent = previous.CustomEvent
+    restoreDomGlobals()
     dom.window.close()
   }
 })
 
 test('MapLibre keeps spatial drag-pan disabled through a roam update during a gesture', async () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
-  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
-  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
   globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
   try {
@@ -365,22 +376,14 @@ test('MapLibre keeps spatial drag-pan disabled through a roam update during a ge
     expect(map.dragPan.enabled).toBe(false)
     handle.dispose()
   } finally {
-    globalThis.document = previous.document
-    globalThis.window = previous.window
-    globalThis.location = previous.location
-    globalThis.getComputedStyle = previous.getComputedStyle
-    globalThis.requestAnimationFrame = previous.requestAnimationFrame
-    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
-    globalThis.fetch = previous.fetch
-    globalThis.CustomEvent = previous.CustomEvent
+    restoreDomGlobals()
     dom.window.close()
   }
 })
 
 test('MapLibre reconciles navigation and reset controls across spec updates without context churn', async () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
-  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
-  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
   globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
   try {
@@ -431,22 +434,14 @@ test('MapLibre reconciles navigation and reset controls across spec updates with
     handle.dispose()
     expect(map.removedControls).toHaveLength(3)
   } finally {
-    globalThis.document = previous.document
-    globalThis.window = previous.window
-    globalThis.location = previous.location
-    globalThis.getComputedStyle = previous.getComputedStyle
-    globalThis.requestAnimationFrame = previous.requestAnimationFrame
-    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
-    globalThis.fetch = previous.fetch
-    globalThis.CustomEvent = previous.CustomEvent
+    restoreDomGlobals()
     dom.window.close()
   }
 })
 
 test('MapLibre applies a fixed camera during tiled placeholder bootstrap', async () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
-  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
-  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
   globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
   try {
@@ -470,22 +465,14 @@ test('MapLibre applies a fixed camera during tiled placeholder bootstrap', async
     expect(map.getZoom()).toBe(2)
     handle.dispose()
   } finally {
-    globalThis.document = previous.document
-    globalThis.window = previous.window
-    globalThis.location = previous.location
-    globalThis.getComputedStyle = previous.getComputedStyle
-    globalThis.requestAnimationFrame = previous.requestAnimationFrame
-    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
-    globalThis.fetch = previous.fetch
-    globalThis.CustomEvent = previous.CustomEvent
+    restoreDomGlobals()
     dom.window.close()
   }
 })
 
 test('MapLibre rechecks cluster camera policy after asynchronous expansion', async () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
-  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
-  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
   globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
   try {
@@ -514,14 +501,7 @@ test('MapLibre rechecks cluster camera policy after asynchronous expansion', asy
     expect(map.getCenter()).toEqual({ lng: 0, lat: 0 })
     handle.dispose()
   } finally {
-    globalThis.document = previous.document
-    globalThis.window = previous.window
-    globalThis.location = previous.location
-    globalThis.getComputedStyle = previous.getComputedStyle
-    globalThis.requestAnimationFrame = previous.requestAnimationFrame
-    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
-    globalThis.fetch = previous.fetch
-    globalThis.CustomEvent = previous.CustomEvent
+    restoreDomGlobals()
     dom.window.close()
   }
 })
