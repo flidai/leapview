@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/flidai/leapview/internal/deployment"
 	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -100,24 +99,6 @@ func (r *Repository) CreateCandidateAllocated(ctx context.Context, in CandidateI
 	return out, nil
 }
 
-// StartCandidateWithClaimTx composes the instance project claim and native
-// candidate admission in one caller-owned control-plane transaction. It is
-// the supported atomic seam for composition roots that need candidate start
-// and claim/audit evidence to commit together.
-func (r *Repository) StartCandidateWithClaimTx(ctx context.Context, tx Tx, claim deployment.ProjectClaimInput, in CandidateInput) (deployment.ProjectClaim, DeliveryCandidate, error) {
-	if tx == nil {
-		return deployment.ProjectClaim{}, DeliveryCandidate{}, ErrInvalid
-	}
-	projectClaim, err := r.ClaimProjectTx(ctx, tx, claim)
-	if err != nil {
-		return deployment.ProjectClaim{}, DeliveryCandidate{}, err
-	}
-	candidate, err := r.CreateCandidateTx(ctx, tx, in)
-	if err != nil {
-		return deployment.ProjectClaim{}, DeliveryCandidate{}, err
-	}
-	return projectClaim, candidate, nil
-}
 func createCandidate(ctx context.Context, db DBTX, in CandidateInput) (DeliveryCandidate, error) {
 	id, err := uuidID(in.CandidateID, "candidate id", true)
 	if err != nil {

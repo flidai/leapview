@@ -159,6 +159,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview admin](/docs/cli/admin): Administrative utilities
 - [leapview agent](/docs/cli/agent): Use the LeapView governed BI agent
 - [leapview api](/docs/cli/api): Call any generated LeapView API operation
+- [leapview bootstrap-project](/docs/cli/bootstrap-project): Bootstrap a target with this deployment authority's ProjectUID
 - [leapview build](/docs/cli/build): Build and seal a target-owned delivery plan
 - [leapview config](/docs/cli/config): Inspect and validate process-global configuration
 - [leapview dashboards](/docs/cli/dashboards): Inspect dashboards

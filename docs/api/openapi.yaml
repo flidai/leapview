@@ -12511,6 +12511,320 @@ paths:
       x-apigen-operation-kind: query
       x-leapview-object-scope: platform
       x-apigen-manual: true
+  /api/v1/instance/project-claim:
+    post:
+      operationId: bootstrapProjectClaim
+      summary: Bootstrap this unclaimed instance with an issuer-owned ProjectUID
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectClaimBootstrapResponse'
+              example:
+                claimedAt: "2026-01-02T15:04:05Z"
+                claimedBy: example
+                environment: example
+                projectUid: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Deployments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectClaimBootstrapRequest'
+            example:
+              environment: example
+              issuerId: example
+              projectUid: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: environment
+                sensitivity: public
+              - name: issuerId
+                sensitivity: internal
+              - name: projectUid
+                sensitivity: public
+              - name: result
+                sensitivity: public
+            retention: security
+            schema:
+              ref: ProjectClaimBootstrappedAuditPayload
+            schema_version: 1
+          required: true
+          success_action: project.claim.bootstrapped
+        authz_mode: privilege
+        failures:
+          - code: PROJECT_CLAIM_CONFLICT
+            kind: project_claim_conflict
+            public_detail: This instance is already claimed by a different Project
+              or environment.
+            status_code: 409
+          - code: INVALID_PROJECT_CLAIM
+            kind: project_claim_invalid
+            public_detail: The Project claim is invalid.
+            status_code: 422
+          - code: PROJECT_CLAIM_UNAVAILABLE
+            kind: project_claim_unavailable
+            public_detail: Project claim bootstrap is temporarily unavailable.
+            status_code: 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        privilege: PROJECT_ADMIN
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: platform
   /api/v1/instance/settings:
     get:
       operationId: getProductSettings
@@ -76980,6 +77294,95 @@ components:
           queryResultMaxBytes: 1
           queryResultMaxRows: 1
         storageBackend: example
+    ProjectClaimBootstrapRequest:
+      type: object
+      required:
+        - projectUid
+        - issuerId
+        - environment
+      properties:
+        projectUid:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        issuerId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        environment:
+          type: string
+          example: example
+      example:
+        environment: example
+        issuerId: example
+        projectUid: example
+    ProjectClaimBootstrapResponse:
+      type: object
+      required:
+        - projectUid
+        - environment
+        - claimedBy
+        - claimedAt
+      properties:
+        projectUid:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        environment:
+          type: string
+          example: example
+        claimedBy:
+          type: string
+          example: example
+        claimedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+      example:
+        claimedAt: "2026-01-02T15:04:05Z"
+        claimedBy: example
+        environment: example
+        projectUid: example
+    ProjectClaimBootstrappedAuditPayload:
+      type: object
+      required:
+        - projectUid
+        - issuerId
+        - environment
+        - result
+      properties:
+        projectUid:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        issuerId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        environment:
+          type: string
+          example: example
+        result:
+          type: string
+          enum:
+            - claimed
+            - conflict
+          example: example
+      example:
+        environment: example
+        issuerId: example
+        projectUid: example
+        result: example
     ProjectResponse:
       type: object
       required:

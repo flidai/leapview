@@ -43,6 +43,7 @@ var documentedCommandSafety = map[string]commandSafety{
 	"leapview api call":                        {effect: "dynamic", confirmation: "never"},
 	"leapview api describe":                    {effect: "read", confirmation: "never"},
 	"leapview api list":                        {effect: "read", confirmation: "never"},
+	"leapview bootstrap-project":               {effect: "write", confirmation: "never"},
 	"leapview config validate":                 {effect: "read", confirmation: "never"},
 	"leapview dashboards describe":             {effect: "read", confirmation: "never"},
 	"leapview dashboards export":               {effect: "local-write", confirmation: "never"},

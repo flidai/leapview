@@ -95,6 +95,44 @@ func (a *Adapter) AppendMutationAudit(ctx context.Context, tx deploymentpostgres
 	return mapAuditEvent(stored), nil
 }
 
+func (a *Adapter) AppendProjectClaimAudit(ctx context.Context, tx deploymentpostgres.Tx, input deploymentmodule.ProjectClaimAuditInput) (deploymentpostgres.AuditEvent, error) {
+	if a == nil || a.audit == nil {
+		return deploymentpostgres.AuditEvent{}, fmt.Errorf("%w: project claim audit adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	stored, err := a.audit.RecordAuditEvent(ctx, tx, projectClaimIntent(input))
+	if err != nil {
+		return deploymentpostgres.AuditEvent{}, normalize(err, "append project claim")
+	}
+	return mapAuditEvent(stored), nil
+}
+
+func (a *Adapter) GetProjectClaimAudit(ctx context.Context, tx deploymentpostgres.Tx, input deploymentmodule.ProjectClaimAuditInput) (deploymentpostgres.AuditEvent, error) {
+	if a == nil || a.audit == nil {
+		return deploymentpostgres.AuditEvent{}, fmt.Errorf("%w: project claim audit adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	intent := projectClaimIntent(input)
+	stored, err := a.audit.GetAuditEvent(ctx, tx, input.AuditID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return deploymentpostgres.AuditEvent{}, deploymentmodule.ErrProjectClaimAuditNotFound
+		}
+		return deploymentpostgres.AuditEvent{}, normalize(err, "read project claim")
+	}
+	if err := validateStored(stored, intent); err != nil {
+		return deploymentpostgres.AuditEvent{}, err
+	}
+	return mapAuditEvent(stored), nil
+}
+
+func projectClaimIntent(input deploymentmodule.ProjectClaimAuditInput) access.AuditIntent {
+	return access.AuditIntent{
+		EventID: input.AuditID, ScopeID: input.ScopeID, ActorID: input.ActorID,
+		RequestDigest: input.RequestDigest, Source: "deployment", Operation: "bootstrap_project_claim",
+		Action: "project.claim.bootstrapped", ResourceKind: "project", ResourceID: input.ProjectUID,
+		Outcome: input.Outcome, AggregateKey: input.AggregateKey, MetadataJSON: input.MetadataJSON,
+	}
+}
+
 // GetMutationAudit reads and validates one native delivery mutation audit
 // against the complete expected intent. It is used after commit by generated
 // command completion guards; it never begins or ends a transaction.

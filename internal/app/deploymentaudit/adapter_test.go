@@ -3,6 +3,7 @@ package deploymentaudit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
@@ -19,6 +20,56 @@ func TestAppendMutationAuditFailsClosed(t *testing.T) {
 	}
 	if _, err := NewWithRepository(accesspostgres.New()).AppendMutationAudit(context.Background(), nil, deploymentmodule.NativeDeliveryAuditInput{}); !errors.Is(err, deploymentpostgres.ErrInvalid) {
 		t.Fatalf("nil transaction error = %v, want deployment.ErrInvalid", err)
+	}
+}
+
+func TestProjectClaimAuditPersistsSuccessAndConflictOutcomes(t *testing.T) {
+	h := postgrestest.Start(t)
+	database := h.NewDatabase(t, "project_claim_audit_adapter")
+	db, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	if _, err := db.Exec(t.Context(), accesspostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+	adapter := NewWithRepository(accesspostgres.New())
+	for index, outcome := range []string{"success", "failure"} {
+		result := "claimed"
+		if outcome == "failure" {
+			result = "conflict"
+		}
+		input := deploymentmodule.ProjectClaimAuditInput{
+			AuditID: fmt.Sprintf("01900000-0000-7000-8000-%012d", 301+index), ScopeID: "lvinst_test", ActorID: "instance-admin",
+			ProjectUID: "project:issued", RequestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			AggregateKey: "project-claim:lvinst_test", Outcome: outcome,
+			MetadataJSON: fmt.Sprintf(`{"environment":"prod","issuerId":"issuer:one","projectUid":"project:issued","result":%q}`, result),
+		}
+		tx, err := db.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := adapter.AppendProjectClaimAudit(t.Context(), tx, input); err != nil {
+			_ = tx.Rollback(t.Context())
+			t.Fatal(err)
+		}
+		if err := tx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		tx, err = db.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored, err := adapter.GetProjectClaimAudit(t.Context(), tx, input)
+		_ = tx.Rollback(t.Context())
+		wantOutcome := outcome
+		if outcome == "success" {
+			wantOutcome = "accepted"
+		}
+		if err != nil || stored.Outcome != wantOutcome || stored.ResourceID != input.ProjectUID {
+			t.Fatalf("project claim audit = %+v, %v", stored, err)
+		}
 	}
 }
 

@@ -338,6 +338,8 @@ func classifyCandidateFailure(err error) error {
 	switch {
 	case errors.Is(err, deployment.ErrProjectClaimConflict):
 		return apigenfailure.Wrap("candidate_conflict", err)
+	case errors.Is(err, deployment.ErrProjectClaimRequired):
+		return apigenfailure.Wrap("candidate_unavailable", err)
 	case errors.Is(err, deployment.ErrProjectClaimInvalid):
 		return apigenfailure.Wrap("candidate_invalid", err)
 	case errors.Is(err, deployment.ErrCandidateUnavailable):

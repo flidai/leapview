@@ -6,6 +6,7 @@ import (
 
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/spf13/cobra"
 )
 
@@ -65,8 +66,9 @@ func NewCommand(ctx context.Context) *cobra.Command {
 	root.AddCommand(semanticModelsCommand(ctx, opts))
 	root.AddCommand(semanticModelOssieCommand(ctx))
 	authentication := applicationAuthoringAuthentication{}
-	root.AddCommand(accesscli.LoginCommand(ctx, authentication, applicationTargetDiscovery{}))
+	root.AddCommand(accesscli.LoginCommand(ctx, authentication, applicationTargetDiscovery{}, applicationProjectIdentity{profiles: cliapi.NewProfileStore(clientConfigPath())}))
 	root.AddCommand(accesscli.LogoutCommand(ctx, authentication))
+	root.AddCommand(bootstrapProjectCommand(ctx, opts))
 	root.AddCommand(adminCommand(ctx, opts))
 	root.AddCommand(healthcheckCommand(ctx, opts))
 	normalizeCommandGroups(root)

@@ -60,6 +60,21 @@ func (r *Repository) GetProjectClaim(ctx context.Context) (deployment.ProjectCla
 	return mapPlatformClaim(claim)
 }
 
+// GetProjectClaimTx reads the singleton claim through a caller-owned
+// transaction. Bootstrap replay/conflict paths must not borrow the repository
+// pool while holding that transaction; doing so can deadlock a correctly
+// bounded pool (including a one-connection control pool).
+func (r *Repository) GetProjectClaimTx(ctx context.Context, tx Tx) (deployment.ProjectClaim, error) {
+	if tx == nil {
+		return deployment.ProjectClaim{}, deployment.ErrProjectClaimNotFound
+	}
+	claim, err := platformbootstrap.New(tx).GetProjectClaim(ctx)
+	if err != nil {
+		return deployment.ProjectClaim{}, mapClaimError(err)
+	}
+	return mapPlatformClaim(claim)
+}
+
 func mapClaimError(err error) error {
 	if err == nil {
 		return nil

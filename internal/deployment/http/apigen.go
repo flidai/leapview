@@ -14,6 +14,10 @@ type APIGenHandler interface {
 	PlanProjectCandidateSynchronization(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
 }
 
+type ProjectClaimBootstrapHandler interface {
+	BootstrapProjectClaim(stdhttp.ResponseWriter, *stdhttp.Request, string)
+}
+
 // DeliveryAPIGenHandler is optional to preserve the small legacy test and
 // embedding surface of APIGenHandler while generated delivery operations are
 // rolled out. Production deployment modules implement both interfaces.
@@ -59,6 +63,14 @@ type APIGenDispatcher struct{ handler APIGenHandler }
 
 func NewAPIGenDispatcher(handler APIGenHandler) *APIGenDispatcher {
 	return &APIGenDispatcher{handler: handler}
+}
+
+func (d *APIGenDispatcher) BootstrapProjectClaim(w stdhttp.ResponseWriter, r *stdhttp.Request, headers deploymentgen.GenBootstrapProjectClaimHeaders) {
+	if handler, ok := d.handler.(ProjectClaimBootstrapHandler); ok {
+		handler.BootstrapProjectClaim(w, r, headers.IdempotencyKey)
+		return
+	}
+	apitransport.WriteProblem(w, r, stdhttp.StatusServiceUnavailable, "PROJECT_CLAIM_UNAVAILABLE", "Project claim bootstrap is temporarily unavailable.", nil)
 }
 
 func (d *APIGenDispatcher) GetDeliveryPlanPreview(w stdhttp.ResponseWriter, r *stdhttp.Request, project, plan string) {

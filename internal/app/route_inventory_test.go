@@ -31,6 +31,9 @@ func TestRouteInventory(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if got["POST /api/v1/instance/project-claim"] != 1 {
+		t.Fatalf("project claim bootstrap route registered %d times, want exactly once", got["POST /api/v1/instance/project-claim"])
+	}
 
 	want := map[string]struct{}{}
 	metadata := map[string]routeMetadata{}
@@ -84,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "b7435d053fea6e5df877c5241ad330f065c6af32035f4135a46b046ae9d00a73"
+	const expectedRouteContractDigest = "0d259c8eaece8e2eb738a1321a920e8a19e159a95f55aa3747362b817bf6a71d"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))

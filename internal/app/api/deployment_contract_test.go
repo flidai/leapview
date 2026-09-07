@@ -72,6 +72,22 @@ func TestProjectDeliveryAPIContract(t *testing.T) {
 	}
 }
 
+func TestProjectClaimBootstrapContractIsPlatformScopedAndTransactional(t *testing.T) {
+	spec := managedDataOpenAPISpec(t)
+	paths := openAPIMap(t, spec, "paths")
+	operation := openAPIOperation(t, paths, "/api/v1/instance/project-claim", "post")
+	if operation["operationId"] != "bootstrapProjectClaim" || openAPIMap(t, operation, "x-authz")["privilege"] != "PROJECT_ADMIN" {
+		t.Fatalf("bootstrap operation = %#v", operation)
+	}
+	if operation["x-leapview-object-scope"] != "platform" || !operationHasParameter(operation, "header", "Idempotency-Key") {
+		t.Fatalf("bootstrap scope/headers = %#v", operation)
+	}
+	command := openAPIMap(t, operation, "x-apigen-command")
+	if command["idempotency"] != "required" || openAPIMap(t, command, "audit")["guarantee"] != "transactional" {
+		t.Fatalf("bootstrap command = %#v", operation)
+	}
+}
+
 func TestPrivateProjectCandidateSynchronizationContract(t *testing.T) {
 	spec := managedDataOpenAPISpec(t)
 	paths := openAPIMap(t, spec, "paths")

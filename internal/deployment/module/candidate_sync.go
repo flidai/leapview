@@ -57,11 +57,10 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 		return
 	}
 	request.IdempotencyKey = strings.TrimSpace(idempotencyKey)
-	// Planning is the first CLI side effect: claim the exact project and
-	// environment before reporting missing blobs. The durable singleton claim
-	// is idempotent for the same project and fails closed for a race with a
-	// different project.
-	if err := m.claimCandidateSynchronizationProject(r.Context(), projectID, principalID); err != nil {
+	// Ordinary authoring is never a claim authority. Require the instance to
+	// have been bootstrapped with the exact ProjectUID/environment before any
+	// source repository or planning work is reached.
+	if err := m.requireCandidateSynchronizationProject(r.Context(), projectID); err != nil {
 		m.writeCandidateCommandFailure(w, r, operationID, err)
 		return
 	}
@@ -90,18 +89,22 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 	})
 }
 
-func (m *Module) claimCandidateSynchronizationProject(ctx context.Context, projectID projectgraph.ResourceID, principalID string) error {
+func (m *Module) requireCandidateSynchronizationProject(ctx context.Context, projectID projectgraph.ResourceID) error {
 	if m == nil {
 		return deployment.ErrCandidateUnavailable
 	}
 	if m.projectClaims == nil {
 		return deployment.ErrCandidateUnavailable
 	}
-	_, err := m.projectClaims.ClaimProject(ctx, deployment.ProjectClaimInput{
-		ProjectID: projectID, Environment: m.instanceEnvironment, ClaimedBy: principalID,
-	})
+	claim, err := m.projectClaims.GetProjectClaim(ctx)
 	if err != nil {
+		if errors.Is(err, deployment.ErrProjectClaimNotFound) {
+			return deployment.ErrProjectClaimRequired
+		}
 		return err
+	}
+	if claim.ProjectID != projectID || claim.Environment != m.instanceEnvironment {
+		return deployment.ErrProjectClaimConflict
 	}
 	if m.bindClaimedProject != nil {
 		if err := m.bindClaimedProject(ctx, projectID, m.instanceEnvironment); err != nil {

@@ -369,6 +369,14 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 
+	if err := bootstrapQualificationProject(
+		ctx,
+		c.qualificationContainers.Existing(containerID),
+		"http://localhost:8080",
+		credentials.PublisherToken,
+	); err != nil {
+		return err
+	}
 	syncOutput, err := c.qualificationContainers.Existing(containerID).Exec(
 		ctx, nil,
 		"env",
@@ -376,7 +384,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		"LEAPVIEW_TARGET=http://localhost:8080",
 		"leapview", "data", "sync",
 		"--source-root", "/app/evaluation/project",
-		"--project-id", "project:leapview-evaluation",
+		"--project-id", explicitQualificationUID,
 		"--connection", "sample",
 		"--from", "/app/evaluation/data",
 		"--format", "json",

@@ -140,6 +140,10 @@ func (m *Module) DispatchAPIGenOperation(operationID string, logger *slog.Logger
 
 type deploymentAPIGenHandler struct{ *Module }
 
+func (h deploymentAPIGenHandler) BootstrapProjectClaim(w http.ResponseWriter, r *http.Request, idempotencyKey string) {
+	h.Module.BootstrapProjectClaim(w, r, idempotencyKey)
+}
+
 func (h deploymentAPIGenHandler) RetainProjectCandidateSource(w http.ResponseWriter, r *http.Request, project, idempotencyKey, sourceSynchronizationPlan string) {
 	h.Module.RetainProjectCandidateSource(w, r, project, idempotencyKey, sourceSynchronizationPlan)
 }

@@ -24,9 +24,13 @@ type TargetDiscovery interface {
 	Discover(context.Context, string) (TargetMetadata, error)
 }
 
-func LoginCommand(ctx context.Context, authentication AuthenticationService, discovery TargetDiscovery) *cobra.Command {
+type ProjectIdentityResolver interface {
+	ProjectID(string) (string, error)
+}
+
+func LoginCommand(ctx context.Context, authentication AuthenticationService, discovery TargetDiscovery, projects ProjectIdentityResolver) *cobra.Command {
 	var name string
-	var projectID string
+	var projectUID string
 	var headless bool
 	format := "text"
 	command := &cobra.Command{
@@ -34,30 +38,36 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 		Short: "Sign in to a LeapView target for project authoring",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			if authentication == nil || discovery == nil {
+			if authentication == nil || discovery == nil || projects == nil {
 				return fmt.Errorf("login dependencies are unavailable")
+			}
+			if format != "text" && format != "json" {
+				return fmt.Errorf("login format must be text or json")
+			}
+			// Resolve and durably persist the issuer-owned project identity before
+			// contacting a target. A failed or unreachable target must not leave
+			// the local authority able to mint a different identity later.
+			projectID, err := projects.ProjectID(projectUID)
+			if err != nil {
+				return fmt.Errorf("read authoring project identity: %w", err)
+			}
+			if strings.TrimSpace(projectID) == "" {
+				return fmt.Errorf("authoring project has no identity")
 			}
 			origin := strings.TrimRight(strings.TrimSpace(args[0]), "/")
 			metadata, err := discovery.Discover(ctx, origin)
 			if err != nil {
 				return fmt.Errorf("discover LeapView target: %w", err)
 			}
-			boundProjectID := strings.TrimSpace(projectID)
-			if boundProjectID == "" {
-				return fmt.Errorf("target-bound Project identity is required; provide --project-id")
-			}
 			profileName := strings.TrimSpace(name)
 			if profileName == "" {
 				profileName = metadata.Origin
-			}
-			if format != "text" && format != "json" {
-				return fmt.Errorf("login format must be text or json")
 			}
 			encoder := json.NewEncoder(command.OutOrStdout())
 			var eventErr error
 			result, err := authentication.Login(ctx, LoginRequest{
 				Name: profileName, Origin: metadata.Origin, InstanceID: metadata.InstanceID,
-				Environment: metadata.Environment, ProjectID: boundProjectID,
+				Environment: metadata.Environment, ProjectID: projectID,
 				Capabilities: []string{
 					"RESOURCE_USE",
 					"RESOURCE_READ",
@@ -88,16 +98,16 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 					"schemaVersion": 1,
 					"type":          "authenticated",
 					"origin":        metadata.Origin,
-					"projectId":     boundProjectID,
+					"projectId":     projectID,
 					"sessionId":     result.SessionID,
 				})
 			}
-			fmt.Fprintf(command.OutOrStdout(), "Signed in to %s for project %s (session %s)\n", metadata.Origin, boundProjectID, result.SessionID)
+			fmt.Fprintf(command.OutOrStdout(), "Signed in to %s for project %s (session %s)\n", metadata.Origin, projectID, result.SessionID)
 			return nil
 		},
 	}
 	command.Flags().StringVar(&name, "name", "", "stable local name for this target")
-	command.Flags().StringVar(&projectID, "project-id", "", "target-bound Project identity")
+	command.Flags().StringVar(&projectUID, "project-id", "", "externally issued ProjectUID (first bootstrap only)")
 	command.Flags().BoolVar(&headless, "no-browser", false, "show the verification URL and code without opening a browser")
 	command.Flags().StringVar(&format, "format", format, "output format: text or json")
 	return command
