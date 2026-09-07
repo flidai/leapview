@@ -85,12 +85,14 @@ func TestLowerCanonicalPresentationVariantsPreserveTableAndKPIFields(t *testing.
 	}
 	units := visualizationir.VisualizationDisplayUnitsThousands
 	note, tone := "Target", visualizationir.VisualizationToneWarning
-	kpi, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.KPIDashboardPresentation{Type: "kpi", DisplayUnits: &units, Note: &note, Tone: &tone}}, document.DashboardVisualTypeKpi)
+	minimum, maximum := 0.0, 100.0
+	ranges := []visualizationir.VisualizationKPIQualitativeRange{{Minimum: &minimum, Maximum: &maximum, Label: "On track", Tone: visualizationir.VisualizationToneSuccess}}
+	kpi, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.KPIDashboardPresentation{Type: "kpi", Ranges: &ranges, DisplayUnits: &units, Note: &note, Tone: &tone}}, document.DashboardVisualTypeKpi)
 	if err != nil {
 		t.Fatal(err)
 	}
 	value := kpi.(visualizationir.KPIVisualizationPresentation)
-	if value.DisplayUnits == nil || *value.DisplayUnits != visualizationir.VisualizationDisplayUnitsThousands || value.Note == nil || *value.Note != "Target" || value.Tone == nil || *value.Tone != visualizationir.VisualizationToneWarning || value.FavorableDirection != visualizationir.VisualizationKPIDirectionNeutral || value.MissingComparison != visualizationir.VisualizationKPIMissingComparisonShowUnavailable {
+	if value.DisplayUnits == nil || *value.DisplayUnits != visualizationir.VisualizationDisplayUnitsThousands || value.Note == nil || *value.Note != "Target" || value.Tone == nil || *value.Tone != visualizationir.VisualizationToneWarning || value.FavorableDirection != visualizationir.VisualizationKPIDirectionNeutral || value.MissingComparison != visualizationir.VisualizationKPIMissingComparisonShowUnavailable || len(value.Ranges) != 1 || value.Ranges[0].Label != "On track" || value.Ranges[0].Tone != visualizationir.VisualizationToneSuccess || value.Thresholds != nil {
 		t.Fatalf("kpi presentation = %#v", value)
 	}
 }
