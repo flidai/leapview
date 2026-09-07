@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
@@ -61,21 +62,51 @@ func normalizeDataExplorerCommand(command projectsignals.DataExplorerCommand) pr
 	if command.Mode == nil || strings.TrimSpace(*command.Mode) == "" {
 		command.Mode = projectsignals.Pointer("browse")
 	}
+	if action := strings.ToLower(strings.TrimSpace(projectsignals.ValueOrZero(command.Action))); action != "" {
+		if action != "configure" && action != "run" && action != "stop" {
+			command.Action = projectsignals.Pointer("configure")
+		} else {
+			command.Action = projectsignals.Pointer(action)
+		}
+	}
 	if command.Explore != nil {
 		command.Explore.Spec = normalizeExplorationSpec(command.Explore.Spec)
+		if action := strings.ToLower(strings.TrimSpace(projectsignals.ValueOrZero(command.Explore.Action))); action != "" {
+			if action != "configure" && action != "run" && action != "stop" {
+				command.Explore.Action = projectsignals.Pointer("configure")
+			} else {
+				command.Explore.Action = projectsignals.Pointer(action)
+			}
+		}
 	}
 	return command
 }
 
-func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand) projectsignals.DataPreviewSignal {
+func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand) (preview projectsignals.DataPreviewSignal) {
 	command = normalizeDataExplorerCommand(command)
 	columns := explorerPreviewColumns(object)
 	command.Sort = dataExplorerSortForObjectColumns(command.Sort, columns)
-	preview := projectsignals.DataPreviewSignal{
+	preview = projectsignals.DataPreviewSignal{
 		Columns: columns, Blocks: emptyDataExplorerBlocks(command), ChunkSize: command.Count,
 		RowHeight: dataExplorerRowHeight, ResetVersion: command.ResetVersion, Sort: command.Sort,
-		TotalRowLabel: object.RowCountLabel,
+		TotalRowLabel: object.RowCountLabel, Loading: true, Stale: false,
 	}
+	defer func() {
+		preview.Loading = false
+		if errors.Is(ctx.Err(), context.Canceled) {
+			// User cancellation is a terminal stale result, not a query failure.
+			// Leave Error empty so clients do not present an intentional stop as
+			// an execution error.
+			preview.Error = nil
+			preview.ProgressPercent = nil
+			preview.Stale = true
+			return
+		}
+		if preview.Error == nil {
+			progress := float64(100)
+			preview.ProgressPercent = &progress
+		}
+	}()
 	if executor == nil {
 		preview.Error = projectsignals.Pointer("data preview execution is unavailable")
 		return preview
@@ -92,10 +123,18 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 		}
 		result, err := executor.ExecuteDataQuery(ctx, query)
 		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+				preview.Stale = true
+				return preview
+			}
 			preview.Error = projectsignals.Pointer(err.Error())
 			return preview
 		}
 		if strings.TrimSpace(result.Error) != "" {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				preview.Stale = true
+				return preview
+			}
 			preview.Error = projectsignals.Pointer(result.Error)
 			return preview
 		}
@@ -245,12 +284,19 @@ func dataExplorerRows(rows []dataquery.Row) []map[string]any {
 	return out
 }
 
-func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, command projectsignals.DataExploreCommand, fields []projectsignals.DataExploreFieldSignal, model *semanticmodel.Model) (projectsignals.DataExploreCommand, projectsignals.DataExploreResultSignal) {
+func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, command projectsignals.DataExploreCommand, fields []projectsignals.DataExploreFieldSignal, model *semanticmodel.Model, compiledModels ...*semanticquery.CompiledModel) (projectsignals.DataExploreCommand, projectsignals.DataExploreResultSignal) {
+	var compiled *semanticquery.CompiledModel
+	if len(compiledModels) > 0 {
+		compiled = compiledModels[0]
+	}
 	spec := normalizeExplorationSpec(command.Spec)
 	resultSignal := projectsignals.DataExploreResultSignal{
 		Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}, RequestSeq: command.RequestSeq,
 	}
 	command.Spec = spec
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return command, resultSignal
+	}
 	if !explorationSpecIsEmpty(spec) {
 		if err := exploration.ValidateShape(&spec); err != nil {
 			resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
@@ -283,6 +329,10 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 			resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
 			return command, resultSignal
 		}
+	}
+	if err := validateExplorerFilterDatasets(spec, fieldByID, compiled); err != nil {
+		resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
+		return command, resultSignal
 	}
 	if len(state.Dimensions) == 0 && len(state.Metrics) == 0 && spec.Time == nil {
 		return command, resultSignal
@@ -341,10 +391,16 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	})
 	executed, err := executor.ExecuteDataQuery(ctx, query)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+			return command, resultSignal
+		}
 		resultSignal.Error = projectsignals.Pointer(err.Error())
 		return command, resultSignal
 	}
 	if strings.TrimSpace(executed.Error) != "" {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return command, resultSignal
+		}
 		resultSignal.Error = projectsignals.Pointer(executed.Error)
 		return command, resultSignal
 	}

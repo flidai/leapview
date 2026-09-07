@@ -1,13 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import type { ExplorationSpec } from '../../generated/exploration'
-import type { DataExploreCommand } from '../../generated/signals'
+import type { DataExploreCommand, DataExplorerCommand } from '../../generated/signals'
 import {
   DataExplorerPanelController,
   DataExplorerQueryController,
   DataExplorerSelectionController,
+  prepareExplorationRun,
+  prepareExplorationStop,
   readDataExplorerAgentState,
   toggleVisibleColumns,
 } from './data-explorer-controller'
+import { DataExplorerClientState } from './data-explorer-client'
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>()
@@ -51,17 +54,66 @@ test('query controller advances request and reset sequences', () => {
   expect(clearedDataset.spec.datasetId).toBeUndefined()
 })
 
+test('explicit run creates a fresh sequence while stop preserves the addressed run', () => {
+  const current: DataExploreCommand = {
+    spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 },
+    requestSeq: 7, resetVersion: 9, columnWidths: {}, action: 'configure',
+  }
+  const run = prepareExplorationRun(current)
+  expect(run.action).toBe('run')
+  expect(run.requestSeq).toBe(8)
+  expect(run.resetVersion).toBe(10)
+  const stop = prepareExplorationStop({ ...run, spec: { ...run.spec, limit: 250 }, requestSeq: 9 })
+  expect(stop.action).toBe('stop')
+  expect(stop.requestSeq).toBe(9)
+  expect(stop.spec.limit).toBe(250)
+})
+
 test('query command normalizes a partially hydrated exploration command on output', () => {
   const query = new DataExplorerQueryController()
   const legacy = {
     mode: 'explore',
+    clientId: 'tab-123',
     explore: { modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 1, resetVersion: 1 },
   } as unknown as DataExplorerCommand
 
   const next = query.command(legacy, {})
   expect((legacy.explore as any).spec).toBeUndefined()
   expect(next.explore?.spec).toEqual({ schemaVersion: 1, modelId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 })
+  expect(next.clientId).toBe('tab-123')
   expect(next.explore).not.toBe(legacy.explore)
+  expect(query.command({ ...next, action: 'configure' }, { action: undefined }).action).toBeUndefined()
+})
+
+test('configure and browse commands clear the run identity after Stop', () => {
+  const query = new DataExplorerQueryController()
+  const stopped: DataExplorerCommand = {
+    action: 'stop', mode: 'explore', runId: 'explore-tombstoned',
+    objectKey: 'model:model:sales.orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100,
+    requestSeq: 4, resetVersion: 4, sort: {}, visibleColumns: [], columnWidths: {},
+    explore: {
+      action: 'stop',
+      spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 },
+      requestSeq: 4, resetVersion: 4,
+    },
+  }
+  const configured = query.command(stopped, {
+    action: 'configure',
+    mode: 'explore',
+    explore: { ...stopped.explore!, action: 'configure', requestSeq: 5, resetVersion: 5 },
+  })
+  expect(configured.runId).toBeUndefined()
+
+  const browsed = query.command(stopped, { action: undefined, mode: 'browse', objectKey: 'model:model:sales.customers' })
+  expect(browsed.runId).toBeUndefined()
+})
+
+test('clearing a run identity prevents reuse of a stopped execution', () => {
+  const client = new DataExplorerClientState()
+  const runID = client.nextRunID()
+  expect(client.runID()).toBe(runID)
+  client.clearRunID()
+  expect(client.runID()).toBe('')
 })
 
 test('visible column toggles preserve one visible fallback and reset all to defaults', () => {

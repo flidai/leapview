@@ -80,6 +80,45 @@ test('mobile windowed tables expose horizontal scrolling and a visible swipe hin
   }
 })
 
+test('windowed tables preserve loading progress and stale preview state', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-windowed-table'))
+    const state = await page.evaluate(async () => {
+      const element = document.createElement('lv-windowed-table') as any
+      element.compact = true
+      element.table = {
+        title: 'Customers',
+        columns: [{ key: 'id', label: 'ID' }],
+        totalRows: 10,
+        availableRows: 10,
+        chunkSize: 10,
+        rowHeight: 32,
+        loading: true,
+        progressPercent: 42,
+        stale: true,
+        blocks: { a: { start: 0, requestSeq: 1, resetVersion: 1, sort: {}, rows: [{ id: '1' }] } },
+      }
+      document.body.append(element)
+      await element.updateComplete
+      const root = element.shadowRoot!
+      const section = root.querySelector('.shell')!
+      const footer = root.querySelector('.footer')!
+      return {
+        loading: element.table.loading,
+        progressPercent: element.table.progressPercent,
+        stale: element.table.stale,
+        busy: section.getAttribute('aria-busy'),
+        footer: footer.textContent?.replace(/\s+/g, ' ').trim(),
+      }
+    })
+    expect(state).toEqual({ loading: true, progressPercent: 42, stale: true, busy: 'true', footer: '1-1 of 10 · loading 42% · stale' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('windowed table loads requested blocks and rejects stale payloads', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
   try {

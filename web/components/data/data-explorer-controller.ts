@@ -178,10 +178,28 @@ export class DataExplorerQueryController {
 
   command(current: DataExplorerCommand, partial: Partial<DataExplorerCommand>): DataExplorerCommand {
     const explore = partial.explore ?? current.explore
-    return {
+    const hasExplicitRunID = Object.prototype.hasOwnProperty.call(partial, 'runId')
+    const explicitAction = Object.prototype.hasOwnProperty.call(partial, 'action')
+      ? partial.action
+      : Object.prototype.hasOwnProperty.call(partial.explore ?? {}, 'action')
+        ? partial.explore?.action
+        : undefined
+    // A run ID addresses one in-flight execution. Configure and browse
+    // commands author a new draft/selection and must not carry a stopped
+    // execution's tombstoned identity forward. Explicit Run/Stop callers
+    // still retain or provide the ID they need for lifecycle coordination.
+    const clearRunID = !hasExplicitRunID && (explicitAction === 'configure' || partial.mode === 'browse')
+    const runId = hasExplicitRunID
+      ? partial.runId
+      : clearRunID
+        ? undefined
+        : current.runId
+    const next: DataExplorerCommand = {
+      action: Object.prototype.hasOwnProperty.call(partial, 'action') ? partial.action : current.action,
       mode: partial.mode ?? current.mode ?? 'browse',
       explore: explore ? { ...explore, spec: explorationSpecFor(explore) } : undefined,
       objectKey: partial.objectKey ?? current.objectKey ?? '',
+      clientId: partial.clientId ?? current.clientId,
       offset: partial.offset ?? current.offset ?? 0,
       limit: partial.limit ?? current.limit ?? 100,
       block: partial.block ?? current.block ?? 'all',
@@ -193,7 +211,24 @@ export class DataExplorerQueryController {
       visibleColumns: partial.visibleColumns ?? current.visibleColumns ?? [],
       columnWidths: partial.columnWidths ?? current.columnWidths ?? {},
     }
+    if (runId) next.runId = runId
+    return next
   }
+}
+
+/** Starts a fresh server execution while retaining the authored query spec. */
+export function prepareExplorationRun(current: DataExploreCommand): DataExploreCommand {
+  return {
+    ...current,
+    action: 'run',
+    requestSeq: (current.requestSeq ?? 0) + 1,
+    resetVersion: (current.resetVersion ?? 0) + 1,
+  }
+}
+
+/** Stops the named execution without rewriting the newer authored draft. */
+export function prepareExplorationStop(current: DataExploreCommand): DataExploreCommand {
+  return { ...current, action: 'stop' }
 }
 
 export function clampBrowserWidth(value: number): number {

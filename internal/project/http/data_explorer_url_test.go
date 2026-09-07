@@ -124,7 +124,11 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				ModelName: "orders",
+				ModelName:   "orders",
+				GrainEntity: "order",
+				Entities: map[string]semanticmodel.EntityDefinition{
+					"order": {Type: "primary", Fields: []string{"status", "created_at", "quantity", "amount", "order_date", "active", "event_at", "revenue"}},
+				},
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"status":     {Label: "Status", Type: "string"},
 					"created_at": {Label: "Created at", Type: "timestamp"},
@@ -133,6 +137,7 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 					"order_date": {Label: "Order date", Type: "date", Datatype: semanticmodel.DataTypeDate},
 					"active":     {Label: "Active", Type: "boolean", Datatype: semanticmodel.DataTypeBoolean},
 					"event_at":   {Label: "Event at", Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ},
+					"revenue":    {Label: "Revenue", Type: "number", Datatype: semanticmodel.DataTypeDecimal},
 				},
 			},
 		},
@@ -141,7 +146,7 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 	}
-	compiled, err := semanticquery.CompileDatasetBindings(model)
+	compiled, err := semanticquery.CompileModel(model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -941,6 +946,64 @@ func TestValidateRestoredDataExploreStateConstrainsFilterDatasetParticipation(t 
 	nonParticipating.Spec.Filters = filter("other")
 	if err := validateRestoredDataExploreState(nonParticipating, base, model, compiledModels); err == nil || !strings.Contains(err.Error(), "does not participate") {
 		t.Fatalf("nonparticipating multi-root filter dataset error = %v, want participation diagnostic", err)
+	}
+}
+
+func TestValidateRestoredDataExploreStateAcceptsRelatedPhysicalFilterScopedToRoot(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {
+				ModelName: "orders",
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"customer_id": {Type: "string"},
+				},
+			},
+			"customers": {
+				ModelName: "customers",
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"customer_id": {Type: "string"},
+					"state":       {Type: "string"},
+				},
+			},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"}, "customers": {Model: "customers"},
+		},
+		Relationships: []semanticmodel.Relationship{{
+			ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"},
+			ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one",
+		}},
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := DataExplorerProjection{
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}, {ID: "customers"}},
+		Fields: []projectsignals.DataExploreFieldSignal{
+			{ID: "customers.state", Kind: "dimension", DatasetID: "customers", Compatible: true, Type: projectsignals.Optional("string")},
+		},
+		Command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
+	}
+	filter := func(dataset string) exploration.ExplorationFilter {
+		value := testStringFilter("customers.state", "equals", "CA")
+		value.DatasetID = projectsignals.Optional(dataset)
+		return value
+	}
+	compiledModels := map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}
+	accepted := testExplorationCommand(exploration.ExplorationSpec{
+		ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Filters: []exploration.ExplorationFilter{filter("orders")},
+	})
+	if err := validateRestoredDataExploreState(accepted, base, model, compiledModels); err != nil {
+		t.Fatalf("related physical filter scoped to root rejected: %v", err)
+	}
+	rejected := accepted
+	rejected.Spec.Filters = []exploration.ExplorationFilter{filter("customers")}
+	if err := validateRestoredDataExploreState(rejected, base, model, compiledModels); err == nil || !strings.Contains(err.Error(), "does not participate") {
+		t.Fatalf("nonparticipating related filter scope error = %v, want participation diagnostic", err)
 	}
 }
 

@@ -1325,16 +1325,22 @@ model DashboardStatus {
 @apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
 model DataExplorerCommand {
+  /** Explicit query lifecycle action. Omitted retains legacy execute-on-command behavior. */
+  `action`?: "configure" | "run" | "stop";
   `explore`?: DataExploreCommand;
   `mode`?: "browse" | "explore";
   `block`?: string;
   `columnWidths`?: Record<float64>;
+  /** Stable per-tab identity used to isolate overlapping explorer requests. */
+  `clientId`?: string;
   `count`: int64;
   `limit`: int64;
   `objectKey`?: string;
   `offset`: int64;
   `requestSeq`: int64;
   `resetVersion`: int64;
+  /** Stable client/run identity used to cancel an in-flight governed query. */
+  `runId`?: string;
   `sort`: DataPreviewSortSignal;
   `start`: int64;
   `visibleColumns`?: string[];
@@ -1343,10 +1349,24 @@ model DataExplorerCommand {
 @apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
 model DataExploreCommand {
+  /** Explicit query lifecycle action for callers that address the nested command directly. */
+  `action`?: "configure" | "run" | "stop";
   `spec`: LeapViewExploration.ExplorationSpec;
   `columnWidths`?: Record<float64>;
+  `filterSuggestions`?: DataExploreFilterSuggestionsCommand;
   `requestSeq`: int64;
   `resetVersion`: int64;
+}
+
+/** Bounded, permission-aware value suggestion request for one semantic dimension. */
+model DataExploreFilterSuggestionsCommand {
+  `field`: LeapViewExploration.ExplorationFieldID;
+  `limit`?: int64;
+  `search`?: string;
+  /** Monotonic identity for this suggestion lane, independent of query requestSeq. */
+  @minValue(1)
+  @maxValue(9007199254740991)
+  `suggestionRequestSeq`: int64;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
@@ -1364,6 +1384,9 @@ model DataExploreDatasetSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreFieldSignal {
+  /** Stable UI explanation category; the server remains authoritative for the transition. */
+  `availability`?: "available" | "related" | "changes_grain" | "unavailable";
+  `availabilityReason`?: string;
   `compatible`: boolean;
   `compatibilityReason`?: string;
   `description`?: string;
@@ -1375,6 +1398,27 @@ model DataExploreFieldSignal {
   `relationshipPath`?: string[];
   `selected`: boolean;
   `type`?: string;
+}
+
+/** A distinct filter value returned by the governed semantic query path. */
+model DataExploreFilterValueSuggestionSignal {
+  `count`?: int64;
+  `label`: string;
+  `value`: LeapViewExploration.ExplorationFilterValue;
+}
+
+/** Value suggestions retain request identity and terminal state for stale-response suppression. */
+model DataExploreFilterSuggestionsSignal {
+  `error`?: string;
+  `field`: string;
+  `loading`: boolean;
+  `requestSeq`: int64;
+  /** Echoes the independent suggestion request identity for stale-response filtering. */
+  `suggestionRequestSeq`: int64;
+  `stale`: boolean;
+  `truncated`: boolean;
+  `type`?: string;
+  `values`: DataExploreFilterValueSuggestionSignal[];
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
@@ -1401,6 +1445,18 @@ model DataExploreResultSignal {
   `warnings`: string[];
 }
 
+/** Backend-owned lifecycle state for one canonical ExplorationSpec execution. */
+model DataExploreStatusSignal {
+  `error`?: string;
+  `loading`: boolean;
+  `message`?: string;
+  /** Omitted while progress is unknown; never a client-estimated percentage. */
+  `progressPercent`?: float64;
+  `requestSeq`: int64;
+  `stale`: boolean;
+  `state`: "idle" | "loading" | "success" | "stale" | "error" | "cancelled";
+}
+
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreSignal {
@@ -1409,6 +1465,8 @@ model DataExploreSignal {
   `fields`: DataExploreFieldSignal[];
   `semanticModels`: DataExploreSemanticModelSignal[];
   `result`: DataExploreResultSignal;
+  `status`: DataExploreStatusSignal;
+  `filterSuggestions`?: DataExploreFilterSuggestionsSignal;
   `selectedDataset`?: DataExploreDatasetSignal;
   `selectedSemanticModel`?: DataExploreSemanticModelSignal;
 }
@@ -1519,10 +1577,14 @@ model DataPreviewSignal {
   `chunkSize`: int64;
   `columns`: DataPreviewColumnSignal[];
   `error`?: string;
+  `loading`: boolean;
   `loadingBlock`?: string;
+  /** Omitted while preview progress is unknown. */
+  `progressPercent`?: float64;
   `resetVersion`: int64;
   `rowHeight`: int64;
   `sort`: DataPreviewSortSignal;
+  `stale`: boolean;
   `sql`?: string;
   `totalRowLabel`?: string;
   `totalRows`: int64;
