@@ -300,6 +300,43 @@ test('ECharts keeps Cartesian conditional icons visible when labels are hidden',
   expect(series.label.formatter({ value: ['A', 1] })).toBe('↑ 1')
 })
 
+test('ECharts keeps heatmap visualMap colors with icon-only conditional cues', () => {
+  for (const target of ['mark_fill', 'series_color'] as const) {
+    const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any; envelope.spec.presentation.labelPolicy.density = 'hidden'
+    envelope.spec.conditionalFormatting = [{
+      id: 'value-icon', target, field: { dataset: 'primary', field: 'value' },
+      rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'arrow_up' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'arrow_down' } },
+    }]
+
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    expect(option.visualMap).toMatchObject({ type: 'continuous', dimension: 'value', inRange: { color: [expect.any(String), expect.any(String)] }, outOfRange: { opacity: 1 } })
+    expect(option.series[0].itemStyle.color({ value: ['A', 'R1', 1] })).toBeTypeOf('string')
+    expect(option.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
+    expect(option.series[0].label.formatter({ value: ['A', 'R1', 1] })).toBe('↑ 1')
+  }
+})
+
+test('ECharts falls back to inside contrast for icon-only label colors', () => {
+  for (const mark of ['bar', 'column', 'waterfall', 'histogram'] as const) {
+    const columns = mark === 'waterfall' ? ['label', 'start', 'value'] : ['label', 'value']
+    const envelope = cartesianFixture(mark, columns) as any
+    envelope.spec.presentation.labelPolicy.density = 'hidden'
+    envelope.spec.conditionalFormatting = [{
+      id: 'value-icon', target: 'label_foreground', field: { dataset: 'primary', field: 'value' },
+      rule: {
+        kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'arrow_up' } }],
+        nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'arrow_down' },
+      },
+    }]
+
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    const series = mark === 'waterfall' ? option.series[1] : option.series[0]
+    const row = mark === 'waterfall' ? ['A', 0, 1] : ['A', 1]
+    expect(series.label.color({ value: row })).toBe('#fff')
+    expect(series.label).toMatchObject({ textBorderColor: 'rgba(0, 0, 0, 0.55)', textBorderWidth: 2 })
+  }
+})
+
 test('ECharts translates governed heatmap gradients and waterfall rule styles', () => {
   const heatmap = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
   heatmap.spec.conditionalFormatting = [{
@@ -334,6 +371,60 @@ test('ECharts translates governed heatmap gradients and waterfall rule styles', 
   const waterfallOption = echartsOption(waterfall, defaultRendererContext) as any
   expect(waterfallOption.series[1].itemStyle.color({ value: ['Returns', 10, -4] })).toBe(defaultRendererContext.colors.danger)
   expect(waterfallOption.series[1].label.formatter({ value: ['Returns', 10, -4] })).toBe('↓ -4')
+})
+
+test('ECharts composes conditional heatmap colors per outcome and keeps null cells visible', () => {
+  const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any; envelope.dataState.datasets[0].rows = [['A', 'R1', 100], ['B', 'R1', 50], ['C', 'R1', null], ['D', 'R1', 'bad']]
+  envelope.spec.presentation.labelPolicy.density = 'hidden'
+  envelope.spec.conditionalFormatting = [{
+    id: 'value-status', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
+    rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 75, style: { color: 'danger', icon: 'arrow_up' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'circle' } },
+  }]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any; const color = option.series[0].itemStyle.color
+  expect(color({ value: ['A', 'R1', 100] })).toBe(defaultRendererContext.colors.danger)
+  expect(color({ value: ['B', 'R1', 50] })).toBeTypeOf('string'); expect(color({ value: ['B', 'R1', 50] })).not.toBe(defaultRendererContext.colors.danger)
+  expect(color({ value: ['C', 'R1', null] })).toBe(defaultRendererContext.colors.muted); expect(color({ value: ['D', 'R1', 'bad'] })).toBe(defaultRendererContext.colors.muted)
+  expect(option.visualMap).toBeUndefined()
+  expect(option.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
+  expect(option.series[0].label.formatter({ value: ['C', 'R1', null] })).toBe('⚠ —')
+})
+
+test('ECharts uses series color when mark fill only supplies an icon for a row', () => {
+  const envelope = proportionalFixture('donut') as any; envelope.dataState.datasets[0].rows = [['High', 20], ['Medium', 5], ['Low', -1]]
+  envelope.spec.conditionalFormatting = [
+    {
+      id: 'fill-status', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
+      rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 10, style: { color: 'danger', icon: 'arrow_up' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'circle' } },
+    },
+    {
+      id: 'series-status', target: 'series_color', field: { dataset: 'primary', field: 'value' },
+      rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { color: 'success', icon: 'arrow_up' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'square' } },
+    },
+  ]
+
+  const categoryColors = new CategoryColorRegistry(); const option = echartsOption(envelope, defaultRendererContext, categoryColors) as any; const color = option.series[0].itemStyle.color
+  expect(color({ value: ['High', 20] })).toBe(defaultRendererContext.colors.danger)
+  expect(color({ value: ['Medium', 5] })).toBe(defaultRendererContext.colors.success)
+  const fallback = categoryColors.color(envelope, envelope.spec.category, 'Low', defaultRendererContext)
+  expect(color({ value: ['Low', -1] })).toBe(fallback)
+})
+
+test('ECharts keeps signed waterfall fallback after icon-only conditional outcomes', () => {
+  const envelope = cartesianFixture('waterfall', ['label', 'start', 'value']) as any
+  envelope.dataState.datasets[0].rows = [['Increase', 0, 4], ['Decrease', 4, -3]]
+  envelope.spec.conditionalFormatting = [{
+    id: 'value-icon', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'rules', rules: [{ operator: 'greater_than', value: 100, style: { icon: 'arrow_up' } }],
+      nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'circle' },
+    },
+  }]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const color = option.series[1].itemStyle.color
+  expect(color({ value: ['Increase', 0, 4] })).toBe(defaultRendererContext.colors.success)
+  expect(color({ value: ['Decrease', 4, -3] })).toBe(defaultRendererContext.colors.danger)
 })
 
 test('ECharts binds waterfall formatting to the authored metric alias', () => {
@@ -1075,6 +1166,31 @@ test('ECharts keeps proportional conditional icon cues visible for null, first-m
   const funnel = echartsOption(envelope, defaultRendererContext) as any
   expect(funnel.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
   expect(funnel.series[0].label.formatter({ value: ['Missing', null] })).toBe('⚠ Missing: —')
+})
+
+test('ECharts preserves typed category colors for proportional icon-only outcomes', () => {
+  for (const target of ['mark_fill', 'series_color'] as const) {
+    const envelope = proportionalFixture('donut') as any
+    envelope.spec.datasets[0].fields[0].sourceRef = 'orders.status'
+    envelope.dataState.datasets[0].rows = [[null, 10], [1, 20], ['1', 30]]
+    envelope.spec.conditionalFormatting = [{
+      id: 'value-icon', target, field: { dataset: 'primary', field: 'value' },
+      rule: {
+        kind: 'rules', rules: [{ operator: 'greater_than', value: 100, style: { icon: 'arrow_up' } }],
+        nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'circle' },
+      },
+    }]
+    const reordered = structuredClone(envelope)
+    reordered.dataState.datasets[0].rows.reverse()
+
+    const initialColor = (echartsOption(envelope, defaultRendererContext, new CategoryColorRegistry()) as any).series[0].itemStyle.color
+    const reorderedColor = (echartsOption(reordered, defaultRendererContext, new CategoryColorRegistry()) as any).series[0].itemStyle.color
+    for (const category of [null, 1, '1']) {
+      const initial = initialColor({ value: [category, 1] })
+      expect(initial).toBe(reorderedColor({ value: [category, 1] }))
+      expect(initial).toBeTypeOf('string')
+    }
+  }
 })
 
 test('ECharts preserves proportional category colors when filtering changes row order', () => {

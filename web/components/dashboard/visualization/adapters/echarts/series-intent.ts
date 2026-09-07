@@ -84,10 +84,19 @@ function cartesianCategoryName(value: unknown): string {
 
 export function conditionalColorWithFallback(
   conditional: ((params: { value?: unknown }) => string | undefined) | undefined,
-  fallback: string,
-): string | ((params: { value?: unknown }) => string) {
+  fallback: string | ((params: { value?: unknown }) => string | undefined),
+): string | ((params: { value?: unknown }) => string | undefined) {
   if (!conditional) return fallback
-  return (params) => conditional(params) ?? fallback
+  return (params) => conditional(params) ?? (typeof fallback === 'function' ? fallback(params) : fallback)
+}
+
+export function conditionalColorChain(
+  conditionals: readonly (((params: { value?: unknown }) => string | undefined) | undefined)[],
+  fallback: string | ((params: { value?: unknown }) => string | undefined),
+): string | ((params: { value?: unknown }) => string | undefined) {
+  let result = fallback
+  for (let index = conditionals.length - 1; index >= 0; index--) result = conditionalColorWithFallback(conditionals[index], result)
+  return result
 }
 
 export function stackingMode(spec: CartesianSpec): 'none' | 'normal' | 'percent' {
