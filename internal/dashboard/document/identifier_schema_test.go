@@ -151,6 +151,20 @@ func geographicSchemaDocument(t *testing.T, kind string, label bool) map[string]
 	return document
 }
 
+func TestDashboardDocumentSchemaRejectsRemovedKPIThresholds(t *testing.T) {
+	compiled := loadDashboardDocumentSchema(t)
+	document := loadDashboardDocumentFixture(t)
+	visual := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)
+	visual["type"] = "kpi"
+	visual["presentation"] = map[string]any{
+		"type":       "kpi",
+		"thresholds": []any{map[string]any{"value": 50, "tone": "warning"}},
+	}
+	if err := compiled.Validate(document); err == nil || !strings.Contains(err.Error(), "thresholds") {
+		t.Fatalf("generated dashboard schema accepted removed KPI thresholds: %v", err)
+	}
+}
+
 func loadDashboardDocumentSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
 	path := filepath.Join("..", "..", "..", "schemas", "json", "dashboard-document.schema.json")

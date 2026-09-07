@@ -374,6 +374,9 @@ func validateSpecification(spec VisualizationSpec, base VisualizationSpecBase) (
 	if err := validateVisualCalculations(base.Calculations, schemas); err != nil {
 		return nil, err
 	}
+	if err := validateGeographicReferenceTooltips(spec); err != nil {
+		return nil, err
+	}
 	for _, ref := range specificationRefs(spec) {
 		if err := validateFieldRef(ref, schemas); err != nil {
 			return nil, err
@@ -425,6 +428,23 @@ func validateSpecification(spec VisualizationSpec, base VisualizationSpecBase) (
 		}
 	}
 	return schemas, nil
+}
+
+func validateGeographicReferenceTooltips(spec VisualizationSpec) error {
+	value, ok := spec.Value.(*GeographicVisualizationSpec)
+	if !ok {
+		return nil
+	}
+	for index, layer := range value.Layers {
+		base, err := layer.Base()
+		if err != nil {
+			return err
+		}
+		if _, ok := layer.Value.(*VisualizationReferenceLayer); ok && len(base.Tooltip) > 0 {
+			return fmt.Errorf("spec.layers[%d].tooltip: reference layers do not support tooltip fields because reference geometry has no query-row locator", index)
+		}
+	}
+	return nil
 }
 
 func validateLabelPolicy(spec VisualizationSpec) error {

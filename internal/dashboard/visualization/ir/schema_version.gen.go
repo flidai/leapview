@@ -2,4 +2,4 @@
 
 package ir
 
-const CurrentSchemaVersion int32 = 11
+const CurrentSchemaVersion int32 = 12

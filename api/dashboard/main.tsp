@@ -970,7 +970,6 @@ model KPIDashboardPresentation extends DashboardPresentation {
   favorableDirection?: LeapViewVisualization.VisualizationKPIDirection;
   missingComparison?: LeapViewVisualization.VisualizationKPIMissingComparison;
   ranges?: LeapViewVisualization.VisualizationKPIQualitativeRange[];
-  thresholds?: LeapViewVisualization.VisualizationThreshold[];
   comparison?: DashboardKPIValueBinding;
   goal?: DashboardKPIValueBinding;
   trend?: DashboardKPITrendBinding;

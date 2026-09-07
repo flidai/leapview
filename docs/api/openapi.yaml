@@ -74396,13 +74396,6 @@ components:
               maximum: 1
               minimum: 1
               tone: neutral
-        thresholds:
-          type: array
-          items:
-            $ref: '#/components/schemas/VisualizationThreshold'
-          example:
-            - tone: neutral
-              value: 1
         comparison:
           $ref: '#/components/schemas/DashboardKPIValueBinding'
         goal:
@@ -74438,9 +74431,6 @@ components:
             maximum: 1
             minimum: 1
             tone: neutral
-        thresholds:
-          - tone: neutral
-            value: 1
         tone: neutral
         trend:
           category: example
@@ -74480,13 +74470,6 @@ components:
           example: example
         tone:
           $ref: '#/components/schemas/VisualizationTone'
-        thresholds:
-          type: array
-          items:
-            $ref: '#/components/schemas/VisualizationThreshold'
-          example:
-            - tone: neutral
-              value: 1
       example:
         delta: absolute
         displayUnits: auto
@@ -74499,9 +74482,6 @@ components:
             maximum: 1
             minimum: 1
             tone: neutral
-        thresholds:
-          - tone: neutral
-            value: 1
         tone: neutral
     KPIVisualizationSpec:
       type: object
@@ -74553,9 +74533,6 @@ components:
               maximum: 1
               minimum: 1
               tone: neutral
-          thresholds:
-            - tone: neutral
-              value: 1
           tone: neutral
         trend:
           category:

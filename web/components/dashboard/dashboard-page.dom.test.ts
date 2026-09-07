@@ -1170,6 +1170,43 @@ test('selected sticky table cells preserve the visible row highlight', async () 
   }
 })
 
+test('report tables omit semantic headers without shifting body rows when showHeader is false', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as any
+      const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.canvas > .row'))
+    })
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const tableHost = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host'))
+        .find((candidate: any) => candidate.envelope?.visualID === 'orders') as any
+      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      table.table = { ...table.table, style: { ...table.table.style, showHeader: false } }
+      await table.updateComplete
+      const root = table.shadowRoot
+      const shell = root.querySelector('.shell') as HTMLElement
+      const firstRow = root.querySelector('.canvas > .row') as HTMLElement
+      return {
+        headerNodes: root.querySelectorAll('.head, .group-head, [role="columnheader"]').length,
+        rowCount: root.querySelectorAll('.canvas > .row').length,
+        cellActionLabels: root.querySelectorAll('.cell-action[aria-label]').length,
+        headOffset: shell.style.getPropertyValue('--lv-head-top'),
+        firstRowTop: firstRow?.style.top,
+      }
+    })
+    expect(result.headerNodes).toBe(0)
+    expect(result.rowCount).toBeGreaterThan(0)
+    expect(result.cellActionLabels).toBeGreaterThan(0)
+    expect(result.headOffset).toBe('0px')
+    expect(result.firstRowTop).toBe('0px')
+  } finally {
+    await page.close()
+  }
+})
+
 test('table resize handles expose keyboard increments and accessible labels', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

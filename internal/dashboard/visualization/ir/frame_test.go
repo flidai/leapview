@@ -3,6 +3,7 @@ package ir
 import (
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -145,6 +146,53 @@ func TestValidateSpecEnforcesGeographicLayerRequirements(t *testing.T) {
 	if err := ValidateSpec(choropleth); err == nil {
 		t.Fatal("choropleth layer without geometry was accepted")
 	}
+}
+
+func TestValidateSpecReferenceLayerTooltipContract(t *testing.T) {
+	for name, tooltip := range map[string][]VisualizationFieldRef{
+		"omitted": nil,
+		"empty":   {},
+	} {
+		name, tooltip := name, tooltip
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateSpec(referenceTooltipSpec(tooltip)); err != nil {
+				t.Fatalf("ValidateSpec() error = %v", err)
+			}
+		})
+	}
+
+	err := ValidateSpec(referenceTooltipSpec([]VisualizationFieldRef{{Dataset: "primary", Field: "label"}}))
+	if err == nil || !strings.Contains(err.Error(), "spec.layers[0].tooltip") || !strings.Contains(err.Error(), "query-row locator") {
+		t.Fatalf("ValidateSpec() error = %v, want a path-bearing reference tooltip diagnostic", err)
+	}
+}
+
+func referenceTooltipSpec(tooltip []VisualizationFieldRef) VisualizationSpec {
+	base := VisualizationSpecBase{
+		Kind: "geographic", Title: "Boundaries",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "label", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Label"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "Boundaries", Description: "Reference boundaries"},
+		Interactions:  []VisualizationInteraction{},
+	}
+	layerBase := VisualizationGeographicLayerBase{
+		ID: "boundaries", Kind: "reference", Tooltip: tooltip,
+		Position: VisualizationMapLayerPositionBelowLabels, Visibility: VisualizationMapVisibility{MaximumZoom: 24},
+	}
+	return VisualizationSpec{Value: &GeographicVisualizationSpec{
+		VisualizationSpecBase: base, Kind: "geographic",
+		Layers: []VisualizationGeographicLayer{{Value: &VisualizationReferenceLayer{
+			VisualizationGeographicLayerBase: layerBase, Kind: "reference",
+			Geometry: VisualizationGeometryAsset{
+				ID: "br-states", Source: "IBGE", License: "terms", Attribution: "IBGE",
+				IdentifierSystem: "br-uf", URL: "/static/geometry/br-states.geojson",
+				Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			},
+		}}},
+		Presentation: GeographicVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionHidden)},
+	}}
 }
 
 func TestValidateEnvelopeAcceptsRowFreeSpatialTiledState(t *testing.T) {
