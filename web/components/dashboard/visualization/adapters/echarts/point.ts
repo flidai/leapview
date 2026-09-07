@@ -156,7 +156,7 @@ function pointEncode(spec: PointSpec): EChartsTranslation {
 }
 
 function pointLegend(spec: PointSpec, context: RendererContext, categories: readonly PointCategory[]): EChartsTranslation {
-  const result = legendDecoration(spec.presentation.legend, context, categories.length > 4, spec.presentation, categories.map((category) => ({ value: String(category.value), name: category.name })))
+  const result = legendDecoration(spec.presentation.legend, context, categories.length > 4, spec.presentation, categories.map((category) => ({ value: category.name, name: category.name })))
   if (!result.legend || !spec.colorScale || spec.colorScale.kind !== 'categorical' || !spec.color) return result
   if (spec.presentation.legendItems === undefined) result.legend.data = categories.map((category) => category.name)
   result.legend.selectedMode = 'multiple'

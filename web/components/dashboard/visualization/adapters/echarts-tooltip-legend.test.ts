@@ -123,6 +123,37 @@ test('ECharts categorical point legend keeps canonical series IDs stable across 
   expect(first.series.map((series: any) => [series.name, series.id])).toEqual(second.series.map((series: any) => [series.name, series.id]))
 })
 
+test('ECharts categorical point legend overrides match canonical null and empty display identities', () => {
+  const envelope = tooltipFixture() as any
+  envelope.spec = pointLegendSpec(envelope.spec, [
+    { value: '(null)', label: 'Missing status' },
+    { value: '(empty)', label: 'Blank status' },
+  ])
+  envelope.dataState.datasets[0].rows = [[null, 1, null, 'null row'], ['', 2, null, 'empty row']]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.legend.data).toEqual([{ name: '(null)' }, { name: '(empty)' }])
+  expect(option.legend.formatter('(null)')).toBe('Missing status')
+  expect(option.legend.formatter('(empty)')).toBe('Blank status')
+  expect(option.dataset.slice(1).map((dataset: any) => dataset.transform.config['='])).toEqual([null, ''])
+})
+
+test('ECharts categorical point legend overrides keep type-collision display identities distinct', () => {
+  const envelope = tooltipFixture() as any
+  envelope.spec = pointLegendSpec(envelope.spec, [
+    { value: '1 [string:1]', label: 'Text one' },
+    { value: '1 [number:1]', label: 'Numeric one' },
+  ])
+  envelope.dataState.datasets[0].rows = [['1', 1, null, 'string row'], [1, 2, null, 'number row']]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.legend.data).toEqual([{ name: '1 [string:1]' }, { name: '1 [number:1]' }])
+  expect(option.legend.formatter('1 [string:1]')).toBe('Text one')
+  expect(option.legend.formatter('1 [number:1]')).toBe('Numeric one')
+  expect(option.series.map((series: any) => series.name)).toEqual(['1 [number:1]', '1 [string:1]'])
+  expect(option.dataset.slice(1).map((dataset: any) => dataset.transform.config['='])).toEqual([1, '1'])
+})
+
 test('ECharts preserves a donut center graphic alongside a legend title graphic', () => {
   const envelope = tooltipFixture() as any
   envelope.spec = {
@@ -159,4 +190,14 @@ function tooltipFixture(): VisualizationEnvelope {
     dataState: { kind: 'inline', specRevision: 'sha256:tooltip', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:tooltip', dataRevision: 1, generation: 1, columns: ['status', 'value', 'nullish', 'note'], rows: [['open', 12.5, null, '<unsafe>'], ['closed', 4, null, '<other>']], completeness: 'complete' }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as any
+}
+
+function pointLegendSpec(baseSpec: any, legendItems: Array<{ value: string; label: string }>): any {
+  return {
+    kind: 'point', title: 'Points', datasets: baseSpec.datasets, dataBudget: baseSpec.dataBudget,
+    accessibility: baseSpec.accessibility, interactions: [], identity: [{ dataset: 'primary', field: 'status' }],
+    x: { dataset: 'primary', field: 'value' }, y: { dataset: 'primary', field: 'value' },
+    color: { dataset: 'primary', field: 'status' }, colorScale: { kind: 'categorical' },
+    presentation: { legend: 'bottom', legendItems, labelPolicy: baseSpec.presentation.labelPolicy, overplot: 'show_all', opacity: 1, largeMode: 'never', largeThreshold: 100, brush: [] },
+  }
 }

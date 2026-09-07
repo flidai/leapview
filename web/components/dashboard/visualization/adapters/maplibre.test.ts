@@ -356,6 +356,12 @@ test('MapLibre aggregate tooltip items keep the precision context and authored m
   ])
 })
 
+test('MapLibre tiled empty tooltip items suppress aggregate context rows', () => {
+	const envelope = tiledPointEnvelope() as any
+	envelope.spec.layers[0].tooltipItems = []
+	expect(mapTooltipEntries(envelope, [{ layer: { id: 'lv-orders' }, properties: { __lv_aggregate: true, __lv_coordinate_count: 12, revenue: 1250 } }])).toEqual([])
+})
+
 test('MapLibre aggregate tooltips lead with the business metric and retain location count', () => {
 	const envelope = tiledPointEnvelope()
 	const entries = mapTooltipEntries(envelope, [{

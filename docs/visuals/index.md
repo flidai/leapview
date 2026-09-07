@@ -91,6 +91,11 @@ canonical series/category names remain unchanged for selection events.
 Unlisted values retain deterministic data order. Geographic reference layers
 and hierarchy visuals do not expose legend metadata.
 
+For categorical point legends, `value` addresses the canonical category name:
+null and empty categories use `(null)` and `(empty)`, and values whose string
+forms collide use the displayed type-qualified name (for example,
+`1 [number:1]`).
+
 ```yaml
 presentation:
   tooltip:

@@ -15,6 +15,7 @@ export function mapTooltipEntries(envelope: VisualizationEnvelope, features: rea
 			if (!layer || !feature.properties) continue
 			if (layer.kind === 'reference') continue
 			const configuredItems = layer.tooltipItems
+			if (configuredItems !== undefined && configuredItems.length === 0) return []
 			const fields = configuredItems !== undefined
 				? configuredItems.map((item) => item.field)
 				: layer.tooltip.length ? layer.tooltip : 'label' in layer && layer.label ? [layer.label] : []
