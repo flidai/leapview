@@ -32,7 +32,7 @@ const (
 	// SpatialTileFormatVersion is part of query equivalence because changing
 	// MVT promotion/encoding must never reuse bytes produced by an older
 	// renderer contract.
-	SpatialTileFormatVersion = 5
+	SpatialTileFormatVersion = 6
 	queryDigestDomain        = "flid.resultidentity.query.v1"
 	cacheKeyDomain           = "flid.resultidentity.cache-key.v2"
 )

@@ -14,6 +14,13 @@ import (
 	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
+func semanticClusterPolicy(policy *dataquery.SpatialClusterPolicy) *semanticquery.SpatialClusterPolicy {
+	if policy == nil {
+		return nil
+	}
+	return &semanticquery.SpatialClusterPolicy{Enabled: policy.Enabled, Radius: policy.Radius, MaximumZoom: policy.MaximumZoom, MinimumPoints: policy.MinimumPoints, ShowCount: policy.ShowCount}
+}
+
 type plannedArrowQuery struct {
 	plan                    semanticquery.Plan
 	countPlan               *semanticquery.Plan
@@ -319,9 +326,10 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 			})
 		} else {
 			planned.plan, err = planner.PlanSpatialTileAggregate(semanticquery.SpatialTileRequest{
-				Dataset: request.Target, Metrics: dataQueryFields(request.Metrics), Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
+				Dataset: request.Target, Dimensions: dataQueryFields(tile.Dimensions), Metrics: dataQueryFields(request.Metrics), Identity: dataQueryFields(tile.Identity), Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
 				Latitude: semanticquery.Field{Field: tile.Latitude.Field, Alias: tile.Latitude.Alias}, Longitude: semanticquery.Field{Field: tile.Longitude.Field, Alias: tile.Longitude.Alias},
 				Zoom: tile.Zoom, TargetZoom: tile.TargetZoom, MetatileX: tile.MetatileX, MetatileY: tile.MetatileY, MetatileSize: tile.MetatileSize, CellPixels: tile.CellPixels, Buffer: tile.Buffer,
+				Cluster: semanticClusterPolicy(tile.Cluster),
 			})
 		}
 	case dataquery.KindSemanticSpatialTileBudget:
@@ -336,6 +344,7 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 			Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
 			Latitude: semanticquery.Field{Field: budget.Latitude.Field, Alias: budget.Latitude.Alias}, Longitude: semanticquery.Field{Field: budget.Longitude.Field, Alias: budget.Longitude.Alias},
 			Zoom: budget.Zoom, FeatureCap: budget.FeatureCap, MaximumBytes: budget.MaximumBytes, Buffer: budget.Buffer,
+			Cluster: semanticClusterPolicy(budget.Cluster),
 		})
 	case dataquery.KindSemanticSpatialMetadata:
 		if request.SpatialMetadata == nil {
@@ -345,7 +354,7 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 		planned.plan, err = planner.PlanSpatialMetadata(semanticquery.SpatialMetadataRequest{
 			Dataset: request.Target, Metrics: dataQueryFields(request.Metrics), Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
 			Latitude: semanticquery.Field{Field: request.SpatialMetadata.Latitude.Field, Alias: request.SpatialMetadata.Latitude.Alias}, Longitude: semanticquery.Field{Field: request.SpatialMetadata.Longitude.Field, Alias: request.SpatialMetadata.Longitude.Alias},
-			FeatureCap: request.SpatialMetadata.FeatureCap, RawMinimumZoom: request.SpatialMetadata.RawMinimumZoom, MaximumZoom: request.SpatialMetadata.MaximumZoom,
+			FeatureCap: request.SpatialMetadata.FeatureCap, RawMinimumZoom: request.SpatialMetadata.RawMinimumZoom, MaximumZoom: request.SpatialMetadata.MaximumZoom, Cluster: semanticClusterPolicy(request.SpatialMetadata.Cluster),
 		})
 	default:
 		err = fmt.Errorf("unsupported data query kind %q", request.Kind)

@@ -108,15 +108,18 @@ type Request struct {
 }
 
 type SpatialBucket struct {
-	Latitude   Field
-	Longitude  Field
-	Zoom       int
-	CellPixels int
+	Latitude      Field
+	Longitude     Field
+	Zoom          int
+	CellPixels    int
+	ClusterRadius int32
 }
 
 type SpatialTileRequest struct {
 	Dataset      string
+	Dimensions   []Field
 	Metrics      []Field
+	Identity     []Field
 	Filters      []Filter
 	ColumnMasks  []ColumnMask
 	Latitude     Field
@@ -128,6 +131,18 @@ type SpatialTileRequest struct {
 	MetatileSize int
 	CellPixels   int
 	Buffer       int
+	Cluster      *SpatialClusterPolicy
+}
+
+// SpatialClusterPolicy is the renderer-neutral point-cluster policy used by
+// the spatial PlanIR envelope. It is separate from CellPixels, which controls
+// transport precision and tile buffering.
+type SpatialClusterPolicy struct {
+	Enabled       bool
+	Radius        int32
+	MaximumZoom   int32
+	MinimumPoints int32
+	ShowCount     bool
 }
 
 type SpatialTileRawRequest struct {
@@ -162,6 +177,7 @@ type SpatialTileBudgetRequest struct {
 	FeatureCap   int
 	MaximumBytes int64
 	Buffer       int
+	Cluster      *SpatialClusterPolicy
 }
 
 type SpatialMetadataRequest struct {
@@ -174,6 +190,7 @@ type SpatialMetadataRequest struct {
 	FeatureCap     int
 	RawMinimumZoom int
 	MaximumZoom    int
+	Cluster        *SpatialClusterPolicy
 }
 
 type RowRequest struct {
