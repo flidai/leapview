@@ -1297,7 +1297,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return principal.ID
 				},
 				AuthorizeListResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
-					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
+					return authorizeSemanticModelResourceRead(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, resource, capability)
 				},
 				QueryFreshness: func(ctx context.Context, projectID, modelID, servingSnapshot string) (dashboardmodule.QueryFreshness, bool) {
 					if routes.refreshModule == nil {
