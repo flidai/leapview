@@ -2,6 +2,7 @@ package deploymentpostgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -117,6 +119,149 @@ func seedCandidateAdmissionFixture(t *testing.T, delivery *deploymentnative.Repo
 	}
 	if _, err := delivery.CreateCandidate(ctx, fixture.Candidate); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func candidateAdmissionRichPlan(t *testing.T, fixture candidateAdmissionFixture, baseRevision int64) deploymentdomain.DeliveryPlan {
+	t.Helper()
+	var plan deploymentdomain.DeliveryPlan
+	if err := json.Unmarshal(fixture.Plan.PlanDocument, &plan); err != nil {
+		t.Fatalf("decode candidate admission plan: %v", err)
+	}
+	plan.BaseTargetRevision = baseRevision
+	plan, err := deploymentdomain.NewDeliveryPlan(plan)
+	if err != nil {
+		t.Fatalf("rebuild candidate admission plan: %v", err)
+	}
+	return plan
+}
+
+func persistCandidateAdmissionRichPlan(t *testing.T, fixture *candidateAdmissionFixture, plan deploymentdomain.DeliveryPlan) {
+	t.Helper()
+	document, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("encode candidate admission plan: %v", err)
+	}
+	fixture.Plan.PlanDigest = plan.Digest
+	fixture.Plan.PlanDocument = document
+	fixture.Input.Attempt.PlanDigest = plan.Digest
+}
+
+func TestCandidateBuildAttemptAdmissionAllocatesCandidateUnderExactPlanFence(t *testing.T) {
+	p := candidateAdmissionDB(t)
+	delivery := deploymentnative.New(p)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := candidateAdmissionFixtureInput(t)
+	plan := candidateAdmissionRichPlan(t, fixture, 1)
+	persistCandidateAdmissionRichPlan(t, &fixture, plan)
+	fixture.Input.Plan = &plan
+	if _, err := delivery.CreateTarget(t.Context(), fixture.Target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.CreatePlan(t.Context(), fixture.Plan); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := admission.AdmitCandidateBuildAttempt(t.Context(), fixture.Input)
+	if err != nil {
+		t.Fatalf("admit newly allocated candidate: %v", err)
+	}
+	candidate, err := delivery.Candidate(t.Context(), fixture.Input.Attempt.CandidateID)
+	if err != nil {
+		t.Fatalf("read allocated candidate: %v", err)
+	}
+	if candidate.CandidateRevision != 1 || candidate.PlanID != fixture.Input.Attempt.PlanID || candidate.ArtifactDigest != fixture.Input.Artifact.ServingArtifactDigest {
+		t.Fatalf("allocated candidate = %#v", candidate)
+	}
+
+	replayed, err := admission.AdmitCandidateBuildAttempt(t.Context(), fixture.Input)
+	if err != nil {
+		t.Fatalf("replay newly allocated candidate: %v", err)
+	}
+	if !reflect.DeepEqual(first, replayed) {
+		t.Fatalf("candidate admission replay drifted: first=%#v replay=%#v", first, replayed)
+	}
+}
+
+func TestCandidateBuildAttemptAdmissionStalePlanRollsBackLeaseCandidateAndRevision(t *testing.T) {
+	p := candidateAdmissionDB(t)
+	delivery := deploymentnative.New(p)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := candidateAdmissionFixtureInput(t)
+	// The target starts at revision one while this persisted plan intentionally
+	// binds revision zero. The stale fence is discovered after lease admission,
+	// so the enclosing transaction must roll every consequence back.
+	plan := candidateAdmissionRichPlan(t, fixture, 0)
+	persistCandidateAdmissionRichPlan(t, &fixture, plan)
+	fixture.Input.Plan = &plan
+	if _, err := delivery.CreateTarget(t.Context(), fixture.Target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.CreatePlan(t.Context(), fixture.Plan); err != nil {
+		t.Fatal(err)
+	}
+	var nextCandidateRevisionBefore int64
+	if err := p.QueryRow(t.Context(), `SELECT next_candidate_revision FROM delivery.delivery_target_revision WHERE target_id=$1`, fixture.Target.TargetID).Scan(&nextCandidateRevisionBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), fixture.Input); !errors.Is(err, deploymentdomain.ErrDeliveryStale) {
+		t.Fatalf("stale candidate admission error = %v, want delivery stale", err)
+	}
+	if _, err := delivery.Lease(t.Context(), fixture.Input.Lease.LeaseID); !errors.Is(err, deploymentnative.ErrNotFound) {
+		t.Fatalf("stale admission retained lease: %v", err)
+	}
+	if _, err := delivery.Candidate(t.Context(), fixture.Input.Attempt.CandidateID); !errors.Is(err, deploymentnative.ErrNotFound) {
+		t.Fatalf("stale admission retained candidate: %v", err)
+	}
+	if _, err := delivery.BuildAttempt(t.Context(), fixture.Input.Attempt.AttemptID); !errors.Is(err, deploymentnative.ErrNotFound) {
+		t.Fatalf("stale admission retained attempt: %v", err)
+	}
+	var nextCandidateRevisionAfter int64
+	if err := p.QueryRow(t.Context(), `SELECT next_candidate_revision FROM delivery.delivery_target_revision WHERE target_id=$1`, fixture.Target.TargetID).Scan(&nextCandidateRevisionAfter); err != nil {
+		t.Fatal(err)
+	}
+	if nextCandidateRevisionAfter != nextCandidateRevisionBefore {
+		t.Fatalf("stale admission advanced target candidate revision from %d to %d", nextCandidateRevisionBefore, nextCandidateRevisionAfter)
+	}
+}
+
+func TestCandidateBuildAttemptAdmissionRejectsRehashedPlanAgainstPersistedDocument(t *testing.T) {
+	p := candidateAdmissionDB(t)
+	delivery := deploymentnative.New(p)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := candidateAdmissionFixtureInput(t)
+	persisted := candidateAdmissionRichPlan(t, fixture, 1)
+	persistCandidateAdmissionRichPlan(t, &fixture, persisted)
+	forged := candidateAdmissionRichPlan(t, fixture, 2)
+	fixture.Input.Plan = &forged
+	// Keep the caller's attempt internally consistent with the rehashed plan;
+	// only the persisted plan authority can reject this identity reuse.
+	fixture.Input.Attempt.PlanDigest = forged.Digest
+	if _, err := delivery.CreateTarget(t.Context(), fixture.Target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.CreatePlan(t.Context(), fixture.Plan); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), fixture.Input); !errors.Is(err, deploymentdomain.ErrDeliveryConflict) {
+		t.Fatalf("rehashed plan admission error = %v, want delivery conflict", err)
+	}
+	if _, err := delivery.Lease(t.Context(), fixture.Input.Lease.LeaseID); !errors.Is(err, deploymentnative.ErrNotFound) {
+		t.Fatalf("rehashed plan admission retained lease: %v", err)
+	}
+	if _, err := delivery.Candidate(t.Context(), fixture.Input.Attempt.CandidateID); !errors.Is(err, deploymentnative.ErrNotFound) {
+		t.Fatalf("rehashed plan admission retained candidate: %v", err)
 	}
 }
 

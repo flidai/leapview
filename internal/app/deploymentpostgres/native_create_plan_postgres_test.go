@@ -186,7 +186,7 @@ func newNativePlanCoordinator(t *testing.T, db *pgxpool.Pool, source *nativePlan
 	eventRepo := postgres.New()
 	operationRepo := operationpostgres.NewWithConfig(db, time.Second, time.Hour)
 	coord, err := NewNativeCreatePlanCoordinator(NativeCreatePlanConfig{
-		Repository: deploymentnative.New(db), Sources: source, Artifacts: inspector, RuntimeVersion: "runtime-native-test",
+		Repository: deploymentnative.New(db), TargetID: "target_native_plan", Environment: "prod", Sources: source, Artifacts: inspector, RuntimeVersion: "runtime-native-test",
 		Policy: runtimefactory.CandidateDeliveryPolicy{ApprovalPolicyRevision: runtimefactory.CurrentApprovalPolicyRevision},
 		Events: deploymentevents.NewWithRepository(eventRepo), Audit: deploymentaudit.NewWithRepository(accesspostgres.New()), Operations: deploymentoperation.New(operationRepo),
 		Clock: func() time.Time { return time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC) },

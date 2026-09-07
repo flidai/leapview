@@ -125,6 +125,7 @@ func (*candidateSourceSynchronizerStub) Commit(_ context.Context, _ deployment.C
 type candidateProjectClaimRepositoryStub struct {
 	input deployment.ProjectClaimInput
 	claim deployment.ProjectClaim
+	calls int
 }
 
 func (stub *candidateProjectClaimRepositoryStub) ClaimProject(_ context.Context, input deployment.ProjectClaimInput) (deployment.ProjectClaim, error) {
@@ -133,6 +134,7 @@ func (stub *candidateProjectClaimRepositoryStub) ClaimProject(_ context.Context,
 }
 
 func (stub *candidateProjectClaimRepositoryStub) GetProjectClaim(context.Context) (deployment.ProjectClaim, error) {
+	stub.calls++
 	if stub.claim.ProjectID == "" {
 		return deployment.ProjectClaim{}, deployment.ErrProjectClaimNotFound
 	}

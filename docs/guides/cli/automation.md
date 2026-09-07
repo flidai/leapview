@@ -43,6 +43,21 @@ returns a candidate only after its catalog is sealed. `dev` remains an optional
 private watch/preview loop; it is not a second CI deployment path. For a local
 candidate preview, use `leapview dev --once --source-root dashboards`.
 
+The compiler's source bundle stays unbound. Planning binds its exact digest to
+the target's existing Project UID and environment, target identity, current
+active generation and revision, and resolved target inputs. Bootstrap must
+already have claimed the target; an ordinary plan or build cannot create or
+replace that claim. A different Project or target is a conflict, not a context
+switch. A new build requires the plan's target revision and active generation
+to remain current at candidate admission; if either changes, create a new plan.
+
+For promotion, plan the same portable bundle independently on each development,
+staging, and production target. Bootstrap those targets with the same
+issuer-owned Project UID, but keep their environments and credentials separate.
+Do not transfer another target's plan, approval, resource UIDs, revision, or
+active pointer. Branch and commit values are provenance, not environment or
+active-generation selectors.
+
 ## Publish an immutable deployment request
 
 Run publication from a protected job using the same source root and target used by `dev`:

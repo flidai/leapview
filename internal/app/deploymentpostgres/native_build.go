@@ -77,6 +77,8 @@ type NativeBuildHeartbeatRunner interface {
 // authority is inferred from process globals or a latest-row lookup.
 type NativeBuildConfig struct {
 	Repository          *deploymentnative.Repository
+	TargetID            string
+	Environment         string
 	Sources             project.CandidateSourceAttestationReader
 	Artifacts           NativeBuildArtifactPhases
 	ArtifactRecovery    release.CandidateArtifactRecovery
@@ -118,6 +120,8 @@ type NativeBuildCoordinatorConfig = NativeBuildConfig
 // NativeBuildCoordinator implements the clean-slate delivery mutation port.
 type NativeBuildCoordinator struct {
 	repository                          *deploymentnative.Repository
+	targetID                            string
+	environment                         string
 	sources                             project.CandidateSourceAttestationReader
 	artifacts                           NativeBuildArtifactPhases
 	artifactRecovery                    release.CandidateArtifactRecovery
@@ -163,6 +167,12 @@ var _ deploymentmodule.NativeDeliveryMutationPort = (*NativeBuildCoordinator)(ni
 func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinator, error) {
 	if config.Repository == nil || !config.Repository.Configured() || !config.Repository.TransactionCapable() {
 		return nil, errors.New("native build requires a configured transaction-capable PostgreSQL repository")
+	}
+	if err := validateText(config.TargetID, "target id", 255); err != nil {
+		return nil, fmt.Errorf("native build target identity: %w", err)
+	}
+	if err := projectgraph.ValidateServingEnvironment(config.Environment); err != nil {
+		return nil, fmt.Errorf("native build environment identity: %w", err)
 	}
 	if nativeBuildAuthorityNil(config.Sources) || nativeBuildAuthorityNil(config.ManagedData) || nativeBuildAuthorityNil(config.Operations) || nativeBuildAuthorityNil(config.Heartbeat) || nativeBuildAuthorityNil(config.AttemptAdmission) || nativeBuildAuthorityNil(config.AttemptTermination) || nativeBuildAuthorityNil(config.GenerationAdmission) || nativeBuildAuthorityNil(config.PhysicalFactory) || nativeBuildAuthorityNil(config.QualificationFactory) {
 		return nil, errors.New("native build source, operation, admission, and execution authorities are required")
@@ -242,7 +252,8 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 		return nil, fmt.Errorf("native build session identity: %w", err)
 	}
 	return &NativeBuildCoordinator{
-		repository: config.Repository, sources: config.Sources, artifacts: artifacts, artifactRecovery: config.ArtifactRecovery, bindingEvidence: config.BindingEvidence, connections: config.Connections, managedData: config.ManagedData, contract: contract,
+		repository: config.Repository, targetID: config.TargetID, environment: config.Environment,
+		sources: config.Sources, artifacts: artifacts, artifactRecovery: config.ArtifactRecovery, bindingEvidence: config.BindingEvidence, connections: config.Connections, managedData: config.ManagedData, contract: contract,
 		physicalPoolID: config.PhysicalPoolID, compatibilityDigest: config.CompatibilityDigest,
 		operations: config.Operations, heartbeat: config.Heartbeat, heartbeatInterval: heartbeatInterval, attemptAdmission: config.AttemptAdmission, attemptTermination: config.AttemptTermination, generationAdmission: config.GenerationAdmission,
 		physicalFactory: config.PhysicalFactory, observationWriter: config.ObservationWriter, markerResolverFactory: config.MarkerResolverFactory, markerQuarantine: config.MarkerQuarantine, observationReader: config.ObservationReader, snapshotFactory: config.SnapshotFactory, qualificationFactory: config.QualificationFactory,
@@ -286,6 +297,9 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
+	if normalized.TargetID != c.targetID || normalized.Environment != c.environment {
+		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: target or environment differs from configured instance", deploymentdomain.ErrDeliveryConflict)
+	}
 	requestDigest, err := nativeBuildRequestDigest(normalized)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -326,6 +340,9 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 		now := c.clock().UTC()
 		if now.IsZero() || !now.Before(plan.Governance.ExpiresAt.UTC()) {
 			return deploymentmodule.NativeDeliveryBuild{}, deploymentdomain.ErrDeliveryPlanExpired
+		}
+		if err := c.validateCurrentBuildTarget(ctx, normalized, plan); err != nil {
+			return deploymentmodule.NativeDeliveryBuild{}, err
 		}
 	default:
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: unknown native build operation disposition %q", deploymentdomain.ErrDeliveryConflict, reservation.Disposition)
@@ -464,13 +481,11 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if bound.AttemptID != attemptID || bound.Lease.AttemptID != attemptID {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: operation attempt identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
-	if _, err := c.repository.CreateCandidateAllocatedTx(ctx, firstTx, deploymentnative.CandidateInput{CandidateID: candidateID, TargetID: normalized.TargetID, PlanID: plan.ID, ArtifactDigest: effective.Generation.ArtifactDigest}); err != nil {
-		return deploymentmodule.NativeDeliveryBuild{}, err
-	}
 	attemptAdmission, err := c.attemptAdmission.AdmitCandidateBuildAttemptTx(ctx, firstTx, CandidateBuildAttemptAdmissionInput{
 		Lease:     deploymentnative.LeaseInput{LeaseID: leaseID, TargetID: normalized.TargetID, OwnerID: normalized.PrincipalID, ExpiresAt: reservation.Lease.LeaseExpiresAt},
 		Attempt:   deploymentnative.BuildAttemptInput{AttemptID: attemptID, PlanID: plan.ID, CandidateID: candidateID, OwnerID: normalized.PrincipalID, PhysicalPoolID: c.physicalPoolID, RequestDigest: requestDigest, PlanDigest: plan.Digest, SessionIdentity: session},
 		Artifact:  CandidateBuildArtifactInput{ServingArtifactID: effective.Generation.ServingArtifactID, ServingArtifactDigest: effective.Generation.ArtifactDigest, ServingStateID: generationID},
+		Plan:      &plan.DeliveryPlan,
 		CatalogID: contract.Catalog.CatalogID,
 	})
 	if err != nil {
@@ -651,6 +666,7 @@ func (c *NativeBuildCoordinator) settleNativeBuildPreflightFailure(ctx context.C
 func nativeBuildPreflightFailureIsDeterministic(err error) bool {
 	return errors.Is(err, deploymentdomain.ErrDeliveryInvalid) ||
 		errors.Is(err, deploymentdomain.ErrDeliveryConflict) ||
+		errors.Is(err, deploymentdomain.ErrDeliveryStale) ||
 		errors.Is(err, deploymentdomain.ErrDeliveryPlanExpired) ||
 		errors.Is(err, deploymentnative.ErrInvalid) ||
 		errors.Is(err, deploymentnative.ErrConflict) ||
@@ -796,6 +812,16 @@ func errorString(err error) string {
 }
 
 func (c *NativeBuildCoordinator) loadBuildPlan(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest) (nativeBuildPlan, error) {
+	claim, err := c.repository.GetProjectClaim(ctx)
+	if errors.Is(err, deploymentdomain.ErrProjectClaimNotFound) {
+		return nativeBuildPlan{}, deploymentdomain.ErrProjectClaimRequired
+	}
+	if err != nil {
+		return nativeBuildPlan{}, err
+	}
+	if claim.ProjectID != request.ProjectID || string(claim.Environment) != request.Environment {
+		return nativeBuildPlan{}, deploymentdomain.ErrProjectClaimConflict
+	}
 	stored, err := c.repository.Plan(ctx, request.PlanID.String())
 	if err != nil {
 		return nativeBuildPlan{}, err
@@ -814,6 +840,25 @@ func (c *NativeBuildCoordinator) loadBuildPlan(ctx context.Context, request depl
 		return nativeBuildPlan{}, fmt.Errorf("%w: persisted native plan evidence is incomplete", deploymentdomain.ErrDeliveryConflict)
 	}
 	return nativeBuildPlan{DeliveryPlan: plan, ArtifactDigest: stored.ArtifactDigest}, nil
+}
+
+func (c *NativeBuildCoordinator) validateCurrentBuildTarget(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest, plan nativeBuildPlan) error {
+	target, err := c.repository.Target(ctx, request.TargetID)
+	if err != nil {
+		return err
+	}
+	return validateNativeBuildTargetBinding(target, request, plan)
+}
+
+func validateNativeBuildTargetBinding(target deploymentnative.DeliveryTarget, request deploymentmodule.NativeDeliveryBuildRequest, plan nativeBuildPlan) error {
+	if target.TargetID != request.TargetID || target.ProjectID != request.ProjectID.String() || target.Environment != request.Environment ||
+		plan.TargetID != request.TargetID || plan.ProjectID != request.ProjectID || plan.Environment != request.Environment {
+		return fmt.Errorf("%w: current target scope differs from delivery plan", deploymentdomain.ErrDeliveryConflict)
+	}
+	if target.TargetRevision != plan.BaseTargetRevision || target.ActiveGenerationID != plan.BaseGenerationID {
+		return fmt.Errorf("%w: current target fence differs from delivery plan", deploymentdomain.ErrDeliveryStale)
+	}
+	return nil
 }
 
 // nativeSourceRevision resolves the immutable source attestation used by a
