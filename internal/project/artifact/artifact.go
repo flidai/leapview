@@ -279,7 +279,7 @@ func requireManifestReference(
 }
 
 func uniqueManifestReferences(primary string, values, dependencies []string) []string {
-	seen := make(map[string]struct{}, 1+len(values)+len(dependencies))
+	seen := make(map[string]struct{})
 	for _, reference := range append(append([]string{primary}, values...), dependencies...) {
 		reference = strings.TrimSpace(reference)
 		if reference != "" {

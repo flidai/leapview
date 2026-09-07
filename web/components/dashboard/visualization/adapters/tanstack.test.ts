@@ -67,6 +67,65 @@ test('TanStack adapter leaves row interaction disabled when the IR declares none
   expect(tableSignal(envelope).interaction).toBeUndefined()
 })
 
+test('TanStack adapter propagates showHeader for every tabular visual kind', () => {
+  const tabularEnvelope = (kind: 'table' | 'matrix' | 'pivot'): VisualizationEnvelope => {
+    const fields = [
+      { id: 'state', role: 'dimension', dataType: 'string', nullable: false, label: 'State' },
+      { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
+    ]
+    const grid = {
+      kind,
+      title: kind,
+      datasets: [{ id: 'primary', fields }],
+      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' },
+      accessibility: { title: kind, description: kind },
+      interactions: [],
+      presentation: { rowHeight: 34, striped: true, showHeader: false },
+      ...(kind === 'table'
+        ? {
+            columns: [{ field: { dataset: 'primary', field: 'state' }, label: 'State', formatting: [] }],
+            defaultSort: [],
+          }
+        : {
+            rows: [{ dataset: 'primary', field: 'state' }],
+            columns: [{ dataset: 'primary', field: 'state' }],
+            metrics: [{ dataset: 'primary', field: 'revenue' }],
+            metricFormatting: {},
+            ...(kind === 'pivot' ? { totals: { rows: false, columns: false, grand: false }, window: { limit: 100 } } : {}),
+          }),
+    }
+    return {
+      schemaVersion: 9, visualID: kind, rendererID: 'tanstack', specRevision: `sha256:${kind}`, dataRevision: 1,
+      spec: grid,
+      dataState: {
+        kind: 'inline', specRevision: `sha256:${kind}`, dataRevision: 1, generation: 1,
+        datasets: [{ id: 'primary', specRevision: `sha256:${kind}`, dataRevision: 1, generation: 1, columns: ['state', 'revenue'], rows: [['CA', 42]], completeness: 'complete' }],
+      },
+      selection: [], status: { kind: 'ready' }, diagnostics: [],
+    } as VisualizationEnvelope
+  }
+
+  for (const kind of ['table', 'matrix', 'pivot'] as const) {
+    expect(tableSignal(tabularEnvelope(kind)).style.showHeader).toBe(false)
+  }
+})
+
+test('TanStack adapter preserves enabled table headers', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'orders', rendererID: 'tanstack', specRevision: 'sha256:test', dataRevision: 1,
+    spec: {
+      kind: 'table', title: 'Orders', datasets: [{ id: 'primary', fields: [{ id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' }] }],
+      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Orders' }, interactions: [],
+      columns: [{ field: { dataset: 'primary', field: 'order_id' }, label: 'Order', formatting: [] }], defaultSort: [],
+      presentation: { rowHeight: 34, striped: true, showHeader: true },
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['order_id'], rows: [['o1']], completeness: 'complete' }] },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+
+  expect(tableSignal(envelope).style.showHeader).toBe(true)
+})
+
 test('TanStack adapter preserves sparse window block identities', () => {
   const envelope = {
     schemaVersion: 9, visualID: 'orders', rendererID: 'tanstack', specRevision: 'sha256:test', dataRevision: 3,

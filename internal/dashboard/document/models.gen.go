@@ -3907,7 +3907,6 @@ type KPIDashboardPresentation struct {
 	FavorableDirection *visualizationir.VisualizationKPIDirection          `json:"favorableDirection,omitempty" yaml:"favorableDirection,omitempty"`
 	MissingComparison  *visualizationir.VisualizationKPIMissingComparison  `json:"missingComparison,omitempty" yaml:"missingComparison,omitempty"`
 	Ranges             *[]visualizationir.VisualizationKPIQualitativeRange `json:"ranges,omitempty" yaml:"ranges,omitempty"`
-	Thresholds         *[]visualizationir.VisualizationThreshold           `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
 	Comparison         *DashboardKPIValueBinding                           `json:"comparison,omitempty" yaml:"comparison,omitempty"`
 	Goal               *DashboardKPIValueBinding                           `json:"goal,omitempty" yaml:"goal,omitempty"`
 	Trend              *DashboardKPITrendBinding                           `json:"trend,omitempty" yaml:"trend,omitempty"`

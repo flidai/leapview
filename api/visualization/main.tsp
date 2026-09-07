@@ -802,7 +802,6 @@ model KPIVisualizationPresentation {
   `displayUnits`?: VisualizationDisplayUnits;
   `note`?: string;
   `tone`?: VisualizationTone;
-  `thresholds`?: VisualizationThreshold[];
 }
 
 model VisualizationKPIValueBinding {
@@ -1391,7 +1390,7 @@ model VisualizationDiagnostic {
 @apigen.contract(#{ kind: "visualization-envelope", tags: #["visualization", "ir"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "visualization-envelope" })
 model VisualizationEnvelope {
-  `schemaVersion`: 11;
+  `schemaVersion`: 12;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;
