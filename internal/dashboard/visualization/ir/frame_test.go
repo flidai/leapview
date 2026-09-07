@@ -3,6 +3,7 @@ package ir
 import (
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -144,6 +145,54 @@ func TestValidateSpecEnforcesGeographicLayerRequirements(t *testing.T) {
 	choropleth := VisualizationSpec{Value: &GeographicVisualizationSpec{VisualizationSpecBase: base, Kind: "geographic", Layers: []VisualizationGeographicLayer{{Value: &VisualizationChoroplethLayer{VisualizationGeographicLayerBase: VisualizationGeographicLayerBase{ID: "states", Kind: "choropleth", Tooltip: []VisualizationFieldRef{}, Position: VisualizationMapLayerPositionBelowLabels, Visibility: VisualizationMapVisibility{MaximumZoom: 24}}, Kind: "choropleth", Join: join}}}, Presentation: GeographicVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionHidden)}}}
 	if err := ValidateSpec(choropleth); err == nil {
 		t.Fatal("choropleth layer without geometry was accepted")
+	}
+}
+
+func TestValidateSpecEnforcesFixedGeographicCamera(t *testing.T) {
+	base := VisualizationSpecBase{
+		Kind: "geographic", Title: "Stores",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "lat", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Latitude"},
+			{ID: "lon", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Longitude"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "Stores", Description: "Store locations"}, Interactions: []VisualizationInteraction{},
+	}
+	point := VisualizationGeographicLayer{Value: &VisualizationPointLayer{
+		VisualizationGeographicLayerBase: VisualizationGeographicLayerBase{ID: "stores", Kind: "point", Tooltip: []VisualizationFieldRef{}, Position: VisualizationMapLayerPositionBelowLabels, Visibility: VisualizationMapVisibility{MaximumZoom: 24}},
+		Kind:                             "point", Latitude: VisualizationFieldRef{Dataset: "primary", Field: "lat"}, Longitude: VisualizationFieldRef{Dataset: "primary", Field: "lon"},
+		Size: VisualizationMapSizeScale{MinimumRadius: 5, MaximumRadius: 28}, Cluster: VisualizationMapCluster{Radius: 50, MinimumPoints: 2},
+	}}
+	makeSpec := func(camera VisualizationMapCamera) VisualizationSpec {
+		return VisualizationSpec{Value: &GeographicVisualizationSpec{
+			VisualizationSpecBase: base, Kind: "geographic", Layers: []VisualizationGeographicLayer{point},
+			Presentation: GeographicVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionHidden), Camera: camera},
+		}}
+	}
+	center := []float64{12.5, -3.25}
+	zoom := 5.5
+	tests := []struct {
+		name   string
+		mutate func(*VisualizationMapCamera)
+		want   string
+	}{
+		{name: "missing center", mutate: func(camera *VisualizationMapCamera) { camera.Center = nil }, want: "presentation.camera.center is required"},
+		{name: "wrong center arity", mutate: func(camera *VisualizationMapCamera) { camera.Center = &[]float64{12.5} }, want: "presentation.camera.center must contain exactly two coordinates"},
+		{name: "nonfinite center", mutate: func(camera *VisualizationMapCamera) { camera.Center = &[]float64{math.NaN(), -3.25} }, want: "presentation.camera.center[0] must be finite"},
+		{name: "missing zoom", mutate: func(camera *VisualizationMapCamera) { camera.Zoom = nil }, want: "presentation.camera.zoom is required"},
+		{name: "nonfinite zoom", mutate: func(camera *VisualizationMapCamera) { value := math.Inf(1); camera.Zoom = &value }, want: "presentation.camera.zoom must be finite"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			camera := VisualizationMapCamera{Mode: VisualizationMapCameraModeFixed, Center: &center, Zoom: &zoom}
+			test.mutate(&camera)
+			if err := ValidateSpec(makeSpec(camera)); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want path-bearing camera diagnostic containing %q", err, test.want)
+			}
+		})
+	}
+	if err := ValidateSpec(makeSpec(VisualizationMapCamera{Mode: VisualizationMapCameraModeFixed, Center: &center, Zoom: &zoom})); err != nil {
+		t.Fatalf("valid fixed camera rejected: %v", err)
 	}
 }
 

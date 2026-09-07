@@ -1308,6 +1308,9 @@ func validateGeographicSpecification(spec VisualizationSpec) error {
 	if !ok {
 		return nil
 	}
+	if err := validateGeographicCamera(value.Presentation.Camera); err != nil {
+		return err
+	}
 	if len(value.Layers) == 0 {
 		return fmt.Errorf("geographic visualization requires at least one layer")
 	}
@@ -1353,6 +1356,31 @@ func validateGeographicSpecification(spec VisualizationSpec) error {
 		asset := value.Presentation.Basemap
 		if asset.ID == "" || asset.StyleURL == "" || asset.ArchiveURL == "" || len(asset.StyleDigest) != 71 || len(asset.ArchiveDigest) != 71 || asset.Attribution == "" {
 			return fmt.Errorf("geographic basemap has incomplete provenance")
+		}
+	}
+	return nil
+}
+
+func validateGeographicCamera(camera VisualizationMapCamera) error {
+	if camera.Center != nil {
+		if len(*camera.Center) != 2 {
+			return fmt.Errorf("presentation.camera.center must contain exactly two coordinates")
+		}
+		for index, coordinate := range *camera.Center {
+			if !finite(coordinate) {
+				return fmt.Errorf("presentation.camera.center[%d] must be finite", index)
+			}
+		}
+	}
+	if camera.Zoom != nil && !finite(*camera.Zoom) {
+		return fmt.Errorf("presentation.camera.zoom must be finite")
+	}
+	if camera.Mode == VisualizationMapCameraModeFixed {
+		if camera.Center == nil {
+			return fmt.Errorf("presentation.camera.center is required for fixed camera")
+		}
+		if camera.Zoom == nil {
+			return fmt.Errorf("presentation.camera.zoom is required for fixed camera")
 		}
 	}
 	return nil

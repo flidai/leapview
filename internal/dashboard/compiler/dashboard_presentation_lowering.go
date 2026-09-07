@@ -342,6 +342,9 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		if variant.Camera != nil {
 			camera := variant.Camera
+			if err := validateDashboardMapCamera(camera); err != nil {
+				return nil, err
+			}
 			if camera.Mode != nil {
 				out.Camera.Mode = *camera.Mode
 			}
@@ -406,6 +409,31 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 	default:
 		return nil, fmt.Errorf("unsupported Dashboard presentation variant %T", value.Value)
 	}
+}
+
+func validateDashboardMapCamera(camera *document.DashboardMapCamera) error {
+	if camera.Center != nil {
+		if len(*camera.Center) != 2 {
+			return fmt.Errorf("presentation.camera.center must contain exactly two coordinates")
+		}
+		for index, coordinate := range *camera.Center {
+			if !finiteDashboardFloat(coordinate) {
+				return fmt.Errorf("presentation.camera.center[%d] must be finite", index)
+			}
+		}
+	}
+	if camera.Zoom != nil && !finiteDashboardFloat(*camera.Zoom) {
+		return fmt.Errorf("presentation.camera.zoom must be finite")
+	}
+	if camera.Mode != nil && *camera.Mode == visualizationir.VisualizationMapCameraModeFixed {
+		if camera.Center == nil {
+			return fmt.Errorf("presentation.camera.center is required for fixed camera")
+		}
+		if camera.Zoom == nil {
+			return fmt.Errorf("presentation.camera.zoom is required for fixed camera")
+		}
+	}
+	return nil
 }
 
 // ValidateCanonicalPresentationResultReferences keeps any future result-name

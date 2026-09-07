@@ -3,6 +3,7 @@ package compiler
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -159,6 +160,45 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 			}
 			test.check(t, value)
 		})
+	}
+}
+
+func TestLowerCanonicalGeographicPresentationValidatesFixedCamera(t *testing.T) {
+	finiteCenter := []float64{12.5, -3.25}
+	finiteZoom := 5.5
+	tests := []struct {
+		name  string
+		setup func(*document.DashboardMapCamera)
+		want  string
+	}{
+		{name: "missing center", setup: func(camera *document.DashboardMapCamera) { camera.Center = nil }, want: "presentation.camera.center is required"},
+		{name: "wrong center arity", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{12.5} }, want: "presentation.camera.center must contain exactly two coordinates"},
+		{name: "nonfinite center", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{math.NaN(), -3.25} }, want: "presentation.camera.center[0] must be finite"},
+		{name: "missing zoom", setup: func(camera *document.DashboardMapCamera) { camera.Zoom = nil }, want: "presentation.camera.zoom is required"},
+		{name: "nonfinite zoom", setup: func(camera *document.DashboardMapCamera) { value := math.Inf(1); camera.Zoom = &value }, want: "presentation.camera.zoom must be finite"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mode := visualizationir.VisualizationMapCameraModeFixed
+			camera := &document.DashboardMapCamera{Mode: &mode, Center: &finiteCenter, Zoom: &finiteZoom}
+			test.setup(camera)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{Type: "geographic", Camera: camera}}, document.DashboardVisualTypeMap)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want path-bearing camera diagnostic containing %q", err, test.want)
+			}
+		})
+	}
+
+	mode := visualizationir.VisualizationMapCameraModeFixed
+	lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{
+		Type: "geographic", Camera: &document.DashboardMapCamera{Mode: &mode, Center: &finiteCenter, Zoom: &finiteZoom},
+	}}, document.DashboardVisualTypeMap)
+	if err != nil {
+		t.Fatalf("valid fixed camera rejected: %v", err)
+	}
+	got := lowered.(visualizationir.GeographicVisualizationPresentation)
+	if got.Camera.Mode != mode || got.Camera.Center == nil || !reflect.DeepEqual(*got.Camera.Center, finiteCenter) || got.Camera.Zoom == nil || *got.Camera.Zoom != finiteZoom {
+		t.Fatalf("lowered fixed camera = %#v", got.Camera)
 	}
 }
 

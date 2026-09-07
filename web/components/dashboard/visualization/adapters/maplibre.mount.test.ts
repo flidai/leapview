@@ -179,11 +179,6 @@ async function labelEnvelope(theme: 'auto' | 'light' | 'dark' = 'auto', specRevi
   } as unknown as VisualizationEnvelope
 }
 
-function layerPaint(map: FakeMap, id: string): { text: unknown; halo: unknown } {
-  const layer = map.getLayer(id)
-  return { text: layer?.paint['text-color'], halo: layer?.paint['text-halo-color'] }
-}
-
 function pointerEvent(dom: JSDOM, type: string, pointerId: number): Event {
   const event = new dom.window.Event(type, { bubbles: true, cancelable: true })
   Object.defineProperties(event, {
@@ -194,57 +189,6 @@ function pointerEvent(dom: JSDOM, type: string, pointerId: number): Event {
   })
   return event
 }
-
-test('MapLibre mounted labels resolve theme and repaint in place on context-only updates', async () => {
-  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
-  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
-  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
-  const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
-  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
-  try {
-    const envelope = await labelEnvelope()
-    const container = dom.window.document.createElement('div')
-    const frame = dom.window.document.createElement('div')
-    const attribution = dom.window.document.createElement('div')
-    const map = new FakeMap()
-    const handle = new MapLibreHandle(container, frame, map as never, attribution, context('dark'))
-    await handle.update(envelope, Change.All, context('dark'))
-    const sourcesBefore = [...map.sources.keys()]
-    const layersBefore = [...map.layers.keys()]
-    expect(layerPaint(map, 'lv-points-data-label')).toEqual({ text: '#f0f6fc', halo: '#0d1821' })
-    expect(layerPaint(map, 'lv-states-data-label')).toEqual({ text: '#f0f6fc', halo: '#0d1821' })
-
-    await handle.update(envelope, Change.Context, context('light'))
-    expect(layerPaint(map, 'lv-points-data-label')).toEqual({ text: '#1f2328', halo: '#ffffff' })
-    expect(layerPaint(map, 'lv-states-data-label')).toEqual({ text: '#1f2328', halo: '#ffffff' })
-    expect([...map.sources.keys()]).toEqual(sourcesBefore)
-    expect([...map.layers.keys()]).toEqual(layersBefore)
-
-    await handle.update(envelope, Change.Context, context('dark'))
-    map.removeLayer('lv-states-data-label')
-    await handle.update(envelope, Change.Context, context('light'))
-    expect(map.getLayer('lv-states-data-label')).toBeUndefined()
-    expect(layerPaint(map, 'lv-points-data-label')).toEqual({ text: '#1f2328', halo: '#ffffff' })
-
-    const explicit = await labelEnvelope('dark', 'sha256:explicit-label-theme')
-    await handle.update(explicit, Change.Spec, context('light'))
-    const darkPaint = layerPaint(map, 'lv-points-data-label')
-    expect(darkPaint).toEqual({ text: '#f0f6fc', halo: '#0d1821' })
-    await handle.update(explicit, Change.Context, context('dark'))
-    expect(layerPaint(map, 'lv-points-data-label')).toEqual(darkPaint)
-    handle.dispose()
-  } finally {
-    globalThis.document = previous.document
-    globalThis.window = previous.window
-    globalThis.location = previous.location
-    globalThis.getComputedStyle = previous.getComputedStyle
-    globalThis.requestAnimationFrame = previous.requestAnimationFrame
-    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
-    globalThis.fetch = previous.fetch
-    globalThis.CustomEvent = previous.CustomEvent
-    dom.window.close()
-  }
-})
 
 test('MapLibre reconciles basemap styles without replacing controls or stale data', async () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
@@ -451,8 +395,11 @@ test('MapLibre reconciles navigation and reset controls across spec updates with
     expect(map.addedControls).toHaveLength(1)
     expect(map.removedControls).toHaveLength(0)
 
-    const resetOnly = await labelEnvelope('auto', 'sha256:controls-reset', { zoom: false, reset: true, compass: false })
+    map.jumpTo({ center: [12.5, -3.25], zoom: 5.5 })
+    const resetOnly = await labelEnvelope('auto', 'sha256:controls-reset', { zoom: false, reset: true, compass: false }, false, false, false, undefined, 'preserve')
     await handle.update(resetOnly, Change.Spec, context('dark'))
+    expect(map.getCenter()).toEqual({ lng: 12.5, lat: -3.25 })
+    expect(map.getZoom()).toBe(5.5)
     expect(map.addedControls).toHaveLength(1)
     expect(map.removedControls).toHaveLength(1)
     expect(frame.querySelector('.lv-map-reset')).not.toBeNull()

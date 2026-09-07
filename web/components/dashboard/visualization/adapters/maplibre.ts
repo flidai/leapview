@@ -76,7 +76,28 @@ export function vectorTileTemplateURL(template: string, base: string): string {
 
 export function mapClickCanRefineCamera(envelope: VisualizationEnvelope): boolean {
 	if (envelope.spec.kind !== 'geographic') return false
-	return envelope.spec.interactions.length === 0 && envelope.spec.spatialInteractions.length === 0
+	return envelope.spec.presentation.roam
+		&& envelope.spec.presentation.camera.mode !== 'fixed'
+		&& envelope.spec.interactions.length === 0
+		&& envelope.spec.spatialInteractions.length === 0
+}
+
+function shouldPreserveCameraOnSpecUpdate(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {
+	if (previous.spec.kind !== 'geographic' || next.spec.kind !== 'geographic') return false
+	const camera = next.spec.presentation.camera
+	if (camera.mode === 'fixed' || camera.mode === 'preserve') return camera.mode === 'preserve'
+	const previousCamera = previous.spec.presentation.camera
+	return previousCamera.mode === camera.mode
+		&& previousCamera.padding === camera.padding
+		&& previousCamera.minimumZoom === camera.minimumZoom
+		&& previousCamera.maximumZoom === camera.maximumZoom
+		&& sameOptionalNumberArray(previousCamera.center, camera.center)
+		&& previousCamera.zoom === camera.zoom
+}
+
+function sameOptionalNumberArray(left: readonly number[] | undefined, right: readonly number[] | undefined): boolean {
+	if (left === undefined || right === undefined) return left === right
+	return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 function isPlaceholderTileURL(value: string): boolean {
@@ -154,7 +175,7 @@ export function mapSelectionControlAvailable(envelope: VisualizationEnvelope): b
   return envelope.spec.interactions.some((candidate) => candidate.kind === 'select')
 }
 
-class MapLibreHandle implements RendererHandle {
+export class MapLibreHandle implements RendererHandle {
   private sourceIDs: string[] = []
   private layerIDs: string[] = []
   private dynamicLayers: Array<{ spec: VisualizationGeographicLayer; sourceID: string; geometry?: FeatureCollection }> = []
@@ -241,6 +262,8 @@ class MapLibreHandle implements RendererHandle {
     if (this.disposed) return
     if (envelope.spec.kind !== 'geographic') throw new Error(`MapLibre cannot render ${envelope.spec.kind}`)
     const specChanged = (change & Change.Spec) !== 0
+    const preserveCamera = specChanged && this.viewportInitialized && this.envelope !== undefined && shouldPreserveCameraOnSpecUpdate(this.envelope, envelope)
+    const preservedCamera = preserveCamera ? this.captureViewState() : undefined
     const basemapIdentity = mapBasemapIdentity(envelope.spec.presentation.basemap)
     const basemapChanged = specChanged && this.basemapIdentity !== undefined && this.basemapIdentity !== basemapIdentity
     if (basemapChanged) {
@@ -351,6 +374,10 @@ class MapLibreHandle implements RendererHandle {
     this.attribution.textContent = [...attributions].join(' · ')
     this.attribution.hidden = attributions.size === 0
     this.initializeViewport(envelope, collections)
+    if (preservedCamera) {
+      resetMapToHome(this.map, preservedCamera)
+      this.captureHomeCamera()
+    }
     this.updateMapControls(envelope)
     this.updateLegend(envelope)
     this.handleMoveEnd()
@@ -557,11 +584,14 @@ class MapLibreHandle implements RendererHandle {
     this.selectionControl ??= new MapSelectionControl(
       (command) => this.dispatchInteraction(command),
       () => this.syncMapSelectionControls(),
-      (center, zoom) => this.map.easeTo({
-        center: [center[0], center[1]],
-        zoom: progressiveAggregateRefinementZoom(this.map.getZoom(), zoom),
-        duration: 250,
-      }),
+      (center, zoom) => {
+        if (!this.envelope || !mapClickCanRefineCamera(this.envelope)) return
+        this.map.easeTo({
+          center: [center[0], center[1]],
+          zoom: progressiveAggregateRefinementZoom(this.map.getZoom(), zoom),
+          duration: 250,
+        })
+      },
     )
     if (!this.selectionControl.element.isConnected) this.frame.append(this.selectionControl.element)
     const filteredEnvelope = envelope.spec.kind === 'geographic'
