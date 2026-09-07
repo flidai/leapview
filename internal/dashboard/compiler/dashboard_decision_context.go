@@ -66,22 +66,10 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 		if cartesian != nil {
 			if axis == visualizationir.VisualizationCartesianAxisX {
 				ref = cartesian.X
+			} else if cartesian.Mark == visualizationir.VisualizationCartesianMarkCombo {
+				ref, _ = visualizationir.CartesianComboAxisOwner(*cartesian, axis)
 			} else if len(cartesian.Y) > 0 {
 				ref = cartesian.Y[0]
-				if axis == visualizationir.VisualizationCartesianAxisSecondaryY && cartesian.Mark == visualizationir.VisualizationCartesianMarkCombo && cartesian.Series == nil {
-					if cartesian.Presentation.ComboSeries != nil {
-						for _, candidate := range cartesian.Y {
-							for _, series := range *cartesian.Presentation.ComboSeries {
-								if series.Axis != visualizationir.VisualizationAxisSecondary {
-									continue
-								}
-								if candidate.Field == series.SeriesValue {
-									return primaryVisualizationField(*primary, candidate.Field)
-								}
-							}
-						}
-					}
-				}
 			}
 		} else if point != nil {
 			if axis == visualizationir.VisualizationCartesianAxisX {
@@ -115,8 +103,10 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 			if authoredAxis.ID == visualizationir.VisualizationCartesianAxisSecondaryY && (cartesian == nil || cartesian.Mark != visualizationir.VisualizationCartesianMarkCombo) {
 				return nil, fmt.Errorf("%s.id secondary_y requires a combo visual", path)
 			}
-			if authoredAxis.ID == visualizationir.VisualizationCartesianAxisSecondaryY && cartesian != nil && !cartesianHasSecondarySeries(*cartesian) {
-				return nil, fmt.Errorf("%s.id secondary_y requires a secondary combo series", path)
+			if cartesian != nil && cartesian.Mark == visualizationir.VisualizationCartesianMarkCombo && authoredAxis.ID != visualizationir.VisualizationCartesianAxisX {
+				if _, found := visualizationir.CartesianComboAxisOwner(*cartesian, authoredAxis.ID); !found {
+					return nil, fmt.Errorf("%s.id requires a %s combo series", path, comboAxisOwnerName(authoredAxis.ID))
+				}
 			}
 			if err := validateDashboardAxisEnums(authoredAxis, path); err != nil {
 				return nil, err
@@ -267,6 +257,15 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 		if axis == visualizationir.VisualizationCartesianAxisSecondaryY && (cartesian == nil || cartesian.Mark != visualizationir.VisualizationCartesianMarkCombo) {
 			return fmt.Errorf("%s secondary_y requires a combo visual", path)
 		}
+		if cartesian != nil && cartesian.Mark == visualizationir.VisualizationCartesianMarkCombo {
+			ownerAxis := axis
+			if ownerAxis == visualizationir.VisualizationCartesianAxisX {
+				ownerAxis = visualizationir.VisualizationCartesianAxisPrimaryY
+			}
+			if _, found := visualizationir.CartesianComboAxisOwner(*cartesian, ownerAxis); !found {
+				return fmt.Errorf("%s requires a %s combo series", path, comboAxisOwnerName(ownerAxis))
+			}
+		}
 		return nil
 	}
 	validateAxisValue := func(value loweredValue, axis visualizationir.VisualizationCartesianAxis, path string) error {
@@ -368,6 +367,11 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 			if annotation.Axis != visualizationir.VisualizationCartesianAxisX {
 				return nil, fmt.Errorf("%s.axis must be x", path)
 			}
+			if cartesian != nil && cartesian.Mark == visualizationir.VisualizationCartesianMarkCombo {
+				if _, found := visualizationir.CartesianComboAxisOwner(*cartesian, visualizationir.VisualizationCartesianAxisPrimaryY); !found {
+					return nil, fmt.Errorf("%s.axis requires a primary_y combo series", path)
+				}
+			}
 			if strings.TrimSpace(annotation.Label) == "" {
 				return nil, fmt.Errorf("%s.label is required", path)
 			}
@@ -414,24 +418,11 @@ func pointerLen[T any](value *[]T) int {
 	return len(*value)
 }
 
-func cartesianHasSecondarySeries(spec visualizationir.CartesianVisualizationSpec) bool {
-	if spec.Mark != visualizationir.VisualizationCartesianMarkCombo || spec.Presentation.ComboSeries == nil {
-		return false
+func comboAxisOwnerName(axis visualizationir.VisualizationCartesianAxis) string {
+	if axis == visualizationir.VisualizationCartesianAxisSecondaryY {
+		return "secondary_y"
 	}
-	for _, series := range *spec.Presentation.ComboSeries {
-		if series.Axis != visualizationir.VisualizationAxisSecondary {
-			continue
-		}
-		if spec.Series != nil {
-			return true
-		}
-		for _, value := range spec.Y {
-			if value.Field == series.SeriesValue {
-				return true
-			}
-		}
-	}
-	return false
+	return "primary_y"
 }
 
 func primaryVisualizationField(schema visualizationir.VisualizationDatasetSchema, name string) (visualizationir.VisualizationField, bool) {

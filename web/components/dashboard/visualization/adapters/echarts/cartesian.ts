@@ -16,13 +16,24 @@ export function cartesianOption(envelope: VisualizationEnvelope, context: Render
   return applyDecisionContext(envelope, context, cartesianBaseOption(envelope, context, categoryColors))
 }
 
+function comboAxisField(spec: CartesianSpec, axis: 'primary' | 'secondary'): CartesianSpec['y'][number] | undefined {
+  if (spec.mark !== 'combo' || spec.y.length === 0) return undefined
+  const configured = spec.presentation.comboSeries
+  if (configured === undefined) return axis === 'primary' ? spec.y[0] : undefined
+  if (spec.series !== undefined) {
+    return configured.some((item) => item.axis === axis) ? spec.y[0] : undefined
+  }
+  return spec.y.find((candidate) => configured.some((item) => String(item.seriesValue) === candidate.field && item.axis === axis))
+}
+
 function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): EChartsTranslation {
   const spec = envelope.spec as CartesianSpec
   const horizontal = spec.presentation.orientation === 'horizontal' || spec.mark === 'bar'
-  const xRef = horizontal ? spec.y[0]! : spec.x
+  const primaryY = comboAxisField(spec, 'primary') ?? spec.y[0]!
+  const xRef = horizontal ? primaryY : spec.x
   const xType = axisType(envelope, xRef, horizontal ? 'value' : 'category')
   const xAxis = axis(envelope, xRef, xType, context, horizontal ? 'primary_y' : 'x', horizontal ? spec.y : [spec.x])
-  const yRef = horizontal ? spec.x : spec.y[0]!
+  const yRef = horizontal ? spec.x : primaryY
   const yType = axisType(envelope, yRef, horizontal ? 'category' : 'value')
   const yAxis = axis(envelope, yRef, yType, context, horizontal ? 'x' : 'primary_y', horizontal ? [spec.x] : spec.y)
   const stack = stackingMode(spec)
@@ -148,7 +159,8 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   const split = splitCartesianSeries(envelope, context, categoryColors)
   if (split) {
     const secondary = split.series.some((item) => (horizontal ? item.xAxisIndex : item.yAxisIndex) === 1)
-    const primaryAxis = axis(envelope, spec.y[0]!, axisType(envelope, spec.y[0]!, 'value'), context, 'primary_y', spec.y)
+    const primaryY = comboAxisField(spec, 'primary') ?? spec.y[0]!
+    const primaryAxis = axis(envelope, primaryY, axisType(envelope, primaryY, 'value'), context, 'primary_y', spec.y)
     if (stackingMode(spec) === 'percent') applyPercentAxis(primaryAxis, context)
     if (split.scrollLegend) {
       // Crowded category-series cards surrender vertical space to a paged
@@ -174,7 +186,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     ? new Map((spec.presentation.comboSeries ?? []).map((item) => [String(item.seriesValue), item]))
     : new Map<string, NonNullable<CartesianSpec['presentation']['comboSeries']>[number]>()
   const hasSecondaryComboAxis = spec.mark === 'combo' && values.some((value) => comboByField.get(value.field)?.axis === 'secondary')
-  const secondaryValue = spec.y.find((value) => comboByField.get(value.field)?.axis === 'secondary') ?? spec.y[0]!
+  const secondaryValue = comboAxisField(spec, 'secondary') ?? spec.y[0]!
   const series = values.map((value, seriesIndex) => {
     const normalizedField = normalized?.dimensions.get(value.field)
     const combo = comboByField.get(value.field)

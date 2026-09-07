@@ -6982,7 +6982,7 @@
                               "type": "string"
                             },
                             "type": {
-                              "description": "Renderer-neutral axis coordinate type. Automatic preserves the field's semantic type.",
+                              "description": "Renderer-neutral axis coordinate type. Automatic preserves the established chart-family default while temporal axes remain time axes.",
                               "enum": [
                                 "automatic",
                                 "category",
@@ -8417,7 +8417,7 @@
                               "type": "string"
                             },
                             "type": {
-                              "description": "Renderer-neutral axis coordinate type. Automatic preserves the field's semantic type.",
+                              "description": "Renderer-neutral axis coordinate type. Automatic preserves the established chart-family default while temporal axes remain time axes.",
                               "enum": [
                                 "automatic",
                                 "category",

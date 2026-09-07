@@ -172,3 +172,71 @@ func TestLowerCanonicalDecisionContextUsesCartesianXCategoryDefault(t *testing.T
 		t.Fatalf("percent primary axis display units should be rejected, error = %v", err)
 	}
 }
+
+func TestLowerCanonicalDecisionContextUsesFirstPrimaryComboOwner(t *testing.T) {
+	t.Parallel()
+
+	primaryType := visualizationir.VisualizationAxisTypeValue
+	base := visualizationir.VisualizationSpecBase{Datasets: []visualizationir.VisualizationDatasetSchema{{
+		ID: "primary", Fields: []visualizationir.VisualizationField{
+			{ID: "month", DataType: visualizationir.VisualizationDataTypeString},
+			{ID: "secondary_value", DataType: visualizationir.VisualizationDataTypeString},
+			{ID: "primary_value", DataType: visualizationir.VisualizationDataTypeDecimal},
+		},
+	}}}
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{
+		VisualizationSpecBase: base,
+		Kind:                  "cartesian",
+		Mark:                  visualizationir.VisualizationCartesianMarkCombo,
+		X:                     visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "month"},
+		Y: []visualizationir.VisualizationFieldRef{
+			{Dataset: "primary", Field: "secondary_value"},
+			{Dataset: "primary", Field: "primary_value"},
+		},
+		Presentation: visualizationir.CartesianVisualizationPresentation{ComboSeries: &[]visualizationir.VisualizationComboSeries{
+			{SeriesValue: "secondary_value", Axis: visualizationir.VisualizationAxisSecondary},
+			{SeriesValue: "primary_value", Axis: visualizationir.VisualizationAxisPrimary},
+		}},
+	}}
+	authored := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+		Type: "cartesian",
+		Axes: &[]document.DashboardAxisConfiguration{{ID: visualizationir.VisualizationCartesianAxisPrimaryY, Type: &primaryType, Scale: visualizationir.VisualizationAxisScaleAutomatic, Zero: visualizationir.VisualizationAxisZeroPolicyAutomatic, TickDensity: visualizationir.VisualizationAxisTickDensityAutomatic}},
+	}}
+	if err := lowerCanonicalDecisionContext(&spec, authored, document.DashboardVisualTypeCombo, LoweredDashboardQuery{}); err != nil {
+		t.Fatalf("primary combo owner should be taken from canonical Y order: %v", err)
+	}
+
+	allSecondary := spec
+	allSecondary.Value = &visualizationir.CartesianVisualizationSpec{
+		VisualizationSpecBase: base,
+		Kind:                  "cartesian",
+		Mark:                  visualizationir.VisualizationCartesianMarkCombo,
+		X:                     visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "month"},
+		Y:                     spec.Value.(*visualizationir.CartesianVisualizationSpec).Y,
+		Presentation:          visualizationir.CartesianVisualizationPresentation{ComboSeries: &[]visualizationir.VisualizationComboSeries{{SeriesValue: "secondary_value", Axis: visualizationir.VisualizationAxisSecondary}, {SeriesValue: "primary_value", Axis: visualizationir.VisualizationAxisSecondary}}},
+	}
+	primaryNumber := document.DashboardReferenceValue{Value: &document.NumberDashboardReferenceValue{DashboardReferenceValueBase: document.DashboardReferenceValueBase{Kind: "number"}, Kind: "number", Value: 10}}
+	for _, test := range []struct {
+		name string
+		set  func(*document.CartesianDashboardPresentation)
+		want string
+	}{
+		{name: "primary reference line", set: func(value *document.CartesianDashboardPresentation) {
+			value.ReferenceLines = &[]document.DashboardReferenceLine{{ID: "target", Axis: visualizationir.VisualizationCartesianAxisPrimaryY, Value: primaryNumber}}
+		}, want: "presentation.referenceLines[0].axis requires a primary_y combo series"},
+		{name: "x reference line owner", set: func(value *document.CartesianDashboardPresentation) {
+			value.ReferenceLines = &[]document.DashboardReferenceLine{{ID: "launch", Axis: visualizationir.VisualizationCartesianAxisX, Value: primaryNumber}}
+		}, want: "presentation.referenceLines[0].axis requires a primary_y combo series"},
+		{name: "horizontal event annotation owner", set: func(value *document.CartesianDashboardPresentation) {
+			value.EventAnnotations = &[]document.DashboardEventAnnotation{{ID: "launch", Axis: visualizationir.VisualizationCartesianAxisX, Value: primaryNumber, Label: "Launch"}}
+		}, want: "presentation.eventAnnotations[0].axis requires a primary_y combo series"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.CartesianDashboardPresentation{Type: "cartesian"}
+			test.set(value)
+			if err := lowerCanonicalDecisionContext(&allSecondary, document.DashboardPresentation{Value: value}, document.DashboardVisualTypeCombo, LoweredDashboardQuery{}); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}

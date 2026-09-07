@@ -1301,25 +1301,9 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 			if axis.ID == VisualizationCartesianAxisSecondaryY && value.Mark != VisualizationCartesianMarkCombo {
 				return fmt.Errorf("secondary_y axis requires combo mark")
 			}
-			if axis.ID == VisualizationCartesianAxisSecondaryY {
-				secondaryFound := false
-				if value.Presentation.ComboSeries != nil {
-					for _, series := range *value.Presentation.ComboSeries {
-						if series.Axis == VisualizationAxisSecondary {
-							secondaryFound = value.Series != nil
-							if !secondaryFound {
-								for _, candidate := range value.Y {
-									if candidate.Field == series.SeriesValue {
-										secondaryFound = true
-										break
-									}
-								}
-							}
-						}
-					}
-				}
-				if !secondaryFound {
-					return fmt.Errorf("axis %q requires a secondary combo series", axis.ID)
+			if value.Mark == VisualizationCartesianMarkCombo && axis.ID != VisualizationCartesianAxisX {
+				if _, found := CartesianComboAxisOwner(*value, axis.ID); !found {
+					return fmt.Errorf("axis %q requires a %s combo series", axis.ID, comboAxisOwnerName(axis.ID))
 				}
 			}
 			switch axis.Scale {
@@ -1384,23 +1368,11 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 				return fmt.Errorf("axis %q minimum must be less than maximum", axis.ID)
 			}
 			axisField := value.X
-			if axis.ID != VisualizationCartesianAxisX && len(value.Y) > 0 {
-				axisField = value.Y[0]
-				if axis.ID == VisualizationCartesianAxisSecondaryY && value.Mark == VisualizationCartesianMarkCombo && value.Series == nil {
-					if value.Presentation.ComboSeries != nil {
-					selectSecondary:
-						for _, candidate := range value.Y {
-							for _, series := range *value.Presentation.ComboSeries {
-								if series.Axis != VisualizationAxisSecondary {
-									continue
-								}
-								if candidate.Field == series.SeriesValue {
-									axisField = candidate
-									break selectSecondary
-								}
-							}
-						}
-					}
+			if axis.ID != VisualizationCartesianAxisX {
+				if value.Mark == VisualizationCartesianMarkCombo {
+					axisField, _ = CartesianComboAxisOwner(*value, axis.ID)
+				} else if len(value.Y) > 0 {
+					axisField = value.Y[0]
 				}
 			}
 			field, hasField := visualizationField(axisField, schemas)
@@ -1473,6 +1445,15 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 		if axis == VisualizationCartesianAxisSecondaryY && value.Mark != VisualizationCartesianMarkCombo {
 			return fmt.Errorf("secondary_y decision context requires combo mark")
 		}
+		if value.Mark == VisualizationCartesianMarkCombo {
+			ownerAxis := axis
+			if ownerAxis == VisualizationCartesianAxisX {
+				ownerAxis = VisualizationCartesianAxisPrimaryY
+			}
+			if _, found := CartesianComboAxisOwner(*value, ownerAxis); !found {
+				return fmt.Errorf("%s decision context requires a %s combo series", axis, comboAxisOwnerName(ownerAxis))
+			}
+		}
 		return nil
 	}
 	if value.ReferenceLines != nil {
@@ -1522,6 +1503,11 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 			}
 			if annotation.Axis != VisualizationCartesianAxisX {
 				return fmt.Errorf("event annotation %q must use x axis", annotation.ID)
+			}
+			if value.Mark == VisualizationCartesianMarkCombo {
+				if _, found := CartesianComboAxisOwner(*value, VisualizationCartesianAxisPrimaryY); !found {
+					return fmt.Errorf("event annotation %q requires a primary_y combo series", annotation.ID)
+				}
 			}
 			if strings.TrimSpace(annotation.Label) == "" {
 				return fmt.Errorf("event annotation %q requires a label", annotation.ID)
@@ -1621,6 +1607,46 @@ func cartesianMarkSupportsReferences(mark VisualizationCartesianMark) bool {
 	default:
 		return false
 	}
+}
+
+// CartesianComboAxisOwner returns the first result field that actually owns a
+// combo value axis in canonical Y order. Combo series policies may reorder the
+// ownership relative to Y[0], and a category-series combo owns the value axis
+// when at least one configured category is assigned to it.
+func CartesianComboAxisOwner(spec CartesianVisualizationSpec, axis VisualizationCartesianAxis) (VisualizationFieldRef, bool) {
+	if spec.Mark != VisualizationCartesianMarkCombo || axis == VisualizationCartesianAxisX || len(spec.Y) == 0 {
+		return VisualizationFieldRef{}, false
+	}
+	if spec.Presentation.ComboSeries == nil {
+		return spec.Y[0], axis == VisualizationCartesianAxisPrimaryY
+	}
+	wanted := VisualizationAxisPrimary
+	if axis == VisualizationCartesianAxisSecondaryY {
+		wanted = VisualizationAxisSecondary
+	}
+	if spec.Series != nil {
+		for _, series := range *spec.Presentation.ComboSeries {
+			if series.Axis == wanted {
+				return spec.Y[0], true
+			}
+		}
+		return VisualizationFieldRef{}, false
+	}
+	for _, candidate := range spec.Y {
+		for _, series := range *spec.Presentation.ComboSeries {
+			if series.Axis == wanted && series.SeriesValue == candidate.Field {
+				return candidate, true
+			}
+		}
+	}
+	return VisualizationFieldRef{}, false
+}
+
+func comboAxisOwnerName(axis VisualizationCartesianAxis) string {
+	if axis == VisualizationCartesianAxisSecondaryY {
+		return "secondary_y"
+	}
+	return "primary_y"
 }
 
 func validateVisualizationReferenceValue(value VisualizationReferenceValue) error {

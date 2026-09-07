@@ -453,6 +453,30 @@ test('ECharts translation applies combo marks and axes to multi-measure series',
     defaultRendererContext.colors.data[1],
   ])
   expect(option.grid.bottom).toBe(44)
+
+  const reordered = structuredClone(envelope) as any
+  reordered.spec.y = [reordered.spec.y[1], reordered.spec.y[0]]
+  reordered.spec.datasets[0].fields[1].dataType = 'temporal'
+  reordered.spec.datasets[0].fields[2].dataType = 'decimal'
+  reordered.spec.referenceLines = [
+    { id: 'primary-target', axis: 'primary_y', value: { kind: 'number', value: 10 }, tone: 'neutral' },
+    { id: 'secondary-target', axis: 'secondary_y', value: { kind: 'number', value: 2 }, tone: 'warning' },
+  ]
+  reordered.spec.eventAnnotations = [{ id: 'launch', axis: 'x', value: { kind: 'text', value: 'Jan' }, label: 'Launch', tone: 'neutral' }]
+  const reorderedOption = echartsOption(reordered, defaultRendererContext) as any
+  expect(reorderedOption.series.map((series: any) => [series.name, series.yAxisIndex])).toEqual([
+    ['Orders', 1], ['Revenue', 0],
+  ])
+  expect(reorderedOption.yAxis[0].type).toBe('time')
+  expect(reorderedOption.yAxis[1].type).toBe('value')
+  expect(reorderedOption.series[0].markLine.data.map((item: any) => item.id)).toEqual(['reference-line:secondary-target'])
+  expect(reorderedOption.series[1].markLine.data.map((item: any) => item.id)).toEqual(['reference-line:primary-target', 'event-annotation:launch'])
+  reordered.spec.presentation.orientation = 'horizontal'
+  const reorderedHorizontalOption = echartsOption(reordered, defaultRendererContext) as any
+  expect(reorderedHorizontalOption.xAxis[0].type).toBe('time')
+  expect(reorderedHorizontalOption.series.map((series: any) => series.xAxisIndex)).toEqual([1, 0])
+  expect(reorderedHorizontalOption.series[1].markLine.data[1]).toMatchObject({ id: 'event-annotation:launch', yAxis: 'Jan' })
+
   const temporalSecondary = structuredClone(envelope) as any
   temporalSecondary.spec.datasets[0].fields[2].dataType = 'temporal'
   temporalSecondary.spec.axes = [{

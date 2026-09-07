@@ -276,3 +276,82 @@ func TestValidateSpecEnforcesStackingAndSeriesIntent(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateSpecUsesComboAxisOwnersForContext(t *testing.T) {
+	t.Parallel()
+
+	base := VisualizationSpecBase{
+		Kind: "cartesian", Title: "Combo",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "month", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Month"},
+			{ID: "secondary_value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeString, Label: "Secondary"},
+			{ID: "primary_value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Primary"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "Combo", Description: "Combo"},
+		Interactions:  []VisualizationInteraction{},
+	}
+	axis := VisualizationAxisConfiguration{ID: VisualizationCartesianAxisPrimaryY, Type: VisualizationAxisTypeValue, Scale: VisualizationAxisScaleAutomatic, Zero: VisualizationAxisZeroPolicyAutomatic, Inversion: VisualizationAxisInversionAutomatic, TickDensity: VisualizationAxisTickDensityAutomatic, Ticks: VisualizationAxisTickVisibilityAutomatic, Grid: VisualizationAxisGridVisibilityAutomatic, LabelRotation: VisualizationAxisLabelRotationAutomatic, DateUnit: VisualizationDateDisplayUnitAutomatic}
+	number := func(value float64) VisualizationReferenceValue {
+		return VisualizationReferenceValue{Value: &NumberVisualizationReferenceValue{VisualizationReferenceValueBase: VisualizationReferenceValueBase{Kind: "number"}, Kind: "number", Value: value}}
+	}
+	valid := func() VisualizationSpec {
+		return VisualizationSpec{Value: &CartesianVisualizationSpec{
+			VisualizationSpecBase: base, Kind: "cartesian", Mark: VisualizationCartesianMarkCombo,
+			X:    VisualizationFieldRef{Dataset: "primary", Field: "month"},
+			Y:    []VisualizationFieldRef{{Dataset: "primary", Field: "secondary_value"}, {Dataset: "primary", Field: "primary_value"}},
+			Axes: &[]VisualizationAxisConfiguration{axis},
+			Presentation: CartesianVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionBottom), ComboSeries: &[]VisualizationComboSeries{
+				{SeriesValue: "secondary_value", Axis: VisualizationAxisSecondary},
+				{SeriesValue: "primary_value", Axis: VisualizationAxisPrimary},
+			}},
+		}}
+	}
+	if err := ValidateSpec(valid()); err != nil {
+		t.Fatalf("primary axis should use the first primary combo field rather than Y[0]: %v", err)
+	}
+
+	allSecondary := valid()
+	combo := allSecondary.Value.(*CartesianVisualizationSpec)
+	combo.Axes = nil
+	combo.Presentation.ComboSeries = &[]VisualizationComboSeries{
+		{SeriesValue: "secondary_value", Axis: VisualizationAxisSecondary},
+		{SeriesValue: "primary_value", Axis: VisualizationAxisSecondary},
+	}
+	for _, test := range []struct {
+		name string
+		set  func(*CartesianVisualizationSpec)
+		want string
+	}{
+		{name: "primary reference line", set: func(spec *CartesianVisualizationSpec) {
+			spec.ReferenceLines = &[]VisualizationReferenceLine{{ID: "target", Axis: VisualizationCartesianAxisPrimaryY, Value: number(10)}}
+		}, want: "primary_y decision context requires a primary_y combo series"},
+		{name: "x reference line owner", set: func(spec *CartesianVisualizationSpec) {
+			spec.ReferenceLines = &[]VisualizationReferenceLine{{ID: "launch", Axis: VisualizationCartesianAxisX, Value: number(10)}}
+		}, want: "x decision context requires a primary_y combo series"},
+		{name: "secondary reference band", set: func(spec *CartesianVisualizationSpec) {
+			spec.Presentation.ComboSeries = &[]VisualizationComboSeries{{SeriesValue: "primary_value", Axis: VisualizationAxisPrimary}}
+			spec.ReferenceBands = &[]VisualizationReferenceBand{{ID: "range", Axis: VisualizationCartesianAxisSecondaryY, From: number(1), To: number(2)}}
+		}, want: "secondary_y decision context requires a secondary_y combo series"},
+		{name: "event annotation", set: func(spec *CartesianVisualizationSpec) {
+			spec.EventAnnotations = &[]VisualizationEventAnnotation{{ID: "launch", Axis: VisualizationCartesianAxisX, Value: number(1), Label: "Launch"}}
+		}, want: "event annotation \"launch\" requires a primary_y combo series"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spec := allSecondary
+			spec.Value = &CartesianVisualizationSpec{
+				VisualizationSpecBase: combo.VisualizationSpecBase,
+				Kind:                  combo.Kind,
+				Mark:                  combo.Mark,
+				X:                     combo.X,
+				Y:                     combo.Y,
+				Axes:                  combo.Axes,
+				Presentation:          combo.Presentation,
+			}
+			test.set(spec.Value.(*CartesianVisualizationSpec))
+			if err := ValidateSpec(spec); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateSpec() error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
