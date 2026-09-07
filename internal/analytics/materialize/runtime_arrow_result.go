@@ -280,7 +280,18 @@ func (r *Runtime) planOwnedArrowQueryContext(ctx context.Context, request dataqu
 				}
 			}
 			planned.countOnly = true
-			planned.plan, err = planner.PlanCount(semanticquery.CountRequest{Dataset: request.Target, Filters: dataQueryFilters(request.Filters)})
+			if consumer != nil {
+				dimensions, metrics, projectionErr := semanticAuthorizationProjectionFields(consumer.Planner(), request)
+				if projectionErr != nil {
+					err = projectionErr
+					break
+				}
+				planned.plan, err = consumer.PlanRowsCount(semanticquery.RowRequest{
+					Dataset: request.Target, Dimensions: dimensions, Metrics: metrics, Filters: dataQueryFilters(request.Filters),
+				})
+			} else {
+				planned.plan, err = planner.PlanCount(semanticquery.CountRequest{Dataset: request.Target, Filters: dataQueryFilters(request.Filters)})
+			}
 			break
 		}
 		planned.plan, err = planner.PlanRows(semanticquery.RowRequest{
@@ -294,7 +305,9 @@ func (r *Runtime) planOwnedArrowQueryContext(ctx context.Context, request dataqu
 				// execution: both the visible rows and auxiliary count are admitted
 				// independently by the same request consumer. The public path keeps
 				// its existing one-plan transport optimization below.
-				count, countErr := planner.PlanCount(semanticquery.CountRequest{Dataset: request.Target, Filters: dataQueryFilters(request.Filters)})
+				count, countErr := consumer.PlanRowsCount(semanticquery.RowRequest{
+					Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics), Filters: dataQueryFilters(request.Filters),
+				})
 				if countErr != nil {
 					err = countErr
 				} else {

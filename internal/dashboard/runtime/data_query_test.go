@@ -36,7 +36,7 @@ func TestReportCountDataQueryPreservesAuthorizationProjection(t *testing.T) {
 	if len(request.Fields) != 0 || len(request.Metrics) != 0 {
 		t.Fatalf("physical projection = fields %#v metrics %#v, want count-only", request.Fields, request.Metrics)
 	}
-	if got := request.AuthorizationFields; len(got) != 3 || got[0].Field != "orders.order_id" || got[1].Field != "orders.customer_email" || got[2].Field != "order_value" {
+	if got := request.AuthorizationFields; len(got) != 3 || got[0].Field != "orders.order_id" || got[0].Kind != dataquery.FieldKindDimension || got[1].Field != "orders.customer_email" || got[1].Kind != dataquery.FieldKindDimension || got[2].Field != "order_value" || got[2].Kind != dataquery.FieldKindMetric {
 		t.Fatalf("authorization projection = %#v", got)
 	}
 }

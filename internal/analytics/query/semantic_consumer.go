@@ -247,6 +247,18 @@ func (consumer *SemanticAccessConsumer) Planner() *Planner {
 	return &planner
 }
 
+// PlanRowsCount plans the effective population of a row request as a
+// count-only graph. The request-bound planner carries the same compiled named
+// filters as PlanRows and admits the resulting graph through this consumer's
+// private provenance hook, so ValidatePlan can prove the exact barriers and
+// renderer output before execution.
+func (consumer *SemanticAccessConsumer) PlanRowsCount(request RowRequest) (Plan, error) {
+	if consumer == nil || consumer.planner == nil {
+		return Plan{}, fmt.Errorf("semantic access consumer is required")
+	}
+	return consumer.planner.planRowsCount(request)
+}
+
 // PrincipalID returns the authenticated principal bound to a protected
 // consumer. Public consumers intentionally have no synthetic principal.
 func (consumer *SemanticAccessConsumer) PrincipalID() string {

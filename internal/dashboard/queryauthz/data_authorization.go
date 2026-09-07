@@ -495,7 +495,11 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 	dimensions := dataFieldsToSemanticFields(request.Fields)
 	metrics := dataFieldsToSemanticFields(request.Metrics)
 	for _, field := range request.AuthorizationFields {
-		if semanticFieldIsMetric(model, field.Field) {
+		isMetric, err := authorizationFieldIsMetric(model, field)
+		if err != nil {
+			return nil, nil, err
+		}
+		if isMetric {
 			metrics = append(metrics, semanticquery.Field{Field: field.Field, Alias: field.Alias})
 		} else {
 			dimensions = append(dimensions, semanticquery.Field{Field: field.Field, Alias: field.Alias})

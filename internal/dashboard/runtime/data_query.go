@@ -41,7 +41,16 @@ func reportRowDataQuery(modelID string, request reportdef.RowQuery, includeTotal
 
 func countOnlyDataQuery(request dataquery.Query) dataquery.Query {
 	request.Operation = dataquery.OperationDashboardCount
-	request.AuthorizationFields = append(append([]dataquery.Field{}, request.Fields...), request.Metrics...)
+	authorizationFields := make([]dataquery.Field, 0, len(request.Fields)+len(request.Metrics))
+	for _, field := range request.Fields {
+		field.Kind = dataquery.FieldKindDimension
+		authorizationFields = append(authorizationFields, field)
+	}
+	for _, field := range request.Metrics {
+		field.Kind = dataquery.FieldKindMetric
+		authorizationFields = append(authorizationFields, field)
+	}
+	request.AuthorizationFields = authorizationFields
 	request.Fields = nil
 	request.Metrics = nil
 	request.Sort = nil

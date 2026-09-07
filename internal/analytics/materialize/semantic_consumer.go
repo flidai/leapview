@@ -167,17 +167,9 @@ func validateSemanticAuthorizationProjection(request dataquery.Query, consumer *
 	if planner == nil || planner.CompiledModel() == nil {
 		return fmt.Errorf("semantic authorization projection planner is unavailable")
 	}
-	dimensions := make([]semanticquery.Field, 0, len(request.AuthorizationFields))
-	metrics := make([]semanticquery.Field, 0, len(request.AuthorizationFields))
-	for _, field := range request.AuthorizationFields {
-		if strings.TrimSpace(field.Field) == "" {
-			return fmt.Errorf("semantic authorization projection contains an empty field")
-		}
-		if _, ok := planner.CompiledModel().Metric(field.Field); ok {
-			metrics = append(metrics, semanticquery.Field{Field: field.Field, Alias: field.Alias})
-			continue
-		}
-		dimensions = append(dimensions, semanticquery.Field{Field: field.Field, Alias: field.Alias})
+	dimensions, metrics, err := semanticAuthorizationProjectionFields(planner, request)
+	if err != nil {
+		return err
 	}
 	projection, err := planner.Plan(semanticquery.Request{
 		Dataset: request.Target, Dimensions: dimensions, Metrics: metrics,
@@ -190,6 +182,58 @@ func validateSemanticAuthorizationProjection(request dataquery.Query, consumer *
 		return fmt.Errorf("validate semantic count projection: %w", err)
 	}
 	return nil
+}
+
+// semanticAuthorizationProjectionFields preserves the member kind that was
+// present in the original logical projection. Count-only requests carry no
+// physical fields, so reconstructing this projection from names alone is
+// unsafe when a model has a dimension and metric with the same name.
+//
+// Empty kinds are accepted for backwards compatibility only when the name is
+// unambiguous. Ambiguous legacy references fail closed instead of silently
+// selecting the metric namespace.
+func semanticAuthorizationProjectionFields(planner *semanticquery.Planner, request dataquery.Query) ([]semanticquery.Field, []semanticquery.Field, error) {
+	if planner == nil || planner.CompiledModel() == nil {
+		return nil, nil, fmt.Errorf("semantic authorization projection planner is unavailable")
+	}
+	compiled := planner.CompiledModel()
+	dimensions := make([]semanticquery.Field, 0, len(request.AuthorizationFields))
+	metrics := make([]semanticquery.Field, 0, len(request.AuthorizationFields))
+	for _, field := range request.AuthorizationFields {
+		name := strings.TrimSpace(field.Field)
+		if name == "" {
+			return nil, nil, fmt.Errorf("semantic authorization projection contains an empty field")
+		}
+		memberKind := strings.ToLower(strings.TrimSpace(field.Kind))
+		switch memberKind {
+		case dataquery.FieldKindMetric:
+			metrics = append(metrics, semanticquery.Field{Field: field.Field, Alias: field.Alias})
+			continue
+		case dataquery.FieldKindDimension:
+			dimensions = append(dimensions, semanticquery.Field{Field: field.Field, Alias: field.Alias})
+			continue
+		case "":
+			_, metricKnown := compiled.Metric(name)
+			_, dimensionKnown := compiled.SemanticDimension(name)
+			if !dimensionKnown {
+				_, dimensionKnown = compiled.PhysicalField(name)
+			}
+			if metricKnown && dimensionKnown {
+				return nil, nil, fmt.Errorf("semantic authorization projection field %q is ambiguous between metric and dimension", name)
+			}
+			if metricKnown {
+				metrics = append(metrics, semanticquery.Field{Field: field.Field, Alias: field.Alias})
+				continue
+			}
+			// Qualified physical fields and legacy semantic dimensions are
+			// resolved by the planner's dimension path validation below.
+			dimensions = append(dimensions, semanticquery.Field{Field: field.Field, Alias: field.Alias})
+			continue
+		default:
+			return nil, nil, fmt.Errorf("semantic authorization projection field %q has unsupported kind %q", name, field.Kind)
+		}
+	}
+	return dimensions, metrics, nil
 }
 
 // semanticConsumerSink rechecks the exact admitted plan before each Arrow

@@ -186,10 +186,26 @@ func (s *semanticConsumerTestSink) WriteRecord(record arrow.RecordBatch) error {
 }
 
 func protectedConsumerFixture(t *testing.T) (*Runtime, semanticConsumerTestGovernor, *int64) {
+	return protectedConsumerFixtureWithMemberAccess(t, true)
+}
+
+func protectedConsumerFixtureWithMemberAccess(t *testing.T, allowMetric bool) (*Runtime, semanticConsumerTestGovernor, *int64) {
+	return protectedConsumerFixtureWithModelModifier(t, allowMetric, nil)
+}
+
+func protectedConsumerFixtureWithModelModifier(t *testing.T, allowMetric bool, modify func(*semanticmodel.Model)) (*Runtime, semanticConsumerTestGovernor, *int64) {
 	t.Helper()
 	literal, err := semanticmodel.NewSemanticAccessLiteral(json.Number("1"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	otherLiteral, err := semanticmodel.NewSemanticAccessLiteral(json.Number("2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metricValues, dimensionValues := []semanticmodel.SemanticAccessLiteral{literal}, []semanticmodel.SemanticAccessLiteral{otherLiteral}
+	if !allowMetric {
+		metricValues, dimensionValues = dimensionValues, metricValues
 	}
 	model := &semanticmodel.Model{
 		Name: "sales",
@@ -200,17 +216,24 @@ func protectedConsumerFixture(t *testing.T) (*Runtime, semanticConsumerTestGover
 				GrainEntity: "order",
 				Entities:    map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"id"}}},
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"id": {Field: "orders.id", Table: "orders", Name: "id", Type: "number", Datatype: semanticmodel.DataTypeInteger},
+					"id":     {Field: "orders.id", Table: "orders", Name: "id", Type: "number", Datatype: semanticmodel.DataTypeInteger},
+					"shared": {Field: "orders.shared", Table: "orders", Name: "shared", Type: "number", Datatype: semanticmodel.DataTypeInteger},
 				},
 			},
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
-			"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.id"}}},
+			"id":     {Name: "id", Datatype: semanticmodel.DataTypeInteger, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.id"}}},
+			"shared": {Name: "shared", Datatype: semanticmodel.DataTypeInteger, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.shared"}}},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"shared": {Name: "shared", Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}},
 		},
 		AccessPolicy: semanticmodel.SemanticAccessPolicy{
 			AccessGrants: map[string]semanticmodel.SemanticAccessGrantSpec{
-				"canViewAccount": {UserAttribute: "accountIds", AllowedValues: []semanticmodel.SemanticAccessLiteral{literal}},
+				"canViewAccount":   {UserAttribute: "accountIds", AllowedValues: []semanticmodel.SemanticAccessLiteral{literal}},
+				"canViewMetric":    {UserAttribute: "accountIds", AllowedValues: metricValues},
+				"canViewDimension": {UserAttribute: "accountIds", AllowedValues: dimensionValues},
 			},
 			Datasets: map[string]semanticmodel.SemanticDatasetAccessSpec{
 				"orders": {
@@ -218,8 +241,12 @@ func protectedConsumerFixture(t *testing.T) (*Runtime, semanticConsumerTestGover
 					AccessFilters:        []semanticmodel.SemanticAccessFilterSpec{{Field: "id", UserAttribute: "accountIds"}},
 				},
 			},
-			Dimensions: map[string][]string{"id": {"canViewAccount"}},
+			Dimensions: map[string][]string{"id": {"canViewAccount"}, "shared": {"canViewDimension"}},
+			Metrics:    map[string][]string{"shared": {"canViewMetric"}},
 		},
+	}
+	if modify != nil {
+		modify(model)
 	}
 	planner, err := semanticquery.NewCompiledPlanner(model)
 	if err != nil {
