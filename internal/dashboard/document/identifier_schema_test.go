@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
@@ -74,6 +75,20 @@ func TestDashboardDocumentSchemaRejectsIdentifierViolations(t *testing.T) {
 				t.Fatal("generated dashboard schema accepted identifier violation")
 			}
 		})
+	}
+}
+
+func TestDashboardDocumentSchemaRejectsRemovedKPIThresholds(t *testing.T) {
+	compiled := loadDashboardDocumentSchema(t)
+	document := loadDashboardDocumentFixture(t)
+	visual := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)
+	visual["type"] = "kpi"
+	visual["presentation"] = map[string]any{
+		"type":       "kpi",
+		"thresholds": []any{map[string]any{"value": 50, "tone": "warning"}},
+	}
+	if err := compiled.Validate(document); err == nil || !strings.Contains(err.Error(), "thresholds") {
+		t.Fatalf("generated dashboard schema accepted removed KPI thresholds: %v", err)
 	}
 }
 

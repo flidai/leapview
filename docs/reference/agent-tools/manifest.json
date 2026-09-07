@@ -13946,32 +13946,6 @@
                         },
                         "type": "array"
                       },
-                      "thresholds": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "tone": {
-                              "enum": [
-                                "neutral",
-                                "ink",
-                                "success",
-                                "warning",
-                                "danger"
-                              ],
-                              "type": "string"
-                            },
-                            "value": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "tone",
-                            "value"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      },
                       "tone": {
                         "enum": [
                           "neutral",

@@ -144,6 +144,43 @@ func TestCompileVisualsValidatesProportionalConditionalFormattingTargets(t *test
 	}
 }
 
+func TestCanonicalGeographicReferenceLayerTooltipContract(t *testing.T) {
+	t.Parallel()
+
+	for name, tooltip := range map[string]*[]string{
+		"omitted": nil,
+		"empty":   func() *[]string { values := []string{}; return &values }(),
+	} {
+		name, tooltip := name, tooltip
+		t.Run(name, func(t *testing.T) {
+			layers, err := canonicalGeographicLayers(referenceMapPresentation(tooltip), LoweredDashboardQuery{})
+			if err != nil {
+				t.Fatalf("canonicalGeographicLayers() error = %v", err)
+			}
+			if got := len(layers[0].Value.(*visualizationir.VisualizationReferenceLayer).Tooltip); got != 0 {
+				t.Fatalf("reference tooltip length = %d, want 0", got)
+			}
+		})
+	}
+
+	tooltip := []string{"state"}
+	_, err := canonicalGeographicLayers(referenceMapPresentation(&tooltip), LoweredDashboardQuery{})
+	if err == nil || !strings.Contains(err.Error(), "presentation.layers[0].tooltip") || !strings.Contains(err.Error(), "query-row locator") {
+		t.Fatalf("canonicalGeographicLayers() error = %v, want a path-bearing reference tooltip diagnostic", err)
+	}
+}
+
+func referenceMapPresentation(tooltip *[]string) *document.GeographicDashboardPresentation {
+	layers := []document.DashboardGeographicLayer{{Value: &document.DashboardReferenceGeographicLayer{
+		DashboardGeographicLayerBase: document.DashboardGeographicLayerBase{
+			DashboardGeographicLayerOptions: document.DashboardGeographicLayerOptions{ID: "boundaries", Tooltip: tooltip},
+			Kind:                            "reference",
+		},
+		Kind: "reference", GeometryAsset: "brazil_states",
+	}}}
+	return &document.GeographicDashboardPresentation{Type: "geographic", Layers: &layers}
+}
+
 func lowerPointColorScaleSpec(t *testing.T, color string, scale *document.PointDashboardColorScale) (visualizationir.VisualizationSpec, error) {
 	t.Helper()
 	authored := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
