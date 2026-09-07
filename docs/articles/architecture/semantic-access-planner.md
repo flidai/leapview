@@ -50,19 +50,19 @@ explicit scan/barrier input rendered as a derived relation on the joined side.
 This implementation does not introduce new relationship join kinds or claim
 provider-specific optimizer security guarantees.
 
-## Deferred composition
+## Consumer composition and deferred lifecycle
 
-FAI-642 must provide authoritative instance/generation, principal/group,
-registry/control, opaque assignment/verified-claim evidence, and current
-observation inputs to this planning boundary. It must also classify direct
-SQL and authoring-preview paths separately and wire discovery and consumers.
-This slice does not claim those consumers are protected merely because a
-planner barrier exists. VAL-11 remains Partial.
+FAI-642 provides the [shared consumer boundary](/docs/architecture/semantic-access-consumers)
+for authoritative instance/generation, principal/group, registry/control,
+opaque assignment evidence, and current observations. Direct SQL and
+authoring-preview paths remain separately classified. A planner barrier alone
+is not consumer authority, and raw claims are not trusted evidence.
+VAL-11 remains Partial.
 
 Authorization is sampled at plan admission. These seals do not constitute a
 runtime revocation watcher or permission to reuse an old plan after authority
-changes. Consumer execution context and policy-aware lifecycle/cache reuse
-remain separate follow-up responsibilities.
+changes. FAI-642 revalidates consumer execution and Arrow delivery;
+policy-aware lifecycle/cache reuse remains FAI-645 work.
 
 One concrete deferred path is `query.PrepareRepresentativePlans`, including
 its explicit-relationship verification helper. It constructs new planners
@@ -70,6 +70,7 @@ without semantic authority; `materialize.Runtime` uses this verification path.
 Policy-bearing models therefore fail closed there until the verification and
 consumer composition work supplies an appropriate trusted context. Even a
 configured planner's explicit-relationship verification currently constructs
-a separate candidate planner. FAI-642 must classify and wire that boundary;
-FAI-641 does not bypass admission for verification or claim protected-model
-deployment qualification.
+a separate candidate planner. This is a neutral activation-context dependency,
+not permission for FAI-642 to fabricate a subject. FAI-648/FAI-649 own the
+remaining qualification/cutover work; FAI-641 does not bypass admission for
+verification or claim protected-model deployment qualification.

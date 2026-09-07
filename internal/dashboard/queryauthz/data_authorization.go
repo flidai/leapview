@@ -33,20 +33,24 @@ type Principal struct {
 }
 
 type Options struct {
-	SnapshotFromContext   func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
-	SubjectsFromContext   func(context.Context, string) ([]access.SubjectRef, error)
-	PrincipalFromContext  func(context.Context) (Principal, bool)
-	CredentialFromContext func(context.Context) (access.APICredential, bool)
-	AuditRecorder         access.CanonicalAuditRecorder
+	InstanceID                string
+	ResolveSemanticAttributes func(context.Context) (access.SemanticAttributeResolution, error)
+	SnapshotFromContext       func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	SubjectsFromContext       func(context.Context, string) ([]access.SubjectRef, error)
+	PrincipalFromContext      func(context.Context) (Principal, bool)
+	CredentialFromContext     func(context.Context) (access.APICredential, bool)
+	AuditRecorder             access.CanonicalAuditRecorder
 }
 
 type Metrics struct {
 	queryruntime.Metrics
-	snapshotFromContext   func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
-	subjectsFromContext   func(context.Context, string) ([]access.SubjectRef, error)
-	principalFromContext  func(context.Context) (Principal, bool)
-	credentialFromContext func(context.Context) (access.APICredential, bool)
-	auditRecorder         access.CanonicalAuditRecorder
+	instanceID                string
+	resolveSemanticAttributes func(context.Context) (access.SemanticAttributeResolution, error)
+	snapshotFromContext       func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	subjectsFromContext       func(context.Context, string) ([]access.SubjectRef, error)
+	principalFromContext      func(context.Context) (Principal, bool)
+	credentialFromContext     func(context.Context) (access.APICredential, bool)
+	auditRecorder             access.CanonicalAuditRecorder
 }
 
 // Planner forwards the activation-owned planner exposed by the active runtime.
@@ -89,12 +93,14 @@ func IsDenied(err error) bool {
 
 func New(metrics queryruntime.Metrics, options Options) Metrics {
 	return Metrics{
-		Metrics:               metrics,
-		snapshotFromContext:   options.SnapshotFromContext,
-		subjectsFromContext:   options.SubjectsFromContext,
-		principalFromContext:  options.PrincipalFromContext,
-		credentialFromContext: options.CredentialFromContext,
-		auditRecorder:         options.AuditRecorder,
+		instanceID:                options.InstanceID,
+		resolveSemanticAttributes: options.ResolveSemanticAttributes,
+		Metrics:                   metrics,
+		snapshotFromContext:       options.SnapshotFromContext,
+		subjectsFromContext:       options.SubjectsFromContext,
+		principalFromContext:      options.PrincipalFromContext,
+		credentialFromContext:     options.CredentialFromContext,
+		auditRecorder:             options.AuditRecorder,
 	}
 }
 
@@ -126,9 +132,17 @@ func (m Metrics) ExecuteDataQuery(ctx context.Context, request dataquery.Query) 
 		return dataquery.Result{}, errors.New("query metrics are not configured")
 	}
 	if m.snapshotFromContext == nil {
-		return m.Metrics.ExecuteDataQuery(ctx, request)
+		bound, err := m.bindSemanticQuery(ctx, request)
+		if err != nil {
+			return rejectedDataQueryResult(err)
+		}
+		return m.Metrics.ExecuteDataQuery(bound, request)
 	}
 	governed, transform, err := m.GovernDataQuery(ctx, request)
+	if err != nil {
+		return rejectedDataQueryResult(err)
+	}
+	ctx, err = m.bindSemanticQuery(ctx, governed)
 	if err != nil {
 		return rejectedDataQueryResult(err)
 	}
@@ -154,9 +168,17 @@ func (m Metrics) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Qu
 		return dataquery.Result{}, errors.New("query metrics do not support native Arrow execution")
 	}
 	if m.snapshotFromContext == nil {
-		return executor.ExecuteDataQueryArrow(ctx, request, sink)
+		bound, err := m.bindSemanticQuery(ctx, request)
+		if err != nil {
+			return rejectedDataQueryResult(err)
+		}
+		return executor.ExecuteDataQueryArrow(bound, request, sink)
 	}
 	governed, transform, err := m.GovernDataQuery(ctx, request)
+	if err != nil {
+		return rejectedDataQueryResult(err)
+	}
+	ctx, err = m.bindSemanticQuery(ctx, governed)
 	if err != nil {
 		return rejectedDataQueryResult(err)
 	}
@@ -473,7 +495,11 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 	dimensions := dataFieldsToSemanticFields(request.Fields)
 	metrics := dataFieldsToSemanticFields(request.Metrics)
 	for _, field := range request.AuthorizationFields {
-		if semanticFieldIsMetric(model, field.Field) {
+		isMetric, err := authorizationFieldIsMetric(model, field)
+		if err != nil {
+			return nil, nil, err
+		}
+		if isMetric {
 			metrics = append(metrics, semanticquery.Field{Field: field.Field, Alias: field.Alias})
 		} else {
 			dimensions = append(dimensions, semanticquery.Field{Field: field.Field, Alias: field.Alias})

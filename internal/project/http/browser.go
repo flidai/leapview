@@ -1509,7 +1509,8 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
-	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels)
+	consumers := dataExplorerSemanticConsumers(r.Context(), h.QueryExecutor, definition)
+	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels, consumers)
 	if strictURLState && projectsignals.ValueOrZero(command.Mode) == "explore" {
 		semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.SemanticModelID))
 		if err := validateRestoredDataExploreState(exploreCommand, projection, definition.SemanticModels[semanticModelID], compiledModels); err != nil {

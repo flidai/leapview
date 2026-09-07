@@ -11,6 +11,7 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
+	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	"github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -131,11 +132,15 @@ func TestCompiledSemanticModelAdaptsActivationPlannerAndFailsClosed(t *testing.T
 
 func TestRuntimeProjectManifestMatchesActivationPlannerSnapshot(t *testing.T) {
 	model := compiledPlannerTestModel()
+	model.Sources = map[string]semanticmodel.Source{"orders": {Format: "table"}}
 	model.AIContext = &semanticmodel.AIContext{Instructions: "authoring only"}
 	discovered := model.ExecutionSnapshot()
 	table := discovered.Tables["orders"]
 	table.Schema.Columns = []semanticmodel.ColumnSchema{{Name: "order_id", PhysicalType: "BIGINT"}}
 	discovered.Tables["orders"] = table
+	if err := discovered.ResolveDiscoveredModelFields(); err != nil {
+		t.Fatal(err)
+	}
 	projectID := projectgraph.ResourceID("project:demo")
 	modelID := projectgraph.ResourceID("semantic-model:sales")
 	planner, err := semanticquery.NewCompiledPlanner(discovered)
@@ -160,12 +165,78 @@ func TestRuntimeProjectManifestMatchesActivationPlannerSnapshot(t *testing.T) {
 	runtime := dashboardRuntimeWithGraph{Service: service, projectManifest: projectmanifest.ResourceManifest{
 		SemanticModels: map[string]*semanticmodel.Model{modelID.String(): model},
 	}}
+	for index := range 3 {
+		activated, ok := runtime.SemanticModel(modelID.String())
+		if !ok || activated == nil {
+			t.Fatal("activation semantic model was unavailable")
+		}
+		if !planner.CompiledModel().MatchesModel(activated) {
+			t.Fatalf("activation semantic model fingerprint = %q, want planner %q", semanticquery.SemanticModelFingerprint(activated), planner.CompiledModel().SourceFingerprint())
+		}
+		if len(activated.Tables["orders"].Schema.Columns) != 1 {
+			t.Fatalf("activation semantic model schema = %#v, want discovered schema", activated.Tables["orders"].Schema.Columns)
+		}
+		if _, ok := activated.Sources["orders"]; !ok {
+			t.Fatalf("activation semantic model omitted runtime-safe source metadata: %#v", activated.Sources)
+		}
+		if index == 0 {
+			activated.Tables["orders"].Schema.Columns[0].Name = "mutated"
+		}
+		if index > 0 && activated.Tables["orders"].Schema.Columns[0].Name != "order_id" {
+			// The first call above deliberately mutates its detached snapshot;
+			// subsequent calls must continue to expose the activation value.
+			t.Fatalf("activation semantic model snapshot was not detached: %#v", activated.Tables["orders"].Schema.Columns)
+		}
+	}
+	consumer, err := queryauthz.New(runtime, queryauthz.Options{}).SemanticConsumer(context.Background(), modelID.String())
+	if err != nil || consumer == nil {
+		t.Fatalf("public discovered semantic consumer = %v, want success", err)
+	}
 	manifest := runtime.ProjectManifest()
 	if !planner.CompiledModel().MatchesModel(manifest.SemanticModels[modelID.String()]) {
 		t.Fatalf("runtime manifest fingerprint = %q, want activation planner %q", semanticquery.SemanticModelFingerprint(manifest.SemanticModels[modelID.String()]), planner.CompiledModel().SourceFingerprint())
 	}
 	if manifest.SemanticModels[modelID.String()].AIContext != nil {
 		t.Fatal("runtime manifest retained authoring-only semantic model context")
+	}
+}
+
+func TestActivationSemanticModelFailsClosedWithoutCoherentSnapshot(t *testing.T) {
+	model := compiledPlannerTestModel()
+	modelID := projectgraph.ResourceID("semantic-model:sales")
+	projectManifest := projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{modelID.String(): model}}
+
+	missing := dashboardRuntimeWithGraph{projectManifest: projectManifest}
+	if _, ok := missing.SemanticModel(modelID.String()); ok {
+		t.Fatal("runtime without activation planner exposed authored semantic metadata")
+	}
+
+	plannerModel := model.ExecutionSnapshot()
+	metric := plannerModel.Metrics["order_count"]
+	metric.Aggregation = "sum"
+	plannerModel.Metrics["order_count"] = metric
+	planner, err := semanticquery.NewCompiledPlanner(plannerModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID := projectgraph.ResourceID("project:demo")
+	definition, err := dashboardruntime.NewTargetBoundProjectDefinition(
+		projectID, "Demo", "", map[projectgraph.ResourceID]*semanticmodel.Model{modelID: model}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := dashboardruntime.NewFromGeneration(context.Background(), "", compiledPlannerDataRuntimeFactory{runtime: compiledPlannerDataRuntime{planner: planner}}, projectgraph.ServingIdentity{ProjectID: projectID, Environment: "dev", GenerationID: "state-1"}, definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	inconsistent := dashboardRuntimeWithGraph{Service: service, projectManifest: projectManifest}
+	if _, ok := inconsistent.SemanticModel(modelID.String()); ok {
+		t.Fatal("runtime exposed unrelated activation semantic metadata")
+	}
+	if _, err := queryauthz.New(inconsistent, queryauthz.Options{}).SemanticConsumer(context.Background(), modelID.String()); err == nil {
+		t.Fatal("query authorization admitted inconsistent activation metadata")
 	}
 }
 

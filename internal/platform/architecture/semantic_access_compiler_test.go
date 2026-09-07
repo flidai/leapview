@@ -9,7 +9,7 @@ import (
 
 // FAI-639 owns portable policy lowering, target qualification, and typed
 // evaluation. FAI-641 may consume that handoff only inside the planner;
-// FAI-642 still owns consumer composition and discovery.
+// FAI-642 owns the shared query consumer composition and discovery boundary.
 func TestSemanticAccessCompilerBoundaryRemainsClosedToConsumers(t *testing.T) {
 	root := repoRoot(t)
 	compiler := readArchitectureFixture(t, root, "internal/analytics/query/semantic_access_compile.go")
@@ -58,7 +58,7 @@ func TestSemanticAccessCompilerBoundaryRemainsClosedToConsumers(t *testing.T) {
 			return err
 		}
 		switch filepath.ToSlash(relative) {
-		case "internal/analytics/query/semantic_access_compile.go", "internal/analytics/query/semantic_access_evaluate.go", "internal/analytics/query/semantic_access_planner.go":
+		case "internal/analytics/query/semantic_access_compile.go", "internal/analytics/query/semantic_access_evaluate.go", "internal/analytics/query/semantic_access_planner.go", "internal/analytics/query/semantic_consumer.go":
 		default:
 			if compileCount != 0 || evaluateCount != 0 {
 				t.Errorf("semantic access bypasses the planner handoff in %s", relative)
@@ -71,10 +71,10 @@ func TestSemanticAccessCompilerBoundaryRemainsClosedToConsumers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if compileCalls != 2 || evaluateCalls != 2 {
-		t.Fatalf("expected one compiler/evaluator declaration and one planner call each: compile=%d evaluate=%d", compileCalls, evaluateCalls)
+	if compileCalls != 3 || evaluateCalls != 3 {
+		t.Fatalf("expected one declaration and calls only from planner and shared consumer: compile=%d evaluate=%d", compileCalls, evaluateCalls)
 	}
 	if admissionCalls != 1 {
-		t.Fatalf("expected planner admission declaration only; FAI-642 consumer composition is deferred: declarations/calls=%d", admissionCalls)
+		t.Fatalf("expected planner admission declaration only; consumer retains the same private planner policy/provider: declarations/calls=%d", admissionCalls)
 	}
 }

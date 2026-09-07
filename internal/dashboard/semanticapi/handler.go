@@ -41,6 +41,17 @@ var errSemanticAuthorizationUnavailable = errors.New("semantic model authorizati
 var errSemanticModelActivationUnavailable = errors.New("active semantic model planner is unavailable")
 
 func (h Handler) authorizeSemanticModel(r *nethttp.Request, modelID string) (bool, error) {
+	allowed, err := h.authorizeSemanticModelResource(r, modelID)
+	if err != nil || !allowed {
+		return allowed, err
+	}
+	if err := authorizeSemanticModelProjection(r.Context(), h.Metrics, modelID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (h Handler) authorizeSemanticModelResource(r *nethttp.Request, modelID string) (bool, error) {
 	if h.AuthorizeListResource == nil {
 		return false, errSemanticAuthorizationUnavailable
 	}
@@ -102,6 +113,15 @@ func (h Handler) semanticModelForRequest(w nethttp.ResponseWriter, r *nethttp.Re
 		return nil, false
 	}
 	modelID := chi.URLParam(r, "model")
+	allowed, err := h.authorizeSemanticModelResource(r, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return nil, false
+	}
+	if !allowed {
+		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
+		return nil, false
+	}
 	model := semanticModelForID(metrics, modelID)
 	if model == nil {
 		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)

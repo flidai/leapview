@@ -16,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmodule "github.com/flidai/leapview/internal/project/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 )
@@ -110,6 +111,7 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		catalog, err := projectcatalog.NewService(
 			projectCatalogLeaseProvider{provider: options.RuntimeHost.Provider()},
 			projectCatalogSubjectResolver{resolve: options.AccessModule.AuthorizationSubjects},
+			projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility("lvinst_test", options.AccessModule.ResolveSemanticAttributes)),
 		)
 		if err != nil {
 			panic(err)

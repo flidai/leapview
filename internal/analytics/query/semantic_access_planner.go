@@ -36,7 +36,15 @@ type semanticAccessMemberRef struct {
 
 type semanticAccessAdmission struct {
 	Policies       map[string]planir.SecurityPolicy
+	PolicyDigest   string
 	DecisionDigest string
+}
+
+func (p *Planner) captureSemanticAccessAdmission(graph *planir.Graph, admission semanticAccessAdmission) error {
+	if p == nil || p.semanticAccessAdmissionHook == nil {
+		return nil
+	}
+	return p.semanticAccessAdmissionHook(graph, admission)
 }
 
 // securePlanGraph is the one query-side admission boundary. It validates the
@@ -55,7 +63,11 @@ func (p *Planner) securePlanGraph(graph *planir.Graph, members ...semanticAccess
 		return semanticAccessAdmission{}, fmt.Errorf("compiled semantic model snapshot is required")
 	}
 	if model.AccessPolicy.Empty() {
-		return semanticAccessAdmission{}, nil
+		admission := semanticAccessAdmission{}
+		if err := p.captureSemanticAccessAdmission(graph, admission); err != nil {
+			return semanticAccessAdmission{}, err
+		}
+		return admission, nil
 	}
 	if p.semanticAccessPolicy == nil || p.semanticAccessPolicy.Digest() == "" || p.semanticAccessProvider == nil {
 		return semanticAccessAdmission{}, fmt.Errorf("policy-bearing semantic model requires semantic access authority")
@@ -82,6 +94,9 @@ func (p *Planner) securePlanGraph(graph *planir.Graph, members ...semanticAccess
 	decision, err := EvaluateSemanticAccess(qualified, snapshot, current)
 	if err != nil {
 		return semanticAccessAdmission{}, fmt.Errorf("evaluate semantic access: %w", err)
+	}
+	if p.semanticAccessExpectedDecisionDigest != "" && decision.IdentityDigest != p.semanticAccessExpectedDecisionDigest {
+		return semanticAccessAdmission{}, fmt.Errorf("semantic access authority decision is stale or inconsistent")
 	}
 
 	refs := append([]semanticAccessMemberRef(nil), members...)
@@ -117,12 +132,20 @@ func (p *Planner) securePlanGraph(graph *planir.Graph, members ...semanticAccess
 		policies[dataset] = planir.SecurityPolicy{PolicyDigest: qualified.Digest(), DecisionDigest: decision.IdentityDigest, Predicate: predicate}
 	}
 	if len(policies) == 0 {
-		return semanticAccessAdmission{DecisionDigest: decision.IdentityDigest}, nil
+		admission := semanticAccessAdmission{PolicyDigest: qualified.Digest(), DecisionDigest: decision.IdentityDigest}
+		if err := p.captureSemanticAccessAdmission(graph, admission); err != nil {
+			return semanticAccessAdmission{}, err
+		}
+		return admission, nil
 	}
 	if err := planir.ApplySecurityBarriers(graph, policies); err != nil {
 		return semanticAccessAdmission{}, fmt.Errorf("apply semantic access barriers: %w", err)
 	}
-	return semanticAccessAdmission{Policies: policies, DecisionDigest: decision.IdentityDigest}, nil
+	admission := semanticAccessAdmission{Policies: policies, PolicyDigest: qualified.Digest(), DecisionDigest: decision.IdentityDigest}
+	if err := p.captureSemanticAccessAdmission(graph, admission); err != nil {
+		return semanticAccessAdmission{}, err
+	}
+	return admission, nil
 }
 
 func admitSemanticMembers(p *Planner, decision *SemanticAccessDecision, refs []semanticAccessMemberRef) error {

@@ -13,8 +13,11 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -201,6 +204,11 @@ func (f testRuntimeFactory) Prepare(_ context.Context, input runtimehost.Runtime
 	if err != nil {
 		return nil, err
 	}
+	model := testSemanticModel()
+	planner, err := semanticquery.NewCompiledPlanner(model)
+	if err != nil {
+		return nil, fmt.Errorf("compile test semantic model: %w", err)
+	}
 	bindings := make([]accesssnapshot.RoleBinding, 0, len(f.subjects))
 	for _, subject := range f.subjects {
 		sum := sha256.Sum256([]byte(subject.subject.ID + "\x00" + string(subject.role)))
@@ -213,12 +221,17 @@ func (f testRuntimeFactory) Prepare(_ context.Context, input runtimehost.Runtime
 	if err != nil {
 		return nil, err
 	}
-	return testPreparedRuntime{authorization: authorization, snapshotID: input.State.DuckLakeSnapshotID}, nil
+	return testPreparedRuntime{
+		authorization: authorization, snapshotID: input.State.DuckLakeSnapshotID,
+		semanticModel: model, compiledModel: planner.CompiledModel(),
+	}, nil
 }
 
 type testPreparedRuntime struct {
 	authorization accesssnapshot.AuthorizationSnapshot
 	snapshotID    int64
+	semanticModel *semanticmodel.Model
+	compiledModel *semanticquery.CompiledModel
 }
 
 func (r testPreparedRuntime) Close() error { return nil }
@@ -226,6 +239,26 @@ func (r testPreparedRuntime) AuthorizationSnapshot() accesssnapshot.Authorizatio
 	return r.authorization
 }
 func (r testPreparedRuntime) DuckLakeSnapshotID() int64 { return r.snapshotID }
+
+// ProjectManifest and CompiledSemanticModel make the app fixture expose the
+// same activation-owned semantic metadata that the public catalog consumes in
+// production. Keeping both facts on one prepared runtime prevents tests from
+// accidentally making catalog visibility public without a compiled source.
+func (r testPreparedRuntime) ProjectManifest() projectmanifest.ResourceManifest {
+	if r.semanticModel == nil {
+		return projectmanifest.ResourceManifest{}
+	}
+	return projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{
+		"test": r.semanticModel.ExecutionSnapshot(),
+	}}
+}
+
+func (r testPreparedRuntime) CompiledSemanticModel(modelID string) (*semanticquery.CompiledModel, bool) {
+	if modelID != "test" || r.compiledModel == nil {
+		return nil, false
+	}
+	return r.compiledModel, true
+}
 
 type testRuntimeAuthorizationInstaller struct{}
 

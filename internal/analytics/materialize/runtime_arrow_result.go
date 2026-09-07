@@ -42,8 +42,16 @@ func rowPlanWithTotal(plan semanticquery.Plan) (semanticquery.Plan, error) {
 }
 
 func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dataquery.Query, transform dataquery.ResultTransformer) (dataquery.Result, error) {
+	state, snapshotErr := r.requireSemanticProtectionState()
+	if snapshotErr != nil {
+		return dataquery.Result{}, snapshotErr
+	}
 	cacheStarted := cacheObservationStarted(ctx, time.Now())
-	cacheable := dashboardQueryResultCacheable(request)
+	// Protected semantic results cannot enter the shared immutable-result path
+	// until lifecycle-bound cache evidence is available (FAI-645). They still
+	// execute through the request consumer and are validated immediately before
+	// every physical capture.
+	cacheable := dashboardQueryResultCacheable(request) && !state.protected
 	var planned plannedArrowQuery
 	var planErr error
 	admissionReason := dataquery.CacheAdmissionReasonQueryNotCacheable
@@ -51,7 +59,7 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionBypassed, admissionReason)
 	}
 	if cacheable {
-		planned, planErr = r.planOwnedArrowQuery(request)
+		planned, planErr = r.planOwnedArrowQueryContext(ctx, request)
 		var resultIdentity semanticquery.ResultIdentity
 		var resultIdentityErr error
 		if planErr == nil {
@@ -90,7 +98,7 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		summary, err := admitPhysicalQuery(execCtx, request, func(queryCtx context.Context) (dataquery.Result, error) {
 			if !cacheable {
 				var planningErr error
-				current, planningErr = r.planOwnedArrowQuery(request)
+				current, planningErr = r.planOwnedArrowQueryContext(queryCtx, request)
 				if planningErr != nil {
 					return dataquery.Result{PlanningMS: current.planningMS}, planningErr
 				}
@@ -108,7 +116,7 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 			}
 			queryCtx, connectionWait := dataquery.WithConnectionWaitCounter(queryCtx)
 			databaseStarted := time.Now()
-			data, queryErr := r.captureArrowPlan(queryCtx, current.plan)
+			data, queryErr := r.captureArrowPlan(queryCtx, request, current.plan)
 			databaseMS := elapsedStageMS(databaseStarted)
 			waitMS := connectionWait.Duration().Milliseconds()
 			if waitMS >= databaseMS {
@@ -130,7 +138,7 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 			}
 			if request.IncludeTotal && !execution.metadata.TotalRowsKnown && current.countPlan != nil {
 				countStarted := time.Now()
-				countData, countErr := r.captureArrowPlan(queryCtx, *current.countPlan)
+				countData, countErr := r.captureArrowPlan(queryCtx, request, *current.countPlan)
 				result.DatabaseMS += elapsedStageMS(countStarted)
 				if countErr != nil {
 					return result, countErr
@@ -214,7 +222,10 @@ func (r *Runtime) dependencyForPlan(plan semanticquery.Plan) (resultidentity.Dep
 	return r.dependencyForProjection(projection)
 }
 
-func (r *Runtime) captureArrowPlan(ctx context.Context, plan semanticquery.Plan) (*arrowresult.Result, error) {
+func (r *Runtime) captureArrowPlan(ctx context.Context, request dataquery.Query, plan semanticquery.Plan) (*arrowresult.Result, error) {
+	if err := r.validateSemanticPlan(ctx, request, plan); err != nil {
+		return nil, err
+	}
 	db, ok := r.db.(arrowDatabase)
 	if !ok {
 		return nil, fmt.Errorf("analytical database does not support native Arrow execution")
@@ -225,12 +236,25 @@ func (r *Runtime) captureArrowPlan(ctx context.Context, plan semanticquery.Plan)
 		collector.Abort()
 		return nil, err
 	}
+	// Buffered Arrow capture has no guarded sink between the database and the
+	// eventual result release. Recheck the request-bound admission after the
+	// database has finished writing, before Finish transfers ownership to the
+	// caller; an authority change during execution must not publish captured
+	// rows.
+	if err := r.validateSemanticPlan(ctx, request, plan); err != nil {
+		collector.Abort()
+		return nil, err
+	}
 	return collector.Finish()
 }
 
 func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuery, error) {
+	return r.planOwnedArrowQueryContext(context.Background(), request)
+}
+
+func (r *Runtime) planOwnedArrowQueryContext(ctx context.Context, request dataquery.Query) (plannedArrowQuery, error) {
 	started := time.Now()
-	planner, plannerErr := r.queryPlanner()
+	planner, consumer, plannerErr := r.semanticPlannerForRequest(ctx, request)
 	if plannerErr != nil {
 		return plannedArrowQuery{}, plannerErr
 	}
@@ -250,8 +274,24 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 				err = fmt.Errorf("table count is unavailable because its authorization projection contains masked fields")
 				break
 			}
+			if consumer != nil {
+				if err = validateSemanticAuthorizationProjection(request, consumer); err != nil {
+					break
+				}
+			}
 			planned.countOnly = true
-			planned.plan, err = planner.PlanCount(semanticquery.CountRequest{Dataset: request.Target, Filters: dataQueryFilters(request.Filters)})
+			if consumer != nil {
+				dimensions, metrics, projectionErr := semanticAuthorizationProjectionFields(consumer.Planner(), request)
+				if projectionErr != nil {
+					err = projectionErr
+					break
+				}
+				planned.plan, err = consumer.PlanRowsCount(semanticquery.RowRequest{
+					Dataset: request.Target, Dimensions: dimensions, Metrics: metrics, Filters: dataQueryFilters(request.Filters),
+				})
+			} else {
+				planned.plan, err = planner.PlanCount(semanticquery.CountRequest{Dataset: request.Target, Filters: dataQueryFilters(request.Filters)})
+			}
 			break
 		}
 		planned.plan, err = planner.PlanRows(semanticquery.RowRequest{
@@ -260,6 +300,21 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,
 		})
 		if err == nil && request.IncludeTotal {
+			if consumer != nil {
+				// Total rows are an explicitly safe two-plan rewrite for protected
+				// execution: both the visible rows and auxiliary count are admitted
+				// independently by the same request consumer. The public path keeps
+				// its existing one-plan transport optimization below.
+				count, countErr := consumer.PlanRowsCount(semanticquery.RowRequest{
+					Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics), Filters: dataQueryFilters(request.Filters),
+				})
+				if countErr != nil {
+					err = countErr
+				} else {
+					planned.countPlan = &count
+				}
+				break
+			}
 			planned.plan, err = rowPlanWithTotal(planned.plan)
 			planned.totalFromData = true
 			if err == nil {
