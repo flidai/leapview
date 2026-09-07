@@ -114,7 +114,7 @@ func authorizeSemanticDatasetMembers(ctx context.Context, metrics Metrics, model
 	for _, field := range sortedMapKeys(table.Dimensions) {
 		// Table dimensions are physical fields even when a same-named metric
 		// exists in the semantic namespace; never infer kind from the name.
-		if err := authorizeSemanticField(ctx, metrics, modelID, datasetID, field); err != nil {
+		if err := authorizeSemanticField(ctx, metrics, modelID, datasetID, datasetID+"."+field); err != nil {
 			return err
 		}
 	}
@@ -147,7 +147,7 @@ func (h Handler) ListSemanticFields(w nethttp.ResponseWriter, r *nethttp.Request
 		if field.Kind == "metric" {
 			fieldErr = authorizeSemanticTarget(ctx, h.Metrics, modelID, semanticquery.SemanticAccessTarget{Dataset: datasetID, Metric: field.Name})
 		} else {
-			fieldErr = authorizeSemanticField(ctx, h.Metrics, modelID, datasetID, field.Name)
+			fieldErr = authorizeSemanticField(ctx, h.Metrics, modelID, datasetID, field.ID)
 		}
 		if fieldErr != nil {
 			if protectedSemanticModel(h.Metrics, modelID) && semanticMemberDenied(fieldErr) {

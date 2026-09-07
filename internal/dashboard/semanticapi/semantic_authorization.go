@@ -265,7 +265,7 @@ func authorizeSemanticRequest(ctx context.Context, metrics Metrics, modelID stri
 	for _, field := range dimensions {
 		fieldDataset, fieldName := dataset, field.Field
 		if fieldDataset == "" {
-			fieldDataset, fieldName = qualifiedSemanticMember(field.Field)
+			fieldDataset, _ = qualifiedSemanticMember(field.Field)
 			if fieldDataset == "" {
 				continue
 			}
@@ -277,7 +277,7 @@ func authorizeSemanticRequest(ctx context.Context, metrics Metrics, modelID stri
 	if timeField != "" {
 		fieldDataset, fieldName := dataset, timeField
 		if fieldDataset == "" {
-			fieldDataset, fieldName = qualifiedSemanticMember(timeField)
+			fieldDataset, _ = qualifiedSemanticMember(timeField)
 		}
 		if fieldDataset != "" {
 			if err := authorizeSemanticField(ctx, metrics, modelID, fieldDataset, fieldName); err != nil {
@@ -302,7 +302,7 @@ func authorizeSemanticFilter(ctx context.Context, metrics Metrics, modelID strin
 	dataset := filter.Dataset
 	field := filter.Field
 	if dataset == "" {
-		dataset, field = qualifiedSemanticMember(field)
+		dataset, _ = qualifiedSemanticMember(field)
 	}
 	if dataset != "" && field != "" {
 		if err := authorizeSemanticField(ctx, metrics, modelID, dataset, field); err != nil {
@@ -311,14 +311,21 @@ func authorizeSemanticFilter(ctx context.Context, metrics Metrics, modelID strin
 	}
 	if filter.Spatial != nil {
 		spatialDataset := filter.Spatial.Dataset
-		if spatialDataset == "" {
-			spatialDataset = dataset
-		}
 		for _, field := range []string{filter.Spatial.LatitudeField, filter.Spatial.LongitudeField} {
-			if field == "" || spatialDataset == "" {
+			if field == "" {
 				continue
 			}
-			if err := authorizeSemanticField(ctx, metrics, modelID, spatialDataset, field); err != nil {
+			fieldDataset := spatialDataset
+			if fieldDataset == "" {
+				fieldDataset = dataset
+			}
+			if fieldDataset == "" {
+				fieldDataset, _ = qualifiedSemanticMember(field)
+			}
+			if fieldDataset == "" {
+				continue
+			}
+			if err := authorizeSemanticField(ctx, metrics, modelID, fieldDataset, field); err != nil {
 				return err
 			}
 		}

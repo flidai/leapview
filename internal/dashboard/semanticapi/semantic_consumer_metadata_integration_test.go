@@ -252,8 +252,11 @@ func semanticMetadataConsumerFixtureWithRole(t *testing.T, includeRole bool) (*s
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
-			"allowed": {Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.allowed"}}},
-			"denied":  {Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.denied"}}},
+			// Keep the authorized semantic identity distinct from the physical
+			// field name. The colliding semantic member below intentionally uses
+			// the short name allowed but binds to the denied physical field.
+			"logicalAllowed": {Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.allowed"}}},
+			"allowed":        {Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.denied"}}},
 		},
 		AccessPolicy: semanticmodel.SemanticAccessPolicy{
 			AccessGrants: map[string]semanticmodel.SemanticAccessGrantSpec{
@@ -262,8 +265,8 @@ func semanticMetadataConsumerFixtureWithRole(t *testing.T, includeRole bool) (*s
 			},
 			Datasets: map[string]semanticmodel.SemanticDatasetAccessSpec{"orders": {RequiredAccessGrants: []string{"view_allowed"}}},
 			Dimensions: map[string][]string{
-				"allowed": {"view_allowed"},
-				"denied":  {"view_denied"},
+				"logicalAllowed": {"view_allowed"},
+				"allowed":        {"view_denied"},
 			},
 		},
 	}
