@@ -102,6 +102,34 @@ func TestCompileVisualsRejectsQuantitativePointColorOnDimension(t *testing.T) {
 	}
 }
 
+func TestCompileVisualsSupportsDynamicCategorySeriesIntent(t *testing.T) {
+	intents := []document.DashboardSeriesIntent{{Value: "category-omitted-at-compile-time"}}
+	visual := document.DashboardVisual{
+		Type: document.DashboardVisualTypeLine,
+		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+			Type:       "aggregate",
+			Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}, {String: stringPtr("purchaseDate")}},
+			Metrics:    []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", SeriesIntent: &intents}},
+	}
+	compiled, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"line": visual})
+	if err != nil {
+		t.Fatalf("compileVisuals() dynamic category-series error = %v", err)
+	}
+	definition := compiled["line"]
+	if definition.Query.ResultShape != visualizationdefinition.ResultCategorySeriesValue || definition.Query.Aggregate == nil || definition.Query.Aggregate.Series == nil || definition.Query.Aggregate.Series.Alias != "purchaseDate" {
+		t.Fatalf("dynamic category-series query = %#v", definition.Query)
+	}
+	spec, ok := definition.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	if !ok || spec.Mark != visualizationir.VisualizationCartesianMarkLine || spec.Series == nil || spec.Series.Field != "purchaseDate" {
+		t.Fatalf("dynamic category-series spec = %#v", definition.Spec.Value)
+	}
+	if spec.Presentation.SeriesIntent == nil || len(*spec.Presentation.SeriesIntent) != 1 || (*spec.Presentation.SeriesIntent)[0].Value != "category-omitted-at-compile-time" {
+		t.Fatalf("dynamic category-series intent = %#v", spec.Presentation.SeriesIntent)
+	}
+}
+
 func TestCompileVisualsAcceptsOnePointMarkFillAndRejectsDuplicate(t *testing.T) {
 	t.Parallel()
 

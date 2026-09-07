@@ -62471,6 +62471,16 @@ components:
             - axis: primary
               field: example
               mark: line
+        seriesIntent:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardSeriesIntent'
+          description: Stable per-series color and order policy. Category values may
+            be data-dependent for non-combo Cartesian series.
+          example:
+            - color: accent
+              order: 1
+              value: example
         axes:
           type: array
           items:
@@ -62577,6 +62587,10 @@ components:
           - axis: primary
             field: example
             mark: line
+        seriesIntent:
+          - color: accent
+            order: 1
+            value: example
         showSymbols: true
         smooth: true
         stacking: none
@@ -70484,6 +70498,25 @@ components:
         - single
         - multiple
       example: single
+    DashboardSeriesIntent:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          example: example
+        order:
+          type: integer
+          format: int32
+          example: 1
+        color:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+      description: A stable renderer-neutral policy for one named chart series.
+      example:
+        color: accent
+        order: 1
+        value: example
     DashboardSlicerComponentResponse:
       type: object
       allOf:

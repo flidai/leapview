@@ -1902,10 +1902,16 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 			}
 		}
 	}
+	if err := validateCartesianComboMetricCompleteness(*value); err != nil {
+		return err
+	}
 	return nil
 }
 
 func validateCartesianSeriesPresentation(spec CartesianVisualizationSpec) error {
+	if err := validateCartesianComboSeries(spec); err != nil {
+		return err
+	}
 	stacking := VisualizationStackingModeNone
 	if spec.Presentation.Stacked {
 		stacking = VisualizationStackingModeNormal
@@ -1941,30 +1947,128 @@ func validateCartesianSeriesPresentation(spec CartesianVisualizationSpec) error 
 	if spec.Presentation.SeriesIntent == nil {
 		return nil
 	}
-	if spec.Series == nil && len(spec.Y) < 2 {
-		return fmt.Errorf("series intent requires multiple series")
+	if len(*spec.Presentation.SeriesIntent) == 0 {
+		return fmt.Errorf("series intent must contain at least one intent")
 	}
 	values := map[string]struct{}{}
 	orders := map[int32]struct{}{}
-	for _, intent := range *spec.Presentation.SeriesIntent {
-		if strings.TrimSpace(intent.Value) == "" {
-			return fmt.Errorf("series intent value is required")
+	for index, intent := range *spec.Presentation.SeriesIntent {
+		rawValue := intent.Value
+		value := strings.TrimSpace(rawValue)
+		if rawValue != value {
+			return fmt.Errorf("series intent[%d].value %q must not contain surrounding whitespace", index, rawValue)
 		}
-		if _, exists := values[intent.Value]; exists {
-			return fmt.Errorf("duplicate series intent %q", intent.Value)
+		if value == "" {
+			return fmt.Errorf("series intent[%d].value is required", index)
 		}
-		values[intent.Value] = struct{}{}
+		if _, exists := values[value]; exists {
+			return fmt.Errorf("duplicate series intent %q at index %d", value, index)
+		}
+		values[value] = struct{}{}
 		if intent.Order != nil {
+			if spec.Series == nil && len(spec.Y) == 1 {
+				return fmt.Errorf("series intent[%d].order cannot be used with a single metric", index)
+			}
 			if *intent.Order < 0 {
-				return fmt.Errorf("series intent %q has negative order", intent.Value)
+				return fmt.Errorf("series intent[%d] %q has negative order %d", index, value, *intent.Order)
 			}
 			if _, exists := orders[*intent.Order]; exists {
-				return fmt.Errorf("duplicate series order %d", *intent.Order)
+				return fmt.Errorf("duplicate series order %d at index %d", *intent.Order, index)
 			}
 			orders[*intent.Order] = struct{}{}
 		}
 		if intent.Color != nil && !validVisualizationColorIntent(*intent.Color) {
-			return fmt.Errorf("series intent %q has unsupported color %q", intent.Value, *intent.Color)
+			return fmt.Errorf("series intent[%d].color %q is unsupported", index, *intent.Color)
+		}
+		if spec.Series == nil {
+			found := false
+			for _, field := range spec.Y {
+				if strings.TrimSpace(field.Field) == value {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("series intent %q is not a compiled metric field", value)
+			}
+		}
+	}
+	return nil
+}
+
+// validateCartesianComboSeries keeps combo policies closed at the IR boundary
+// even when callers bypass Dashboard authoring. Combo marks are measure-only:
+// their policies must configure compiled Y metric fields, not a dynamic
+// category-series binding.
+func validateCartesianComboSeries(spec CartesianVisualizationSpec) error {
+	if spec.Mark == VisualizationCartesianMarkCombo && spec.Series != nil {
+		return fmt.Errorf("combo.series cannot use a dynamic category series; configure compiled metric aliases in combo series")
+	}
+	if spec.Presentation.ComboSeries == nil {
+		return nil
+	}
+	if spec.Mark != VisualizationCartesianMarkCombo {
+		return fmt.Errorf("combo series presentation requires combo mark")
+	}
+	if len(*spec.Presentation.ComboSeries) == 0 {
+		return fmt.Errorf("combo series presentation requires at least one series")
+	}
+	seen := make(map[string]int, len(*spec.Presentation.ComboSeries))
+	allowedY := make(map[string]struct{}, len(spec.Y))
+	for _, field := range spec.Y {
+		allowedY[field.Field] = struct{}{}
+	}
+	hasBar, hasColumn := false, false
+	for index, series := range *spec.Presentation.ComboSeries {
+		rawValue := series.SeriesValue
+		value := strings.TrimSpace(rawValue)
+		if rawValue != value {
+			return fmt.Errorf("combo series[%d].seriesValue %q must not contain surrounding whitespace", index, rawValue)
+		}
+		if value == "" {
+			return fmt.Errorf("combo series %d requires a series value", index)
+		}
+		if previous, exists := seen[value]; exists {
+			return fmt.Errorf("duplicate combo series value %q at series %d (already configured at series %d)", value, index, previous)
+		}
+		seen[value] = index
+		switch series.Mark {
+		case "", VisualizationCartesianMarkLine, VisualizationCartesianMarkArea:
+		case VisualizationCartesianMarkBar:
+			hasBar = true
+		case VisualizationCartesianMarkColumn:
+			hasColumn = true
+		default:
+			return fmt.Errorf("combo series %q has unsupported mark %q", value, series.Mark)
+		}
+		switch series.Axis {
+		case VisualizationAxisPrimary, VisualizationAxisSecondary:
+		default:
+			return fmt.Errorf("combo series %q has unsupported axis %q", value, series.Axis)
+		}
+		if spec.Series == nil {
+			if _, exists := allowedY[value]; !exists {
+				return fmt.Errorf("combo series %q is not a compiled metric field", value)
+			}
+		}
+	}
+	if hasBar && hasColumn {
+		return fmt.Errorf("combo series cannot mix bar and column marks because they require different orientations")
+	}
+	return nil
+}
+
+func validateCartesianComboMetricCompleteness(spec CartesianVisualizationSpec) error {
+	if spec.Mark != VisualizationCartesianMarkCombo || spec.Series != nil || spec.Presentation.ComboSeries == nil {
+		return nil
+	}
+	configured := make(map[string]struct{}, len(*spec.Presentation.ComboSeries))
+	for _, series := range *spec.Presentation.ComboSeries {
+		configured[strings.TrimSpace(series.SeriesValue)] = struct{}{}
+	}
+	for _, field := range spec.Y {
+		if _, ok := configured[strings.TrimSpace(field.Field)]; !ok {
+			return fmt.Errorf("combo series must configure every compiled metric exactly once (missing %q)", field.Field)
 		}
 	}
 	return nil

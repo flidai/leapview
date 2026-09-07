@@ -120,11 +120,11 @@ Cartesian marks all support the common `labels`, `labelPosition`, `displayUnits`
 
 | Mark | Mark-specific presentation fields |
 | --- | --- |
-| Line | `legend`, `stacking`, `orientation`, `showSymbols`, `smooth`, `step`, `dataZoom`, `symbolSize`, `referenceLines`, `referenceBands`, `eventAnnotations` |
-| Area | `legend`, `stacking`, `orientation`, `showSymbols`, `smooth`, `step`, `dataZoom`, `symbolSize`, `referenceLines`, `referenceBands`, `eventAnnotations` |
-| Bar | `legend`, `stacking`, `dataZoom`, `referenceLines`, `referenceBands`, `eventAnnotations` |
-| Column | `legend`, `stacking`, `orientation`, `dataZoom`, `referenceLines`, `referenceBands`, `eventAnnotations` |
-| Combo | `legend`, `stacking`, `orientation`, `dataZoom`, `series`, `referenceLines`, `referenceBands`, `eventAnnotations`; conditional line controls (`showSymbols`, `smooth`, `step`, `symbolSize`) apply with the default line series or when a configured series is line or area |
+| Line | `legend`, `stacking`, `orientation`, `showSymbols`, `smooth`, `step`, `dataZoom`, `symbolSize`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Area | `legend`, `stacking`, `orientation`, `showSymbols`, `smooth`, `step`, `dataZoom`, `symbolSize`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Bar | `legend`, `stacking`, `dataZoom`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Column | `legend`, `stacking`, `orientation`, `dataZoom`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Combo | `legend`, `stacking`, `orientation`, `dataZoom`, `series`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations`; conditional line controls (`showSymbols`, `smooth`, `step`, `symbolSize`) apply with the default line series or when a configured series is line or area |
 | Waterfall | `dataZoom`, `referenceLines`, `referenceBands`, `eventAnnotations` |
 | Heatmap | No additional mark-specific fields |
 | Histogram | `dataZoom` |

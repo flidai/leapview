@@ -580,6 +580,13 @@ model DashboardComboSeries {
   axis: DashboardComboSeriesAxis;
 }
 
+/** A stable renderer-neutral policy for one named chart series. */
+model DashboardSeriesIntent {
+  value: string;
+  order?: int32;
+  color?: LeapViewVisualization.VisualizationColorIntent;
+}
+
 /** A renderer-neutral color or icon intent applied by a conditional rule. */
 model DashboardConditionalStyle {
   color?: LeapViewVisualization.VisualizationColorIntent;
@@ -725,6 +732,8 @@ model CartesianDashboardPresentation extends DashboardPresentation {
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
   /** Explicit per-measure marks and axis assignments for combo visuals. */
   series?: DashboardComboSeries[];
+  /** Stable per-series color and order policy. Category values may be data-dependent for non-combo Cartesian series. */
+  seriesIntent?: DashboardSeriesIntent[];
   axes?: DashboardAxisConfiguration[];
   referenceLines?: DashboardReferenceLine[];
   referenceBands?: DashboardReferenceBand[];

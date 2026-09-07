@@ -19,6 +19,7 @@ func TestLowerCanonicalCartesianPresentationRejectsInapplicableOptions(t *testin
 	emptyLines := []document.DashboardReferenceLine{}
 	emptyBands := []document.DashboardReferenceBand{}
 	emptyEvents := []document.DashboardEventAnnotation{}
+	seriesIntents := []document.DashboardSeriesIntent{{Value: "revenue"}}
 	allColumnSeries := []document.DashboardComboSeries{{Field: "revenue", Mark: document.DashboardComboSeriesMarkColumn, Axis: document.DashboardComboSeriesAxisPrimary}}
 
 	tests := []struct {
@@ -57,6 +58,7 @@ func TestLowerCanonicalCartesianPresentationRejectsInapplicableOptions(t *testin
 			value.ShowSymbols = &falseValue
 		}, want: "presentation.showSymbols"},
 		{name: "series on line", visualType: document.DashboardVisualTypeLine, set: func(value *document.CartesianDashboardPresentation) { value.Series = &allColumnSeries }, want: "presentation.series"},
+		{name: "series intent on heatmap", visualType: document.DashboardVisualTypeHeatmap, set: func(value *document.CartesianDashboardPresentation) { value.SeriesIntent = &seriesIntents }, want: "presentation.seriesIntent"},
 		{name: "empty lines on heatmap", visualType: document.DashboardVisualTypeHeatmap, set: func(value *document.CartesianDashboardPresentation) { value.ReferenceLines = &emptyLines }, want: "presentation.referenceLines"},
 		{name: "empty bands on histogram", visualType: document.DashboardVisualTypeHistogram, set: func(value *document.CartesianDashboardPresentation) { value.ReferenceBands = &emptyBands }, want: "presentation.referenceBands"},
 		{name: "empty events on boxplot", visualType: document.DashboardVisualTypeBoxplot, set: func(value *document.CartesianDashboardPresentation) { value.EventAnnotations = &emptyEvents }, want: "presentation.eventAnnotations"},
