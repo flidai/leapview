@@ -1432,10 +1432,40 @@ model DataExploreSemanticModelSignal {
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
+model DataExploreFreshnessSignal {
+  /** Stable serving snapshot supplied by the governed query boundary. */
+  `snapshotId`?: string;
+  `servingStateId`?: string;
+  `lastSuccessfulRefreshAt`?: utcDateTime;
+  `source`?: string;
+  `status`: "fresh" | "stale" | "unknown";
+}
+
+/** Exact, independently governed totals for a configured pivot. */
+model DataExplorePivotTotalSignal {
+  /** Typed row/column identity values keyed by their semantic field output. */
+  `key`: Record<unknown>;
+  /** Metric values returned by the same governed aggregate boundary. */
+  `values`: Record<unknown>;
+}
+
+/** Pivot totals are optional and are present only when explicitly requested. */
+model DataExplorePivotTotalsSignal {
+  `columns`: DataExplorePivotTotalSignal[];
+  `grand`: DataExplorePivotTotalSignal[];
+  `rows`: DataExplorePivotTotalSignal[];
+  `status`: "complete" | "incomplete" | "error";
+  `warnings`: string[];
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreResultSignal {
   `columns`: DataPreviewColumnSignal[];
   `durationMs`: int64;
   `error`?: string;
+  `freshness`?: DataExploreFreshnessSignal;
+  `pivotTotals`?: DataExplorePivotTotalsSignal;
   `plan`?: string;
   `requestSeq`: int64;
   `rows`: Record<unknown>[];
@@ -1461,6 +1491,12 @@ model DataExploreStatusSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreSignal {
   `command`: DataExploreCommand;
+  /** Existing renderer-independent envelopes keyed by stable view ID. */
+  `views`: Record<LeapViewVisualization.VisualizationEnvelope>;
+  /** Deterministic view selected by the server for the current result. */
+  `recommendedView`: string;
+  /** Stable table view available for every successful exploration. */
+  `defaultView`: string;
   `datasets`: DataExploreDatasetSignal[];
   `fields`: DataExploreFieldSignal[];
   `semanticModels`: DataExploreSemanticModelSignal[];

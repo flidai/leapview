@@ -303,12 +303,18 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 			return command, resultSignal
 		}
 	}
-	if spec.Pivot != nil {
-		// Pivot changes the result shape and cannot be represented by the
-		// existing aggregate executor. Do not silently execute the non-pivot
-		// query in its place, including for a pivot-only selection.
-		resultSignal.Error = projectsignals.Pointer("pivot exploration execution is not supported")
+	if err := validateDataExplorerExecutionWindow(spec); err != nil {
+		resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
 		return command, resultSignal
+	}
+	if spec.Pivot != nil {
+		// An empty pivot is not an executable query. Keep this explicit error for
+		// malformed incremental state; populated pivots are lowered to one
+		// governed aggregate below and retain their row/column grain.
+		if len(spec.Pivot.Rows) == 0 || len(spec.Pivot.Columns) == 0 || len(spec.Pivot.Metrics) == 0 {
+			resultSignal.Error = projectsignals.Pointer("pivot exploration execution is not supported")
+			return command, resultSignal
+		}
 	}
 	state := dataExploreStateFromSpec(spec)
 	fieldByID := make(map[string]projectsignals.DataExploreFieldSignal, len(fields))
@@ -348,6 +354,7 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		resultSignal.Error = projectsignals.Pointer("semantic exploration target is incomplete")
 		return command, resultSignal
 	}
+	effectiveLimit := explorerEffectiveLimit(spec)
 	aliases := explorerSpecQueryAliases(spec)
 	dimensions := make([]dataquery.Field, 0, len(spec.Dimensions))
 	timeDecoratesDimension := false
@@ -370,8 +377,17 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		resultSignal.Error = projectsignals.Pointer(err.Error())
 		return command, resultSignal
 	}
-	sortSpec := make([]dataquery.Sort, 0, len(spec.Sort))
-	for _, sortSignal := range spec.Sort {
+	sortSignals := spec.Sort
+	if spec.Pivot != nil {
+		// A pivot's row/column/metric selection is its complete query scope;
+		// never inherit a stale top-level sort for a field outside that scope.
+		sortSignals = nil
+		if spec.Pivot.Sort != nil {
+			sortSignals = *spec.Pivot.Sort
+		}
+	}
+	sortSpec := make([]dataquery.Sort, 0, len(sortSignals))
+	for _, sortSignal := range sortSignals {
 		sortSpec = append(sortSpec, dataquery.Sort{Field: sortSignal.Field, Direction: string(sortSignal.Direction)})
 	}
 	// A metric with multiple physical roots is not owned by the selected
@@ -381,8 +397,11 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	if clearTarget {
 		queryTarget = ""
 	}
-	query := dataquery.SemanticAggregate(modelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(spec.Limit)+1)
-	if spec.Time != nil && !timeDecoratesDimension {
+	query := dataquery.SemanticAggregate(modelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(effectiveLimit)+1)
+	if spec.Time != nil && !timeDecoratesDimension && spec.Pivot == nil {
+		// A pivot owns its complete grouping axis. Keep an authored time range
+		// in filters, but do not add DataQuery.Time as a hidden extra grouping
+		// dimension outside pivot rows/columns.
 		query.Time = dataquery.Time{Field: spec.Time.Field, Grain: string(spec.Time.Grain), Alias: projectsignals.ValueOrZero(spec.Time.Alias)}
 	}
 	query = query.WithMetadata(dataquery.Metadata{
@@ -405,20 +424,231 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		return command, resultSignal
 	}
 	rows := executed.Rows
-	truncated := int64(len(rows)) > int64(spec.Limit)
+	truncated := int64(len(rows)) > effectiveLimit
 	if truncated {
-		rows = rows[:spec.Limit]
+		rows = rows[:effectiveLimit]
+	}
+	var pivotTotals *projectsignals.DataExplorePivotTotalsSignal
+	var totalsDurationMS int64
+	var totalsWarnings []string
+	if !truncated {
+		pivotTotals, totalsDurationMS, totalsWarnings = dataExplorerExecutePivotTotals(ctx, executor, spec, query)
 	}
 	labels := explorerResultLabels(fields, aliases)
 	columns := make([]projectsignals.DataPreviewColumnSignal, 0, len(executed.Columns))
 	for _, column := range executed.Columns {
 		columns = append(columns, projectsignals.DataPreviewColumnSignal{Key: column.Name, Label: firstExplorerNonEmpty(labels[column.Name], column.Name)})
 	}
+	resultWarnings := append([]string(nil), executed.Warnings...)
+	resultWarnings = append(resultWarnings, totalsWarnings...)
 	return command, projectsignals.DataExploreResultSignal{
 		Columns: columns, Rows: dataExplorerRows(rows), SQL: projectsignals.Optional(executed.SQL), Plan: projectsignals.Optional(executed.PlanText),
-		DurationMS: executed.DurationMS, RowsReturned: int64(len(rows)), Truncated: truncated,
-		Warnings: append([]string(nil), executed.Warnings...), RequestSeq: command.RequestSeq,
+		DurationMS: executed.DurationMS + totalsDurationMS, RowsReturned: int64(len(rows)), Truncated: truncated,
+		Warnings: resultWarnings, PivotTotals: pivotTotals, RequestSeq: command.RequestSeq,
 	}
+}
+
+// validateDataExplorerExecutionWindow rejects window operands that the
+// governed semantic executor cannot honor. Silently ignoring an offset would
+// return a different slice than the authored/restored exploration requested.
+func validateDataExplorerExecutionWindow(spec exploration.ExplorationSpec) error {
+	if spec.Pivot != nil && spec.Pivot.Window != nil && spec.Pivot.Window.Offset != nil && *spec.Pivot.Window.Offset != 0 {
+		return fmt.Errorf("pivot window offset %d is not supported; use zero or omit offset", *spec.Pivot.Window.Offset)
+	}
+	return nil
+}
+
+type dataExplorerPivotTotalsQuery struct {
+	name       string
+	dimensions []dataquery.Field
+}
+
+// dataExplorerExecutePivotTotals runs only the explicitly requested exact
+// totals. Each query clones the already-authorized main query, retaining its
+// target, filters, time context, grain, policy metadata, and request identity;
+// only the selected pivot dimensions are replaced. Totals are never derived
+// by adding cells from the displayed aggregate frame.
+func dataExplorerExecutePivotTotals(ctx context.Context, executor DataQueryExecutor, spec exploration.ExplorationSpec, baseQuery dataquery.Query) (*projectsignals.DataExplorePivotTotalsSignal, int64, []string) {
+	if spec.Pivot == nil || !explorerPivotTotalsRequested(spec.Pivot.Totals) || executor == nil {
+		return nil, 0, nil
+	}
+	pivot := spec.Pivot
+	aliases := explorerSpecQueryAliases(spec)
+	rowFields := explorerPivotDataQueryFields(pivot.Rows, aliases, spec.Time)
+	columnFields := explorerPivotDataQueryFields(pivot.Columns, aliases, spec.Time)
+	metricFields := explorerPivotMetricDataQueryFields(pivot.Metrics, aliases)
+	queries := make([]dataExplorerPivotTotalsQuery, 0, 3)
+	if projectsignals.ValueOrZero(pivot.Totals.Rows) {
+		queries = append(queries, dataExplorerPivotTotalsQuery{name: "row", dimensions: rowFields})
+	}
+	if projectsignals.ValueOrZero(pivot.Totals.Columns) {
+		queries = append(queries, dataExplorerPivotTotalsQuery{name: "column", dimensions: columnFields})
+	}
+	if projectsignals.ValueOrZero(pivot.Totals.Grand) {
+		queries = append(queries, dataExplorerPivotTotalsQuery{name: "grand", dimensions: nil})
+	}
+	if len(queries) == 0 {
+		return nil, 0, nil
+	}
+	result := &projectsignals.DataExplorePivotTotalsSignal{Rows: []projectsignals.DataExplorePivotTotalSignal{}, Columns: []projectsignals.DataExplorePivotTotalSignal{}, Grand: []projectsignals.DataExplorePivotTotalSignal{}, Status: "complete", Warnings: []string{}}
+	var durationMS int64
+	warnings := []string{}
+	for _, requested := range queries {
+		query := baseQuery
+		query.Fields = append([]dataquery.Field(nil), requested.dimensions...)
+		query.Metrics = append([]dataquery.Field(nil), metricFields...)
+		// A sort on a dimension excluded from this total query would change the
+		// governed shape. Totals are exact aggregates, so no sort is required.
+		query.Sort = nil
+		executed, err := executor.ExecuteDataQuery(ctx, query)
+		if err != nil {
+			upgradeDataExplorerPivotTotalsStatus(result, "error")
+			warning := fmt.Sprintf("pivot %s totals query failed: %v", requested.name, err)
+			result.Warnings = append(result.Warnings, warning)
+			warnings = append(warnings, warning)
+			continue
+		}
+		durationMS += executed.DurationMS
+		if strings.TrimSpace(executed.Error) != "" {
+			upgradeDataExplorerPivotTotalsStatus(result, "error")
+			warning := fmt.Sprintf("pivot %s totals query failed: %s", requested.name, executed.Error)
+			result.Warnings = append(result.Warnings, warning)
+			warnings = append(warnings, warning)
+			continue
+		}
+		if len(executed.Warnings) > 0 {
+			result.Warnings = append(result.Warnings, executed.Warnings...)
+			warnings = append(warnings, executed.Warnings...)
+		}
+		if dataExplorerPivotTotalsIncomplete(executed, query.Limit) {
+			upgradeDataExplorerPivotTotalsStatus(result, "incomplete")
+			warning := fmt.Sprintf("pivot %s totals are incomplete", requested.name)
+			result.Warnings = append(result.Warnings, warning)
+			warnings = append(warnings, warning)
+			continue
+		}
+		values, err := dataExplorerPivotTotalRows(executed.Rows, requested.dimensions, metricFields, requested.name)
+		if err != nil {
+			upgradeDataExplorerPivotTotalsStatus(result, "error")
+			warning := fmt.Sprintf("pivot %s totals are ambiguous: %v", requested.name, err)
+			result.Warnings = append(result.Warnings, warning)
+			warnings = append(warnings, warning)
+			continue
+		}
+		switch requested.name {
+		case "row":
+			result.Rows = values
+		case "column":
+			result.Columns = values
+		case "grand":
+			result.Grand = values
+		}
+	}
+	if result.Status == "complete" {
+		// A requested query yielding no keyed rows is not an exact totals
+		// payload for a non-empty governed frame; projection will fail closed.
+		for _, requested := range queries {
+			var values []projectsignals.DataExplorePivotTotalSignal
+			switch requested.name {
+			case "row":
+				values = result.Rows
+			case "column":
+				values = result.Columns
+			case "grand":
+				values = result.Grand
+			}
+			if len(values) == 0 {
+				upgradeDataExplorerPivotTotalsStatus(result, "error")
+				warning := fmt.Sprintf("pivot %s totals are missing", requested.name)
+				result.Warnings = append(result.Warnings, warning)
+				warnings = append(warnings, warning)
+			}
+		}
+	}
+	return result, durationMS, warnings
+}
+
+func upgradeDataExplorerPivotTotalsStatus(result *projectsignals.DataExplorePivotTotalsSignal, status string) {
+	if result == nil {
+		return
+	}
+	rank := func(value string) int {
+		switch value {
+		case "error":
+			return 3
+		case "incomplete":
+			return 2
+		case "complete":
+			return 1
+		default:
+			return 0
+		}
+	}
+	if rank(status) > rank(result.Status) {
+		result.Status = status
+	}
+}
+
+func explorerPivotDataQueryFields(refs []exploration.ExplorationDimensionRef, aliases map[string]string, timeSelection *exploration.ExplorationTimeSelection) []dataquery.Field {
+	fields := make([]dataquery.Field, 0, len(refs))
+	for _, ref := range refs {
+		grain := string(projectsignals.ValueOrZero(ref.Grain))
+		if grain == "" && timeSelection != nil && timeSelection.Field == ref.Field {
+			grain = string(timeSelection.Grain)
+		}
+		fields = append(fields, dataquery.Field{Field: ref.Field, Alias: firstExplorerNonEmpty(projectsignals.ValueOrZero(ref.Alias), aliases[ref.Field], ref.Field), Grain: grain})
+	}
+	return fields
+}
+
+func explorerPivotMetricDataQueryFields(refs []exploration.ExplorationMetricRef, aliases map[string]string) []dataquery.Field {
+	fields := make([]dataquery.Field, 0, len(refs))
+	for _, ref := range refs {
+		fields = append(fields, dataquery.Field{Field: ref.Field, Alias: firstExplorerNonEmpty(projectsignals.ValueOrZero(ref.Alias), aliases[ref.Field], ref.Field)})
+	}
+	return fields
+}
+
+func dataExplorerPivotTotalsIncomplete(result dataquery.Result, limit int) bool {
+	if limit > 0 && len(result.Rows) >= limit {
+		return true
+	}
+	return result.TotalRowsKnown && result.TotalRows > len(result.Rows)
+}
+
+func dataExplorerPivotTotalRows(rows []dataquery.Row, dimensions, metrics []dataquery.Field, name string) ([]projectsignals.DataExplorePivotTotalSignal, error) {
+	if name == "grand" && len(rows) != 1 {
+		return nil, fmt.Errorf("expected one grand-total row, got %d", len(rows))
+	}
+	values := make([]projectsignals.DataExplorePivotTotalSignal, 0, len(rows))
+	seen := map[string]struct{}{}
+	for index, row := range rows {
+		key := make(map[string]any, len(dimensions))
+		identity := make([]any, 0, len(dimensions))
+		for _, dimension := range dimensions {
+			value, ok := row[dimension.Alias]
+			if !ok {
+				return nil, fmt.Errorf("row %d is missing dimension %q", index, dimension.Alias)
+			}
+			key[dimension.Alias] = value
+			identity = append(identity, value)
+		}
+		identityKey := explorerPivotTupleIdentity(identity)
+		if _, exists := seen[identityKey]; exists {
+			return nil, fmt.Errorf("duplicate key at row %d", index)
+		}
+		seen[identityKey] = struct{}{}
+		metricValues := make(map[string]any, len(metrics))
+		for _, metric := range metrics {
+			value, ok := row[metric.Alias]
+			if !ok {
+				return nil, fmt.Errorf("row %d is missing metric %q", index, metric.Alias)
+			}
+			metricValues[metric.Alias] = value
+		}
+		values = append(values, projectsignals.DataExplorePivotTotalSignal{Key: key, Values: metricValues})
+	}
+	return values, nil
 }
 
 func explorerSpecQueryAliases(spec exploration.ExplorationSpec) map[string]string {
@@ -689,6 +919,23 @@ func validateExplorerProjectedSpec(spec exploration.ExplorationSpec, fields map[
 			return err
 		}
 	}
+	if spec.Pivot != nil {
+		for index, dimension := range spec.Pivot.Rows {
+			if err := validate(dimension.Field, "dimension", fmt.Sprintf("pivot row %d", index+1)); err != nil {
+				return err
+			}
+		}
+		for index, dimension := range spec.Pivot.Columns {
+			if err := validate(dimension.Field, "dimension", fmt.Sprintf("pivot column %d", index+1)); err != nil {
+				return err
+			}
+		}
+		for index, metric := range spec.Pivot.Metrics {
+			if err := validate(metric.Field, "metric", fmt.Sprintf("pivot metric %d", index+1)); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -708,6 +955,18 @@ func explorationSpecSortAliases(spec exploration.ExplorationSpec) map[string]str
 	for _, metric := range spec.Metrics {
 		if metric.Alias != nil && strings.TrimSpace(*metric.Alias) != "" {
 			selected[*metric.Alias] = struct{}{}
+		}
+	}
+	if spec.Pivot != nil {
+		for _, dimension := range append(append([]exploration.ExplorationDimensionRef(nil), spec.Pivot.Rows...), spec.Pivot.Columns...) {
+			if dimension.Alias != nil && strings.TrimSpace(*dimension.Alias) != "" {
+				selected[*dimension.Alias] = struct{}{}
+			}
+		}
+		for _, metric := range spec.Pivot.Metrics {
+			if metric.Alias != nil && strings.TrimSpace(*metric.Alias) != "" {
+				selected[*metric.Alias] = struct{}{}
+			}
 		}
 	}
 	return selected

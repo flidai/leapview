@@ -3,6 +3,50 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
+import type { VisualizationEnvelope } from '../../generated/visualization'
+import { currentVisualizationSchemaVersion } from '../../generated/visualization/schema-version'
+
+function explorerTableEnvelope(): VisualizationEnvelope {
+  const specRevision = `sha256:${'1'.repeat(64)}`
+  const field = { id: 'status', role: 'dimension', dataType: 'string', nullable: false, label: 'Status' } as const
+  const sort = [{ field: { dataset: 'primary', field: 'status' }, direction: 'ascending' }] as const
+  return {
+    schemaVersion: currentVisualizationSchemaVersion,
+    visualID: 'explore-table',
+    rendererID: 'tanstack',
+    specRevision,
+    dataRevision: 1,
+    spec: {
+      kind: 'table',
+      title: 'Orders',
+      datasets: [{ id: 'primary', fields: [field] }],
+      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' },
+      accessibility: { title: 'Orders', description: 'Governed Orders result' },
+      interactions: [],
+      columns: [{ field: { dataset: 'primary', field: 'status' }, label: 'Status', formatting: [] }],
+      defaultSort: sort,
+      presentation: { rowHeight: 32, striped: false, showHeader: true },
+    },
+    dataState: {
+      kind: 'windowed',
+      specRevision,
+      dataRevision: 1,
+      generation: 1,
+      schema: { id: 'primary', fields: [field] },
+      cardinality: { kind: 'exact', count: 1 },
+      availableRows: 1,
+      rowCap: 100,
+      chunkSize: 50,
+      resetVersion: 0,
+      sort,
+      blocks: { a: { id: 'a', start: 0, rows: [['delivered']], requestSeq: 1, resetVersion: 0, sort } },
+    },
+    selection: [],
+    highlights: [],
+    status: { kind: 'ready' },
+    diagnostics: [],
+  } as VisualizationEnvelope
+}
 let server: Server
 let baseURL = ''
 let browser: Browser
@@ -643,25 +687,29 @@ test('data explorer builds a governed semantic exploration and filter command', 
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-data-explorer') && customElements.get('lv-data-explore-table'))
+    await page.waitForFunction(() => customElements.get('lv-data-explorer') && customElements.get('lv-data-explorer-results') && customElements.get('lv-visualization-host'))
 
-    const state = await page.evaluate(async () => {
+    const state = await page.evaluate(async ({ tableEnvelope }) => {
       const element = document.createElement('lv-data-explorer') as any
       const pageSignal = {
         kind: 'data', title: 'Data Explorer', description: 'Inspect or explore data.', tabs: [],
       }
       const exploreCommand = {
         spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [{ field: 'revenue' }],
-          filters: [], sort: [{ field: 'revenue', direction: 'desc' }], limit: 100 },
+          filters: [], time: { field: 'orders.created_at', grain: 'month', alias: 'period', range: {
+            kind: 'absolute', lower: { value: { kind: 'date', value: '2026-01-01' }, inclusive: true },
+            upper: { value: { kind: 'date', value: '2026-04-01' }, inclusive: false },
+          } }, sort: [{ field: 'revenue', direction: 'desc' }], limit: 100 },
         requestSeq: 1, resetVersion: 1, columnWidths: {},
       }
       const selectedObject = {
         key: 'model:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'orders',
-        description: 'One row per order.', grain: 'order_id', columnCount: 2, rowCountLabel: '10',
+        description: 'One row per order.', grain: 'order_id', columnCount: 3, rowCountLabel: '10',
         columns: [
           { key: 'order_id', label: 'Order ID', type: 'string' },
           { key: 'status', label: 'Status', type: 'string' },
           { key: 'order_status', label: 'Order status', type: 'string' },
+          { key: 'created_at', label: 'Created at', type: 'date' },
         ],
       }
       const customersObject = {
@@ -682,6 +730,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
         command: { mode: 'explore', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
         explore: {
           command: exploreCommand,
+          views: { table: tableEnvelope }, recommendedView: 'table', defaultView: 'table',
           semanticModels: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] }],
           datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }],
           selectedSemanticModel: { id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] },
@@ -690,6 +739,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
             { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: false },
             { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
             { id: 'order_status', label: 'Order status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: false },
+            { id: 'orders.created_at', label: 'Created at', kind: 'dimension', datasetId: 'orders', type: 'date', compatible: true, selected: false },
             { id: 'customers.customer_id', label: 'Customer ID', kind: 'dimension', datasetId: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
             { id: 'customers.state', label: 'State', kind: 'dimension', datasetId: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
             { id: 'items.sku', label: 'SKU', kind: 'dimension', datasetId: 'items', type: 'string', compatible: false, compatibilityReason: 'Not available from Orders because no grain-preserving relationship path reaches Items.', selected: false },
@@ -700,6 +750,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
             rows: [{ status: 'delivered', revenue: 1200 }], rowsReturned: 1, durationMs: 8, requestSeq: 1,
             sql: 'SELECT status, SUM(revenue)', plan: 'orders aggregate', truncated: false, warnings: [],
           },
+          status: { loading: false, stale: false, requestSeq: 1, state: 'success' },
         }, warnings: [],
       }
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -767,36 +818,90 @@ test('data explorer builds a governed semantic exploration and filter command', 
       await new Promise((resolve) => setTimeout(resolve, 380))
       const semanticFilter = commands.at(-1)?.explore?.spec?.filters?.find((filter: any) => filter.field === 'order_status')
 
-      const table = root.querySelector('lv-data-explore-table') as any
-      await table.updateComplete
-      const exploreRequestSeqBeforeWidth = table.command.requestSeq
-      table.dispatchEvent(new CustomEvent('lv-data-explore-table-command', {
-        bubbles: true, composed: true, detail: { columnWidths: { revenue: 240 } },
-      }))
-      await element.updateComplete
-      const nestedWidthCommand = commands.at(-1)
-      const windowedTable = table.shadowRoot.querySelector('lv-windowed-table')
-      windowedTable.dispatchEvent(new CustomEvent('lv-windowed-table-request', {
-        bubbles: true, composed: true, detail: { start: 0, sort: { key: 'status', direction: 'asc' } },
-      }))
-      await element.updateComplete
-      await new Promise((resolve) => setTimeout(resolve, 380))
-      const derivedSortCommand = commands.at(-1)
-      table.command = { ...table.command, spec: { ...table.command.spec, sort: [{ field: 'orders.status', direction: 'asc' }] } }
-      await table.updateComplete
-      const tableSortPayload = table.shadowRoot.querySelector('lv-windowed-table')?.table?.sort
+      const results = root.querySelector('lv-data-explorer-results') as any
+      await results.updateComplete
+      const host = results.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement
+      if (!host) throw new Error(`shared visualization host was not rendered: ${results.shadowRoot?.textContent}`)
       const stateField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('State'))!
       const skuField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('SKU'))!
-      skuField.click()
       const initialState = {
         modes: Array.from(root.querySelectorAll('.mode-button')).map((button) => ({ text: button.textContent?.trim(), pressed: button.getAttribute('aria-pressed') })),
         hasBreadcrumb: Boolean(root.querySelector('[aria-label="Breadcrumb"]')),
         resourceTables: root.querySelector('.resource-group')?.textContent?.replace(/\s+/g, ' ').trim(),
         chips: Array.from(root.querySelectorAll('.selection-shelf .chip')).map((chip) => chip.textContent?.replace(/\s+/g, ' ').trim()),
-        grain: root.querySelector('.result-meta')?.textContent?.replace(/\s+/g, ' ').trim(),
-        tableRows: table.result.rows,
+        grain: results.shadowRoot?.querySelector('[data-result-grain]')?.textContent?.replace(/\s+/g, ' ').trim(),
+        resultRows: results.result.rows,
+        resultView: results.shadowRoot?.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim(),
+        hasResultsSurface: Boolean(results),
+        hasSharedHost: Boolean(host),
+        timeSelection: exploreCommand.spec.time,
         relatedField: { disabled: stateField.disabled, text: stateField.textContent?.replace(/\s+/g, ' ').trim(), title: stateField.title },
       }
+      const commandCountBeforeWindow = commands.length
+      const windowRequest = {
+        visualID: 'explore-table',
+        specRevision: tableEnvelope.specRevision,
+        dataRevision: tableEnvelope.dataRevision,
+        requestSeq: 2,
+        resetVersion: 0,
+        start: 0,
+        limit: 50,
+        blockID: 'a',
+        sort: [{ field: { dataset: 'primary', field: 'status' }, direction: 'descending' }],
+      }
+      host.dispatchEvent(new CustomEvent('lv-visualization-window-request', {
+        bubbles: true,
+        composed: true,
+        detail: windowRequest,
+      }))
+      await element.updateComplete
+      const windowCommand = commands.slice(commandCountBeforeWindow).find((candidate) => candidate.action === 'run')
+      const commandCountAfterValidWindow = commands.length
+      const invalidWindowMessages: string[] = []
+      for (const detail of [
+        { ...windowRequest, visualID: 'old-table' },
+        { ...windowRequest, specRevision: `sha256:${'f'.repeat(64)}` },
+        { ...windowRequest, dataRevision: 2 },
+        { ...windowRequest, requestSeq: 0 },
+        { ...windowRequest, resetVersion: 2 },
+        { ...windowRequest, blockID: ' ' },
+      ]) {
+        host.dispatchEvent(new CustomEvent('lv-visualization-window-request', { bubbles: true, composed: true, detail }))
+        await element.updateComplete
+        invalidWindowMessages.push(root.querySelector<HTMLElement>('.result-error[role="alert"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? '')
+      }
+      const invalidWindowCommandCount = commands.length - commandCountAfterValidWindow
+      const interaction = {
+        sourceKind: 'visual', sourceId: 'explore-table', interactionKind: 'selection',
+        action: 'set', toggle: false,
+        mappings: [{ field: 'orders.status', dataset: 'orders', value: 'delivered', label: 'Delivered' }],
+      }
+      const commandCountBeforeExploreFromHere = commands.length
+      host.dispatchEvent(new CustomEvent('lv-interaction-select', { bubbles: true, composed: true, detail: interaction }))
+      await results.updateComplete
+      const exploreFromHereButton = Array.from(results.shadowRoot?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+        .find((button) => button.textContent?.includes('Explore from here'))
+      if (!exploreFromHereButton) throw new Error('explore-from-here action was not rendered')
+      exploreFromHereButton.click()
+      await element.updateComplete
+      const exploreFromHereCommand = commands.slice(commandCountBeforeExploreFromHere)
+        .find((candidate) => candidate.action === 'configure' && candidate.explore?.action === 'configure')
+
+      const refreshedResults = root.querySelector('lv-data-explorer-results') as any
+      await refreshedResults.updateComplete
+      const refreshedHost = refreshedResults.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement
+      const commandCountBeforeDrill = commands.length
+      refreshedHost.dispatchEvent(new CustomEvent('lv-interaction-select', { bubbles: true, composed: true, detail: interaction }))
+      await refreshedResults.updateComplete
+      const drillButton = Array.from(refreshedResults.shadowRoot?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+        .find((button) => button.textContent?.includes('Drill to rows'))
+      if (!drillButton) throw new Error('drill-to-rows action was not rendered')
+      drillButton.click()
+      await element.updateComplete
+      const drillCommand = commands.slice(commandCountBeforeDrill)
+        .find((candidate) => candidate.action === 'run' && candidate.explore?.action === 'run')
+      skuField.click()
+      await results.updateComplete
       const unavailableField = { disabled: skuField.disabled, pressed: skuField.getAttribute('aria-pressed'), text: skuField.textContent?.replace(/\s+/g, ' ').trim(), title: skuField.title }
 
       const customerCommand = {
@@ -810,6 +915,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
         explore: {
           ...dataExplorer.explore,
           command: customerCommand,
+          views: null, recommendedView: 'table', defaultView: 'table',
           selectedDataset: { id: 'customers', title: 'Customers', grainEntity: 'customer_id', grainFields: ['customer_id'], fieldCount: 1, entities: [] },
           fields: [
             { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Order ID and change grain from Customers to Orders.', selected: false },
@@ -835,16 +941,17 @@ test('data explorer builds a governed semantic exploration and filter command', 
         physicalFilter,
         semanticFilter,
         unavailableField,
+        exploreFromHereCommand,
+        drillCommand,
         rebaseField: { disabled: rebaseField.disabled, text: rebaseField.textContent?.replace(/\s+/g, ' ').trim(), title: rebaseField.title },
         rebaseCommand,
         tableSelectionCommand,
-        nestedWidthCommand,
-        exploreRequestSeqBeforeWidth,
-        derivedSortCommand,
-        tableSortPayload,
+        windowCommand,
+        invalidWindowMessages,
+        invalidWindowCommandCount,
         commands,
       }
-    })
+    }, { tableEnvelope: explorerTableEnvelope() })
 
     expect(state.modes).toEqual([
       { text: 'Rows', pressed: 'false' },
@@ -855,7 +962,10 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.chips.join(' ')).toContain('Order ID')
     expect(state.chips.join(' ')).toContain('Revenue')
     expect(state.grain).toContain('Grain: order_id')
-    expect(state.tableRows).toEqual([{ status: 'delivered', revenue: 1200 }])
+    expect(state.resultRows).toEqual([{ status: 'delivered', revenue: 1200 }])
+    expect(state.resultView).toBe('Table')
+    expect(state.hasResultsSurface).toBe(true)
+    expect(state.hasSharedHost).toBe(true)
     expect(state.physicalFilter).toMatchObject({ field: 'orders.status', datasetId: 'orders' })
     expect(state.semanticFilter).toMatchObject({ field: 'order_status' })
     expect(state.semanticFilter).not.toHaveProperty('datasetId')
@@ -874,12 +984,28 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.tableSelectionCommand.spec.datasetId).toBe('customers')
     expect(state.tableSelectionCommand.spec.dimensions.map((field: any) => field.field)).toEqual(['customers.customer_id', 'customers.state'])
     expect(state.tableSelectionCommand.spec.metrics).toEqual([])
-    expect(state.nestedWidthCommand.explore.columnWidths).toEqual({ revenue: 240 })
-    expect(state.nestedWidthCommand.columnWidths).toEqual({})
-    expect(state.nestedWidthCommand.explore.requestSeq).toBe(state.exploreRequestSeqBeforeWidth)
-    expect(state.nestedWidthCommand.requestSeq).toBe(0)
-    expect(state.derivedSortCommand.explore.spec.sort).toEqual([{ field: 'orders.status', direction: 'asc' }])
-    expect(state.tableSortPayload).toEqual({ key: 'status', column: 'status', direction: 'asc' })
+    expect(state.windowCommand.action).toBe('run')
+    expect(state.windowCommand.explore.action).toBe('run')
+    expect(state.windowCommand.explore.spec.sort).toEqual([{ field: 'orders.status', direction: 'desc' }])
+    expect(state.invalidWindowCommandCount).toBe(0)
+    expect(state.invalidWindowMessages).toEqual([
+      expect.stringContaining('visual ID'),
+      expect.stringContaining('spec revision'),
+      expect.stringContaining('data revision'),
+      expect.stringContaining('request sequence'),
+      expect.stringContaining('reset version'),
+      expect.stringContaining('block ID'),
+    ])
+    expect(state.exploreFromHereCommand.action).toBe('configure')
+    expect(state.exploreFromHereCommand.explore.action).toBe('configure')
+    expect(state.exploreFromHereCommand.explore.spec.filters).toContainEqual(expect.objectContaining({ field: 'orders.status', datasetId: 'orders' }))
+    expect(state.drillCommand.action).toBe('run')
+    expect(state.drillCommand.explore.action).toBe('run')
+    expect(state.drillCommand.explore.spec.visualization.kind).toBe('table')
+    expect(state.drillCommand.explore.spec.dimensions).toEqual([{ field: 'orders.order_id' }])
+    expect(state.drillCommand.explore.spec.metrics).toEqual([])
+    expect(state.drillCommand.explore.spec.filters).toContainEqual(expect.objectContaining({ field: 'orders.status', datasetId: 'orders' }))
+    expect(state.drillCommand.explore.spec.time).toEqual(state.timeSelection)
     expect(state.commands.some((command) => command.explore?.spec?.dimensions?.some((field: any) => field.field === 'items.sku'))).toBe(false)
     expect(state.commands.some((command) => command.mode === 'explore' && command.explore?.spec?.dimensions?.some((field: any) => field.field === 'orders.order_id'))).toBe(true)
     expect(state.commands.some((command) => command.explore?.spec?.filters?.some((filter: any) => filter.field === 'orders.status' && filter.expression?.value?.value === 'delivered'))).toBe(true)

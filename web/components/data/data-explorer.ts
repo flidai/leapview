@@ -6,6 +6,7 @@ import type {
   DataExploreCommand,
   DataExploreDatasetSignal,
   DataExploreFieldSignal,
+  DataExploreResultSignal,
   DataExploreSignal,
   DataExplorerCommand,
   DataExplorerObjectSignal,
@@ -14,6 +15,8 @@ import type {
   DataPreviewSignal,
 } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
+import type { VisualizationEnvelope, VisualizationWindowRequest } from '../../generated/visualization'
+import type { OptimisticInteractionCommand } from '../dashboard/interaction-selection'
 import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { agentIcon } from '../chat/agent-icon'
@@ -40,6 +43,7 @@ import {
   makeExplorationFilter,
   objectDatasetID,
   explorationRunValidation,
+  explorationSortFieldForResult,
   removeExplorationField,
   explorationSortsWithoutField,
   explorationSpecFor,
@@ -51,6 +55,8 @@ import '../chat/chat-drawer'
 import './preview-table'
 import './explore-table'
 import './data-explorer-query-controls'
+import './data-explorer-results'
+import { explorationSpecFromInteraction, type ExplorationInteractionMode } from './data-explorer-drill'
 
 const emptyPreview: DataPreviewSignal = {
   columns: [],
@@ -75,6 +81,7 @@ const emptyExplorer: DataExplorerSignal = {
   preview: emptyPreview,
   explore: {
     command: emptyDataExploreCommand,
+    views: {}, recommendedView: 'table', defaultView: 'table',
     semanticModels: [], datasets: [], fields: [],
     result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
     status: { loading: false, stale: false, requestSeq: 0, state: 'idle' },
@@ -104,6 +111,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private exploreVisibleColumns: string[] = []
   @state() private exploreExecutionState: 'idle' | 'pending' | 'running' | 'stopped' = 'idle'
   @state() private exploreTransportFailure: BrowserCommandFailure | null = null
+  @state() private exploreInteractionError = ''
   private exploreTransportAction: 'run' | 'stop' | null = null
   private lastSearch = ''
   private expandedGroupIDs = new Set<string>()
@@ -1099,7 +1107,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const filtered = filterObjects(explorer.objects ?? [], this.search)
     const grouped = groupObjectsBySemanticModel(filtered, explorer.explore?.semanticModels ?? [])
     const agentEnabled = this.signal<unknown | null>('agent', null) !== null
-    const columns = this.headerColumns(explorer, semanticActive)
+    // Governed result tables expose their own shared table column chooser.
+    // Keep the route-level chooser for raw browse previews only; showing both
+    // would leave a second control that cannot change the IR envelope.
+    const columns = semanticActive ? [] : this.headerColumns(explorer, false)
     const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
     return html`
       <section class=${`route${semanticActive ? ' semantic' : ''}${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
@@ -1479,6 +1490,61 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.emitCommand({ action: 'stop', mode: 'explore', runId: runID, explore: stopCommand })
   }
 
+  private handleExploreInteraction(
+    event: CustomEvent<{ command: OptimisticInteractionCommand; mode: ExplorationInteractionMode }>,
+    command: DataExploreCommand,
+    fields: readonly DataExploreFieldSignal[],
+    grainFields: readonly string[],
+  ): void {
+    const applied = explorationSpecFromInteraction(explorationSpecFor(command), fields, event.detail.command, event.detail.mode, grainFields)
+    if (!applied.ok) {
+      this.exploreInteractionError = applied.error
+      return
+    }
+    this.exploreInteractionError = ''
+    if (event.detail.mode === 'drill') {
+      const next = this.queryController.explore(command, applied.spec)
+      next.action = 'configure'
+      this.runExplore(next)
+      return
+    }
+    this.emitExplore(applied.spec, command, undefined, true)
+  }
+
+  private handleExploreWindowRequest(
+    event: CustomEvent<VisualizationWindowRequest>,
+    command: DataExploreCommand,
+    views: Record<string, VisualizationEnvelope>,
+    result: DataExploreResultSignal,
+  ): void {
+    const validationError = validateDataExploreWindowRequest(event.detail, views, result)
+    if (validationError) {
+      this.exploreInteractionError = `Ignored visualization window request: ${validationError}`
+      this.requestUpdate()
+      return
+    }
+    // Explorer envelopes materialize the complete bounded result in one block;
+    // only a start-zero request can represent a user sort. Paging requests are
+    // never translated into a partial, differently governed query.
+    if ((event.detail.start ?? 0) > 0) return
+    const requestedSort = event.detail.sort[0]
+    const spec = explorationSpecFor(command)
+    const field = explorationSortFieldForResult(spec, requestedSort.field.field)
+    if (!field) {
+      this.exploreInteractionError = 'This generated pivot column cannot be used as a governed query sort.'
+      return
+    }
+    const direction = requestedSort.direction === 'descending' ? 'desc' : 'asc'
+    const sort = [{ field, direction }] as ExplorationSpec['sort']
+    const nextSpec = spec.pivot
+      ? { ...spec, pivot: { ...spec.pivot, sort } }
+      : { ...spec, sort }
+    this.exploreInteractionError = ''
+    const next = this.queryController.explore(command, nextSpec)
+    next.action = 'configure'
+    this.runExplore(next)
+  }
+
   private handleExploreTableCommand(detail: Partial<ExplorationSpec> | Pick<DataExploreCommand, 'columnWidths'>, command: DataExploreCommand): void {
     if (Object.prototype.hasOwnProperty.call(detail, 'columnWidths')) {
       this.emitCommand({ explore: { ...command, columnWidths: (detail as Pick<DataExploreCommand, 'columnWidths'>).columnWidths } })
@@ -1722,7 +1788,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const datasets = selectedSemanticModel?.datasets ?? explore.datasets ?? []
     const selectedDataset = datasets.find((dataset) => dataset.id === spec.datasetId) ?? explore.selectedDataset
     const queryFields = new Set([...(spec.dimensions ?? []).map((field) => field.field), ...(spec.metrics ?? []).map((field) => field.field)])
-    const rawResult = explore.result ?? emptyExplorer.explore.result; const result = this.clientState.semanticResult(command, rawResult, explore.status, this.page?.context)
+    const rawResult = explore.result ?? emptyExplorer.explore.result; const result = this.clientState.semanticResult(command, rawResult, explore.status, this.page?.context, this.exploreExecutionState)
+    const presentation = this.clientState.semanticViews(command, rawResult, explore.views, explore.recommendedView, explore.defaultView, explore.status, this.page?.context, this.exploreExecutionState)
     const status = explore.status
     const suggestionSignal = explore.filterSuggestions && this.clientState.isSuggestionCurrentOrNewer(explore.filterSuggestions.suggestionRequestSeq)
       ? explore.filterSuggestions
@@ -1777,22 +1844,22 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               @lv-data-explorer-filter-open=${(event: CustomEvent<string>) => this.handleExploreFilterOpen(event, command)}
               @lv-data-explorer-filter-change=${(event: CustomEvent<{ action: 'apply' | 'cancel' | 'operator' | 'value'; operator?: string; value?: string }>) => this.handleExploreFilterChange(event, command)}
             ></lv-data-explorer-query-controls>
-            <div class="result-meta" aria-live="polite">
-              <span><strong>${selectedSemanticModel?.title ?? label(spec.modelId)}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
-              ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
-              ${this.renderExecutionState(command, result, status, rawResult.error || this.exploreTransportFailure?.message)}
-              ${hasQuery && !result.error && !status?.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
-              ${rawResult.error || status?.error || this.exploreTransportFailure ? this.renderExploreFailure(rawResult.error || status?.error || this.exploreTransportFailure?.message || 'Query failed', command) : nothing}
-              ${(result.warnings ?? []).map((warning) => html`<span>${warning}</span>`)}
-            </div>
+            ${this.renderExecutionState(command, result, status, rawResult.error || this.exploreTransportFailure?.message)}
+            ${rawResult.error || status?.error || this.exploreTransportFailure ? this.renderExploreFailure(rawResult.error || status?.error || this.exploreTransportFailure?.message || 'Query failed', command) : nothing}
+            ${this.exploreInteractionError ? html`<p class="result-error" role="alert">${this.exploreInteractionError}</p>` : nothing}
             ${hasQuery
-              ? html`<lv-data-explore-table
+              ? html`<lv-data-explorer-results
                   .command=${command}
                   .result=${result}
-                  .visibleColumns=${this.exploreVisibleColumns}
+                  .status=${status}
+                  .views=${presentation.views}
+                  .recommendedView=${presentation.recommendedView}
+                  .selectedDataset=${selectedDataset ? { id: selectedDataset.id, title: selectedDataset.title, grainEntity: selectedDataset.grainEntity, grainLabel: datasetGrainLabel(selectedDataset) } : undefined}
+                  .executionState=${this.exploreExecutionState}
                   aria-busy=${String(exploreRunning)}
-                  @lv-data-explore-table-command=${(event: CustomEvent<Partial<ExplorationSpec> | Pick<DataExploreCommand, 'columnWidths'>>) => this.handleExploreTableCommand(event.detail, command)}
-                ></lv-data-explore-table>`
+                  @lv-data-explore-interaction=${(event: CustomEvent<{ command: OptimisticInteractionCommand; mode: ExplorationInteractionMode }>) => this.handleExploreInteraction(event, command, explore.fields, selectedDataset?.grainFields ?? [])}
+                  @lv-visualization-window-request=${(event: CustomEvent<VisualizationWindowRequest>) => this.handleExploreWindowRequest(event, command, presentation.views, result)}
+                ></lv-data-explorer-results>`
               : html`<p class="empty">Select at least one field to build a governed result table.</p>`}
         </section>
       </div>
@@ -1921,6 +1988,52 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.closeFilter()
     window.location.reload()
   }
+}
+
+export function validateDataExploreWindowRequest(
+  request: unknown,
+  views: Record<string, VisualizationEnvelope> | undefined,
+  result: Pick<DataExploreResultSignal, 'requestSeq'>,
+): string | undefined {
+  if (!request || typeof request !== 'object') return 'the request payload is invalid'
+  const candidate = request as Partial<VisualizationWindowRequest>
+  if (typeof candidate.visualID !== 'string' || !candidate.visualID.trim()) return 'the visual ID is missing'
+  const envelope = Object.values(views ?? {}).find((view) => view.visualID === candidate.visualID)
+  if (!envelope) return 'the visual ID does not match the presented visualization'
+  if (typeof candidate.specRevision !== 'string' || candidate.specRevision !== envelope.specRevision) return 'the spec revision is no longer current'
+  if (typeof candidate.dataRevision !== 'number' || !Number.isSafeInteger(candidate.dataRevision) || candidate.dataRevision !== envelope.dataRevision) return 'the data revision is no longer current'
+  if (envelope.dataState.kind !== 'windowed') return 'the presented visualization does not support windows'
+  if (envelope.dataState.specRevision !== envelope.specRevision || envelope.dataState.dataRevision !== envelope.dataRevision) return 'the presented visualization envelope is internally inconsistent'
+
+  const requestSeq = candidate.requestSeq
+  const resultSeq = result.requestSeq
+  if (typeof requestSeq !== 'number' || !Number.isSafeInteger(requestSeq) || requestSeq < 0) return 'the request sequence is invalid'
+  if (typeof resultSeq !== 'number' || !Number.isSafeInteger(resultSeq) || resultSeq < 0) return 'the presented result sequence is invalid'
+  if (resultSeq > 0 && envelope.dataRevision !== resultSeq) return 'the presented result sequence does not match the visualization'
+  const blockID = candidate.blockID
+  if (typeof blockID !== 'string' || !blockID.trim()) return 'the block ID is missing'
+  // Window adapters may allocate a new rotating block (a/b/c) while paging,
+  // so presence in the currently materialized envelope is not lineage proof.
+  // Identity is carried by the visual/spec/data/reset revisions instead.
+  const block = blockID === 'all' ? undefined : envelope.dataState.blocks[blockID]
+  if (block && block.id !== blockID) return 'the block ID does not match the presented block'
+  const presentedSequences = Object.values(envelope.dataState.blocks).map((entry) => entry.requestSeq).filter((value) => Number.isSafeInteger(value) && value >= 0)
+  const minimumCurrentSequence = Math.max(resultSeq, envelope.dataRevision, ...presentedSequences)
+  if (requestSeq < minimumCurrentSequence) return 'the request sequence is superseded'
+
+  const resetVersion = candidate.resetVersion
+  const currentResetVersion = envelope.dataState.resetVersion
+  if (typeof resetVersion !== 'number' || !Number.isSafeInteger(resetVersion) || resetVersion < 0) return 'the reset version is invalid'
+  // A table sort intentionally increments resetVersion before the next
+  // envelope arrives; any larger jump is from a superseded table instance.
+  if (resetVersion !== currentResetVersion && resetVersion !== currentResetVersion + 1) return 'the reset version is no longer current'
+  if (typeof candidate.start !== 'number' || !Number.isSafeInteger(candidate.start) || candidate.start < 0) return 'the window start is invalid'
+  if (typeof candidate.limit !== 'number' || !Number.isSafeInteger(candidate.limit) || candidate.limit < 1) return 'the window limit is invalid'
+  if (!Array.isArray(candidate.sort) || candidate.sort.length === 0) return 'the sort is missing'
+  const sort = candidate.sort[0]
+  if (!sort || typeof sort !== 'object' || !sort.field || typeof sort.field.field !== 'string' || !sort.field.field.trim()) return 'the sort field is invalid'
+  if (sort.direction !== 'ascending' && sort.direction !== 'descending') return 'the sort direction is invalid'
+  return undefined
 }
 
 function filterObjects(objects: DataExplorerObjectSignal[], query: string): DataExplorerObjectSignal[] {

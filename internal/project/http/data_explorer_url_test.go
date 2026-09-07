@@ -638,6 +638,34 @@ func TestDataExplorerRestoredV2URLAcceptsSortByExplicitMetricAlias(t *testing.T)
 	}
 }
 
+func TestDataExplorerRestoredV2URLRejectsNonzeroPivotOffsetWithoutExecution(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	offset := int32(4)
+	state, err := json.Marshal(exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+		Pivot: &exploration.ExplorationPivotConfig{
+			Rows: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Columns: []exploration.ExplorationDimensionRef{{Field: "orders.created_at"}},
+			Metrics: []exploration.ExplorationMetricRef{{Field: "revenue"}}, Window: &exploration.ExplorationPivotWindow{Offset: &offset, Limit: 10},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	_, _, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?mode=explore&v=2&state="+url.QueryEscape(string(state)), nil), true)
+	if ok {
+		t.Fatal("restored nonzero pivot offset was accepted")
+	}
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "pivot window offset") {
+		t.Fatalf("restored offset response = status=%d body=%q, want bad-request offset diagnostic", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 0 {
+		t.Fatalf("restored nonzero pivot offset executed %d analytical queries, want 0", executor.calls)
+	}
+}
+
 func TestDataExplorerRestoredV2URLAcceptsTimeOnlySortAlias(t *testing.T) {
 	h, executor := newDataExplorerURLTestHandler(t)
 	state, err := json.Marshal(exploration.ExplorationSpec{
