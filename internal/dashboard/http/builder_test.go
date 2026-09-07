@@ -25,6 +25,7 @@ import (
 	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 type builderAuthoringFake struct {
@@ -91,13 +92,13 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }, CSRFToken: func(*nethttp.Request) string { return "csrf" }}
 	getCreate := httptest.NewRecorder()
 	handler.DashboardDraftCreate(getCreate, httptest.NewRequest(nethttp.MethodGet, "/dashboards/new", nil))
-	if getCreate.Code != nethttp.StatusOK || !strings.Contains(getCreate.Body.String(), `action="/dashboards/new"`) || !strings.Contains(getCreate.Body.String(), "Governed semantic model") || !strings.Contains(getCreate.Body.String(), `name="gorilla.csrf.Token" value="csrf"`) || !strings.Contains(getCreate.Body.String(), `name="idempotencyKey" value="req_`) {
+	if getCreate.Code != nethttp.StatusOK || !strings.Contains(getCreate.Body.String(), `action="/dashboards/new"`) || !strings.Contains(getCreate.Body.String(), "Governed semantic model") || !strings.Contains(getCreate.Body.String(), `name="gorilla.csrf.Token" value="csrf"`) || !formContainsUUIDv7(getCreate.Body.String(), "idempotencyKey") {
 		t.Fatalf("create page = %d %s", getCreate.Code, getCreate.Body.String())
 	}
 	getFork := httptest.NewRecorder()
 	getForkRequest := withBuilderURLParams(httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/fork", nil), "sales", "revenue")
 	handler.DashboardDraftFork(getFork, getForkRequest)
-	if getFork.Code != nethttp.StatusOK || !strings.Contains(getFork.Body.String(), `action="/dashboards/revenue/fork"`) || !strings.Contains(getFork.Body.String(), `name="idempotencyKey" value="req_`) {
+	if getFork.Code != nethttp.StatusOK || !strings.Contains(getFork.Body.String(), `action="/dashboards/revenue/fork"`) || !formContainsUUIDv7(getFork.Body.String(), "idempotencyKey") {
 		t.Fatalf("fork page = %d %s", getFork.Code, getFork.Body.String())
 	}
 	create := httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=sales-model&slug=sales&idempotencyKey=create-form-1"))
@@ -216,10 +217,28 @@ func TestDashboardBuilderCommandPreservesIdempotencyFallbackWithGeneratedRequest
 		if fake.executed.ID != "builder-retry-1" {
 			t.Fatalf("command ID = %q, want stable Idempotency-Key fallback", fake.executed.ID)
 		}
-		if got := rec.Header().Get("X-Request-ID"); !strings.HasPrefix(got, "req_") {
+		got := rec.Header().Get("X-Request-ID")
+		parsed, err := uuid.Parse(got)
+		if err != nil || parsed.String() != got || parsed.Version() != 7 {
 			t.Fatalf("response request ID = %q, want generated correlation identity", got)
 		}
 	}
+}
+
+func formContainsUUIDv7(body, field string) bool {
+	marker := `name="` + field + `" value="`
+	start := strings.Index(body, marker)
+	if start < 0 {
+		return false
+	}
+	start += len(marker)
+	end := strings.IndexByte(body[start:], '"')
+	if end < 0 {
+		return false
+	}
+	value := body[start : start+end]
+	parsed, err := uuid.Parse(value)
+	return err == nil && parsed.String() == value && parsed.Version() == 7
 }
 
 func (f *builderAuthoringFake) Preview(ctx context.Context, request preview.PreviewRequest) (preview.Preview, error) {

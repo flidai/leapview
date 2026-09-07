@@ -34,11 +34,34 @@ func (fakeDiscovery) Discover(_ context.Context, origin string) (TargetMetadata,
 
 type fakeProjectResolver struct{}
 
-func (fakeProjectResolver) ProjectID(path string) (string, error) {
-	if path != "dashboards/leapview.yaml" {
-		return "", nil
-	}
+func (fakeProjectResolver) ProjectID(_ string) (string, error) {
 	return "analytics", nil
+}
+
+type orderedProjectResolver struct{ events *[]string }
+
+func (resolver orderedProjectResolver) ProjectID(_ string) (string, error) {
+	*resolver.events = append(*resolver.events, "project")
+	return "analytics", nil
+}
+
+type orderedDiscovery struct{ events *[]string }
+
+func (discovery orderedDiscovery) Discover(_ context.Context, origin string) (TargetMetadata, error) {
+	*discovery.events = append(*discovery.events, "discover")
+	return TargetMetadata{Origin: strings.TrimRight(origin, "/"), InstanceID: "lvinst_prod", Environment: "production"}, nil
+}
+
+func TestLoginCommandResolvesProjectBeforeTargetNetwork(t *testing.T) {
+	events := []string{}
+	command := LoginCommand(context.Background(), &fakeAuthService{}, orderedDiscovery{events: &events}, orderedProjectResolver{events: &events})
+	command.SetArgs([]string{"https://prod.example.com", "--no-browser"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(events, ","); got != "project,discover" {
+		t.Fatalf("events = %q, want project,discover", got)
+	}
 }
 
 func TestLoginCommandDiscoversTargetAndProject(t *testing.T) {

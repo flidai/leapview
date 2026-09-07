@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -168,6 +169,47 @@ func TestAuthoringDeviceAuthorizationBindsToActiveProjectBeforePersistence(t *te
 				return
 			}
 			if recorder.Code != http.StatusBadRequest || service.beginCalls != 0 {
+				t.Fatalf("status=%d begin_calls=%d body=%s", recorder.Code, service.beginCalls, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestAuthoringDeviceAuthorizationUsesDurableResolverForFreshAndBoundTargets(t *testing.T) {
+	readErr := errors.New("serving state unavailable")
+	for name, test := range map[string]struct {
+		bound      projectgraph.ResourceID
+		resolveErr error
+		currentErr error
+		wantStatus int
+		wantBegins int
+	}{
+		"fresh target":        {wantStatus: http.StatusOK, wantBegins: 1, currentErr: readErr},
+		"claimed target":      {bound: "analytics", wantStatus: http.StatusOK, wantBegins: 1},
+		"foreign project":     {bound: "foreign", wantStatus: http.StatusBadRequest},
+		"resolver read error": {resolveErr: readErr, wantStatus: http.StatusServiceUnavailable},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service := &fakeAuthoringOAuth{}
+			module := authoringOAuthTestModule(service)
+			module.currentProjectID = func(context.Context) (projectgraph.ResourceID, error) {
+				return "", test.currentErr
+			}
+			module.authoringProjectID = func(context.Context) (projectgraph.ResourceID, error) {
+				return test.bound, test.resolveErr
+			}
+			form := url.Values{
+				"client_id":  {access.AuthoringCLIClientID},
+				"project_id": {"analytics"},
+				"scope":      {string(access.CapabilityResourcePublish)},
+			}
+			request := httptest.NewRequest(http.MethodPost, "/oauth/device/code", strings.NewReader(form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			recorder := httptest.NewRecorder()
+
+			module.AuthoringDeviceAuthorization(recorder, request)
+
+			if recorder.Code != test.wantStatus || service.beginCalls != test.wantBegins {
 				t.Fatalf("status=%d begin_calls=%d body=%s", recorder.Code, service.beginCalls, recorder.Body.String())
 			}
 		})

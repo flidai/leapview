@@ -197,6 +197,7 @@ type CompiledModel struct {
 	// reject a stale planner paired with a different manifest without
 	// recompiling that definition.
 	sourceFingerprint string
+	sourceSnapshot    []byte
 
 	// The DAG is intentionally private. Returning detached nodes prevents a
 	// consumer from mutating serving-state metadata after activation.
@@ -217,6 +218,10 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 	if validated == nil {
 		return nil, fmt.Errorf("semantic model snapshot is required")
 	}
+	sourceSnapshot, err := json.Marshal(validated)
+	if err != nil {
+		return nil, fmt.Errorf("encode semantic model snapshot: %w", err)
+	}
 	if err := validated.ValidateSemanticGraph(); err != nil {
 		return nil, fmt.Errorf("validate semantic graph: %w", err)
 	}
@@ -236,6 +241,7 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 		datasets: datasets, dimensionBindings: dimensionBindings, fieldBindings: fieldBindings,
 		semanticDimensions: semanticDimensions, physicalFields: physicalFields, relationships: relationships, relationshipPaths: relationshipPaths,
 		sourceFingerprint: sourceFingerprint,
+		sourceSnapshot:    sourceSnapshot,
 		metrics:           make(map[string]CompiledMetric, len(model.Metrics)),
 	}
 
@@ -356,6 +362,10 @@ func CompileDatasetBindings(model *semanticmodel.Model) (*CompiledModel, error) 
 		return nil, fmt.Errorf("semantic model is required")
 	}
 	snapshot := model.ExecutionSnapshot()
+	sourceSnapshot, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("encode semantic model snapshot: %w", err)
+	}
 	datasets, err := compileDatasets(snapshot)
 	if err != nil {
 		return nil, err
@@ -363,7 +373,7 @@ func CompileDatasetBindings(model *semanticmodel.Model) (*CompiledModel, error) 
 	// This dataset-only projection intentionally does not compile semantic
 	// lineage. Full lineage facts are activation inputs for CompileModel and
 	// serving planners; read-model callers only need executable dataset metadata.
-	return &CompiledModel{datasets: datasets, sourceFingerprint: semanticModelFingerprint(model)}, nil
+	return &CompiledModel{datasets: datasets, sourceFingerprint: semanticModelFingerprint(model), sourceSnapshot: sourceSnapshot}, nil
 }
 
 func compileLineageBindings(model *semanticmodel.Model) (map[string]map[string]CompiledDimensionBinding, map[string]map[string]CompiledFieldBinding, error) {
@@ -471,6 +481,20 @@ func (c *CompiledModel) SourceFingerprint() string {
 		return ""
 	}
 	return c.sourceFingerprint
+}
+
+// SourceModel returns a detached execution snapshot of the semantic model
+// compiled into this activation-owned graph. Runtime projections use it to
+// expose schema-discovery facts from the same generation as the planner.
+func (c *CompiledModel) SourceModel() *semanticmodel.Model {
+	if c == nil || len(c.sourceSnapshot) == 0 {
+		return nil
+	}
+	var model semanticmodel.Model
+	if err := json.Unmarshal(c.sourceSnapshot, &model); err != nil {
+		return nil
+	}
+	return &model
 }
 
 // SemanticModelFingerprint returns the deterministic fingerprint used to bind

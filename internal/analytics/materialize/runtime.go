@@ -366,6 +366,12 @@ func (r *Runtime) SourceObservations() []SourceObservation {
 	for i, item := range r.sourceObservations {
 		result[i] = item
 		result[i].Schema = append([]semanticmodel.ColumnSchema(nil), item.Schema...)
+		for column := range result[i].Schema {
+			if result[i].Schema[column].Nullable != nil {
+				nullable := *result[i].Schema[column].Nullable
+				result[i].Schema[column].Nullable = &nullable
+			}
+		}
 	}
 	return result
 }
@@ -798,6 +804,12 @@ func dashboardQueryResultCacheable(request dataquery.Query) bool {
 	if request.Surface != dataquery.SurfaceDashboard {
 		return false
 	}
+	// Model rows are lowered through an opaque SQL plan without PlanIR
+	// equivalence evidence. Keep them out of the result cache until that
+	// planner-owned identity exists.
+	if request.Kind == dataquery.KindModelRows {
+		return false
+	}
 	switch request.Operation {
 	case dataquery.OperationDashboardAggregate,
 		dataquery.OperationDashboardRows,
@@ -812,6 +824,46 @@ func dashboardQueryResultCacheable(request dataquery.Query) bool {
 	default:
 		return false
 	}
+}
+
+// planCacheDeterministic is the query-specific cache admission guard. A
+// planner-produced deterministic PlanIR is necessary but not sufficient when
+// one of its participating Models is backed by authored SQL: the
+// resulting relation revision is not currently represented in the shared
+// query-result identity. Resolve every participating dataset through the
+// validated semantic model and fail closed when that mapping is incomplete.
+func planCacheDeterministic(model *semanticmodel.Model, plan semanticquery.Plan) bool {
+	if model == nil || !plan.Deterministic {
+		return false
+	}
+	projection, err := plan.ResultDependencies()
+	if err != nil {
+		return false
+	}
+	return dependencyProjectionCacheDeterministic(model, projection)
+}
+
+func dependencyProjectionCacheDeterministic(model *semanticmodel.Model, projection semanticquery.DependencyProjection) bool {
+	if model == nil || len(projection.Datasets) == 0 {
+		return false
+	}
+	for _, dataset := range projection.Datasets {
+		spec, ok := model.Datasets[dataset]
+		if !ok || strings.TrimSpace(spec.Model) == "" {
+			return false
+		}
+		table, ok := model.Tables[dataset]
+		if !ok {
+			return false
+		}
+		if table.ModelName != "" && table.ModelName != spec.Model {
+			return false
+		}
+		if strings.TrimSpace(table.Execution.SQL) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Runtime) ClearQueryCache() {
@@ -1232,11 +1284,4 @@ func (r *Runtime) LastRefresh() time.Time {
 		return time.Time{}
 	}
 	return r.lastRefresh
-}
-
-func (r *Runtime) DBPath() string {
-	if r == nil {
-		return ""
-	}
-	return r.db.Path()
 }

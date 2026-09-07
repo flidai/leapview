@@ -1,0 +1,17 @@
+package app
+
+import dashboardpublication "github.com/flidai/leapview/internal/app/dashboardpublication"
+
+// dashboardPublicationServingStateReader and dashboardPublicationActivationReconciler
+// are aliases to the composition-owned contracts used by runtime routing.
+type dashboardPublicationServingStateReader = dashboardpublication.ServingStateReader
+type dashboardPublicationActivationReconciler = dashboardpublication.ActivationReconciler
+
+type NativeDashboardPublicationTxBeginner = dashboardpublication.NativeDashboardPublicationTxBeginner
+type NativeDashboardPublicationGenerationFence = dashboardpublication.NativeDashboardPublicationGenerationFence
+type NativeDashboardPublicationActivationConfig = dashboardpublication.NativeDashboardPublicationActivationConfig
+type NativeDashboardPublicationReconciler = dashboardpublication.NativeDashboardPublicationReconciler
+
+func NewNativeDashboardPublicationReconciler(config NativeDashboardPublicationActivationConfig) (*NativeDashboardPublicationReconciler, error) {
+	return dashboardpublication.NewNativeDashboardPublicationReconciler(config)
+}

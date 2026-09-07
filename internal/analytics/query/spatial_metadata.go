@@ -36,15 +36,15 @@ func (p *Planner) PlanSpatialMetadata(request SpatialMetadataRequest) (Plan, err
 		Filter{Field: request.Longitude.Field, Operator: "greater_than_or_equal", Values: []any{-180.0}},
 		Filter{Field: request.Longitude.Field, Operator: "less_than_or_equal", Values: []any{180.0}},
 	)
-	coordinate, err := p.Plan(Request{
+	coordinate, err := p.planAggregateInternal(Request{
 		Dataset: request.Dataset, Dimensions: []Field{request.Latitude, request.Longitude}, Metrics: request.Metrics,
 		Filters: filters, ColumnMasks: request.ColumnMasks,
-	})
+	}, false)
 	if err != nil {
 		return Plan{}, err
 	}
 	if len(request.Metrics) > 0 {
-		_, err = p.Plan(Request{Dataset: request.Dataset, Metrics: request.Metrics, Filters: filters, ColumnMasks: request.ColumnMasks})
+		_, err = p.planAggregateInternal(Request{Dataset: request.Dataset, Metrics: request.Metrics, Filters: filters, ColumnMasks: request.ColumnMasks}, false)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -86,5 +86,5 @@ func (p *Planner) PlanSpatialMetadata(request SpatialMetadataRequest) (Plan, err
 		alias, _ := outputAlias(metric)
 		envelope.Metrics = append(envelope.Metrics, alias)
 	}
-	return renderSpatialEnvelopePlan(irGraph, envelope, "spatial_metadata")
+	return p.renderSpatialEnvelopePlan(irGraph, envelope, "spatial_metadata", spatialMetadataMemberRefs(p, request))
 }

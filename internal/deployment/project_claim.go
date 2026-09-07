@@ -16,6 +16,7 @@ var (
 	ErrProjectClaimInvalid  = errors.New("project claim is invalid")
 	ErrProjectClaimConflict = errors.New("project claim conflicts with the instance binding")
 	ErrProjectClaimNotFound = errors.New("project claim not found")
+	ErrProjectClaimRequired = errors.New("project claim bootstrap is required")
 )
 
 // ProjectClaim is the durable, singleton binding for one database instance.

@@ -13,7 +13,7 @@ func testAuth(store *platform.Store, cfg accessmodule.AuthConfig) *accessmodule.
 	repo := accesssqlite.NewRepository(store.SQLDB())
 	if cfg.DevBypass {
 		_, _ = repo.SetPlatformRole(context.Background(), access.PlatformRoleInput{
-			PrincipalID: "dev",
+			PrincipalID: accessmodule.DevelopmentPrincipalID,
 			Email:       "dev@localhost",
 			DisplayName: "Local Developer",
 			Role:        access.PlatformRoleAdmin,

@@ -6,7 +6,6 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
-	"github.com/flidai/leapview/internal/dashboard/publication"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
@@ -52,7 +51,8 @@ type DashboardSource struct {
 
 // AuthoredModelDefinition preserves the non-secret definition union from a
 // Model resource for browser/read-model projections. It is intentionally
-// separate from Project.Models: that map is the runtime execution projection
+// separate from ResourceManifest.Models: that map is the runtime execution
+// projection
 // and may be rewritten or target-bound during activation. Keeping the
 // authored shape here lets details show the source SQL without allowing
 // presentation code to treat runtime execution state as authoring input.
@@ -62,13 +62,10 @@ type AuthoredModelDefinition struct {
 	SQL    string `json:"sql,omitempty"`
 }
 
-// Project is the mutable, project-wide compiler assembly contract. It is
-// intentionally independent of artifact/bundle storage and contains no
-// serving namespace. Compiler code may populate this value while the
-// artifact capability owns immutable serialization of it.
-type Project struct {
-	ID                       string                              `json:"id"`
-	Name                     string                              `json:"name"`
+// ResourceManifest is the portable compiler projection for the six authored
+// resource kinds. It is independent of artifact/bundle storage and contains
+// no Project identity, access policy, publication state, or serving namespace.
+type ResourceManifest struct {
 	Title                    string                              `json:"title,omitempty"`
 	Description              string                              `json:"description,omitempty"`
 	Connections              map[string]semanticmodel.Connection `json:"connections,omitempty"`
@@ -85,8 +82,6 @@ type Project struct {
 	SemanticModels          map[string]*semanticmodel.Model           `json:"semanticModels,omitempty"`
 	DashboardDefinitions    map[string]dashboarddefinition.Definition `json:"dashboardDefinitions,omitempty"`
 	DashboardSources        map[string]DashboardSource                `json:"dashboardSources,omitempty"`
-	Publications            map[string]publication.Definition         `json:"publications,omitempty"`
-	Access                  AccessPolicy                              `json:"access,omitempty"`
 	RefreshPipelines        map[string]refreshschedule.Definition     `json:"refreshPipelines,omitempty"`
 	NameIndex               NameIndex                                 `json:"nameIndex,omitempty"`
 	ResourceFiles           map[string]string                         `json:"resourceFiles,omitempty"`
@@ -101,7 +96,6 @@ type NameIndex struct {
 	SemanticModels map[string]string `json:"semanticModels,omitempty"`
 	Dashboards     map[string]string `json:"dashboards,omitempty"`
 	Pipelines      map[string]string `json:"pipelines,omitempty"`
-	Publications   map[string]string `json:"publications,omitempty"`
 }
 
 type AccessPolicy struct {

@@ -219,7 +219,7 @@ func (h *Handler) GetAuthentication(w http.ResponseWriter, _ *http.Request) {
 func (h *Handler) GetSystem(w http.ResponseWriter, r *http.Request) {
 	status := h.config.Status.System
 	status.ControlPlane = "available"
-	if err := h.config.Service.db.PingContext(r.Context()); err != nil {
+	if err := h.config.Service.Ping(r.Context()); err != nil {
 		status.ControlPlane = "unavailable"
 	}
 	apitransport.WriteJSON(w, http.StatusOK, status)

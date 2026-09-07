@@ -1,150 +1,211 @@
 # Backup and restore
 
-Use LeapView administrative commands and backend-native protection so the control plane, analytical catalog, analytical files, and managed source objects can be recovered to a consistent point.
+LeapView production recovery is a coordinated, provider-native operation. The
+control plane is PostgreSQL and analytical state is a PostgreSQL-backed DuckLake
+catalog plus its Parquet/object-store data. The production Admin CLI records and
+gates one exact recovery frontier; it does not replace the PostgreSQL or
+object-store provider's backup and restore tooling. The removed offline
+administrative backup and restore commands are not a supported production
+recovery path.
 
-## Define recovery objectives
+## Recovery objectives
 
-Before choosing a schedule, record the maximum acceptable data loss (RPO) and recovery time (RTO). Include application metadata, active project state, analytical tables, managed revisions, identity/access state, and required external stores.
+Record an RPO and RTO for application metadata, active project state,
+analytical snapshots, managed-data revisions, identity/access state, and every
+external store. Keep project source in Git, but do not treat Git as a backup of
+database state or analytical data.
 
-Dashboard source history belongs in Git, but Git cannot restore user principals, grants, active deployments, refresh state, or analytical data. Instance backups and project version control solve different problems.
+Use a reviewed service record rather than an implied default. At minimum, name
+the provider, region/cluster, backup policy, encryption-key owner, declared RPO,
+declared RTO, and the last measured drill for each boundary:
 
-## Create an instance backup
+| Boundary | Recovery point to prove | Recovery time to measure |
+| --- | --- | --- |
+| Control PostgreSQL | WAL/PITR timestamp or provider backup ID, including the control database identity and timeline | Provider restore complete, credentials accepted, and the exact recovery set published |
+| DuckLake PostgreSQL catalog | Catalog database identity, provider PITR point, catalog version, and DuckLake snapshot ID | Catalog reachable and the snapshot seal/closure validates |
+| DuckLake/object roots and serving artifacts | Object URI, immutable version/generation, digest, and provider restore/versioning evidence | Every root readable and `/readyz` passes after the selected frontier is published |
+| Credential and key material | Secret-manager/provider version, role or service identity, TLS CA/certificate, and key references (never secret values) | Secret references restored, pools reconnect, and a bounded governed query succeeds |
 
-Write the archive outside the active instance directory:
+Measure RPO from the latest durable provider point to the incident boundary and
+RTO from the start of provider restore to the first admitted request. A drill
+that only opens a TCP connection, restores one database, or proves a copied
+file is not an RPO/RTO result. Keep the provider's native operation IDs and
+timestamps with the LeapView recovery evidence; do not put passwords, bearer
+tokens, private keys, or raw connection URLs in that record.
 
-```sh
-install -d -m 0700 /srv/backups
-leapview admin backup --out /srv/backups/leapview-2026-07-16.tar.gz
-```
+## Native protection boundary
 
-Use a dedicated backup directory rather than a shared output directory. The direct backup path enforces mode `0700` on its parent and `0600` on the completed archive even when the process umask is permissive. Compose and supported host installations apply the same private directory, archive, checksum, and systemd `UMask=0077` contract.
+Use the PostgreSQL operator's supported backup and point-in-time recovery (PITR)
+mechanism for the control plane. Protect the DuckLake catalog and Parquet or
+object-store data with their provider-native snapshot, versioning, replication,
+or backup mechanism. Select recovery points that are mutually consistent and
+retain the encryption keys and secret-manager procedures needed to restore
+them.
 
-The output path must not already exist. Record a checksum, creation time, LeapView version, storage-backend configuration, and the identity of any corresponding external catalog or object-store recovery point.
+When the supported `local` managed-data backend or `filesystem` immutable
+object-store backend is selected, the provider-native recovery mechanism is a
+crash-consistent encrypted snapshot of the complete LeapView state volume—not
+an application archive or a copy of selected files. Quiesce application writes,
+record the PostgreSQL recovery point, snapshot the whole volume that contains
+`LEAPVIEW_HOME`, and retain the provider snapshot ID and encryption-key version
+with that recovery point. Restore the snapshot to an isolated volume, mount it
+at the identical path, and verify every recovery-set root and digest before
+traffic is admitted. A PostgreSQL recovery point and a volume snapshot taken at
+different write frontiers are not a valid recovery set.
 
-`--database-only` intentionally captures only the platform database. It is useful for narrow administration but is not a complete analytical recovery artifact.
+LeapView does not provide a product-owned local SQLite/file archive that can be
+used as a PostgreSQL target backup. Follow [PostgreSQL operations and high
+availability](/docs/guides/operate/postgresql-operations) for the provider
+ownership boundary, alert conditions, maintenance fencing, credential
+rotation, and failover checks. Do not claim that a local archive or copied
+Parquet files are a supported restore artifact. Production local/filesystem
+storage is supported only when the host provider supplies, retains, and
+regularly rehearses the complete-volume snapshot procedure above; otherwise
+use versioned S3 storage.
 
-## Protect external stores
+## Provider-native restore drill
 
-For the local backend, the coordinated archive captures the local instance boundary according to the deployment contract. For S3 managed data, enable bucket versioning and independent backup or replication; the application archive contains metadata and cache, not authoritative bucket objects.
+Run this drill in an isolated target with the same PostgreSQL major, DuckLake
+extension/specification, object naming contract, encryption domains, and
+credential-provider integration as production. The provider operator owns the
+restore APIs and can substitute the managed service's equivalent commands.
 
-If DuckLake catalog or analytical data uses a remote backend, use its native consistent backup mechanism. Retain encryption keys and secret-manager recovery procedures separately from the encrypted data they unlock.
+1. Select one mutually consistent PostgreSQL PITR timestamp (or provider
+   backup ID) for the control and DuckLake databases. Confirm WAL/archive
+   continuity, the database/cluster identities, and the provider timeline before
+   allowing the restore to proceed.
+2. Restore the control database and DuckLake catalog with the provider-native
+   PITR workflow. Restore each immutable object root and serving-artifact root
+   by its provider version/generation, then verify the object digest and
+   encryption-key version. Do not replace a missing version with the latest
+   object.
+3. Restore the secret-manager references required by the named control and
+   DuckLake pools, including the role credentials, TLS CA/certificate chain,
+   and key-encryption references. Resolve the exact retained provider version;
+   a newly rotated secret is a new recovery input and must be recorded as such.
+   If the secret manager itself was unavailable, recover it using its native
+   export/replication procedure before starting LeapView. Never copy secret
+   values into the recovery-set JSON or evidence.
+4. Keep writes and traffic stopped. Run `leapview admin recovery prepare`, the
+   external provider probes, `leapview admin recovery validate`, and
+   `leapview admin recovery publish` from the qualification sequence below.
+   Capture provider operation IDs, point-in-time/timeline identities, object
+   version IDs, key versions, and command output with secrets redacted.
+5. Set `LEAPVIEW_RECOVERY_SET_ID`, restart, and gate traffic on `/readyz`.
+   Verify a metadata read/write transaction, one governed DuckLake query, one
+   representative dashboard, access policy evaluation, and managed-data
+   revision visibility. Record measured RPO/RTO and retain failed-state
+   evidence until the incident or drill review is closed.
 
-### Record an executable S3 recovery point
+The repository can validate the immutable frontier, evidence digest, and
+active-pointer bindings, but it cannot honestly prove a provider PITR,
+object-store version restore, encryption-key recovery, or secret-manager
+restore in this local test environment. Those steps remain external-provider
+admission gates; a local unit or PostgreSQL conformance test must not be
+reported as completion of this drill. The active serving seal carries the
+object URI and digest, while provider version/frontier identifiers are retained
+in the recovery-set evidence; readiness deliberately does not re-probe those
+providers. A new provider version or frontier therefore requires a new
+recovery-set validation before publication.
 
-First stop writes and use the object store's native versioning, snapshot, replication, or inventory mechanism to select an immutable recovery point. The point must cover the exact S3 identity configured for LeapView: provider, credential-free endpoint, region, bucket, and prefix. Keep credentials in the deployment secret store; neither input below contains credentials.
+## Recovery qualification and publication
 
-For example, record the selected point and a stable evidence key in `/srv/backups/source-external-recovery.json`:
+First use the native providers to restore the selected PostgreSQL and object
+recovery points far enough that the control plane and referenced objects are
+available. Keep writes stopped, then run the following qualification sequence.
 
-```json
-[
-  {
-    "role": "managed-data",
-    "recoveryPoint": "inventory-sha256:7c0d8f4e.../2026-07-16T02:00:00Z",
-    "evidenceKey": "managed-data-2026-07-16"
-  }
-]
-```
-
-Create the application archive only after that point exists:
-
-```sh
-leapview admin backup \
-  --out /srv/backups/leapview-2026-07-16.tar.gz \
-  --external-recovery-points /srv/backups/source-external-recovery.json
-```
-
-Manifest v2 binds that recovery point and evidence key to the configured provider, endpoint, region, bucket, and prefix. Backup fails when S3 is configured and the exact external point is absent.
-
-## Validate continuously
-
-Automate these checks after backup creation:
-
-- archive exists, is non-empty, and is readable only by intended operators;
-- recorded checksum matches;
-- external store backups cover the expected point;
-- off-host retention and lifecycle rules are active;
-- enough free capacity remains for the next backup and restore staging;
-- retention matches policy without deleting the only good copy.
-
-Periodically restore into an isolated environment. Open representative project resources, run analytical queries, inspect active revisions, and create a fresh post-restore backup. Test both ordinary recovery and the loss of a full node.
-
-## Prepare a restore
-
-Choose a maintenance window, stop traffic and writes, validate the archive checksum, confirm version compatibility, and ensure enough space for archive validation, restored state, and the current-state checkpoint. Do not restore over a running instance or unpack files manually.
-
-For an external-data restore, use this sequence:
-
-1. Read the selected backup's manifest or preflight output and identify every `externalPrerequisites` entry. Restore the native object-store recovery point into the exact provider, endpoint, region, bucket, and prefix named by the backup before replacing LeapView state.
-2. Independently verify the restored object-store point. Map each manifest evidence key to the exact verified recovery-point value in `/srv/backups/source-external-evidence.json`:
-
-   ```json
-   {
-     "managed-data-2026-07-16": "inventory-sha256:7c0d8f4e.../2026-07-16T02:00:00Z"
-   }
-   ```
-
-3. If the target home already contains an instance, select a new native recovery point for its current external store before restore. Record it in `/srv/backups/current-external-recovery.json`; this point belongs to the safety checkpoint, not the source backup:
-
-   ```json
-   [
-     {
-       "role": "managed-data",
-       "recoveryPoint": "inventory-sha256:91be36a2.../2026-07-17T01:30:00Z",
-       "evidenceKey": "managed-data-before-restore-2026-07-17"
-     }
-   ]
-   ```
-
-4. Run read-only preflight with the same archive, evidence, checkpoint path, and current recovery-point inputs intended for restore:
+1. Prepare an immutable recovery-set JSON document containing the restored
+   control and DuckLake recovery identities, delivery pointer, snapshot seal,
+   catalog commit, object roots, and compatibility tuple. The object-roots
+   list must contain exactly the two roots named by the serving seal: one
+   `ducklake` root equal to the seal's DuckLake object URI and digest, and one
+   `serving-artifact` root equal to its serving-artifact URI and digest. Record
+   it in PostgreSQL with the production maintenance identity:
 
    ```sh
-   leapview admin restore \
-     --from /srv/backups/leapview-2026-07-16.tar.gz \
-     --current-out /srv/backups/pre-restore-2026-07-17.tar.gz \
-     --external-evidence /srv/backups/source-external-evidence.json \
-     --current-external-recovery-points /srv/backups/current-external-recovery.json \
-     --preflight-only
+   leapview admin recovery prepare \
+     --set /secure/recovery-set.json \
+     --expires-at 2026-10-01T12:00:00Z
    ```
 
-   Continue only when the JSON plan has `allowed: true` and its archive digest, external prerequisites, target topology, checkpoint topology, capacity values, replacement inventory, and target-tree checksum match the incident plan. Preflight creates no checkpoint and mutates no target state.
+   `--set` and `--expires-at` are required. The expiry is an RFC3339 timestamp
+   in the future and makes the recovery hold finite; `--retain-root-id` is an
+   optional canonical UUID and otherwise defaults to the recovery-set ID.
+   Prepare validates the bounded set document and atomically inserts the
+   prepared frontier and its finite physical recovery-retention hold (a live
+   `recovery` root) in one PostgreSQL transaction. It performs no PostgreSQL
+   PITR, DuckLake, object-store, or other provider I/O.
 
-5. Run the restore with identical inputs, replacing only `--preflight-only` with `--confirm`:
+2. With the finite hold installed, use the PostgreSQL operator and the
+   DuckLake/object-store providers to perform the external checks. Prove the
+   control and DuckLake database
+   identities and recovery frontiers, every object URI/version/digest and
+   provider recovery frontier, and the relation namespace, manifest, and
+   closure digests named by the prepared set. Keep those provider-produced
+   observations as a typed evidence envelope; LeapView does not run these
+   probes.
 
-```sh
-leapview admin restore \
-  --from /srv/backups/leapview-2026-07-16.tar.gz \
-  --current-out /srv/backups/pre-restore-2026-07-17.tar.gz \
-  --external-evidence /srv/backups/source-external-evidence.json \
-  --current-external-recovery-points /srv/backups/current-external-recovery.json \
-  --confirm
-```
+3. Record that evidence against one exact, fenced validation attempt:
 
-Actual restore reruns the same preflight validation before mutation and fails if the archive or target changed. It then writes the current-instance checkpoint with the current external topology before replacing state. Preserve both the checkpoint archive and its native external recovery point until the incident is closed.
+   ```sh
+   leapview admin recovery validate \
+     --set-id 018f3f83-7b2f-7b37-9f9e-000000000010 \
+     --attempt-id 018f3f83-7b2f-7b37-9f9e-000000000021 \
+     --validator operator@example.com \
+     --evidence /secure/recovery-validation.json
+   ```
 
-For a genuinely empty target, omit `--current-out` and `--current-external-recovery-points`; there is no current state to checkpoint. `--current-out -` creates and validates a temporary checkpoint and then discards it, so use it only when an independently durable rollback copy is explicitly unnecessary.
+   `--set-id`, `--attempt-id`, `--validator`, and `--evidence` are required;
+   `--validator` must be a canonical identity of at most 255 bytes. Evidence
+   is bounded to 65,536 bytes and must be the strict v1 JSON envelope: exact
+   fields only, no unknown or duplicate (including case-variant) keys, and
+   canonical identities/digests that match the selected set and attempt. The
+   command transports and records a valid envelope, computes its canonical
+   result digest, and completes the attempt as `passed`; malformed or
+   mismatched evidence is rejected rather than published. It does not contact
+   a provider. Retries must use the same attempt and exact evidence.
 
-## Verify before reopening traffic
+4. Publish only that exact passed attempt under the set's fencing epoch:
 
-After the process starts:
+   ```sh
+   leapview admin recovery publish \
+     --set-id 018f3f83-7b2f-7b37-9f9e-000000000010 \
+     --publisher operator@example.com \
+     --fence-epoch 42 \
+     --validation-attempt-id 018f3f83-7b2f-7b37-9f9e-000000000021
+   ```
 
-1. Check liveness and readiness.
-2. Verify administrator and expected principals without changing grants.
-3. Confirm the bound instance environment and active serving pointers.
-4. Confirm current managed revision digests.
-5. Run a representative semantic and dashboard query.
-6. Inspect refresh and audit history.
-7. Check storage cleanup in dry-run mode.
-8. Create and validate a new backup.
+   Publication is a fenced `prepared` → `published` control-plane transition;
+   it never selects a latest set and performs no provider I/O.
 
-If a remote object store or catalog was restored independently, reconcile its point with LeapView metadata before serving. Preserve the failed and pre-restore artifacts until the incident is closed.
+5. Set `LEAPVIEW_RECOVERY_SET_ID` to the published set ID, restart LeapView
+   with the restored configuration/image, and wait for `/readyz` before
+   admitting traffic. Readiness reads only that exact ID and requires its
+   published status, passed immutable attempt/result, target pointer and
+   revision, generation/publication, snapshot seal and catalog identity,
+   admitted compatibility tuple, and serving-artifact identities to match the
+   active PostgreSQL projections. The check is read-only and performs no
+   object-store or other provider probes. An unset variable runs the ordinary
+   startup checks; it never means “latest recovery set.”
 
-For a plan-delivery restore, keep traffic stopped until the control-plane
-checks pass. Verify that every configured production target has an admitted
-physical pool, a target revision, and an active generation with a non-empty
-serving-state identity. Rows with missing identity or a publication in the
-`indeterminate` state remain non-serving until the original request is
-reconciled; never create a replacement request merely to probe the result.
-If any check is missing or ambiguous, leave readiness failed, preserve the
-backup, and repair or restore again from the last validated point.
+The `--expires-at` hold is retired by native PostgreSQL maintenance when its
+deadline elapses. Maintenance advances the root monotonically from `live` to
+`retiring`, then to `expired` only after its configured grace and exact reader
+leases have drained. Do not edit retention rows or delete physical objects by
+hand; immutable snapshot seals remain historical evidence after reachability
+expires.
 
-See [Storage and recovery](/docs/guides/data/storage-recovery) and the generated [`admin backup`](/docs/cli/admin-backup) and [`admin restore`](/docs/cli/admin-restore) references.
+## Restore and verify
+
+The sequence above keeps writes stopped through provider restore, validation,
+publication, and restart. Set `LEAPVIEW_RECOVERY_SET_ID` before that restart and
+use `/readyz` as the pre-traffic gate; LeapView never selects the latest set.
+Before admitting traffic, verify the instance identity, active
+project/deployment pointers, authorization state, managed-data revisions,
+representative semantic queries, and dashboards. Preserve the failed state and
+all provider and LeapView recovery evidence until the incident is closed.
+
+For an empty or development SQLite fixture, use the fixture's own test harness;
+that path is not production recovery. The commands above are production-only
+and require the PostgreSQL maintenance configuration; they do not provide an
+offline restore or a local archive.

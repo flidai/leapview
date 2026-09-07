@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/access/http/mcpoauth"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
@@ -27,6 +28,8 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/extension"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
+	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
+	idempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
@@ -34,7 +37,6 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
-	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
@@ -243,14 +245,13 @@ type assemblyConfig struct {
 	Database                *sql.DB
 	PlatformHealth          platformHealth
 	AgentSettings           agentmodule.Settings
-	AdminDatabase           *sql.DB
+	AgentPersistence        *agentmodule.Persistence
 	ServingStateRepo        servingStateRepository
-	StorageRetention        *servingstatemodule.Retention
-	ManagedDataValidation   refreshmodule.CandidateValidationHook
 	ManagedDataResolver     runtimehostmodule.ManagedDataResolver
 	ReleaseModule           *releasemodule.Module
 	JobModule               *jobsmodule.Module
 	AccessRepo              access.Repository
+	MCPResource             mcpoauth.ResourceServer
 	AccessModule            *accessmodule.Module
 	Agent                   *agentmodule.Service
 	AgentConfig             agentmodule.ModelConfig
@@ -278,8 +279,6 @@ type assemblyConfig struct {
 	PublicURL               string
 	DesktopDiscovery        desktopdiscovery.Config
 	RefreshPipelineClock    refreshmodule.Clock
-	RefreshMaterializer     refreshrun.Materializer
-	EnableRefreshDispatcher bool
 	RecoveryLifecycle       *refreshmodule.RecoveryLifecycle
 	RecoveryInterval        time.Duration
 	RuntimeHost             *runtimehostmodule.Module
@@ -294,6 +293,8 @@ type assemblyConfig struct {
 	ProductStatus           adminmodule.ProductStatus
 	ProjectCatalog          *projectcatalog.Service
 	ProjectGraph            projecthttp.GraphReader
+
+	RefreshPersistence *refreshmodule.Persistence
 }
 
 // appTestHarness is the test-only composition adapter used by app-package tests.
@@ -351,6 +352,7 @@ func apiGenDispatcherForTest(server *appTestHarness) apiGenDispatcher {
 	return apiGenDispatcher{
 		managedDataModule:  server.routes.managedDataModule,
 		arrowQueries:       supportsNativeArrow(server.runtime.metrics),
+		nativeDelivery:     server.platform.nativeDelivery,
 		defaultEnvironment: server.policy.defaultEnvironment, managedDataTus: server.policy.managedDataTus,
 		instanceID: "lvinst_test", canonicalOrigin: "http://localhost:8080",
 		buildIdentity: server.platform.buildIdentity,
@@ -378,9 +380,9 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 	if options.AccessModule == nil {
 		var err error
 		options.AccessModule, err = accessmodule.Build(ctx, accessmodule.Config{
-			Database:     options.Database,
 			ExistingAuth: options.Auth, Auth: accessmodule.AuthConfig{Disabled: options.Auth == nil},
-			Assets: options.Assets, InstanceID: instanceID, PublicURL: publicURL,
+			Profile: accessmodule.NewProfileSurface(options.AccessRepo, options.MCPResource),
+			Assets:  options.Assets, InstanceID: instanceID, PublicURL: publicURL,
 		})
 		if err != nil {
 			return nil, err
@@ -393,6 +395,15 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		}
 		options.Workload = controller
 	}
+	data := dataAssemblyInputs{
+		PlatformHealth: options.PlatformHealth, ServingStateRepo: options.ServingStateRepo,
+		AccessRepo:         options.AccessRepo,
+		RefreshPersistence: options.RefreshPersistence,
+	}
+	if options.Database != nil {
+		data.APIIdempotency = idempotencysqlite.NewStore(options.Database)
+		data.CursorSigning = cursorsigning.NewEphemeralInitializer()
+	}
 	if options.ProjectCatalog == nil && options.AccessModule != nil && options.RuntimeHost != nil {
 		catalog, err := projectcatalog.NewService(
 			projectCatalogLeaseProvider{provider: options.RuntimeHost.Provider()},
@@ -404,34 +415,27 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		options.ProjectCatalog = catalog
 	}
 	routes, runtime, platform, policy, err := buildApplicationSurfaces(ctx, metrics,
-		dataAssemblyInputs{
-			Database: options.Database, PlatformHealth: options.PlatformHealth,
-			AdminDatabase: options.AdminDatabase, ServingStateRepo: options.ServingStateRepo,
-			StorageRetention: options.StorageRetention,
-			AccessRepo:       options.AccessRepo,
-		},
+		data,
 		capabilityAssemblyInputs{
-			ReleaseModule: options.ReleaseModule, JobModule: options.JobModule,
+			ReleaseModule: options.ReleaseModule, JobModule: options.JobModule, AgentPersistence: options.AgentPersistence,
 			AccessModule: options.AccessModule, Agent: options.Agent,
 			ManagedDataModule: options.ManagedDataModule, AnalyticsModule: options.AnalyticsModule, Authoring: options.Authoring,
 			DashboardAssets: options.DashboardAssets, Product: options.Product, ProductStatus: options.ProductStatus,
 			ProjectCatalog: options.ProjectCatalog, ProjectGraph: options.ProjectGraph,
 		},
 		workflowAssemblyInputs{
-			AgentSettings: options.AgentSettings, ManagedDataValidation: options.ManagedDataValidation,
+			AgentSettings:       options.AgentSettings,
 			ManagedDataResolver: options.ManagedDataResolver, AgentConfig: options.AgentConfig,
 			Auth: options.Auth, Reloader: options.Reloader, Workload: options.Workload,
 			DeploymentConfig: options.DeploymentConfig, RefreshPipelineClock: options.RefreshPipelineClock,
-			RefreshMaterializer: options.RefreshMaterializer, EnableRefreshDispatcher: options.EnableRefreshDispatcher,
 			RecoveryLifecycle: options.RecoveryLifecycle, RecoveryInterval: options.RecoveryInterval,
 			QueryAudit: options.QueryAudit,
 		},
 		runtimeAssemblyInputs{
 			RuntimeHost: options.RuntimeHost, ProjectID: options.ProjectID,
 			ProjectIDResolver: options.ProjectIDResolver, ServingSnapshotResolver: options.ServingSnapshotResolver,
-			InstanceID: instanceID,
-			DuckDBDir:  options.DuckDBDir, DuckLakeCatalogPath: options.DuckLakeCatalogPath,
-			DuckLakeDataPath:   options.DuckLakeDataPath,
+			InstanceID:         instanceID,
+			DuckDBDir:          options.DuckDBDir,
 			DefaultEnvironment: options.DefaultEnvironment, SCIMBearerToken: options.SCIMBearerToken,
 			MetricsBearerToken: options.MetricsBearerToken, AllowedHosts: options.AllowedHosts, Assets: options.Assets,
 			AllowDevAuthBypass: true,

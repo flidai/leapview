@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	StyleSHA256              = "eeb32e219ad7dd4178377e21a2f11477b44408ab44a4878579692315add1e7f7"
+	StyleSHA256              = "2cca54bc71115f75c1963b187e74e4c8695ff6ee37d8939d99e9403344aadeb1"
 	ArchiveSHA256            = "af527dbc24444b4f87e89190319f65bd6e6e6ef0db8d8054f19e2017932ab392"
 	BasemapAssetsRevision    = "028c18f713baecad011301ff7a69acc39bcc2ae7"
 	assetID                  = "leapview-streets"

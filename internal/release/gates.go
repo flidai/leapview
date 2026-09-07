@@ -115,6 +115,9 @@ func (e GateEvidence) Validate() error {
 		if source.ObservationQueries < 0 || source.ObservationRows < 0 || source.ObservationMillis < 0 || source.ObservationQueries > e.Bounds.MaxQueries || source.ObservationRows > e.Bounds.MaxRows || source.ObservationMillis > e.Bounds.MaxMillis {
 			return fmt.Errorf("invalid gate source observation bounds")
 		}
+		if source.ObservationQueries > e.Queries-accountedQueries || source.ObservationRows > e.ObservedRows-accountedRows {
+			return fmt.Errorf("gate aggregate totals do not cover component evidence")
+		}
 		accountedQueries += source.ObservationQueries
 		accountedRows += source.ObservationRows
 		switch source.Mode {
@@ -173,6 +176,9 @@ func (e GateEvidence) Validate() error {
 		if check.Identity == "" || check.Kind == "" || check.ResourceID == "" || check.Queries < 0 || check.ObservedRows < 0 || (!e.QueriesExceeded && check.Queries > e.Bounds.MaxQueries) || (!e.RowsExceeded && check.ObservedRows > e.Bounds.MaxRows) {
 			return fmt.Errorf("invalid gate check evidence")
 		}
+		if check.Queries > e.Queries-accountedQueries || check.ObservedRows > e.ObservedRows-accountedRows {
+			return fmt.Errorf("gate aggregate totals do not cover component evidence")
+		}
 		accountedQueries += check.Queries
 		accountedRows += check.ObservedRows
 		if _, duplicate := seenChecks[check.Identity]; duplicate {
@@ -192,9 +198,6 @@ func (e GateEvidence) Validate() error {
 		default:
 			return fmt.Errorf("invalid gate outcome %q", check.Outcome)
 		}
-	}
-	if accountedQueries > e.Queries || accountedRows > e.ObservedRows {
-		return fmt.Errorf("gate aggregate totals do not cover component evidence")
 	}
 	componentOutcome := GateSuccess
 	for _, source := range e.Sources {

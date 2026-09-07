@@ -24,7 +24,7 @@ All capability modules are peers. Some—especially `access`, `analytics`, `proj
 
 `admin` is an interface module over capability-owned reads and mutations rather than a separate domain owner. Product HTTP, API, UI, worker, and persistence adapters live with the capability whose language they express. Generic protocol mechanics live in `platform`; global dispatch and application assembly live in `app`.
 
-Offline initialization, retention, analytical cleanup, backup, and restore are Admin-owned use cases under `internal/admin/offline`. They depend on explicit Access, instance-state, retention, storage, archive, locking, and credential-recovery ports. `internal/app/adminoffline` only translates process configuration and wires those ports to concrete capability adapters and platform mechanisms.
+Initialization and physical-pool bootstrap are Admin-owned use cases under `internal/admin/offline`. They depend on explicit Access, instance-state, locking, credential-recovery, and pool-admission ports. `internal/app/adminpostgres` translates process configuration and wires the PostgreSQL-native authorities. Operational retention is likewise composed from capability-owned PostgreSQL maintenance authorities; the application exposes no second local control-plane implementation.
 
 `cmd/leapview` starts the application and CLI. Transport adapters parse HTTP or Datastar commands and invoke capability use cases. Capability code enforces authorization and lifecycle invariants through explicit ports. Capability-owned adapters implement SQLite, DuckLake, object-storage, filesystem, and external-connector behavior.
 
@@ -45,15 +45,27 @@ Avoid introducing a second path around capability use cases. Browser, CLI-backed
 
 ## Configuration and deployment
 
-Project YAML is loaded and validated as one graph. The project manifest discovers connections, sources, models, semantic models, pipelines, dashboards, access, and publications from flat include lists.
+The configured source root is loaded and validated as one graph. Conventional
+resource directories discover connections, sources, models, semantic models,
+pipelines, and dashboards without an authored Project manifest. The target
+binds the durable Project identity; access policy and publication state remain
+target-owned concerns.
 
 Project deployment compiles validated candidates into immutable artifacts and serving metadata, then changes the instance's serving pointers to accepted state. Runtime requests read the active deployment rather than mutable repository files. Managed-data revision pins move with the project candidate.
 
 ## Analytical storage
 
-The platform SQLite database owns application state: identities, grants, environments, deployments, jobs, audit history, and active serving pointers.
+Production application state lives in PostgreSQL: identities, grants,
+environments, deployments, jobs, audit history, and active serving pointers.
+SQLite remains an explicit adapter for local/evaluation fixtures; the
+documentation site's SQLite search index is separate and unchanged.
 
-One process-owned DuckDB instance is the sole client of a DuckDB-backed DuckLake catalog. DuckLake owns analytical table metadata, snapshots, schema evolution, statistics, and physical-file manifests; Parquet holds analytical data. Runtime generations produce snapshot-qualified plans and share bounded DuckDB connections for materialization and governed BI queries.
+One process-owned DuckDB instance is the sole client of the PostgreSQL-backed
+DuckLake catalog in production. Local/evaluation fixtures may use a local
+DuckLake catalog file. DuckLake owns analytical table metadata, snapshots,
+schema evolution, statistics, and physical-file manifests; Parquet holds
+analytical data. Runtime generations produce snapshot-qualified plans and
+share bounded DuckDB connections for materialization and governed BI queries.
 
 The active pointer is a LeapView concern; snapshot and file ownership are DuckLake concerns. Cleanup reconciles both before expiring metadata or deleting physical files.
 

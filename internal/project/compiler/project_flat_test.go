@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
@@ -24,10 +22,11 @@ import (
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	"github.com/flidai/leapview/internal/workload"
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
@@ -94,12 +93,10 @@ spec:
   pages: [{id: overview, title: Overview, components: []}]
 `,
 	}
-	project := flatProjectFixtureYAMLForFiles(files)
-	project = strings.Replace(project, "dashboards: {include: []}", "dashboards: {include: [dashboards/*.yaml]}", 1)
-	projectPath := writeFlatProjectFixtureWithProject(t, project, files)
-	compiled, err := LoadProject(projectPath)
+	projectPath := writeSourceFixture(t, files)
+	compiled, err := LoadSourceRoot(projectPath)
 	if err != nil {
-		t.Fatalf("LoadProject() error = %v", err)
+		t.Fatalf("LoadSourceRoot() error = %v", err)
 	}
 	source, ok := compiled.Manifest.DashboardSources["dashboard:sales"]
 	if !ok {
@@ -131,7 +128,7 @@ spec:
 }
 
 func TestAIContextIsPreservedWithoutChangingExecutableSemantics(t *testing.T) {
-	load := func(t *testing.T, withContext bool) *Project {
+	load := func(t *testing.T, withContext bool) *sourceAssembly {
 		t.Helper()
 		modelContext := ""
 		semanticContext := ""
@@ -197,14 +194,6 @@ spec:
       empty: 'null'
       timeDimension: activity_date
 `,
-			"access/sales-read.yaml": `apiVersion: leapview.dev/v1
-kind: Grant
-metadata: {id: grant:sales-read, name: sales-read}
-spec:
-  object: {kind: semantic_model, id: semantic:sales}
-  subject: {kind: principal, principalId: alice}
-  capability: RESOURCE_READ
-`,
 		}
 		if withContext {
 			files["models/orders.yaml"] = strings.Replace(files["models/orders.yaml"], "order_line: {type: primary, fields: [order_id, line_number]}", "order_line: {type: primary, fields: [order_id, line_number], aiContext: {instructions: Keep the order-line grain.}}", 1)
@@ -223,15 +212,13 @@ spec:
 			metricContext = "\n      aiContext: {instructions: Explain governed revenue.}"
 		}
 		files["semantic-models/sales.yaml"] = strings.Replace(files["semantic-models/sales.yaml"], "      timeDimension: activity_date\n", "      timeDimension: activity_date\n      where: [captured_orders]"+metricContext+"\n", 1)
-		projectYAML := flatProjectFixtureYAMLForFiles(files)
-		projectYAML = strings.Replace(projectYAML, "access: {include: []}", "access: {include: [access/*.yaml]}", 1)
-		projectPath := writeFlatProjectFixtureWithProject(t, projectYAML, files)
-		project := mustLoadProject(t, projectPath)
+		projectPath := writeSourceFixture(t, files)
+		project := mustLoadSourceAssembly(t, projectPath)
 		// Managed source paths are relative to the active revision root. Keep
 		// both projects pointed at their own identical fixture data.
 		for name, model := range project.Manifest.SemanticModels {
 			connection := model.Connections["warehouse"]
-			connection.Root = filepath.Dir(projectPath)
+			connection.Root = projectPath
 			model.Connections["warehouse"] = connection
 			project.Manifest.SemanticModels[name] = model
 		}
@@ -335,9 +322,6 @@ spec:
 	if !reflect.DeepEqual(strip(withoutModel), strip(withModel)) {
 		t.Fatalf("top-level AI context changed executable semantic model:\n%s", cmp.Diff(strip(withoutModel), strip(withModel)))
 	}
-	if !reflect.DeepEqual(without.Manifest.Access, with.Manifest.Access) {
-		t.Fatalf("AI context changed compiled authorization artifact:\n%s", cmp.Diff(without.Manifest.Access, with.Manifest.Access))
-	}
 	withoutPlanner, err := semanticquery.NewCompiledPlanner(withoutModel)
 	if err != nil {
 		t.Fatalf("compile planner without AI context: %v", err)
@@ -424,11 +408,11 @@ func (aiContextQualificationGovernor) GovernDataQuery(_ context.Context, request
 	return request, nil, nil
 }
 
-func mustLoadProject(t *testing.T, path string) *Project {
+func mustLoadSourceAssembly(t *testing.T, path string) *sourceAssembly {
 	t.Helper()
-	project, err := LoadProject(path)
+	project, err := LoadSourceRoot(path)
 	if err != nil {
-		t.Fatalf("LoadProject(%q): %v", path, err)
+		t.Fatalf("LoadSourceRoot(%q): %v", path, err)
 	}
 	return &project
 }
@@ -445,7 +429,6 @@ func TestResourceResolverRejectsAmbiguousNames(t *testing.T) {
 
 func TestProjectGraphRejectsDependencyCycle(t *testing.T) {
 	resources := []projectgraph.Resource{
-		{ID: "project:test", Kind: projectgraph.KindProject, Name: "test"},
 		{ID: "model:a", Kind: projectgraph.KindModel, Name: "a"},
 		{ID: "model:b", Kind: projectgraph.KindModel, Name: "b"},
 	}
@@ -456,13 +439,13 @@ func TestProjectGraphRejectsDependencyCycle(t *testing.T) {
 }
 
 func TestProjectGraphCanonicalBytesStableAcrossTraversalOrder(t *testing.T) {
-	resources := []projectgraph.Resource{{ID: "project:test", Kind: projectgraph.KindProject, Name: "test"}, {ID: "source:z", Kind: projectgraph.KindSource, Name: "z"}, {ID: "connection:a", Kind: projectgraph.KindConnection, Name: "a"}}
+	resources := []projectgraph.Resource{{ID: "source:z", Kind: projectgraph.KindSource, Name: "z"}, {ID: "connection:a", Kind: projectgraph.KindConnection, Name: "a"}}
 	edges := []projectgraph.Edge{{From: "source:z", To: "connection:a", Relation: "uses_connection"}}
 	first, err := projectgraph.NewProjectGraph(resources, edges)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := projectgraph.NewProjectGraph([]projectgraph.Resource{resources[2], resources[0], resources[1]}, []projectgraph.Edge{edges[0]})
+	second, err := projectgraph.NewProjectGraph([]projectgraph.Resource{resources[1], resources[0]}, []projectgraph.Edge{edges[0]})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,22 +493,21 @@ func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T)
 	base := newModel("orders")
 	derived := newModel("")
 	derived.Execution.SQL = "SELECT base.order_id FROM model.base_model AS base JOIN source.orders AS raw ON raw.order_id = base.order_id"
-	project := Project{
-		ID: "project:test", Name: "test",
+	project := sourceAssembly{
 		Connections:   map[string]semanticmodel.Connection{"warehouse": {Kind: "managed"}},
 		ConnectionIDs: map[string]string{"warehouse": "connection:warehouse"},
 		Sources:       map[string]semanticmodel.Source{"orders": {Connection: "warehouse", Format: "csv", Path: "orders.csv"}},
 		SourceIDs:     map[string]string{"orders": "source:orders"},
 		Models:        map[string]semanticmodel.Table{"base_model": base, "derived_model": derived},
 		ModelIDs:      map[string]string{"base_model": "model:base", "derived_model": "model:derived"},
-		SemanticModels: map[string]projectSemanticModelSpec{"sales": {Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+		SemanticModels: map[string]projectcontracts.SemanticModelSpec{"sales": {Datasets: map[string]projectcontracts.SemanticDataset{
 			"base_alias": {Model: "base_model"}, "derived_alias": {Model: "derived_model"},
 		}}},
 		SemanticModelIDs: map[string]string{"sales": "semantic:sales"},
 	}
-	manifest, err := projectManifest(project)
+	manifest, err := buildResourceManifest(project)
 	if err != nil {
-		t.Fatalf("projectManifest() error = %v", err)
+		t.Fatalf("buildResourceManifest() error = %v", err)
 	}
 	semanticModel := manifest.SemanticModels["semantic:sales"]
 	if semanticModel == nil {
@@ -542,13 +524,13 @@ func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T)
 	derived = invalid.Models["derived_model"]
 	derived.Execution.SQL = strings.Replace(derived.Execution.SQL, "model.base_model", "model.base_alias", 1)
 	invalid.Models["derived_model"] = derived
-	if _, err := projectManifest(invalid); err == nil || !strings.Contains(err.Error(), `unknown Model "base_alias"`) {
+	if _, err := buildResourceManifest(invalid); err == nil || !strings.Contains(err.Error(), `unknown Model "base_alias"`) {
 		t.Fatalf("dataset alias in transform dependency error = %v, want unknown physical model", err)
 	}
 }
 
-func TestFlatProjectAllowsModelOnlyTransform(t *testing.T) {
-	projectPath := writeFlatProjectFixture(t, map[string]string{
+func TestSourceRootAllowsModelOnlyTransform(t *testing.T) {
+	projectPath := writeSourceFixture(t, map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
@@ -580,9 +562,9 @@ spec:
   fields: {order_id: {datatype: String}}
 `,
 	})
-	project, err := LoadProject(projectPath)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
-		t.Fatalf("LoadProject() model-only transform: %v", err)
+		t.Fatalf("LoadSourceRoot() model-only transform: %v", err)
 	}
 	derived, ok := project.Models["order_labels"]
 	if !ok {
@@ -606,8 +588,8 @@ spec:
 	}
 }
 
-func TestFlatProjectRejectsTopLevelModelSQLAlias(t *testing.T) {
-	projectPath := writeFlatProjectFixture(t, map[string]string{
+func TestSourceRootRejectsTopLevelModelSQLAlias(t *testing.T) {
+	projectPath := writeSourceFixture(t, map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
@@ -629,13 +611,13 @@ spec:
   fields: {order_id: {datatype: String}}
 `,
 	})
-	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "legacySql") {
-		t.Fatalf("LoadProject() accepted removed top-level Model sql alias: %v", err)
+	if _, err := LoadSourceRoot(projectPath); err == nil || !strings.Contains(err.Error(), "legacySql") {
+		t.Fatalf("LoadSourceRoot() accepted removed top-level Model sql alias: %v", err)
 	}
 }
 
-func TestFlatProjectPreservesStableIDForPunctuatedSourceName(t *testing.T) {
-	projectPath := writeFlatProjectFixture(t, map[string]string{
+func TestSourceRootPreservesStableIDForPunctuatedSourceName(t *testing.T) {
+	projectPath := writeSourceFixture(t, map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
@@ -652,9 +634,9 @@ metadata: {id: model:orders, name: orders}
 spec: {definition: {type: direct, source: foo-bar}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
-	project, err := LoadProject(projectPath)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
-		t.Fatalf("LoadProject() error = %v", err)
+		t.Fatalf("LoadSourceRoot() error = %v", err)
 	}
 	resource, ok := project.Graph.Resource("source:foo-bar")
 	if !ok || resource.Kind != projectgraph.KindSource || resource.Name != "foo-bar" {
@@ -665,8 +647,8 @@ spec: {definition: {type: direct, source: foo-bar}, entities: {id: {type: primar
 	}
 }
 
-func TestFlatProjectRejectsCollidingSourceAliases(t *testing.T) {
-	projectPath := writeFlatProjectFixture(t, map[string]string{
+func TestSourceRootRejectsCollidingSourceAliases(t *testing.T) {
+	projectPath := writeSourceFixture(t, map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
@@ -688,48 +670,18 @@ metadata: {id: model:orders, name: orders}
 spec: {definition: {type: direct, source: foo-bar}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
-	_, err := LoadProject(projectPath)
+	_, err := LoadSourceRoot(projectPath)
 	if err == nil {
-		t.Fatal("LoadProject() accepted colliding source aliases")
+		t.Fatal("LoadSourceRoot() accepted colliding source aliases")
 	}
 	for _, want := range []string{"foo-bar", "foo_bar", "source:foo-bar", "source:foo_bar", "runtime source alias"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("LoadProject() error = %v, want %q", err, want)
+			t.Fatalf("LoadSourceRoot() error = %v, want %q", err, want)
 		}
 	}
 }
 
-func TestFlatAccessRejectsWrongKindAndCapability(t *testing.T) {
-	project := Project{
-		Access:      manifest.AccessPolicy{Groups: map[string]manifest.Group{}, RoleBindings: map[string]manifest.RoleBinding{}, Grants: map[string]manifest.Grant{"bad": {ID: "grant:bad", Name: "bad", Object: manifest.SecurableRef{Kind: "source", ID: "dashboard:one"}, Subject: manifest.Subject{Kind: "principal", Email: "user@example.test"}, Capability: "NOT_A_CAPABILITY"}}, DataPolicies: map[string]manifest.DataPolicy{}},
-		AccessPaths: map[string]string{"bad": "access/bad.yaml"}, ResourceIDs: map[string]string{"grant:bad": "grant:bad"},
-	}
-	resolver, err := newResourceResolver([]projectgraph.Resource{{ID: "project:test", Kind: projectgraph.KindProject, Name: "test"}, {ID: "dashboard:one", Kind: projectgraph.KindDashboard, Name: "one"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateFlatAccess(project, resolver); err == nil || !strings.Contains(err.Error(), "unsupported capability") {
-		t.Fatalf("validateFlatAccess() error = %v, want capability diagnostic", err)
-	}
-	project.Access.Grants["bad"] = manifest.Grant{ID: "grant:bad", Name: "bad", Object: manifest.SecurableRef{Kind: "source", ID: "dashboard:one"}, Subject: manifest.Subject{Kind: "principal", Email: "user@example.test"}, Capability: "RESOURCE_READ"}
-	if err := validateFlatAccess(project, resolver); err == nil || !strings.Contains(err.Error(), "want source") {
-		t.Fatalf("validateFlatAccess() error = %v, want wrong-kind diagnostic", err)
-	}
-	project.Access.Grants["bad"] = manifest.Grant{ID: "grant:bad", Name: "bad", Object: manifest.SecurableRef{Kind: "source", ID: "source:one"}, Subject: manifest.Subject{Kind: "principal", Email: "user@example.test"}, Capability: "RESOURCE_SHARE"}
-	resolver, err = newResourceResolver([]projectgraph.Resource{{ID: "project:test", Kind: projectgraph.KindProject, Name: "test"}, {ID: "source:one", Kind: projectgraph.KindSource, Name: "one"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateFlatAccess(project, resolver); err == nil || !strings.Contains(err.Error(), "unsupported capability") {
-		t.Fatalf("validateFlatAccess() accepted RESOURCE_SHARE on source")
-	}
-	project.Access.Grants["bad"] = manifest.Grant{ID: "grant:bad", Name: "bad", Object: manifest.SecurableRef{Kind: "project", ID: "project:test"}, Subject: manifest.Subject{Kind: "principal", PrincipalID: "principal:test"}, Capability: "RESOURCE_READ"}
-	if err := validateFlatAccess(project, resolver); err == nil || !strings.Contains(err.Error(), "unsupported capability") {
-		t.Fatalf("validateFlatAccess() accepted RESOURCE_READ as a direct project grant")
-	}
-}
-
-func TestCompileProjectGraphResolvesStableIDsAndProvenance(t *testing.T) {
+func TestCompileGraphResolvesStableIDsAndProvenance(t *testing.T) {
 	root := t.TempDir()
 	write := func(name, body string) {
 		t.Helper()
@@ -741,18 +693,6 @@ func TestCompileProjectGraphResolvesStableIDsAndProvenance(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("leapview.yaml", `apiVersion: leapview.dev/v1
-kind: Project
-metadata: {id: project:demo, name: demo, displayName: Demo}
-spec:
-  connections: {include: [connections/*.yaml]}
-  sources: {include: [sources/*.yaml]}
-  models: {include: [models/*.yaml]}
-  semanticModels: {include: [semantic-models/*.yaml]}
-  pipelines: {include: [pipelines/*.yaml]}
-  dashboards: {include: [dashboards/*.yaml]}
-  access: {include: []}
-`)
 	write("connections/warehouse.yaml", `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: conn:warehouse, name: warehouse}
@@ -800,23 +740,20 @@ spec:
   pages: [{id: overview, title: Overview, components: []}]
 `)
 
-	compiled, err := CompileProjectGraph(filepath.Join(root, "leapview.yaml"))
+	compiled, err := CompileGraph(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if compiled.ProjectID() != "project:demo" {
-		t.Fatalf("project id = %q", compiled.ProjectID())
-	}
 	resources := compiled.Resources()
-	if len(resources) != 7 {
-		t.Fatalf("resource count = %d, want 7", len(resources))
+	if len(resources) != 6 {
+		t.Fatalf("resource count = %d, want 6", len(resources))
 	}
 	for _, resource := range resources {
-		if resource.Kind == projectgraph.KindProject {
-			continue
-		}
 		if resource.Provenance.Path == "" || filepath.IsAbs(resource.Provenance.Path) {
 			t.Fatalf("resource %q provenance = %#v", resource.ID, resource.Provenance)
+		}
+		if resource.Provenance.Origin != "source" {
+			t.Fatalf("resource %q provenance origin = %q, want source", resource.ID, resource.Provenance.Origin)
 		}
 	}
 	resolver, err := newResourceResolver(compiled.Resources())
@@ -837,20 +774,50 @@ spec:
 	}
 }
 
-func TestCompileProjectGraphShowcase(t *testing.T) {
-	project, err := LoadProject(filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"))
+func TestCompileGraphShowcase(t *testing.T) {
+	// The repository also keeps the independent MovieLens example below
+	// dashboards/experiments. Compile the showcase's six owned directories as
+	// one source root so that sibling examples are not treated as resources.
+	fixtureRoot := filepath.Join("..", "..", "..", "dashboards")
+	sourceRoot := t.TempDir()
+	for _, directory := range []string{"connections", "sources", "models", "semantic-models", "pipelines", "dashboards"} {
+		from := filepath.Join(fixtureRoot, directory)
+		to := filepath.Join(sourceRoot, directory)
+		err := filepath.WalkDir(from, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			relative, err := filepath.Rel(from, path)
+			if err != nil {
+				return err
+			}
+			target := filepath.Join(to, relative)
+			if entry.IsDir() {
+				return os.MkdirAll(target, 0o755)
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(target, content, 0o644)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	project, err := LoadSourceRoot(sourceRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	graph := project.Graph
-	if graph.ProjectID() != "project:leapview-showcase" {
-		t.Fatalf("project id = %q", graph.ProjectID())
-	}
 	if len(graph.Resources()) < 10 {
 		t.Fatalf("resource count = %d", len(graph.Resources()))
 	}
 	wantKinds := map[projectgraph.Kind]bool{
-		projectgraph.KindProject: true, projectgraph.KindConnection: true, projectgraph.KindSource: true,
+		projectgraph.KindConnection: true, projectgraph.KindSource: true,
 		projectgraph.KindModel: true, projectgraph.KindSemanticModel: true, projectgraph.KindPipeline: true,
 		projectgraph.KindDashboard: true,
 	}
@@ -900,7 +867,7 @@ func TestCompileProjectGraphShowcase(t *testing.T) {
 	}
 }
 
-func TestCompileProjectGraphAcceptsCanonicalReferenceIDs(t *testing.T) {
+func TestCompileGraphAcceptsCanonicalReferenceIDs(t *testing.T) {
 	root := t.TempDir()
 	write := func(name, body string) {
 		t.Helper()
@@ -912,23 +879,11 @@ func TestCompileProjectGraphAcceptsCanonicalReferenceIDs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("leapview.yaml", `apiVersion: leapview.dev/v1
-kind: Project
-metadata: {id: project:id-refs, name: id-refs}
-spec:
-  connections: {include: [connections/*.yaml]}
-  sources: {include: [sources/*.yaml]}
-  models: {include: [models/*.yaml]}
-  semanticModels: {include: [semantic-models/*.yaml]}
-  pipelines: {include: []}
-  dashboards: {include: []}
-  access: {include: []}
-`)
 	write("connections/c.yaml", "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:id, name: warehouse}\nspec: {type: managed}\n")
 	write("sources/s.yaml", "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:id, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n")
 	write("models/m.yaml", "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:id, name: orders_model}\nspec: {definition: {type: direct, source: source:id}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}\n")
 	write("semantic-models/s.yaml", "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic-model:id, name: sales}\nspec: {datasets: {orders: {model: orders_model}}, metrics: {count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}}\n")
-	graph, err := CompileProjectGraph(filepath.Join(root, "leapview.yaml"))
+	graph, err := CompileGraph(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -937,8 +892,8 @@ spec:
 	}
 }
 
-func TestFlatProjectAllowsTwoSemanticConsumersOfOneModel(t *testing.T) {
-	projectPath := writeFlatProjectFixture(t, map[string]string{
+func TestSourceRootAllowsTwoSemanticConsumersOfOneModel(t *testing.T) {
+	projectPath := writeSourceFixture(t, map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
@@ -981,9 +936,9 @@ spec:
   metrics: {row_count: {type: aggregate, dataset: order_rows, aggregation: count, input: {field: order_rows.id}, empty: zero}}
 `,
 	})
-	project, err := LoadProject(projectPath)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
-		t.Fatalf("LoadProject() error = %v", err)
+		t.Fatalf("LoadSourceRoot() error = %v", err)
 	}
 	graph := project.Graph
 	var consumers int
@@ -1017,8 +972,8 @@ spec:
 	}
 }
 
-func TestFlatProjectRejectsDuplicateStableIDsAcrossKinds(t *testing.T) {
-	projectPath := writeFlatProjectFixture(t, map[string]string{
+func TestSourceRootRejectsDuplicateStableIDsAcrossKinds(t *testing.T) {
+	projectPath := writeSourceFixture(t, map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: resource:duplicate, name: warehouse}
@@ -1030,9 +985,9 @@ metadata: {id: resource:duplicate, name: orders}
 spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
-	_, err := LoadProject(projectPath)
+	_, err := LoadSourceRoot(projectPath)
 	if err == nil || !strings.Contains(err.Error(), "duplicates resource") {
-		t.Fatalf("LoadProject() error = %v, want duplicate stable ID", err)
+		t.Fatalf("LoadSourceRoot() error = %v, want duplicate stable ID", err)
 	}
 	diagnostics := configschema.Diagnostics(err)
 	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "resource:duplicate" || !strings.HasSuffix(filepath.ToSlash(diagnostics[0].File), "models/orders.yaml") {
@@ -1040,8 +995,8 @@ spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary
 	}
 }
 
-func TestFlatProjectWrongReferenceReportsResourcePathAndField(t *testing.T) {
-	projectPath := writeFlatProjectFixture(t, map[string]string{
+func TestSourceRootWrongReferenceReportsResourcePathAndField(t *testing.T) {
+	projectPath := writeSourceFixture(t, map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
@@ -1063,9 +1018,9 @@ metadata: {id: semantic:sales, name: sales}
 spec: {datasets: {orders: {model: orders}}, metrics: {}}
 `,
 	})
-	_, err := LoadProject(projectPath)
+	_, err := LoadSourceRoot(projectPath)
 	if err == nil || !strings.Contains(err.Error(), `resolves to source, want model`) {
-		t.Fatalf("LoadProject() error = %v, want wrong-kind reference", err)
+		t.Fatalf("LoadSourceRoot() error = %v, want wrong-kind reference", err)
 	}
 	diagnostics := configschema.Diagnostics(err)
 	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "semantic:sales" || diagnostics[0].FieldPath != "spec.datasets.orders.model" || !strings.HasSuffix(filepath.ToSlash(diagnostics[0].File), "semantic-models/sales.yaml") {
@@ -1073,7 +1028,7 @@ spec: {datasets: {orders: {model: orders}}, metrics: {}}
 	}
 }
 
-func TestFlatProjectManifestIsCheckoutIndependentAndCanonical(t *testing.T) {
+func TestSourceRootManifestIsCheckoutIndependentAndCanonical(t *testing.T) {
 	files := map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
@@ -1096,13 +1051,13 @@ metadata: {id: semantic:sales, name: sales}
 spec: {datasets: {orders: {model: orders_model}}, metrics: {}}
 `,
 	}
-	first, err := LoadProject(writeFlatProjectFixture(t, files))
+	first, err := LoadSourceRoot(writeSourceFixture(t, files))
 	if err != nil {
-		t.Fatalf("LoadProject(first) error = %v", err)
+		t.Fatalf("LoadSourceRoot(first) error = %v", err)
 	}
-	second, err := LoadProject(writeFlatProjectFixture(t, files))
+	second, err := LoadSourceRoot(writeSourceFixture(t, files))
 	if err != nil {
-		t.Fatalf("LoadProject(second) error = %v", err)
+		t.Fatalf("LoadSourceRoot(second) error = %v", err)
 	}
 	firstManifest, err := json.Marshal(first.Manifest)
 	if err != nil {
@@ -1141,7 +1096,7 @@ spec: {datasets: {orders: {model: orders_model}}, metrics: {}}
 	}
 }
 
-func TestLoadProjectRejectsSymlinkEscapingInclude(t *testing.T) {
+func TestLoadSourceRootRejectsSymlinkEscapingResource(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	outsideConnection := filepath.Join(outside, "warehouse.yaml")
@@ -1159,83 +1114,25 @@ spec: {type: managed}
 	if err := os.Symlink(outsideConnection, link); err != nil {
 		t.Fatal(err)
 	}
-	projectPath := filepath.Join(root, "leapview.yaml")
-	if err := os.WriteFile(projectPath, []byte(`apiVersion: leapview.dev/v1
-kind: Project
-metadata: {id: project:symlink, name: symlink}
-spec:
-  connections: {include: [connections/*.yaml]}
-  sources: {include: []}
-  models: {include: []}
-  semanticModels: {include: []}
-  pipelines: {include: []}
-  dashboards: {include: []}
-  access: {include: []}
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, err := LoadProject(projectPath)
-	if err == nil || !strings.Contains(err.Error(), "resolves outside project boundary") || !strings.Contains(err.Error(), "connections/warehouse.yaml") {
-		t.Fatalf("LoadProject() error = %v, want project-relative symlink diagnostic", err)
+	_, err := LoadSourceRoot(root)
+	if err == nil || !strings.Contains(err.Error(), "resolves outside source root") || !strings.Contains(err.Error(), "connections/warehouse.yaml") {
+		t.Fatalf("LoadSourceRoot() error = %v, want source-relative symlink diagnostic", err)
 	}
 	if strings.Contains(err.Error(), root) || strings.Contains(err.Error(), outside) {
 		t.Fatalf("symlink diagnostic leaked absolute checkout path: %v", err)
 	}
 }
 
-func TestExpandIncludesRejectsNoMatch(t *testing.T) {
-	_, err := expandIncludes(t.TempDir(), []string{"connections/*.yaml"})
-	if err == nil || !strings.Contains(err.Error(), "matched no files") {
-		t.Fatalf("expandIncludes() error = %v, want no-match diagnostic", err)
-	}
-}
-
-func TestLoadProjectDeduplicatesOverlappingIncludes(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "connections"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "connections", "warehouse.yaml"), []byte(`apiVersion: leapview.dev/v1
-kind: Connection
-metadata: {id: connection:warehouse, name: warehouse}
-spec: {type: managed}
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	projectPath := filepath.Join(root, "leapview.yaml")
-	if err := os.WriteFile(projectPath, []byte(`apiVersion: leapview.dev/v1
-kind: Project
-metadata: {id: project:overlap, name: overlap}
-spec:
-  connections: {include: [connections/*.yaml, connections/warehouse.yaml]}
-  sources: {include: []}
-  models: {include: []}
-  semanticModels: {include: []}
-  pipelines: {include: []}
-  dashboards: {include: []}
-  access: {include: []}
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	project, err := LoadProject(projectPath)
-	if err != nil {
-		t.Fatalf("LoadProject() error = %v", err)
-	}
-	if len(project.Connections) != 1 || len(project.ConnectionPaths) != 1 {
-		t.Fatalf("connections = %#v paths = %#v, want one deduplicated resource", project.Connections, project.ConnectionPaths)
-	}
-}
-
 func TestProjectRelativePathNeverFallsBackToAbsolute(t *testing.T) {
-	project := Project{BaseDir: t.TempDir()}
+	project := sourceAssembly{BaseDir: t.TempDir()}
 	path := filepath.Join(t.TempDir(), "outside.yaml")
 	if got := projectRelativePath(&project, path); filepath.IsAbs(got) {
 		t.Fatalf("projectRelativePath() returned absolute fallback %q", got)
 	}
 }
 
-func TestFlatProjectRejectsTargetOwnedConnectionCredentials(t *testing.T) {
-	projectPath := writeFlatProjectFixture(t, map[string]string{
+func TestSourceRootRejectsTargetOwnedConnectionCredentials(t *testing.T) {
+	projectPath := writeSourceFixture(t, map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
@@ -1244,9 +1141,9 @@ spec:
   credentials: {provider: env, secret: LEAPVIEW_WAREHOUSE_CREDENTIALS}
 `,
 	})
-	_, err := LoadProject(projectPath)
+	_, err := LoadSourceRoot(projectPath)
 	if err == nil || (!strings.Contains(err.Error(), "target-owned") && !strings.Contains(err.Error(), "credentials")) {
-		t.Fatalf("LoadProject() error = %v, want target-owned credential diagnostic", err)
+		t.Fatalf("LoadSourceRoot() error = %v, want target-owned credential diagnostic", err)
 	}
 	diagnostics := configschema.Diagnostics(err)
 	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "connection:warehouse" || diagnostics[0].FieldPath != "spec.credentials" {
@@ -1254,8 +1151,8 @@ spec:
 	}
 }
 
-func TestFlatProjectRejectsHiddenSQLImportsAndUnsafeIncludes(t *testing.T) {
-	projectPath := writeFlatProjectFixture(t, map[string]string{
+func TestSourceRootRejectsHiddenSQLImportsAndUnsafeIncludes(t *testing.T) {
+	projectPath := writeSourceFixture(t, map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
@@ -1276,24 +1173,12 @@ spec:
   fields: {id: {datatype: String}}
 `,
 	})
-	if _, err := LoadProject(projectPath); err == nil || (!strings.Contains(err.Error(), `relation schema "raw" is not governed`) && !strings.Contains(err.Error(), "raw namespace relations are not allowed") && !strings.Contains(err.Error(), "raw.<name> is internal")) {
-		t.Fatalf("LoadProject() accepted hidden raw import: %v", err)
-	}
-	projectBytes, err := os.ReadFile(projectPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	projectBytes = []byte(strings.Replace(string(projectBytes), "connections/*.yaml", "../*.yaml", 1))
-	if err := os.WriteFile(projectPath, projectBytes, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "escapes project boundary") {
-		t.Fatalf("LoadProject() accepted escaping include: %v", err)
+	if _, err := LoadSourceRoot(projectPath); err == nil || (!strings.Contains(err.Error(), `relation schema "raw" is not governed`) && !strings.Contains(err.Error(), "raw namespace relations are not allowed") && !strings.Contains(err.Error(), "raw.<name> is internal")) {
+		t.Fatalf("LoadSourceRoot() accepted hidden raw import: %v", err)
 	}
 }
 
-func TestFlatProjectRefreshPipelinesValidateAndNormalize(t *testing.T) {
-	projectYAML := strings.Replace(flatProjectFixtureYAML(), "pipelines: {include: []}", "pipelines: {include: [pipelines/*.yaml]}", 1)
+func TestSourceRootRefreshPipelinesValidateAndNormalize(t *testing.T) {
 	base := map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
@@ -1327,10 +1212,10 @@ spec:
   startingDeadlineSeconds: 3600
   concurrencyPolicy: Replace
 `
-	projectPath := writeFlatProjectFixtureWithProject(t, projectYAML, validFiles)
-	project, err := LoadProject(projectPath)
+	projectPath := writeSourceFixture(t, validFiles)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
-		t.Fatalf("LoadProject(valid pipeline) error = %v", err)
+		t.Fatalf("LoadSourceRoot(valid pipeline) error = %v", err)
 	}
 	pipeline := project.RefreshPipelines["sales_refresh"]
 	if pipeline.ID != "pipeline:sales-refresh" || pipeline.SemanticModelID != "sales" || pipeline.SelectionDigest != authoredPipelineSelectionDigest("sales") || pipeline.Timezone != "Europe/Copenhagen" || pipeline.StartingDeadlineSeconds != 3600 || pipeline.ConcurrencyPolicy != "Replace" || len(pipeline.Schedules) != 1 || pipeline.Schedules[0].ID != "weekdays 06:00" || pipeline.Schedules[0].Expression != "0 6 * * *" {
@@ -1342,9 +1227,9 @@ kind: Pipeline
 metadata: {id: pipeline:manual, name: manual}
 spec: {selection: {semanticModel: sales}}
 `
-	manual, err := LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, manualFiles))
+	manual, err := LoadSourceRoot(writeSourceFixture(t, manualFiles))
 	if err != nil {
-		t.Fatalf("LoadProject(manual pipeline) error = %v", err)
+		t.Fatalf("LoadSourceRoot(manual pipeline) error = %v", err)
 	}
 	if got := len(manual.RefreshPipelines["manual"].Schedules); got != 0 {
 		t.Fatalf("manual pipeline schedules = %d, want 0", got)
@@ -1355,9 +1240,9 @@ kind: Pipeline
 metadata: {id: pipeline:bad, name: bad}
 spec: {selection: {semanticModel: missing}}
 `
-	_, err = LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, invalidFiles))
+	_, err = LoadSourceRoot(writeSourceFixture(t, invalidFiles))
 	if err == nil || !strings.Contains(err.Error(), `unknown authored SemanticModel name "missing"`) {
-		t.Fatalf("LoadProject(invalid pipeline) error = %v, want missing semantic model", err)
+		t.Fatalf("LoadSourceRoot(invalid pipeline) error = %v, want missing semantic model", err)
 	}
 	canonicalIDFiles := cloneFixtureFiles(base)
 	canonicalIDFiles["pipelines/canonical-id.yaml"] = `apiVersion: leapview.dev/v1
@@ -1365,13 +1250,13 @@ kind: Pipeline
 metadata: {id: pipeline:canonical-id, name: canonical_id}
 spec: {selection: {semanticModel: semantic-model:sales}}
 `
-	_, err = LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, canonicalIDFiles))
+	_, err = LoadSourceRoot(writeSourceFixture(t, canonicalIDFiles))
 	if err == nil || !strings.Contains(err.Error(), "spec.selection.semanticModel") {
-		t.Fatalf("LoadProject(canonical semantic model ID) error = %v, want authored-name validation", err)
+		t.Fatalf("LoadSourceRoot(canonical semantic model ID) error = %v, want authored-name validation", err)
 	}
 }
 
-func TestFlatProjectRejectsInlineConnectionAuthAndSourceIdentity(t *testing.T) {
+func TestSourceRootRejectsInlineConnectionAuthAndSourceIdentity(t *testing.T) {
 	for name, tc := range map[string]struct {
 		spec string
 		want string
@@ -1383,9 +1268,9 @@ func TestFlatProjectRejectsInlineConnectionAuthAndSourceIdentity(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			files := map[string]string{"connections/warehouse.yaml": "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\n" + tc.spec}
-			_, err := LoadProject(writeFlatProjectFixture(t, files))
+			_, err := LoadSourceRoot(writeSourceFixture(t, files))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("LoadProject() error = %v, want schema rejection", err)
+				t.Fatalf("LoadSourceRoot() error = %v, want schema rejection", err)
 			}
 			diagnostics := configschema.Diagnostics(err)
 			if len(diagnostics) == 0 || diagnostics[0].ResourceID != "connection:warehouse" {
@@ -1395,7 +1280,7 @@ func TestFlatProjectRejectsInlineConnectionAuthAndSourceIdentity(t *testing.T) {
 	}
 }
 
-func TestFlatProjectRejectsSQLSourceMismatchAndModelCycles(t *testing.T) {
+func TestSourceRootRejectsSQLSourceMismatchAndModelCycles(t *testing.T) {
 	base := map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
@@ -1420,9 +1305,9 @@ kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec: {definition: {type: sql, sql: 'SELECT * FROM source.missing'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
-		_, err := LoadProject(writeFlatProjectFixture(t, files))
+		_, err := LoadSourceRoot(writeSourceFixture(t, files))
 		if err == nil || !strings.Contains(err.Error(), `unknown source "missing"`) {
-			t.Fatalf("LoadProject() error = %v, want unknown SQL source diagnostic", err)
+			t.Fatalf("LoadSourceRoot() error = %v, want unknown SQL source diagnostic", err)
 		}
 	})
 	t.Run("model cycle", func(t *testing.T) {
@@ -1437,15 +1322,14 @@ kind: Model
 metadata: {id: model:customers, name: customers_model}
 spec: {definition: {type: sql, sql: 'SELECT * FROM source.customers JOIN model.orders_model USING (id)'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
-		_, err := LoadProject(writeFlatProjectFixture(t, files))
+		_, err := LoadSourceRoot(writeSourceFixture(t, files))
 		if err == nil || !strings.Contains(err.Error(), "cycle") {
-			t.Fatalf("LoadProject() error = %v, want model cycle", err)
+			t.Fatalf("LoadSourceRoot() error = %v, want model cycle", err)
 		}
 	})
 }
 
-func TestFlatProjectDashboardAdapterMatchesDirectCompilation(t *testing.T) {
-	projectYAML := strings.Replace(flatProjectFixtureYAML(), "dashboards: {include: []}", "dashboards: {include: [dashboards/*.yaml]}", 1)
+func TestSourceRootDashboardAdapterMatchesDirectCompilation(t *testing.T) {
 	files := map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
@@ -1477,9 +1361,9 @@ spec:
   pages: [{id: overview, title: Overview, components: []}]
 `,
 	}
-	project, err := LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, files))
+	project, err := LoadSourceRoot(writeSourceFixture(t, files))
 	if err != nil {
-		t.Fatalf("LoadProject() error = %v", err)
+		t.Fatalf("LoadSourceRoot() error = %v", err)
 	}
 	authored := *project.Dashboards["sales_dashboard"]
 	model := project.Manifest.SemanticModels["semantic:sales"]
@@ -1496,99 +1380,8 @@ spec:
 	}
 }
 
-func TestFlatProjectPublicationValidationAndCanonicalization(t *testing.T) {
-	projectYAML := strings.NewReplacer(
-		"dashboards: {include: []}", "dashboards: {include: [dashboards/*.yaml]}",
-		"publications: {include: []}", "publications: {include: [publications/*.yaml]}",
-	).Replace(flatProjectFixtureYAML())
-	files := map[string]string{
-		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
-kind: Connection
-metadata: {id: connection:warehouse, name: warehouse}
-spec: {type: managed}
-`,
-		"sources/orders.yaml": `apiVersion: leapview.dev/v1
-kind: Source
-metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
-`,
-		"models/orders.yaml": `apiVersion: leapview.dev/v1
-kind: Model
-metadata: {id: model:orders, name: orders_model}
-spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
-`,
-		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
-kind: SemanticModel
-metadata: {id: semantic:sales, name: sales}
-spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}}
-`,
-		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
-kind: Dashboard
-metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales}
-spec:
-  semanticModel: sales
-  filters: []
-  visuals: {order_count: {type: kpi, query: {type: aggregate, dimensions: [], metrics: [order_count]}, presentation: {type: kpi}}}
-  pages: [{id: overview, title: Overview, components: []}]
-`,
-		"publications/website.yaml": `apiVersion: leapview.dev/v1
-kind: DashboardPublication
-metadata: {id: publication:website, name: website}
-spec:
-  dashboard: sales_dashboard
-  defaultPage: overview
-  embedding: {allowedOrigins: [https://z.example, https://a.example]}
-`,
-	}
-	project, err := LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, files))
-	if err != nil {
-		t.Fatalf("LoadProject() error = %v", err)
-	}
-	publication := project.Manifest.Publications["publication:website"]
-	if publication.Dashboard != "dashboard:sales" || !reflect.DeepEqual(publication.AllowedOrigins, []string{"https://a.example", "https://z.example"}) {
-		t.Fatalf("publication = %#v, want canonical dashboard and sorted origins", publication)
-	}
-	for _, want := range []string{"dashboard:sales", "semantic:sales", "model:orders", "source:orders", "connection:warehouse"} {
-		if !containsString(publication.DependencyAssetIDs, want) {
-			t.Fatalf("publication dependency closure = %v, missing %q", publication.DependencyAssetIDs, want)
-		}
-	}
-	if publication.ConfigurationDigest == "" {
-		t.Fatal("publication configuration digest is empty")
-	}
-	invalid := cloneFixtureFiles(files)
-	invalid["publications/website.yaml"] = strings.Replace(files["publications/website.yaml"], "https://z.example, https://a.example", "http://example.com", 1)
-	if _, err := LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, invalid)); err == nil || !strings.Contains(err.Error(), "must use https") {
-		t.Fatalf("LoadProject() accepted invalid publication origin: %v", err)
-	}
-}
-
-func TestFlatAccessDataPolicyValidatesExpressionAndSubject(t *testing.T) {
-	project := Project{
-		Access: manifest.AccessPolicy{
-			Groups:       map[string]manifest.Group{"analysts": {ID: "group:analysts", Name: "analysts"}},
-			RoleBindings: map[string]manifest.RoleBinding{},
-			Grants:       map[string]manifest.Grant{},
-			DataPolicies: map[string]manifest.DataPolicy{"policy": {ID: "policy:bad", Name: "policy", Object: manifest.SecurableRef{Kind: "source", ID: "source:orders"}, PolicyType: "row_filter", ExpressionJSON: `{}`}},
-		},
-		AccessPaths: map[string]string{"policy": "access/policy.yaml"}, ResourceIDs: map[string]string{"datapolicy:policy": "policy:bad"},
-	}
-	resolver, err := newResourceResolver([]projectgraph.Resource{{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateFlatAccess(project, resolver); err == nil || !strings.Contains(err.Error(), "requires field or filters") {
-		t.Fatalf("validateFlatAccess() accepted invalid policy expression: %v", err)
-	}
-	project.Access.DataPolicies["policy"] = manifest.DataPolicy{ID: "policy:bad", Name: "policy", Object: manifest.SecurableRef{Kind: "source", ID: "source:orders"}, PolicyType: "row_filter", ExpressionJSON: `{"allowAll":true}`, Subject: manifest.Subject{Kind: "group", Group: "missing"}}
-	if err := validateFlatAccess(project, resolver); err == nil || !strings.Contains(err.Error(), "unknown Group") {
-		t.Fatalf("validateFlatAccess() accepted unknown policy subject: %v", err)
-	}
-}
-
-func TestProjectPlanDiffIsDeterministicAndAggregatesImpact(t *testing.T) {
+func TestBundlePlanDiffIsDeterministicAndAggregatesImpact(t *testing.T) {
 	resources := []projectgraph.Resource{
-		{ID: "project:test", Kind: projectgraph.KindProject, Name: "test"},
 		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},
 		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
 	}
@@ -1604,8 +1397,8 @@ func TestProjectPlanDiffIsDeterministicAndAggregatesImpact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstChanges, firstDeps, firstSummary := diffProjectGraphs(authored, active)
-	secondChanges, secondDeps, secondSummary := diffProjectGraphs(authored, active)
+	firstChanges, firstDeps, firstSummary := diffResourceGraphs(authored, active)
+	secondChanges, secondDeps, secondSummary := diffResourceGraphs(authored, active)
 	if !reflect.DeepEqual(firstChanges, secondChanges) || !reflect.DeepEqual(firstDeps, secondDeps) || firstSummary != secondSummary {
 		t.Fatal("project graph diff is not deterministic")
 	}
@@ -1615,24 +1408,24 @@ func TestProjectPlanDiffIsDeterministicAndAggregatesImpact(t *testing.T) {
 	if len(firstDeps) != 1 || firstDeps[0].Type != "reads_source" || firstDeps[0].ResourceKind != string(projectgraph.KindSource) {
 		t.Fatalf("dependency change = %#v, want reads_source relation targeting a source resource", firstDeps)
 	}
-	removedResources := []projectgraph.Resource{resources[0], resources[2]}
+	removedResources := []projectgraph.Resource{resources[1]}
 	removed, err := projectgraph.NewProjectGraph(removedResources, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The reduced graph is the authored candidate; the complete graph is the
 	// active baseline, so the source is correctly reported as removed.
-	_, _, removedSummary := diffProjectGraphs(removed, authored)
+	_, _, removedSummary := diffResourceGraphs(removed, authored)
 	if !removedSummary.Breaking || !removedSummary.MaterializationImpact {
 		t.Fatalf("removed source summary = %#v, want breaking materialization impact", removedSummary)
 	}
 	kindChangedResources := append([]projectgraph.Resource(nil), resources...)
-	kindChangedResources[1].Kind = projectgraph.KindModel
+	kindChangedResources[0].Kind = projectgraph.KindModel
 	kindChanged, err := projectgraph.NewProjectGraph(kindChangedResources, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, kindChangedSummary := diffProjectGraphs(authored, kindChanged)
+	_, _, kindChangedSummary := diffResourceGraphs(authored, kindChanged)
 	if !kindChangedSummary.Breaking {
 		t.Fatalf("kind change summary = %#v, want breaking", kindChangedSummary)
 	}
@@ -1655,15 +1448,9 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
-func writeFlatProjectFixture(t *testing.T, files map[string]string) string {
-	t.Helper()
-	return writeFlatProjectFixtureWithProject(t, flatProjectFixtureYAMLForFiles(files), files)
-}
-
-func writeFlatProjectFixtureWithProject(t *testing.T, project string, files map[string]string) string {
+func writeSourceFixture(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
-	files["leapview.yaml"] = project
 	for name, body := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1673,39 +1460,5 @@ func writeFlatProjectFixtureWithProject(t *testing.T, project string, files map[
 			t.Fatal(err)
 		}
 	}
-	return filepath.Join(root, "leapview.yaml")
-}
-
-func flatProjectFixtureYAML() string {
-	return `apiVersion: leapview.dev/v1
-kind: Project
-metadata: {id: project:test, name: test}
-spec:
-  connections: {include: [connections/*.yaml]}
-  sources: {include: [sources/*.yaml]}
-  models: {include: [models/*.yaml]}
-  semanticModels: {include: [semantic-models/*.yaml]}
-  pipelines: {include: []}
-  dashboards: {include: []}
-  access: {include: []}
-  publications: {include: []}
-`
-}
-
-func flatProjectFixtureYAMLForFiles(files map[string]string) string {
-	include := func(directory, pattern string) string {
-		prefix := directory + "/"
-		for name := range files {
-			if strings.HasPrefix(name, prefix) {
-				return "[" + pattern + "]"
-			}
-		}
-		return "[]"
-	}
-	project := flatProjectFixtureYAML()
-	project = strings.Replace(project, "[connections/*.yaml]", include("connections", "connections/*.yaml"), 1)
-	project = strings.Replace(project, "[sources/*.yaml]", include("sources", "sources/*.yaml"), 1)
-	project = strings.Replace(project, "[models/*.yaml]", include("models", "models/*.yaml"), 1)
-	project = strings.Replace(project, "[semantic-models/*.yaml]", include("semantic-models", "semantic-models/*.yaml"), 1)
-	return project
+	return root
 }

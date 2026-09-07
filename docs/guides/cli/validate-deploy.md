@@ -20,10 +20,10 @@ For a local single-node evaluation, follow [Installation](/docs/installation) to
 Before authoring:
 
 1. Confirm the intended target is healthy and reachable from both the CLI and browser.
-2. Confirm the project entrypoint is `dashboards/leapview.yaml`.
+2. Confirm the source root is `dashboards/` (or the repository directory containing the resource YAML files).
 3. Ask the operator to provision logical connection bindings and representative access grants.
 4. Install a CLI release compatible with the target's advertised API contract.
-5. Keep the project path and target unchanged from login through publication.
+5. Keep the source root and target unchanged from login through publication.
 
 The security identities remain deliberately distinct:
 
@@ -45,10 +45,10 @@ Sign in before starting the candidate loop:
 ```sh
 export LEAPVIEW_TARGET=https://dash.example.com
 leapview login "$LEAPVIEW_TARGET" \
-  --project dashboards/leapview.yaml
+  --project-id analytics
 ```
 
-`login` discovers the canonical target origin, immutable instance identity, environment, and released API contract before it creates a project-scoped CLI session. Human login uses the browser/device flow. SSO authentication proves identity but does not grant authoring, publishing, approval, source access, or data-policy bypass.
+`login` discovers the canonical target origin, immutable instance identity, environment, and released API contract before it creates a project-scoped CLI session. The explicit `--project-id` supplies the target-bound Project identity that scopes the session; later authoring commands supply the portable source root. Human login uses the browser/device flow. SSO authentication proves identity but does not grant authoring, publishing, approval, source access, or data-policy bypass.
 
 CLI OAuth credentials and browser or LeapView Desktop sessions are separate security domains. The CLI stores rotating credentials in the operating-system credential store. A target-hosted browser, including a LeapView Desktop profile, uses an HttpOnly target session. Their client registrations, storage, expiry, logout, and revocation are independently revocable and are never interchangeable.
 
@@ -59,7 +59,7 @@ For an air-gapped target, the CLI workstation and approval browser must be able 
 Validate the complete resource graph before synchronizing:
 
 ```sh
-leapview validate --project dashboards/leapview.yaml
+leapview validate --source-root dashboards
 ```
 
 Validation is a credential-free preflight within the same lifecycle, not a second runtime or deployment path. It checks project structure and references but cannot prove target bindings, access policy, source availability, or rendered behavior.
@@ -69,7 +69,7 @@ Validation is a credential-free preflight within the same lifecycle, not a secon
 Create the durable target-owned plan from the exact source snapshot:
 
 ```sh
-leapview plan dashboards/leapview.yaml \
+leapview plan --source-root dashboards \
   --target "$LEAPVIEW_TARGET" --format json
 ```
 
@@ -78,7 +78,7 @@ source-attestation digest, plan digest, and target evidence. It does not create
 a candidate or acquire build credentials. Review this evidence before starting
 physical work. The `dev` command remains an optional private watch/preview
 convenience; it is not a substitute for the canonical plan/build/publish
-workflow. Use `leapview dev --once --project dashboards/leapview.yaml` when a
+workflow. Use `leapview dev --once --source-root dashboards` when a
 private candidate preview is needed.
 
 In production, the target returns a canonical-origin, token-free HTTPS URL; the loopback evaluator uses the same URL shape over local HTTP. `dev` opens it in the system browser by default. Use `--no-browser` only on a headless workstation and open the printed URL in an authenticated browser. The preview does not require LeapView Desktop, and Desktop is not an authoring client; browsers and Desktop may only consume the same authenticated target-hosted page.
@@ -136,7 +136,7 @@ A failed candidate or activation leaves the last valid serving generation active
 | Failure | Expected behavior | Recovery |
 | --- | --- | --- |
 | Released CLI/server incompatibility | Discovery rejects the operation before candidate mutation. | Install a compatible released CLI or upgrade the target through the operator workflow. |
-| SSO or CLI access expiry | A revocable CLI session refreshes once; revoked or expired session families fail authentication. | Run `leapview login` again after confirming identity-provider health and revocation intent. |
+| SSO or CLI access expiry | A revocable CLI session refreshes once; revoked or expired session families fail authentication. | Run `leapview login <target> --project-id PROJECT_ID` again after confirming identity-provider health and revocation intent. |
 | RLS or grant rejection | Preview and verification fail without widening visibility. | Inspect effective grants and policy inputs; never give the author source credentials or impersonate a viewer. |
 | Candidate preparation failure | The candidate remains private and retryable; active serving state is unchanged. | Correct the project or target binding and retry the same candidate when safe. |
 | Approval expiry or denial | No activation occurs. | Request a new decision for the unchanged candidate or create a new candidate for changed content. |

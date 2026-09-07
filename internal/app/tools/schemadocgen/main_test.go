@@ -18,11 +18,11 @@ func TestGenerateWritesACompleteSchemaReference(t *testing.T) {
 	if err := os.MkdirAll(exampleDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(schemaDir, "project.schema.json"), []byte(`{
+	if err := os.WriteFile(filepath.Join(schemaDir, "connection.schema.json"), []byte(`{
   "type": "object",
   "properties": {
     "apiVersion": {"const": "leapview.dev/v1"},
-    "kind": {"const": "Project"},
+    "kind": {"const": "Connection"},
     "metadata": {"$ref": "#/$defs/Metadata"}
   },
   "required": ["apiVersion", "kind", "metadata"],
@@ -32,7 +32,7 @@ func TestGenerateWritesACompleteSchemaReference(t *testing.T) {
 }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(exampleDir, "leapview.yaml"), []byte("apiVersion: leapview.dev/v1\nkind: Project\nmetadata:\n  name: demo\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(exampleDir, "connection.yaml"), []byte("apiVersion: leapview.dev/v1\nkind: Connection\nmetadata:\n  name: demo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -40,11 +40,11 @@ func TestGenerateWritesACompleteSchemaReference(t *testing.T) {
 		t.Fatalf("generate schema reference: %v", err)
 	}
 
-	article, err := os.ReadFile(filepath.Join(outDir, "project.md"))
+	article, err := os.ReadFile(filepath.Join(outDir, "connection.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"# Project configuration", "## Example", "kind: Project", "## Fields", "`metadata`", "## Nested definitions", "### Metadata", "`name`"} {
+	for _, want := range []string{"# Connection configuration", "## Example", "kind: Connection", "## Fields", "`metadata`", "## Nested definitions", "### Metadata", "`name`"} {
 		if !strings.Contains(string(article), want) {
 			t.Errorf("generated article missing %q:\n%s", want, article)
 		}
@@ -53,11 +53,50 @@ func TestGenerateWritesACompleteSchemaReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(catalog), `"slug": "project"`) {
-		t.Errorf("generated catalog missing project: %s", catalog)
+	if !strings.Contains(string(catalog), `"slug": "connection"`) {
+		t.Errorf("generated catalog missing connection: %s", catalog)
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "schemas", "project.schema.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(outDir, "schemas", "connection.schema.json")); err != nil {
 		t.Errorf("generated schema download missing: %v", err)
+	}
+}
+
+func TestGenerateExposesOnlyAnalyticalConfigurationKinds(t *testing.T) {
+	root := t.TempDir()
+	schemaDir := filepath.Join(root, "schemas")
+	exampleDir := filepath.Join(root, "examples")
+	outDir := filepath.Join(root, "docs")
+	if err := os.MkdirAll(schemaDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(exampleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, slug := range []string{"connection", "source", "model", "semantic-model", "pipeline", "dashboard-document", "project", "group", "role-binding", "grant", "data-policy", "dashboard-publication"} {
+		contents := `{"type":"object","properties":{"kind":{"const":"Connection"}}}`
+		if err := os.WriteFile(filepath.Join(schemaDir, slug+".schema.json"), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := generate(schemaDir, exampleDir, outDir); err != nil {
+		t.Fatalf("generate schema reference: %v", err)
+	}
+	catalog, err := os.ReadFile(filepath.Join(outDir, "catalog.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, slug := range configurationDocumentOrderList {
+		if !strings.Contains(string(catalog), `"slug": "`+slug+`"`) {
+			t.Errorf("generated catalog missing %s: %s", slug, catalog)
+		}
+	}
+	for _, slug := range []string{"project", "group", "role-binding", "grant", "data-policy", "dashboard-publication"} {
+		if strings.Contains(string(catalog), `"slug": "`+slug+`"`) {
+			t.Errorf("generated catalog exposes removed %s kind: %s", slug, catalog)
+		}
+		if _, err := os.Stat(filepath.Join(outDir, slug+".md")); !os.IsNotExist(err) {
+			t.Errorf("generated removed %s article exists, err=%v", slug, err)
+		}
 	}
 }
 

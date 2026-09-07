@@ -3,7 +3,6 @@ set -euo pipefail
 
 readonly image_file=/run/leapview/image-reference
 readonly config_file=/run/leapview/bootstrap.json
-readonly policy_file=/run/leapview/release-transition-policy.json
 
 if [[ "$(id -u)" -ne 0 ]]; then
   printf 'LeapView host bootstrap must run as root\n' >&2
@@ -35,18 +34,12 @@ if [[ ! -s "$config_file" ]]; then
   printf 'LeapView bootstrap configuration is missing\n' >&2
   exit 1
 fi
-if [[ ! -f "$policy_file" || ! -s "$policy_file" ]]; then
-  printf 'Candidate-bound release-transition policy is missing\n' >&2
-  exit 1
-fi
-
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates \
   docker.io \
   docker-compose-v2 \
-  restic \
   unattended-upgrades
 systemctl enable --now docker
 docker version >/dev/null
@@ -61,7 +54,6 @@ cleanup() {
 trap cleanup EXIT
 
 docker cp "$payload_container:/usr/local/share/leapview/deployment/." "$payload_dir"
-install -m 0600 "$policy_file" "$payload_dir/release-transition-policy.json"
 test -x "$payload_dir/leapviewctl"
 "$payload_dir/leapviewctl" host install \
   --config "$config_file" \

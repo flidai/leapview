@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/flidai/leapview/internal/manageddata"
@@ -24,8 +23,7 @@ type dataPlanner interface {
 type Dependencies struct {
 	Client          cliapi.Client
 	HTTPClient      *http.Client
-	LoadPlanProject func(string) (localplan.Project, error)
-	LoadProjectID   func(string) (string, error)
+	LoadPlanCatalog func(string) (localplan.SourceCatalog, error)
 }
 
 type options struct {
@@ -35,10 +33,10 @@ type options struct {
 
 // Command constructs the Managed Data command tree.
 func Command(ctx context.Context, dependencies Dependencies) *cobra.Command {
-	loader := dependencies.LoadPlanProject
+	loader := dependencies.LoadPlanCatalog
 	if loader == nil {
-		loader = func(string) (localplan.Project, error) {
-			return localplan.Project{}, fmt.Errorf("Managed Data project plan loader is required")
+		loader = func(string) (localplan.SourceCatalog, error) {
+			return localplan.SourceCatalog{}, fmt.Errorf("Managed Data source catalog loader is required")
 		}
 	}
 	return dataCommandWithOptions(ctx, localplan.NewService(loader), dependencies, &options{})
@@ -61,7 +59,7 @@ func dataCommandWithOptions(ctx context.Context, planner dataPlanner, dependenci
 }
 
 func dataPlanCommand(ctx context.Context, planner dataPlanner) *cobra.Command {
-	var projectPath string
+	sourceRoot := "dashboards"
 	var connection string
 	var from string
 	var previousManifestPath string
@@ -85,10 +83,10 @@ func dataPlanCommand(ctx context.Context, planner dataPlanner) *cobra.Command {
 				previous = &manifest
 			}
 			result, err := planner.Plan(ctx, localplan.Request{
-				ProjectPath: projectPath,
-				Connection:  connection,
-				From:        from,
-				Previous:    previous,
+				SourceRoot: sourceRoot,
+				Connection: connection,
+				From:       from,
+				Previous:   previous,
 			})
 			if err != nil {
 				return err
@@ -96,7 +94,7 @@ func dataPlanCommand(ctx context.Context, planner dataPlanner) *cobra.Command {
 			return writeDataPlan(cmd.OutOrStdout(), result)
 		},
 	}
-	command.Flags().StringVar(&projectPath, "project", filepath.Join("dashboards", "leapview.yaml"), "project path")
+	command.Flags().StringVar(&sourceRoot, "source-root", sourceRoot, "analytics source root")
 	command.Flags().StringVar(&connection, "connection", "", "project-global managed connection")
 	command.Flags().StringVar(&from, "from", "", "local filesystem root to ingest")
 	command.Flags().StringVar(&previousManifestPath, "previous-manifest", "", "prior managed data manifest path")

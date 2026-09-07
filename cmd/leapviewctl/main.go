@@ -32,22 +32,12 @@ func run(ctx context.Context) error {
 		root = filepath.Dir(executable)
 	}
 	dockerBin := os.Getenv("LEAPVIEWCTL_DOCKER_BIN")
-	payloadManager, err := hostinstall.NewDeploymentPayloadManager(hostinstall.DeploymentPayloadManagerOptions{
-		Paths:     hostinstall.InstalledPaths(root),
+	controller, err := composectl.New(composectl.Options{
+		Root:      root,
 		DockerBin: dockerBin,
+		Stdin:     os.Stdin,
 		Stdout:    os.Stdout,
 		Stderr:    os.Stderr,
-	})
-	if err != nil {
-		return err
-	}
-	controller, err := composectl.New(composectl.Options{
-		Root:               root,
-		DockerBin:          dockerBin,
-		Stdin:              os.Stdin,
-		Stdout:             os.Stdout,
-		Stderr:             os.Stderr,
-		DeploymentPayloads: payloadManager,
 	})
 	if err != nil {
 		return err

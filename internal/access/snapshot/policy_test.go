@@ -14,7 +14,6 @@ import (
 func testGraph(t *testing.T) graph.ProjectGraph {
 	t.Helper()
 	project, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_demo", Kind: graph.KindProject, Name: "demo"},
 		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "main", Metadata: graph.Metadata{Domain: "sales"}},
 		{ID: "model_orders", Kind: graph.KindModel, Name: "orders"},
 	}, nil)
@@ -170,7 +169,7 @@ func TestAuthorizationSnapshotRejectsMalformedServingIdentity(t *testing.T) {
 		{ProjectID: "project_demo", Environment: "", GenerationID: "generation_1"},
 		{ProjectID: "project_demo", Environment: "prod/uction", GenerationID: "generation_1"},
 		{ProjectID: "project_demo", Environment: "production", GenerationID: ""},
-		{ProjectID: "other_project", Environment: "production", GenerationID: "generation_1"},
+		{ProjectID: "project demo", Environment: "production", GenerationID: "generation_1"},
 	} {
 		_, err := NewAuthorizationSnapshot(identity, project, nil, nil)
 		require.Error(t, err)

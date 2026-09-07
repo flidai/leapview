@@ -9,9 +9,20 @@ import (
 )
 
 var (
-	ErrSemanticAttributeConflict = errors.New("semantic attribute definition conflicts with the registry")
-	ErrSemanticAttributeDisabled = errors.New("semantic attribute is disabled")
+	ErrSemanticAttributeConflict        = errors.New("semantic attribute definition conflicts with the registry")
+	ErrSemanticAttributeDisabled        = errors.New("semantic attribute is disabled")
+	ErrSemanticAttributeRegistryCorrupt = errors.New("semantic attribute registry state is corrupt")
 )
+
+// MaxSemanticAttributeValues and ValidateSemanticAttributeName publish the
+// semanticvalue profile's structural limits through the access contract. This
+// lets upstream authored-contract compilers validate references without
+// acquiring a direct dependency on the canonicalization capability.
+const MaxSemanticAttributeValues = semanticvalue.MaxSetValues
+
+func ValidateSemanticAttributeName(name string) error {
+	return semanticvalue.ValidateAttributeName(name)
+}
 
 // SemanticAttributeShape distinguishes a scalar assignment from a homogeneous
 // list assignment. The element type remains one of semanticvalue's closed v1

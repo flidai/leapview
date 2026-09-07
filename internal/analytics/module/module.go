@@ -2,29 +2,29 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
-	queryauditsqlite "github.com/flidai/leapview/internal/analytics/queryaudit/sqlite"
 	"github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
-	analyticssqlite "github.com/flidai/leapview/internal/analytics/sqlite"
 	"github.com/flidai/leapview/internal/extension"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	storagemaintenance "github.com/flidai/leapview/internal/servingstate/retention"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 type CredentialMode string
+
+// QueryAuditStore is the analytics-module boundary for durable query audit
+// reads and writes. The alias keeps application composition on the module
+// surface while preserving the capability-owned contract.
+type QueryAuditStore = queryaudit.Store
 
 const (
 	CredentialModeNonSecret              CredentialMode = "non_secret"
@@ -32,10 +32,15 @@ const (
 )
 
 type Config struct {
-	Database *sql.DB
-	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port
-	// consumed by connection-binding SQLite mutations.
-	AuditIntentRecorder   access.AuditIntentRecorder
+	// ConnectionBindings is the preferred capability-owned binding authority.
+	// Production composition injects this interface (normally backed by the
+	// native PostgreSQL repository) so analytics does not own a database handle.
+	ConnectionBindings connectionbinding.BindingCatalog
+	Production         bool
+	// QueryAuditStore is the explicit capability-owned query-audit authority.
+	// Test fixtures may inject an in-memory implementation; production wiring
+	// supplies the native PostgreSQL repository.
+	QueryAuditStore       queryaudit.Store
 	TargetCredentials     TargetCredentialConfig
 	CredentialMode        CredentialMode
 	CredentialTargetID    string
@@ -65,6 +70,22 @@ type Resources interface {
 	resource.SessionProvider
 }
 
+type postgresConnectionBindingAuthority interface {
+	connectionbinding.BindingCatalog
+	PostgreSQLAuthority()
+	AuditCapable() bool
+}
+
+// postgresQueryAuditAuthority is the production query-audit seam. The
+// storage-neutral queryaudit.Store remains available to test fixtures, but
+// native analytics composition must prove that its implementation is the
+// configured PostgreSQL authority.
+type postgresQueryAuditAuthority interface {
+	queryaudit.Store
+	PostgreSQLAuthority()
+	Configured() bool
+}
+
 func NewSurface(environment *analyticsducklake.Environment, cache *resultcache.Pool) *Module {
 	return &Module{environment: environment, cache: cache}
 }
@@ -72,22 +93,16 @@ func NewSurface(environment *analyticsducklake.Environment, cache *resultcache.P
 // NewQueryAuditSurface constructs the analytics-owned control-plane adapter
 // without opening the analytical runtime. It is useful to compose API-only
 // surfaces and focused tests.
-func NewQueryAuditSurface(database *sql.DB) *Module {
-	if database == nil {
-		return &Module{}
-	}
-	return &Module{queryAudit: queryauditsqlite.NewRepository(database)}
+func NewQueryAuditSurface(repository queryaudit.Store) *Module {
+	return &Module{queryAudit: repository}
 }
 
 type QueryAuditSurface struct {
-	repository queryaudit.Repository
+	repository queryaudit.Store
 }
 
-func BuildQueryAuditSurface(database *sql.DB) *QueryAuditSurface {
-	if database == nil {
-		return &QueryAuditSurface{}
-	}
-	return &QueryAuditSurface{repository: queryauditsqlite.NewRepository(database)}
+func BuildQueryAuditSurface(repository queryaudit.Store) *QueryAuditSurface {
+	return &QueryAuditSurface{repository: repository}
 }
 
 func (s *QueryAuditSurface) Provider() func() (queryaudit.Reader, error) {
@@ -109,7 +124,7 @@ func (s *QueryAuditSurface) Recorder() queryaudit.Recorder {
 type Module struct {
 	environment                  *analyticsducklake.Environment
 	cache                        *resultcache.Pool
-	queryAudit                   queryaudit.Repository
+	queryAudit                   queryaudit.Store
 	connectionBindings           connectionbinding.BindingCatalog
 	credentials                  analyticsduckdb.CredentialResolver
 	targetResolvers              connectionbinding.ResolverSet
@@ -124,6 +139,27 @@ type Module struct {
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
+	if config.Production {
+		if config.ConnectionBindings == nil {
+			return nil, errors.New("production analytics build requires PostgreSQL connection binding authority")
+		}
+		if config.CredentialMode == CredentialModeDevelopmentEnvironment {
+			return nil, errors.New("production analytics build rejects process-environment credential resolution")
+		}
+		if config.ConnectionBindings != nil {
+			authority, ok := config.ConnectionBindings.(postgresConnectionBindingAuthority)
+			if !ok {
+				return nil, errors.New("production analytics build requires the native PostgreSQL connection binding authority")
+			}
+			if !authority.AuditCapable() {
+				return nil, errors.New("production analytics build requires an audit-capable PostgreSQL connection binding authority")
+			}
+		}
+		queryAudit, ok := config.QueryAuditStore.(postgresQueryAuditAuthority)
+		if !ok || !queryAudit.Configured() {
+			return nil, errors.New("production analytics build requires configured native PostgreSQL query-audit authority")
+		}
+	}
 	credentials, err := buildCredentialResolver(config)
 	if err != nil {
 		return nil, err
@@ -159,7 +195,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		}
 	}
 	cache, err := resultcache.New(resultcache.Limits{
-		RuntimeEntries: config.RuntimeCacheEntries, RuntimeBytes: config.RuntimeCacheBytes,
+		PartitionEntries: config.RuntimeCacheEntries, PartitionBytes: config.RuntimeCacheBytes,
 		NodeEntries: config.NodeCacheEntries, NodeBytes: config.NodeCacheBytes,
 	})
 	if err != nil {
@@ -168,16 +204,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		}
 		return nil, err
 	}
-	var queryAudit queryaudit.Repository
-	var connectionBindings connectionbinding.BindingCatalog
-	if config.Database != nil {
-		queryAudit = queryauditsqlite.NewRepository(config.Database)
-		if config.AuditIntentRecorder != nil {
-			connectionBindings = analyticssqlite.NewConnectionBindingRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
-		} else {
-			connectionBindings = analyticssqlite.NewConnectionBindingRepository(config.Database)
-		}
-	}
+	queryAudit := config.QueryAuditStore
+	var connectionBindings connectionbinding.BindingCatalog = config.ConnectionBindings
 	targetClass := connectionbinding.TargetProduction
 	if config.CredentialMode == CredentialModeDevelopmentEnvironment {
 		targetClass = connectionbinding.TargetDevelopment
@@ -235,6 +263,9 @@ func (m *Module) NewConnectionAdministration(
 		}
 	} else if err := requireConnectionBindingAuditSinks(config.Audit, config.AdministrationAudit); err != nil {
 		return nil, err
+	}
+	if config.Authorize == nil {
+		return nil, fmt.Errorf("%w: connection administration authorizer is required", connectionbinding.ErrInvalidBinding)
 	}
 	if config.RequireAuditIntent && config.AuditIntentRecorder == nil {
 		return nil, fmt.Errorf(
@@ -397,14 +428,25 @@ func (m *Module) ProjectMaterializer() analyticsmaterialization.Executor {
 	if m == nil || m.environment == nil {
 		return nil
 	}
-	return duckDBProjectMaterializer{environment: m.environment, credentials: m.credentials, module: m}
+	return &duckDBProjectMaterializer{environment: m.environment, credentials: m.credentials, module: m}
 }
 
-func (m *Module) RetentionSnapshots() storagemaintenance.SnapshotMaintenance {
+// ProjectMaterializerForEnvironment builds the governed project materializer
+// against one explicitly supplied DuckLake environment. The caller owns the
+// environment's lifetime; this method never falls back to the module's
+// process-wide environment. Credential and binding policy remain owned by the
+// module.
+func (m *Module) ProjectMaterializerForEnvironment(environment *analyticsducklake.Environment) (analyticsmaterialization.Executor, error) {
 	if m == nil {
-		return nil
+		return nil, fmt.Errorf("analytical runtime is unavailable")
 	}
-	return m.environment
+	if environment == nil {
+		return nil, fmt.Errorf("analytical runtime environment is unavailable")
+	}
+	if m.credentials == nil {
+		return nil, fmt.Errorf("analytical runtime credential resolver is unavailable")
+	}
+	return &duckDBProjectMaterializer{environment: environment, credentials: m.credentials, module: m}, nil
 }
 
 func (m *Module) AdminResources() Resources {
@@ -435,7 +477,7 @@ func NewProjectMaterializerWithCredentials(
 	if credentials == nil {
 		credentials = analyticsduckdb.NonSecretCredentialResolver{}
 	}
-	return duckDBProjectMaterializer{environment: environment, credentials: credentials}
+	return &duckDBProjectMaterializer{environment: environment, credentials: credentials}
 }
 
 func (m *Module) QueryAuditReader() queryaudit.Reader {

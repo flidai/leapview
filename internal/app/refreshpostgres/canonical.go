@@ -1,0 +1,294 @@
+package refreshpostgres
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	physicalpool "github.com/flidai/leapview/internal/analytics/physicalpool"
+	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
+)
+
+// PostgresCanonicalVerifierAdapter verifies delivery-owned plan, generation,
+// snapshot-seal and build-attempt evidence through the refresh transaction.
+// The adapter is bound to one deployment target; pool and catalog identities
+// are read from the immutable seal and catalog identity rows instead of
+// process configuration.
+type PostgresCanonicalVerifierAdapter struct {
+	Deployment *deploymentpostgres.Repository
+	TargetID   string
+}
+
+// PostgresPublicationIdentityResolverAdapter resolves the exact physical
+// namespace admitted for one deployment target. It intentionally shares the
+// complete control-evidence loader with the canonical verifier.
+type PostgresPublicationIdentityResolverAdapter struct {
+	Deployment *deploymentpostgres.Repository
+	TargetID   string
+}
+
+var _ refreshpostgres.PostgresPublicationIdentityResolver = (*PostgresPublicationIdentityResolverAdapter)(nil)
+
+func NewPostgresCanonicalVerifierAdapter(deployment *deploymentpostgres.Repository, targetID string) (*PostgresCanonicalVerifierAdapter, error) {
+	if err := validateAdapterConfig(deployment, targetID); err != nil {
+		return nil, err
+	}
+	return &PostgresCanonicalVerifierAdapter{Deployment: deployment, TargetID: targetID}, nil
+}
+
+func NewPostgresPublicationIdentityResolverAdapter(deployment *deploymentpostgres.Repository, targetID string) (*PostgresPublicationIdentityResolverAdapter, error) {
+	if err := validateAdapterConfig(deployment, targetID); err != nil {
+		return nil, err
+	}
+	return &PostgresPublicationIdentityResolverAdapter{Deployment: deployment, TargetID: targetID}, nil
+}
+
+func validateAdapterConfig(deployment *deploymentpostgres.Repository, targetID string) error {
+	if deployment == nil {
+		return errors.New("deployment repository is required")
+	}
+	if targetID == "" || targetID != strings.TrimSpace(targetID) || len(targetID) > 255 {
+		return errors.New("deployment target id must be canonical")
+	}
+	return nil
+}
+
+// ResolvePublicationIdentityTx implements the refresh module's late-bound
+// identity resolver contract. Every read is issued through the caller-owned
+// transaction, so a successful identity can only accompany the same
+// transaction that writes refresh provenance.
+func (r *PostgresPublicationIdentityResolverAdapter) ResolvePublicationIdentityTx(ctx context.Context, tx refreshpostgres.Tx, request refreshpostgres.PostgresPublicationIdentityRequest) (refreshpostgres.PostgresPublicationIdentity, error) {
+	if r == nil || r.Deployment == nil || tx == nil {
+		return refreshpostgres.PostgresPublicationIdentity{}, refreshpostgres.ErrPublicationIdentityUnavailable
+	}
+	evidence, err := loadCanonicalDeliveryEvidence(ctx, tx, r.Deployment, r.TargetID, request)
+	if err != nil {
+		return refreshpostgres.PostgresPublicationIdentity{}, err
+	}
+	return refreshpostgres.PostgresPublicationIdentity{PhysicalPoolID: evidence.Seal.PhysicalPoolID, CatalogID: evidence.Seal.CatalogID}, nil
+}
+
+// ResolvePublicationIdentityTx also lets the verifier be supplied directly
+// as the resolver when a composition root wants one target-bound adapter.
+func (v *PostgresCanonicalVerifierAdapter) ResolvePublicationIdentityTx(ctx context.Context, tx refreshpostgres.Tx, request refreshpostgres.PostgresPublicationIdentityRequest) (refreshpostgres.PostgresPublicationIdentity, error) {
+	if v == nil || v.Deployment == nil || tx == nil {
+		return refreshpostgres.PostgresPublicationIdentity{}, refreshpostgres.ErrPublicationIdentityUnavailable
+	}
+	evidence, err := loadCanonicalDeliveryEvidence(ctx, tx, v.Deployment, v.TargetID, request)
+	if err != nil {
+		return refreshpostgres.PostgresPublicationIdentity{}, err
+	}
+	return refreshpostgres.PostgresPublicationIdentity{PhysicalPoolID: evidence.Seal.PhysicalPoolID, CatalogID: evidence.Seal.CatalogID}, nil
+}
+
+// canonicalDeliveryEvidence is the immutable delivery proof shared by both
+// refresh identity resolution and canonical completion verification.
+type canonicalDeliveryEvidence struct {
+	Target      deploymentpostgres.DeliveryTarget
+	Generation  deploymentpostgres.DeliveryGeneration
+	Seal        deploymentpostgres.SnapshotSeal
+	Attempt     deploymentpostgres.DeliveryBuildAttempt
+	Publication deploymentpostgres.DeliveryPublication
+	Admission   physicalpool.AdmissionContract
+	Catalog     ducklakepostgres.CatalogIdentity
+}
+
+// loadCanonicalDeliveryArtifacts loads the immutable generation, seal, build,
+// pool, and catalog evidence produced by native refresh execution. A refresh
+// result is intentionally still unpublished while the canonical verifier runs;
+// publication/activation is composed by the caller after this artifact proof.
+func loadCanonicalDeliveryArtifacts(ctx context.Context, tx refreshpostgres.Tx, deployment *deploymentpostgres.Repository, targetID string, request refreshpostgres.PostgresPublicationIdentityRequest) (canonicalDeliveryEvidence, error) {
+	if deployment == nil || tx == nil {
+		return canonicalDeliveryEvidence{}, unavailableError("deployment authority transaction is unavailable")
+	}
+	if targetID == "" || targetID != strings.TrimSpace(targetID) {
+		return canonicalDeliveryEvidence{}, unavailableError("deployment target is not canonical")
+	}
+	if request.ProjectID == "" || request.ProjectID != strings.TrimSpace(request.ProjectID) || request.Environment == "" || request.Environment != strings.TrimSpace(request.Environment) || request.GenerationID == "" || request.GenerationID != strings.TrimSpace(request.GenerationID) {
+		return canonicalDeliveryEvidence{}, unavailableError("publication identity request scope is not canonical")
+	}
+	if request.Source != "" && request.Source != "publish" && request.Source != "refresh" {
+		return canonicalDeliveryEvidence{}, mismatchError("publication identity source is unsupported")
+	}
+
+	generation, err := deployment.GenerationTx(ctx, tx, request.GenerationID)
+	if err != nil {
+		return canonicalDeliveryEvidence{}, unavailableError("load canonical generation: %v", err)
+	}
+	if generation.GenerationID != request.GenerationID || generation.TargetID != targetID || generation.CandidateID == "" || generation.SnapshotSealID == "" || generation.PlanID == "" || generation.PlanDigest == "" {
+		return canonicalDeliveryEvidence{}, mismatchError("canonical generation is not admitted for target")
+	}
+	target, err := deployment.TargetForShareTx(ctx, tx, targetID)
+	if err != nil {
+		return canonicalDeliveryEvidence{}, unavailableError("load canonical target: %v", err)
+	}
+	if target.TargetID != targetID || target.ProjectID != request.ProjectID || target.Environment != request.Environment {
+		return canonicalDeliveryEvidence{}, mismatchError("canonical delivery target scope differs from publication request")
+	}
+
+	seal, err := deployment.SnapshotSealTx(ctx, tx, generation.SnapshotSealID)
+	if err != nil {
+		return canonicalDeliveryEvidence{}, unavailableError("load canonical snapshot seal: %v", err)
+	}
+	if seal.SealID != generation.SnapshotSealID || seal.CandidateID != generation.CandidateID || seal.AttemptID == "" || seal.PlanDigest != generation.PlanDigest || seal.CompatibilityDigest == "" || seal.PhysicalPoolID == "" || seal.CatalogID == "" || seal.CatalogDatabase == "" || seal.CatalogUUID == "" || seal.DuckLakeSnapshotID <= 0 || seal.QualifiedAt.IsZero() {
+		return canonicalDeliveryEvidence{}, mismatchError("canonical snapshot seal is not exact generation evidence")
+	}
+	if request.SnapshotID > 0 && request.SnapshotID != seal.DuckLakeSnapshotID {
+		return canonicalDeliveryEvidence{}, mismatchError("publication snapshot differs from canonical seal")
+	}
+
+	// Resolve the immutable physical-pool admission by the exact compatibility
+	// digest carried by the seal. No latest-admission or process-global pool is
+	// accepted.
+	admission, err := physicalpoolpostgres.New(tx).LoadAdmissionContractByCompatibilityDigest(ctx, physicalpool.PoolID(seal.PhysicalPoolID), seal.CompatibilityDigest)
+	if err != nil {
+		return canonicalDeliveryEvidence{}, unavailableError("load canonical physical-pool admission: %v", err)
+	}
+	if admission.Pool.ID.String() != seal.PhysicalPoolID || admission.Admission.PoolID.String() != seal.PhysicalPoolID || admission.Admission.CompatibilityDigest != seal.CompatibilityDigest {
+		return canonicalDeliveryEvidence{}, mismatchError("canonical physical-pool admission differs from snapshot seal")
+	}
+
+	// Catalog identity is a separate immutable authority, but it is read from
+	// this same control transaction. This prevents a pool admission from being
+	// paired with a catalog database/UUID belonging to another namespace.
+	catalog, err := ducklakepostgres.LoadCatalog(ctx, tx, seal.PhysicalPoolID)
+	if err != nil {
+		return canonicalDeliveryEvidence{}, unavailableError("load canonical catalog identity: %v", err)
+	}
+	if catalog.PhysicalPoolID != seal.PhysicalPoolID || catalog.CatalogID != seal.CatalogID || catalog.CatalogDatabase != seal.CatalogDatabase || catalog.CatalogUUID != seal.CatalogUUID {
+		return canonicalDeliveryEvidence{}, mismatchError("canonical catalog identity differs from snapshot seal")
+	}
+
+	attempt, err := deployment.BuildAttemptTx(ctx, tx, seal.AttemptID)
+	if err != nil {
+		return canonicalDeliveryEvidence{}, unavailableError("load canonical build attempt: %v", err)
+	}
+	if attempt.AttemptID != seal.AttemptID || attempt.State != deploymentpostgres.AttemptCommitted || attempt.SnapshotID != seal.DuckLakeSnapshotID || attempt.PhysicalPoolID != seal.PhysicalPoolID || attempt.PlanID != generation.PlanID || attempt.CandidateID != generation.CandidateID || attempt.PlanDigest != generation.PlanDigest || attempt.FencingEpoch <= 0 || len(attempt.CommitMarker) == 0 {
+		return canonicalDeliveryEvidence{}, mismatchError("canonical build attempt is not exact committed evidence")
+	}
+
+	return canonicalDeliveryEvidence{Target: target, Generation: generation, Seal: seal, Attempt: attempt, Admission: admission, Catalog: catalog}, nil
+}
+
+// loadCanonicalDeliveryEvidence extends artifact evidence with the committed
+// publication for callers (identity resolution and replay) that require a
+// generation to have already been activated.
+func loadCanonicalDeliveryEvidence(ctx context.Context, tx refreshpostgres.Tx, deployment *deploymentpostgres.Repository, targetID string, request refreshpostgres.PostgresPublicationIdentityRequest) (canonicalDeliveryEvidence, error) {
+	evidence, err := loadCanonicalDeliveryArtifacts(ctx, tx, deployment, targetID, request)
+	if err != nil {
+		return canonicalDeliveryEvidence{}, err
+	}
+	publication, err := deployment.HistoricalCommittedPublicationTx(ctx, tx, request.GenerationID)
+	if err != nil {
+		return canonicalDeliveryEvidence{}, unavailableError("load canonical committed publication: %v", err)
+	}
+	if publication.State != "committed" || publication.GenerationID != evidence.Generation.GenerationID || publication.TargetID != targetID || publication.CandidateID != evidence.Generation.CandidateID || publication.SnapshotSealID != evidence.Seal.SealID || publication.CommittedAt.IsZero() || publication.ResultTargetRevision <= publication.ExpectedTargetRevision {
+		return canonicalDeliveryEvidence{}, mismatchError("canonical delivery publication is not exact generation evidence")
+	}
+	if request.Source == "refresh" && request.TargetRevision > 0 && (publication.ExpectedTargetRevision != request.TargetRevision || publication.ResultTargetRevision != request.TargetRevision+1) {
+		return canonicalDeliveryEvidence{}, mismatchError("canonical publication target revision differs from refresh request")
+	}
+	evidence.Publication = publication
+	return evidence, nil
+}
+
+func unavailableError(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", refreshpostgres.ErrPublicationIdentityUnavailable, fmt.Sprintf(format, args...))
+}
+
+func mismatchError(format string, args ...any) error {
+	return fmt.Errorf("%w: %w: %s", refreshpostgres.ErrConflict, refreshpostgres.ErrPublicationIdentityMismatch, fmt.Sprintf(format, args...))
+}
+
+func (v *PostgresCanonicalVerifierAdapter) VerifyCanonicalRefreshTx(ctx context.Context, tx refreshpostgres.Tx, job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult) (refreshpostgres.PublicationInput, error) {
+	if v == nil || v.Deployment == nil || tx == nil {
+		return refreshpostgres.PublicationInput{}, unavailableError("canonical deployment verifier is unavailable")
+	}
+	if err := job.Validate(); err != nil || job.PipelinePlan == nil || result.PlanID == "" || result.ServingStateID == "" || result.SnapshotID <= 0 {
+		return refreshpostgres.PublicationInput{}, refreshrun.ErrLeaseLost
+	}
+	// Native refresh execution has only built and sealed the result generation;
+	// its publication is created later by the transaction-aware finalizer. Keep
+	// this verification focused on immutable result artifacts, then prove that
+	// the target is still at the job's committed base publication/revision.
+	evidence, err := loadCanonicalDeliveryArtifacts(ctx, tx, v.Deployment, v.TargetID, refreshpostgres.PostgresPublicationIdentityRequest{
+		ProjectID: job.Identity.ProjectID.String(), Environment: job.Identity.Environment,
+		GenerationID: result.ServingStateID, SemanticModelID: job.SemanticModelID.String(),
+		PipelineID: job.PipelineID.String(), RunID: job.RunID, SnapshotID: result.SnapshotID,
+		Source: "refresh", TargetRevision: job.TargetRevision,
+	})
+	if err != nil {
+		return refreshpostgres.PublicationInput{}, err
+	}
+	if evidence.Generation.GenerationID != result.ServingStateID || evidence.Generation.PlanID != result.PlanID || evidence.Generation.ServingArtifactDigest == "" {
+		return refreshpostgres.PublicationInput{}, mismatchError("canonical generation evidence differs from refresh job")
+	}
+	plan, err := v.Deployment.PlanTx(ctx, tx, evidence.Generation.PlanID)
+	if err != nil {
+		return refreshpostgres.PublicationInput{}, unavailableError("load canonical plan: %v", err)
+	}
+	if plan.TargetID != v.TargetID || plan.PlanDigest != evidence.Generation.PlanDigest || plan.ArtifactDigest != evidence.Generation.ServingArtifactDigest {
+		return refreshpostgres.PublicationInput{}, mismatchError("canonical plan evidence differs from refresh job")
+	}
+	richPlan, err := plan.RichPlan()
+	if err != nil {
+		return refreshpostgres.PublicationInput{}, unavailableError("load canonical rich plan: %v", err)
+	}
+	boundPipeline := richPlan.PipelinePlan
+	if richPlan.Digest != plan.PlanDigest || richPlan.BaseGenerationID != job.Identity.GenerationID || boundPipeline == nil ||
+		boundPipeline.Digest != job.PipelinePlan.Digest || boundPipeline.ID != job.PipelinePlan.ID ||
+		boundPipeline.ProjectID != job.Identity.ProjectID.String() || boundPipeline.Environment != job.Identity.Environment ||
+		boundPipeline.PipelineID != job.PipelineID.String() || boundPipeline.SemanticModelID != job.SemanticModelID.String() ||
+		boundPipeline.ServingGenerationID != job.Identity.GenerationID || boundPipeline.ArtifactDigest != job.PipelinePlan.ArtifactDigest {
+		return refreshpostgres.PublicationInput{}, mismatchError("embedded pipeline plan evidence differs from refresh job")
+	}
+	if evidence.Seal.DuckLakeSnapshotID != result.SnapshotID || evidence.Seal.PlanDigest != plan.PlanDigest || evidence.Seal.ServingArtifactDigest != evidence.Generation.ServingArtifactDigest {
+		return refreshpostgres.PublicationInput{}, mismatchError("canonical snapshot seal evidence differs from refresh job")
+	}
+	expectedTargetRevision := job.TargetRevision
+	resultTargetRevision := job.TargetRevision + 1
+	switch evidence.Target.ActiveGenerationID {
+	case job.Identity.GenerationID:
+		// Normal first completion: the result is sealed but unpublished and the
+		// target must still be fenced by the job's exact committed base.
+		basePublication, err := v.Deployment.CommittedPublicationTx(ctx, tx, job.Identity.GenerationID)
+		if err != nil {
+			return refreshpostgres.PublicationInput{}, unavailableError("load current canonical base publication: %v", err)
+		}
+		if basePublication.State != "committed" || basePublication.GenerationID != job.Identity.GenerationID || basePublication.TargetID != v.TargetID || basePublication.CommittedAt.IsZero() || basePublication.ResultTargetRevision <= basePublication.ExpectedTargetRevision || basePublication.ResultTargetRevision != job.TargetRevision {
+			return refreshpostgres.PublicationInput{}, mismatchError("canonical base publication is not current exact evidence")
+		}
+		if evidence.Target.ActivePublicationID != basePublication.PublicationID || evidence.Target.TargetRevision != basePublication.ResultTargetRevision {
+			return refreshpostgres.PublicationInput{}, mismatchError("canonical delivery target pointer differs from committed base publication")
+		}
+	case result.ServingStateID:
+		// Recovery/audit path: accept an already activated result only when its
+		// committed publication is the exact base-to-result transition described
+		// by this job. The native finalizer remains responsible for replaying its
+		// deterministic publication when production composition enables it.
+		resultPublication, err := v.Deployment.CommittedPublicationTx(ctx, tx, result.ServingStateID)
+		if err != nil {
+			return refreshpostgres.PublicationInput{}, unavailableError("load current canonical result publication: %v", err)
+		}
+		if resultPublication.State != "committed" || resultPublication.GenerationID != result.ServingStateID || resultPublication.ExpectedBaseGenerationID != job.Identity.GenerationID || resultPublication.TargetID != v.TargetID || resultPublication.CandidateID != evidence.Generation.CandidateID || resultPublication.SnapshotSealID != evidence.Seal.SealID || resultPublication.CommittedAt.IsZero() || resultPublication.ExpectedTargetRevision != job.TargetRevision || resultPublication.ResultTargetRevision != job.TargetRevision+1 {
+			return refreshpostgres.PublicationInput{}, mismatchError("canonical result publication is not current exact evidence")
+		}
+		if evidence.Target.ActivePublicationID != resultPublication.PublicationID || evidence.Target.TargetRevision != resultPublication.ResultTargetRevision {
+			return refreshpostgres.PublicationInput{}, mismatchError("canonical delivery target pointer differs from committed result publication")
+		}
+		expectedTargetRevision = resultPublication.ExpectedTargetRevision
+		resultTargetRevision = resultPublication.ResultTargetRevision
+	default:
+		return refreshpostgres.PublicationInput{}, mismatchError("canonical delivery target is neither the refresh base nor result generation")
+	}
+	return refreshpostgres.PublicationInput{
+		RunID: job.RunID, BaseGenerationID: job.Identity.GenerationID, ResultGenerationID: result.ServingStateID,
+		ExpectedTargetRevision: expectedTargetRevision, ResultTargetRevision: resultTargetRevision,
+		PhysicalPoolID: evidence.Seal.PhysicalPoolID, CatalogID: evidence.Seal.CatalogID,
+	}, nil
+}

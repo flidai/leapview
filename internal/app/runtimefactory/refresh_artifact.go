@@ -5,6 +5,8 @@ import (
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 )
 
-func NewRefreshArtifactLoader() refreshrun.ArtifactLoader {
-	return projectbundle.RefreshArtifactLoader{}
+func NewRefreshArtifactLoader(reader projectbundle.ArtifactObjectReader) refreshrun.ArtifactLoader {
+	return projectbundle.RefreshArtifactLoader{
+		Serving: projectbundle.ServingArtifactLoader{Objects: reader},
+	}
 }

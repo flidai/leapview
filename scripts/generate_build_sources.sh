@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
+GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
 go run ./internal/app/tools/configgen
 go run ./internal/app/tools/layoutcontractgen
 

@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/desktopauth"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/go-chi/chi/v5"
 )
@@ -101,8 +103,8 @@ func TestDesktopAuthorizationEstablishesHttpOnlySessionWithoutReturningSecret(t 
 
 	protected := module.Auth().Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := PrincipalFromContext(r.Context())
-		if !ok || principal.ID != "dev" {
-			t.Fatalf("authenticated desktop principal = %#v, %v; want dev", principal, ok)
+		if !ok || principal.ID != DevelopmentPrincipalID {
+			t.Fatalf("authenticated desktop principal = %#v, %v; want development UUID", principal, ok)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -309,23 +311,25 @@ func newDesktopAuthTestModule(t *testing.T) desktopAuthTestFixture {
 		t.Fatalf("open platform store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	module, err := Build(t.Context(), Config{
-		Database:   store.SQLDB(),
-		InstanceID: desktopTestInstanceID,
-		PublicURL:  "https://analytics.company.com",
-		Auth: AuthConfig{
-			DevBypass:    true,
-			CSRFKey:      "0123456789abcdef0123456789abcdef",
-			CookieSecure: true,
-		},
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	auth := NewAuth(repository, AuthConfig{
+		DevBypass: true, CSRFKey: "0123456789abcdef0123456789abcdef", CookieSecure: true,
+	})
+	module, err := newSurface(surfaceConfig{
+		Repository: func() (access.Repository, error) { return repository, nil },
+		Auth:       auth,
 	})
 	if err != nil {
 		t.Fatalf("build access module: %v", err)
 	}
+	module.desktopAuth, err = desktopauth.New(repository, desktopauth.Config{InstanceID: desktopTestInstanceID})
+	if err != nil {
+		t.Fatalf("build desktop auth service: %v", err)
+	}
 	if err := module.SeedLocalDeveloperPlatformAdmin(t.Context()); err != nil {
 		t.Fatalf("seed development principal: %v", err)
 	}
-	token, err := module.repositoryValue().CreateSession(t.Context(), "dev", time.Hour)
+	token, err := module.repositoryValue().CreateSession(t.Context(), DevelopmentPrincipalID, time.Hour)
 	if err != nil {
 		t.Fatalf("create browser session: %v", err)
 	}

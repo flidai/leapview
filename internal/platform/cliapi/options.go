@@ -11,19 +11,21 @@ import (
 // RemoteOptions are the capability-agnostic credentials accepted by remote
 // commands. Resolution of saved targets remains an application concern.
 type RemoteOptions struct {
-	Target string
-	Token  string
+	Target    string
+	Token     string
+	ProjectID string
 }
 
 // AddFlags binds remote target flags to a command.
 func (options *RemoteOptions) AddFlags(command *cobra.Command) {
 	command.Flags().StringVar(&options.Target, "target", "", "LeapView server URL")
 	command.Flags().StringVar(&options.Token, "token", "", "API token")
+	command.Flags().StringVar(&options.ProjectID, "project-id", "", "target-bound Project identity")
 }
 
 // Credentials returns the unresolved credentials supplied by the user.
 func (options RemoteOptions) Credentials() Credentials {
-	return Credentials{Target: options.Target, Token: options.Token}
+	return Credentials{Target: options.Target, Token: options.Token, ProjectID: options.ProjectID}
 }
 
 // PaginationOptions are the common cursor pagination flags.

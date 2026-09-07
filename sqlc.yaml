@@ -1,36 +1,23 @@
 version: "2"
 sql:
   - engine: "sqlite"
+    queries: "internal/platform/jobs/sqlite/queries"
+    schema: "internal/platform/migrations"
+    gen:
+      go:
+        package: "jobdb"
+        out: "internal/platform/jobs/sqlite/jobdb"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "sqlite"
     queries: "internal/platform/db/queries"
     schema: "internal/platform/migrations"
     gen:
       go:
         package: "db"
         out: "internal/platform/db"
-        emit_json_tags: true
-        emit_empty_slices: true
-        omit_unused_structs: true
-
-  - engine: "sqlite"
-    queries:
-      - "internal/analytics/queryaudit/sqlite/queries"
-      - "internal/analytics/sqlite/queries"
-    schema: "internal/platform/migrations"
-    gen:
-      go:
-        package: "db"
-        out: "internal/analytics/internal/db"
-        emit_json_tags: true
-        emit_empty_slices: true
-        omit_unused_structs: true
-
-  - engine: "sqlite"
-    queries: "internal/admin/sqlite/queries"
-    schema: "internal/platform/migrations"
-    gen:
-      go:
-        package: "db"
-        out: "internal/admin/internal/db"
         emit_json_tags: true
         emit_empty_slices: true
         omit_unused_structs: true
@@ -58,45 +45,12 @@ sql:
         omit_unused_structs: true
 
   - engine: "sqlite"
-    queries: "internal/platform/jobs/sqlite/queries"
-    schema: "internal/platform/migrations"
-    gen:
-      go:
-        package: "jobdb"
-        out: "internal/platform/jobs/sqlite/jobdb"
-        emit_json_tags: true
-        emit_empty_slices: true
-        omit_unused_structs: true
-
-  - engine: "sqlite"
-    queries: "internal/release/sqlite/queries"
-    schema: "internal/platform/migrations"
-    gen:
-      go:
-        package: "db"
-        out: "internal/release/internal/db"
-        emit_json_tags: true
-        emit_empty_slices: true
-        omit_unused_structs: true
-
-  - engine: "sqlite"
     queries: "internal/platform/http/idempotency/sqlite/queries"
     schema: "internal/platform/migrations"
     gen:
       go:
         package: "idempotencydb"
         out: "internal/platform/http/idempotency/sqlite/idempotencydb"
-        emit_json_tags: true
-        emit_empty_slices: true
-        omit_unused_structs: true
-
-  - engine: "sqlite"
-    queries: "internal/platform/http/cursorsigning/sqlite/queries"
-    schema: "internal/platform/migrations"
-    gen:
-      go:
-        package: "cursordb"
-        out: "internal/platform/http/cursorsigning/sqlite/cursordb"
         emit_json_tags: true
         emit_empty_slices: true
         omit_unused_structs: true
@@ -126,17 +80,6 @@ sql:
         omit_unused_structs: true
 
   - engine: "sqlite"
-    queries: "internal/deployment/sqlite/queries"
-    schema: "internal/platform/migrations"
-    gen:
-      go:
-        package: "db"
-        out: "internal/deployment/internal/db"
-        emit_json_tags: true
-        emit_empty_slices: true
-        omit_unused_structs: true
-
-  - engine: "sqlite"
     queries: "internal/servingstate/sqlite/queries"
     schema: "internal/platform/migrations"
     gen:
@@ -147,13 +90,14 @@ sql:
         emit_empty_slices: true
         omit_unused_structs: true
 
-  - engine: "sqlite"
-    queries: "internal/project/sqlite/queries"
-    schema: "internal/platform/migrations"
+  - engine: "postgresql"
+    queries: "internal/project/postgres/queries"
+    schema: "internal/project/postgres/schema.sql"
     gen:
       go:
         package: "db"
-        out: "internal/project/internal/db"
+        out: "internal/project/postgres/internal/db"
+        sql_package: "pgx/v5"
         emit_json_tags: true
         emit_empty_slices: true
         omit_unused_structs: true
@@ -162,8 +106,6 @@ sql:
     queries: "internal/access/postgres/queries"
     schema:
       - "internal/access/postgres/schema.sql"
-      - "internal/access/postgres/migrations/002_typed_attribute_registry.sql"
-      - "internal/access/postgres/migrations/003_semantic_attribute_control.sql"
     gen:
       go:
         package: "db"
@@ -173,6 +115,141 @@ sql:
         emit_empty_slices: true
         emit_pointers_for_null_types: true
         omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/admin/product/postgres/queries"
+    schema: "internal/admin/product/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/admin/product/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/agent/postgres/queries"
+    schema: "internal/agent/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/agent/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/dashboard/session/postgres/queries"
+    schema: "internal/dashboard/session/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/dashboard/session/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+
+  - engine: "postgresql"
+    queries: "internal/dashboard/usage/postgres/queries"
+    schema: "internal/dashboard/usage/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/dashboard/usage/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "date"
+            go_type: "time.Time"
+
+  - engine: "postgresql"
+    queries: "internal/dashboard/appearance/postgres/queries"
+    schema: "internal/dashboard/appearance/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/dashboard/appearance/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+
+  - engine: "postgresql"
+    queries: "internal/dashboard/authoring/postgres/queries"
+    schema: "internal/dashboard/authoring/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/dashboard/authoring/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+
+  - engine: "postgresql"
+    queries: "internal/dashboard/publication/postgres/queries"
+    schema: "internal/dashboard/publication/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/dashboard/publication/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+
+  - engine: "postgresql"
+    queries: "internal/platform/operation/postgres/queries"
+    schema: "internal/platform/operation/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/platform/operation/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/platform/jobs/postgres/queries"
+    schema:
+      - "internal/platform/jobs/postgres/schema.sql"
+      - "internal/platform/jobs/postgres/river_schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/platform/jobs/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+
   - engine: "postgresql"
     queries: "internal/platform/postgres/queries"
     schema: "internal/platform/postgres/schema.sql"
@@ -184,6 +261,7 @@ sql:
         emit_json_tags: true
         emit_empty_slices: true
         omit_unused_structs: true
+
   - engine: "postgresql"
     queries: "internal/platform/bootstrap/postgres/queries"
     schema: "internal/platform/bootstrap/postgres/schema.sql"
@@ -194,7 +272,105 @@ sql:
         sql_package: "pgx/v5"
         emit_json_tags: true
         emit_empty_slices: true
+        emit_pointers_for_null_types: true
         omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/platform/http/cursorsigning/postgres/queries"
+    schema: "internal/platform/http/cursorsigning/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/platform/http/cursorsigning/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/manageddata/postgres/queries"
+    schema:
+      - "internal/manageddata/postgres/schema.sql"
+      - "internal/deployment/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/manageddata/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/servingstate/postgres/queries"
+    schema:
+      - "internal/servingstate/postgres/schema.sql"
+      - "internal/deployment/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/servingstate/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/platform/events/postgres/queries"
+    schema: "internal/platform/events/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/platform/events/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/deployment/postgres/queries"
+    schema: "internal/deployment/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/deployment/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/lineage/postgres/queries"
+    schema: "internal/lineage/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/lineage/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/refresh/postgres/queries"
+    schema: "internal/refresh/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/refresh/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "pg_catalog.interval"
+            go_type: "time.Duration"
+
   - engine: "postgresql"
     queries: "internal/analytics/physicalpool/postgres/queries"
     schema: "internal/analytics/physicalpool/postgres/schema.sql"
@@ -206,9 +382,30 @@ sql:
         emit_json_tags: true
         emit_empty_slices: true
         omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/analytics/connectionbinding/postgres/queries"
+    schema: "internal/analytics/connectionbinding/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/analytics/connectionbinding/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+
   - engine: "postgresql"
     queries: "internal/analytics/ducklake/postgres/queries"
-    schema: "internal/analytics/ducklake/postgres/schema.sql"
+    schema:
+      - "internal/analytics/ducklake/postgres/schema.sql"
+      - "internal/analytics/ducklake/postgres/queries/catalog_schema.sql"
+      - "internal/servingstate/postgres/schema.sql"
+      # The canonical delivery seal is the source of physical retention
+      # admission and is installed before this capability in the control
+      # database baseline.
+      - "internal/deployment/postgres/schema.sql"
     gen:
       go:
         package: "db"
@@ -216,13 +413,52 @@ sql:
         sql_package: "pgx/v5"
         emit_json_tags: true
         emit_empty_slices: true
+        emit_pointers_for_null_types: true
         omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/analytics/queryaudit/postgres/queries"
+    schema: "internal/analytics/queryaudit/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/analytics/queryaudit/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/release/postgres/queries"
+    schema: "internal/release/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/release/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/recoveryset/postgres/queries"
+    schema: "internal/recoveryset/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/recoveryset/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+
   - engine: "sqlite"
-    queries:
-      - "internal/dashboard/publication/sqlite/queries"
-      - "internal/dashboard/session/sqlite/queries"
-      - "internal/dashboard/usage/sqlite/queries"
-      - "internal/dashboard/authoring/sqlite/queries"
+    queries: "internal/dashboard/publication/sqlite/queries"
     schema: "internal/platform/migrations"
     gen:
       go:

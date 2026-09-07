@@ -50,6 +50,9 @@ func (g *Graph) Validate() error {
 			}
 		}
 	}
+	if err := validateSecurityCoverage(g); err != nil {
+		return err
+	}
 	// Cycle detection is separate from input checks so the reported cycle is
 	// stable and useful even when a node has several inputs.
 	state := map[string]uint8{}
@@ -144,6 +147,9 @@ func (g *Graph) Validate() error {
 	if len(g.AvailableMetrics) > 0 && !sameMetrics(g.AvailableMetrics, outputMeta.AvailableMetrics) {
 		return fmt.Errorf("graph available metrics do not match output node %q", g.Output)
 	}
+	if err := validateSecurityBaseline(g); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -160,6 +166,11 @@ func validateNode(node Node, nodes map[string]Node) error {
 	// concrete node types below.
 	switch value := node.(type) {
 	case *ScanDataset:
+		if value == nil {
+			return fmt.Errorf("node is nil")
+		}
+		return validateNode(*value, nodes)
+	case *SecurityBarrier:
 		if value == nil {
 			return fmt.Errorf("node is nil")
 		}
@@ -274,6 +285,15 @@ func validateNode(node Node, nodes map[string]Node) error {
 		if !availableDatasets[n.Path.FromDataset] {
 			return fmt.Errorf("relationship path %q starts at unavailable dataset %q", n.Path.Name, n.Path.FromDataset)
 		}
+		if n.TargetInput != "" {
+			if err := validateSecurityTarget(n, nodes); err != nil {
+				return err
+			}
+		}
+	case SecurityBarrier:
+		if err := validateSecurityBarrierNode(n, nodes); err != nil {
+			return err
+		}
 	case FilterRows:
 		if n.Input == "" {
 			return fmt.Errorf("input and predicate are required")
@@ -325,7 +345,7 @@ func validateNode(node Node, nodes map[string]Node) error {
 		}
 		input := nodes[n.Input]
 		switch input.(type) {
-		case ScanDataset, *ScanDataset, TraverseRelationship, *TraverseRelationship, FilterRows, *FilterRows, BundleBranches, *BundleBranches:
+		case ScanDataset, *ScanDataset, SecurityBarrier, *SecurityBarrier, TraverseRelationship, *TraverseRelationship, FilterRows, *FilterRows, BundleBranches, *BundleBranches:
 		default:
 			return fmt.Errorf("aggregate input %q crosses an aggregate boundary", n.Input)
 		}
@@ -868,7 +888,7 @@ func validateFilterPlacement(filter FilterRows, nodes map[string]Node) error {
 	}
 	phase := filter.Meta().FilterPhase
 	switch input.(type) {
-	case ScanDataset, *ScanDataset:
+	case ScanDataset, *ScanDataset, SecurityBarrier, *SecurityBarrier:
 		if phase != FilterPhaseScan {
 			return fmt.Errorf("scan filter must use scan phase, got %q", phase)
 		}

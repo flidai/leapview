@@ -74,7 +74,7 @@ test('code block highlights product and documentation languages with GitHub them
 
       const yaml = document.createElement('lv-code-block') as any
       yaml.language = 'yaml'
-      yaml.code = 'apiVersion: leapview.dev/v1\nkind: Project'
+      yaml.code = 'apiVersion: leapview.dev/v1\nkind: Connection'
       yaml.highlightedLines = [2]
       yaml.copy = true
       yaml.toolbar = true
@@ -94,7 +94,7 @@ test('code block highlights product and documentation languages with GitHub them
 
       const shell = document.createElement('lv-code-block') as any
       shell.language = 'sh'
-      shell.code = 'leapview validate --project dashboards/leapview.yaml'
+      shell.code = 'leapview validate --source-root dashboards'
       document.body.append(shell)
       await waitFor(() => Boolean(shell.querySelector('.shiki')))
 
@@ -166,12 +166,12 @@ test('code block highlights product and documentation languages with GitHub them
     expect(state.toonText).toContain('items[2]{id,title}:')
     expect(state.yamlText).toContain('apiVersion: leapview.dev/v1')
     expect(state.yamlLanguage).toBe('YAML')
-    expect(state.yamlHighlightedLines).toEqual(['kind: Project'])
-    expect(state.yamlFocusedLines).toEqual(['kind: Project'])
+    expect(state.yamlHighlightedLines).toEqual(['kind: Connection'])
+    expect(state.yamlFocusedLines).toEqual(['kind: Connection'])
     expect(state.yamlFocusCleared).toBe(true)
     expect(state.yamlHighlightMarkerWidth).toBe('4px')
     expect(state.yamlCopyLabel).toBe('Code copied')
-    expect(state.copiedCode).toBe('apiVersion: leapview.dev/v1\nkind: Project')
+    expect(state.copiedCode).toBe('apiVersion: leapview.dev/v1\nkind: Connection')
     expect(state.textFallback).toBe(true)
     expect(state.textError).toBe(false)
     expect(state.unknownFallback).toBe(true)

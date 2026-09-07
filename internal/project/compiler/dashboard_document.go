@@ -2,7 +2,6 @@ package compiler
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
@@ -13,10 +12,14 @@ import (
 // boundary. YAML/JSON normalization, schema validation, and tagged-union
 // dispatch all happen through the generated document DTO.
 func LoadDashboardDocument(path string) (document.DashboardDocument, error) {
+	return LoadDashboardDocumentWithReader(osSourceReader{}, path)
+}
+
+func LoadDashboardDocumentWithReader(reader sourceFileReader, path string) (document.DashboardDocument, error) {
 	if path == "" {
 		return document.DashboardDocument{}, fmt.Errorf("dashboard path is required")
 	}
-	content, err := os.ReadFile(path)
+	content, err := reader.ReadFile(path)
 	if err != nil {
 		return document.DashboardDocument{}, err
 	}
@@ -27,17 +30,21 @@ func LoadDashboardDocument(path string) (document.DashboardDocument, error) {
 	return value, nil
 }
 
-// LoadDashboardDocumentForProject performs the canonical source decode and
-// expands dashboard-local fragment includes inside the project boundary. The
+// LoadDashboardDocumentForSourceRoot performs the canonical source decode and
+// expands dashboard-local fragment includes inside the source-root boundary. The
 // plain loader remains useful for source-level tests and callers that only
-// need the authored DTO; project compilation must use this entry point so an
+// need the authored DTO; source compilation must use this entry point so an
 // include-bearing document cannot silently compile with missing visuals/pages.
-func LoadDashboardDocumentForProject(path, projectRoot string) (document.DashboardDocument, error) {
-	value, err := LoadDashboardDocument(path)
+func LoadDashboardDocumentForSourceRoot(path, sourceRoot string) (document.DashboardDocument, error) {
+	return loadDashboardDocumentForSourceRootWithReader(path, sourceRoot, osSourceReader{})
+}
+
+func loadDashboardDocumentForSourceRootWithReader(path, sourceRoot string, reader sourceFileReader) (document.DashboardDocument, error) {
+	value, err := LoadDashboardDocumentWithReader(reader, path)
 	if err != nil {
 		return document.DashboardDocument{}, err
 	}
-	expanded, err := document.ExpandDashboardFragments(value, path, projectRoot)
+	expanded, err := document.ExpandDashboardFragmentsWithReader(value, path, sourceRoot, reader)
 	if err != nil {
 		return document.DashboardDocument{}, err
 	}
@@ -47,7 +54,7 @@ func LoadDashboardDocumentForProject(path, projectRoot string) (document.Dashboa
 	return expanded.Document, nil
 }
 
-// validateExpandedDashboard is the one project-compilation seam for the
+// validateExpandedDashboard is the one source-compilation seam for the
 // generated DTO after source-only fragment expansion. Include paths are added
 // to failures so diagnostics remain useful even though schema validation sees
 // one canonical expanded document.

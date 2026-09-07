@@ -1,0 +1,366 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+
+	ducklakecatalog "github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/app/config"
+	"github.com/flidai/leapview/internal/app/postgresbaseline"
+	"github.com/flidai/leapview/internal/app/postgresducklake"
+	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
+	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
+)
+
+const (
+	developmentPoolSentinelID     = "dev-local"
+	developmentPoolSentinelDigest = "sha256:" + "0000000000000000000000000000000000000000000000000000000000000000"
+)
+
+// postgresControlPlaneLifecycle owns the runtime, required maintenance, and
+// optional readonly control pools plus independent DuckLake runtime and
+// maintenance pools after the one-shot migrator pool has applied the
+// baseline. The migrator is closed immediately after commit and is therefore
+// never available to request handlers. Start re-pings the serving pools so
+// readiness is tied to the exact connections retained by the process rather
+// than to migration success.
+type postgresControlPlaneLifecycle struct {
+	pools                  *platformpostgres.ControlPlanePools
+	ducklake               *platformpostgres.Pool
+	ducklakeMaintenance    *platformpostgres.Pool
+	ducklakeMetadataSchema string
+	ducklakeAdmission      bool
+	stop                   sync.Once
+	err                    error
+}
+
+func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgresControlPlaneLifecycle, error) {
+	var validationErr error
+	if cfg.Production {
+		validationErr = cfg.ValidatePostgresProduction()
+	} else {
+		validationErr = cfg.ValidatePostgresDevelopment()
+	}
+	if validationErr != nil {
+		return nil, validationErr
+	}
+	controlConfig := cfg.PostgresControlPlaneConfig()
+	var pools *platformpostgres.ControlPlanePools
+	var err error
+	if cfg.Production {
+		pools, err = platformpostgres.OpenServingControlPlane(ctx, controlConfig)
+	} else {
+		pools, err = platformpostgres.OpenControlPlane(ctx, controlConfig)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if pools == nil || pools.Runtime == nil || pools.Maintenance == nil || (!cfg.Production && pools.Migrator == nil) {
+		if pools != nil {
+			pools.Close()
+		}
+		return nil, errors.New("PostgreSQL control-plane pools are incomplete")
+	}
+	runtimeDatabase, err := postgresDatabaseName(ctx, pools.Runtime)
+	if err != nil {
+		pools.Close()
+		return nil, fmt.Errorf("identify PostgreSQL control runtime database: %w", err)
+	}
+	maintenanceDatabase, err := postgresDatabaseName(ctx, pools.Maintenance)
+	if err != nil {
+		pools.Close()
+		return nil, fmt.Errorf("identify PostgreSQL control maintenance database: %w", err)
+	}
+	if maintenanceDatabase != runtimeDatabase {
+		pools.Close()
+		return nil, fmt.Errorf("PostgreSQL control maintenance database %q differs from runtime database %q", maintenanceDatabase, runtimeDatabase)
+	}
+	if !cfg.Production {
+		migratorDatabase, identifyErr := postgresDatabaseName(ctx, pools.Migrator)
+		if identifyErr != nil {
+			pools.Close()
+			return nil, fmt.Errorf("identify PostgreSQL control migrator database: %w", identifyErr)
+		}
+		if migratorDatabase != runtimeDatabase {
+			pools.Close()
+			return nil, fmt.Errorf("PostgreSQL control migrator database %q differs from runtime database %q", migratorDatabase, runtimeDatabase)
+		}
+		if err := applyPostgresControlPlaneMigrations(ctx, pools.Migrator); err != nil {
+			pools.Close()
+			return nil, err
+		}
+		pools.Migrator.Close()
+		pools.Migrator = nil
+	}
+	ducklake, err := platformpostgres.Open(ctx, cfg.PostgresDuckLakeRuntimeConfig())
+	if err != nil {
+		pools.Close()
+		return nil, fmt.Errorf("open PostgreSQL DuckLake runtime pool: %w", err)
+	}
+	// The runtime URL is a credential selector, not the catalog identity
+	// authority. Fail closed unless it lands on the dedicated DuckLake
+	// database, and re-check both login and session roles through the existing
+	// capability-owned static probe. This prevents a syntactically valid URL
+	// from silently attaching a control or cross-environment database.
+	ducklakeConfig := cfg.PostgresDuckLakeRuntimeConfig()
+	ducklakeIdentity, err := postgresducklake.ReadDatabaseIdentity(ctx, ducklake)
+	if err != nil {
+		ducklake.Close()
+		pools.Close()
+		return nil, fmt.Errorf("identify PostgreSQL DuckLake runtime credentials: %w", err)
+	}
+	ducklakeDatabase := ducklakeIdentity.Database
+	if err := validatePostgresDuckLakeRuntimeIdentity(ducklakeDatabase, ducklakeIdentity, ducklakeConfig.RuntimeRole); err != nil {
+		ducklake.Close()
+		pools.Close()
+		return nil, fmt.Errorf("validate PostgreSQL DuckLake runtime credentials: %w", err)
+	}
+	if ducklakeDatabase == runtimeDatabase {
+		ducklake.Close()
+		pools.Close()
+		return nil, fmt.Errorf("PostgreSQL control and DuckLake authorities resolve to the same database %q", runtimeDatabase)
+	}
+	ducklakeMaintenance, err := platformpostgres.Open(ctx, cfg.PostgresDuckLakeMaintenanceConfig())
+	if err != nil {
+		ducklake.Close()
+		pools.Close()
+		return nil, fmt.Errorf("open PostgreSQL DuckLake maintenance pool: %w", err)
+	}
+	maintenanceIdentity, err := postgresducklake.ReadDatabaseIdentity(ctx, ducklakeMaintenance)
+	if err != nil {
+		ducklakeMaintenance.Close()
+		ducklake.Close()
+		pools.Close()
+		return nil, fmt.Errorf("identify PostgreSQL DuckLake maintenance credentials: %w", err)
+	}
+	ducklakeMaintenanceDatabase := maintenanceIdentity.Database
+	maintenanceConfig := cfg.PostgresDuckLakeMaintenanceConfig()
+	if err := validatePostgresDuckLakeMaintenanceIdentity(ducklakeMaintenanceDatabase, maintenanceIdentity, maintenanceConfig.RuntimeRole); err != nil {
+		ducklakeMaintenance.Close()
+		ducklake.Close()
+		pools.Close()
+		return nil, fmt.Errorf("validate PostgreSQL DuckLake maintenance credentials: %w", err)
+	}
+	if ducklakeMaintenanceDatabase != ducklakeDatabase {
+		ducklakeMaintenance.Close()
+		ducklake.Close()
+		pools.Close()
+		return nil, fmt.Errorf("PostgreSQL DuckLake maintenance database %q differs from runtime database %q", ducklakeMaintenanceDatabase, ducklakeDatabase)
+	}
+	return &postgresControlPlaneLifecycle{
+		pools: pools, ducklake: ducklake, ducklakeMaintenance: ducklakeMaintenance,
+		ducklakeMetadataSchema: ducklakecatalog.MetadataSchemaForPool(strings.TrimSpace(cfg.DeliveryPhysicalPoolID)),
+		ducklakeAdmission:      requiresDuckLakeAdmission(cfg),
+	}, nil
+}
+
+// requiresDuckLakeAdmission distinguishes the migration-only development
+// process (which carries BuildDevelopment's explicit local sentinel) from the
+// final process restarted with a real, qualified pool identity. Any partially
+// populated or malformed non-sentinel identity remains admission-required and
+// therefore fails closed in Start rather than silently skipping verification.
+func requiresDuckLakeAdmission(cfg config.Config) bool {
+	if cfg.Production {
+		return true
+	}
+	id := strings.TrimSpace(cfg.DeliveryPhysicalPoolID)
+	digest := strings.TrimSpace(cfg.DeliveryPhysicalPoolCompatibilityDigest)
+	return !(id == developmentPoolSentinelID && digest == developmentPoolSentinelDigest)
+}
+
+// validatePostgresDuckLakeRuntimeIdentity is the production admission seam
+// for the separately authenticated DuckLake pool. Both the pool's current
+// database probe and PostgreSQL's login/session identity must agree with the
+// dedicated catalog contract before serving composition proceeds.
+func validatePostgresDuckLakeRuntimeIdentity(database string, identity postgresducklake.DatabaseIdentity, expectedRole string) error {
+	if database != postgresducklake.DefaultDuckLakeDatabase {
+		return fmt.Errorf("%w: PostgreSQL DuckLake runtime database %q differs from required database %q", postgresducklake.ErrWrongDatabaseCredential, database, postgresducklake.DefaultDuckLakeDatabase)
+	}
+	if identity.Database != database {
+		return fmt.Errorf("%w: PostgreSQL DuckLake identity database %q differs from pool database %q", postgresducklake.ErrWrongDatabaseCredential, identity.Database, database)
+	}
+	return postgresducklake.ValidateDatabaseIdentity(identity, database, expectedRole)
+}
+
+// validatePostgresDuckLakeMaintenanceIdentity applies the same database and
+// login/session-role checks as the runtime pool, but is kept as a distinct
+// composition seam so maintenance credentials cannot be accidentally reused
+// by ordinary serving code.
+func validatePostgresDuckLakeMaintenanceIdentity(database string, identity postgresducklake.DatabaseIdentity, expectedRole string) error {
+	return validatePostgresDuckLakeRuntimeIdentity(database, identity, expectedRole)
+}
+
+func postgresDatabaseName(ctx context.Context, pool *platformpostgres.Pool) (string, error) {
+	if pool == nil {
+		return "", errors.New("PostgreSQL pool is nil")
+	}
+	database, err := pool.CurrentDatabase(ctx)
+	if err != nil {
+		return "", err
+	}
+	if database == "" {
+		return "", errors.New("PostgreSQL current_database() returned an empty identity")
+	}
+	return database, nil
+}
+
+func applyPostgresControlPlaneMigrations(ctx context.Context, migrator *platformpostgres.Pool) error {
+	if migrator == nil {
+		return errors.New("PostgreSQL control migrator pool is nil")
+	}
+	db, err := migrator.SQLDB()
+	if err != nil {
+		return fmt.Errorf("open PostgreSQL Goose migration adapter: %w", err)
+	}
+	defer db.Close()
+	if err := postgresbaseline.ApplyWithMigrationFence(ctx, migrator.NativePool(), db); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Start validates the pools retained for serving.  It is safe to call more
+// than once; each call rechecks the live database because a successful
+// startup ping is not a perpetual readiness guarantee.
+func (l *postgresControlPlaneLifecycle) Start(ctx context.Context) error {
+	if l == nil || l.pools == nil || l.pools.Runtime == nil || l.pools.Maintenance == nil || l.ducklake == nil || l.ducklakeMaintenance == nil {
+		return errors.New("PostgreSQL control-plane lifecycle is not initialized")
+	}
+	if err := l.pools.Runtime.Ping(ctx); err != nil {
+		return fmt.Errorf("ping PostgreSQL control runtime pool: %w", err)
+	}
+	if err := l.pools.Maintenance.Ping(ctx); err != nil {
+		return fmt.Errorf("ping PostgreSQL control maintenance pool: %w", err)
+	}
+	runtimeDB, err := l.pools.Runtime.SQLDB()
+	if err != nil {
+		return fmt.Errorf("open PostgreSQL Goose verification adapter: %w", err)
+	}
+	defer runtimeDB.Close()
+	if err := postgresbaseline.Verify(ctx, runtimeDB); err != nil {
+		return fmt.Errorf("verify PostgreSQL control schema revision: %w", err)
+	}
+	if err := platformmigrations.VerifyRiver(ctx, l.pools.Runtime.NativePool()); err != nil {
+		return fmt.Errorf("verify PostgreSQL River schema: %w", err)
+	}
+	if err := postgresbaseline.VerifyControlRuntimeAdmission(ctx, l.pools.Runtime); err != nil {
+		return fmt.Errorf("verify PostgreSQL control runtime admission: %w", err)
+	}
+	if err := postgresbaseline.VerifyControlMaintenanceAdmission(ctx, l.pools.Maintenance); err != nil {
+		return fmt.Errorf("verify PostgreSQL control maintenance admission: %w", err)
+	}
+	if l.pools.Readonly != nil {
+		if err := l.pools.Readonly.Ping(ctx); err != nil {
+			return fmt.Errorf("ping PostgreSQL control readonly pool: %w", err)
+		}
+		if err := postgresbaseline.VerifyControlReadonlyAdmission(ctx, l.pools.Readonly); err != nil {
+			return fmt.Errorf("verify PostgreSQL control readonly admission: %w", err)
+		}
+	}
+	if err := l.ducklake.Ping(ctx); err != nil {
+		return fmt.Errorf("ping PostgreSQL DuckLake runtime pool: %w", err)
+	}
+	// The migration-only development process carries an explicit local
+	// sentinel, so its metadata namespace is not expected yet. The final
+	// development process has a real admitted identity and verifies it just as
+	// production does before exposing readiness.
+	if l.ducklakeAdmission {
+		if err := postgresbaseline.VerifyDuckLakeAdmission(ctx, l.ducklake, l.ducklakeMetadataSchema); err != nil {
+			return fmt.Errorf("verify PostgreSQL DuckLake runtime admission: %w", err)
+		}
+	}
+	if err := l.ducklakeMaintenance.Ping(ctx); err != nil {
+		return fmt.Errorf("ping PostgreSQL DuckLake maintenance pool: %w", err)
+	}
+	if l.ducklakeAdmission {
+		if err := postgresbaseline.VerifyDuckLakeAdmission(ctx, l.ducklakeMaintenance, l.ducklakeMetadataSchema); err != nil {
+			return fmt.Errorf("verify PostgreSQL DuckLake maintenance admission: %w", err)
+		}
+	}
+	return nil
+}
+
+// MaintenancePool exposes the retained, independently authenticated
+// one-connection control pool used by native maintenance coordinators. The
+// lifecycle retains ownership and closes it from Stop.
+func (l *postgresControlPlaneLifecycle) MaintenancePool() *platformpostgres.Pool {
+	if l == nil || l.pools == nil {
+		return nil
+	}
+	return l.pools.Maintenance
+}
+
+// RuntimePool exposes the retained ordinary control-plane pool to the
+// application-owned authority graph. The lifecycle remains the sole owner and
+// closes it during Stop.
+func (l *postgresControlPlaneLifecycle) RuntimePool() *platformpostgres.Pool {
+	if l == nil || l.pools == nil {
+		return nil
+	}
+	return l.pools.Runtime
+}
+
+// DuckLakePool exposes only the separately authenticated external
+// leapview_ducklake catalog pool to native runtime attach composition without
+// transferring lifecycle ownership. It must not be used to construct
+// PostgresAuthorityGraph or its control-plane DuckLake ledger.
+func (l *postgresControlPlaneLifecycle) DuckLakePool() *platformpostgres.Pool {
+	if l == nil {
+		return nil
+	}
+	return l.ducklake
+}
+
+// DuckLakeMaintenancePool exposes the separately authenticated, one-
+// connection DuckLake maintenance pool to the retention composition. The
+// lifecycle retains ownership and closes it during Stop; callers must not
+// transfer or reuse it as a runtime catalog pool.
+func (l *postgresControlPlaneLifecycle) DuckLakeMaintenancePool() *platformpostgres.Pool {
+	if l == nil {
+		return nil
+	}
+	return l.ducklakeMaintenance
+}
+
+// NamedPools returns the serving pools that production composition exposes to
+// application telemetry. The one-shot migrator is intentionally omitted; it
+// is closed before serving starts and must not appear as a retained pool.
+func (l *postgresControlPlaneLifecycle) NamedPools() []platformpostgres.NamedPool {
+	if l == nil || l.pools == nil {
+		return nil
+	}
+	result := []platformpostgres.NamedPool{
+		{Name: platformpostgres.ControlRuntimePoolName, Pool: l.pools.Runtime},
+		{Name: platformpostgres.ControlMaintenancePoolName, Pool: l.pools.Maintenance},
+		{Name: platformpostgres.DuckLakeRuntimePoolName, Pool: l.ducklake},
+		{Name: platformpostgres.DuckLakeMaintenancePoolName, Pool: l.ducklakeMaintenance},
+	}
+	if l.pools.Readonly != nil {
+		result = append(result, platformpostgres.NamedPool{Name: platformpostgres.ControlReadonlyPoolName, Pool: l.pools.Readonly})
+	}
+	return result
+}
+
+// Stop closes all serving pools and is idempotent.  It deliberately accepts a
+// context to satisfy app.Lifecycle; pgxpool close itself is synchronous and
+// does not require a cancellation path.
+func (l *postgresControlPlaneLifecycle) Stop(context.Context) error {
+	if l == nil {
+		return nil
+	}
+	l.stop.Do(func() {
+		if l.ducklakeMaintenance != nil {
+			l.ducklakeMaintenance.Close()
+		}
+		if l.ducklake != nil {
+			l.ducklake.Close()
+		}
+		if l.pools != nil {
+			l.pools.Close()
+		}
+	})
+	return l.err
+}

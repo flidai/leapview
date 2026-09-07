@@ -2,51 +2,17 @@
 
 Dashboard publications expose one compiled dashboard as an anonymous, governed read surface. Each publication has a stable standalone URL and an iframe URL. Publishing does not create an API credential, inherit the deployer's permissions, or make arbitrary semantic queries available.
 
-## Declare a publication
+## Configure a publication
 
-Add a `DashboardPublication` resource to the project's publication include path:
-
-```yaml
-apiVersion: leapview.dev/v1
-kind: DashboardPublication
-metadata:
-  id: publication:website-showcase
-  name: website-showcase
-spec:
-  dashboard: visual-showcase
-  defaultPage: overview
-  embedding:
-    allowedOrigins:
-      - https://leapview.dev
-```
+Dashboard publication state belongs to the target control plane, not the portable analytics source root. Ask a target administrator to configure the publication for the exact compiled dashboard and default page, then use **Admin → Publications** or the dashboard-publication API to inspect and operate it.
 
 Origins are exact. Internet origins require HTTPS, and wildcards, credentials, paths, queries, and fragments are rejected. An empty list permits the standalone URL but denies framing.
 
-Deploy the project to production to make the publication effective. The public ID remains stable across later deployments, removal, and re-addition. The publication follows the active production generation.
+Publish the source bundle to production before enabling the target-owned publication. The public ID remains stable across later deployments and follows the active production generation.
 
 ## Govern anonymous data
 
-Public execution uses a credential-less `dashboard_publication` principal scoped to the compiled dashboard execution manifest. Global data policies continue to apply. Add a publication-specific policy when two public presentations need different rows or masks:
-
-```yaml
-apiVersion: leapview.dev/v1
-kind: DataPolicy
-metadata:
-  id: data-policy:website-public-region
-  name: website-public-region
-spec:
-  object:
-    kind: semantic_model
-    id: semantic-model:visuals
-  subject:
-    kind: dashboard_publication
-    publication: website-showcase
-  policyType: row_filter
-  expression:
-    field: orders.region
-    operator: equals
-    values: [public]
-```
+Public execution uses a credential-less `dashboard_publication` principal scoped to the compiled dashboard execution manifest. Global data policies continue to apply. When two public presentations need different rows or masks, create a publication-specific data policy through **Admin → Access** or the [Access API](/docs/api/access). The policy must target the exact semantic-model resource and publication subject retained by the target.
 
 Publication subjects are supported only by data policies, not role bindings or grants. They cannot authenticate, hold tokens, use agents, export data, edit dashboards, or call the general BI API.
 
@@ -57,7 +23,7 @@ Users with `RESOURCE_PUBLISH` on the governed dashboard can use **Admin → Publ
 - Suspension immediately makes documents and commands unavailable and terminates active streams.
 - Resume succeeds only while the publication remains in the active production configuration.
 - Rotation invalidates the prior URL and active streams immediately.
-- Removing the YAML resource disables the publication while preserving its ID for a future re-addition.
+- Removing or disabling the target configuration makes the publication unavailable while preserving its audit history.
 
 Mutation API requests require an `Idempotency-Key`.
 

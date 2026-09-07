@@ -10,6 +10,10 @@ Deciders: LeapView maintainers
 
 Supersedes: none
 
+Superseded by: [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md),
+control-store selection only; the separation and cross-store reconciliation
+decision remains accepted
+
 Related: [ADR-0007](0007-adopt-plan-driven-project-delivery.md),
 [ADR-0008](0008-isolate-ducklake-candidate-physical-state.md), the
 [project-delivery conformance specification](specifications/project-delivery-conformance.md),

@@ -84,6 +84,12 @@ type Reader interface {
 	ListSummaries(context.Context, time.Time) ([]Summary, error)
 }
 
+// Retainer is the bounded maintenance seam for removing stale viewer-day
+// rows. RecordView intentionally performs only the hot-path upsert.
+type Retainer interface {
+	DeleteBefore(context.Context, time.Time, int) (int64, error)
+}
+
 // RankPopularity returns popularity levels for the top thirty percent of
 // configured dashboards, provided each result reached the minimum
 // distinct-viewer floor. Ranking is instance-wide: viewer breadth wins,

@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 
 	"github.com/flidai/leapview/internal/access"
@@ -15,12 +14,11 @@ import (
 	adminstorage "github.com/flidai/leapview/internal/admin/storage"
 	"github.com/flidai/leapview/internal/agent/api"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
-	"github.com/flidai/leapview/internal/analytics/resource"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
-	"github.com/flidai/leapview/internal/workload"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	"github.com/flidai/leapview/pkg/pagestream"
 )
 
@@ -69,15 +67,11 @@ type AuthoringSessions interface {
 type QueryAuditReaderProvider func() (queryaudit.Reader, error)
 
 type StorageConfig struct {
-	CatalogPath  string
-	DataPath     string
-	Environment  string
-	ControlPlane *sql.DB
-	Analytics    interface {
-		resource.Provider
-		resource.SessionProvider
-	}
-	Admitter workload.Admitter
+	// Runtime is the active serving-generation provider. Production callers
+	// supply this so storage reads use the sealed PostgreSQL DuckLake catalog,
+	// never a node-local catalog path.
+	Runtime      projectruntime.Provider
+	ControlPlane productsettings.Pinger
 }
 
 type Config struct {
@@ -133,10 +127,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	readModel := adminhttp.ReadModel{
 		Access: config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,
-		StorageService: adminstorage.Service{
-			CatalogPath: config.Storage.CatalogPath, DataPath: config.Storage.DataPath,
-			Analytics: config.Storage.Analytics, Admitter: config.Storage.Admitter,
-		},
+		StorageService:   adminstorage.Service{Runtime: config.Storage.Runtime},
 		QueryAuditReader: adminhttp.QueryAuditReaderProvider(config.QueryAuditReader), CSRFToken: config.CSRFToken,
 		CurrentPrincipal: func(r *http.Request) (adminhttp.Principal, bool) {
 			if config.CurrentPrincipal == nil {

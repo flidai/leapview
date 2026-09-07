@@ -175,7 +175,6 @@ func directArrowExperimentMetrics(snapshot accesssnapshot.AuthorizationSnapshot,
 func directArrowExperimentGraph(t testing.TB) (projectgraph.ProjectGraph, projectgraph.ServingIdentity, access.ResourceRef) {
 	t.Helper()
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: directArrowExperimentProject, Kind: projectgraph.KindProject, Name: "sales_project"},
 		{ID: "semantic_sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
 	}, nil)

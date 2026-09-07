@@ -14,6 +14,10 @@ func (p *Planner) Plan(request Request) (Plan, error) {
 }
 
 func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
+	return p.planRows(request, true)
+}
+
+func (p *Planner) planRows(request RowRequest, secure bool) (Plan, error) {
 	view, err := p.rowView(request)
 	if err != nil {
 		return Plan{}, err
@@ -105,6 +109,11 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 		irGraph.Nodes[irGraph.Output] = sortNode
 		irGraph.NodeMeta = sortNode.NodeMeta
 	}
+	if secure {
+		if _, err := p.securePlanGraph(irGraph, requestRowMemberRefs(p, request)...); err != nil {
+			return Plan{}, err
+		}
+	}
 	rendered, irErr := planir.RenderDuckDB(irGraph)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("render row plan IR: %w", irErr)
@@ -113,10 +122,14 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 	for _, column := range rendered.Columns {
 		columnSet[column] = true
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
 }
 
 func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
+	return p.planRawValues(request, true)
+}
+
+func (p *Planner) planRawValues(request RawValueRequest, secure bool) (Plan, error) {
 	view, err := p.rawValueView(request)
 	if err != nil {
 		return Plan{}, err
@@ -200,6 +213,11 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 		irGraph.Nodes[irGraph.Output] = sortNode
 		irGraph.NodeMeta = sortNode.NodeMeta
 	}
+	if secure {
+		if _, err := p.securePlanGraph(irGraph, requestRawValueMemberRefs(p, request)...); err != nil {
+			return Plan{}, err
+		}
+	}
 	rendered, irErr := planir.RenderDuckDB(irGraph)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("render raw-value plan IR: %w", irErr)
@@ -208,10 +226,14 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	for _, column := range rendered.Columns {
 		columnSet[column] = true
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
 }
 
 func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
+	return p.planCount(request, true)
+}
+
+func (p *Planner) planCount(request CountRequest, secure bool) (Plan, error) {
 	view, err := p.countView(request)
 	if err != nil {
 		return Plan{}, err
@@ -223,11 +245,16 @@ func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("build count plan IR: %w", irErr)
 	}
+	if secure {
+		if _, err := p.securePlanGraph(irGraph, requestCountMemberRefs(p, request)...); err != nil {
+			return Plan{}, err
+		}
+	}
 	rendered, irErr := planir.RenderDuckDB(irGraph)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("render count plan IR: %w", irErr)
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, IR: irGraph}, nil
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, IR: irGraph}, nil
 }
 
 type columnMaskSet map[string]masking.Kind

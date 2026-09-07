@@ -9,21 +9,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSourceFilesFromProjectReturnsOnlyResolvedReachableFiles(t *testing.T) {
+func TestSourceFilesFromAssemblyReturnsOnlyResolvedReachableFiles(t *testing.T) {
 	root := t.TempDir()
 	path := func(value string) string { return filepath.Join(root, filepath.FromSlash(value)) }
-	project := Project{
+	project := sourceAssembly{
 		BaseDir: root,
 		ConnectionPaths: map[string]string{
 			"warehouse": path("connections/warehouse.yaml"),
 		},
 		SourcePaths: map[string]string{"orders": path("sources/orders.yaml")},
 	}
-	projectPath := path("leapview.yaml")
-	got, err := sourceFilesFromProject(projectPath, project)
+	got, err := sourceFilesFromAssembly(root, project)
 	require.NoError(t, err)
 	want := []string{
-		projectPath,
 		path("connections/warehouse.yaml"),
 		path("sources/orders.yaml"),
 	}
@@ -33,15 +31,54 @@ func TestSourceFilesFromProjectReturnsOnlyResolvedReachableFiles(t *testing.T) {
 	}
 }
 
-func TestSourceFilesFromProjectRejectsResolvedPathOutsideProject(t *testing.T) {
+func TestSourceFilesFromAssemblyIncludesDashboardFragments(t *testing.T) {
 	root := t.TempDir()
-	projectPath := filepath.Join(root, "leapview.yaml")
+	dashboardPath := filepath.Join(root, "dashboards", "sales.yaml")
+	fragmentPath := filepath.Join(root, "dashboards", "fragments", "visuals.yaml")
+	if err := os.MkdirAll(filepath.Dir(fragmentPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dashboardPath, []byte(`apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata: {id: dashboard:sales, name: sales}
+spec:
+  semanticModel: sales
+  filters: []
+  includes: {visuals: [fragments/visuals.yaml]}
+  visuals: {}
+  pages: []
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fragmentPath, []byte(`visuals:
+  revenue:
+    type: bar
+    query: {type: aggregate, dimensions: [], metrics: [revenue]}
+    presentation: {type: cartesian}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := sourceFilesFromAssembly(root, sourceAssembly{
+		BaseDir:        root,
+		DashboardPaths: map[string]string{"sales": dashboardPath},
+	})
+	require.NoError(t, err)
+	want := []string{dashboardPath, fragmentPath}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("source files = %#v, want %#v", got, want)
+	}
+}
+
+func TestSourceFilesFromAssemblyRejectsResolvedPathOutsideProject(t *testing.T) {
+	root := t.TempDir()
 	outside := filepath.Join(filepath.Dir(root), "outside.yaml")
 	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Remove(outside) })
-	_, err := sourceFilesFromProject(projectPath, Project{
+	_, err := sourceFilesFromAssembly(root, sourceAssembly{
 		BaseDir: root,
 		ConnectionPaths: map[string]string{
 			"escaped": outside,
@@ -52,7 +89,7 @@ func TestSourceFilesFromProjectRejectsResolvedPathOutsideProject(t *testing.T) {
 	}
 }
 
-func TestSourceFilesFromProjectRejectsSymlinkEscapingProject(t *testing.T) {
+func TestSourceFilesFromAssemblyRejectsSymlinkEscapingProject(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	outsidePath := filepath.Join(outside, "secret.yaml")
@@ -64,7 +101,7 @@ func TestSourceFilesFromProjectRejectsSymlinkEscapingProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := sourceFilesFromProject(filepath.Join(root, "leapview.yaml"), Project{
+	_, err := sourceFilesFromAssembly(root, sourceAssembly{
 		BaseDir:     root,
 		SourcePaths: map[string]string{"escaped": linkPath},
 	})

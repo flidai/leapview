@@ -2,8 +2,6 @@ package module
 
 import (
 	"context"
-	cryptorand "crypto/rand"
-	"database/sql"
 	"fmt"
 	"io"
 	"time"
@@ -13,8 +11,8 @@ import (
 	authoringaccessadapter "github.com/flidai/leapview/internal/dashboard/authoring/accessadapter"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	authoringcompileradapter "github.com/flidai/leapview/internal/dashboard/authoring/compileradapter"
+	authoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
-	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
@@ -38,8 +36,9 @@ type AuthorizeProjectCapability func(context.Context, string, projectgraph.Resou
 // behavior is injected as a function so dashboard authoring does not import
 // the project compiler, and runtime acquisition remains topology-neutral.
 type AuthoringConfig struct {
-	Database                   *sql.DB
-	AuditIntentRecorder        access.AuditIntentRecorder
+	// Persistence is the opaque native dashboard authority bundle. It is
+	// the concrete authoring repository and uses UUIDv7 identity generators.
+	Persistence                *NativePersistence
 	AuthorizeResource          AuthorizeResource
 	AuthorizeProjectCapability AuthorizeProjectCapability
 	AcquireRuntime             func(context.Context) (runtimehost.Lease, error)
@@ -48,8 +47,11 @@ type AuthoringConfig struct {
 // BuildAuthoring constructs the complete dashboard authoring application and
 // its adapters behind the dashboard module surface.
 func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
-	if config.Database == nil {
-		return nil, fmt.Errorf("dashboard authoring database is required")
+	if config.Persistence == nil {
+		return nil, fmt.Errorf("dashboard authoring persistence is required")
+	}
+	if config.Persistence != nil && !config.Persistence.valid() {
+		return nil, fmt.Errorf("dashboard authoring native persistence is not configured")
 	}
 	if config.AuthorizeResource == nil || config.AuthorizeProjectCapability == nil {
 		return nil, fmt.Errorf("dashboard authoring resource and project capability authorizers are required")
@@ -57,10 +59,13 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 	if config.AcquireRuntime == nil {
 		return nil, fmt.Errorf("dashboard authoring runtime provider is required")
 	}
-	if config.AuditIntentRecorder == nil {
-		return nil, fmt.Errorf("dashboard authoring audit intent recorder is required")
+	var repository authoring.Repository
+	repository = config.Persistence.authoring
+	ids := authoringIDs{
+		dashboard: func() (authoring.DashboardID, error) { return authoringpostgres.NewDashboardID() },
+		draft:     func() (authoring.DraftID, error) { return authoringpostgres.NewDraftID() },
+		revision:  func() (authoring.RevisionID, error) { return authoringpostgres.NewRevisionID() },
 	}
-	repository := authoringsqlite.NewRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
 	authorizer, err := authoringaccessadapter.New(authoringaccessadapter.Options{
 		AuthorizeResource:          authoringaccessadapter.AuthorizeResource(config.AuthorizeResource),
 		AuthorizeProjectCapability: authoringaccessadapter.AuthorizeProjectCapability(config.AuthorizeProjectCapability),
@@ -72,7 +77,6 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build dashboard authoring compiler adapter: %w", err)
 	}
-	ids := newAuthoringIDs(cryptorand.Reader)
 	service, err := authoringservice.NewService(authoringservice.Options{
 		Repository: repository,
 		Authorizer: authorizer,

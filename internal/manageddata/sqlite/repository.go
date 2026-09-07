@@ -1123,7 +1123,7 @@ func mapRevisionFile(row platformdb.ManagedDataRevisionFile) manageddata.Revisio
 }
 
 func mapUploadSession(row platformdb.ManagedDataUploadSession) manageddata.UploadSession {
-	return manageddata.UploadSession{ID: manageddata.UploadID(row.ID), CollectionID: projectgraph.ResourceID(row.CollectionID), BaseRevisionID: manageddata.RevisionID(row.BaseRevisionID.String), RevisionID: manageddata.RevisionID(row.RevisionID.String), Status: manageddata.UploadStatus(row.Status), ManifestJSON: row.ManifestJson, ExpectedFileCount: row.ExpectedFileCount, ExpectedSizeBytes: row.ExpectedSizeBytes, UploadedFileCount: row.UploadedFileCount, UploadedSizeBytes: row.UploadedSizeBytes, StorageBackend: row.StorageBackend, StagingPrefix: row.StagingPrefix, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ExpiresAt: row.ExpiresAt, CompletedAt: row.CompletedAt.String, Error: row.Error}
+	return manageddata.UploadSession{ID: manageddata.UploadID(row.ID), CollectionID: projectgraph.ResourceID(row.CollectionID), BaseRevisionID: manageddata.RevisionID(row.BaseRevisionID.String), RevisionID: manageddata.RevisionID(row.RevisionID.String), Status: manageddata.UploadStatus(row.Status), ManifestJSON: row.ManifestJson, ExpectedFileCount: row.ExpectedFileCount, ExpectedSizeBytes: row.ExpectedSizeBytes, UploadedFileCount: row.UploadedFileCount, UploadedSizeBytes: row.UploadedSizeBytes, StorageBackend: row.StorageBackend, StagingPrefix: row.StagingPrefix, CreatedBy: row.CreatedBy, CreatedAt: canonicalTimestamp(row.CreatedAt), UpdatedAt: canonicalTimestamp(row.UpdatedAt), ExpiresAt: canonicalTimestamp(row.ExpiresAt), CompletedAt: canonicalTimestamp(row.CompletedAt.String), Error: row.Error}
 }
 
 func mapS3MultipartUpload(row platformdb.ManagedDataS3MultipartUpload) manageddata.S3MultipartUpload {
@@ -1207,7 +1207,26 @@ func mapEnvironmentPointer(row platformdb.ManagedDataEnvironmentPointer) managed
 	return manageddata.EnvironmentPointer{CollectionID: projectgraph.ResourceID(row.CollectionID), Environment: manageddata.Environment(row.Environment), RevisionID: manageddata.RevisionID(row.RevisionID), DeploymentID: row.DeploymentID, Generation: row.Generation, UpdatedBy: row.UpdatedBy, UpdatedAt: row.UpdatedAt}
 }
 
-func timestamp(value time.Time) string { return value.UTC().Format("2006-01-02 15:04:05.000000000") }
+const sqliteTimestampLayout = "2006-01-02 15:04:05.000000000"
+
+// canonicalTimestamp is the adapter boundary for SQLite's text timestamps.
+// SQLite comparisons continue to use sqliteTimestampLayout via timestamp;
+// values exposed through manageddata.UploadSession use RFC3339Nano like the
+// native PostgreSQL adapter.
+func canonicalTimestamp(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	for _, layout := range []string{time.RFC3339Nano, sqliteTimestampLayout, "2006-01-02 15:04:05"} {
+		if parsed, err := time.ParseInLocation(layout, value, time.UTC); err == nil {
+			return parsed.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	return ""
+}
+
+func timestamp(value time.Time) string { return value.UTC().Format(sqliteTimestampLayout) }
 
 func nullable(value string) sql.NullString {
 	value = strings.TrimSpace(value)

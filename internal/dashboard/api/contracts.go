@@ -29,6 +29,7 @@ type PublicationResponse struct {
 	IFrameSnippet        string            `json:"iframeSnippet"`
 	Name                 string            `json:"name"`
 	ProjectID            string            `json:"projectId"`
+	Revision             int64             `json:"revision"`
 	PublicURL            string            `json:"publicUrl"`
 	RotatedAt            *string           `json:"rotatedAt,omitempty"`
 	Status               PublicationStatus `json:"status"`

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,24 +11,19 @@ import (
 	"testing"
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
+	"github.com/flidai/leapview/internal/analytics/physicalpool"
 )
 
 type fakeOperations struct {
-	called                string
-	options               Options
-	requeueEvent          string
-	recoveryPoints        []adminoffline.ExternalRecoveryPoint
-	currentRecoveryPoints []adminoffline.ExternalRecoveryPoint
-	externalEvidence      map[string]string
-}
-
-func (operations *fakeOperations) AuditOutbox(_ context.Context, request adminoffline.AuditOutboxRequest, _ io.Writer) error {
-	operations.called, operations.requeueEvent, operations.options.Apply = "audit-outbox", request.RequeueEventID, request.Apply
-	return nil
-}
-func (operations *fakeOperations) RecoveryLedgerStatus(context.Context, io.Writer) error {
-	operations.called = "recovery-status"
-	return nil
+	called                  string
+	options                 Options
+	upgradeRequest          CatalogUpgradeRequest
+	recoveryPrepareRequest  RecoveryPrepareRequest
+	recoveryValidateRequest RecoveryValidateRequest
+	recoveryPublishRequest  RecoveryPublishRequest
+	recoveryPrepareResult   RecoveryPrepareResult
+	recoveryValidateResult  RecoveryValidateResult
+	recoveryPublishResult   RecoveryPublishResult
 }
 
 func (operations *fakeOperations) Initialize(context.Context, adminoffline.InitializeRequest, io.Writer) error {
@@ -37,11 +34,7 @@ func (operations *fakeOperations) AcknowledgeInitialCredentials(context.Context)
 	operations.called = "acknowledge"
 	return nil
 }
-func (operations *fakeOperations) StorageCleanup(_ context.Context, request adminoffline.StorageCleanupRequest, _ io.Writer) error {
-	operations.called, operations.options.Apply = "cleanup", request.Apply
-	return nil
-}
-func (operations *fakeOperations) Maintenance(_ context.Context, request adminoffline.MaintenanceRequest, _ io.Writer) error {
+func (operations *fakeOperations) Maintenance(_ context.Context, request MaintenanceRequest, _ io.Writer) error {
 	operations.called = "maintenance"
 	operations.options = Options{
 		Apply: request.Apply, AuditDays: request.AuditDays, QueryDays: request.QueryDays,
@@ -49,36 +42,53 @@ func (operations *fakeOperations) Maintenance(_ context.Context, request adminof
 	}
 	return nil
 }
-func (operations *fakeOperations) Backup(_ context.Context, request adminoffline.BackupRequest, _ io.Writer) error {
-	operations.called = "backup"
-	operations.options.BackupOut, operations.options.DatabaseOnly = request.Out, request.DatabaseOnly
-	operations.recoveryPoints = request.ExternalRecoveryPoints
-	return nil
-}
-func (operations *fakeOperations) Restore(_ context.Context, request adminoffline.RestoreRequest, _ io.Reader, _ io.Writer) error {
-	operations.called = "restore"
-	operations.options.RestoreFrom, operations.options.RestoreBefore = request.From, request.CurrentBackup
-	operations.options.ConfirmRestore, operations.options.DatabaseOnly = request.Confirm, request.DatabaseOnly
-	operations.options.PreflightOnly = request.PreflightOnly
-	operations.externalEvidence = request.ExternalEvidence
-	operations.currentRecoveryPoints = request.CurrentExternalRecoveryPoints
-	return nil
-}
 func (operations *fakeOperations) BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error {
 	operations.called = "pool-bootstrap"
 	return nil
 }
-func (operations *fakeOperations) BootstrapQualificationLocalPhysicalPool(context.Context, io.Writer) error {
-	operations.called = "qualification-local-pool-bootstrap"
+func (operations *fakeOperations) UpgradePhysicalPoolCatalog(_ context.Context, request CatalogUpgradeRequest, _ io.Writer) error {
+	operations.called = "pool-upgrade"
+	operations.upgradeRequest = request
 	return nil
 }
-func (operations *fakeOperations) RepairDeliveryRoot(context.Context, adminoffline.DeliveryRepairRequest, io.Writer) error {
-	operations.called = "delivery-repair"
-	return nil
+func (operations *fakeOperations) QualificationPoolArtifacts(context.Context) (adminoffline.QualificationPoolArtifacts, error) {
+	operations.called = "qualification-local-pool-artifacts"
+	compatibility := physicalpool.Compatibility{DuckDBRuntime: "duckdb:1.0", DuckLakeExtension: "ducklake:managed", CatalogFormat: "ducklake-catalog:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1"}
+	evidence, err := physicalpool.NewEvidence(physicalpool.EvidenceInput{
+		Compatibility: compatibility, ConformanceVersion: "test/v1",
+		Checks: []physicalpool.EvidenceCheck{{ID: "check", Passed: true, ObservationDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}},
+	})
+	if err != nil {
+		return adminoffline.QualificationPoolArtifacts{}, err
+	}
+	return adminoffline.QualificationPoolArtifacts{
+		SchemaVersion: adminoffline.QualificationPoolArtifactsSchemaVersion,
+		Pool: physicalpool.PoolIdentity{
+			StorageLocation: "/var/lib/leapview/data", StorageNamespace: "delivery", Region: "local", Tenant: "qualification", EncryptionDomain: "local",
+			IsolationBoundary: "qualification", RetentionAuthority: "qualification",
+			RetentionPolicy: physicalpool.RetentionPolicy{ReaderGracePeriodSeconds: 1800, OrphanGracePeriodSeconds: 3600, BuildGracePeriodSeconds: 3600},
+			Compatibility:   compatibility,
+		},
+		Evidence: physicalpool.EvidenceArtifact{SchemaVersion: physicalpool.EvidenceArtifactSchemaVersion, Evidence: evidence},
+	}, nil
 }
-func (operations *fakeOperations) AuditDeliveryRoots(context.Context, adminoffline.DeliveryAuditRequest, io.Writer) error {
-	operations.called = "delivery-audit"
-	return nil
+
+func (operations *fakeOperations) PrepareRecovery(_ context.Context, request RecoveryPrepareRequest) (RecoveryPrepareResult, error) {
+	operations.called = "recovery-prepare"
+	operations.recoveryPrepareRequest = request
+	return operations.recoveryPrepareResult, nil
+}
+
+func (operations *fakeOperations) ValidateRecovery(_ context.Context, request RecoveryValidateRequest) (RecoveryValidateResult, error) {
+	operations.called = "recovery-validate"
+	operations.recoveryValidateRequest = request
+	return operations.recoveryValidateResult, nil
+}
+
+func (operations *fakeOperations) PublishRecovery(_ context.Context, request RecoveryPublishRequest) (RecoveryPublishResult, error) {
+	operations.called = "recovery-publish"
+	operations.recoveryPublishRequest = request
+	return operations.recoveryPublishResult, nil
 }
 
 func TestCommandOwnsMaintenanceFlags(t *testing.T) {
@@ -97,33 +107,9 @@ func TestCommandOwnsMaintenanceFlags(t *testing.T) {
 	}
 }
 
-func TestCommandRoutesRecoveryLedgerStatus(t *testing.T) {
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"recovery", "status"})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.called != "recovery-status" {
-		t.Fatalf("called = %q", operations.called)
-	}
-}
-
-func TestCommandOwnsAuditOutboxRecoveryFlags(t *testing.T) {
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"audit-outbox", "--requeue-event", "audit-event-1", "--apply"})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.called != "audit-outbox" || operations.requeueEvent != "audit-event-1" || !operations.options.Apply {
-		t.Fatalf("audit outbox call = %q %q apply=%v", operations.called, operations.requeueEvent, operations.options.Apply)
-	}
-}
-
 func TestCommandRequiresOperations(t *testing.T) {
 	command := Command(context.Background(), nil)
-	command.SetArgs([]string{"backup", "--out", "-"})
+	command.SetArgs([]string{"initialize"})
 	err := command.Execute()
 	if err == nil || !strings.Contains(err.Error(), "operations are required") {
 		t.Fatalf("error = %v", err)
@@ -144,87 +130,127 @@ func TestCommandRejectsInvalidNestedSubcommandsWithoutUsage(t *testing.T) {
 	}
 }
 
-func TestCommandRoutesRestorePreflightWithoutConfirmation(t *testing.T) {
+func TestCommandRoutesQualificationLocalPoolArtifactExportWithoutApply(t *testing.T) {
 	operations := &fakeOperations{}
 	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"restore", "--from", "backup.tar.gz", "--preflight-only"})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.called != "restore" || !operations.options.PreflightOnly || operations.options.ConfirmRestore {
-		t.Fatalf("restore options = %#v", operations.options)
-	}
-}
-
-func TestCommandLoadsExternalRecoveryInputs(t *testing.T) {
-	dir := t.TempDir()
-	recoveryPath := filepath.Join(dir, "recovery.json")
-	if err := os.WriteFile(recoveryPath, []byte(`[{"role":"managed-data","recoveryPoint":"version-42","evidenceKey":"managed-data-version"}]`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	evidencePath := filepath.Join(dir, "evidence.json")
-	if err := os.WriteFile(evidencePath, []byte(`{"managed-data-version":"version-42"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"backup", "--out", "backup.tar.gz", "--external-recovery-points", recoveryPath})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if len(operations.recoveryPoints) != 1 || operations.recoveryPoints[0].RecoveryPoint != "version-42" {
-		t.Fatalf("external recovery points = %#v", operations.recoveryPoints)
-	}
-	command = Command(context.Background(), operations)
-	command.SetArgs([]string{"restore", "--from", "backup.tar.gz", "--preflight-only", "--external-evidence", evidencePath, "--current-external-recovery-points", recoveryPath})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.externalEvidence["managed-data-version"] != "version-42" {
-		t.Fatalf("external evidence = %#v", operations.externalEvidence)
-	}
-	if len(operations.currentRecoveryPoints) != 1 || operations.currentRecoveryPoints[0].RecoveryPoint != "version-42" {
-		t.Fatalf("current external recovery points = %#v", operations.currentRecoveryPoints)
-	}
-}
-
-func TestCommandRoutesBoundedDeliveryRepair(t *testing.T) {
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"delivery", "repair", "--pool-id", "pool", "--kind", "candidate", "--source-id", "candidate", "--catalog-digest", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--object-key", "catalogs/a.ducklake", "--created-at", "2026-08-17T12:00:00Z", "--apply"})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.called != "delivery-repair" {
-		t.Fatalf("called = %q", operations.called)
-	}
-}
-
-func TestCommandRoutesReadOnlyDeliveryAudit(t *testing.T) {
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"delivery", "audit", "--pool-id", "pool"})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.called != "delivery-audit" {
-		t.Fatalf("operations called = %q", operations.called)
-	}
-}
-
-func TestCommandRoutesQualificationLocalPoolBootstrapOnlyWithApply(t *testing.T) {
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
+	var output bytes.Buffer
+	command.SetOut(&output)
 	command.SetArgs([]string{"delivery", "pool", "qualify"})
-	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "--apply is required") {
-		t.Fatalf("missing confirmation error = %v", err)
-	}
-	command = Command(context.Background(), operations)
-	command.SetArgs([]string{"delivery", "pool", "qualify", "--apply"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if operations.called != "qualification-local-pool-bootstrap" {
+	if operations.called != "qualification-local-pool-artifacts" {
 		t.Fatalf("called = %q", operations.called)
 	}
+	if _, err := adminoffline.UnmarshalQualificationPoolArtifacts(output.Bytes()); err != nil {
+		t.Fatalf("qualification output = %q: %v", output.String(), err)
+	}
+}
+
+func TestCommandRoutesCatalogUpgradeWithTargetArtifacts(t *testing.T) {
+	poolPath, evidencePath, identity, evidence := writeCatalogUpgradeArtifacts(t)
+	operations := &fakeOperations{}
+	command := Command(context.Background(), operations)
+	command.SetArgs([]string{
+		"delivery", "pool", "upgrade", "--pool", poolPath, "--evidence", evidencePath,
+		"--migration-id", "0198f2c0-7c7a-7f00-8a11-000000000001",
+		"--catalog-schema-version", "ducklake-schema-v2", "--recovery-decision", "forward_recovery",
+		"--drain-verified", "--backup-verified", "--apply",
+	})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if operations.called != "pool-upgrade" {
+		t.Fatalf("called = %q", operations.called)
+	}
+	request := operations.upgradeRequest
+	if request.Pool != identity || request.Evidence.Digest != evidence.Digest ||
+		request.MigrationID != "0198f2c0-7c7a-7f00-8a11-000000000001" ||
+		request.CatalogSchemaVersion != "ducklake-schema-v2" ||
+		request.RecoveryDecision != CatalogUpgradeRecoveryForwardRecovery ||
+		!request.DrainVerified || !request.BackupVerified || !request.Apply {
+		t.Fatalf("upgrade request = %#v", request)
+	}
+}
+
+func TestCommandDispatchesCatalogUpgradeDryRun(t *testing.T) {
+	poolPath, evidencePath, _, _ := writeCatalogUpgradeArtifacts(t)
+	operations := &fakeOperations{}
+	command := Command(context.Background(), operations)
+	command.SetArgs([]string{
+		"delivery", "pool", "upgrade", "--pool", poolPath, "--evidence", evidencePath,
+		"--migration-id", "0198f2c0-7c7a-7f00-8a11-000000000002",
+		"--catalog-schema-version", "ducklake-schema-v2", "--recovery-decision", "rollback",
+		"--drain-verified", "--backup-verified",
+	})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if operations.called != "pool-upgrade" || operations.upgradeRequest.Apply {
+		t.Fatalf("dry-run dispatch = called %q request %#v", operations.called, operations.upgradeRequest)
+	}
+}
+
+func TestCommandValidatesCatalogUpgradeContract(t *testing.T) {
+	poolPath, evidencePath, _, _ := writeCatalogUpgradeArtifacts(t)
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "missing target artifacts", args: []string{"--migration-id", "0198f2c0-7c7a-7f00-8a11-000000000000", "--catalog-schema-version", "v2", "--recovery-decision", "rollback", "--drain-verified", "--backup-verified"}, want: "--pool and --evidence are required"},
+		{name: "missing migration id", args: []string{"--pool", poolPath, "--evidence", evidencePath, "--catalog-schema-version", "v2", "--recovery-decision", "rollback", "--drain-verified", "--backup-verified"}, want: "--migration-id is required"},
+		{name: "missing schema version", args: []string{"--pool", poolPath, "--evidence", evidencePath, "--migration-id", "0198f2c0-7c7a-7f00-8a11-000000000003", "--recovery-decision", "rollback", "--drain-verified", "--backup-verified"}, want: "--catalog-schema-version is required"},
+		{name: "invalid recovery decision", args: []string{"--pool", poolPath, "--evidence", evidencePath, "--migration-id", "0198f2c0-7c7a-7f00-8a11-000000000004", "--catalog-schema-version", "v2", "--recovery-decision", "retry", "--drain-verified", "--backup-verified"}, want: "--recovery-decision must be"},
+		{name: "missing verification", args: []string{"--pool", poolPath, "--evidence", evidencePath, "--migration-id", "0198f2c0-7c7a-7f00-8a11-000000000005", "--catalog-schema-version", "v2", "--recovery-decision", "rollback"}, want: "--drain-verified and --backup-verified are required"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command := Command(context.Background(), &fakeOperations{})
+			command.SetArgs(append([]string{"delivery", "pool", "upgrade"}, test.args...))
+			err := command.Execute()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func writeCatalogUpgradeArtifacts(t *testing.T) (poolPath, evidencePath string, identity physicalpool.PoolIdentity, evidence physicalpool.Evidence) {
+	t.Helper()
+	compatibility := physicalpool.Compatibility{
+		DuckDBRuntime: "duckdb:1.0", DuckLakeExtension: "ducklake:managed", CatalogFormat: "ducklake-catalog:v1",
+		StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1",
+	}
+	identity = physicalpool.PoolIdentity{
+		StorageLocation: "/var/lib/leapview/data", StorageNamespace: "delivery", Region: "local", Tenant: "prod",
+		EncryptionDomain: "local", IsolationBoundary: "prod", RetentionAuthority: "prod",
+		RetentionPolicy: physicalpool.RetentionPolicy{ReaderGracePeriodSeconds: 1800, OrphanGracePeriodSeconds: 3600, BuildGracePeriodSeconds: 3600},
+		Compatibility:   compatibility,
+	}
+	var err error
+	evidence, err = physicalpool.NewEvidence(physicalpool.EvidenceInput{
+		Compatibility: compatibility, ConformanceVersion: "test/v1",
+		Checks: []physicalpool.EvidenceCheck{{ID: "check", Passed: true, ObservationDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolBytes, err := json.Marshal(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceBytes, err := physicalpool.MarshalEvidenceArtifact(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolPath = filepath.Join(t.TempDir(), "pool.json")
+	evidencePath = filepath.Join(filepath.Dir(poolPath), "evidence.json")
+	if err := os.WriteFile(poolPath, poolBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(evidencePath, evidenceBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return poolPath, evidencePath, identity, evidence
 }

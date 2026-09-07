@@ -69,8 +69,7 @@ func compiledPlannerTestModel() *semanticmodel.Model {
 }
 
 func TestProjectManifestReturnsDetachedCompiledDefinition(t *testing.T) {
-	runtime := dashboardRuntimeWithGraph{projectManifest: projectmanifest.Project{
-		ID: "project:demo",
+	runtime := dashboardRuntimeWithGraph{projectManifest: projectmanifest.ResourceManifest{
 		Models: map[string]semanticmodel.Table{
 			"model:orders": {
 				Entities:           map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
@@ -130,6 +129,46 @@ func TestCompiledSemanticModelAdaptsActivationPlannerAndFailsClosed(t *testing.T
 	}
 }
 
+func TestRuntimeProjectManifestMatchesActivationPlannerSnapshot(t *testing.T) {
+	model := compiledPlannerTestModel()
+	model.AIContext = &semanticmodel.AIContext{Instructions: "authoring only"}
+	discovered := model.ExecutionSnapshot()
+	table := discovered.Tables["orders"]
+	table.Schema.Columns = []semanticmodel.ColumnSchema{{Name: "order_id", PhysicalType: "BIGINT"}}
+	discovered.Tables["orders"] = table
+	projectID := projectgraph.ResourceID("project:demo")
+	modelID := projectgraph.ResourceID("semantic-model:sales")
+	planner, err := semanticquery.NewCompiledPlanner(discovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, err := dashboardruntime.NewTargetBoundProjectDefinition(
+		projectID,
+		"Demo",
+		"",
+		map[projectgraph.ResourceID]*semanticmodel.Model{modelID: model},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := dashboardruntime.NewFromGeneration(context.Background(), "", compiledPlannerDataRuntimeFactory{runtime: compiledPlannerDataRuntime{planner: planner}}, projectgraph.ServingIdentity{ProjectID: projectID, Environment: "dev", GenerationID: "state-1"}, definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	runtime := dashboardRuntimeWithGraph{Service: service, projectManifest: projectmanifest.ResourceManifest{
+		SemanticModels: map[string]*semanticmodel.Model{modelID.String(): model},
+	}}
+	manifest := runtime.ProjectManifest()
+	if !planner.CompiledModel().MatchesModel(manifest.SemanticModels[modelID.String()]) {
+		t.Fatalf("runtime manifest fingerprint = %q, want activation planner %q", semanticquery.SemanticModelFingerprint(manifest.SemanticModels[modelID.String()]), planner.CompiledModel().SourceFingerprint())
+	}
+	if manifest.SemanticModels[modelID.String()].AIContext != nil {
+		t.Fatal("runtime manifest retained authoring-only semantic model context")
+	}
+}
+
 func TestAuthoredDashboardSourcesRetainsDescriptiveDomain(t *testing.T) {
 	projectID, err := projectgraph.NewResourceID("project:demo")
 	if err != nil {
@@ -139,7 +178,7 @@ func TestAuthoredDashboardSourcesRetainsDescriptiveDomain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sources, err := authoredDashboardSources(projectmanifest.Project{
+	sources, err := authoredDashboardSources(projectmanifest.ResourceManifest{
 		DashboardSources: map[string]projectmanifest.DashboardSource{
 			string(dashboardID): {
 				Document: dashboarddocument.DashboardDocument{APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1, Kind: dashboarddocument.DashboardResourceKindDashboard, Metadata: dashboarddocument.DashboardMetadata{ID: dashboardID.String(), Name: "sales_dashboard"}, Spec: dashboarddocument.DashboardSpec{SemanticModel: "sales"}},

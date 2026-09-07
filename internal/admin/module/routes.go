@@ -12,6 +12,11 @@ import (
 type RouteGuard struct {
 	Authenticate         func(http.Handler) http.Handler
 	RequirePlatformAdmin func(http.Handler) http.Handler
+	// BrowserMutationMiddleware supplies the durable idempotency boundary for
+	// session-authenticated command routes. It receives the module's current
+	// resource authorization callback so completed responses are only replayed
+	// while the principal still has access.
+	BrowserMutationMiddleware func(func(*http.Request) bool, http.Handler) http.Handler
 }
 
 func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
@@ -66,7 +71,11 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Post("/admin/audit/command", platformAdmin(guard, h.AuditLogCommand))
 	r.Get("/admin/system", platformAdmin(guard, h.System))
 	r.Get("/admin/publications", platformAdmin(guard, h.Publications))
-	r.Post("/admin/publications/command", platformAdmin(guard, h.PublicationCommand))
+	publicationCommand := http.Handler(http.HandlerFunc(h.PublicationCommand))
+	if guard.BrowserMutationMiddleware != nil {
+		publicationCommand = guard.BrowserMutationMiddleware(m.authorizePublicationReplay, publicationCommand)
+	}
+	r.Post("/admin/publications/command", platformAdmin(guard, publicationCommand.ServeHTTP))
 }
 
 func authenticated(guard RouteGuard, next http.HandlerFunc) http.HandlerFunc {

@@ -17,6 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectors"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
@@ -246,6 +247,9 @@ func validateAdmittedExtension(requested string, admitted AdmittedExtension) err
 		return fmt.Errorf("extension %s admission digest is not canonical sha256: %w", requested, err)
 	}
 	base := filepath.Base(admitted.Path)
+	if strings.ContainsAny(admitted.Path, "\x00\r\n") {
+		return fmt.Errorf("extension %s admission path contains a control character", requested)
+	}
 	stem := strings.TrimSuffix(base, ".duckdb_extension")
 	expectedStem := extensiondomain.ArtifactFilenameStem(requested)
 	if !filepath.IsAbs(admitted.Path) || filepath.Clean(admitted.Path) != admitted.Path || !strings.HasSuffix(base, ".duckdb_extension") || stem != expectedStem && !strings.HasPrefix(stem, expectedStem+"-") {
@@ -378,6 +382,10 @@ func (r *SourceRuntime) resolveCredentials(ctx context.Context, model *semanticm
 
 func (p *PreparedSources) PlanModelTable(ctx context.Context, _ *semanticmodel.Model, tableName string, table semanticmodel.Table) (analyticsmaterialize.ModelTablePlan, error) {
 	return planModelTable(ctx, p.session, p.model, tableName, table, p.relations)
+}
+
+func (p *PreparedSources) PlanModelTableInNamespace(ctx context.Context, _ *semanticmodel.Model, tableName string, table semanticmodel.Table, relationNamespace string) (analyticsmaterialize.ModelTablePlan, error) {
+	return planModelTableInNamespace(ctx, p.session, p.model, tableName, table, p.relations, relationNamespace)
 }
 
 // SourceObservations captures all source evidence while the resolved source
@@ -585,16 +593,21 @@ func safeSourceError(source string, _ error) error {
 }
 
 type ProjectRuntimeConfig struct {
-	Models              map[string]*semanticmodel.Model
-	ModelTables         map[string]semanticmodel.Table
-	Database            analyticsruntime.ProjectDatabase
-	CredentialResolver  CredentialResolver
-	ConnectionResolver  analyticsruntime.ConnectionResolver
-	ExtensionAdmission  ExtensionAdmission
-	SnapshotID          int64
-	ServingStateID      string
-	ProjectID           projectgraph.ResourceID
-	Environment         string
+	Models             map[string]*semanticmodel.Model
+	ModelTables        map[string]semanticmodel.Table
+	Database           analyticsruntime.ProjectDatabase
+	CredentialResolver CredentialResolver
+	ConnectionResolver analyticsruntime.ConnectionResolver
+	ExtensionAdmission ExtensionAdmission
+	SnapshotID         int64
+	ServingStateID     string
+	ProjectID          projectgraph.ResourceID
+	CandidateID        string
+	Environment        string
+	// RelationNamespace scopes materialization DDL for an isolated candidate.
+	// Empty retains the legacy model schema for non-native callers; candidate
+	// runtimes must provide a validated namespace.
+	RelationNamespace   string
 	TargetType          string
 	TargetID            string
 	SemanticDigest      string
@@ -660,6 +673,23 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 	if err := config.ProjectID.Validate(); err != nil {
 		return nil, fmt.Errorf("project id: %w", err)
 	}
+	if config.CandidateID != "" {
+		if config.RelationNamespace == "" {
+			return nil, fmt.Errorf("candidate relation namespace is required")
+		}
+		if config.RelationNamespace == "model" || config.RelationNamespace == "source" {
+			return nil, fmt.Errorf("candidate relation namespace cannot use reserved schema %q", config.RelationNamespace)
+		}
+		if config.RelationNamespace != strings.TrimSpace(config.RelationNamespace) {
+			return nil, fmt.Errorf("candidate relation namespace must be canonical")
+		}
+	}
+	if config.RelationNamespace == "" {
+		config.RelationNamespace = "model"
+	}
+	if err := validateRelationNamespace(config.RelationNamespace); err != nil {
+		return nil, fmt.Errorf("relation namespace: %w", err)
+	}
 	dependencyEvidence := make(map[string]resultidentity.Evidence, len(config.DependencyEvidence))
 	for modelID, evidence := range config.DependencyEvidence {
 		dependencyEvidence[modelID] = evidence
@@ -716,7 +746,7 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		viewConfig:              config,
 	}
 	if config.SnapshotID > 0 {
-		if err := discoverSnapshotModelSchemas(ctx, db, config.Models, config.SnapshotID); err != nil {
+		if err := discoverSnapshotModelSchemas(ctx, db, config.Models, config.SnapshotID, config.RelationNamespace); err != nil {
 			return nil, errors.Join(err, runtime.Close())
 		}
 		runtime.lastSnapshotID = config.SnapshotID
@@ -751,7 +781,7 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 				return "", fmt.Errorf("physical table %q: %w", physical, err)
 			}
 			if config.SnapshotID > 0 {
-				return analyticsducklake.QualifiedSnapshotRelation(config.SnapshotID, physical)
+				return analyticsducklake.QualifiedSnapshotRelationInNamespace(config.SnapshotID, config.RelationNamespace, physical)
 			}
 			return "model." + physical, nil
 		}
@@ -787,7 +817,7 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 // immutable DuckLake snapshot. Snapshot activation deliberately does not
 // inspect authored sources: source connections and credentials may no longer
 // be available when a committed serving generation is reopened.
-func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresource.SessionProvider, models map[string]*semanticmodel.Model, snapshotID int64) error {
+func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresource.SessionProvider, models map[string]*semanticmodel.Model, snapshotID int64, relationNamespace string) error {
 	if provider == nil {
 		return fmt.Errorf("snapshot schema discovery requires a DuckDB database")
 	}
@@ -823,7 +853,7 @@ func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresourc
 			if err != nil {
 				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: %w", modelID, tableName, err)
 			}
-			relation, err := analyticsducklake.QualifiedSnapshotRelation(snapshotID, physical)
+			relation, err := analyticsducklake.QualifiedSnapshotRelationInNamespace(snapshotID, relationNamespace, physical)
 			if err != nil {
 				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: %w", modelID, tableName, err)
 			}
@@ -1055,6 +1085,43 @@ func (r *ProjectRuntime) RefreshProjectTables(ctx context.Context, tableNames []
 	return r.rebuildViews(ctx)
 }
 
+// RefreshProjectTablesWithObservationWriter is the native-build variant of
+// RefreshProjectTables. The writer is called inside CommitTransaction after
+// table materialization and before DuckLake acknowledges the external commit.
+// Its error is returned from the transaction callback and therefore aborts the
+// DuckLake commit. Observations are published to the runtime only after that
+// commit succeeds.
+func (r *ProjectRuntime) RefreshProjectTablesWithObservationWriter(ctx context.Context, tableNames []string, writer analyticsmaterialization.ObservationWriter) error {
+	if r == nil {
+		return fmt.Errorf("project runtime is not initialized")
+	}
+	if len(tableNames) == 0 {
+		return fmt.Errorf("Model refresh plan is empty")
+	}
+	if writer == nil {
+		return fmt.Errorf("source observation writer is required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ctx, release, err := r.acquireOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	lastRefresh, snapshotID, err := r.refreshModelWithObservationWriter(ctx, r.materializationModel, tableNames, writer)
+	if err != nil {
+		return err
+	}
+	r.clearQueryCaches()
+	if err := r.discoverServingSchemas(ctx, r.materializationModel); err != nil {
+		return err
+	}
+	r.lastRefresh = lastRefresh
+	r.lastSnapshotID = snapshotID
+	return r.rebuildViews(ctx)
+}
+
 func (r *ProjectRuntime) clearQueryCaches() {
 	for _, view := range r.views {
 		view.ClearQueryCache()
@@ -1064,7 +1131,7 @@ func (r *ProjectRuntime) clearQueryCaches() {
 func (r *ProjectRuntime) discoverServingSchemas(ctx context.Context, refreshed *semanticmodel.Model) error {
 	applyDiscoveredSourceSchemas(refreshed, r.models)
 	for modelID, model := range r.models {
-		if err := discoverSchemas(ctx, r.sessions, model); err != nil {
+		if err := discoverSchemasInNamespace(ctx, r.sessions, model, r.viewConfig.RelationNamespace); err != nil {
 			return fmt.Errorf("discovering semantic model %q schemas: %w", modelID, err)
 		}
 	}
@@ -1107,6 +1174,24 @@ func cloneTableSchema(schema semanticmodel.TableSchema) semanticmodel.TableSchem
 		clone.Columns[index].Nullable = &nullable
 	}
 	return clone
+}
+
+func cloneSourceObservations(observations []analyticsmaterialize.SourceObservation) []analyticsmaterialize.SourceObservation {
+	if observations == nil {
+		return nil
+	}
+	result := make([]analyticsmaterialize.SourceObservation, len(observations))
+	for i, observation := range observations {
+		result[i] = observation
+		result[i].Schema = append([]semanticmodel.ColumnSchema(nil), observation.Schema...)
+		for column := range result[i].Schema {
+			if result[i].Schema[column].Nullable != nil {
+				nullable := *result[i].Schema[column].Nullable
+				result[i].Schema[column].Nullable = &nullable
+			}
+		}
+	}
+	return result
 }
 
 func ProjectModelTableDependencyOrder(models map[string]*semanticmodel.Model, selectedTable string) ([]string, error) {
@@ -1183,20 +1268,28 @@ func physicalTableNames(model *semanticmodel.Model, tables []string) ([]string, 
 }
 
 func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.Model, tableNames []string) (time.Time, int64, error) {
+	return r.refreshModelWithObservationWriter(ctx, model, tableNames, nil)
+}
+
+func (r *ProjectRuntime) refreshModelWithObservationWriter(ctx context.Context, model *semanticmodel.Model, tableNames []string, observationWriter analyticsmaterialization.ObservationWriter) (time.Time, int64, error) {
 	prepared, err := r.sources.Prepare(ctx, model)
 	if err != nil {
 		return time.Time{}, 0, err
 	}
+	if observationWriter != nil && r.committer == nil {
+		_ = prepared.Close()
+		return time.Time{}, 0, fmt.Errorf("source observation writer requires a DuckLake commit transaction")
+	}
 	if r.committer == nil {
 		if len(tableNames) > 0 {
-			lastRefresh, err := analyticsmaterialize.RefreshModelTables(ctx, r.db, prepared, model, tableNames)
+			lastRefresh, err := refreshModelTablesInNamespace(ctx, r.db, prepared, model, tableNames, r.viewConfig.RelationNamespace)
 			observations, observationErr := captureSourceObservations(ctx, prepared)
 			if err == nil && observationErr == nil {
 				r.sourceObservations = observations
 			}
 			return lastRefresh, 0, errors.Join(err, observationErr, prepared.Close())
 		}
-		lastRefresh, err := analyticsmaterialize.Refresh(ctx, r.db, prepared, model)
+		lastRefresh, err := refreshModelInNamespace(ctx, r.db, prepared, model, r.viewConfig.RelationNamespace)
 		observations, observationErr := captureSourceObservations(ctx, prepared)
 		if err == nil && observationErr == nil {
 			r.sourceObservations = observations
@@ -1208,28 +1301,67 @@ func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.
 		metadata[key] = value
 	}
 	servingStateID := firstNonEmpty(r.commitMetadata["servingStateId"], "project-refresh")
+	var callbackObservations []analyticsmaterialize.SourceObservation
 	snapshotID, err := r.committer.CommitTransaction(ctx, servingStateID, metadata, func(tx transaction.Transaction) error {
 		executor := txExecutor{tx: tx}
 		sources := txPreparedSources{PreparedSources: prepared.(*PreparedSources), tx: tx}
+		var materializeErr error
 		if len(tableNames) > 0 {
-			return analyticsmaterialize.ModelTablesNamed(ctx, executor, sources, model, tableNames)
+			materializeErr = analyticsmaterialize.ModelTablesNamedInNamespace(ctx, executor, sources, model, tableNames, r.viewConfig.RelationNamespace)
+		} else {
+			materializeErr = analyticsmaterialize.ModelTablesInNamespace(ctx, executor, sources, model, r.viewConfig.RelationNamespace)
 		}
-		return analyticsmaterialize.ModelTables(ctx, executor, sources, model)
+		if materializeErr != nil {
+			return materializeErr
+		}
+		if observationWriter == nil {
+			return nil
+		}
+		observations, observationErr := captureSourceObservations(ctx, prepared)
+		if observationErr != nil {
+			return observationErr
+		}
+		callbackObservations = cloneSourceObservations(observations)
+		return observationWriter(ctx, cloneSourceObservations(observations))
 	})
 	if err != nil {
 		_ = prepared.Close()
 		return time.Time{}, 0, err
 	}
-	observations, observationErr := captureSourceObservations(ctx, prepared)
-	if observationErr != nil {
-		_ = prepared.Close()
-		return time.Time{}, 0, observationErr
+	observations := callbackObservations
+	if observationWriter == nil {
+		var observationErr error
+		observations, observationErr = captureSourceObservations(ctx, prepared)
+		if observationErr != nil {
+			_ = prepared.Close()
+			return time.Time{}, 0, observationErr
+		}
 	}
 	r.sourceObservations = observations
 	if err := prepared.Close(); err != nil {
 		return time.Time{}, 0, fmt.Errorf("cleaning refresh staging: %w", err)
 	}
 	return time.Now(), snapshotID, nil
+}
+
+func refreshModelTablesInNamespace(ctx context.Context, executor analyticsmaterialize.Executor, sources analyticsmaterialize.ModelTablePlanner, model *semanticmodel.Model, tableNames []string, relationNamespace string) (time.Time, error) {
+	if relationNamespace == "model" {
+		return analyticsmaterialize.RefreshModelTables(ctx, executor, sources, model, tableNames)
+	}
+	if err := analyticsmaterialize.ModelTablesNamedInNamespace(ctx, executor, sources, model, tableNames, relationNamespace); err != nil {
+		return time.Time{}, err
+	}
+	return time.Now(), nil
+}
+
+func refreshModelInNamespace(ctx context.Context, executor analyticsmaterialize.Executor, sources analyticsmaterialize.ModelTablePlanner, model *semanticmodel.Model, relationNamespace string) (time.Time, error) {
+	if relationNamespace == "model" {
+		return analyticsmaterialize.Refresh(ctx, executor, sources, model)
+	}
+	if err := analyticsmaterialize.ModelTablesInNamespace(ctx, executor, sources, model, relationNamespace); err != nil {
+		return time.Time{}, err
+	}
+	return time.Now(), nil
 }
 
 func captureSourceObservations(ctx context.Context, prepared analyticsmaterialize.PreparedSources) ([]analyticsmaterialize.SourceObservation, error) {
@@ -1328,19 +1460,7 @@ func (r *ProjectRuntime) SourceObservations() []analyticsmaterialize.SourceObser
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	result := make([]analyticsmaterialize.SourceObservation, len(r.sourceObservations))
-	for i, item := range r.sourceObservations {
-		result[i] = item
-		result[i].Schema = append([]semanticmodel.ColumnSchema(nil), item.Schema...)
-	}
-	return result
-}
-
-func (r *ProjectRuntime) DBPath() string {
-	if r == nil || r.db == nil {
-		return ""
-	}
-	return r.db.Path()
+	return cloneSourceObservations(r.sourceObservations)
 }
 
 func (r *ProjectRuntime) DuckLakeSnapshotID() int64 {
@@ -1384,6 +1504,10 @@ type txPreparedSources struct {
 
 func (r txPreparedSources) PlanModelTable(ctx context.Context, _ *semanticmodel.Model, tableName string, table semanticmodel.Table) (analyticsmaterialize.ModelTablePlan, error) {
 	return planModelTable(ctx, r.tx, r.model, tableName, table, r.relations)
+}
+
+func (r txPreparedSources) PlanModelTableInNamespace(ctx context.Context, _ *semanticmodel.Model, tableName string, table semanticmodel.Table, relationNamespace string) (analyticsmaterialize.ModelTablePlan, error) {
+	return planModelTableInNamespace(ctx, r.tx, r.model, tableName, table, r.relations, relationNamespace)
 }
 
 func physicalProjectModel(models map[string]*semanticmodel.Model, authoredTables map[string]semanticmodel.Table) (*semanticmodel.Model, error) {

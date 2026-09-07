@@ -2,14 +2,23 @@ package module
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 
+	project "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 )
 
-// EnsureIdentity installs the minimum mutable project identity required by
-// legacy control-plane tables without overwriting authored project metadata.
-func EnsureIdentity(ctx context.Context, database *sql.DB, id projectgraph.ResourceID) error {
-	return projectsqlite.NewRepository(database).EnsureIdentity(ctx, id)
+// ErrIdentityRepositoryUnavailable indicates that identity persistence was
+// not wired into the composition root.
+var ErrIdentityRepositoryUnavailable = errors.New("project identity repository is unavailable")
+
+// EnsureIdentity installs the minimum durable project identity required by
+// control-plane projections without coupling module code to a database
+// driver. The repository is injected by the composition root; PostgreSQL is
+// the production authority.
+func EnsureIdentity(ctx context.Context, repository project.IdentityRepository, id projectgraph.ResourceID) error {
+	if repository == nil {
+		return ErrIdentityRepositoryUnavailable
+	}
+	return repository.EnsureIdentity(ctx, id)
 }

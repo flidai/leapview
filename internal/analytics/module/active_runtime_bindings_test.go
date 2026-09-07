@@ -83,6 +83,12 @@ func TestActiveRuntimeResolverFailsClosedWhenReleaseBindingEvidenceIsMissing(t *
 	require.ErrorIs(t, err, connectionbinding.ErrBindingNotFound)
 }
 
+func TestActiveRuntimeResolverFailsClosedWhenTargetBindingRuntimeIsUnconfigured(t *testing.T) {
+	resolver := &activeRuntimeConnectionResolver{module: &Module{}}
+	_, err := resolver.Resolve(t.Context(), "quack", semanticmodel.Connection{Kind: "quack"})
+	require.ErrorIs(t, err, connectionbinding.ErrProviderUnavailable)
+}
+
 func TestActiveRuntimeResolverLeavesCredentialFreeAuthoredConnectionUnbound(t *testing.T) {
 	source := &activeFlakyEvidenceSource{}
 	module := &Module{activeRuntimeBindingEvidence: source}

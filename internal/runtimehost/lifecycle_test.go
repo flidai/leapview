@@ -45,7 +45,7 @@ func (f *lifecycleFactory) Prepare(_ context.Context, input RuntimeInput) (Prepa
 	if err != nil {
 		return nil, err
 	}
-	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: input.State.ProjectID, Kind: projectgraph.KindProject, Name: "demo"}}, nil)
+	project, err := projectgraph.NewProjectGraph(nil, nil)
 	if err != nil {
 		return nil, err
 	}

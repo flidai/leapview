@@ -12,12 +12,12 @@ import (
 )
 
 type projectDefinitionRuntimeStub struct {
-	definition projectmanifest.Project
+	definition projectmanifest.ResourceManifest
 	compiled   map[string]*semanticquery.CompiledModel
 }
 
 func (r projectDefinitionRuntimeStub) Close() error { return nil }
-func (r projectDefinitionRuntimeStub) ProjectManifest() projectmanifest.Project {
+func (r projectDefinitionRuntimeStub) ProjectManifest() projectmanifest.ResourceManifest {
 	return r.definition
 }
 func (r projectDefinitionRuntimeStub) CompiledSemanticModel(modelID string) (*semanticquery.CompiledModel, bool) {
@@ -28,15 +28,15 @@ func (r projectDefinitionRuntimeStub) CompiledSemanticModel(modelID string) (*se
 type projectDefinitionProviderStub struct {
 	lease        *projectDefinitionLeaseStub
 	compiled     map[string]*semanticquery.CompiledModel
-	definition   projectmanifest.Project
+	definition   projectmanifest.ResourceManifest
 	acquisitions int
 }
 
 func (p *projectDefinitionProviderStub) Acquire(context.Context) (projectruntime.Lease, error) {
 	p.acquisitions++
 	definition := p.definition
-	if definition.ID == "" {
-		definition = projectmanifest.Project{ID: "project:demo", Title: "Demo"}
+	if definition.Title == "" && len(definition.SemanticModels) == 0 {
+		definition = projectmanifest.ResourceManifest{Title: "Demo"}
 	}
 	p.lease = &projectDefinitionLeaseStub{runtime: projectDefinitionRuntimeStub{
 		definition: definition, compiled: p.compiled,
@@ -62,7 +62,7 @@ func TestActiveProjectDefinitionReaderPinsAndReleasesRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if definition.ID != "project:demo" || definition.Title != "Demo" {
+	if definition.Title != "Demo" {
 		t.Fatalf("definition = %#v", definition)
 	}
 	if len(compiled) != 0 {
@@ -108,14 +108,11 @@ func TestActiveProjectDefinitionReaderSnapshotReadsCompiledModelPort(t *testing.
 	if !planner.CompiledModel().MatchesModel(model) {
 		t.Fatalf("planner fingerprint mismatch: got %q want %q", planner.CompiledModel().SourceFingerprint(), semanticquery.SemanticModelFingerprint(model))
 	}
-	provider := &projectDefinitionProviderStub{compiled: map[string]*semanticquery.CompiledModel{"sales": planner.CompiledModel()}, definition: projectmanifest.Project{ID: "project:demo", SemanticModels: map[string]*semanticmodel.Model{"sales": model}}}
+	provider := &projectDefinitionProviderStub{compiled: map[string]*semanticquery.CompiledModel{"sales": planner.CompiledModel()}, definition: projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{"sales": model}}}
 	reader := NewActiveProjectDefinitionReader(provider)
-	definition, compiled, err := reader.ProjectDefinitionSnapshot(t.Context())
+	_, compiled, err := reader.ProjectDefinitionSnapshot(t.Context())
 	if err != nil {
 		t.Fatal(err)
-	}
-	if definition.ID != "project:demo" {
-		t.Fatalf("definition = %#v", definition)
 	}
 	if compiled["sales"] == nil {
 		t.Fatalf("compiled model = %#v", compiled["sales"])
@@ -147,7 +144,7 @@ func TestActiveProjectDefinitionReaderSnapshotRejectsMismatchedPlanner(t *testin
 	other.Metrics["order_count"] = semanticmodel.Metric{Type: "aggregate", Dataset: "orders", Aggregation: "count_distinct", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}}
 	provider := &projectDefinitionProviderStub{
 		compiled:   map[string]*semanticquery.CompiledModel{"sales": planner.CompiledModel(), "marketing": planner.CompiledModel()},
-		definition: projectmanifest.Project{ID: "project:demo", SemanticModels: map[string]*semanticmodel.Model{"sales": model, "marketing": other}},
+		definition: projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{"sales": model, "marketing": other}},
 	}
 	reader := NewActiveProjectDefinitionReader(provider)
 	if _, _, err := reader.ProjectDefinitionSnapshot(t.Context()); err == nil {

@@ -1,7 +1,6 @@
 package sqlite
 
 import (
-	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,57 +10,9 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
-	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 var publicationIdentity = projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "dev", GenerationID: "candidate"}
-
-func TestPublicationCompletesRootAndChildrenAtomically(t *testing.T) {
-	store, version := seedPublicationTree(t, "running")
-	defer store.Close()
-	unit := NewPublicationUnitOfWork(store.SQLDB(), nil)
-	if err := unit.Publish(t.Context(), publicationIdentity, servingstate.ID(publicationIdentity.GenerationID), version); err != nil {
-		t.Fatalf("Publish() error = %v", err)
-	}
-	assertPublicationTreeStatuses(t, store, refreshrun.RunStatusSucceeded, refreshrun.RunStatusSucceeded, refreshrun.RunStatusSucceeded, refreshrun.RunStatusSucceeded)
-}
-
-func TestPublicationRejectsExpiredFenceWithoutMutation(t *testing.T) {
-	store, version := seedPublicationTree(t, "running")
-	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_jobs SET lease_expires_at = datetime('now', '-1 second') WHERE id = 'root_job'`); err != nil {
-		t.Fatal(err)
-	}
-	before := publicationSnapshot(t, store)
-	unit := NewPublicationUnitOfWork(store.SQLDB(), nil)
-	if err := unit.Publish(t.Context(), publicationIdentity, servingstate.ID(publicationIdentity.GenerationID), version); !errors.Is(err, refreshrun.ErrLeaseLost) {
-		t.Fatalf("Publish() error = %v, want ErrLeaseLost", err)
-	}
-	assertPublicationTreeStatuses(t, store, refreshrun.RunStatusPrepared, refreshrun.RunStatusRunning, refreshrun.RunStatusRunning, refreshrun.RunStatusQueued)
-	if after := publicationSnapshot(t, store); after != before {
-		t.Fatalf("expired publication mutated durable fields: before=%q after=%q", before, after)
-	}
-}
-
-func publicationSnapshot(t *testing.T, store *platform.Store) string {
-	t.Helper()
-	var snapshot string
-	err := store.SQLDB().QueryRowContext(t.Context(), `SELECT group_concat(value, '|') FROM (SELECT printf('%s|%s|%s|%s|%d|%s|%s', j.status, r.status, r.error, COALESCE(r.finished_at,''), j.lease_revision, COALESCE(j.lease_owner,''), COALESCE(j.lease_expires_at,'')) AS value FROM refresh_jobs j JOIN refresh_job_runs r ON r.job_id=j.id WHERE j.id IN ('root_job','child_job') ORDER BY j.id)`).Scan(&snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return snapshot
-}
-
-func TestPublicationIneligibleChildRollsBackWholeTree(t *testing.T) {
-	store, version := seedPublicationTree(t, "succeeded")
-	defer store.Close()
-	unit := NewPublicationUnitOfWork(store.SQLDB(), nil)
-	if err := unit.Publish(t.Context(), publicationIdentity, servingstate.ID(publicationIdentity.GenerationID), version); !errors.Is(err, refreshrun.ErrLeaseLost) {
-		t.Fatalf("Publish() error = %v, want ErrLeaseLost", err)
-	}
-	assertPublicationTreeStatuses(t, store, refreshrun.RunStatusPrepared, refreshrun.RunStatusSucceeded, refreshrun.RunStatusRunning, refreshrun.RunStatusQueued)
-}
 
 func TestCompleteCanonicalRefreshPersistsPublishedGenerationDataVersion(t *testing.T) {
 	store, job, result := seedCanonicalPublication(t)

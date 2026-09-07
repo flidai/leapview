@@ -7,7 +7,6 @@ import (
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
-	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 )
 
 type qualificationProblemTransport struct {
@@ -36,30 +35,6 @@ func TestQualificationGeneratedFailureMappings(t *testing.T) {
 			},
 			mapf: mapQualificationCreatePrincipalFailure,
 			want: "create qualification reviewer failed (PRINCIPAL_ALREADY_EXISTS)",
-		},
-		{
-			name: "approval",
-			call: func() error {
-				_, err := deploymentgen.NewGenClient(qualificationProblemTransport{problem: &apigenclient.ProblemError{
-					Response: apigenclient.Response{StatusCode: 409},
-					Problem:  apigenclient.ProblemDetails{Code: "DEPLOYMENT_APPROVAL_REQUIRED", Detail: "approval required"},
-				}}).ApproveDeployment(context.Background(), deploymentgen.GenApproveDeploymentClientRequest{})
-				return err
-			},
-			mapf: mapQualificationApproveDeploymentFailure,
-			want: "approve qualification deployment failed (DEPLOYMENT_APPROVAL_REQUIRED)",
-		},
-		{
-			name: "activation",
-			call: func() error {
-				_, err := deploymentgen.NewGenClient(qualificationProblemTransport{problem: &apigenclient.ProblemError{
-					Response: apigenclient.Response{StatusCode: 503},
-					Problem:  apigenclient.ProblemDetails{Code: "ASYNC_QUEUE_UNAVAILABLE", Detail: "queue unavailable"},
-				}}).ActivateDeployment(context.Background(), deploymentgen.GenActivateDeploymentClientRequest{})
-				return err
-			},
-			mapf: mapQualificationActivateDeploymentFailure,
-			want: "activate qualification deployment failed (ASYNC_QUEUE_UNAVAILABLE)",
 		},
 	}
 	for _, test := range tests {

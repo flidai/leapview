@@ -10,7 +10,7 @@ The procedure is:
 
 1. Define one connection for the access and operational boundary.
 2. Define logical sources for the physical objects it exposes.
-3. Discover those resources from the project manifest and grant only the required resource privileges.
+3. Discover those resources from the conventional directories beneath the source root and grant only the required resource privileges.
 4. Plan and stage the managed revision.
 5. Validate the graph and verify the source contract before modeling.
 
@@ -84,17 +84,15 @@ The source name is logical identity; `path` is a physical detail that can evolve
 
 ### Discover the resources
 
-Confirm the project manifest includes both directories:
+Place the resource files beneath the source root's conventional directories:
 
-```yaml
-spec:
-  connections:
-    include: [connections/*.yaml]
-  sources:
-    include: [sources/*.yaml]
+```text
+dashboards/
+  connections/*.yaml
+  sources/*.yaml
 ```
 
-Include patterns are relative to the project manifest. A duplicate match or undiscovered resource should be corrected in the manifest rather than worked around with an absolute path.
+LeapView discovers supported resource files from these directories when the source root is supplied. Keep one file per resource and avoid duplicate IDs; an undiscovered resource or duplicate should be corrected in the source tree rather than worked around with an absolute path.
 
 ### Reference the source in the project graph
 
@@ -116,14 +114,14 @@ The compiler derives lineage and keeps SQL reads within the governed project gra
 Validate the resource graph:
 
 ```sh
-leapview validate --project dashboards/leapview.yaml
+leapview validate --source-root dashboards
 ```
 
 For a managed connection, inspect the local revision before uploading it:
 
 ```sh
 leapview data plan \
-  --project dashboards/leapview.yaml \
+  --source-root dashboards \
   --connection commerce \
   --from ./data/commerce
 ```
@@ -138,7 +136,7 @@ For managed data, retain the revision digest returned by staging and confirm tha
 
 ## Troubleshooting
 
-If validation cannot discover the connection or source, resolve include patterns relative to `dashboards/leapview.yaml` and check for duplicate matches. If staging reports missing files, compare the source `location.path` with the case-sensitive filename beneath `--from`. If a model later reports a missing source dependency, correct its governed SQL reference or source resource rather than bypassing project validation.
+If validation cannot discover the connection or source, check that its file is beneath the expected source-root directory and that no duplicate ID exists. If staging reports missing files, compare the source `location.path` with the case-sensitive filename beneath `--from`. If a model later reports a missing source dependency, correct its governed SQL reference or source resource rather than bypassing source-root validation.
 
 ## Next steps
 

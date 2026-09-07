@@ -39,6 +39,36 @@ func TestParseListenAddrGrammar(t *testing.T) {
 	}
 }
 
+func TestDevelopmentAuthBypassRequiresExplicitLoopbackListener(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		addr string
+		ok   bool
+	}{
+		{name: "IPv4 loopback", addr: "127.0.0.1:8080", ok: true},
+		{name: "IPv6 loopback", addr: "[::1]:8080", ok: true},
+		{name: "localhost", addr: "localhost:8080", ok: true},
+		{name: "wildcard", addr: ":8080"},
+		{name: "IPv4 wildcard", addr: "0.0.0.0:8080"},
+		{name: "remote", addr: "dev.example.com:8080"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := withAnalyticalTestDefaults(Config{
+				Addr:          test.addr,
+				DevAuthBypass: true,
+				CSRFKey:       "development-csrf-key-000000000000",
+			})
+			err := cfg.Validate(ProfileServe)
+			if test.ok && err != nil {
+				t.Fatalf("loopback development bypass rejected: %v", err)
+			}
+			if !test.ok && (err == nil || !strings.Contains(err.Error(), "explicit loopback")) {
+				t.Fatalf("non-loopback development bypass error = %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsMalformedWorkloadConfiguration(t *testing.T) {
 	t.Setenv("LEAPVIEW_WORKLOAD_INTERACTIVE_MAX_RUNNING", "many")
 	if _, err := Load(); err == nil {
@@ -91,6 +121,37 @@ func TestInfisicalRuntimeConfigurationIsAllOrNoneAndHTTPS(t *testing.T) {
 	complete["LEAPVIEW_INFISICAL_BASE_URL"] = "http://infisical.example.com"
 	if err := configspec.Validate(complete); err == nil {
 		t.Fatal("plain HTTP Infisical origin was accepted")
+	}
+}
+
+func TestObjectStoreRuntimeConfigurationIsComplete(t *testing.T) {
+	base := map[string]any{
+		"LEAPVIEW_OBJECT_STORE_BACKEND":                    "s3",
+		"LEAPVIEW_OBJECT_STORE_S3_BUCKET":                  "leapview-objects",
+		"LEAPVIEW_OBJECT_STORE_S3_REGION":                  "eu-west-1",
+		"LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE":         "AES256",
+		"LEAPVIEW_OBJECT_STORE_S3_ACCESS_KEY_ID":           "",
+		"LEAPVIEW_OBJECT_STORE_S3_SECRET_ACCESS_KEY":       "",
+		"LEAPVIEW_OBJECT_STORE_S3_SESSION_TOKEN":           "",
+		"LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_KEY_REF":      "",
+		"LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_PROVIDER_KEY": "",
+	}
+	if err := configspec.Validate(base); err != nil {
+		t.Fatalf("valid S3 object-store configuration rejected: %v", err)
+	}
+	base["LEAPVIEW_OBJECT_STORE_S3_ACCESS_KEY_ID"] = "only-access"
+	if err := configspec.Validate(base); err == nil {
+		t.Fatal("partial static object-store credentials were accepted")
+	}
+	base["LEAPVIEW_OBJECT_STORE_S3_ACCESS_KEY_ID"] = ""
+	base["LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE"] = "aws:kms"
+	if err := configspec.Validate(base); err == nil {
+		t.Fatal("SSE-KMS without key identities was accepted")
+	}
+	base["LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_KEY_REF"] = "logical-ref"
+	base["LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_PROVIDER_KEY"] = "provider-key"
+	if err := configspec.Validate(base); err != nil {
+		t.Fatalf("complete SSE-KMS object-store configuration rejected: %v", err)
 	}
 }
 
@@ -192,26 +253,6 @@ func TestWorkloadConfigAppliesLeapViewDefaultsOnlyWhenUnset(t *testing.T) {
 	partial := (Config{WorkloadMaxQueued: 1}).WorkloadConfig()
 	if err := partial.Validate(); err == nil {
 		t.Fatal("partially configured zero running limit was replaced by defaults")
-	}
-}
-
-func TestDuckLakeCatalogPathDefaultsOutsidePlatformDB(t *testing.T) {
-	cfg := Config{HomeDir: "/var/lib/leapview"}
-	if got, want := cfg.DBPath(), "/var/lib/leapview/leapview.db"; got != want {
-		t.Fatalf("DBPath = %q, want %q", got, want)
-	}
-	if got, want := cfg.DuckLakeCatalogPath(), "/var/lib/leapview/ducklake/catalog.duckdb"; got != want {
-		t.Fatalf("DuckLakeCatalogPath = %q, want %q", got, want)
-	}
-	if cfg.DuckLakeCatalogPath() == cfg.DBPath() {
-		t.Fatal("DuckLake catalog must not default to the platform database")
-	}
-}
-
-func TestDuckLakeCatalogPathHonorsExplicitPath(t *testing.T) {
-	cfg := Config{HomeDir: "/var/lib/leapview", DuckLakeCatalog: "/mnt/catalog.duckdb"}
-	if got, want := cfg.DuckLakeCatalogPath(), "/mnt/catalog.duckdb"; got != want {
-		t.Fatalf("DuckLakeCatalogPath = %q, want %q", got, want)
 	}
 }
 
@@ -486,39 +527,6 @@ func TestValidateProductionAuthRejectsMissingOrInsecurePublicURL(t *testing.T) {
 	}
 }
 
-func TestValidateProductionEvaluationModeAllowsOnlyLoopbackHTTP(t *testing.T) {
-	cfg := Config{
-		Production:         true,
-		EvaluationMode:     true,
-		Environment:        "evaluation",
-		LocalAuth:          true,
-		CookieSecureRaw:    "false",
-		PublicURL:          "http://localhost:8080",
-		CSRFKey:            "0123456789abcdef0123456789abcdef",
-		MetricsBearerToken: "0123456789abcdef0123456789abcdef",
-	}
-	cfg = withAnalyticalTestDefaults(cfg)
-	if err := cfg.ValidateProductionAuth(); err != nil {
-		t.Fatalf("loopback evaluation configuration rejected: %v", err)
-	}
-
-	for name, mutate := range map[string]func(*Config){
-		"external HTTP origin": func(c *Config) { c.PublicURL = "http://evaluation.example.com" },
-		"wrong environment":    func(c *Config) { c.Environment = "prod" },
-		"missing local auth":   func(c *Config) { c.LocalAuth = false },
-		"secure cookie":        func(c *Config) { c.CookieSecureRaw = "true" },
-		"trusted proxy":        func(c *Config) { c.TrustProxyHeaders = true },
-	} {
-		t.Run(name, func(t *testing.T) {
-			invalid := cfg
-			mutate(&invalid)
-			if err := invalid.ValidateProductionAuth(); err == nil {
-				t.Fatalf("invalid evaluation configuration accepted: %#v", invalid)
-			}
-		})
-	}
-}
-
 func TestValidateProductionAuthRejectsInsecureExternalMCPOAuthIssuer(t *testing.T) {
 	cfg := Config{
 		Production: true, APITokenOnlyAuth: true, PublicURL: "https://leapview.example.com",
@@ -580,6 +588,8 @@ func withAnalyticalTestDefaults(cfg Config) Config {
 	cfg.DuckDBNodeMemoryMaxBytes = 256 << 20
 	cfg.DuckDBNodeTempMaxBytes = 1 << 30
 	cfg.DuckDBNodeMaxThreads = 2
+	cfg.DuckLakeRetentionInterval = time.Hour
+	cfg.DuckLakeRetentionFileGracePeriod = 24 * time.Hour
 	cfg.QueryResultMaxRows = 10_000
 	cfg.QueryResultMaxBytes = 32 << 20
 	cfg.QueryCacheRuntimeMaxEntries = 16

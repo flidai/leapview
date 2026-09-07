@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,16 +12,18 @@ import (
 	"github.com/flidai/leapview/internal/access/avatar"
 	"github.com/flidai/leapview/internal/access/desktopauth"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Config struct {
-	// Persistence is the preferred capability-owned authority bundle.
-	Persistence                  *Persistence
-	Database                     *sql.DB
+	// Persistence is the capability-owned authority bundle.
+	Persistence *Persistence
+	// Profile is an explicitly injected, non-production profile/test surface.
+	// It keeps those surfaces governed without allowing the composition root to
+	// infer a database backend. Internal OAuth state remains PostgreSQL-owned.
+	Profile                      *ProfileSurface
 	Production                   bool
 	Auth                         AuthConfig
 	ExistingAuth                 *Auth
@@ -31,50 +32,51 @@ type Config struct {
 	MCPIssuerURL                 string
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
 	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
+	AuthoringProjectID           func(context.Context) (projectgraph.ResourceID, error)
 	Presentation                 webpage.Presentation
 	Assets                       staticasset.Resolver
 	AvatarBlobs                  avatar.BlobStore
 }
 
-// NewAuditStore is retained for explicit legacy SQLite callers. PostgreSQL
-// callers inject a transaction-bound audit recorder from their authority.
-func NewAuditStore(database *sql.DB) access.AuditStore {
-	if database == nil {
-		return nil
-	}
-	return accesssqlite.NewRepository(database)
-}
-
 func Build(ctx context.Context, config Config) (*Module, error) {
-	if config.Persistence != nil && config.Database != nil {
-		return nil, errors.New("access persistence is mutually exclusive with database inputs")
+	if config.Production && config.Profile != nil {
+		return nil, errors.New("production access build rejects profile-only authority injection")
 	}
-	if config.Production && config.Database != nil {
-		return nil, errors.New("production access build rejects SQLite database injection; use PostgreSQL persistence")
+	if config.Persistence != nil && config.Profile != nil {
+		return nil, errors.New("profile-only authority injection requires persistence-free access build")
 	}
 	if config.Production && config.Persistence == nil {
 		return nil, errors.New("production access build requires injected PostgreSQL persistence")
 	}
-	if config.Persistence == nil && config.Database == nil {
+	if config.Persistence == nil {
 		auth := config.ExistingAuth
 		surface := surfaceConfig{
 			Persistence: config.Persistence,
 			Auth:        auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
-			CurrentProjectID: config.CurrentProjectID,
-			Presentation:     config.Presentation, Assets: config.Assets,
+			CurrentProjectID:   config.CurrentProjectID,
+			AuthoringProjectID: config.AuthoringProjectID,
+			Presentation:       config.Presentation, Assets: config.Assets,
+		}
+		if config.Profile != nil {
+			surface.OAuthResource = config.Profile.oauthResource
+			if config.Profile.repository != nil {
+				surface.Repository = func() (access.Repository, error) { return config.Profile.repository, nil }
+			}
 		}
 		if auth != nil {
+			// ExistingAuth is an explicitly injected profile/test authority. Keep
+			// its repository available to the HTTP surface so authenticated
+			// persistence-free assemblies retain the same subject and credential
+			// lookups as the auth middleware.
+			if auth.repo != nil && surface.Repository == nil {
+				// An explicitly supplied profile repository is authoritative;
+				// otherwise preserve the repository paired with ExistingAuth.
+				surface.Repository = func() (access.Repository, error) { return auth.repo, nil }
+			}
 			surface.CurrentPrincipal = auth.Principal
 			surface.CurrentCredential = auth.APICredential
 		}
 		return newSurface(surface)
-	}
-	if config.Persistence == nil {
-		persistence, err := NewSQLitePersistence(ctx, SQLitePersistenceConfig{Database: config.Database})
-		if err != nil {
-			return nil, err
-		}
-		config.Persistence = &persistence
 	}
 	if config.Production && !config.Persistence.isPostgres() {
 		return nil, errors.New("production access build requires PostgreSQL persistence")
@@ -130,6 +132,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		Auth:                         auth,
 		CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 		CurrentProjectID:             config.CurrentProjectID,
+		AuthoringProjectID:           config.AuthoringProjectID,
 		AuthoringAuth:                authoringAuth,
 		Avatar:                       avatarService,
 		Presentation:                 config.Presentation,
@@ -154,11 +157,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		module.oauthResource = oauth
 	} else if issuer := strings.TrimSpace(config.MCPIssuerURL); issuer != "" {
 		module.oauthResource, err = mcpoauth.NewExternal(repository, mcpoauth.ExternalConfig{IssuerURL: issuer, ResourceURL: publicURL + "/mcp"})
-	} else if config.Database != nil {
-		module.oauth, err = mcpoauth.New(config.Database, repository, mcpoauth.Config{
-			IssuerURL: publicURL, ResourceURL: publicURL + "/mcp", Secret: auth.MCPOAuthSecret(),
-		})
-		module.oauthResource = module.oauth
 	} else {
 		return nil, errors.New("MCP OAuth requires injected PostgreSQL-backed service or external resource")
 	}

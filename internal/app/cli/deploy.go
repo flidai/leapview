@@ -14,22 +14,8 @@ import (
 
 const projectDeploymentCandidateKey = "deploy"
 
-// projectDeploymentLifecycle is retained as a source-compatible seam for
-// downstream integrations. The public deploy command no longer invokes it:
-// deploy is a thin composition of the canonical plan, build, and publish
-// capabilities below.
-type projectDeploymentLifecycle interface {
-	Synchronize(context.Context, projectcli.DevOptions, io.Writer, io.Writer) error
-	Publish(context.Context, projectcli.PublishOptions, io.Writer) error
-}
-
 type projectDeployOperations struct {
-	client cliapi.Client
-	// lifecycle is deprecated and intentionally ignored by Deploy. Keep the
-	// field for source compatibility with integrations that construct this
-	// value directly; canonical callers must provide planner, builder, and
-	// publisher.
-	lifecycle   projectDeploymentLifecycle
+	client      cliapi.Client
 	planner     projectcli.DeliveryPlanOperations
 	builder     projectcli.DeliveryBuildOperations
 	publisher   projectcli.PublishOperations
@@ -79,8 +65,9 @@ func (operations projectDeployOperations) Deploy(
 			asserted,
 		)
 	}
+	sourceRoot := strings.TrimSpace(options.SourceRoot)
 	plan, err := operations.planner.Create(ctx, projectcli.DeliveryPlanOptions{
-		ProjectPath:       options.ProjectPath,
+		SourceRoot:        sourceRoot,
 		Credentials:       options.Credentials,
 		Operation:         "code_change",
 		CandidateKey:      projectDeploymentCandidateKey,
@@ -102,7 +89,7 @@ func (operations projectDeployOperations) Deploy(
 		return fmt.Errorf("build %s is %s and has not produced a sealed candidate; run leapview publish after the build is sealed", build.BuildID, build.Status)
 	}
 	checkpoint := projectcli.CandidateCheckpoint{
-		ProjectPath: options.ProjectPath, TargetOrigin: options.Credentials.Target,
+		SourceRoot: sourceRoot, TargetOrigin: options.Credentials.Target,
 		TargetID: plan.TargetID, Environment: plan.Environment, ProjectID: plan.ProjectID,
 		CandidateID: build.CandidateID, CandidateKey: projectDeploymentCandidateKey,
 		ArtifactDigest: plan.SourceDigest, PlanID: plan.PlanID, PlanDigest: plan.PlanDigest,
@@ -114,7 +101,7 @@ func (operations projectDeployOperations) Deploy(
 		}
 	}
 	if err := operations.publisher.Publish(ctx, projectcli.PublishOptions{
-		ProjectPath: options.ProjectPath, ProjectID: plan.ProjectID, Credentials: options.Credentials,
+		ProjectID: plan.ProjectID, Credentials: options.Credentials,
 		Checkpoint: checkpoint, CandidateID: build.CandidateID,
 		Format: "text",
 	}, out); err != nil {

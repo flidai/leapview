@@ -12,10 +12,10 @@ import (
 )
 
 type dashboardAppearanceProjectReaderStub struct {
-	project projectmanifest.Project
+	project projectmanifest.ResourceManifest
 }
 
-func (s dashboardAppearanceProjectReaderStub) ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error) {
+func (s dashboardAppearanceProjectReaderStub) ProjectDefinitionSnapshot(context.Context) (projectmanifest.ResourceManifest, map[string]*semanticquery.CompiledModel, error) {
 	return s.project, nil, nil
 }
 
@@ -31,7 +31,7 @@ func TestDashboardAppearanceResolverUsesAuthoredAppearanceAndPersistedOverrides(
 	dashboardID := projectgraph.ResourceID("dashboard:showcase")
 	authoredIcon := "gallery-vertical-end"
 	authoredColor := dashboarddocument.DashboardAppearanceColorBlue
-	reader := dashboardAppearanceProjectReaderStub{project: projectmanifest.Project{
+	reader := dashboardAppearanceProjectReaderStub{project: projectmanifest.ResourceManifest{
 		DashboardSources: map[string]projectmanifest.DashboardSource{
 			dashboardID.String(): {Document: dashboarddocument.DashboardDocument{Spec: dashboarddocument.DashboardSpec{
 				Appearance: &dashboarddocument.DashboardAppearance{Icon: &authoredIcon, Color: &authoredColor},

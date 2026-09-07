@@ -24,10 +24,13 @@ The current producer-by-producer contract is maintained in the machine-readable
 the repository decision log. The inventory is an implementation map, not a
 promise that every existing best-effort producer has already been upgraded.
 
-## Durable mutation handoff
+## Local fixture mutation handoff
 
-Producers that own a SQLite mutation can record a canonical audit intent in the
-same transaction. The Access-owned outbox assigns a stable event identity and
+The isolated local/evaluation SQLite fixture path can record a canonical audit
+intent in the same transaction. This is not a production authority or a
+PostgreSQL compatibility path. Production capability mutations insert immutable
+audit evidence directly in their caller-owned PostgreSQL transactions. In the
+local fixture, the Access-owned outbox assigns a stable event identity and
 payload digest, enforces per-aggregate ordering, and rejects an idempotency-key
 reuse with different content. A successful commit therefore leaves either both
 the domain transition and its audit intent, or neither.

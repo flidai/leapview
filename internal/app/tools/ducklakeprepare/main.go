@@ -27,7 +27,7 @@ const (
 	developmentSupportProfile = "development-fixture"
 )
 
-var fixtureExtensions = [...]string{"ducklake", "spatial"}
+var fixtureExtensions = [...]string{"ducklake", "spatial", "postgres"}
 
 type installer func(context.Context, string, string, string) error
 
@@ -165,7 +165,7 @@ func ensurePrivateRoot(root string) error {
 }
 
 func locateArtifact(root, version, platform, name string) (string, error) {
-	path := filepath.Join(root, version, platform, name+".duckdb_extension")
+	path := filepath.Join(root, version, platform, extension.ArtifactFilenameStem(name)+".duckdb_extension")
 	info, err := os.Lstat(path)
 	if err != nil {
 		return "", fmt.Errorf("%s artifact is unavailable", name)
@@ -195,7 +195,12 @@ func verifyExtension(ctx context.Context, name, path string) (string, string, er
 	}
 	var extensionVersion string
 	if err := db.QueryRowContext(ctx, "SELECT extension_version FROM duckdb_extensions() WHERE extension_name = ?", name).Scan(&extensionVersion); err != nil {
-		return "", "", fmt.Errorf("read pinned %s fixture version: %w", name, err)
+		// Scanner artifacts use an engine-defined *_scanner name in
+		// duckdb_extensions(), while the manifest keeps the stable logical
+		// connector name (for example, postgres -> postgres_scanner).
+		if stem := extension.ArtifactFilenameStem(name); stem == name || db.QueryRowContext(ctx, "SELECT extension_version FROM duckdb_extensions() WHERE extension_name = ?", stem).Scan(&extensionVersion) != nil {
+			return "", "", fmt.Errorf("read pinned %s fixture version: %w", name, err)
+		}
 	}
 	extensionVersion = strings.TrimSpace(extensionVersion)
 	if extensionVersion == "" || strings.ContainsAny(extensionVersion, `/\\`) {

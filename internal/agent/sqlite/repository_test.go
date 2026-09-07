@@ -16,7 +16,6 @@ import (
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
-	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/flidai/leapview/pkg/jobs"
 )
@@ -858,7 +857,10 @@ func openAgentRepo(t *testing.T, ctx context.Context) (*platform.Store, *Reposit
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, projectsqlite.EnsureInput{ID: "test", Title: "Test"}); err != nil {
+	if _, err := store.SQLDB().ExecContext(ctx,
+		`INSERT INTO projects (id, title, description) VALUES (?, ?, ?)`,
+		"test", "Test", "",
+	); err != nil {
 		t.Fatalf("ensure project: %v", err)
 	}
 	return store, NewRepositoryWithEvents(store.SQLDB(), jobsqlite.NewRepository(store.SQLDB()))

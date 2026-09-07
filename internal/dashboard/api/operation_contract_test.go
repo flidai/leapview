@@ -11,7 +11,7 @@ func TestGeneratedDashboardPublicationOperationClassifications(t *testing.T) {
 	commands := map[string]string{
 		"suspendDashboardPublication": "dashboard_publication.suspended",
 		"resumeDashboardPublication":  "dashboard_publication.resumed",
-		"rotateDashboardPublication":  "dashboard_publication.public_id_rotated",
+		"rotateDashboardPublication":  "dashboard_publication.rotated",
 	}
 	for operationID, auditAction := range commands {
 		contract, ok := contracts[operationID]
@@ -19,7 +19,7 @@ func TestGeneratedDashboardPublicationOperationClassifications(t *testing.T) {
 			t.Fatalf("%s command contract = %#v", operationID, contract.Command)
 		}
 		command := contract.Command
-		if contract.Namespace != "LeapViewAPI.Dashboard" || command.Owner != contract.Namespace || command.AuthzMode != "authenticated" || command.Privilege != "" {
+		if contract.Namespace != "LeapViewAPI.Dashboard" || command.Owner != contract.Namespace || command.AuthzMode != "privilege" || command.Privilege != "RESOURCE_PUBLISH" {
 			t.Errorf("%s ownership/authz = %#v", operationID, command)
 		}
 		if !command.Audit.Required || command.Audit.SuccessAction != auditAction || command.Audit.Guarantee != "transactional" {
@@ -28,7 +28,7 @@ func TestGeneratedDashboardPublicationOperationClassifications(t *testing.T) {
 		if command.Target == nil || command.Target.Parameter != "project" || command.Target.Type != "project" {
 			t.Errorf("%s target = %#v", operationID, command.Target)
 		}
-		if command.Idempotency != "required" || command.Concurrency != "" || len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != "ui" {
+		if command.Idempotency != "required" || command.Concurrency != "if-match" || len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != "ui" {
 			t.Errorf("%s policies/exposures = %#v", operationID, command)
 		}
 		if command.Execution != nil {

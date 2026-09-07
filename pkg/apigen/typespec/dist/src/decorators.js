@@ -1,4 +1,4 @@
-import { isRecordModelType } from "@typespec/compiler";
+import { isArrayModelType, isRecordModelType } from "@typespec/compiler";
 import { reportDiagnostic } from "./lib.js";
 const cliKey = Symbol.for("@yacobolo/apigen.cli");
 const commandKey = Symbol.for("@yacobolo/apigen.command");
@@ -19,10 +19,12 @@ const responseShapeKey = Symbol.for("@yacobolo/apigen.responseShape");
 const packageKey = Symbol.for("@yacobolo/apigen.package");
 const contractKey = Symbol.for("@yacobolo/apigen.contract");
 const metadataKey = Symbol.for("@yacobolo/apigen.metadata");
+const exactNumbersKey = Symbol.for("@yacobolo/apigen.exactNumbers");
 const toolKey = Symbol.for("@yacobolo/apigen.tool");
 const transportErrorsKey = Symbol.for("@yacobolo/apigen.transportErrors");
 const propertyNamesKey = Symbol.for("@yacobolo/apigen.propertyNames");
 const minPropertiesKey = Symbol.for("@yacobolo/apigen.minProperties");
+const uniqueItemsKey = Symbol.for("@yacobolo/apigen.uniqueItems");
 export function $cli(context, target, options) {
     context.program.stateMap(cliKey).set(target, options);
 }
@@ -164,6 +166,9 @@ export function $contract(context, target, options = {}) {
 export function $metadata(context, target, value) {
     context.program.stateMap(metadataKey).set(target, value);
 }
+export function $exactNumbers(context, target) {
+    context.program.stateSet(exactNumbersKey).add(target);
+}
 export function $tool(context, target, options) {
     context.program.stateMap(toolKey).set(target, options);
 }
@@ -229,6 +234,34 @@ export function $minProperties(context, target, value) {
     }
     context.program.stateMap(minPropertiesKey).set(target, numeric);
 }
+export function $uniqueItems(context, target) {
+    if (context.program.stateMap(uniqueItemsKey).has(target)) {
+        reportDiagnostic(context.program, {
+            code: "invalid-unique-items",
+            format: { reason: "the decorator may only be applied once" },
+            target,
+        });
+        return;
+    }
+    if (!isArrayValuedType(target.type)) {
+        reportDiagnostic(context.program, {
+            code: "invalid-unique-items",
+            format: { reason: "target must be an array or a union containing only arrays" },
+            target,
+        });
+        return;
+    }
+    context.program.stateMap(uniqueItemsKey).set(target, true);
+}
+function isArrayValuedType(type) {
+    if (type.kind === "Model") {
+        return isArrayModelType(type);
+    }
+    if (type.kind !== "Union" || type.variants.size === 0) {
+        return false;
+    }
+    return [...type.variants.values()].every((variant) => variant.type.kind === "Model" && isArrayModelType(variant.type));
+}
 export const $decorators = {
     apigen: {
         cli: $cli,
@@ -254,10 +287,12 @@ export const $decorators = {
         package: $package,
         contract: $contract,
         metadata: $metadata,
+        exactNumbers: $exactNumbers,
         tool: $tool,
         transportErrors: $transportErrors,
         propertyNames: $propertyNames,
         minProperties: $minProperties,
+        uniqueItems: $uniqueItems,
     },
 };
 export function getCLI(context, target) {
@@ -343,6 +378,9 @@ export function getContracts(context) {
 export function getMetadata(context, target) {
     return context.program.stateMap(metadataKey).get(target);
 }
+export function hasExactNumbers(context, target) {
+    return context.program.stateSet(exactNumbersKey).has(target);
+}
 export function getTool(context, target) {
     return context.program.stateMap(toolKey).get(target);
 }
@@ -354,4 +392,7 @@ export function getPropertyNames(context, target) {
 }
 export function getMinProperties(context, target) {
     return context.program.stateMap(minPropertiesKey).get(target);
+}
+export function getUniqueItems(context, target) {
+    return context.program.stateMap(uniqueItemsKey).get(target) === true;
 }

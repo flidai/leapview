@@ -8,9 +8,9 @@ import (
 )
 
 func TestMovieLensExperimentLoadsAndUsesApproximateScoreTypes(t *testing.T) {
-	project, err := LoadProject("../../../dashboards/experiments/movielens/leapview.yaml")
+	project, err := LoadSourceRoot("../../../dashboards/experiments/movielens")
 	if err != nil {
-		t.Fatalf("LoadProject MovieLens experiment: %v", err)
+		t.Fatalf("LoadSourceRoot MovieLens experiment: %v", err)
 	}
 
 	checks := map[string]string{

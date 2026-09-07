@@ -87,6 +87,12 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`Invalid @apigen.minProperties usage: ${"reason"}.`,
       },
     },
+    "invalid-unique-items": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Invalid @apigen.uniqueItems usage: ${"reason"}.`,
+      },
+    },
     "unnamed-schema": {
       severity: "error",
       messages: {

@@ -10,7 +10,7 @@ Prefer extending an existing resource when the new fields share ownership and li
 
 ## Define the contract
 
-Add the closed resource shape to `internal/project/schema/contracts/contracts.cue` using the standard `apiVersion`, `kind`, `metadata`, and `spec` envelope. Define enums, required fields, nested closed objects, and reference types explicitly.
+Define public structural contracts in the owning TypeSpec package using the standard `apiVersion`, `kind`, `metadata`, and `spec` envelope. Connection, Source, Model, SemanticModel, Pipeline, and Dashboard are source-root resources; their generated JSON Schema, Go DTOs, and browser types must not be shadowed by handwritten structural copies. Project identity, access policy, and publication state are target-owned and do not become source-root schema pages. Keep CUE only for retained or contextual graph constraints that do not duplicate a TypeSpec resource shape.
 
 Field descriptions should explain semantics and failure boundaries, not repeat the field name. Apply defaults in one authoritative layer and reflect them in generated outputs where supported. Do not accept arbitrary maps unless the extension point is intentionally open, such as connector-specific options.
 
@@ -19,7 +19,7 @@ Field descriptions should explain semantics and failure boundaries, not repeat t
 Add typed resource representation in the owning project package. Register include discovery and decoding. Validate:
 
 - duplicate IDs and conflicting discovery;
-- project graph ownership;
+- source-root ownership;
 - references to known resources;
 - permitted graph dependencies;
 - identifier and enum rules;
@@ -36,7 +36,7 @@ If it creates a securable object, register its parent hierarchy and test authori
 
 ## Generate schema and reference
 
-Add a representative example to the schema generator inputs and register the exported schema/catalog entry. Run:
+Add a representative example beneath the appropriate conventional source-root directory and register the exported schema/catalog entry. Run:
 
 ```sh
 task schema:generate

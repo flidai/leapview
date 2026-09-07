@@ -1,0 +1,66 @@
+apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata:
+  id: dashboard:warehouse-sales-overview
+  name: warehouse-sales-overview
+  displayName: dbt Warehouse Sales
+  description: Governed view of the physical marts published by dbt.
+  tags: [dbt, warehouse-boundary]
+spec:
+  semanticModel: warehouse_sales
+  filters:
+    - id: order_date
+      label: Order date
+      dimension: order_date
+      control: {type: relativePeriod}
+      urlParameter: period
+      operators: []
+    - id: customer_region
+      label: Customer region
+      dimension: customer_region
+      control: {type: multiSelect}
+      operators: [in, notIn]
+      urlParameter: region
+  visuals:
+    revenue:
+      type: kpi
+      query: {type: aggregate, dimensions: [], metrics: [revenue]}
+      presentation: {type: kpi, note: dbt-published revenue, tone: success}
+    orders:
+      type: kpi
+      query: {type: aggregate, dimensions: [], metrics: [order_count]}
+      presentation: {type: kpi, note: Distinct orders, tone: ink}
+    average_order_value:
+      type: kpi
+      query: {type: aggregate, dimensions: [], metrics: [average_order_value]}
+      presentation: {type: kpi, note: Revenue per order, tone: warning}
+    revenue_by_month:
+      type: area
+      title: Revenue by month
+      query:
+        type: aggregate
+        dimensions:
+          - {dimension: order_date, grain: month, alias: order_month}
+        metrics: [revenue]
+        sort: [{field: order_month, direction: asc}]
+      presentation: {type: cartesian}
+    revenue_by_region:
+      type: bar
+      title: Revenue by customer region
+      query:
+        type: aggregate
+        dimensions: [customer_region]
+        metrics: [revenue]
+        sort: [{field: revenue, direction: desc}]
+      presentation: {type: cartesian}
+  pages:
+    - id: overview
+      title: Overview
+      components:
+        - {id: order-date-filter, type: filter, filter: order_date, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 2}}
+        - {id: region-filter, type: filter, filter: customer_region, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 2}}
+        - {id: revenue-kpi, type: visual, visual: revenue, placement: {column: 1, row: 3, columnSpan: 4, rowSpan: 3}}
+        - {id: orders-kpi, type: visual, visual: orders, placement: {column: 5, row: 3, columnSpan: 4, rowSpan: 3}}
+        - {id: aov-kpi, type: visual, visual: average_order_value, placement: {column: 9, row: 3, columnSpan: 4, rowSpan: 3}}
+        - {id: revenue-month, type: visual, visual: revenue_by_month, placement: {column: 1, row: 6, columnSpan: 7, rowSpan: 6}}
+        - {id: revenue-region, type: visual, visual: revenue_by_region, placement: {column: 8, row: 6, columnSpan: 5, rowSpan: 6}}

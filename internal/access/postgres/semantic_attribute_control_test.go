@@ -25,7 +25,7 @@ func TestSemanticAttributeControlDigestSeedAndOrdering(t *testing.T) {
 		t.Fatal(err)
 	}
 	const wantEmpty = "sha256:e05005cdeee20cc98d9e8de8f32ed4b8da34a95f82872dc3b65a451ce7de4e37"
-	if empty != wantEmpty || !strings.Contains(SemanticAttributeControlMigrationSQL(), wantEmpty) {
+	if empty != wantEmpty || !strings.Contains(SchemaSQL(), wantEmpty) {
 		t.Fatalf("empty control digest = %q, want %q", empty, wantEmpty)
 	}
 	rows := []access.SemanticAttributeAssignment{
@@ -138,12 +138,6 @@ func TestSemanticAttributeControlAuditProjectionOmitsValues(t *testing.T) {
 func TestEffectiveSemanticAttributeAssignmentsRejectsOutOfBandRowCorruption(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	ctx := t.Context()
-	if _, err := db.admin.Exec(ctx, AttributeRegistryMigrationSQL()); err != nil {
-		t.Fatalf("apply attribute registry migration: %v", err)
-	}
-	if _, err := db.admin.Exec(ctx, SemanticAttributeControlMigrationSQL()); err != nil {
-		t.Fatalf("apply semantic attribute control migration: %v", err)
-	}
 	for _, id := range []string{auditActorID, controlSubjectID} {
 		if _, err := db.admin.Exec(ctx, `INSERT INTO access.principal (id, principal_type, status) VALUES ($1::uuid, 'user', 'active')`, id); err != nil {
 			t.Fatalf("insert principal %s: %v", id, err)
@@ -188,12 +182,6 @@ func TestEffectiveSemanticAttributeAssignmentsRejectsOutOfBandRowCorruption(t *t
 func TestSemanticAttributeControlPostgreSQL18CanonicalTimestampsAreSessionIndependent(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	ctx := t.Context()
-	if _, err := db.admin.Exec(ctx, AttributeRegistryMigrationSQL()); err != nil {
-		t.Fatalf("apply attribute registry migration: %v", err)
-	}
-	if _, err := db.admin.Exec(ctx, SemanticAttributeControlMigrationSQL()); err != nil {
-		t.Fatalf("apply semantic attribute control migration: %v", err)
-	}
 	for _, id := range []string{auditActorID, controlSubjectID} {
 		if _, err := db.admin.Exec(ctx, `INSERT INTO access.principal (id, principal_type, status) VALUES ($1::uuid, 'user', 'active')`, id); err != nil {
 			t.Fatalf("insert principal %s: %v", id, err)
@@ -290,12 +278,6 @@ func assertRFC3339UTCTimestamp(t *testing.T, value string) {
 func TestSemanticAttributeControlPostgreSQL18LifecycleAndTrust(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	ctx := t.Context()
-	if _, err := db.admin.Exec(ctx, AttributeRegistryMigrationSQL()); err != nil {
-		t.Fatalf("apply attribute registry migration: %v", err)
-	}
-	if _, err := db.admin.Exec(ctx, SemanticAttributeControlMigrationSQL()); err != nil {
-		t.Fatalf("apply semantic attribute control migration: %v", err)
-	}
 	for _, id := range []string{auditActorID, controlSubjectID, controlOwnerID} {
 		if _, err := db.admin.Exec(ctx, `
 			INSERT INTO access.principal (id, principal_type, status)
@@ -515,12 +497,6 @@ func TestSemanticAttributeControlPostgreSQL18LifecycleAndTrust(t *testing.T) {
 func TestSemanticAttributeControlPostgreSQL18TransactionRollback(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	ctx := t.Context()
-	if _, err := db.admin.Exec(ctx, AttributeRegistryMigrationSQL()); err != nil {
-		t.Fatalf("apply attribute registry migration: %v", err)
-	}
-	if _, err := db.admin.Exec(ctx, SemanticAttributeControlMigrationSQL()); err != nil {
-		t.Fatalf("apply semantic attribute control migration: %v", err)
-	}
 	if _, err := db.admin.Exec(ctx, `INSERT INTO access.principal (id, principal_type, status) VALUES ($1::uuid, 'user', 'active')`, auditActorID); err != nil {
 		t.Fatal(err)
 	}

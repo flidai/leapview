@@ -6,7 +6,7 @@ import (
 
 	documentcontent "github.com/flidai/leapview/docs"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
-	docsearch "github.com/flidai/leapview/internal/app/site/search/sqlite"
+	docsearch "github.com/flidai/leapview/internal/app/site/search"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 )
 

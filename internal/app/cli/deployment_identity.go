@@ -6,7 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"strings"
+
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 )
 
 func newDeploymentIdempotencyKey(kind string, values ...string) (string, error) {
@@ -33,14 +34,5 @@ func writeDeploymentHashValue(digest io.Writer, value string) {
 }
 
 func canonicalManagedRevisionID(value string) bool {
-	const prefix = "sha256:"
-	if len(value) != len(prefix)+sha256.Size*2 || !strings.HasPrefix(value, prefix) {
-		return false
-	}
-	digest := value[len(prefix):]
-	if strings.ToLower(digest) != digest {
-		return false
-	}
-	_, err := hex.DecodeString(digest)
-	return err == nil
+	return platformdigest.ValidateSHA256Identity(value) == nil
 }
