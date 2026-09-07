@@ -520,6 +520,14 @@ test('ECharts normalizes stacks and preserves series order and color identity ac
   ])
   expect(option.yAxis.axisLabel.formatter(25)).toBe('25%')
 
+  const darkContext = {
+    ...defaultRendererContext,
+    theme: 'dark',
+    colors: { ...defaultRendererContext.colors, success: '#2ea043', data: ['#1f6feb', '#a371f7', '#d29922'] },
+  } as any
+  const darkOption = echartsOption(envelope, darkContext) as any
+  expect(darkOption.series.map((series: any) => series.itemStyle.color)).toEqual(['#2ea043', '#d29922'])
+
   const filtered = structuredClone(envelope) as any
   filtered.dataState.datasets[0].rows = filtered.dataState.datasets[0].rows.filter((row: unknown[]) => row[1] === 'processing')
   const filteredOption = echartsOption(filtered, defaultRendererContext) as any
