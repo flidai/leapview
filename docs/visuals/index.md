@@ -80,6 +80,13 @@ All entries below describe renderer-neutral compiled contracts. Unsupported comb
 | Table, matrix, pivot | Table-owned sorting and formatting | No | No | Cell foreground/background and icons | Static titles; governed cell bindings |
 | Map | Renderer-owned geographic contract | No | No | No | No secondary context datasets |
 
+Cartesian conditional formatting is mark-aware: `mark_fill`, `series_color`,
+`label_foreground`, and `icon` remain available on supported Cartesian marks;
+`mark_stroke` is supported for bar, column, waterfall, and heatmap marks. Line
+and area marks reject `mark_stroke` during compilation because ECharts cannot
+apply a per-row callback to `lineStyle.color`; use `mark_fill` or a label/icon
+cue instead. The diagnostic includes the conditional-format ID and field path.
+
 Decision-context field references use stable dataset and field identities. Gradient domains, rule order, null/default outcomes, series order, colors, scale domains, zero policies, units, and tick density are explicit in the compiled IR. Bound titles, subtitles, descriptions, summaries, reference values, and accessibility text recompute when filters or data revisions change and use authored fallbacks when governed data is empty.
 
 Deleted fields, unknown datasets, incompatible reducers, unsupported mark/feature combinations, and unsafe formatting intents are deployment errors with the binding path in the diagnostic. Authorization remains part of governed query execution; an unauthorized or failed context query produces the visual’s normal error state and does not reveal a hidden value through metadata or a renderer message.

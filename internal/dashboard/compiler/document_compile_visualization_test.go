@@ -138,6 +138,42 @@ func TestCompileVisualsRejectsConditionalFormattingTargetOutsideRenderedChannel(
 	}
 }
 
+func TestCompileVisualsRejectsLineAreaMarkStrokeAndKeepsBarMarkStroke(t *testing.T) {
+	t.Parallel()
+
+	for _, visualType := range []document.DashboardVisualType{document.DashboardVisualTypeLine, document.DashboardVisualTypeArea} {
+		visualType := visualType
+		t.Run(string(visualType), func(t *testing.T) {
+			visual := document.DashboardVisual{
+				Type: visualType,
+				Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+					Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+				}},
+				Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+					DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian", ConditionalFormatting: &[]document.DashboardConditionalFormat{pointGradientFormat("revenue", visualizationir.VisualizationConditionalTargetMarkStroke)}}, Type: "cartesian",
+				}},
+			}
+			_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{string(visualType): visual})
+			if err == nil || !strings.Contains(err.Error(), "conditional formatting \"revenue-gradient\" field: target \"mark_stroke\" is unsupported") {
+				t.Fatalf("compileVisuals() error = %v, want conditional-format ID/path mark-stroke diagnostic", err)
+			}
+		})
+	}
+
+	visual := document.DashboardVisual{
+		Type: document.DashboardVisualTypeBar,
+		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+			Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+			DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian", ConditionalFormatting: &[]document.DashboardConditionalFormat{pointGradientFormat("revenue", visualizationir.VisualizationConditionalTargetMarkStroke)}}, Type: "cartesian",
+		}},
+	}
+	if _, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"bar": visual}); err != nil {
+		t.Fatalf("compileVisuals() rejected valid bar mark_stroke formatting: %v", err)
+	}
+}
+
 func TestCompileVisualsConditionalFormattingPreIRErrorIncludesIDAndPath(t *testing.T) {
 	format := pointGradientFormat("missing", visualizationir.VisualizationConditionalTargetMarkFill)
 	visual := document.DashboardVisual{

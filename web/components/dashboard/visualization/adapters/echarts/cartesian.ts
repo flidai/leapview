@@ -180,12 +180,11 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const combo = comboByField.get(value.field)
     const mark = combo?.mark ?? (spec.mark === 'combo' ? 'line' : spec.mark)
     const fill = conditionalItemColor(envelope, value, 'mark_fill', context) ?? conditionalItemColor(envelope, value, 'series_color', context)
-    const stroke = conditionalItemColor(envelope, value, 'mark_stroke', context)
+    const stroke = cartesianSeriesType(mark) === 'line' ? undefined : conditionalItemColor(envelope, value, 'mark_stroke', context)
     const intent = spec.presentation.seriesIntent?.find((candidate) => candidate.value === value.field)?.color
     const markColor = fill ?? (intent === undefined
       ? context.colors.data[seriesIndex % context.colors.data.length] ?? context.colors.accent
       : seriesColor(value.field, intent, context))
-    const lineStyle = stroke && cartesianSeriesType(mark) === 'line' ? { color: stroke, width: 2 } : undefined
     const translatedLabel = normalizedField
       ? percentLabel(envelope, spec, context, normalized?.columnIndices.get(value.field))
       : chartLabel(envelope, value, spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y', markColor)
@@ -200,7 +199,6 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
         borderColor: stroke,
         borderWidth: stroke ? 2 : undefined,
       },
-      ...(lineStyle ? { lineStyle } : {}),
       barMinHeight: horizontal && translatedLabel.label.show !== false && translatedLabel.label.position === 'insideRight' ? 44 : undefined,
       step: spec.presentation.step ? 'middle' : false,
       ...translatedLabel,
@@ -479,11 +477,10 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
     const mark = combo?.mark ?? (spec.mark === 'combo' ? 'line' : spec.mark)
     const valueRef = spec.y[0]!
     const fill = conditionalItemColor(envelope, valueRef, 'mark_fill', context) ?? conditionalItemColor(envelope, valueRef, 'series_color', context)
-    const stroke = conditionalItemColor(envelope, valueRef, 'mark_stroke', context)
+    const stroke = cartesianSeriesType(mark) === 'line' ? undefined : conditionalItemColor(envelope, valueRef, 'mark_stroke', context)
     const governedSeriesColor = conditionalCategoryColor(envelope, valueRef, spec.series!, value, 'mark_fill', context)
       ?? conditionalCategoryColor(envelope, valueRef, spec.series!, value, 'series_color', context)
     const markColor = governedSeriesColor ?? fill ?? (intent?.color ? seriesColor(String(value), intent.color, context) : categoryColors.color(envelope, spec.series!, value, context))
-    const lineStyle = stroke && cartesianSeriesType(mark) === 'line' ? { color: stroke, width: 2 } : undefined
     return {
       id: `series:${spec.series?.dataset}:${spec.series?.field}:${token}`, datasetId: datasetID, name: String(value), type: cartesianSeriesType(mark),
       ...(horizontal ? { xAxisIndex: combo?.axis === 'secondary' ? 1 : 0 } : { yAxisIndex: combo?.axis === 'secondary' ? 1 : 0 }),
@@ -494,7 +491,6 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
         borderColor: stroke,
         borderWidth: stroke ? 2 : undefined,
       },
-      ...(lineStyle ? { lineStyle } : {}),
       step: spec.presentation.step ? 'middle' : false,
       ...(normalized
         ? percentLabel(envelope, spec, context, normalized.columnIndex)
