@@ -170,6 +170,29 @@ func TestCanonicalVisualizationSpecRejectsEqualPointSizeScalePixels(t *testing.T
 	}
 }
 
+func TestCompileVisualsValidatesProportionalConditionalFormattingTargets(t *testing.T) {
+	t.Parallel()
+
+	for _, target := range []visualizationir.VisualizationConditionalTarget{
+		visualizationir.VisualizationConditionalTargetMarkFill,
+		visualizationir.VisualizationConditionalTargetSeriesColor,
+	} {
+		target := target
+		t.Run(string(target), func(t *testing.T) {
+			visual := proportionalDashboardVisual(target)
+			if _, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"orders-share": visual}); err != nil {
+				t.Fatalf("compileVisuals() rejected proportional %s rule: %v", target, err)
+			}
+		})
+	}
+
+	visual := proportionalDashboardVisual(visualizationir.VisualizationConditionalTargetMarkStroke)
+	_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"orders-share": visual})
+	if err == nil || !strings.Contains(err.Error(), `visual "orders-share" IR`) || !strings.Contains(err.Error(), `conditional formatting "revenue-gradient"`) || !strings.Contains(err.Error(), `target "mark_stroke" is incompatible with proportional visualizations`) {
+		t.Fatalf("compileVisuals() error = %v, want path-bearing proportional target diagnostic", err)
+	}
+}
+
 func TestCanonicalGeographicReferenceLayerTooltipContract(t *testing.T) {
 	t.Parallel()
 
@@ -243,6 +266,22 @@ func pointDashboardVisual(color string, scale *document.PointDashboardColorScale
 		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{String: stringPtr("revenue")}}}},
 		Presentation: document.DashboardPresentation{Value: &document.PointDashboardPresentation{
 			Type: "point", Identity: []string{"state"}, X: "revenue", Y: "revenue", Color: &color, ColorScale: scale,
+		}},
+	}
+}
+
+func proportionalDashboardVisual(target visualizationir.VisualizationConditionalTarget) document.DashboardVisual {
+	format := pointGradientFormat("revenue", target)
+	return document.DashboardVisual{
+		Type: document.DashboardVisualTypePie,
+		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+			Type:       "aggregate",
+			Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}},
+			Metrics:    []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{
+			DashboardPresentationBase: document.DashboardPresentationBase{ConditionalFormatting: &[]document.DashboardConditionalFormat{format}},
+			Type:                      "proportional",
 		}},
 	}
 }
