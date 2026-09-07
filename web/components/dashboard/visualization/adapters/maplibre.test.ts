@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
-import { aggregateExpansionCamera, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
+import { aggregateExpansionCamera, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setMapStyleAndWait, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
 test('MapLibre owns usable shadow-DOM styles for map navigation controls', () => {
@@ -107,6 +107,48 @@ test('MapLibre becomes renderer-ready after a rendered frame without waiting for
 
   expect(listeners.get('idle')?.size).toBe(0)
   expect(listeners.get('render')?.size).toBe(0)
+})
+
+test('MapLibre registers basemap style readiness before swapping the style', async () => {
+  const listeners = new Map<string, Set<(event?: unknown) => void>>()
+  let styleCalls = 0
+  const map = {
+    on: (event: string, listener: (event?: unknown) => void) => { (listeners.get(event) ?? (listeners.set(event, new Set()), listeners.get(event)!)).add(listener) },
+    off: (event: string, listener: (event?: unknown) => void) => listeners.get(event)?.delete(listener),
+    setStyle: () => {
+      styleCalls++
+      expect(listeners.get('styledata')?.size).toBe(1)
+      listeners.get('styledata')?.forEach((listener) => listener())
+    },
+  }
+  await setMapStyleAndWait(map as never, { version: 8, sources: {}, layers: [] } as never)
+  expect(styleCalls).toBe(1)
+  expect([...listeners.values()].every((listenersForEvent) => listenersForEvent.size === 0)).toBe(true)
+})
+
+test('MapLibre rejects basemap style errors and removes readiness listeners', async () => {
+  const listeners = new Map<string, Set<(event?: unknown) => void>>()
+  const map = {
+    on: (event: string, listener: (event?: unknown) => void) => { (listeners.get(event) ?? (listeners.set(event, new Set()), listeners.get(event)!)).add(listener) },
+    off: (event: string, listener: (event?: unknown) => void) => listeners.get(event)?.delete(listener),
+    setStyle: () => { listeners.get('error')?.forEach((listener) => listener({ error: new Error('style failed') })) },
+  }
+  await expect(setMapStyleAndWait(map as never, { version: 8, sources: {}, layers: [] } as never)).rejects.toThrow('style failed')
+  expect([...listeners.values()].every((listenersForEvent) => listenersForEvent.size === 0)).toBe(true)
+})
+
+test('MapLibre settles basemap style readiness when the map is removed', async () => {
+  const listeners = new Map<string, Set<(event?: unknown) => void>>()
+  const map = {
+    on: (event: string, listener: (event?: unknown) => void) => { (listeners.get(event) ?? (listeners.set(event, new Set()), listeners.get(event)!)).add(listener) },
+    off: (event: string, listener: (event?: unknown) => void) => listeners.get(event)?.delete(listener),
+    setStyle: () => {},
+  }
+  const pending = setMapStyleAndWait(map as never, { version: 8, sources: {}, layers: [] } as never)
+  expect(listeners.get('remove')?.size).toBe(1)
+  listeners.get('remove')?.forEach((listener) => listener())
+  await pending
+  expect([...listeners.values()].every((listenersForEvent) => listenersForEvent.size === 0)).toBe(true)
 })
 
 test('MapLibre keeps its frame hidden and inaccessible until the final fitted frame is presented', () => {
@@ -543,9 +585,17 @@ test('MapLibre selection maps reserve clicks for data interaction instead of mov
 	if (interactive.spec.kind !== 'geographic') throw new Error('geographic fixture is unavailable')
 	const exploratory = {
 		...interactive,
-		spec: { ...interactive.spec, interactions: [], spatialInteractions: [] },
+		spec: { ...interactive.spec, interactions: [], spatialInteractions: [], presentation: { ...interactive.spec.presentation, roam: true } },
 	} as VisualizationEnvelope
 	expect(mapClickCanRefineCamera(exploratory)).toBe(true)
+	expect(mapClickCanRefineCamera({
+		...exploratory,
+		spec: { ...exploratory.spec, presentation: { ...exploratory.spec.presentation, roam: false } },
+	} as VisualizationEnvelope)).toBe(false)
+	expect(mapClickCanRefineCamera({
+		...exploratory,
+		spec: { ...exploratory.spec, presentation: { ...exploratory.spec.presentation, camera: { ...exploratory.spec.presentation.camera, mode: 'fixed', center: [0, 0], zoom: 2 } } },
+	} as VisualizationEnvelope)).toBe(false)
 })
 
 test('MapLibre tiled accessibility deduplicates visible raw and aggregate features', () => {
@@ -569,6 +619,12 @@ test('MapLibre tiled interaction submits raw identities and never aggregate cell
   const aggregate = { layer: { id: 'lv-orders' }, properties: { __lv_id: 22, __lv_aggregate: true, order_id: 'not-a-row' } }
   expect(mapInteractionCommand(envelope, [raw], ['lv-orders'])?.mappings[0]?.value).toBe('o1')
   expect(mapInteractionCommand(envelope, [aggregate], ['lv-orders'])).toBeUndefined()
+})
+
+test('MapLibre tiled stable-identity interactions reject null raw identities', () => {
+  const envelope = tiledPointEnvelope()
+  const raw = { layer: { id: 'lv-orders' }, properties: { __lv_id: 11, __lv_aggregate: false, order_id: null } }
+  expect(mapInteractionCommand(envelope, [raw], ['lv-orders'])).toBeUndefined()
 })
 
 test('MapLibre builds the tile-backed picker from unique visible raw points', () => {

@@ -1,4 +1,4 @@
-import type { VisualizationEnvelope, VisualizationGeographicLayer, VisualizationGeometryAsset } from '../../../../generated/visualization'
+import type { VisualizationEnvelope, VisualizationGeographicLayer, VisualizationGeometryAsset, VisualizationMapStyleAsset } from '../../../../generated/visualization'
 import { Map as MapLibre, NavigationControl, type GeoJSONSource, type Map as MapLibreMap, type MapMouseEvent, type MapOptions, type VectorTileSource } from 'maplibre-gl'
 import type { FeatureCollection } from 'geojson'
 import type { OptimisticInteractionCommand } from '../../interaction-selection'
@@ -12,7 +12,7 @@ import { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
 import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledPrecisionLayerIDs } from './maplibre/layers'
 import { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
 import { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries, type RenderedFeatureLocator } from './maplibre/overlays'
-import { emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
+import { emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, setMapStyleAndWait, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
 import { MapSpatialSelectionControl } from './maplibre/spatial-selection-control'
 import { combineMapFilters, formatMapRangeValue, mapValueFilteredEnvelope, mapValueFilterExpression, mapValueRange, mapValueRangePercent, withMapValueSelection, type MapValueRange } from './maplibre/value-range'
 import { coordinateReferenceGrid, fitMapToGeographicData, fitMapToSpatialExtent, resetMapToHome, type MapHomeCamera } from './maplibre/viewport'
@@ -24,7 +24,7 @@ export { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
 export { applyFeatureScales, mapLayer, mapOutlineLayer, normalizeFeatureWeights, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledPrecisionLayerIDs } from './maplibre/layers'
 export { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
 export { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries } from './maplibre/overlays'
-export { installWebGLRecovery, removeRendererFrame, waitForMapIdle, waitForMapRender } from './maplibre/lifecycle'
+export { installWebGLRecovery, removeRendererFrame, setMapStyleAndWait, waitForMapIdle, waitForMapRender } from './maplibre/lifecycle'
 export { coordinateReferenceGrid, fitMapToGeographicData, resetMapToHome } from './maplibre/viewport'
 
 export const mapAccessibleTableStyle = 'position:absolute;z-index:3;left:10px;bottom:50px;max-width:min(520px,calc(100% - 20px));max-height:55%;overflow:auto;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary);box-shadow:0 1px 3px rgba(31,35,40,.12)'
@@ -76,7 +76,28 @@ export function vectorTileTemplateURL(template: string, base: string): string {
 
 export function mapClickCanRefineCamera(envelope: VisualizationEnvelope): boolean {
 	if (envelope.spec.kind !== 'geographic') return false
-	return envelope.spec.interactions.length === 0 && envelope.spec.spatialInteractions.length === 0
+	return envelope.spec.presentation.roam
+		&& envelope.spec.presentation.camera.mode !== 'fixed'
+		&& envelope.spec.interactions.length === 0
+		&& envelope.spec.spatialInteractions.length === 0
+}
+
+function shouldPreserveCameraOnSpecUpdate(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {
+	if (previous.spec.kind !== 'geographic' || next.spec.kind !== 'geographic') return false
+	const camera = next.spec.presentation.camera
+	if (camera.mode === 'fixed' || camera.mode === 'preserve') return camera.mode === 'preserve'
+	const previousCamera = previous.spec.presentation.camera
+	return previousCamera.mode === camera.mode
+		&& previousCamera.padding === camera.padding
+		&& previousCamera.minimumZoom === camera.minimumZoom
+		&& previousCamera.maximumZoom === camera.maximumZoom
+		&& sameOptionalNumberArray(previousCamera.center, camera.center)
+		&& previousCamera.zoom === camera.zoom
+}
+
+function sameOptionalNumberArray(left: readonly number[] | undefined, right: readonly number[] | undefined): boolean {
+	if (left === undefined || right === undefined) return left === right
+	return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 function isPlaceholderTileURL(value: string): boolean {
@@ -145,11 +166,16 @@ export function mapPointerOptions(envelope: VisualizationEnvelope): Pick<MapOpti
   }
 }
 
+export function mapBasemapIdentity(asset: VisualizationMapStyleAsset | undefined): string {
+  if (!asset) return 'blank'
+  return [asset.id, asset.styleUrl, asset.styleDigest, asset.archiveUrl, asset.archiveDigest, asset.glyphsUrl, asset.spriteUrl].join('\u0000')
+}
+
 export function mapSelectionControlAvailable(envelope: VisualizationEnvelope): boolean {
   return envelope.spec.interactions.some((candidate) => candidate.kind === 'select')
 }
 
-class MapLibreHandle implements RendererHandle {
+export class MapLibreHandle implements RendererHandle {
   private sourceIDs: string[] = []
   private layerIDs: string[] = []
   private dynamicLayers: Array<{ spec: VisualizationGeographicLayer; sourceID: string; geometry?: FeatureCollection }> = []
@@ -167,6 +193,7 @@ class MapLibreHandle implements RendererHandle {
   private selectionControl?: MapSelectionControl
   private spatialSelectionControl?: MapSpatialSelectionControl
   private navigationControl?: NavigationControl
+  private navigationControlOptions?: { showZoom: boolean; showCompass: boolean }
   private resetButton?: HTMLButtonElement
   private readonly tooltip: HTMLDivElement
   private readonly legend: HTMLDivElement
@@ -180,6 +207,7 @@ class MapLibreHandle implements RendererHandle {
   private viewportInitialized = false
   private updateQueue: Promise<void> = Promise.resolve()
   private lastBasemapThemeKey = ''
+  private basemapIdentity?: string
   private disposed = false
   private readonly disposeWebGLRecovery: () => void
   constructor(private readonly container: HTMLElement, private readonly frame: HTMLElement, private readonly map: MapLibreMap, private readonly attribution: HTMLElement, private context: RendererContext) {
@@ -233,6 +261,16 @@ class MapLibreHandle implements RendererHandle {
   private async applyUpdate(envelope: VisualizationEnvelope, change: Change): Promise<void> {
     if (this.disposed) return
     if (envelope.spec.kind !== 'geographic') throw new Error(`MapLibre cannot render ${envelope.spec.kind}`)
+    const specChanged = (change & Change.Spec) !== 0
+    const preserveCamera = specChanged && this.viewportInitialized && this.envelope !== undefined && shouldPreserveCameraOnSpecUpdate(this.envelope, envelope)
+    const preservedCamera = preserveCamera ? this.captureViewState() : undefined
+    const basemapIdentity = mapBasemapIdentity(envelope.spec.presentation.basemap)
+    const basemapChanged = specChanged && this.basemapIdentity !== undefined && this.basemapIdentity !== basemapIdentity
+    if (basemapChanged) {
+      await this.replaceBasemapStyle(envelope.spec.presentation.basemap)
+      if (this.disposed) return
+    }
+    this.basemapIdentity = basemapIdentity
     this.envelope = envelope
     this.updateAccessibleFallback(envelope)
     this.map.setMinZoom(envelope.spec.presentation.camera.minimumZoom)
@@ -241,6 +279,7 @@ class MapLibreHandle implements RendererHandle {
     if (this.disposed) return
     this.updateSelectionControl(envelope)
     this.updateSpatialSelectionControl(envelope)
+    if (specChanged) this.updateMapInteractionState(envelope)
     if ((change & (Change.Spec | Change.Data)) === 0) {
       if ((change & Change.Selection) !== 0) this.updateSelectionData(envelope)
       return
@@ -293,7 +332,7 @@ class MapLibreHandle implements RendererHandle {
       if (sourceLifecycle !== 'error') this.updateAccessibleTiledFeatures(envelope)
       return
     }
-    this.removeOwnedMapData()
+    if (!basemapChanged) this.removeOwnedMapData()
     this.legendBaseFilters.clear()
     this.sourceIDs = []
     this.layerIDs = []
@@ -335,6 +374,10 @@ class MapLibreHandle implements RendererHandle {
     this.attribution.textContent = [...attributions].join(' · ')
     this.attribution.hidden = attributions.size === 0
     this.initializeViewport(envelope, collections)
+    if (preservedCamera) {
+      resetMapToHome(this.map, preservedCamera)
+      this.captureHomeCamera()
+    }
     this.updateMapControls(envelope)
     this.updateLegend(envelope)
     this.handleMoveEnd()
@@ -373,7 +416,10 @@ class MapLibreHandle implements RendererHandle {
     this.selectionControl?.dispose()
     this.spatialSelectionControl?.dispose()
     if (this.navigationControl) this.map.removeControl(this.navigationControl)
+    this.navigationControl = undefined
+    this.navigationControlOptions = undefined
     this.resetButton?.remove()
+    this.resetButton = undefined
     this.map.remove()
     removeRendererFrame(this.container, this.frame)
   }
@@ -504,15 +550,16 @@ class MapLibreHandle implements RendererHandle {
 
   private initializeViewport(envelope: VisualizationEnvelope, collections: FeatureCollection[]): boolean {
     if (this.viewportInitialized || envelope.spec.kind !== 'geographic') return false
+    const camera = envelope.spec.presentation.camera
     // Bootstrap envelopes use a world-sized placeholder extent. Deferring the
     // home camera until governed metadata arrives prevents ready tiled maps
-    // from remaining at the bootstrap zoom-0 view.
-    if (envelope.dataState.kind === 'spatial_tiled' && (envelope.status.kind === 'loading' || isPlaceholderTileURL(envelope.dataState.tileURL))) return false
+    // from remaining at the bootstrap zoom-0 view. A fixed camera is already
+    // governed by the spec, so it must apply even while tile metadata loads.
+    if (envelope.dataState.kind === 'spatial_tiled' && camera.mode !== 'fixed' && (envelope.status.kind === 'loading' || isPlaceholderTileURL(envelope.dataState.tileURL))) return false
     // The host mounts while its dashboard grid is still settling. Refresh the
     // transform from the laid-out container before calculating fitBounds;
     // otherwise MapLibre can retain its constructor-time zoom-0 dimensions.
     this.map.resize()
-    const camera = envelope.spec.presentation.camera
     const fitted = envelope.dataState.kind === 'spatial_tiled'
       ? fitMapToSpatialExtent(this.map, envelope.dataState.extent, camera)
       : fitMapToGeographicData(this.map, collections, camera)
@@ -538,11 +585,14 @@ class MapLibreHandle implements RendererHandle {
     this.selectionControl ??= new MapSelectionControl(
       (command) => this.dispatchInteraction(command),
       () => this.syncMapSelectionControls(),
-      (center, zoom) => this.map.easeTo({
-        center: [center[0], center[1]],
-        zoom: progressiveAggregateRefinementZoom(this.map.getZoom(), zoom),
-        duration: 250,
-      }),
+      (center, zoom) => {
+        if (this.disposed || !this.envelope || !mapClickCanRefineCamera(this.envelope)) return
+        this.map.easeTo({
+          center: [center[0], center[1]],
+          zoom: progressiveAggregateRefinementZoom(this.map.getZoom(), zoom),
+          duration: 250,
+        })
+      },
     )
     if (!this.selectionControl.element.isConnected) this.frame.append(this.selectionControl.element)
     const filteredEnvelope = envelope.spec.kind === 'geographic'
@@ -568,6 +618,30 @@ class MapLibreHandle implements RendererHandle {
     if (!this.spatialSelectionControl.element.isConnected) this.frame.append(this.spatialSelectionControl.element)
     this.spatialSelectionControl.update(envelope)
     this.syncMapSelectionControls()
+  }
+
+  private updateMapInteractionState(envelope: VisualizationEnvelope): void {
+    const options = mapPointerOptions(envelope)
+    const handlers = [
+      [this.map.scrollZoom, options.scrollZoom],
+      [this.map.boxZoom, options.boxZoom],
+      [this.map.dragRotate, options.dragRotate],
+      [this.map.dragPan, options.dragPan],
+      [this.map.keyboard, options.keyboard],
+      [this.map.doubleClickZoom, options.doubleClickZoom],
+      [this.map.touchZoomRotate, options.touchZoomRotate],
+      [this.map.touchPitch, options.touchPitch],
+    ] as const
+    for (const [handler, enabled] of handlers) {
+      if (handler === this.map.dragPan && this.spatialSelectionControl) continue
+      const shouldEnable = enabled === true
+      if (handler.isEnabled() === shouldEnable) continue
+      if (shouldEnable) handler.enable()
+      else handler.disable()
+    }
+    this.map.getCanvasContainer().classList.toggle('maplibregl-interactive', options.interactive)
+    this.map.getCanvas().tabIndex = options.interactive ? 0 : -1
+    this.spatialSelectionControl?.setRoamDragPanEnabled(options.dragPan === true)
   }
 
   private syncMapSelectionControls(): void {
@@ -620,18 +694,31 @@ class MapLibreHandle implements RendererHandle {
   }
 
   private updateMapControls(envelope: VisualizationEnvelope): void {
-    if (envelope.spec.kind !== 'geographic' || this.navigationControl || this.resetButton) return
+    if (envelope.spec.kind !== 'geographic') return
     const controls = envelope.spec.presentation.controls
-    if (controls.zoom || controls.compass) {
-      this.navigationControl = new NavigationControl({ showZoom: controls.zoom, showCompass: controls.compass, visualizePitch: false })
-      this.map.addControl(this.navigationControl, 'top-right')
+    const wantsNavigation = controls.zoom || controls.compass
+    const navigationUnchanged = wantsNavigation && this.navigationControl
+      && this.navigationControlOptions?.showZoom === controls.zoom
+      && this.navigationControlOptions?.showCompass === controls.compass
+    if (!navigationUnchanged) {
+      if (this.navigationControl) this.map.removeControl(this.navigationControl)
+      this.navigationControl = undefined
+      this.navigationControlOptions = undefined
+      if (wantsNavigation) {
+        this.navigationControl = new NavigationControl({ showZoom: controls.zoom, showCompass: controls.compass, visualizePitch: false })
+        this.navigationControlOptions = { showZoom: controls.zoom, showCompass: controls.compass }
+        this.map.addControl(this.navigationControl, 'top-right')
+      }
     }
-    if (controls.reset) {
+    if (controls.reset && !this.resetButton) {
       const button = document.createElement('button')
       button.type = 'button'; button.className = 'lv-map-reset'; button.textContent = 'Reset view'; button.setAttribute('aria-label', 'Reset map view')
       button.style.cssText = 'position:absolute;z-index:3;top:10px;right:50px;padding:5px 8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:4px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-caption);font-weight:var(--base-text-weight-medium);cursor:pointer;box-shadow:0 1px 2px rgba(31,35,40,.08)'
       button.addEventListener('click', () => { if (this.homeCamera) resetMapToHome(this.map, this.homeCamera) })
       this.frame.append(button); this.resetButton = button
+    } else if (!controls.reset && this.resetButton) {
+      this.resetButton.remove()
+      this.resetButton = undefined
     }
   }
 
@@ -856,7 +943,13 @@ class MapLibreHandle implements RendererHandle {
     if (expansion) {
 		if (canRefineCamera) {
 			const source = this.map.getSource(expansion.sourceID) as GeoJSONSource | undefined
-			void source?.getClusterExpansionZoom(expansion.clusterID).then((zoom) => this.map.easeTo({ center: expansion.center, zoom }))
+      void source?.getClusterExpansionZoom(expansion.clusterID).then((zoom) => {
+        // Cluster expansion is asynchronous. The envelope may have changed
+        // while MapLibre was resolving the cluster's target zoom; re-check
+        // the current interaction/camera policy before moving the camera.
+        if (this.disposed || !this.envelope || !mapClickCanRefineCamera(this.envelope)) return
+        this.map.easeTo({ center: expansion.center, zoom })
+      })
 		}
       return
     }
@@ -1000,6 +1093,15 @@ class MapLibreHandle implements RendererHandle {
 
   private async loadGeometry(asset: VisualizationGeometryAsset): Promise<FeatureCollection> {
     return loadGeometryAsset(asset, location.href)
+  }
+
+  private async replaceBasemapStyle(asset: VisualizationMapStyleAsset | undefined): Promise<void> {
+    const background = getComputedStyle(this.frame).backgroundColor || '#f6f8fa'
+    const style = asset ? await loadMapStyleAsset(asset, location.href) : blankMapStyle(background)
+    if (this.disposed) return
+    await setMapStyleAndWait(this.map, style)
+    if (this.disposed) return
+    this.lastBasemapThemeKey = ''
   }
 
   private async applyTheme(): Promise<void> {
