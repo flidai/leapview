@@ -6887,6 +6887,21 @@
                           "additionalProperties": false,
                           "description": "A renderer-neutral axis policy for Cartesian and point visuals.",
                           "properties": {
+                            "dateUnit": {
+                              "description": "Semantic date granularity for labels on a temporal axis.",
+                              "enum": [
+                                "automatic",
+                                "year",
+                                "quarter",
+                                "month",
+                                "week",
+                                "day",
+                                "hour",
+                                "minute",
+                                "second"
+                              ],
+                              "type": "string"
+                            },
                             "displayUnits": {
                               "enum": [
                                 "auto",
@@ -6898,11 +6913,37 @@
                               ],
                               "type": "string"
                             },
+                            "grid": {
+                              "enum": [
+                                "automatic",
+                                "visible",
+                                "hidden"
+                              ],
+                              "type": "string"
+                            },
                             "id": {
                               "enum": [
                                 "x",
                                 "primary_y",
                                 "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "inversion": {
+                              "description": "Renderer-neutral axis direction. Automatic keeps the conventional direction.",
+                              "enum": [
+                                "automatic",
+                                "normal",
+                                "inverted"
+                              ],
+                              "type": "string"
+                            },
+                            "labelRotation": {
+                              "enum": [
+                                "automatic",
+                                "horizontal",
+                                "diagonal",
+                                "vertical"
                               ],
                               "type": "string"
                             },
@@ -6929,7 +6970,25 @@
                               ],
                               "type": "string"
                             },
+                            "ticks": {
+                              "enum": [
+                                "automatic",
+                                "visible",
+                                "hidden"
+                              ],
+                              "type": "string"
+                            },
                             "title": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "description": "Renderer-neutral axis coordinate type. Automatic preserves the field's semantic type.",
+                              "enum": [
+                                "automatic",
+                                "category",
+                                "value",
+                                "time"
+                              ],
                               "type": "string"
                             },
                             "unit": {
@@ -8263,6 +8322,21 @@
                           "additionalProperties": false,
                           "description": "A renderer-neutral axis policy for Cartesian and point visuals.",
                           "properties": {
+                            "dateUnit": {
+                              "description": "Semantic date granularity for labels on a temporal axis.",
+                              "enum": [
+                                "automatic",
+                                "year",
+                                "quarter",
+                                "month",
+                                "week",
+                                "day",
+                                "hour",
+                                "minute",
+                                "second"
+                              ],
+                              "type": "string"
+                            },
                             "displayUnits": {
                               "enum": [
                                 "auto",
@@ -8274,11 +8348,37 @@
                               ],
                               "type": "string"
                             },
+                            "grid": {
+                              "enum": [
+                                "automatic",
+                                "visible",
+                                "hidden"
+                              ],
+                              "type": "string"
+                            },
                             "id": {
                               "enum": [
                                 "x",
                                 "primary_y",
                                 "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "inversion": {
+                              "description": "Renderer-neutral axis direction. Automatic keeps the conventional direction.",
+                              "enum": [
+                                "automatic",
+                                "normal",
+                                "inverted"
+                              ],
+                              "type": "string"
+                            },
+                            "labelRotation": {
+                              "enum": [
+                                "automatic",
+                                "horizontal",
+                                "diagonal",
+                                "vertical"
                               ],
                               "type": "string"
                             },
@@ -8305,7 +8405,25 @@
                               ],
                               "type": "string"
                             },
+                            "ticks": {
+                              "enum": [
+                                "automatic",
+                                "visible",
+                                "hidden"
+                              ],
+                              "type": "string"
+                            },
                             "title": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "description": "Renderer-neutral axis coordinate type. Automatic preserves the field's semantic type.",
+                              "enum": [
+                                "automatic",
+                                "category",
+                                "value",
+                                "time"
+                              ],
                               "type": "string"
                             },
                             "unit": {

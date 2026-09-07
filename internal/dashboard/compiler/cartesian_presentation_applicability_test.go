@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
 func TestLowerCanonicalCartesianPresentationRejectsInapplicableOptions(t *testing.T) {
@@ -68,6 +69,16 @@ func TestLowerCanonicalCartesianPresentationRejectsInapplicableOptions(t *testin
 				t.Fatalf("error = %v, want %q", err, want)
 			}
 		})
+	}
+}
+
+func TestLowerCanonicalCartesianPresentationRejectsPercentDisplayUnits(t *testing.T) {
+	stacking := document.DashboardStackingModePercent
+	units := visualizationir.VisualizationDisplayUnitsAuto
+	value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", Stacking: &stacking, DisplayUnits: &units}}
+	_, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeLine)
+	if err == nil || !strings.Contains(err.Error(), "presentation.displayUnits is incompatible with percent stacking") {
+		t.Fatalf("error = %v, want percent display-unit rejection", err)
 	}
 }
 

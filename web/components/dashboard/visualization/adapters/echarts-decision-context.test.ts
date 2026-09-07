@@ -7,8 +7,8 @@ import { echartsOption } from './echarts'
 test('ECharts translates semantic axes and decision context from the current frame', () => {
   const envelope = cartesianFixture() as any
   envelope.spec.axes = [
-    { id: 'x', title: 'Month', scale: 'automatic', zero: 'automatic', tickDensity: 'sparse' },
-    { id: 'primary_y', title: 'Revenue', scale: 'linear', zero: 'exclude', minimum: 10, maximum: 100, unit: 'USD', tickDensity: 'dense' },
+    { id: 'x', title: 'Month', type: 'automatic', inversion: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic', scale: 'automatic', zero: 'automatic', tickDensity: 'sparse' },
+    { id: 'primary_y', title: 'Revenue', type: 'automatic', inversion: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic', scale: 'linear', zero: 'exclude', minimum: 10, maximum: 100, unit: 'USD', tickDensity: 'dense' },
   ]
   envelope.spec.referenceLines = [
     { id: 'target', axis: 'primary_y', value: { kind: 'number', value: 80 }, label: 'Target', tone: 'success' },

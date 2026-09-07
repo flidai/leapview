@@ -41,6 +41,13 @@ func TestValidateSpecRejectsInvalidDecisionContext(t *testing.T) {
 			},
 		}}
 	}
+	automaticAxis := func(id VisualizationCartesianAxis) VisualizationAxisConfiguration {
+		return VisualizationAxisConfiguration{
+			ID: id, Type: VisualizationAxisTypeAutomatic, Scale: VisualizationAxisScaleAutomatic, Zero: VisualizationAxisZeroPolicyAutomatic,
+			Inversion: VisualizationAxisInversionAutomatic, Ticks: VisualizationAxisTickVisibilityAutomatic, Grid: VisualizationAxisGridVisibilityAutomatic,
+			LabelRotation: VisualizationAxisLabelRotationAutomatic, DateUnit: VisualizationDateDisplayUnitAutomatic, TickDensity: VisualizationAxisTickDensityAutomatic,
+		}
+	}
 
 	if err := ValidateSpec(valid()); err != nil {
 		t.Fatalf("valid decision context: %v", err)
@@ -70,10 +77,90 @@ func TestValidateSpecRejectsInvalidDecisionContext(t *testing.T) {
 			name: "invalid log domain",
 			mutate: func(spec *CartesianVisualizationSpec) {
 				minimum := 0.0
-				axes := []VisualizationAxisConfiguration{{ID: VisualizationCartesianAxisPrimaryY, Scale: VisualizationAxisScaleLog, Zero: VisualizationAxisZeroPolicyExclude, Minimum: &minimum, TickDensity: VisualizationAxisTickDensityAutomatic}}
+				axis := automaticAxis(VisualizationCartesianAxisPrimaryY)
+				axis.Scale, axis.Zero, axis.Minimum = VisualizationAxisScaleLog, VisualizationAxisZeroPolicyExclude, &minimum
+				axes := []VisualizationAxisConfiguration{axis}
 				spec.Axes = &axes
 			},
 			want: "log scale requires positive bounds",
+		},
+		{
+			name: "category domain",
+			mutate: func(spec *CartesianVisualizationSpec) {
+				minimum := 0.0
+				typeValue := VisualizationAxisTypeCategory
+				axis := automaticAxis(VisualizationCartesianAxisX)
+				axis.Type, axis.Minimum = typeValue, &minimum
+				axes := []VisualizationAxisConfiguration{axis}
+				spec.Axes = &axes
+			},
+			want: "domain bounds require an effective numeric field",
+		},
+		{
+			name: "automatic numeric X display units",
+			mutate: func(spec *CartesianVisualizationSpec) {
+				spec.X.Field = "revenue"
+				units := VisualizationDisplayUnitsMillions
+				axis := automaticAxis(VisualizationCartesianAxisX)
+				axis.DisplayUnits = &units
+				axes := []VisualizationAxisConfiguration{axis}
+				spec.Axes = &axes
+			},
+			want: "display units require an effective numeric field",
+		},
+		{
+			name: "percent primary display units",
+			mutate: func(spec *CartesianVisualizationSpec) {
+				stacking := VisualizationStackingModePercent
+				spec.Presentation.Stacking = &stacking
+				spec.Y = []VisualizationFieldRef{{Dataset: "primary", Field: "revenue"}, {Dataset: "primary", Field: "revenue"}}
+				units := VisualizationDisplayUnitsAuto
+				axis := automaticAxis(VisualizationCartesianAxisPrimaryY)
+				axis.DisplayUnits = &units
+				axes := []VisualizationAxisConfiguration{axis}
+				spec.Axes = &axes
+			},
+			want: "display units are incompatible with percent stacking",
+		},
+		{
+			name: "category scale",
+			mutate: func(spec *CartesianVisualizationSpec) {
+				typeValue := VisualizationAxisTypeCategory
+				axis := automaticAxis(VisualizationCartesianAxisX)
+				axis.Type, axis.Scale = typeValue, VisualizationAxisScaleLinear
+				axes := []VisualizationAxisConfiguration{axis}
+				spec.Axes = &axes
+			},
+			want: "linear scale requires an effective numeric field",
+		},
+		{
+			name: "invalid axis enum",
+			mutate: func(spec *CartesianVisualizationSpec) {
+				invalid := VisualizationAxisGridVisibility("invalid")
+				axis := automaticAxis(VisualizationCartesianAxisX)
+				axis.Grid = invalid
+				axes := []VisualizationAxisConfiguration{axis}
+				spec.Axes = &axes
+			},
+			want: "unsupported grid visibility",
+		},
+		{
+			name: "invalid legacy axis enum",
+			mutate: func(spec *CartesianVisualizationSpec) {
+				axis := automaticAxis(VisualizationCartesianAxisX)
+				axis.Scale = VisualizationAxisScale("invalid")
+				axes := []VisualizationAxisConfiguration{axis}
+				spec.Axes = &axes
+			},
+			want: "unsupported scale",
+		},
+		{
+			name: "omitted required axis policy",
+			mutate: func(spec *CartesianVisualizationSpec) {
+				axes := []VisualizationAxisConfiguration{{ID: VisualizationCartesianAxisX, Scale: VisualizationAxisScaleAutomatic, Zero: VisualizationAxisZeroPolicyAutomatic, TickDensity: VisualizationAxisTickDensityAutomatic}}
+				spec.Axes = &axes
+			},
+			want: "unsupported type",
 		},
 	}
 
@@ -86,6 +173,13 @@ func TestValidateSpecRejectsInvalidDecisionContext(t *testing.T) {
 				t.Fatalf("ValidateSpec() error = %v, want containing %q", err, test.want)
 			}
 		})
+	}
+	automaticNumericX := valid()
+	automaticNumericX.Value.(*CartesianVisualizationSpec).X.Field = "revenue"
+	automaticAxisConfig := automaticAxis(VisualizationCartesianAxisX)
+	automaticNumericX.Value.(*CartesianVisualizationSpec).Axes = &[]VisualizationAxisConfiguration{automaticAxisConfig}
+	if err := ValidateSpec(automaticNumericX); err != nil {
+		t.Fatalf("automatic numeric cartesian X should retain category semantics without numeric policies: %v", err)
 	}
 }
 
@@ -153,6 +247,14 @@ func TestValidateSpecEnforcesStackingAndSeriesIntent(t *testing.T) {
 				}}
 			},
 			want: "percent stacking cannot use dual axes",
+		},
+		{
+			name: "percent with presentation display units",
+			mutate: func(spec *CartesianVisualizationSpec) {
+				units := VisualizationDisplayUnitsAuto
+				spec.Presentation.DisplayUnits = &units
+			},
+			want: "percent stacking cannot use presentation display units",
 		},
 		{
 			name: "duplicate series value",

@@ -37,6 +37,21 @@ func TestPointEnvelopeAcceptsStableBivariateRows(t *testing.T) {
 	}
 }
 
+func TestPointDecisionContextTreatsNumericXAsValueByDefault(t *testing.T) {
+	envelope := pointEnvelope(t, [][]any{{"o-1", 2.0, 80.0}, {"o-2", 4.0, 120.0}})
+	units := VisualizationDisplayUnitsMillions
+	point := envelope.Spec.Value.(*PointVisualizationSpec)
+	point.Axes = &[]VisualizationAxisConfiguration{{
+		ID: VisualizationCartesianAxisX, Type: VisualizationAxisTypeAutomatic, Scale: VisualizationAxisScaleAutomatic, Zero: VisualizationAxisZeroPolicyAutomatic,
+		Inversion: VisualizationAxisInversionAutomatic, Ticks: VisualizationAxisTickVisibilityAutomatic, Grid: VisualizationAxisGridVisibilityAutomatic,
+		LabelRotation: VisualizationAxisLabelRotationAutomatic, DateUnit: VisualizationDateDisplayUnitAutomatic, DisplayUnits: &units,
+		TickDensity: VisualizationAxisTickDensityAutomatic,
+	}}
+	if err := ValidateSpec(envelope.Spec); err != nil {
+		t.Fatalf("numeric point X should accept numeric axis options with automatic type: %v", err)
+	}
+}
+
 func pointEnvelope(t *testing.T, rows [][]any) VisualizationEnvelope {
 	t.Helper()
 	ref := func(field string) VisualizationFieldRef {

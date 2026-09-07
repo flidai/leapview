@@ -96,10 +96,11 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     data.sort((left, right) => left.value[Math.floor(left.value.length / 2)]! - right.value[Math.floor(right.value.length / 2)]!)
     const primary = context.colors.data[0] ?? context.colors.accent
     const rotateLabels = data.length > 4
+    const authoredRotation = spec.axes?.find((candidate) => candidate.id === 'x')?.labelRotation
     return {
       ...axes,
       grid: { ...axes.grid, bottom: dataZoom ? 76 : rotateLabels ? 44 : 20 },
-      xAxis: { ...axes.xAxis, data: data.map((item) => item.name), axisLabel: { ...axes.xAxis.axisLabel, interval: 0, rotate: rotateLabels ? 24 : 0 } },
+      xAxis: { ...axes.xAxis, data: data.map((item) => item.name), axisLabel: { ...axes.xAxis.axisLabel, interval: 0, ...(authoredRotation && authoredRotation !== 'automatic' ? {} : { rotate: rotateLabels ? 24 : 0 }) } },
       dataZoom,
       graphic: data.length === 0 ? [{ type: 'text', left: 'center', top: 'middle', silent: true, style: { text: 'No complete distribution data', fill: context.colors.muted, fontFamily: context.fontFamily, textAlign: 'center' } }] : undefined,
       series: [{
@@ -118,7 +119,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const extent = finiteFieldExtent(envelope, value)
     const primary = context.colors.data[0] ?? context.colors.accent
     return {
-      xAxis: axis(envelope, spec.x, 'category', context), yAxis: axis(envelope, spec.y[0]!, 'category', context),
+      xAxis: axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x'), yAxis: axis(envelope, spec.y[0]!, axisType(envelope, spec.y[0]!, 'category'), context, 'primary_y'),
       visualMap: gradient
         ? {
             type: 'continuous', dimension: value.field,
@@ -147,7 +148,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   const split = splitCartesianSeries(envelope, context, categoryColors)
   if (split) {
     const secondary = split.series.some((item) => (horizontal ? item.xAxisIndex : item.yAxisIndex) === 1)
-    const primaryAxis = axis(envelope, spec.y[0]!, 'value', context, 'primary_y', spec.y)
+    const primaryAxis = axis(envelope, spec.y[0]!, axisType(envelope, spec.y[0]!, 'value'), context, 'primary_y', spec.y)
     if (stackingMode(spec) === 'percent') applyPercentAxis(primaryAxis, context)
     if (split.scrollLegend) {
       // Crowded category-series cards surrender vertical space to a paged
@@ -158,8 +159,8 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     }
     return {
       dataset: split.datasets, grid: cartesianGrid(spec), legend: legend(spec.presentation.legend, context, split.scrollLegend), xAxis: axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x'),
-      yAxis: horizontal ? axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x') : secondary ? [primaryAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y)] : primaryAxis,
-      ...(horizontal ? { xAxis: secondary ? [primaryAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y)] : primaryAxis } : {}),
+      yAxis: horizontal ? axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x') : secondary ? [primaryAxis, axis(envelope, spec.y[0]!, axisType(envelope, spec.y[0]!, 'value'), context, 'secondary_y', spec.y)] : primaryAxis,
+      ...(horizontal ? { xAxis: secondary ? [primaryAxis, axis(envelope, spec.y[0]!, axisType(envelope, spec.y[0]!, 'value'), context, 'secondary_y', spec.y)] : primaryAxis } : {}),
       dataZoom, series: [...split.series, ...interactionHitSeries(envelope, spec, split.series)],
     }
   }
@@ -173,6 +174,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     ? new Map((spec.presentation.comboSeries ?? []).map((item) => [String(item.seriesValue), item]))
     : new Map<string, NonNullable<CartesianSpec['presentation']['comboSeries']>[number]>()
   const hasSecondaryComboAxis = spec.mark === 'combo' && values.some((value) => comboByField.get(value.field)?.axis === 'secondary')
+  const secondaryValue = spec.y.find((value) => comboByField.get(value.field)?.axis === 'secondary') ?? spec.y[0]!
   const series = values.map((value, seriesIndex) => {
     const normalizedField = normalized?.dimensions.get(value.field)
     const combo = comboByField.get(value.field)
@@ -204,8 +206,8 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     ...(normalized ? { dataset: { id: `dataset:${normalized.datasetID}`, source: normalized.source } } : {}),
     ...(hasSecondaryComboAxis
       ? horizontal
-        ? { xAxis: [xAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', values)] }
-        : { yAxis: [yAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', values)] }
+        ? { xAxis: [xAxis, axis(envelope, secondaryValue, axisType(envelope, secondaryValue, 'value'), context, 'secondary_y', values)] }
+        : { yAxis: [yAxis, axis(envelope, secondaryValue, axisType(envelope, secondaryValue, 'value'), context, 'secondary_y', values)] }
       : {}),
     legend: legend(spec.presentation.legend, context), dataZoom,
     series: [...series, ...interactionHitSeries(envelope, spec, series)],
@@ -341,7 +343,7 @@ function axisAt(option: EChartsTranslation, key: 'xAxis' | 'yAxis', index: numbe
 
 function applyTickDensity(axisOption: EChartsTranslation, density: 'automatic' | 'sparse' | 'normal' | 'dense'): void {
   if (density === 'automatic') return
-  if (axisOption.type === 'category' || axisOption.type === 'time') {
+  if (axisOption.type === 'category') {
     axisOption.axisLabel = { ...axisOption.axisLabel, interval: density === 'sparse' ? 2 : density === 'dense' ? 0 : 'auto' }
     return
   }

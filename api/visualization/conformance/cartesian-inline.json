@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "visualID": "monthly_revenue",
   "rendererID": "echarts",
   "specRevision": "sha256:6382f1fca47722d5f278cd7cddbae43b16cfa04c907a889d7896b168a2655ff2",

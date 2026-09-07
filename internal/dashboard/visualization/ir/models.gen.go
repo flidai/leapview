@@ -613,16 +613,47 @@ const (
 )
 
 type VisualizationAxisConfiguration struct {
-	ID           VisualizationCartesianAxis   `json:"id" yaml:"id"`
-	Title        *string                      `json:"title,omitempty" yaml:"title,omitempty"`
-	Scale        VisualizationAxisScale       `json:"scale" yaml:"scale"`
-	Zero         VisualizationAxisZeroPolicy  `json:"zero" yaml:"zero"`
-	Minimum      *float64                     `json:"minimum,omitempty" yaml:"minimum,omitempty"`
-	Maximum      *float64                     `json:"maximum,omitempty" yaml:"maximum,omitempty"`
-	Unit         *string                      `json:"unit,omitempty" yaml:"unit,omitempty"`
-	DisplayUnits *VisualizationDisplayUnits   `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
-	TickDensity  VisualizationAxisTickDensity `json:"tickDensity" yaml:"tickDensity"`
+	ID            VisualizationCartesianAxis      `json:"id" yaml:"id"`
+	Title         *string                         `json:"title,omitempty" yaml:"title,omitempty"`
+	Type          VisualizationAxisType           `json:"type" yaml:"type"`
+	Scale         VisualizationAxisScale          `json:"scale" yaml:"scale"`
+	Zero          VisualizationAxisZeroPolicy     `json:"zero" yaml:"zero"`
+	Inversion     VisualizationAxisInversion      `json:"inversion" yaml:"inversion"`
+	Minimum       *float64                        `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum       *float64                        `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Unit          *string                         `json:"unit,omitempty" yaml:"unit,omitempty"`
+	DisplayUnits  *VisualizationDisplayUnits      `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	TickDensity   VisualizationAxisTickDensity    `json:"tickDensity" yaml:"tickDensity"`
+	Ticks         VisualizationAxisTickVisibility `json:"ticks" yaml:"ticks"`
+	Grid          VisualizationAxisGridVisibility `json:"grid" yaml:"grid"`
+	LabelRotation VisualizationAxisLabelRotation  `json:"labelRotation" yaml:"labelRotation"`
+	DateUnit      VisualizationDateDisplayUnit    `json:"dateUnit" yaml:"dateUnit"`
 }
+
+type VisualizationAxisGridVisibility string
+
+const (
+	VisualizationAxisGridVisibilityAutomatic VisualizationAxisGridVisibility = "automatic"
+	VisualizationAxisGridVisibilityVisible   VisualizationAxisGridVisibility = "visible"
+	VisualizationAxisGridVisibilityHidden    VisualizationAxisGridVisibility = "hidden"
+)
+
+type VisualizationAxisInversion string
+
+const (
+	VisualizationAxisInversionAutomatic VisualizationAxisInversion = "automatic"
+	VisualizationAxisInversionNormal    VisualizationAxisInversion = "normal"
+	VisualizationAxisInversionInverted  VisualizationAxisInversion = "inverted"
+)
+
+type VisualizationAxisLabelRotation string
+
+const (
+	VisualizationAxisLabelRotationAutomatic  VisualizationAxisLabelRotation = "automatic"
+	VisualizationAxisLabelRotationHorizontal VisualizationAxisLabelRotation = "horizontal"
+	VisualizationAxisLabelRotationDiagonal   VisualizationAxisLabelRotation = "diagonal"
+	VisualizationAxisLabelRotationVertical   VisualizationAxisLabelRotation = "vertical"
+)
 
 type VisualizationAxisScale string
 
@@ -639,6 +670,23 @@ const (
 	VisualizationAxisTickDensitySparse    VisualizationAxisTickDensity = "sparse"
 	VisualizationAxisTickDensityNormal    VisualizationAxisTickDensity = "normal"
 	VisualizationAxisTickDensityDense     VisualizationAxisTickDensity = "dense"
+)
+
+type VisualizationAxisTickVisibility string
+
+const (
+	VisualizationAxisTickVisibilityAutomatic VisualizationAxisTickVisibility = "automatic"
+	VisualizationAxisTickVisibilityVisible   VisualizationAxisTickVisibility = "visible"
+	VisualizationAxisTickVisibilityHidden    VisualizationAxisTickVisibility = "hidden"
+)
+
+type VisualizationAxisType string
+
+const (
+	VisualizationAxisTypeAutomatic VisualizationAxisType = "automatic"
+	VisualizationAxisTypeCategory  VisualizationAxisType = "category"
+	VisualizationAxisTypeValue     VisualizationAxisType = "value"
+	VisualizationAxisTypeTime      VisualizationAxisType = "time"
 )
 
 type VisualizationAxisZeroPolicy string
@@ -1377,6 +1425,20 @@ type VisualizationDatasetSchema struct {
 	ID     string               `json:"id" yaml:"id"`
 	Fields []VisualizationField `json:"fields" yaml:"fields"`
 }
+
+type VisualizationDateDisplayUnit string
+
+const (
+	VisualizationDateDisplayUnitAutomatic VisualizationDateDisplayUnit = "automatic"
+	VisualizationDateDisplayUnitYear      VisualizationDateDisplayUnit = "year"
+	VisualizationDateDisplayUnitQuarter   VisualizationDateDisplayUnit = "quarter"
+	VisualizationDateDisplayUnitMonth     VisualizationDateDisplayUnit = "month"
+	VisualizationDateDisplayUnitWeek      VisualizationDateDisplayUnit = "week"
+	VisualizationDateDisplayUnitDay       VisualizationDateDisplayUnit = "day"
+	VisualizationDateDisplayUnitHour      VisualizationDateDisplayUnit = "hour"
+	VisualizationDateDisplayUnitMinute    VisualizationDateDisplayUnit = "minute"
+	VisualizationDateDisplayUnitSecond    VisualizationDateDisplayUnit = "second"
+)
 
 type VisualizationDatumRef struct {
 	Dataset      string         `json:"dataset" yaml:"dataset"`

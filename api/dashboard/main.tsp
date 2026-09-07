@@ -616,13 +616,19 @@ model DashboardConditionalFormat {
 model DashboardAxisConfiguration {
   id: LeapViewVisualization.VisualizationCartesianAxis;
   title?: string;
+  type?: LeapViewVisualization.VisualizationAxisType;
   scale: LeapViewVisualization.VisualizationAxisScale;
   zero: LeapViewVisualization.VisualizationAxisZeroPolicy;
+  inversion?: LeapViewVisualization.VisualizationAxisInversion;
   minimum?: float64;
   maximum?: float64;
   unit?: string;
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
   tickDensity: LeapViewVisualization.VisualizationAxisTickDensity;
+  ticks?: LeapViewVisualization.VisualizationAxisTickVisibility;
+  grid?: LeapViewVisualization.VisualizationAxisGridVisibility;
+  labelRotation?: LeapViewVisualization.VisualizationAxisLabelRotation;
+  dateUnit?: LeapViewVisualization.VisualizationDateDisplayUnit;
 }
 
 /** A scalar value used by a governed reference line, band, or annotation. */

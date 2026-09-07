@@ -242,6 +242,53 @@ enum VisualizationAxisScale {
   log: "log",
 }
 
+/** Renderer-neutral axis coordinate type. Automatic preserves the established chart-family default while temporal axes remain time axes. */
+enum VisualizationAxisType {
+  automatic: "automatic",
+  category: "category",
+  value: "value",
+  time: "time",
+}
+
+/** Renderer-neutral axis direction. Automatic keeps the conventional direction. */
+enum VisualizationAxisInversion {
+  automatic: "automatic",
+  normal: "normal",
+  inverted: "inverted",
+}
+
+enum VisualizationAxisTickVisibility {
+  automatic: "automatic",
+  visible: "visible",
+  hidden: "hidden",
+}
+
+enum VisualizationAxisGridVisibility {
+  automatic: "automatic",
+  visible: "visible",
+  hidden: "hidden",
+}
+
+enum VisualizationAxisLabelRotation {
+  automatic: "automatic",
+  horizontal: "horizontal",
+  diagonal: "diagonal",
+  vertical: "vertical",
+}
+
+/** Semantic date granularity for labels on a temporal axis. */
+enum VisualizationDateDisplayUnit {
+  automatic: "automatic",
+  year: "year",
+  quarter: "quarter",
+  month: "month",
+  week: "week",
+  day: "day",
+  hour: "hour",
+  minute: "minute",
+  second: "second",
+}
+
 enum VisualizationAxisZeroPolicy {
   automatic: "automatic",
   include: "include",
@@ -554,13 +601,19 @@ model FieldVisualizationReferenceValue extends VisualizationReferenceValue {
 model VisualizationAxisConfiguration {
   `id`: VisualizationCartesianAxis;
   `title`?: string;
+  `type`: VisualizationAxisType;
   `scale`: VisualizationAxisScale;
   `zero`: VisualizationAxisZeroPolicy;
+  `inversion`: VisualizationAxisInversion;
   `minimum`?: float64;
   `maximum`?: float64;
   `unit`?: string;
   `displayUnits`?: VisualizationDisplayUnits;
   `tickDensity`: VisualizationAxisTickDensity;
+  `ticks`: VisualizationAxisTickVisibility;
+  `grid`: VisualizationAxisGridVisibility;
+  `labelRotation`: VisualizationAxisLabelRotation;
+  `dateUnit`: VisualizationDateDisplayUnit;
 }
 
 model VisualizationReferenceLine {
@@ -1387,7 +1440,7 @@ model VisualizationDiagnostic {
 @apigen.contract(#{ kind: "visualization-envelope", tags: #["visualization", "ir"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "visualization-envelope" })
 model VisualizationEnvelope {
-  `schemaVersion`: 12;
+  `schemaVersion`: 13;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;

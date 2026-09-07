@@ -62466,13 +62466,19 @@ components:
           items:
             $ref: '#/components/schemas/DashboardAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -62505,13 +62511,19 @@ components:
               tone: neutral
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         dataZoom: true
@@ -62666,13 +62678,19 @@ components:
           items:
             $ref: '#/components/schemas/VisualizationAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -62714,13 +62732,19 @@ components:
           $ref: '#/components/schemas/CartesianVisualizationPresentation'
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         eventAnnotations:
@@ -67080,10 +67104,14 @@ components:
         title:
           type: string
           example: example
+        type:
+          $ref: '#/components/schemas/VisualizationAxisType'
         scale:
           $ref: '#/components/schemas/VisualizationAxisScale'
         zero:
           $ref: '#/components/schemas/VisualizationAxisZeroPolicy'
+        inversion:
+          $ref: '#/components/schemas/VisualizationAxisInversion'
         minimum:
           type: number
           format: double
@@ -67099,15 +67127,29 @@ components:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
         tickDensity:
           $ref: '#/components/schemas/VisualizationAxisTickDensity'
+        ticks:
+          $ref: '#/components/schemas/VisualizationAxisTickVisibility'
+        grid:
+          $ref: '#/components/schemas/VisualizationAxisGridVisibility'
+        labelRotation:
+          $ref: '#/components/schemas/VisualizationAxisLabelRotation'
+        dateUnit:
+          $ref: '#/components/schemas/VisualizationDateDisplayUnit'
       description: A renderer-neutral axis policy for Cartesian and point visuals.
       example:
+        dateUnit: automatic
         displayUnits: auto
+        grid: automatic
         id: x
+        inversion: automatic
+        labelRotation: automatic
         maximum: 1
         minimum: 1
         scale: automatic
         tickDensity: automatic
+        ticks: automatic
         title: example
+        type: automatic
         unit: example
         zero: automatic
     DashboardCalculation:
@@ -75971,13 +76013,19 @@ components:
           items:
             $ref: '#/components/schemas/DashboardAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -76012,13 +76060,19 @@ components:
         channels.
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         brush:
@@ -76230,13 +76284,19 @@ components:
           items:
             $ref: '#/components/schemas/VisualizationAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -76271,13 +76331,19 @@ components:
           $ref: '#/components/schemas/PointVisualizationPresentation'
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         color:
@@ -83053,19 +83119,29 @@ components:
       type: object
       required:
         - id
+        - type
         - scale
         - zero
+        - inversion
         - tickDensity
+        - ticks
+        - grid
+        - labelRotation
+        - dateUnit
       properties:
         id:
           $ref: '#/components/schemas/VisualizationCartesianAxis'
         title:
           type: string
           example: example
+        type:
+          $ref: '#/components/schemas/VisualizationAxisType'
         scale:
           $ref: '#/components/schemas/VisualizationAxisScale'
         zero:
           $ref: '#/components/schemas/VisualizationAxisZeroPolicy'
+        inversion:
+          $ref: '#/components/schemas/VisualizationAxisInversion'
         minimum:
           type: number
           format: double
@@ -83081,16 +83157,54 @@ components:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
         tickDensity:
           $ref: '#/components/schemas/VisualizationAxisTickDensity'
+        ticks:
+          $ref: '#/components/schemas/VisualizationAxisTickVisibility'
+        grid:
+          $ref: '#/components/schemas/VisualizationAxisGridVisibility'
+        labelRotation:
+          $ref: '#/components/schemas/VisualizationAxisLabelRotation'
+        dateUnit:
+          $ref: '#/components/schemas/VisualizationDateDisplayUnit'
       example:
+        dateUnit: automatic
         displayUnits: auto
+        grid: automatic
         id: x
+        inversion: automatic
+        labelRotation: automatic
         maximum: 1
         minimum: 1
         scale: automatic
         tickDensity: automatic
+        ticks: automatic
         title: example
+        type: automatic
         unit: example
         zero: automatic
+    VisualizationAxisGridVisibility:
+      type: string
+      enum:
+        - automatic
+        - visible
+        - hidden
+      example: automatic
+    VisualizationAxisInversion:
+      type: string
+      enum:
+        - automatic
+        - normal
+        - inverted
+      description: Renderer-neutral axis direction. Automatic keeps the conventional
+        direction.
+      example: automatic
+    VisualizationAxisLabelRotation:
+      type: string
+      enum:
+        - automatic
+        - horizontal
+        - diagonal
+        - vertical
+      example: automatic
     VisualizationAxisScale:
       type: string
       enum:
@@ -83105,6 +83219,23 @@ components:
         - sparse
         - normal
         - dense
+      example: automatic
+    VisualizationAxisTickVisibility:
+      type: string
+      enum:
+        - automatic
+        - visible
+        - hidden
+      example: automatic
+    VisualizationAxisType:
+      type: string
+      enum:
+        - automatic
+        - category
+        - value
+        - time
+      description: Renderer-neutral axis coordinate type. Automatic preserves the
+        established chart-family default while temporal axes remain time axes.
       example: automatic
     VisualizationAxisZeroPolicy:
       type: string
@@ -83677,6 +83808,20 @@ components:
               timezone: example
               weekStart: monday
         id: example
+    VisualizationDateDisplayUnit:
+      type: string
+      enum:
+        - automatic
+        - year
+        - quarter
+        - month
+        - week
+        - day
+        - hour
+        - minute
+        - second
+      description: Semantic date granularity for labels on a temporal axis.
+      example: automatic
     VisualizationDatumRef:
       type: object
       required:

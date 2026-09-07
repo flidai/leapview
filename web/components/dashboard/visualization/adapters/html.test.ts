@@ -130,7 +130,7 @@ test('HTML KPI layout requirements come only from explicitly configured features
 
 test('HTML KPI status layout is driven by qualitative ranges', () => {
   const envelope = {
-    schemaVersion: 12, visualID: 'revenue', rendererID: 'html', specRevision: 'sha256:status', dataRevision: 1,
+    schemaVersion: 13, visualID: 'revenue', rendererID: 'html', specRevision: 'sha256:status', dataRevision: 1,
     spec: {
       kind: 'kpi', title: 'Revenue', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' }] }],
       dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Revenue', description: 'Revenue' }, interactions: [],

@@ -116,6 +116,16 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   expect(temporal.xAxis.axisLabel.hideOverlap).toBe(true)
   expect(temporal.xAxis.axisLabel.formatter(Date.UTC(2026, 0, 2))).toMatch(/2026/)
   expect(temporal.xAxis.axisLabel.formatter(Date.UTC(2026, 0, 2))).not.toContain('1767')
+  envelope.spec.axes = [{
+    id: 'x', type: 'time', inversion: 'inverted', ticks: 'visible', grid: 'hidden', labelRotation: 'vertical', dateUnit: 'month',
+    scale: 'automatic', zero: 'automatic', tickDensity: 'normal',
+  }, {
+    id: 'primary_y', type: 'value', inversion: 'normal', ticks: 'hidden', grid: 'visible', labelRotation: 'horizontal', dateUnit: 'automatic',
+    scale: 'linear', zero: 'automatic', tickDensity: 'normal',
+  }]
+  const authoredAxes = echartsOption(envelope, defaultRendererContext) as any
+  expect(authoredAxes.xAxis).toMatchObject({ type: 'time', inverse: true, axisTick: { show: true }, splitLine: { show: false }, axisLabel: { rotate: 90 } })
+  expect(authoredAxes.yAxis).toMatchObject({ type: 'value', axisTick: { show: false }, splitLine: { show: true } })
 
   expect(brushSelectionCommands(envelope, {
     batch: [{ selected: [{ seriesIndex: 0, dataIndex: [1, 0, 1] }] }],
@@ -387,6 +397,15 @@ test('ECharts translation preserves combo series marks and axes', () => {
   expect(option.series[0].markLine.data[0].id).toBe('reference-line:primary-target')
   expect(option.series[1].markLine.data[0].id).toBe('reference-line:secondary-target')
   expect(option.series[1].markArea.data[0][0].id).toBe('reference-band:secondary-range')
+  const temporal = structuredClone(base) as any
+  temporal.spec.datasets[0].fields[2].dataType = 'temporal'
+  temporal.spec.axes = [{
+    id: 'primary_y', type: 'automatic', scale: 'automatic', zero: 'automatic', inversion: 'automatic',
+    tickDensity: 'normal', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'month',
+  }]
+  const temporalOption = echartsOption(temporal, defaultRendererContext) as any
+  expect(temporalOption.yAxis[0].type).toBe('time')
+  expect(temporalOption.yAxis[0].axisLabel.formatter(Date.UTC(2026, 0, 1))).toBe('Jan 2026')
   const horizontal = structuredClone(base) as any
   horizontal.spec.presentation.orientation = 'horizontal'
   const horizontalOption = echartsOption(horizontal) as any
@@ -434,6 +453,18 @@ test('ECharts translation applies combo marks and axes to multi-measure series',
     defaultRendererContext.colors.data[1],
   ])
   expect(option.grid.bottom).toBe(44)
+  const temporalSecondary = structuredClone(envelope) as any
+  temporalSecondary.spec.datasets[0].fields[2].dataType = 'temporal'
+  temporalSecondary.spec.axes = [{
+    id: 'secondary_y', type: 'automatic', scale: 'automatic', zero: 'automatic', inversion: 'inverted',
+    tickDensity: 'sparse', ticks: 'visible', grid: 'hidden', labelRotation: 'diagonal', dateUnit: 'month',
+  }]
+  const temporalOption = echartsOption(temporalSecondary, defaultRendererContext) as any
+  expect(temporalOption.yAxis[1]).toMatchObject({ type: 'time', inverse: true, splitNumber: 3, axisTick: { show: true }, splitLine: { show: false }, axisLabel: { rotate: 45 } })
+  expect(temporalOption.yAxis[1].axisLabel.formatter(Date.UTC(2026, 0, 1))).toBe('Jan 2026')
+  temporalSecondary.spec.presentation.orientation = 'horizontal'
+  const temporalHorizontalOption = echartsOption(temporalSecondary, defaultRendererContext) as any
+  expect(temporalHorizontalOption.xAxis[1]).toMatchObject({ type: 'time', inverse: true, splitNumber: 3 })
 })
 
 test('ECharts normalizes stacks and preserves series order and color identity across filters', () => {
@@ -666,7 +697,7 @@ test('ECharts uses stable IDs, contractual formatting, and resolved theme colors
 
   if (envelope.spec.kind !== 'cartesian') throw new Error('test fixture must be cartesian')
   envelope.spec.presentation.displayUnits = 'thousands'
-  envelope.spec.axes = [{ id: 'primary_y', scale: 'automatic', zero: 'automatic', displayUnits: 'millions', tickDensity: 'automatic' }]
+  envelope.spec.axes = [{ id: 'primary_y', type: 'automatic', inversion: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic', scale: 'automatic', zero: 'automatic', displayUnits: 'millions', tickDensity: 'automatic' }]
   const overridden = echartsOption(envelope, context) as any
   expect(overridden.yAxis.axisLabel.formatter(1234.5)).toBe('R$\u00a00,00123M')
   expect(overridden.series[0].label.formatter({ value: ['Jan', 1234.5] })).toBe('R$\u00a00,00123M')
