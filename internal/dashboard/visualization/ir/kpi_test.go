@@ -173,4 +173,20 @@ func TestValidateSpecKPIConditionalFormattingRequiresValueField(t *testing.T) {
 	if err := ValidateSpec(spec); err != nil {
 		t.Fatalf("ValidateSpec() rejected KPI value conditional formatting: %v", err)
 	}
+
+	icon := VisualizationIconIntentCircle
+	(*spec.Value.(*KPIVisualizationSpec).ConditionalFormatting)[0].Rule = VisualizationConditionalRule{Value: &FieldVisualizationConditionalRule{
+		VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "field"}, Kind: "field",
+		Source:    VisualizationFieldRef{Dataset: "comparison", Field: "value"},
+		Values:    map[string]VisualizationConditionalStyle{"high": {Icon: &icon}},
+		NullStyle: VisualizationConditionalStyle{Icon: &icon}, DefaultStyle: VisualizationConditionalStyle{Icon: &icon},
+	}}
+	if err := ValidateSpec(spec); err == nil || !strings.Contains(err.Error(), "spec.conditionalFormatting[0].rule.source.dataset") || !strings.Contains(err.Error(), `does not match row dataset "primary"`) {
+		t.Fatalf("ValidateSpec() error = %v, want path-bearing KPI source row-dataset diagnostic", err)
+	}
+
+	(*spec.Value.(*KPIVisualizationSpec).ConditionalFormatting)[0].Rule.Value.(*FieldVisualizationConditionalRule).Source = VisualizationFieldRef{Dataset: "primary", Field: "value"}
+	if err := ValidateSpec(spec); err != nil {
+		t.Fatalf("ValidateSpec() rejected KPI same-dataset conditional source: %v", err)
+	}
 }

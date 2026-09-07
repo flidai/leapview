@@ -420,6 +420,10 @@ function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][n
         }
       : baseFormatter
   const translated = echartsLabelPolicy(envelope, value?.dataset ?? spec.x.dataset, spec.presentation.labelPolicy, formatter, context)
+  if (cue) {
+    translated.label.show = true
+    translated.labelLayout = { hideOverlap: false }
+  }
   translated.label.position = position
   if (color) translated.label.color = color
   else if (authored !== 'outside' && ['bar', 'column', 'waterfall', 'histogram'].includes(spec.mark)) {
@@ -512,7 +516,9 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
     && spec.presentation.labelPolicy.tooltipFallback
     && (values.length > 4 || dataset.rows.length > 24)
   if (crowded) {
+    const cue = conditionalCueFormat(envelope, spec.y[0]!)
     for (const item of series) {
+      if (cue) continue
       item.label = { ...item.label, show: false }
       item.labelLayout = { hideOverlap: true }
     }
@@ -647,6 +653,10 @@ function percentLabel(
       : baseFormatter,
     context,
   )
+  if (cue) {
+    translated.label.show = true
+    translated.labelLayout = { hideOverlap: false }
+  }
   if (color) translated.label.color = color
   return translated
 }

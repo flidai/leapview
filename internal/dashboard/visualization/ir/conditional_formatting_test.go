@@ -151,6 +151,110 @@ func TestValidateSpecAllowsGovernedProportionalCategoryColors(t *testing.T) {
 	}
 }
 
+func TestValidateSpecRejectsConditionalFormattingOutsideRendererRowDataset(t *testing.T) {
+	t.Parallel()
+
+	ref := func(dataset, field string) VisualizationFieldRef {
+		return VisualizationFieldRef{Dataset: dataset, Field: field}
+	}
+	color := VisualizationColorIntentDanger
+	format := func() VisualizationConditionalFormat {
+		return VisualizationConditionalFormat{
+			ID: "secondary-score", Target: VisualizationConditionalTargetMarkFill, Field: ref("context", "score"),
+			Rule: VisualizationConditionalRule{Value: &GradientVisualizationConditionalRule{
+				VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "gradient"}, Kind: "gradient", Minimum: 0, Maximum: 100,
+				Low: VisualizationConditionalStyle{Color: &color}, High: VisualizationConditionalStyle{Color: &color}, NullStyle: VisualizationConditionalStyle{Color: &color},
+			}},
+		}
+	}
+	base := func(kind string) VisualizationSpecBase {
+		return VisualizationSpecBase{
+			Kind: kind, Title: kind,
+			Datasets: []VisualizationDatasetSchema{
+				{ID: "primary", Fields: []VisualizationField{
+					{ID: "id", Role: VisualizationFieldRoleIdentity, DataType: VisualizationDataTypeString, Label: "ID"},
+					{ID: "label", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Label"},
+					{ID: "x", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "X"},
+					{ID: "y", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Y"},
+				}},
+				{ID: "context", Fields: []VisualizationField{{ID: "score", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Score"}}},
+			},
+			DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+			Accessibility: VisualizationAccessibility{Title: kind, Description: kind},
+			Interactions:  []VisualizationInteraction{},
+		}
+	}
+	presentation := testVisualizationPresentation(VisualizationLegendPositionBottom)
+	tests := []struct {
+		name string
+		spec VisualizationSpec
+	}{
+		{
+			name: "point color channel",
+			spec: func() VisualizationSpec {
+				baseValue := base("point")
+				baseValue.ConditionalFormatting = &[]VisualizationConditionalFormat{format()}
+				return VisualizationSpec{Value: &PointVisualizationSpec{
+					VisualizationSpecBase: baseValue, Kind: "point", Identity: []VisualizationFieldRef{ref("primary", "id")}, X: ref("primary", "x"), Y: ref("primary", "y"),
+					Color:        func() *VisualizationFieldRef { value := ref("context", "score"); return &value }(),
+					ColorScale:   &PointVisualizationColorScale{Kind: VisualizationPointColorScaleKindQuantitative},
+					Presentation: PointVisualizationPresentation{VisualizationPresentation: presentation, Overplot: VisualizationPointOverplotStrategyOpacity, Opacity: 0.7, LargeMode: VisualizationPointLargeModeNever, LargeThreshold: 100, Brush: []VisualizationPointBrushGesture{}},
+				}}
+			}(),
+		},
+		{
+			name: "cartesian y channel",
+			spec: func() VisualizationSpec {
+				baseValue := base("cartesian")
+				baseValue.ConditionalFormatting = &[]VisualizationConditionalFormat{format()}
+				return VisualizationSpec{Value: &CartesianVisualizationSpec{
+					VisualizationSpecBase: baseValue, Kind: "cartesian", Mark: VisualizationCartesianMarkLine, X: ref("primary", "label"), Y: []VisualizationFieldRef{ref("context", "score")},
+					Presentation: CartesianVisualizationPresentation{VisualizationPresentation: presentation},
+				}}
+			}(),
+		},
+		{
+			name: "proportional value channel",
+			spec: func() VisualizationSpec {
+				baseValue := base("proportional")
+				baseValue.ConditionalFormatting = &[]VisualizationConditionalFormat{format()}
+				return VisualizationSpec{Value: &ProportionalVisualizationSpec{
+					VisualizationSpecBase: baseValue, Kind: "proportional", Mark: VisualizationProportionalMarkPie, Category: ref("primary", "label"), Value: ref("context", "score"),
+					Presentation: ProportionalVisualizationPresentation{VisualizationPresentation: presentation, Orientation: VisualizationOrientationVertical},
+				}}
+			}(),
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateSpec(test.spec)
+			if err == nil || !strings.Contains(err.Error(), "spec.conditionalFormatting[0].field.dataset") || !strings.Contains(err.Error(), `does not match row dataset "primary"`) {
+				t.Fatalf("ValidateSpec() error = %v, want path-bearing row-dataset diagnostic", err)
+			}
+		})
+	}
+	t.Run("field rule source", func(t *testing.T) {
+		color := VisualizationColorIntentDanger
+		baseValue := base("cartesian")
+		baseValue.ConditionalFormatting = &[]VisualizationConditionalFormat{{
+			ID: "secondary-source", Target: VisualizationConditionalTargetMarkFill, Field: ref("primary", "y"),
+			Rule: VisualizationConditionalRule{Value: &FieldVisualizationConditionalRule{
+				VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "field"}, Kind: "field", Source: ref("context", "score"),
+				Values: map[string]VisualizationConditionalStyle{"high": {Color: &color}}, NullStyle: VisualizationConditionalStyle{Color: &color}, DefaultStyle: VisualizationConditionalStyle{Color: &color},
+			}},
+		}}
+		spec := VisualizationSpec{Value: &CartesianVisualizationSpec{
+			VisualizationSpecBase: baseValue, Kind: "cartesian", Mark: VisualizationCartesianMarkLine, X: ref("primary", "label"), Y: []VisualizationFieldRef{ref("primary", "y")},
+			Presentation: CartesianVisualizationPresentation{VisualizationPresentation: presentation},
+		}}
+		err := ValidateSpec(spec)
+		if err == nil || !strings.Contains(err.Error(), "spec.conditionalFormatting[0].rule.source.dataset") || !strings.Contains(err.Error(), `does not match row dataset "primary"`) {
+			t.Fatalf("ValidateSpec() error = %v, want path-bearing source row-dataset diagnostic", err)
+		}
+	})
+}
+
 func TestValidateConditionalFormattingTargetAllowlists(t *testing.T) {
 	t.Parallel()
 

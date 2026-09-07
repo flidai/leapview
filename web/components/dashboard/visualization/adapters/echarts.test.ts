@@ -261,7 +261,7 @@ test('ECharts applies governed row formatting with theme colors and redundant cu
   expect(option.series[0].itemStyle.color({ value: ['A', 25] })).toBe('rgb(162 57 48)')
   expect(option.series[0].itemStyle.color({ value: ['B', 75] })).toBe('rgb(71 104 53)')
   expect(option.series[0].label.show).toBe(true)
-  expect(option.series[0].labelLayout({ dataIndex: 0 }).hideOverlap).toBe(false)
+  expect(option.series[0].labelLayout).toEqual({ hideOverlap: false })
   expect(option.series[0].label.formatter({ value: ['A', 25] })).toBe('↓ 25')
   expect(option.series[0].label.formatter({ value: ['B', 75] })).toBe('↑ 75')
 })
@@ -281,6 +281,22 @@ test('ECharts gives explicit icon targets precedence when Cartesian formats shar
   ]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series[0].label.formatter({ value: ['A', 1] })).toBe('↑ 1')
+})
+
+test('ECharts keeps Cartesian conditional icons visible when labels are hidden', () => {
+  const envelope = cartesianFixture('column') as any
+  envelope.spec.presentation.labelPolicy.density = 'hidden'
+  envelope.spec.conditionalFormatting = [{
+    id: 'value-icon', target: 'icon', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'arrow_up' } }],
+      nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'arrow_down' },
+    },
+  }]
+
+  const series = (echartsOption(envelope, defaultRendererContext) as any).series[0]
+  expect(series).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
+  expect(series.label.formatter({ value: ['A', 1] })).toBe('↑ 1')
 })
 
 test('ECharts translates governed heatmap gradients and waterfall rule styles', () => {
