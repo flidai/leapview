@@ -86,7 +86,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  if (!server?.listening) return
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve())
+    server.closeIdleConnections()
+  })
 }, 15_000)
 
 test('Data Explorer retains the last good result through draft and run lifecycle failures', async () => {
