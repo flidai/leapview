@@ -9,10 +9,10 @@ import { blankMapStyle, loadGeometryAsset, loadMapStyleAsset, registerPMTilesPro
 import { applyBasemapTheme, applyDataLabelTheme, basemapThemeKey, createBasemapThemeScheduler, mapDataLabelColors, mapThemeColors, scheduleBasemapThemeMutation, type BasemapColors, type DataLabelColors } from './maplibre/basemap'
 import { installMapLibreChromeStyles } from './maplibre/chrome'
 import { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
-import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledPrecisionLayerIDs } from './maplibre/layers'
+import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerIDs, type TiledLayerStyleUpdate } from './maplibre/layers'
 import { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
 import { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries, type RenderedFeatureLocator } from './maplibre/overlays'
-import { emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, setMapStyleAndWait, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
+import { applyTiledPrecisionLayerVisibility, emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, setMapStyleAndWait, tiledPrecisionLayerFamily, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
 import { MapSpatialSelectionControl } from './maplibre/spatial-selection-control'
 import { combineMapFilters, formatMapRangeValue, mapValueFilteredEnvelope, mapValueFilterExpression, mapValueRange, mapValueRangePercent, withMapValueSelection, type MapValueRange } from './maplibre/value-range'
 import { coordinateReferenceGrid, fitMapToGeographicData, fitMapToSpatialExtent, resetMapToHome, type MapHomeCamera } from './maplibre/viewport'
@@ -21,10 +21,10 @@ export { loadMapStyleAsset, sameOriginGeometryURL, verifyGeometryDigest } from '
 export { applyBasemapTheme, applyDataLabelTheme, basemapBoundaryLayer, basemapLayer, basemapThemeKey, concreteCSSColor, createBasemapThemeScheduler, effectiveMapTheme, mapDataLabelColors, mapThemeColors } from './maplibre/basemap'
 export { mapLibreChromeCSS } from './maplibre/chrome'
 export { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
-export { applyFeatureScales, mapLayer, mapOutlineLayer, normalizeFeatureWeights, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledPrecisionLayerIDs } from './maplibre/layers'
+export { applyFeatureScales, mapLayer, mapOutlineLayer, normalizeFeatureWeights, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerIDs } from './maplibre/layers'
 export { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
 export { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries } from './maplibre/overlays'
-export { installWebGLRecovery, removeRendererFrame, setMapStyleAndWait, waitForMapIdle, waitForMapRender } from './maplibre/lifecycle'
+export { applyTiledPrecisionLayerVisibility, installWebGLRecovery, removeRendererFrame, setMapStyleAndWait, tiledPrecisionLayerFamily, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, waitForMapIdle, waitForMapRender } from './maplibre/lifecycle'
 export { coordinateReferenceGrid, fitMapToGeographicData, resetMapToHome } from './maplibre/viewport'
 
 export const mapAccessibleTableStyle = 'position:absolute;z-index:3;left:10px;bottom:50px;max-width:min(520px,calc(100% - 20px));max-height:55%;overflow:auto;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary);box-shadow:0 1px 3px rgba(31,35,40,.12)'
@@ -149,8 +149,6 @@ export const adapter: RendererAdapter = {
 }
 
 type RendererFramePresentationTarget = Pick<HTMLElement, 'style' | 'setAttribute' | 'removeAttribute'>
-type TiledPrecisionLayerFamily = 'hidden' | 'raw' | 'aggregate'
-type TiledLayerVisibilityTarget = Pick<MapLibreMap, 'getLayer' | 'setLayoutProperty'>
 
 export function setRendererFramePresented(frame: RendererFramePresentationTarget, presented: boolean): void {
   frame.style.visibility = presented ? 'visible' : 'hidden'
@@ -1172,65 +1170,6 @@ export class MapLibreHandle implements RendererHandle {
     return mapDataLabelColors(theme, this.context.theme)
   }
 
-}
-
-type TiledLayerStyleUpdate = { id: string; paint?: Record<string, unknown>; filter?: unknown[]; minzoom?: number; maxzoom?: number }
-
-export function tiledRawPrecisionVisible(zoom: number, rawMinimumZoom: number): boolean {
-	return zoom >= rawMinimumZoom
-}
-
-/** A new tile capability is a new source generation; never reuse rendered tiles across it. */
-export function tiledSourceTransition(previousTileTemplate: string | undefined, nextTileTemplate: string): 'stable' | 'replace' {
-  return previousTileTemplate !== undefined && previousTileTemplate !== nextTileTemplate ? 'replace' : 'stable'
-}
-
-export function tiledSourceLifecycle(transition: 'stable' | 'replace', sourceUpdated: boolean): 'stable' | 'waiting' | 'error' {
-  if (!sourceUpdated) return 'error'
-  return transition === 'replace' ? 'waiting' : 'stable'
-}
-
-export function tiledSourceEventReady(event: { sourceId?: string; isSourceLoaded?: boolean; sourceDataType?: string }, sourceID: string | undefined): boolean {
-  return event.sourceId === sourceID && (event.sourceDataType === 'content' || event.isSourceLoaded === true)
-}
-
-export function tiledPrecisionLayerFamily(transitioning: boolean, zoom: number, rawMinimumZoom: number): TiledPrecisionLayerFamily {
-  if (transitioning) return 'hidden'
-  return tiledRawPrecisionVisible(zoom, rawMinimumZoom) ? 'raw' : 'aggregate'
-}
-
-export function applyTiledPrecisionLayerVisibility(target: TiledLayerVisibilityTarget, rawLayerIDs: string[], aggregateLayerIDs: string[], family: TiledPrecisionLayerFamily): void {
-  const rawVisible = family === 'raw'
-  const aggregateVisible = family === 'aggregate'
-  for (const id of rawLayerIDs) if (target.getLayer(id)) target.setLayoutProperty(id, 'visibility', rawVisible ? 'visible' : 'none')
-  for (const id of aggregateLayerIDs) if (target.getLayer(id)) target.setLayoutProperty(id, 'visibility', aggregateVisible ? 'visible' : 'none')
-}
-
-export function tiledLayerPaintUpdates(envelope: VisualizationEnvelope, sourceID: string): TiledLayerStyleUpdate[] {
-	if (envelope.dataState.kind !== 'spatial_tiled' || envelope.spec.kind !== 'geographic') return []
-	const updates: TiledLayerStyleUpdate[] = []
-	for (const layer of envelope.spec.layers) {
-		if (layer.kind !== 'point' && layer.kind !== 'heat' && layer.kind !== 'density') continue
-		const id = `lv-${layer.id}`
-		const raw = mapLayer(id, layer, envelope.dataState, sourceID)
-		updates.push({ id, paint: raw.paint, filter: raw.filter, minzoom: raw.minzoom, maxzoom: raw.maxzoom })
-		if (layer.kind === 'point') {
-			const aggregateID = `${id}-aggregate`
-			const aggregate = tiledAggregatePointLayer(aggregateID, sourceID, layer, envelope.dataState)
-			updates.push({ id: aggregateID, paint: aggregate.paint, filter: aggregate.filter, minzoom: aggregate.minzoom, maxzoom: aggregate.maxzoom })
-			if (layer.cluster.enabled && layer.cluster.showCount) {
-				const countID = `${id}-aggregate-count`
-				const count = tiledAggregateCountLayer(countID, sourceID, layer, envelope.dataState)
-				updates.push({ id: countID, filter: count.filter, minzoom: count.minzoom, maxzoom: count.maxzoom })
-			}
-		}
-		if (layer.kind === 'heat' || layer.kind === 'density') {
-			const aggregateID = `${id}-aggregate`
-			const aggregate = tiledAggregateHeatLayer(aggregateID, sourceID, layer, envelope.dataState)
-			updates.push({ id: aggregateID, paint: aggregate.paint, filter: aggregate.filter, minzoom: aggregate.minzoom, maxzoom: aggregate.maxzoom })
-		}
-	}
-	return updates
 }
 
 function rangeInput(label: string, range: MapValueRange, value: number): HTMLInputElement {

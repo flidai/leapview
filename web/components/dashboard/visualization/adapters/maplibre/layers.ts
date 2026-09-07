@@ -1,9 +1,38 @@
 import type { FeatureCollection } from 'geojson'
-import type { SpatialTiledVisualizationDataState, VisualizationGeographicLayer } from '../../../../../generated/visualization'
+import type { SpatialTiledVisualizationDataState, VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../../generated/visualization'
 
 export function tiledPrecisionLayerIDs(family: 'hidden' | 'raw' | 'aggregate', rawLayerIDs: readonly string[], aggregateLayerIDs: readonly string[], candidates?: readonly string[]): string[] {
 	const layerIDs = family === 'raw' ? [...rawLayerIDs] : family === 'aggregate' ? [...aggregateLayerIDs] : []
 	return candidates ? layerIDs.filter((id) => candidates.includes(id)) : layerIDs
+}
+
+export type TiledLayerStyleUpdate = { id: string; paint?: Record<string, unknown>; filter?: unknown[]; minzoom?: number; maxzoom?: number }
+
+export function tiledLayerPaintUpdates(envelope: VisualizationEnvelope, sourceID: string): TiledLayerStyleUpdate[] {
+	if (envelope.dataState.kind !== 'spatial_tiled' || envelope.spec.kind !== 'geographic') return []
+	const updates: TiledLayerStyleUpdate[] = []
+	for (const layer of envelope.spec.layers) {
+		if (layer.kind !== 'point' && layer.kind !== 'heat' && layer.kind !== 'density') continue
+		const id = `lv-${layer.id}`
+		const raw = mapLayer(id, layer, envelope.dataState, sourceID)
+		updates.push({ id, paint: raw.paint, filter: raw.filter, minzoom: raw.minzoom, maxzoom: raw.maxzoom })
+		if (layer.kind === 'point') {
+			const aggregateID = `${id}-aggregate`
+			const aggregate = tiledAggregatePointLayer(aggregateID, sourceID, layer, envelope.dataState)
+			updates.push({ id: aggregateID, paint: aggregate.paint, filter: aggregate.filter, minzoom: aggregate.minzoom, maxzoom: aggregate.maxzoom })
+			if (layer.cluster.enabled && layer.cluster.showCount) {
+				const countID = `${id}-aggregate-count`
+				const count = tiledAggregateCountLayer(countID, sourceID, layer, envelope.dataState)
+				updates.push({ id: countID, filter: count.filter, minzoom: count.minzoom, maxzoom: count.maxzoom })
+			}
+		}
+		if (layer.kind === 'heat' || layer.kind === 'density') {
+			const aggregateID = `${id}-aggregate`
+			const aggregate = tiledAggregateHeatLayer(aggregateID, sourceID, layer, envelope.dataState)
+			updates.push({ id: aggregateID, paint: aggregate.paint, filter: aggregate.filter, minzoom: aggregate.minzoom, maxzoom: aggregate.maxzoom })
+		}
+	}
+	return updates
 }
 
 export function mapLayer(id: string, layerOrKind: VisualizationGeographicLayer | VisualizationGeographicLayer['kind'], tiled?: SpatialTiledVisualizationDataState, sourceID = id): any {

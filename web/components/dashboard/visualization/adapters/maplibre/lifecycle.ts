@@ -57,6 +57,43 @@ export function waitForMapRender(map: MapLibreMap): Promise<void> {
   return waitForMapEvent(map, ['idle', 'render'], 2_000)
 }
 
+export function tiledRawPrecisionVisible(zoom: number, rawMinimumZoom: number): boolean {
+  return zoom >= rawMinimumZoom
+}
+
+/** A new tile capability is a new source generation; never reuse rendered tiles across it. */
+export function tiledSourceTransition(previousTileTemplate: string | undefined, nextTileTemplate: string): 'stable' | 'replace' {
+  return previousTileTemplate !== undefined && previousTileTemplate !== nextTileTemplate ? 'replace' : 'stable'
+}
+
+export function tiledSourceLifecycle(transition: 'stable' | 'replace', sourceUpdated: boolean): 'stable' | 'waiting' | 'error' {
+  if (!sourceUpdated) return 'error'
+  return transition === 'replace' ? 'waiting' : 'stable'
+}
+
+export function tiledSourceEventReady(event: { sourceId?: string; isSourceLoaded?: boolean; sourceDataType?: string }, sourceID: string | undefined): boolean {
+  return event.sourceId === sourceID && (event.sourceDataType === 'content' || event.isSourceLoaded === true)
+}
+
+export type TiledPrecisionLayerFamily = 'hidden' | 'raw' | 'aggregate'
+
+export function tiledPrecisionLayerFamily(transitioning: boolean, zoom: number, rawMinimumZoom: number): TiledPrecisionLayerFamily {
+  if (transitioning) return 'hidden'
+  return tiledRawPrecisionVisible(zoom, rawMinimumZoom) ? 'raw' : 'aggregate'
+}
+
+export function applyTiledPrecisionLayerVisibility(
+  target: Pick<MapLibreMap, 'getLayer' | 'setLayoutProperty'>,
+  rawLayerIDs: string[],
+  aggregateLayerIDs: string[],
+  family: TiledPrecisionLayerFamily,
+): void {
+  const rawVisible = family === 'raw'
+  const aggregateVisible = family === 'aggregate'
+  for (const id of rawLayerIDs) if (target.getLayer(id)) target.setLayoutProperty(id, 'visibility', rawVisible ? 'visible' : 'none')
+  for (const id of aggregateLayerIDs) if (target.getLayer(id)) target.setLayoutProperty(id, 'visibility', aggregateVisible ? 'visible' : 'none')
+}
+
 export function setMapStyleAndWait(map: Pick<MapLibreMap, 'setStyle' | 'on' | 'off'>, style: StyleSpecification): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false
