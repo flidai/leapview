@@ -289,7 +289,6 @@ enum VisualizationColorIntent {
 
 enum VisualizationConditionalTarget {
   markFill: "mark_fill",
-  markStroke: "mark_stroke",
   seriesColor: "series_color",
   labelForeground: "label_foreground",
   visualBackground: "visual_background",

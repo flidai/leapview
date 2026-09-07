@@ -1041,7 +1041,6 @@ type VisualizationConditionalTarget string
 
 const (
 	VisualizationConditionalTargetMarkFill         VisualizationConditionalTarget = "mark_fill"
-	VisualizationConditionalTargetMarkStroke       VisualizationConditionalTarget = "mark_stroke"
 	VisualizationConditionalTargetSeriesColor      VisualizationConditionalTarget = "series_color"
 	VisualizationConditionalTargetLabelForeground  VisualizationConditionalTarget = "label_foreground"
 	VisualizationConditionalTargetVisualBackground VisualizationConditionalTarget = "visual_background"

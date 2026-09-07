@@ -222,9 +222,6 @@ func TestValidateSpecRejectsConditionalFormattingTargetsOutsideVisibleChannels(t
 		invalid VisualizationSpec
 		want    string
 	}{
-		{name: "line mark stroke", valid: cartesian(VisualizationCartesianMarkLine, []VisualizationFieldRef{ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkLine, []VisualizationFieldRef{ref("value")}, format("value", VisualizationConditionalTargetMarkStroke)), want: "row-level stroke variation is unavailable"},
-		{name: "area mark stroke", valid: cartesian(VisualizationCartesianMarkArea, []VisualizationFieldRef{ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkArea, []VisualizationFieldRef{ref("value")}, format("value", VisualizationConditionalTargetMarkStroke)), want: "row-level stroke variation is unavailable"},
-		{name: "bar mark stroke", valid: cartesian(VisualizationCartesianMarkBar, []VisualizationFieldRef{ref("value")}, format("value", VisualizationConditionalTargetMarkStroke)), invalid: cartesian(VisualizationCartesianMarkBar, []VisualizationFieldRef{ref("value")}, format("x", VisualizationConditionalTargetMarkStroke)), want: "not rendered by the cartesian y channel"},
 		{name: "cartesian y channel", valid: cartesian(VisualizationCartesianMarkColumn, []VisualizationFieldRef{ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkColumn, []VisualizationFieldRef{ref("value")}, format("x", VisualizationConditionalTargetMarkFill)), want: "not rendered by the cartesian y channel"},
 		{name: "heatmap value channel", valid: cartesian(VisualizationCartesianMarkHeatmap, []VisualizationFieldRef{ref("row"), ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkHeatmap, []VisualizationFieldRef{ref("row"), ref("value")}, format("row", VisualizationConditionalTargetMarkFill)), want: "cartesian y[1] value channel"},
 		{name: "waterfall metric channel", valid: cartesian(VisualizationCartesianMarkWaterfall, []VisualizationFieldRef{ref("start"), ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkWaterfall, []VisualizationFieldRef{ref("start"), ref("value")}, format("start", VisualizationConditionalTargetMarkFill)), want: "cartesian value channel"},
@@ -245,6 +242,57 @@ func TestValidateSpecRejectsConditionalFormattingTargetsOutsideVisibleChannels(t
 		})
 	}
 }
+
+func TestValidateSpecRejectsRemovedCartesianMarkStrokeTarget(t *testing.T) {
+	t.Parallel()
+
+	ref := func(field string) VisualizationFieldRef {
+		return VisualizationFieldRef{Dataset: "primary", Field: field}
+	}
+	removedTarget := VisualizationConditionalTarget("mark_stroke")
+	tests := []struct {
+		name string
+		mark VisualizationCartesianMark
+		y    []VisualizationFieldRef
+	}{
+		{name: "line", mark: VisualizationCartesianMarkLine, y: []VisualizationFieldRef{ref("value")}},
+		{name: "area", mark: VisualizationCartesianMarkArea, y: []VisualizationFieldRef{ref("value")}},
+		{name: "bar", mark: VisualizationCartesianMarkBar, y: []VisualizationFieldRef{ref("value")}},
+		{name: "column", mark: VisualizationCartesianMarkColumn, y: []VisualizationFieldRef{ref("value")}},
+		{name: "combo", mark: VisualizationCartesianMarkCombo, y: []VisualizationFieldRef{ref("value")}},
+		{name: "waterfall", mark: VisualizationCartesianMarkWaterfall, y: []VisualizationFieldRef{ref("start"), ref("value")}},
+		{name: "heatmap", mark: VisualizationCartesianMarkHeatmap, y: []VisualizationFieldRef{ref("row"), ref("value")}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			format := VisualizationConditionalFormat{
+				ID: "stroke", Target: removedTarget, Field: ref("value"),
+				Rule: VisualizationConditionalRule{Value: &GradientVisualizationConditionalRule{
+					VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "gradient"}, Kind: "gradient", Minimum: 0, Maximum: 100,
+					Low: VisualizationConditionalStyle{Color: colorIntent(VisualizationColorIntentDanger)}, High: VisualizationConditionalStyle{Color: colorIntent(VisualizationColorIntentDanger)}, NullStyle: VisualizationConditionalStyle{Color: colorIntent(VisualizationColorIntentDanger)},
+				}},
+			}
+			base := VisualizationSpecBase{
+				Kind: "cartesian", Title: test.name, Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+					{ID: "x", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "X"},
+					{ID: "row", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Row"},
+					{ID: "start", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Start"},
+					{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Value"},
+				}}},
+				DataBudget: VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete}, Accessibility: VisualizationAccessibility{Title: test.name, Description: test.name},
+				Interactions: []VisualizationInteraction{}, ConditionalFormatting: &[]VisualizationConditionalFormat{format},
+			}
+			spec := VisualizationSpec{Value: &CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: test.mark, X: ref("x"), Y: test.y, Presentation: CartesianVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionBottom)}}}
+			err := ValidateSpec(spec)
+			if err == nil || !strings.Contains(err.Error(), `conditional formatting "stroke" target: unsupported target "mark_stroke"`) {
+				t.Fatalf("ValidateSpec() error = %v, want removed target diagnostic", err)
+			}
+		})
+	}
+}
+
+func colorIntent(value VisualizationColorIntent) *VisualizationColorIntent { return &value }
 
 func TestValidateSpecAcceptsDirectIRWaterfallValueBeforeStart(t *testing.T) {
 	t.Parallel()

@@ -197,7 +197,7 @@ test('ECharts applies governed row formatting with theme colors and redundant cu
       },
     },
     {
-      id: 'value-health', target: 'mark_stroke', field: { dataset: 'primary', field: 'value' },
+      id: 'value-health', target: 'label_foreground', field: { dataset: 'primary', field: 'value' },
       rule: {
         kind: 'rules',
         rules: [{ operator: 'less_than', value: 50, style: { color: 'danger', icon: 'arrow_down' } }],
@@ -210,7 +210,6 @@ test('ECharts applies governed row formatting with theme colors and redundant cu
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series[0].itemStyle.color({ value: ['A', 25] })).toBe('rgb(162 57 48)')
   expect(option.series[0].itemStyle.color({ value: ['B', 75] })).toBe('rgb(71 104 53)')
-  expect(option.series[0].itemStyle.borderColor({ value: ['A', 25] })).toBe(defaultRendererContext.colors.danger)
   expect(option.series[0].label.show).toBe(true)
   expect(option.series[0].labelLayout({ dataIndex: 0 }).hideOverlap).toBe(false)
   expect(option.series[0].label.formatter({ value: ['A', 25] })).toBe('↓ 25')

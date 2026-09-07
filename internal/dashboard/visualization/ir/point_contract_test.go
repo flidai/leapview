@@ -105,7 +105,7 @@ func TestValidateSpecPointConditionalFormattingTargets(t *testing.T) {
 	}
 
 	for _, target := range []VisualizationConditionalTarget{
-		VisualizationConditionalTargetMarkStroke,
+		VisualizationConditionalTarget("mark_stroke"),
 		VisualizationConditionalTargetSeriesColor,
 		VisualizationConditionalTargetLabelForeground,
 		VisualizationConditionalTargetVisualBackground,

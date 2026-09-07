@@ -716,7 +716,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 		}
 		targets[targetKey] = struct{}{}
 		if err := validateConditionalFormattingTarget(base.Kind, format); err != nil {
-			return fmt.Errorf("conditional formatting %q: %w", format.ID, err)
+			return fmt.Errorf("conditional formatting %q target: %w", format.ID, err)
 		}
 		if base.Kind == "point" && format.Target == VisualizationConditionalTargetMarkFill {
 			if pointMarkFill {
@@ -842,12 +842,6 @@ func validateConditionalFormattingApplicability(spec VisualizationSpec, format V
 	field := format.Field
 	switch value := spec.Value.(type) {
 	case *CartesianVisualizationSpec:
-		if format.Target == VisualizationConditionalTargetMarkStroke {
-			switch value.Mark {
-			case VisualizationCartesianMarkLine, VisualizationCartesianMarkArea:
-				return fmt.Errorf("target %q is unsupported for cartesian %q marks because row-level stroke variation is unavailable; use %q instead", format.Target, value.Mark, VisualizationConditionalTargetMarkFill)
-			}
-		}
 		visible := value.Y
 		channel := "y"
 		switch value.Mark {
@@ -977,7 +971,7 @@ func validateConditionalFormattingTarget(kind string, format VisualizationCondit
 		return fmt.Errorf("target %q is incompatible with point visualizations; use %q", format.Target, VisualizationConditionalTargetMarkFill)
 	}
 	switch format.Target {
-	case VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetMarkStroke, VisualizationConditionalTargetSeriesColor:
+	case VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetSeriesColor:
 		if kind == "kpi" || kind == "table" || kind == "matrix" || kind == "pivot" {
 			return fmt.Errorf("target %q is incompatible with %s visualizations", format.Target, kind)
 		}
