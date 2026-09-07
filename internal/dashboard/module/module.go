@@ -40,6 +40,8 @@ import (
 )
 
 type Module struct {
+	prewarmConfig              PrewarmConfig
+	prewarm                    *prewarmCoordinator
 	handler                    dashboardhttp.Handler
 	authoring                  *dashboardauthoringapplication.Application
 	semantic                   semanticapi.Handler
@@ -65,6 +67,7 @@ type Module struct {
 }
 
 type Config struct {
+	Prewarm PrewarmConfig
 	// NativePersistence is the only accepted source of dashboard persistence
 	// when RequireNativePersistence is enabled. Its constructor checks that all
 	// authorities are the concrete PostgreSQL implementations, so callers cannot
@@ -284,6 +287,9 @@ type Telemetry interface {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	if err := config.Prewarm.validate(); err != nil {
+		return nil, err
+	}
 	if config.RequireNativePersistence {
 		if config.NativePersistence == nil {
 			return nil, fmt.Errorf("dashboard native persistence bundle is required")
@@ -441,8 +447,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		}, nil
 	}
 	module := &Module{
-		handler:   handler,
-		authoring: config.Authoring,
+		prewarmConfig: config.Prewarm,
+		handler:       handler,
+		authoring:     config.Authoring,
 		semantic: semanticapi.Handler{
 			Metrics: config.Semantic.Metrics, ResolveProjectID: config.Semantic.ResolveProjectID,
 			CurrentPrincipalID:    config.Semantic.CurrentPrincipalID,
@@ -459,6 +466,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		usageReader:    usageReader, usageNow: usageNow,
 		appearanceStore: appearanceStore,
 	}
+	module.prewarmConfig.PublicationIDs = append([]string(nil), config.Prewarm.PublicationIDs...)
 	if config.RequireNativePersistence {
 		if config.NativePersistence.streams != nil {
 			module.streams = config.NativePersistence.streams
