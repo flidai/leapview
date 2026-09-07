@@ -530,6 +530,24 @@ enum DashboardLegendPosition {
   left: "left",
 }
 
+/** One ordered tooltip field projection. Compact string entries remain supported. */
+model DashboardTooltipItem {
+  field: DashboardResultField;
+  label?: string;
+  format?: LeapViewVisualization.VisualizationFormat;
+}
+
+union DashboardTooltip {
+  field: DashboardResultField,
+  item: DashboardTooltipItem,
+}
+
+/** One canonical legend value. Array order is the display order. */
+model DashboardLegendItem {
+  value: string;
+  label?: string;
+}
+
 enum DashboardStackingMode {
   none: "none",
   normal: "normal",
@@ -692,6 +710,8 @@ model DashboardPresentation {
 model CartesianDashboardPresentation extends DashboardPresentation {
   type: "cartesian";
   legend?: DashboardLegendPosition;
+  legendTitle?: string;
+  legendItems?: DashboardLegendItem[];
   labels?: DashboardLabelPolicy;
   stacking?: DashboardStackingMode;
   orientation?: DashboardOrientation;
@@ -709,6 +729,7 @@ model CartesianDashboardPresentation extends DashboardPresentation {
   referenceLines?: DashboardReferenceLine[];
   referenceBands?: DashboardReferenceBand[];
   eventAnnotations?: DashboardEventAnnotation[];
+  tooltip?: DashboardTooltip[];
 }
 
 /** A governed result-frame binding used by a point/scatter visual. */
@@ -738,6 +759,8 @@ model PointDashboardOverplot {
 model PointDashboardPresentation extends DashboardPresentation {
   type: "point";
   legend?: DashboardLegendPosition;
+  legendTitle?: string;
+  legendItems?: DashboardLegendItem[];
   labels?: DashboardLabelPolicy;
   identity: DashboardResultField[];
   x: DashboardResultField;
@@ -745,7 +768,7 @@ model PointDashboardPresentation extends DashboardPresentation {
   size?: DashboardResultField;
   color?: DashboardResultField;
   label?: DashboardResultField;
-  tooltip?: DashboardResultField[];
+  tooltip?: DashboardTooltip[];
   colorScale?: PointDashboardColorScale;
   sizeScale?: PointDashboardSizeScale;
   overplot?: PointDashboardOverplot;
@@ -759,6 +782,8 @@ model PointDashboardPresentation extends DashboardPresentation {
 model ProportionalDashboardPresentation extends DashboardPresentation {
   type: "proportional";
   legend?: DashboardLegendPosition;
+  legendTitle?: string;
+  legendItems?: DashboardLegendItem[];
   labels?: DashboardLabelPolicy;
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
   orientation?: DashboardOrientation;
@@ -769,6 +794,7 @@ model ProportionalDashboardPresentation extends DashboardPresentation {
   outerRadius?: float64;
   align?: DashboardProportionalAlignment;
   sort?: LeapViewVisualization.VisualizationSortDirection;
+  tooltip?: DashboardTooltip[];
 }
 
 enum DashboardProportionalAlignment {
@@ -780,6 +806,8 @@ enum DashboardProportionalAlignment {
 model HierarchyDashboardPresentation extends DashboardPresentation {
   type: "hierarchy";
   legend?: DashboardLegendPosition;
+  legendTitle?: string;
+  legendItems?: DashboardLegendItem[];
   labels?: DashboardLabelPolicy;
   orientation?: DashboardOrientation;
   initialDepth?: int32;
@@ -794,6 +822,8 @@ model HierarchyDashboardPresentation extends DashboardPresentation {
 model PolarDashboardPresentation extends DashboardPresentation {
   type: "polar";
   legend?: DashboardLegendPosition;
+  legendTitle?: string;
+  legendItems?: DashboardLegendItem[];
   labels?: DashboardLabelPolicy;
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
   minimum?: float64;
@@ -882,7 +912,7 @@ model DashboardMapCluster {
 
 model DashboardGeographicLayerOptions {
   id: DashboardObjectIdentifier;
-  tooltip?: DashboardResultField[];
+  tooltip?: DashboardTooltip[];
   position?: LeapViewVisualization.VisualizationMapLayerPosition;
   minimumZoom?: float64;
   maximumZoom?: float64;

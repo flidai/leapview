@@ -14,6 +14,7 @@ func TestLowerCanonicalCartesianPresentationRejectsInapplicableOptions(t *testin
 	zero := 0.0
 	orientation := document.DashboardOrientationHorizontal
 	legend := document.DashboardLegendPositionRight
+	legendItems := []document.DashboardLegendItem{{Value: "open"}}
 	stacking := document.DashboardStackingModeNormal
 	emptyLines := []document.DashboardReferenceLine{}
 	emptyBands := []document.DashboardReferenceBand{}
@@ -30,6 +31,7 @@ func TestLowerCanonicalCartesianPresentationRejectsInapplicableOptions(t *testin
 		{name: "legend on histogram", visualType: document.DashboardVisualTypeHistogram, set: func(value *document.CartesianDashboardPresentation) { value.Legend = &legend }, want: "presentation.legend"},
 		{name: "legend on heatmap", visualType: document.DashboardVisualTypeHeatmap, set: func(value *document.CartesianDashboardPresentation) { value.Legend = &legend }, want: "presentation.legend"},
 		{name: "legend on boxplot", visualType: document.DashboardVisualTypeBoxplot, set: func(value *document.CartesianDashboardPresentation) { value.Legend = &legend }, want: "presentation.legend"},
+		{name: "legend items on candlestick", visualType: document.DashboardVisualTypeCandlestick, set: func(value *document.CartesianDashboardPresentation) { value.LegendItems = &legendItems }, want: "presentation.legendItems"},
 		{name: "stacking on waterfall", visualType: document.DashboardVisualTypeWaterfall, set: func(value *document.CartesianDashboardPresentation) { value.Stacking = &stacking }, want: "presentation.stacking"},
 		{name: "stacking on heatmap", visualType: document.DashboardVisualTypeHeatmap, set: func(value *document.CartesianDashboardPresentation) { value.Stacking = &stacking }, want: "presentation.stacking"},
 		{name: "stacking on histogram", visualType: document.DashboardVisualTypeHistogram, set: func(value *document.CartesianDashboardPresentation) { value.Stacking = &stacking }, want: "presentation.stacking"},

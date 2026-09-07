@@ -2,7 +2,7 @@ import type { VisualizationConditionalFormat, VisualizationEnvelope, Visualizati
 import type { RendererContext } from '../../host-controller'
 import { conditionalIconGlyph, resolveConditionalFormat } from '../../conditional-format'
 import { resolveVisualizationMetadata } from '../../metadata'
-import { axis, escapeHTML, field, fieldLabel, formatDisplayField, formatField, inlineDataset, labelFormatter, legend, selectedDatasetSource, toneColor, type EChartsTranslation } from './common'
+import { axis, field, fieldLabel, formatDisplayField, formatField, inlineDataset, labelFormatter, legendDecoration, selectedDatasetSource, toneColor, tooltipFormatterForRow, type EChartsTranslation } from './common'
 import { conditionalCategoryColor, conditionalItemColor, seriesColor } from './conditional-color'
 import { echartsLabelPolicy } from './label-policy'
 import type { CategoryColorRegistry } from './category-colors'
@@ -61,6 +61,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
           id: seriesID(value?.dataset, value?.field), type: 'bar', stack: 'waterfall',
           encode: { x: spec.x.field, y: value?.field },
           itemStyle: { color: fill ?? signedWaterfallColor(envelope, value, context) },
+          tooltip: { formatter: tooltipFormatterForRow(envelope, context, { fallbackRefs: [spec.x, ...spec.y] }) },
           ...chartLabel(envelope, value, spec, context),
         },
       ],
@@ -78,18 +79,10 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     }))
     return {
       ...axes, xAxis: { ...axes.xAxis, data: (dataset?.rows ?? []).map((row) => String(row[categoryIndex])) }, dataZoom,
-      legend: legend(spec.presentation.legend, context),
+      ...legendDecoration(spec.presentation.legend, context, false, spec.presentation, [{ value: spec.title, name: spec.title }]),
       series: [{
         id: 'series:primary:candlestick', type: 'candlestick', name: spec.title, data,
-        tooltip: { formatter: (params: { data?: { __lv_row_index?: number } }) => {
-          const rowIndex = params.data?.__lv_row_index
-          const row = rowIndex === undefined ? undefined : dataset?.rows[rowIndex]
-          if (!row || !dataset) return ''
-          return [spec.x, ...spec.y].map((ref) => {
-            const value = row[dataset.columns.indexOf(ref.field)]
-            return `${escapeHTML(fieldLabel(envelope, ref))}: ${escapeHTML(formatField(envelope, ref, value, context))}`
-          }).join('<br>')
-        } },
+        tooltip: { formatter: tooltipFormatterForRow(envelope, context, { fallbackRefs: [spec.x, ...spec.y] }) },
         ...chartLabel(envelope, spec.y[0], spec, context),
       }],
     }
@@ -170,7 +163,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       primaryAxis.axisLabel = { ...primaryAxis.axisLabel, hideOverlap: true }
     }
     return {
-      dataset: split.datasets, grid: cartesianGrid(spec), legend: legend(spec.presentation.legend, context, split.scrollLegend), xAxis: axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x'),
+      dataset: split.datasets, grid: cartesianGrid(spec), ...legendDecoration(spec.presentation.legend, context, split.scrollLegend, spec.presentation, split.series.map((item) => ({ value: String(item.name), name: String(item.name) }))), xAxis: axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x'),
       yAxis: horizontal ? axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x') : secondary ? [primaryAxis, axis(envelope, spec.y[0]!, axisType(envelope, spec.y[0]!, 'value'), context, 'secondary_y', spec.y)] : primaryAxis,
       ...(horizontal ? { xAxis: secondary ? [primaryAxis, axis(envelope, spec.y[0]!, axisType(envelope, spec.y[0]!, 'value'), context, 'secondary_y', spec.y)] : primaryAxis } : {}),
       dataZoom, series: [...split.series, ...interactionHitSeries(envelope, spec, split.series)],
@@ -221,7 +214,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
         ? { xAxis: [xAxis, axis(envelope, secondaryValue, axisType(envelope, secondaryValue, 'value'), context, 'secondary_y', values)] }
         : { yAxis: [yAxis, axis(envelope, secondaryValue, axisType(envelope, secondaryValue, 'value'), context, 'secondary_y', values)] }
       : {}),
-    legend: legend(spec.presentation.legend, context), dataZoom,
+    ...legendDecoration(spec.presentation.legend, context, false, spec.presentation, values.map((value, index) => ({ value: value.field, name: String(series[index]?.name ?? value.field) }))), dataZoom,
     series: [...series, ...interactionHitSeries(envelope, spec, series)],
   }
 }
@@ -439,11 +432,13 @@ function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][n
 
 function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
   const bottomLegend = spec.presentation.legend === 'bottom'
+  const titleInset = spec.presentation.legendTitle === undefined ? 0 : 24
+  const sideInset = spec.presentation.legendTitle === undefined ? 0 : 72
   return {
-    left: 12,
-    right: 16,
-    top: spec.presentation.legend === 'top' ? 44 : 16,
-    bottom: 16 + (bottomLegend ? 28 : 0) + (spec.presentation.dataZoom ? 42 : 0),
+    left: 12 + (spec.presentation.legend === 'left' ? sideInset : 0),
+    right: 16 + (spec.presentation.legend === 'right' ? sideInset : 0),
+    top: (spec.presentation.legend === 'top' ? 44 : 16) + (spec.presentation.legend === 'top' ? titleInset : 0),
+    bottom: 16 + (bottomLegend ? 28 : 0) + (spec.presentation.dataZoom ? 42 : 0) + (bottomLegend ? titleInset : 0),
     containLabel: true,
   }
 }

@@ -1,9 +1,11 @@
-import type { VisualizationAxisConfiguration, VisualizationAxisLabelRotation, VisualizationCartesianAxis, VisualizationDateDisplayUnit, VisualizationDisplayUnits, VisualizationEnvelope, VisualizationField, VisualizationFieldRef } from '../../../../../generated/visualization'
+import type { VisualizationAxisConfiguration, VisualizationAxisLabelRotation, VisualizationCartesianAxis, VisualizationDateDisplayUnit, VisualizationDisplayUnits, VisualizationEnvelope, VisualizationField, VisualizationFieldRef, VisualizationPresentation } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
 import { formatDisplayValue, formatValue, resolveDisplayUnitForFormat, type ResolvedDisplayUnit } from '../../format'
 import { resolveVisualizationMetadata } from '../../metadata'
+import { formatTooltipEntries } from '../../tooltip-format'
 
 export type EChartsTranslation = Record<string, any>
+export type LegendKnownValue = Readonly<{ value: string; name: string }>
 
 export function inlineDataset(envelope: VisualizationEnvelope, datasetID = 'primary') {
   if (envelope.dataState.kind !== 'inline') return undefined
@@ -245,9 +247,21 @@ function isoWeek(date: Date): { number: string; year: number } {
   return { number: String(week).padStart(2, '0'), year: thursday.getUTCFullYear() }
 }
 
-export function legend(position: string, context: RendererContext, scroll = false): EChartsTranslation | undefined {
+export function legend(
+  position: string,
+  context: RendererContext,
+  scroll = false,
+  presentation?: Pick<VisualizationPresentation, 'legendTitle' | 'legendItems'>,
+  knownValues?: readonly LegendKnownValue[],
+): EChartsTranslation | undefined {
   if (position === 'hidden') return undefined
-  return {
+  const configuredItems = presentation?.legendItems
+  const uniqueKnownValues = knownValues?.filter((item, index, values) => values.findIndex((candidate) => candidate.value === item.value) === index)
+  const known = uniqueKnownValues ? new Map(uniqueKnownValues.map((item) => [item.value, item.name])) : undefined
+  const selectedItems = configuredItems
+    ? configuredItems.filter((item) => known === undefined || known.has(item.value))
+    : undefined
+  const result: EChartsTranslation = {
     show: true,
     ...(scroll ? {
       type: 'scroll',
@@ -260,6 +274,50 @@ export function legend(position: string, context: RendererContext, scroll = fals
     [position]: 0,
     textStyle: { color: context.colors.muted, fontFamily: context.fontFamily },
   }
+  if (selectedItems) {
+    const configuredValues = new Set(selectedItems.map((item) => item.value))
+    const orderedValues = [
+      ...selectedItems.map((item) => ({ value: item.value, name: known?.get(item.value) ?? item.value })),
+      ...(uniqueKnownValues ?? []).filter((item) => !configuredValues.has(item.value)),
+    ]
+    result.data = orderedValues.map((item) => ({ name: item.name }))
+    const labels = new Map(selectedItems.map((item) => {
+      const canonicalName = known?.get(item.value) ?? item.value
+      return [canonicalName, item.label ?? canonicalName]
+    }))
+    result.formatter = (value: string) => labels.get(value) ?? value
+  }
+  return result
+}
+
+export function legendDecoration(
+  position: string,
+  context: RendererContext,
+  scroll = false,
+  presentation?: Pick<VisualizationPresentation, 'legendTitle' | 'legendItems'>,
+  knownValues?: readonly LegendKnownValue[],
+): EChartsTranslation {
+  const result: EChartsTranslation = { legend: legend(position, context, scroll, presentation, knownValues) }
+  const title = presentation?.legendTitle
+  if (title === undefined || position === 'hidden') return result
+  const titleGraphic: EChartsTranslation = {
+    type: 'text', silent: true,
+    style: { text: title, fill: context.colors.foreground, fontFamily: context.fontFamily, fontSize: 12, fontWeight: 600 },
+  }
+  if (position === 'bottom') {
+    titleGraphic.left = 8
+    titleGraphic.bottom = 28
+  } else if (position === 'left' || position === 'right') {
+    titleGraphic.top = 4
+    titleGraphic[position] = 8
+    if (result.legend) result.legend.top = scroll ? 28 : 24
+  } else {
+    titleGraphic.left = 8
+    titleGraphic.top = 4
+    if (result.legend) result.legend.top = scroll ? 28 : 24
+  }
+  result.graphic = [titleGraphic]
+  return result
 }
 
 export function labelFormatter(
@@ -290,32 +348,41 @@ export function escapeHTML(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;')
 }
 
-function tooltipFormatter(envelope: VisualizationEnvelope, context: RendererContext) {
+type TooltipFormatterOptions = Readonly<{ fallbackRefs?: readonly VisualizationFieldRef[] }>
+
+export function tooltipFormatterForRow(
+  envelope: VisualizationEnvelope,
+  context: RendererContext,
+  options: TooltipFormatterOptions = {},
+) {
   return (raw: unknown): string => {
     const params = Array.isArray(raw) ? raw : [raw]
-    const entries: string[] = []
     for (const item of params) {
-      const value = (item as { value?: unknown })?.value
-      if (!Array.isArray(value)) continue
-      const dataset = inlineDataset(envelope)
-      if (!dataset) continue
-      const schema = envelope.spec.datasets.find((candidate) => candidate.id === dataset.id)
-      const authored = envelope.spec.kind === 'cartesian' || envelope.spec.kind === 'point' ? envelope.spec.tooltip : undefined
-      const definitions = authored
-        ? authored.flatMap((ref) => {
-            if (ref.dataset !== dataset.id) return []
-            const definition = schema?.fields.find((candidate) => candidate.id === ref.field)
-            return definition ? [definition] : []
-          })
-        : schema?.fields ?? []
-      for (const definition of definitions) {
-        const index = dataset.columns.indexOf(definition.id)
-        if (index < 0) continue
-        const formatted = definition.format ? formatValue(context.locale, definition.format, value[index]) : value[index] === null || value[index] === undefined ? '—' : String(value[index])
-        entries.push(`${escapeHTML(definition.label)}: ${escapeHTML(formatted)}`)
-      }
-      if (entries.length) break
+      const event = item as { value?: unknown; data?: { __lv_dataset?: unknown; __lv_row_index?: unknown } }
+      const locatorDataset = typeof event.data?.__lv_dataset === 'string' ? event.data.__lv_dataset : undefined
+      const locatorIndex = event.data?.__lv_row_index
+      const locatedDataset = locatorDataset ? inlineDataset(envelope, locatorDataset) : undefined
+      const locatedRow = locatedDataset && Number.isInteger(locatorIndex) ? locatedDataset.rows[locatorIndex as number] : undefined
+      const dataset = locatedDataset ?? inlineDataset(envelope)
+      const row = locatedRow ?? (Array.isArray(event.value) ? event.value : undefined)
+      if (!dataset || !row) continue
+      const refs = tooltipRefs(envelope, dataset.id, options.fallbackRefs)
+      const entries = formatTooltipEntries(envelope, row, dataset.id, context, refs, envelope.spec.tooltipItems)
+      if (entries.length) return entries.map((entry) => `${escapeHTML(entry.label)}: ${escapeHTML(entry.value)}`).join('<br>')
+      if (envelope.spec.tooltipItems !== undefined && envelope.spec.tooltipItems.length === 0) return ''
     }
-    return entries.join('<br>')
+    return ''
   }
+}
+
+function tooltipRefs(envelope: VisualizationEnvelope, datasetID: string, fallbackRefs?: readonly VisualizationFieldRef[]): VisualizationFieldRef[] {
+  if (envelope.spec.tooltipItems !== undefined) return envelope.spec.tooltipItems.map((item) => item.field)
+  if ((envelope.spec.kind === 'cartesian' || envelope.spec.kind === 'point' || envelope.spec.kind === 'proportional') && envelope.spec.tooltip !== undefined) return envelope.spec.tooltip
+  if (fallbackRefs !== undefined) return [...fallbackRefs]
+  const schema = envelope.spec.datasets.find((candidate) => candidate.id === datasetID)
+  return (schema?.fields ?? []).map((definition) => ({ dataset: datasetID, field: definition.id }))
+}
+
+function tooltipFormatter(envelope: VisualizationEnvelope, context: RendererContext) {
+  return tooltipFormatterForRow(envelope, context)
 }

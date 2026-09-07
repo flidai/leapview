@@ -73,6 +73,42 @@ presentation:
 
 Policies also bound label length by Unicode grapheme, set minimum collision spacing, and declare whether selected, anomalous, or threshold-crossing data should win a collision. The same frame, locale, dimensions, and policy always produce the same label decision. Full untruncated values remain in governed tooltips when `tooltipFallback` is enabled.
 
+## Curated tooltips and legends
+
+Use the structured `tooltip` item form when a visual needs an explicit tooltip
+contract. Items are shown in authored order; each item may override the field
+label and semantic format. An explicit empty list suppresses tooltip rows. If
+omitted, the renderer preserves the legacy field list and then the visual's
+default fields. Values are HTML-escaped and null values display as `—`.
+
+Visible legends on supported Cartesian marks, categorical points, proportional
+charts, and radar series accept `legendTitle` and `legendItems`. Candlestick
+charts are the exception: they support legend position and title, but not
+per-item overrides because the renderer exposes one visual-title series rather
+than metric aliases. Listed values on other supported series are filtered to
+values present in the current data and rendered in authored order, while
+canonical series/category names remain unchanged for selection events.
+Unlisted values retain deterministic data order. Geographic reference layers
+and hierarchy visuals do not expose legend metadata.
+
+```yaml
+presentation:
+  tooltip:
+  - field: status
+    label: Order status
+  - field: revenue
+    label: Net revenue
+    format:
+      kind: currency
+      currency: USD
+  legend: right
+  legendTitle: Segment
+  legendItems:
+  - value: Consumer
+    label: Consumer orders
+  - value: Enterprise
+```
+
 ## Per-mark presentation
 
 Cartesian marks all support the common `labels`, `labelPosition`, `displayUnits`, and `axes` fields. Mark-specific fields are scoped to the renderer paths that consume them:
@@ -87,7 +123,7 @@ Cartesian marks all support the common `labels`, `labelPosition`, `displayUnits`
 | Waterfall | `dataZoom`, `referenceLines`, `referenceBands`, `eventAnnotations` |
 | Heatmap | No additional mark-specific fields |
 | Histogram | `dataZoom` |
-| Candlestick | `legend`, `dataZoom` |
+| Candlestick | `legend`, `dataZoom` (legend title is supported; legend item overrides are not) |
 | Boxplot | `dataZoom` |
 
 Proportional and polar presentations share the common `legend`, `labels`, and `displayUnits` fields where those channels are meaningful. Mark-specific fields are intentionally scoped to the marks that can render them:

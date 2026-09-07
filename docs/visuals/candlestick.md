@@ -2,6 +2,10 @@
 
 Use a candlestick chart to compare open, close, low, and high metrics across an ordered category.
 
+Candlestick legends support position and an optional `legendTitle`. Per-item
+`legendItems` overrides are not supported because the renderer exposes one
+visual-title series rather than independently named metric aliases.
+
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
 ## Market OHLC

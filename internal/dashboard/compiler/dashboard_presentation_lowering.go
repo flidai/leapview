@@ -33,7 +33,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 	}
 	switch variant := value.Value.(type) {
 	case *document.CartesianDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits)
 		if err != nil {
 			return nil, err
 		}
@@ -90,7 +90,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.PointDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, nil)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -139,7 +139,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.ProportionalDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits)
 		if err != nil {
 			return nil, err
 		}
@@ -205,7 +205,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		out.Sort = variant.Sort
 		return out, nil
 	case *document.HierarchyDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, nil)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -251,7 +251,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.PolarDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits)
 		if err != nil {
 			return nil, err
 		}
@@ -316,7 +316,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.GeographicDashboardPresentation:
-		base, err := lowerBasePresentation(nil, nil, nil)
+		base, err := lowerBasePresentation(nil, nil, nil, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -508,6 +508,9 @@ func LowerCanonicalDashboardPresentationForQuery(value document.DashboardPresent
 			return nil, err
 		}
 	}
+	if err := validateCanonicalLegendQueryApplicability(value, visualType, query); err != nil {
+		return nil, err
+	}
 	return lowered, nil
 }
 
@@ -524,6 +527,15 @@ func validateCanonicalPresentationApplicability(value document.DashboardPresenta
 	case *document.HierarchyDashboardPresentation:
 		if variant == nil {
 			return nil
+		}
+		if err := optionSupported("legend", variant.Legend != nil, false); err != nil {
+			return err
+		}
+		if err := optionSupported("legendTitle", variant.LegendTitle != nil, false); err != nil {
+			return err
+		}
+		if err := optionSupported("legendItems", variant.LegendItems != nil, false); err != nil {
+			return err
 		}
 		if err := optionSupported("orientation", variant.Orientation != nil, visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeSankey); err != nil {
 			return err
@@ -546,7 +558,20 @@ func validateCanonicalPresentationApplicability(value document.DashboardPresenta
 		if err := optionSupported("curveness", variant.Curveness != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeSankey); err != nil {
 			return err
 		}
-		return optionSupported("focus", variant.Focus != nil, visualType == document.DashboardVisualTypeGraph)
+		if err := optionSupported("focus", variant.Focus != nil, visualType == document.DashboardVisualTypeGraph); err != nil {
+			return err
+		}
+	case *document.PointDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		if variant.Legend != nil && (variant.Color == nil || variant.ColorScale == nil || variant.ColorScale.Kind != visualizationir.VisualizationPointColorScaleKindCategorical) {
+			return fmt.Errorf("presentation.legend requires a categorical point color series")
+		}
+		if err := optionSupported("legendTitle", variant.LegendTitle != nil, true); err != nil {
+			return err
+		}
+		return optionSupported("legendItems", variant.LegendItems != nil, true)
 	case *document.ProportionalDashboardPresentation:
 		if variant == nil {
 			return nil
@@ -577,6 +602,12 @@ func validateCanonicalPresentationApplicability(value document.DashboardPresenta
 		if err := optionSupported("legend", variant.Legend != nil, visualType == document.DashboardVisualTypeRadar); err != nil {
 			return err
 		}
+		if err := optionSupported("legendTitle", variant.LegendTitle != nil, visualType == document.DashboardVisualTypeRadar); err != nil {
+			return err
+		}
+		if err := optionSupported("legendItems", variant.LegendItems != nil, visualType == document.DashboardVisualTypeRadar); err != nil {
+			return err
+		}
 		if err := optionSupported("minimum", variant.Minimum != nil, visualType == document.DashboardVisualTypeGauge); err != nil {
 			return err
 		}
@@ -599,6 +630,56 @@ func validateCanonicalPresentationApplicability(value document.DashboardPresenta
 	default:
 		return nil
 	}
+	return nil
+}
+
+func validateCanonicalLegendQueryApplicability(value document.DashboardPresentation, visualType document.DashboardVisualType, query LoweredDashboardQuery) error {
+	var title, items bool
+	switch variant := value.Value.(type) {
+	case *document.CartesianDashboardPresentation:
+		if variant != nil && visualType == document.DashboardVisualTypeCandlestick && variant.LegendItems != nil {
+			return fmt.Errorf("presentation.legendItems is not supported for candlestick visuals")
+		}
+		if variant == nil || variant.LegendItems == nil || query.Binding.Aggregate == nil || query.Binding.Aggregate.Series != nil {
+			return nil
+		}
+		metrics := make(map[string]struct{}, len(query.Binding.Aggregate.Metrics))
+		for _, metric := range query.Binding.Aggregate.Metrics {
+			alias := strings.TrimSpace(metric.Alias)
+			if alias != "" {
+				metrics[alias] = struct{}{}
+			}
+		}
+		for index, item := range *variant.LegendItems {
+			itemValue := strings.TrimSpace(item.Value)
+			if _, ok := metrics[itemValue]; !ok {
+				return fmt.Errorf("presentation.legendItems[%d].value %q is not a compiled metric alias", index, itemValue)
+			}
+		}
+	case *document.PointDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		title, items = variant.LegendTitle != nil, variant.LegendItems != nil
+		if title && (variant.Color == nil || variant.ColorScale == nil || variant.ColorScale.Kind != visualizationir.VisualizationPointColorScaleKindCategorical) {
+			return fmt.Errorf("presentation.legendTitle requires a categorical point color series")
+		}
+		if items && (variant.Color == nil || variant.ColorScale == nil || variant.ColorScale.Kind != visualizationir.VisualizationPointColorScaleKindCategorical) {
+			return fmt.Errorf("presentation.legendItems requires a categorical point color series")
+		}
+	case *document.PolarDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		title, items = variant.LegendTitle != nil, variant.LegendItems != nil
+		if (title || items) && visualType == document.DashboardVisualTypeRadar && (query.Binding.Aggregate == nil || query.Binding.Aggregate.Series == nil) {
+			if title {
+				return fmt.Errorf("presentation.legendTitle requires a radar series")
+			}
+			return fmt.Errorf("presentation.legendItems requires a radar series")
+		}
+	}
+	return nil
 }
 
 // lowerCanonicalComboSeries maps the closed Dashboard combo policy into the
@@ -695,7 +776,7 @@ func validateCanonicalComboSeries(value document.DashboardPresentation, query Lo
 	return nil
 }
 
-func lowerBasePresentation(legend *document.DashboardLegendPosition, labels *document.DashboardLabelPolicy, units *visualizationir.VisualizationDisplayUnits) (visualizationir.VisualizationPresentation, error) {
+func lowerBasePresentation(legend *document.DashboardLegendPosition, legendTitle *string, legendItems *[]document.DashboardLegendItem, labels *document.DashboardLabelPolicy, units *visualizationir.VisualizationDisplayUnits) (visualizationir.VisualizationPresentation, error) {
 	out := visualizationir.VisualizationPresentation{Legend: visualizationir.VisualizationLegendPositionBottom, LabelPolicy: defaultCanonicalLabelPolicy(), DisplayUnits: units}
 	if legend != nil {
 		value, err := lowerLegend(*legend)
@@ -703,6 +784,45 @@ func lowerBasePresentation(legend *document.DashboardLegendPosition, labels *doc
 			return visualizationir.VisualizationPresentation{}, err
 		}
 		out.Legend = value
+	}
+	if out.Legend == visualizationir.VisualizationLegendPositionHidden {
+		if legendTitle != nil {
+			return visualizationir.VisualizationPresentation{}, fmt.Errorf("presentation.legendTitle cannot be used with a hidden legend")
+		}
+		if legendItems != nil {
+			return visualizationir.VisualizationPresentation{}, fmt.Errorf("presentation.legendItems cannot be used with a hidden legend")
+		}
+	}
+	if legendTitle != nil {
+		if err := validatePresentationText(*legendTitle, "presentation.legendTitle", false); err != nil {
+			return visualizationir.VisualizationPresentation{}, err
+		}
+		out.LegendTitle = legendTitle
+	}
+	if legendItems != nil {
+		items := make([]visualizationir.VisualizationLegendItem, 0, len(*legendItems))
+		seen := make(map[string]int, len(*legendItems))
+		for index, item := range *legendItems {
+			value := strings.TrimSpace(item.Value)
+			if value == "" {
+				return visualizationir.VisualizationPresentation{}, fmt.Errorf("presentation.legendItems[%d].value must not be empty", index)
+			}
+			if previous, ok := seen[value]; ok {
+				return visualizationir.VisualizationPresentation{}, fmt.Errorf("presentation.legendItems[%d].value %q duplicates legendItems[%d]", index, value, previous)
+			}
+			seen[value] = index
+			label := item.Label
+			if label != nil {
+				if err := validatePresentationText(*label, fmt.Sprintf("presentation.legendItems[%d].label", index), false); err != nil {
+					return visualizationir.VisualizationPresentation{}, err
+				}
+			}
+			items = append(items, visualizationir.VisualizationLegendItem{Value: value, Label: label})
+		}
+		if len(items) == 0 {
+			return visualizationir.VisualizationPresentation{}, fmt.Errorf("presentation.legendItems must contain at least one item")
+		}
+		out.LegendItems = &items
 	}
 	if labels != nil {
 		value, err := lowerLabelPolicy(*labels)
@@ -712,6 +832,17 @@ func lowerBasePresentation(legend *document.DashboardLegendPosition, labels *doc
 		out.LabelPolicy = value
 	}
 	return out, nil
+}
+
+func validatePresentationText(value, path string, allowEmpty bool) error {
+	trimmed := strings.TrimSpace(value)
+	if !allowEmpty && trimmed == "" {
+		return fmt.Errorf("%s must not be empty", path)
+	}
+	if len([]rune(value)) > 128 {
+		return fmt.Errorf("%s must not exceed 128 characters", path)
+	}
+	return nil
 }
 
 func defaultCanonicalLabelPolicy() visualizationir.VisualizationLabelPolicy {

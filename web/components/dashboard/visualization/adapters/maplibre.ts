@@ -112,6 +112,10 @@ function isPlaceholderTileURL(value: string): boolean {
   return value.includes('/tiles/unavailable/') || value.includes('/tiles/documentation/')
 }
 
+function hasTooltipFields(layer: VisualizationGeographicLayer): boolean {
+  return layer.tooltip.length > 0 || (layer.tooltipItems?.length ?? 0) > 0
+}
+
 export const adapter: RendererAdapter = {
   async mount(container, envelope, context) {
     const frame = document.createElement('div'); frame.style.cssText = 'position:relative;width:100%;height:100%;overflow:hidden;background:var(--lv-chart-surface,var(--lv-bg-panel,#fff))'
@@ -490,14 +494,14 @@ export class MapLibreHandle implements RendererHandle {
 				this.layerIDs.push(aggregateID)
 				this.tiledAggregateLayerIDs.push(aggregateID)
 				this.selectableLayerIDs.push(aggregateID)
-				if (layer.tooltip.length > 0) this.tooltipLayerIDs.push(aggregateID)
+				if (hasTooltipFields(layer)) this.tooltipLayerIDs.push(aggregateID)
 			}
 			if (layer.kind === 'heat' || layer.kind === 'density') {
 				const aggregateID = `${id}-aggregate`
 				this.map.addLayer(tiledAggregateHeatLayer(aggregateID, this.tiledSourceID, layer, envelope.dataState), before)
 				this.layerIDs.push(aggregateID)
 				this.tiledAggregateLayerIDs.push(aggregateID)
-				if (layer.tooltip.length > 0) this.tooltipLayerIDs.push(aggregateID)
+				if (hasTooltipFields(layer)) this.tooltipLayerIDs.push(aggregateID)
 			}
 			if (layer.kind === 'point' && layer.cluster.enabled && layer.cluster.showCount) {
 				const countID = `${id}-aggregate-count`
@@ -511,7 +515,7 @@ export class MapLibreHandle implements RendererHandle {
 				this.tiledAggregateLayerIDs.push(this.addDataLabelLayer(this.tiledSourceID, layer, true, true, id))
 			}
       if (layer.kind === 'point') this.selectableLayerIDs.push(id)
-      if (layer.tooltip.length > 0) this.tooltipLayerIDs.push(id)
+      if (hasTooltipFields(layer)) this.tooltipLayerIDs.push(id)
       return { type: 'FeatureCollection', features: [] }
     }
     let data: FeatureCollection
@@ -558,7 +562,7 @@ export class MapLibreHandle implements RendererHandle {
       this.layerIDs.push(outlineID)
     }
     if (layer.kind === 'point' || layer.kind === 'choropleth') this.selectableLayerIDs.push(id)
-    if (layer.tooltip.length > 0 && layer.kind !== 'reference') this.tooltipLayerIDs.push(id)
+    if (hasTooltipFields(layer) && layer.kind !== 'reference') this.tooltipLayerIDs.push(id)
     this.dynamicLayers.push({ spec: layer, sourceID: id, geometry })
     return data
   }

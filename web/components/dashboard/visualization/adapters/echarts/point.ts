@@ -1,6 +1,6 @@
 import type { VisualizationEnvelope, VisualizationFieldRef } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
-import { axis, field, inlineDataset, labelFormatter, legend, selectedDatasetSource, type EChartsTranslation } from './common'
+import { axis, field, inlineDataset, labelFormatter, legendDecoration, selectedDatasetSource, type EChartsTranslation } from './common'
 import { applyDecisionContext } from './cartesian'
 import { conditionalItemColor } from './conditional-color'
 import { resolveConditionalFormat, type ConditionalFormatResult } from '../../conditional-format'
@@ -27,10 +27,16 @@ export function pointOption(envelope: VisualizationEnvelope, context: RendererCo
       : [pointSeries(envelope, spec, labels, markFill)]
     : [pointSeries(envelope, spec, labels, markFill)]
   const option: EChartsTranslation = {
-    grid: { left: 12, right: spec.colorScale?.kind === 'quantitative' ? 54 : 16, top: 16, bottom: 16, containLabel: true },
+    grid: {
+      left: 12 + (spec.presentation.legend === 'left' && spec.presentation.legendTitle !== undefined ? 72 : 0),
+      right: (spec.colorScale?.kind === 'quantitative' ? 54 : 16) + (spec.presentation.legend === 'right' && spec.presentation.legendTitle !== undefined ? 72 : 0),
+      top: 16 + (spec.presentation.legend === 'top' && spec.presentation.legendTitle !== undefined ? 24 : 0),
+      bottom: 16 + (spec.presentation.legend === 'bottom' && spec.presentation.legendTitle !== undefined ? 24 : 0),
+      containLabel: true,
+    },
     xAxis: pointAxis(envelope, spec.x, pointAxisType(envelope, spec.x), context),
     yAxis: axis(envelope, spec.y, 'value', context, 'primary_y'),
-    legend: pointLegend(spec, context, categories),
+    ...pointLegend(spec, context, categories),
     series,
     ...(categoricalRef && dataset ? { dataset: pointCategoryDatasets(envelope, dataset, categoricalRef, categories) } : {}),
     ...(spec.colorScale?.kind === 'quantitative' && spec.color && markFill?.hasColor !== true ? {
@@ -149,11 +155,11 @@ function pointEncode(spec: PointSpec): EChartsTranslation {
   }
 }
 
-function pointLegend(spec: PointSpec, context: RendererContext, categories: readonly PointCategory[]): EChartsTranslation | undefined {
-  const result = legend(spec.presentation.legend, context, categories.length > 4)
-  if (!result || !spec.colorScale || spec.colorScale.kind !== 'categorical' || !spec.color) return result
-  result.data = categories.map((category) => category.name)
-  result.selectedMode = 'multiple'
+function pointLegend(spec: PointSpec, context: RendererContext, categories: readonly PointCategory[]): EChartsTranslation {
+  const result = legendDecoration(spec.presentation.legend, context, categories.length > 4, spec.presentation, categories.map((category) => ({ value: String(category.value), name: category.name })))
+  if (!result.legend || !spec.colorScale || spec.colorScale.kind !== 'categorical' || !spec.color) return result
+  if (spec.presentation.legendItems === undefined) result.legend.data = categories.map((category) => category.name)
+  result.legend.selectedMode = 'multiple'
   return result
 }
 
