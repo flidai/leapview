@@ -149,6 +149,19 @@ func TestCompileVisualsAcceptsOnePointMarkFillAndRejectsDuplicate(t *testing.T) 
 	}
 }
 
+func TestCompileVisualsRejectsPointConditionalFormattingOutsideRenderedChannels(t *testing.T) {
+	t.Parallel()
+
+	visual := pointDashboardVisual("revenue", &document.PointDashboardColorScale{Kind: visualizationir.VisualizationPointColorScaleKindQuantitative})
+	format := pointGradientFormat("state", visualizationir.VisualizationConditionalTargetMarkFill)
+	point := visual.Presentation.Value.(*document.PointDashboardPresentation)
+	point.ConditionalFormatting = &[]document.DashboardConditionalFormat{format}
+	_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"scatter": visual})
+	if err == nil || !strings.Contains(err.Error(), `conditional formatting "state-gradient" field: field "state" is not rendered by point channels`) {
+		t.Fatalf("compileVisuals() error = %v, want point rendered-channel diagnostic", err)
+	}
+}
+
 func TestCanonicalVisualizationSpecRejectsNonFinitePointSizeScale(t *testing.T) {
 	minimum, maximum := 1.0, 12.0
 	size := "revenue"

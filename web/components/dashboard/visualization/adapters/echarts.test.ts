@@ -144,6 +144,46 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   }])
 })
 
+test('ECharts keeps point conditional cues visible for null, first-match, and default outcomes', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'health-points', rendererID: 'echarts', specRevision: 'sha256:health-points', dataRevision: 1,
+    spec: {
+      kind: 'point', title: 'Health points', datasets: [{ id: 'primary', fields: [
+        { id: 'label', role: 'dimension', dataType: 'string', nullable: false, label: 'Label' },
+        { id: 'x', role: 'metric', dataType: 'decimal', nullable: false, label: 'X' },
+        { id: 'y', role: 'metric', dataType: 'decimal', nullable: false, label: 'Y' },
+        { id: 'score', role: 'metric', dataType: 'decimal', nullable: true, label: 'Score' },
+      ] }],
+      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Health points', description: 'Health points' }, interactions: [],
+      x: { dataset: 'primary', field: 'x' }, y: { dataset: 'primary', field: 'y' }, color: { dataset: 'primary', field: 'score' },
+      label: { dataset: 'primary', field: 'label' }, tooltip: [{ dataset: 'primary', field: 'score' }], colorScale: { kind: 'quantitative' },
+      presentation: { legend: 'bottom', labelPolicy: { density: 'always', priority: [], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, overplot: 'opacity', opacity: 0.55, largeMode: 'automatic', largeThreshold: 1000, brush: [] },
+      conditionalFormatting: [{
+        id: 'score-status', target: 'mark_fill', field: { dataset: 'primary', field: 'score' },
+        rule: {
+          kind: 'rules',
+          rules: [
+            { operator: 'greater_or_equal', value: 0, style: { color: 'warning', icon: 'circle' } },
+            { operator: 'greater_or_equal', value: 80, style: { color: 'success', icon: 'arrow_up' } },
+          ],
+          nullStyle: { color: 'neutral', icon: 'warning' }, defaultStyle: { color: 'danger', icon: 'arrow_down' },
+        },
+      }],
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:health-points', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:health-points', dataRevision: 1, generation: 1, columns: ['label', 'x', 'y', 'score'], rows: [['Missing', 1, 1, null], ['High', 2, 2, 90], ['Low', 3, 3, -1]], completeness: 'complete' }] },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+  const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, attention: '#d29922', danger: '#ff7b72', success: '#56d364', muted: '#8b949e' } }
+  const series = (echartsOption(envelope, dark) as any).series[0]
+
+  expect(series.symbol(['Missing', 1, 1, null])).toContain('path://')
+  expect(series.itemStyle.color({ value: ['Missing', 1, 1, null] })).toBe(dark.colors.muted)
+  expect(series.symbol(['High', 2, 2, 90])).toBe('circle')
+  expect(series.itemStyle.color({ value: ['High', 2, 2, 90] })).toBe(dark.colors.attention)
+  expect(series.symbol(['Low', 3, 3, -1])).toBe('arrow')
+  expect(series.itemStyle.color({ value: ['Low', 3, 3, -1] })).toBe(dark.colors.danger)
+})
+
 test('superseded ECharts mounts own isolated renderer frames', () => {
   const mounted: HTMLElement[] = []
   const container = {
@@ -226,6 +266,56 @@ test('ECharts applies governed row formatting with theme colors and redundant cu
   expect(option.series[0].label.formatter({ value: ['B', 75] })).toBe('↑ 75')
 })
 
+test('ECharts gives explicit icon targets precedence when Cartesian formats share a field', () => {
+  const envelope = cartesianFixture('column') as any
+  envelope.spec.presentation.labelPolicy.density = 'always'
+  envelope.spec.conditionalFormatting = [
+    {
+      id: 'fill-cue', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
+      rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { color: 'warning', icon: 'warning' } }], nullStyle: { icon: 'circle' }, defaultStyle: { color: 'neutral', icon: 'circle' } },
+    },
+    {
+      id: 'icon-cue', target: 'icon', field: { dataset: 'primary', field: 'value' },
+      rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'arrow_up' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'arrow_down' } },
+    },
+  ]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].label.formatter({ value: ['A', 1] })).toBe('↑ 1')
+})
+
+test('ECharts preserves conditional icon and label color on percent-stack labels', () => {
+  const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, attention: '#d29922' } }
+  const format = {
+    id: 'cost-status', target: 'label_foreground', field: { dataset: 'primary', field: 'cost' },
+    rule: {
+      kind: 'rules',
+      rules: [{ operator: 'greater_or_equal', value: 0, style: { color: 'warning', icon: 'arrow_up' } }],
+      nullStyle: { color: 'neutral', icon: 'warning' }, defaultStyle: { color: 'danger', icon: 'arrow_down' },
+    },
+  }
+
+  const multiMetric = cartesianFixture('area', ['label', 'revenue', 'cost']) as any
+  multiMetric.spec.presentation.stacked = false
+  multiMetric.spec.presentation.stacking = 'percent'
+  multiMetric.spec.presentation.labelPolicy.density = 'always'
+  multiMetric.spec.presentation.seriesIntent = [{ value: 'cost', order: 0 }, { value: 'revenue', order: 1 }]
+  multiMetric.dataState.datasets[0].rows = [['Jan', 10, 30]]
+  multiMetric.spec.conditionalFormatting = [format]
+  const multiOption = echartsOption(multiMetric, dark) as any
+  const multiLabel = multiOption.series[0].label
+  expect(multiLabel.formatter({ value: ['Jan', 10, 30, 75, 25] })).toBe('↑ 75%')
+  expect(multiLabel.color({ value: ['Jan', 10, 30, 75, 25] })).toBe(dark.colors.attention)
+
+  const categorySeries = cartesianSeriesFixture() as any
+  categorySeries.spec.presentation.stacking = 'percent'
+  categorySeries.spec.presentation.labelPolicy.density = 'always'
+  categorySeries.spec.conditionalFormatting = [{ ...format, id: 'value-status', field: { dataset: 'primary', field: 'value' } }]
+  const categoryOption = echartsOption(categorySeries, dark) as any
+  const categoryLabel = categoryOption.series.find((series: any) => series.name === 'delivered').label
+  expect(categoryLabel.formatter({ value: ['Jan', 'delivered', 10, 25] })).toBe('↑ 25%')
+  expect(categoryLabel.color({ value: ['Jan', 'delivered', 10, 25] })).toBe(dark.colors.attention)
+})
+
 test('ECharts translates governed heatmap gradients and waterfall rule styles', () => {
   const heatmap = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
   heatmap.spec.conditionalFormatting = [{
@@ -244,8 +334,9 @@ test('ECharts translates governed heatmap gradients and waterfall rule styles', 
     calculable: true,
     text: ['100', '0'],
     inRange: { color: [defaultRendererContext.colors.danger, defaultRendererContext.colors.success] },
-    outOfRange: { opacity: 0 },
+    outOfRange: { opacity: 1 },
   })
+  expect(heatmapOption.series[0].itemStyle.color({ value: ['A', 'R1', null] })).toBe(defaultRendererContext.colors.muted)
 
   const waterfall = cartesianFixture('waterfall', ['label', 'start', 'value']) as any
   waterfall.spec.conditionalFormatting = [{
@@ -1194,6 +1285,42 @@ test('ECharts gives donuts legible renderer defaults without changing their cate
   const update = echartsUpdatePlan(Change.Data, filtered)
   expect(update.option.graphic[0].style.text).toBe('{centerValue|3}\n{centerLabel|Total}')
   expect(update.option.aria.decal.show).toBe(false)
+})
+
+test('ECharts keeps proportional conditional icon cues visible for null, first-match, and default outcomes', () => {
+  const envelope = proportionalFixture('donut') as any
+  envelope.spec.conditionalFormatting = [{
+    id: 'value-status', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'rules',
+      rules: [
+        { operator: 'greater_or_equal', value: 0, style: { color: 'warning', icon: 'circle' } },
+        { operator: 'greater_or_equal', value: 80, style: { color: 'success', icon: 'arrow_up' } },
+      ],
+      nullStyle: { color: 'neutral', icon: 'warning' },
+      defaultStyle: { color: 'danger', icon: 'arrow_down' },
+    },
+  }]
+  envelope.dataState.datasets[0].rows = [['Missing', null], ['High', 90], ['Low', -1]]
+  envelope.spec.presentation.labelPolicy.density = 'hidden'
+
+  const contexts = [
+    defaultRendererContext,
+    { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, foreground: '#f0f6fc', surface: '#0d1117' } },
+  ]
+  for (const context of contexts) {
+    const option = echartsOption(envelope, context) as any
+    const formatter = option.series[0].label.formatter
+    expect(option.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false }, minShowLabelAngle: 0 })
+    expect(formatter({ value: ['Missing', null] })).toBe('⚠ Missing: —')
+    expect(formatter({ value: ['High', 90] })).toBe('● High: 90')
+    expect(formatter({ value: ['Low', -1] })).toBe('↓ Low: -1')
+  }
+
+  envelope.spec.mark = 'funnel'
+  const funnel = echartsOption(envelope, defaultRendererContext) as any
+  expect(funnel.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
+  expect(funnel.series[0].label.formatter({ value: ['Missing', null] })).toBe('⚠ Missing: —')
 })
 
 test('ECharts preserves proportional category colors when filtering changes row order', () => {

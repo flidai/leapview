@@ -138,3 +138,39 @@ func TestValidateSpecEnforcesGovernedKPIComparisonContract(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateSpecKPIConditionalFormattingRequiresValueField(t *testing.T) {
+	t.Parallel()
+
+	color := VisualizationColorIntentDanger
+	format := VisualizationConditionalFormat{
+		ID: "kpi-value", Target: VisualizationConditionalTargetKpiValue,
+		Field: VisualizationFieldRef{Dataset: "comparison", Field: "value"},
+		Rule: VisualizationConditionalRule{Value: &GradientVisualizationConditionalRule{
+			VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "gradient"}, Kind: "gradient", Minimum: 0, Maximum: 100,
+			Low: VisualizationConditionalStyle{Color: &color}, High: VisualizationConditionalStyle{Color: &color}, NullStyle: VisualizationConditionalStyle{Color: &color},
+		}},
+	}
+	spec := VisualizationSpec{Value: &KPIVisualizationSpec{
+		VisualizationSpecBase: VisualizationSpecBase{
+			Kind: "kpi", Title: "Revenue",
+			Datasets: []VisualizationDatasetSchema{
+				{ID: "primary", Fields: []VisualizationField{{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Revenue"}}},
+				{ID: "comparison", Fields: []VisualizationField{{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Previous revenue"}}},
+			},
+			DataBudget:    VisualizationDataBudget{MaxRows: 1, RequiredCompleteness: VisualizationCompletenessComplete},
+			Accessibility: VisualizationAccessibility{Title: "Revenue", Description: "Revenue"},
+			Interactions:  []VisualizationInteraction{}, ConditionalFormatting: &[]VisualizationConditionalFormat{format},
+		},
+		Kind: "kpi", Value: VisualizationFieldRef{Dataset: "primary", Field: "value"},
+		Presentation: KPIVisualizationPresentation{Mode: VisualizationKPIModeCompact, Delta: VisualizationKPIDeltaModeAbsolute, FavorableDirection: VisualizationKPIDirectionNeutral, MissingComparison: VisualizationKPIMissingComparisonShowUnavailable, Ranges: []VisualizationKPIQualitativeRange{}},
+	}}
+	if err := ValidateSpec(spec); err == nil || !strings.Contains(err.Error(), "not the rendered KPI value field") {
+		t.Fatalf("ValidateSpec() error = %v, want KPI value-field diagnostic", err)
+	}
+
+	(*spec.Value.(*KPIVisualizationSpec).ConditionalFormatting)[0].Field = VisualizationFieldRef{Dataset: "primary", Field: "value"}
+	if err := ValidateSpec(spec); err != nil {
+		t.Fatalf("ValidateSpec() rejected KPI value conditional formatting: %v", err)
+	}
+}

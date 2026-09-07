@@ -132,7 +132,9 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
             type: 'continuous', dimension: value.field,
             min: gradient.minimum, max: gradient.maximum, calculable: true, orient: 'horizontal', left: 'center', bottom: 0,
             inRange: { color: [seriesColor('', gradient.low.color, context), seriesColor('', gradient.high.color, context)] },
-            outOfRange: { opacity: 0 },
+            // Keep nulls visible so the conditional formatter can apply the
+            // authored nullStyle instead of visualMap hiding them.
+            outOfRange: { opacity: 1 },
             text: [formatDisplayField(envelope, value, gradient.maximum, context), formatDisplayField(envelope, value, gradient.minimum, context)],
             textStyle: { color: context.colors.muted },
           }
@@ -147,7 +149,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       series: [{
         id: 'series:primary:heatmap', type: 'heatmap',
         encode: { x: spec.x.field, y: spec.y[0]?.field, value: value.field },
-        itemStyle: { color: gradient ? undefined : fill },
+        itemStyle: { color: fill },
         ...chartLabel(envelope, value, spec, context),
       }],
     }
@@ -193,7 +195,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const paletteColor = context.colors.data[(paletteIndex < 0 ? seriesIndex : paletteIndex) % context.colors.data.length] ?? context.colors.accent
     const markColor = conditionalColorWithFallback(fill, intent === undefined ? paletteColor : seriesColor(value.field, intent, context))
     const translatedLabel = normalizedField
-      ? percentLabel(envelope, spec, context, normalized?.columnIndices.get(value.field))
+      ? percentLabel(envelope, value, spec, context, normalized?.columnIndices.get(value.field))
       : chartLabel(envelope, value, spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y', markColor)
     return {
       id: seriesID(value.dataset, value.field), type: cartesianSeriesType(mark), name: fieldLabel(envelope, value),
@@ -502,7 +504,7 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
       },
       step: spec.presentation.step ? 'middle' : false,
       ...(normalized
-        ? percentLabel(envelope, spec, context, normalized.columnIndex)
+        ? percentLabel(envelope, spec.y[0], spec, context, normalized.columnIndex)
         : chartLabel(envelope, spec.y[0], spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y', markColor)),
     }
   })
@@ -694,18 +696,36 @@ function applyPercentAxis(axisOption: EChartsTranslation, context: RendererConte
   axisOption.axisLabel = { ...axisOption.axisLabel, formatter: (value: unknown) => typeof value === 'number' ? `${formatter.format(value)}%` : String(value) }
 }
 
-function percentLabel(envelope: VisualizationEnvelope, spec: CartesianSpec, context: RendererContext, columnIndex = -1) {
+function percentLabel(
+  envelope: VisualizationEnvelope,
+  value: CartesianSpec['y'][number] | undefined,
+  spec: CartesianSpec,
+  context: RendererContext,
+  columnIndex = -1,
+) {
   const formatter = new Intl.NumberFormat(context.locale, { maximumFractionDigits: 1 })
-  return echartsLabelPolicy(
+  const baseFormatter = (params: { value?: unknown }) => {
+    const normalized = Array.isArray(params.value) ? params.value.at(columnIndex) : params.value
+    return typeof normalized === 'number' ? `${formatter.format(normalized)}%` : ''
+  }
+  const cue = value ? conditionalCueFormat(envelope, value) : undefined
+  const color = value ? conditionalItemColor(envelope, value, 'label_foreground', context) : undefined
+  const translated = echartsLabelPolicy(
     envelope,
     spec.x.dataset,
     spec.presentation.labelPolicy,
-    (params: { value?: unknown }) => {
-      const value = Array.isArray(params.value) ? params.value.at(columnIndex) : params.value
-      return typeof value === 'number' ? `${formatter.format(value)}%` : ''
-    },
+    cue
+      ? (params: { value?: unknown }) => {
+          const row = Array.isArray(params.value) ? params.value : []
+          const result = resolveConditionalForRow(envelope, cue, row)
+          const glyph = result?.style.icon ? conditionalIconGlyph(result.style.icon) : ''
+          return [glyph, baseFormatter(params)].filter(Boolean).join(' ')
+        }
+      : baseFormatter,
     context,
   )
+  if (color) translated.label.color = color
+  return translated
 }
 
 function conditionalGradient(
@@ -719,10 +739,16 @@ function conditionalGradient(
 }
 
 function conditionalCueFormat(envelope: VisualizationEnvelope, ref: VisualizationFieldRef): VisualizationConditionalFormat | undefined {
-  return envelope.spec.conditionalFormatting?.find((format) =>
-    format.field.dataset === ref.dataset
-    && format.field.field === ref.field
-    && conditionalRuleHasIcon(format))
+  const formats = envelope.spec.conditionalFormatting ?? []
+  for (const target of ['icon', 'label_foreground', 'mark_fill', 'series_color'] as const) {
+    const format = formats.find((candidate) =>
+      candidate.target === target
+      && candidate.field.dataset === ref.dataset
+      && candidate.field.field === ref.field
+      && conditionalRuleHasIcon(candidate))
+    if (format) return format
+  }
+  return undefined
 }
 
 function conditionalRuleHasIcon(format: VisualizationConditionalFormat): boolean {

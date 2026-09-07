@@ -160,12 +160,15 @@ All entries below describe renderer-neutral compiled contracts. Unsupported comb
 | Map | Renderer-owned geographic contract | No | No | No | No secondary context datasets |
 
 Conditional-format targets are closed by visual family. Point visuals accept only
-`mark_fill`; supported Cartesian marks retain `mark_fill`, `series_color`,
-`label_foreground`, and `icon`. KPI accepts `visual_background`
-and `kpi_value`, while table, matrix, and pivot accept `cell_foreground`,
+`mark_fill`; its field must be one of the rendered `x`, `y`, `size`, `color`,
+`label`, or tooltip channels, and the icon cue is rendered as the point symbol.
+Supported Cartesian marks retain `mark_fill`, `series_color`, `label_foreground`,
+and `icon`. KPI accepts `visual_background` and `kpi_value`, both bound to the
+current `value` field, while table, matrix, and pivot accept `cell_foreground`,
 `cell_background`, and `icon`. Proportional visuals (`pie`, `donut`, and
-`funnel`) currently accept `mark_fill` and `series_color`. Cartesian conditional
-formatting is mark-aware across its supported marks.
+`funnel`) currently accept `mark_fill` and `series_color`, both bound to the
+`value` field; authored icon cues are rendered in sector labels. Cartesian
+conditional formatting is mark-aware across its supported marks.
 Row-level mark stroke variation is not part of the rendering contract; use
 `mark_fill` or a label/icon cue instead.
 

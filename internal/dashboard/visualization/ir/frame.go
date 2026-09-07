@@ -1241,6 +1241,28 @@ func validateConditionalFormattingApplicability(spec VisualizationSpec, format V
 	}
 	field := format.Field
 	switch value := spec.Value.(type) {
+	case *PointVisualizationSpec:
+		visible := make([]VisualizationFieldRef, 0, 6)
+		visible = append(visible, value.X, value.Y)
+		if value.Size != nil {
+			visible = append(visible, *value.Size)
+		}
+		if value.Color != nil {
+			visible = append(visible, *value.Color)
+		}
+		if value.Label != nil {
+			visible = append(visible, *value.Label)
+		}
+		if value.Tooltip != nil {
+			visible = append(visible, (*value.Tooltip)...)
+		}
+		if !contains(visible, field) {
+			return fmt.Errorf("field %q is not rendered by point channels (x, y, size, color, label, or tooltip)", field.Field)
+		}
+	case *KPIVisualizationSpec:
+		if field.Dataset != value.Value.Dataset || field.Field != value.Value.Field {
+			return fmt.Errorf("field %q is not the rendered KPI value field %q", field.Field, value.Value.Field)
+		}
 	case *CartesianVisualizationSpec:
 		visible := value.Y
 		channel := "y"
