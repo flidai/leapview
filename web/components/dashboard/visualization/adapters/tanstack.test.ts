@@ -118,3 +118,39 @@ test('TanStack matrix adapter renders dynamic window schema columns with compile
   expect(table.columns.map((column) => column.key)).toEqual(['state', 'delivered__revenue'])
 	expect(table.columns[1]).toMatchObject({ group: 'Delivered', metric: 'revenue', columnValue: 'delivered', formatting: [{ kind: 'data_bar', min: 0, max: 100, color: 'accent' }] })
 })
+
+test('TanStack matrix adapter projects metric aliases onto visible generated columns', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'matrix-conditional', rendererID: 'tanstack', specRevision: 'sha256:matrix', dataRevision: 2,
+    spec: {
+      kind: 'matrix', title: 'Matrix', datasets: [{ id: 'primary', fields: [
+        { id: 'state', role: 'dimension', dataType: 'string', nullable: true, label: 'State' },
+        { id: 'status', role: 'dimension', dataType: 'string', nullable: true, label: 'Hidden column' },
+        { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: true, label: 'Revenue' },
+      ] }], dataBudget: { maxRows: 1000, requiredCompleteness: 'partial' }, accessibility: { title: 'Matrix', description: 'Matrix' }, interactions: [],
+      rows: [{ dataset: 'primary', field: 'state' }], columns: [{ dataset: 'primary', field: 'status' }], metrics: [{ dataset: 'primary', field: 'revenue' }], metricFormatting: {},
+      conditionalFormatting: [{
+        id: 'revenue-health', target: 'cell_background', field: { dataset: 'primary', field: 'revenue' },
+        rule: { kind: 'rules', rules: [{ operator: 'less_than', value: 50, style: { color: 'danger', icon: 'warning' } }], nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'circle' } },
+      }],
+      presentation: { rowHeight: 34, striped: true, showHeader: true },
+    },
+    dataState: {
+      kind: 'windowed', specRevision: 'sha256:matrix', dataRevision: 2, generation: 1,
+      schema: { id: 'primary', fields: [
+        { id: 'state', role: 'identity', dataType: 'string', nullable: true, label: 'State', grid: { formatting: [] } },
+        { id: 'status', role: 'dimension', dataType: 'string', nullable: true, label: 'Hidden column', grid: { group: 'Hidden', columnValue: 'Delivered', formatting: [] } },
+        { id: 'delivered__revenue', role: 'metric', dataType: 'decimal', nullable: true, label: 'Delivered revenue', grid: { group: 'Delivered', metric: 'revenue', columnValue: 'delivered', formatting: [] } },
+      ] },
+      cardinality: { kind: 'exact', count: 1 }, availableRows: 1, rowCap: 1000, chunkSize: 50, resetVersion: 1,
+      sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }],
+      blocks: { a: { id: 'a', start: 0, rows: [['SP', 'delivered', 42]], requestSeq: 1, resetVersion: 1, sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }] } },
+    }, selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+
+  const table = tableSignal(envelope)
+  expect(table.columns.map((column) => column.key)).toEqual(['state', 'delivered__revenue'])
+  expect(table.columns[1]?.conditionalFormatting?.[0]).toMatchObject({
+    id: 'revenue-health', field: { dataset: 'primary', field: 'delivered__revenue' },
+  })
+})

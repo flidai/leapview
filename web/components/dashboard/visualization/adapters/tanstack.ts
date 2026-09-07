@@ -57,7 +57,7 @@ export function tableSignal(envelope: VisualizationEnvelope): TableSignal {
 	if (envelope.dataState.kind === 'spatial_tiled') throw new Error('TanStack cannot render spatial map data')
   const schema = envelope.dataState.kind === 'windowed' ? envelope.dataState.schema : spec.datasets[0]
   const fields = new Map((schema?.fields ?? []).map((field) => [field.id, field]))
-  const fieldRefs = spec.kind === 'table' ? spec.columns.map((column) => column.field) : (schema?.fields ?? []).map((field) => ({ dataset: schema?.id ?? 'primary', field: field.id }))
+  const fieldRefs = visibleFieldRefs(spec, schema?.fields ?? [], schema?.id ?? 'primary')
   const columns: TableColumn[] = fieldRefs.map((ref) => {
     const field = fields.get(ref.field)
     const authored = spec.kind === 'table' ? spec.columns.find((column) => column.field.field === ref.field) : undefined
@@ -86,6 +86,34 @@ export function tableSignal(envelope: VisualizationEnvelope): TableSignal {
     rowHeight: spec.presentation.rowHeight, resetVersion: state.kind === 'windowed' ? state.resetVersion : 0,
     sort, blocks, loadingBlock: envelope.status.kind === 'loading' ? 'all' : '', error: envelope.status.kind === 'error' ? envelope.status.message ?? 'Visualization error' : '',
   }
+}
+
+function visibleFieldRefs(
+  spec: Extract<VisualizationEnvelope['spec'], { kind: 'table' | 'matrix' | 'pivot' }>,
+  schemaFields: VisualizationField[],
+  dataset: string,
+): { dataset: string; field: string }[] {
+  if (spec.kind === 'table') return spec.columns.map((column) => column.field)
+
+  const refs: { dataset: string; field: string }[] = []
+  const seen = new Set<string>()
+  const append = (field: string) => {
+    if (seen.has(field)) return
+    seen.add(field)
+    refs.push({ dataset, field })
+  }
+  for (const row of spec.rows) append(row.field)
+
+  // Matrix/pivot result frames retain authored metric aliases in Grid.Metric
+  // while pivot cells receive generated field IDs. Project each alias onto
+  // every generated visible cell and omit the source column dimensions.
+  for (const metric of spec.metrics) {
+    for (const field of schemaFields) {
+      const metricAlias = field.grid?.metric ?? field.id
+      if (metricAlias === metric.field) append(field.id)
+    }
+  }
+  return refs
 }
 
 function tableInteraction(spec: Extract<VisualizationEnvelope['spec'], { kind: 'table' | 'matrix' | 'pivot' }>): TableSignal['interaction'] {

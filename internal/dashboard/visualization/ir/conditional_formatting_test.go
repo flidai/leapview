@@ -80,7 +80,7 @@ func TestValidateSpecEnforcesGovernedConditionalFormatting(t *testing.T) {
 			mutate: func(spec *CartesianVisualizationSpec) {
 				(*spec.ConditionalFormatting)[0].Field.Field = "status"
 			},
-			want: "gradient requires a numeric field",
+			want: "not rendered by the cartesian y channel",
 		},
 		{
 			name: "duplicate identity",
@@ -148,5 +148,97 @@ func TestValidateSpecAllowsGovernedProportionalCategoryColors(t *testing.T) {
 	}}
 	if err := ValidateSpec(spec); err != nil {
 		t.Fatalf("valid proportional conditional formatting: %v", err)
+	}
+}
+
+func TestValidateSpecRejectsConditionalFormattingTargetsOutsideVisibleChannels(t *testing.T) {
+	t.Parallel()
+
+	ref := func(field string) VisualizationFieldRef {
+		return VisualizationFieldRef{Dataset: "primary", Field: field}
+	}
+	fields := []VisualizationField{
+		{ID: "x", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "X"},
+		{ID: "row", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Row"},
+		{ID: "column", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Column"},
+		{ID: "start", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Start"},
+		{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Value"},
+		{ID: "metric", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Metric"},
+	}
+	base := func(kind string, format VisualizationConditionalFormat) VisualizationSpecBase {
+		return VisualizationSpecBase{
+			Kind: kind, Title: kind, Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: fields}},
+			DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+			Accessibility: VisualizationAccessibility{Title: kind, Description: kind},
+			Interactions:  []VisualizationInteraction{}, ConditionalFormatting: &[]VisualizationConditionalFormat{format},
+		}
+	}
+	format := func(field string, target VisualizationConditionalTarget) VisualizationConditionalFormat {
+		color := VisualizationColorIntentDanger
+		style := VisualizationConditionalStyle{Color: &color}
+		return VisualizationConditionalFormat{
+			ID: field, Target: target, Field: ref(field),
+			Rule: VisualizationConditionalRule{Value: &GradientVisualizationConditionalRule{
+				VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "gradient"}, Kind: "gradient", Minimum: 0, Maximum: 100,
+				Low: style, High: style, NullStyle: style,
+			}},
+		}
+	}
+	presentation := testVisualizationPresentation(VisualizationLegendPositionBottom)
+	cartesian := func(mark VisualizationCartesianMark, y []VisualizationFieldRef, format VisualizationConditionalFormat) VisualizationSpec {
+		baseValue := base("cartesian", format)
+		return VisualizationSpec{Value: &CartesianVisualizationSpec{
+			VisualizationSpecBase: baseValue, Kind: "cartesian", Mark: mark, X: ref("x"), Y: y,
+			Presentation: CartesianVisualizationPresentation{VisualizationPresentation: presentation},
+		}}
+	}
+	proportional := func(value, category string) VisualizationSpec {
+		baseValue := base("proportional", format(value, VisualizationConditionalTargetMarkFill))
+		return VisualizationSpec{Value: &ProportionalVisualizationSpec{
+			VisualizationSpecBase: baseValue, Kind: "proportional", Mark: VisualizationProportionalMarkPie,
+			Category: ref(category), Value: ref("value"),
+			Presentation: ProportionalVisualizationPresentation{VisualizationPresentation: presentation, Orientation: VisualizationOrientationVertical},
+		}}
+	}
+	table := func(kind, field string, visible []string) VisualizationSpec {
+		columns := make([]TableVisualizationColumn, 0, len(visible))
+		for _, visibleField := range visible {
+			columns = append(columns, TableVisualizationColumn{Field: ref(visibleField), Label: visibleField, Formatting: []TableVisualizationFormattingRule{}})
+		}
+		baseValue := base(kind, format(field, VisualizationConditionalTargetCellBackground))
+		presentation := GridVisualizationPresentation{RowHeight: 28, ShowHeader: true}
+		if kind == "table" {
+			return VisualizationSpec{Value: &TableVisualizationSpec{VisualizationSpecBase: baseValue, Kind: kind, Columns: columns, Presentation: presentation}}
+		}
+		if kind == "matrix" {
+			return VisualizationSpec{Value: &MatrixVisualizationSpec{VisualizationSpecBase: baseValue, Kind: kind, Rows: []VisualizationFieldRef{ref("row")}, Columns: []VisualizationFieldRef{ref("column")}, Metrics: []VisualizationFieldRef{ref("metric")}, MetricFormatting: map[string][]TableVisualizationFormattingRule{}, Presentation: presentation}}
+		}
+		return VisualizationSpec{Value: &PivotVisualizationSpec{VisualizationSpecBase: baseValue, Kind: kind, Rows: []VisualizationFieldRef{ref("row")}, Columns: []VisualizationFieldRef{ref("column")}, Metrics: []VisualizationFieldRef{ref("metric")}, MetricFormatting: map[string][]TableVisualizationFormattingRule{}, Presentation: presentation}}
+	}
+
+	tests := []struct {
+		name    string
+		valid   VisualizationSpec
+		invalid VisualizationSpec
+		want    string
+	}{
+		{name: "cartesian y channel", valid: cartesian(VisualizationCartesianMarkColumn, []VisualizationFieldRef{ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkColumn, []VisualizationFieldRef{ref("value")}, format("x", VisualizationConditionalTargetMarkFill)), want: "not rendered by the cartesian y channel"},
+		{name: "heatmap value channel", valid: cartesian(VisualizationCartesianMarkHeatmap, []VisualizationFieldRef{ref("row"), ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkHeatmap, []VisualizationFieldRef{ref("row"), ref("value")}, format("row", VisualizationConditionalTargetMarkFill)), want: "cartesian y[1] value channel"},
+		{name: "waterfall metric channel", valid: cartesian(VisualizationCartesianMarkWaterfall, []VisualizationFieldRef{ref("start"), ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkWaterfall, []VisualizationFieldRef{ref("start"), ref("value")}, format("start", VisualizationConditionalTargetMarkFill)), want: "cartesian y[1] metric channel"},
+		{name: "proportional value channel", valid: proportional("value", "row"), invalid: proportional("row", "row"), want: "proportional value channel"},
+		{name: "table visible column", valid: table("table", "value", []string{"value"}), invalid: table("table", "column", []string{"value"}), want: "visible table column"},
+		{name: "matrix metric alias", valid: table("matrix", "metric", nil), invalid: table("matrix", "column", nil), want: "visible matrix row or metric alias"},
+		{name: "pivot metric alias", valid: table("pivot", "metric", nil), invalid: table("pivot", "column", nil), want: "visible pivot row or metric alias"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ValidateSpec(test.valid); err != nil {
+				t.Fatalf("valid spec rejected: %v", err)
+			}
+			err := ValidateSpec(test.invalid)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateSpec() error = %v, want containing %q", err, test.want)
+			}
+		})
 	}
 }

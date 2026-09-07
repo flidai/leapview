@@ -707,6 +707,9 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 		if err := validateFieldRef(format.Field, schemas); err != nil {
 			return fmt.Errorf("conditional formatting %q field: %w", format.ID, err)
 		}
+		if err := validateConditionalFormattingApplicability(spec, format); err != nil {
+			return fmt.Errorf("conditional formatting %q field: %w", format.ID, err)
+		}
 		field, _ := visualizationField(format.Field, schemas)
 		switch rule := format.Rule.Value.(type) {
 		case *GradientVisualizationConditionalRule:
@@ -795,6 +798,65 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 			if err := validatePointMarkFillColors(format.Rule); err != nil {
 				return fmt.Errorf("conditional formatting %q: %w", format.ID, err)
 			}
+		}
+	}
+	return nil
+}
+
+// validateConditionalFormattingApplicability keeps authored target bindings
+// honest about the channels a renderer actually emits. Schema membership alone
+// is insufficient: ECharts and the table adapter intentionally omit source
+// fields that do not participate in the visible mark or column.
+func validateConditionalFormattingApplicability(spec VisualizationSpec, format VisualizationConditionalFormat) error {
+	contains := func(refs []VisualizationFieldRef, target VisualizationFieldRef) bool {
+		for _, ref := range refs {
+			if ref.Dataset == target.Dataset && ref.Field == target.Field {
+				return true
+			}
+		}
+		return false
+	}
+	field := format.Field
+	switch value := spec.Value.(type) {
+	case *CartesianVisualizationSpec:
+		visible := value.Y
+		channel := "y"
+		switch value.Mark {
+		case VisualizationCartesianMarkHeatmap:
+			visible = nil
+			if len(value.Y) >= 2 {
+				visible = value.Y[1:2]
+			}
+			channel = "y[1] value"
+		case VisualizationCartesianMarkWaterfall:
+			visible = nil
+			if len(value.Y) >= 2 {
+				visible = value.Y[1:2]
+			}
+			channel = "y[1] metric"
+		}
+		if !contains(visible, field) {
+			return fmt.Errorf("field %q is not rendered by the cartesian %s channel", field.Field, channel)
+		}
+	case *ProportionalVisualizationSpec:
+		if field.Dataset != value.Value.Dataset || field.Field != value.Value.Field {
+			return fmt.Errorf("field %q is not rendered by the proportional value channel", field.Field)
+		}
+	case *TableVisualizationSpec:
+		visible := make([]VisualizationFieldRef, 0, len(value.Columns))
+		for _, column := range value.Columns {
+			visible = append(visible, column.Field)
+		}
+		if !contains(visible, field) {
+			return fmt.Errorf("field %q is not a visible table column", field.Field)
+		}
+	case *MatrixVisualizationSpec:
+		if !contains(value.Rows, field) && !contains(value.Metrics, field) {
+			return fmt.Errorf("field %q is not a visible matrix row or metric alias", field.Field)
+		}
+	case *PivotVisualizationSpec:
+		if !contains(value.Rows, field) && !contains(value.Metrics, field) {
+			return fmt.Errorf("field %q is not a visible pivot row or metric alias", field.Field)
 		}
 	}
 	return nil
