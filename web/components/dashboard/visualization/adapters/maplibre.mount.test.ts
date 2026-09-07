@@ -120,10 +120,37 @@ function layerPaint(map: FakeMap, id: string): { text: unknown; halo: unknown } 
   return { text: layer?.paint['text-color'], halo: layer?.paint['text-halo-color'] }
 }
 
+function installDomGlobals(dom: JSDOM): () => void {
+  const values = {
+    document: dom.window.document,
+    window: dom.window,
+    location: dom.window.location,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
+    cancelAnimationFrame: () => {},
+    fetch: globalThis.fetch,
+    CustomEvent: dom.window.CustomEvent,
+  }
+  const keys = Object.keys(values)
+  const previous = new Map(keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
+  Object.defineProperties(globalThis, Object.fromEntries(keys.map((key) => [key, {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: values[key as keyof typeof values],
+  }])))
+  return () => {
+    for (const key of keys) {
+      const descriptor = previous.get(key)
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor)
+      else Reflect.deleteProperty(globalThis, key)
+    }
+  }
+}
+
 test('MapLibre mounted labels resolve theme and repaint in place on context-only updates', async () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
-  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
-  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
   globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
   try {
@@ -159,22 +186,14 @@ test('MapLibre mounted labels resolve theme and repaint in place on context-only
     expect(layerPaint(map, 'lv-points-data-label')).toEqual(darkPaint)
     handle.dispose()
   } finally {
-    globalThis.document = previous.document
-    globalThis.window = previous.window
-    globalThis.location = previous.location
-    globalThis.getComputedStyle = previous.getComputedStyle
-    globalThis.requestAnimationFrame = previous.requestAnimationFrame
-    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
-    globalThis.fetch = previous.fetch
-    globalThis.CustomEvent = previous.CustomEvent
+    restoreDomGlobals()
     dom.window.close()
   }
 })
 
 test('MapLibre changes basemap label density in place without rebuilding geographic data', async () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
-  const previous = { document: globalThis.document, window: globalThis.window, location: globalThis.location, getComputedStyle: globalThis.getComputedStyle, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, fetch: globalThis.fetch, CustomEvent: globalThis.CustomEvent }
-  Object.assign(globalThis, { document: dom.window.document, window: dom.window, location: dom.window.location, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 }, cancelAnimationFrame: () => {}, CustomEvent: dom.window.CustomEvent })
+  const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
   globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
   try {
@@ -193,14 +212,7 @@ test('MapLibre changes basemap label density in place without rebuilding geograp
     expect([...map.layers.keys()]).toEqual(layersBefore)
     handle.dispose()
   } finally {
-    globalThis.document = previous.document
-    globalThis.window = previous.window
-    globalThis.location = previous.location
-    globalThis.getComputedStyle = previous.getComputedStyle
-    globalThis.requestAnimationFrame = previous.requestAnimationFrame
-    globalThis.cancelAnimationFrame = previous.cancelAnimationFrame
-    globalThis.fetch = previous.fetch
-    globalThis.CustomEvent = previous.CustomEvent
+    restoreDomGlobals()
     dom.window.close()
   }
 })
