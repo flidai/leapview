@@ -192,12 +192,35 @@ func (f *PostgresNativeRefreshFinalizerAdapter) FinalizeCanonicalRefreshTx(ctx c
 		return fmt.Errorf("%w: native refresh snapshot seal evidence differs", refreshpostgres.ErrConflict)
 	}
 
-	publication, err := f.Deployment.CreatePublicationTx(ctx, tx, deploymentpostgres.PublicationInput{
+	publicationInput := deploymentpostgres.PublicationInput{
 		PublicationID: publicationID, TargetID: targetID, GenerationID: result.NativeGenerationID,
 		ExpectedBaseGenerationID: job.Identity.GenerationID, CandidateID: generation.CandidateID,
 		SnapshotSealID: generation.SnapshotSealID, ExpectedTargetRevision: evidence.ExpectedTargetRevision,
 		ActorID: job.PrincipalID, RequestDigest: requestDigest,
-	})
+	}
+	// A committed publication is durable native outcome evidence and must be
+	// replayable after the refresh worker lease expires. Inspect that existing
+	// outcome before taking a delivery lease; fresh and pending publications
+	// acquire the target fence before any publication FK can take a target-row
+	// key-share lock.
+	existingPublication, publicationLookupErr := f.Deployment.PublicationTx(ctx, tx, publicationID)
+	leaseAcquired := false
+	var publicationLease deploymentpostgres.DeliveryLease
+	if errors.Is(publicationLookupErr, deploymentpostgres.ErrNotFound) || (publicationLookupErr == nil && existingPublication.State == "pending") {
+		publicationLease, err = f.leaseForPublication(ctx, tx, leaseID, targetID, job)
+		if err != nil {
+			return err
+		}
+		leaseAcquired = true
+		// Lease acquisition can itself advance the target fence. Recheck the
+		// refresh worker lease before creating the publication and its FK locks.
+		if err := f.requireLiveRun(ctx, tx, job); err != nil {
+			return err
+		}
+	} else if publicationLookupErr != nil {
+		return fmt.Errorf("load native refresh publication: %w", publicationLookupErr)
+	}
+	publication, err := f.Deployment.CreatePublicationTx(ctx, tx, publicationInput)
 	if err != nil {
 		return fmt.Errorf("create native refresh publication: %w", err)
 	}
@@ -217,13 +240,13 @@ func (f *PostgresNativeRefreshFinalizerAdapter) FinalizeCanonicalRefreshTx(ctx c
 		if publication.State != "pending" {
 			return fmt.Errorf("%w: native refresh publication state=%s", refreshpostgres.ErrConflict, publication.State)
 		}
-		lease, leaseErr := f.leaseForPublication(ctx, tx, leaseID, targetID, job)
-		if leaseErr != nil {
-			return leaseErr
+		if !leaseAcquired {
+			return fmt.Errorf("%w: pending native refresh publication was not fenced before creation", refreshpostgres.ErrConflict)
 		}
-		activation.LeaseID, activation.OwnerID, activation.FencingEpoch = lease.LeaseID, lease.OwnerID, lease.FencingEpoch
+		activation.LeaseID, activation.OwnerID, activation.FencingEpoch = publicationLease.LeaseID, publicationLease.OwnerID, publicationLease.FencingEpoch
 		// Lease acquisition can itself advance the target fence. Recheck the
-		// refresh worker lease immediately before native target CAS.
+		// refresh worker lease immediately before native target CAS, after all
+		// publication validation has completed.
 		if err := f.requireLiveRun(ctx, tx, job); err != nil {
 			return err
 		}
@@ -269,7 +292,21 @@ func (f *PostgresNativeRefreshFinalizerAdapter) leaseForPublication(ctx context.
 		if lease.TargetID != targetID || lease.OwnerID != job.LeaseOwner || lease.State != "active" || !lease.ExpiresAt.After(now) {
 			return deploymentpostgres.DeliveryLease{}, deploymentpostgres.ErrStaleFence
 		}
-		return lease, nil
+		// Re-admit the exact existing lease while taking the target fence and
+		// lease row locks. A non-locking validation followed by publication
+		// insertion would let candidate admission acquire the fence, expire this
+		// lease, and then wait on the target row held by the publication FK.
+		locked, acquireErr := f.Deployment.AcquireLeaseTx(ctx, tx, deploymentpostgres.LeaseInput{
+			LeaseID: lease.LeaseID, TargetID: lease.TargetID, OwnerID: lease.OwnerID,
+			ExpiresAt: lease.ExpiresAt,
+		})
+		if acquireErr != nil {
+			if errors.Is(acquireErr, deploymentpostgres.ErrConflict) || errors.Is(acquireErr, deploymentpostgres.ErrNotFound) {
+				return deploymentpostgres.DeliveryLease{}, deploymentpostgres.ErrStaleFence
+			}
+			return deploymentpostgres.DeliveryLease{}, fmt.Errorf("acquire native refresh lease: %w", acquireErr)
+		}
+		return locked, nil
 	} else if !errors.Is(err, deploymentpostgres.ErrNotFound) {
 		return deploymentpostgres.DeliveryLease{}, fmt.Errorf("read native refresh lease: %w", err)
 	}
