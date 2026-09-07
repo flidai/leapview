@@ -305,6 +305,7 @@ tasks:
       - node --test scripts/ci_watchdog.test.mjs
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/node_deps_contract.test.ts
+      - bun test scripts/contract_projection_fixture.test.ts
       - bun test scripts/ensure_playwright.test.ts
       - bun run test:primer-primitives
       - bun run test:primer-alignment
@@ -998,6 +999,8 @@ tasks:
       - Taskfile.yml
       - api/apigen.yaml
       - api/data-resources/**/*.tsp
+      - internal/project/contractprojection/exclusions.json
+      - internal/project/contractprojection/manifest.go
       - internal/project/contracts/generate/**/*.go
       - internal/analytics/connectors/**/*.go
       - pkg/apigen/**/*.go

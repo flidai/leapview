@@ -545,6 +545,11 @@ sections:
             type: explanation
             summary: Follow routing, query execution, and streamed UI updates.
             source: articles/architecture/runtime.md
+          - slug: architecture/contract-projections
+            title: Canonical contract projections
+            type: explanation
+            summary: Follow sealed projection inputs, deterministic contract identity, and fail-closed coverage checks.
+            source: articles/architecture/contract-projections.md
           - slug: architecture/semantic-attribute-registry
             title: Semantic attribute registry and control plane
             type: explanation

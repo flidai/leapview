@@ -475,6 +475,919 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "ContractProjectionAuthoritativeDefinition": {
+      "properties": {
+        "type": {
+          "enum": [
+            "businessDefinition",
+            "transformationImplementation"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionCanonicalBooleanValue": {
+      "properties": {
+        "type": {
+          "enum": [
+            "Boolean"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionCanonicalTextValue": {
+      "properties": {
+        "type": {
+          "enum": [
+            "String",
+            "Integer",
+            "Decimal",
+            "Number",
+            "Date",
+            "Time",
+            "DateTime",
+            "Timestamp"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionCanonicalValue": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ContractProjectionCanonicalTextValue"
+        },
+        {
+          "$ref": "#/$defs/ContractProjectionCanonicalBooleanValue"
+        }
+      ]
+    },
+    "ContractProjectionContract": {
+      "properties": {
+        "compatibility": {
+          "enum": [
+            "backward"
+          ],
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "compatibility",
+        "version"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionDuration": {
+      "properties": {
+        "amount": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "unit": {
+          "enum": [
+            "second",
+            "minute",
+            "hour",
+            "day"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "unit"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionField": {
+      "properties": {
+        "authoritativeDefinitions": {
+          "items": {
+            "$ref": "#/$defs/ContractProjectionAuthoritativeDefinition"
+          },
+          "type": "array"
+        },
+        "classification": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "criticalDataElement": {
+          "type": "boolean"
+        },
+        "datatype": {
+          "enum": [
+            "String",
+            "Integer",
+            "Decimal",
+            "Float",
+            "Boolean",
+            "Date",
+            "Time",
+            "DateTime",
+            "DateTimeTz",
+            "Opaque"
+          ],
+          "type": "string"
+        },
+        "deprecation": {
+          "$ref": "#/$defs/ContractProjectionFieldDeprecation"
+        },
+        "nullable": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionFieldDeprecation": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "replacement": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "since": {
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "since"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionMetadata": {
+      "properties": {
+        "contract": {
+          "$ref": "#/$defs/ContractProjectionContract"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract",
+        "id",
+        "name"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionModelBody": {
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/ContractProjectionModelCheck"
+          },
+          "type": "array"
+        },
+        "definition": {
+          "$ref": "#/$defs/ContractProjectionModelDefinition"
+        },
+        "entities": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContractProjectionModelEntity"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContractProjectionModelField"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "grain": {
+          "$ref": "#/$defs/ContractProjectionModelGrain"
+        }
+      },
+      "required": [
+        "definition",
+        "entities",
+        "fields",
+        "grain"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionModelCheck": {
+      "properties": {
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "maximum": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "minimum": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "severity": {
+          "enum": [
+            "warning",
+            "error"
+          ],
+          "type": "string"
+        },
+        "to": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "non_null",
+            "unique",
+            "accepted_values",
+            "relationship",
+            "row_count"
+          ],
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionModelDefinition": {
+      "properties": {
+        "source": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "type": "string"
+        },
+        "sqlAst": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "direct",
+            "sql"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionModelEntity": {
+      "properties": {
+        "fields": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "primary",
+            "unique",
+            "foreign",
+            "natural"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionModelField": {
+      "properties": {
+        "authoritativeDefinitions": {
+          "items": {
+            "$ref": "#/$defs/ContractProjectionAuthoritativeDefinition"
+          },
+          "type": "array"
+        },
+        "classification": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "criticalDataElement": {
+          "type": "boolean"
+        },
+        "datatype": {
+          "enum": [
+            "String",
+            "Integer",
+            "Decimal",
+            "Float",
+            "Boolean",
+            "Date",
+            "Time",
+            "DateTime",
+            "DateTimeTz",
+            "Opaque"
+          ],
+          "type": "string"
+        },
+        "deprecation": {
+          "$ref": "#/$defs/ContractProjectionFieldDeprecation"
+        },
+        "nullable": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionModelGrain": {
+      "properties": {
+        "entity": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionRelationshipEndpoint": {
+      "properties": {
+        "dataset": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "entity": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "dataset"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSemanticAccessFilter": {
+      "properties": {
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "userAttribute": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "userAttribute"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSemanticAccessGrant": {
+      "properties": {
+        "allowedValues": {
+          "items": {
+            "$ref": "#/$defs/ContractProjectionCanonicalValue"
+          },
+          "type": "array"
+        },
+        "userAttribute": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "allowedValues",
+        "userAttribute"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSemanticBinding": {
+      "properties": {
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSemanticDataset": {
+      "properties": {
+        "accessFilters": {
+          "items": {
+            "$ref": "#/$defs/ContractProjectionSemanticAccessFilter"
+          },
+          "type": "array"
+        },
+        "defaultTimeDimension": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "model": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "type": "string"
+        },
+        "requiredAccessGrants": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSemanticDimension": {
+      "properties": {
+        "bindings": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContractProjectionSemanticBinding"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "datatype": {
+          "enum": [
+            "String",
+            "Integer",
+            "Decimal",
+            "Float",
+            "Boolean",
+            "Date",
+            "Time",
+            "DateTime",
+            "DateTimeTz",
+            "Opaque"
+          ],
+          "type": "string"
+        },
+        "requiredAccessGrants": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "time": {
+          "$ref": "#/$defs/ContractProjectionSemanticTime"
+        }
+      },
+      "required": [
+        "bindings",
+        "datatype"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSemanticFilter": {
+      "properties": {
+        "all": {
+          "items": {
+            "$ref": "#/$defs/ContractProjectionSemanticFilter"
+          },
+          "type": "array"
+        },
+        "any": {
+          "items": {
+            "$ref": "#/$defs/ContractProjectionSemanticFilter"
+          },
+          "type": "array"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "not": {
+          "$ref": "#/$defs/ContractProjectionSemanticFilter"
+        },
+        "operator": {
+          "enum": [
+            "equals",
+            "not_equals",
+            "in",
+            "not_in",
+            "less_than",
+            "less_than_or_equal",
+            "greater_than",
+            "greater_than_or_equal",
+            "is_null",
+            "is_not_null"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/ContractProjectionCanonicalValue"
+        },
+        "values": {
+          "items": {
+            "$ref": "#/$defs/ContractProjectionCanonicalValue"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSemanticMetric": {
+      "properties": {
+        "aggregation": {
+          "enum": [
+            "sum",
+            "count",
+            "count_distinct",
+            "avg",
+            "min",
+            "max"
+          ],
+          "type": "string"
+        },
+        "dataset": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "denominator": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "empty": {
+          "enum": [
+            "zero",
+            "null"
+          ],
+          "type": "string"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/ContractProjectionSemanticMetricInput"
+        },
+        "numerator": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "requiredAccessGrants": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "timeDimension": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "aggregate",
+            "derived",
+            "ratio"
+          ],
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "where": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSemanticMetricInput": {
+      "properties": {
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSemanticModelBody": {
+      "properties": {
+        "accessGrants": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContractProjectionSemanticAccessGrant"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "datasets": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContractProjectionSemanticDataset"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "dimensions": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContractProjectionSemanticDimension"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "filters": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContractProjectionSemanticFilter"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "metrics": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContractProjectionSemanticMetric"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "relationships": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContractProjectionSemanticRelationship"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "datasets",
+        "metrics"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSemanticRelationship": {
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/ContractProjectionRelationshipEndpoint"
+        },
+        "to": {
+          "$ref": "#/$defs/ContractProjectionRelationshipEndpoint"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSemanticTime": {
+      "properties": {
+        "calendar": {
+          "type": "string"
+        },
+        "grains": {
+          "items": {
+            "enum": [
+              "second",
+              "minute",
+              "hour",
+              "day",
+              "week",
+              "month",
+              "quarter",
+              "year"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "nativeGrain": {
+          "enum": [
+            "second",
+            "minute",
+            "hour",
+            "day",
+            "week",
+            "month",
+            "quarter",
+            "year"
+          ],
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "grains",
+        "nativeGrain"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSourceBody": {
+      "properties": {
+        "freshness": {
+          "$ref": "#/$defs/ContractProjectionSourceFreshness"
+        },
+        "schema": {
+          "$ref": "#/$defs/ContractProjectionSourceSchema"
+        }
+      },
+      "required": [
+        "schema"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSourceFreshness": {
+      "properties": {
+        "basis": {
+          "enum": [
+            "field",
+            "revision"
+          ],
+          "type": "string"
+        },
+        "errorAfter": {
+          "$ref": "#/$defs/ContractProjectionDuration"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "revision": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "warningAfter": {
+          "$ref": "#/$defs/ContractProjectionDuration"
+        }
+      },
+      "required": [
+        "basis"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSourceSchema": {
+      "properties": {
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContractProjectionField"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "mode": {
+          "enum": [
+            "inferred",
+            "compatible",
+            "strict"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "ContractResourceMetadata": {
       "properties": {
         "contract": {
@@ -1484,6 +2397,43 @@
       },
       "required": [
         "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ModelContractProjection": {
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "leapview.dev/v1"
+          ],
+          "type": "string"
+        },
+        "contract": {
+          "$ref": "#/$defs/ContractProjectionModelBody"
+        },
+        "kind": {
+          "enum": [
+            "Model"
+          ],
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ContractProjectionMetadata"
+        },
+        "profile": {
+          "enum": [
+            "leapview.contract/v1"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "contract",
+        "kind",
+        "metadata",
+        "profile"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -2787,6 +3737,43 @@
       "unevaluatedProperties": false,
       "x-leapview-semantic-access-profile": "leapview.semantic-access/v1"
     },
+    "SemanticModelContractProjection": {
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "leapview.dev/v1"
+          ],
+          "type": "string"
+        },
+        "contract": {
+          "$ref": "#/$defs/ContractProjectionSemanticModelBody"
+        },
+        "kind": {
+          "enum": [
+            "SemanticModel"
+          ],
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ContractProjectionMetadata"
+        },
+        "profile": {
+          "enum": [
+            "leapview.contract/v1"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "contract",
+        "kind",
+        "metadata",
+        "profile"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "SemanticModelMetadata": {
       "properties": {
         "description": {
@@ -3004,6 +3991,43 @@
         "kind",
         "metadata",
         "spec"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SourceContractProjection": {
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "leapview.dev/v1"
+          ],
+          "type": "string"
+        },
+        "contract": {
+          "$ref": "#/$defs/ContractProjectionSourceBody"
+        },
+        "kind": {
+          "enum": [
+            "Source"
+          ],
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ContractProjectionMetadata"
+        },
+        "profile": {
+          "enum": [
+            "leapview.contract/v1"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "contract",
+        "kind",
+        "metadata",
+        "profile"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -3429,10 +4453,19 @@
       "$ref": "#/$defs/Model"
     },
     {
+      "$ref": "#/$defs/ModelContractProjection"
+    },
+    {
       "$ref": "#/$defs/SemanticModel"
     },
     {
+      "$ref": "#/$defs/SemanticModelContractProjection"
+    },
+    {
       "$ref": "#/$defs/Source"
+    },
+    {
+      "$ref": "#/$defs/SourceContractProjection"
     }
   ],
   "description": "Strict authored Connection, Source, Model, and SemanticModel contracts.",
@@ -3461,6 +4494,17 @@
       ]
     },
     {
+      "kind": "leapview-contract-v1",
+      "name": "ModelContractProjection",
+      "schema": {
+        "$ref": "#/$defs/ModelContractProjection"
+      },
+      "tags": [
+        "model",
+        "contract-projection"
+      ]
+    },
+    {
       "kind": "resource",
       "name": "SemanticModel",
       "schema": {
@@ -3473,6 +4517,17 @@
       "x-leapview-semantic-access-profile": "leapview.semantic-access/v1"
     },
     {
+      "kind": "leapview-contract-v1",
+      "name": "SemanticModelContractProjection",
+      "schema": {
+        "$ref": "#/$defs/SemanticModelContractProjection"
+      },
+      "tags": [
+        "semantic-model",
+        "contract-projection"
+      ]
+    },
+    {
       "kind": "resource",
       "name": "Source",
       "schema": {
@@ -3481,6 +4536,17 @@
       "tags": [
         "source",
         "data-resource"
+      ]
+    },
+    {
+      "kind": "leapview-contract-v1",
+      "name": "SourceContractProjection",
+      "schema": {
+        "$ref": "#/$defs/SourceContractProjection"
+      },
+      "tags": [
+        "source",
+        "contract-projection"
       ]
     }
   ]

@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 1,
+  "profile": "leapview.contract/v1",
+  "sourceAuthority": "api/gen/data-resources-ir.json",
+  "resources": {
+    "Source": [
+      {
+        "paths": [
+          "metadata.description",
+          "metadata.displayName",
+          "metadata.documentation",
+          "metadata.domain",
+          "metadata.owner",
+          "metadata.provenance.origin",
+          "metadata.provenance.path",
+          "metadata.provenance.source",
+          "metadata.tags.*"
+        ],
+        "sourceShapeFingerprint": "sha256:4af74f3c779006b601181c62116f0650257a397895805b609c61d0980980c26f",
+        "reason": "Discovery prose, presentation labels, ownership routing, documentation, provenance, and search tags do not change the Source consumer contract.",
+        "securityPrivacyImplications": "Exclusion prevents internal paths, author identities, organizational labels, and potentially sensitive prose from entering external contract bytes.",
+        "compatibilityImplications": "Changes to these descriptive fields do not require a contract version change."
+      },
+      {
+        "paths": [
+          "spec.connection",
+          "spec.location.catalog",
+          "spec.location.format",
+          "spec.location.name",
+          "spec.location.options.compression",
+          "spec.location.options.delimiter",
+          "spec.location.options.escape",
+          "spec.location.options.format",
+          "spec.location.options.header",
+          "spec.location.options.hivePartitioning",
+          "spec.location.options.maximumDepth",
+          "spec.location.options.nullString",
+          "spec.location.options.quote",
+          "spec.location.options.sheet",
+          "spec.location.options.snapshot",
+          "spec.location.options.unionByName",
+          "spec.location.options.version",
+          "spec.location.path",
+          "spec.location.schema",
+          "spec.location.type"
+        ],
+        "sourceShapeFingerprint": "sha256:4942501cba70eb6248aa70826cb69448a57bb04a683fcb2df9a5186a04950412",
+        "reason": "Connector binding and physical location are deployment inputs rather than public Source guarantees.",
+        "securityPrivacyImplications": "Exclusion prevents connection identifiers, catalogs, schemas, relation names, filesystem paths, reader options, and location details from leaking.",
+        "compatibilityImplications": "Rebinding or relocating a Source does not change its external contract when the projected schema and guarantees are unchanged."
+      },
+      {
+        "paths": [
+          "spec.schema.fields.*.description",
+          "spec.schema.fields.*.tags.*"
+        ],
+        "sourceShapeFingerprint": "sha256:90c42e2169b7af155d9df5b9c7a6cd0039d84a0cf9988a7f04b02b142d178719",
+        "reason": "Field descriptions and discovery tags are non-executable annotations.",
+        "securityPrivacyImplications": "Exclusion avoids publishing free-form field prose and internal taxonomy labels.",
+        "compatibilityImplications": "Description and tag edits are contract-neutral; datatype and nullability remain projected."
+      }
+    ],
+    "Model": [
+      {
+        "paths": [
+          "aiContext.examples.*",
+          "aiContext.instructions",
+          "aiContext.synonyms.*",
+          "metadata.description",
+          "metadata.displayName",
+          "metadata.documentation",
+          "metadata.domain",
+          "metadata.owner",
+          "metadata.provenance.origin",
+          "metadata.provenance.path",
+          "metadata.provenance.source",
+          "metadata.tags.*"
+        ],
+        "sourceShapeFingerprint": "sha256:7afb92d84fba8c1ac7e6caefca7da4e983148678e04d0a409bcb17ad984cdab0",
+        "reason": "Resource discovery metadata and AI prompting context do not define returned Model values.",
+        "securityPrivacyImplications": "Exclusion prevents free-form instructions, examples, internal paths, identities, and organizational annotations from entering external bytes.",
+        "compatibilityImplications": "These descriptive changes do not require a contract version change."
+      },
+      {
+        "paths": [
+          "spec.entities.*.aiContext.examples.*",
+          "spec.entities.*.aiContext.instructions",
+          "spec.entities.*.aiContext.synonyms.*",
+          "spec.entities.*.description",
+          "spec.fields.*.aiContext.examples.*",
+          "spec.fields.*.aiContext.instructions",
+          "spec.fields.*.aiContext.synonyms.*",
+          "spec.fields.*.description",
+          "spec.fields.*.label",
+          "spec.fields.*.tags.*"
+        ],
+        "sourceShapeFingerprint": "sha256:9b6a5953a186bde6f05c0624d5bef27611779c2bff69f53107e32302d27325a6",
+        "reason": "Presentation, discovery, and AI annotations do not alter entity, field, grain, or executable quality guarantees.",
+        "securityPrivacyImplications": "Exclusion avoids publishing free-form prose and internal classification tags that are not themselves the governed field classification.",
+        "compatibilityImplications": "Annotation edits are contract-neutral; executable check definitions and field datatypes remain projected."
+      },
+      {
+        "paths": [
+          "spec.checks.*.description",
+          "spec.checks.*.tags.*"
+        ],
+        "sourceShapeFingerprint": "sha256:38d6c87a48bd36890a412ee1bb186c253357d9c5c4c768ddad90d3e2408c07e4",
+        "reason": "Quality-check descriptions and tags are descriptive evidence annotations; IDs, types, thresholds, and references remain projected.",
+        "securityPrivacyImplications": "Exclusion avoids publishing free-form quality prose and internal taxonomy labels.",
+        "compatibilityImplications": "Description and tag edits do not change executable quality guarantees."
+      }
+    ],
+    "SemanticModel": [
+      {
+        "paths": [
+          "aiContext.examples.*",
+          "aiContext.instructions",
+          "aiContext.synonyms.*",
+          "metadata.description",
+          "metadata.displayName",
+          "metadata.documentation",
+          "metadata.domain",
+          "metadata.owner",
+          "metadata.provenance.origin",
+          "metadata.provenance.path",
+          "metadata.provenance.source",
+          "metadata.tags.*"
+        ],
+        "sourceShapeFingerprint": "sha256:7afb92d84fba8c1ac7e6caefca7da4e983148678e04d0a409bcb17ad984cdab0",
+        "reason": "Resource discovery metadata and AI prompting context are outside governed semantic query behavior.",
+        "securityPrivacyImplications": "Exclusion prevents free-form instructions, examples, internal paths, identities, and organizational annotations from entering external bytes.",
+        "compatibilityImplications": "These descriptive changes do not require a contract version change."
+      },
+      {
+        "paths": [
+          "spec.datasets.*.aiContext.examples.*",
+          "spec.datasets.*.aiContext.instructions",
+          "spec.datasets.*.aiContext.synonyms.*",
+          "spec.datasets.*.description",
+          "spec.datasets.*.displayName",
+          "spec.dimensions.*.aiContext.examples.*",
+          "spec.dimensions.*.aiContext.instructions",
+          "spec.dimensions.*.aiContext.synonyms.*",
+          "spec.dimensions.*.description",
+          "spec.dimensions.*.label",
+          "spec.filters.**.aiContext.examples.*",
+          "spec.filters.**.aiContext.instructions",
+          "spec.filters.**.aiContext.synonyms.*",
+          "spec.metrics.*.aiContext.examples.*",
+          "spec.metrics.*.aiContext.instructions",
+          "spec.metrics.*.aiContext.synonyms.*",
+          "spec.metrics.*.description",
+          "spec.metrics.*.hidden",
+          "spec.metrics.*.label",
+          "spec.relationships.*.aiContext.examples.*",
+          "spec.relationships.*.aiContext.instructions",
+          "spec.relationships.*.aiContext.synonyms.*",
+          "spec.relationships.*.description"
+        ],
+        "sourceShapeFingerprint": "sha256:8bf33aef4fc8d10640a24eac0baf76bc4c4d3c741e7bdf33bda2f34a1b61dfcc",
+        "reason": "Display, discovery, visibility, and AI annotations do not change the executable semantic or access contract.",
+        "securityPrivacyImplications": "Exclusion avoids publishing free-form semantic documentation and AI context; authored access grant names and conditions remain included.",
+        "compatibilityImplications": "Annotation and presentation visibility changes are contract-neutral; bindings, filters, metrics, formats, units, and access requirements remain projected."
+      }
+    ]
+  }
+}
