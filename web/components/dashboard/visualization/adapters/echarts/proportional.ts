@@ -5,6 +5,7 @@ import { conditionalIconGlyph, resolveConditionalFormat } from '../../conditiona
 import { conditionalItemColor } from './conditional-color'
 import { echartsLabelPolicy } from './label-policy'
 import type { CategoryColorRegistry } from './category-colors'
+import { conditionalColorWithFallback } from './series-intent'
 
 const CENTER_GRAPHIC_ID = 'graphic:proportional:center'
 
@@ -38,8 +39,20 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   }
   const categoryValues = categoryIndex < 0 ? [] : (dataset?.rows ?? []).map((row) => row[categoryIndex])
   categoryColors.register(envelope, spec.category, categoryValues)
-  const governedColor = conditionalItemColor(envelope, spec.value, 'mark_fill', context)
-    ?? conditionalItemColor(envelope, spec.value, 'series_color', context)
+  const markFill = conditionalItemColor(envelope, spec.value, 'mark_fill', context)
+  const seriesFill = conditionalItemColor(envelope, spec.value, 'series_color', context)
+  const categoryColor = (params: { value?: unknown }) => categoryColors.color(
+    envelope,
+    spec.category,
+    Array.isArray(params.value) ? params.value[categoryIndex] : undefined,
+    context,
+  )
+  // Icon-only conditional outcomes intentionally have no fill color. Keep
+  // the normal, category-stable color for those rows instead of suppressing
+  // the sector color with an undefined itemStyle callback result.
+  const itemColor = markFill || seriesFill
+    ? conditionalColorWithFallback(markFill, conditionalColorWithFallback(seriesFill, categoryColor))
+    : categoryColor
   const series: EChartsTranslation = {
     id: `series:primary:${spec.mark}`, type: spec.mark === 'funnel' ? 'funnel' : 'pie',
     encode: { itemName: spec.category.field, value: spec.value.field },
@@ -61,7 +74,7 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     } : {}),
     ...(isPie ? { roseType: presentation.rose ? 'radius' : false } : {}),
     itemStyle: {
-      color: governedColor ?? ((params: { value?: unknown[] }) => categoryColors.color(envelope, spec.category, Array.isArray(params.value) ? params.value[categoryIndex] : undefined, context)),
+      color: itemColor,
     },
   }
   if (radius !== undefined) series.radius = radius

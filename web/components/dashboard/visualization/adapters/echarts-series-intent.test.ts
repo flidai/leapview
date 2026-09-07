@@ -226,6 +226,37 @@ test('ECharts condenses crowded category-series charts without overlapping label
   expect(compact.series.every((series: any) => series.label.show === true)).toBe(true)
 })
 
+test('ECharts keeps category-series conditional icon cues visible through crowding and percent labels', () => {
+  const envelope = cartesianSeriesFixture() as any
+  envelope.spec.mark = 'column'
+  envelope.spec.presentation.stacked = false
+  envelope.spec.presentation.stacking = 'none'
+  envelope.spec.conditionalFormatting = [{
+    id: 'value-icon', target: 'icon', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'arrow_up' } }],
+      nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'arrow_down' },
+    },
+  }]
+  const states = ['MG', 'CE', 'GO', 'MT', 'PE', 'RJ', 'RS', 'AP']
+  const statuses = ['approved', 'canceled', 'created', 'delivered', 'invoiced', 'processing', 'shipped', 'unavailable']
+  envelope.dataState.datasets[0].rows = states.flatMap((state: string, stateIndex: number) =>
+    statuses.map((status: string, statusIndex: number) => [state, status, (stateIndex + 1) * (statusIndex + 1)]),
+  )
+
+  const crowded = echartsOption(envelope, defaultRendererContext) as any
+  expect(crowded.series.every((series: any) => series.label.show === true)).toBe(true)
+  expect(crowded.series.every((series: any) => series.labelLayout.hideOverlap === false)).toBe(true)
+  expect(crowded.series[0].label.formatter({ value: ['MG', 'approved', 1] })).toBe('↑ 1')
+
+  envelope.spec.presentation.stacking = 'percent'
+  envelope.spec.presentation.labelPolicy.density = 'hidden'
+  const percent = echartsOption(envelope, defaultRendererContext) as any
+  const delivered = percent.series.find((series: any) => series.name === 'approved')
+  expect(delivered).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
+  expect(delivered.label.formatter({ value: ['MG', 'approved', 1, 2.7777777777777777] })).toBe('↑ 2.8%')
+})
+
 test('ECharts normalizes multi-metric percent stacks without changing raw tooltip values', () => {
   const envelope = cartesianFixture('area', ['label', 'revenue', 'cost']) as any
   envelope.spec.presentation.stacked = false
