@@ -114,6 +114,7 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   }
   const repeatsColors = uniqueValueCount(categoryValues) > context.colors.data.length
   const decoration = legendDecoration(presentation.legend, context, true, presentation, categoryValues.map((value) => ({ value: String(value), name: formatField(envelope, spec.category, value, context) })))
+  applyProportionalLegend(decoration.legend, presentation.legendItems, spec.category, categoryValues, envelope, context)
   const graphics = [...(decoration.graphic ?? []), ...(center.graphic ?? [])]
   return {
     ...decoration,
@@ -184,6 +185,29 @@ function minimumLabelAngle(density: string): number {
   if (density === 'always') return 0
   if (density === 'dense') return 1
   return 3
+}
+
+function applyProportionalLegend(
+  legend: EChartsTranslation | undefined,
+  configuredItems: NonNullable<Extract<VisualizationEnvelope['spec'], { kind: 'proportional' }>['presentation']['legendItems']> | undefined,
+  ref: VisualizationFieldRef,
+  values: readonly unknown[],
+  envelope: VisualizationEnvelope,
+  context: RendererContext,
+): void {
+  if (!legend) return
+  const entries = [...new Map(values.map((value) => {
+    const raw = String(value)
+    return [raw, { raw, label: formatField(envelope, ref, value, context) }]
+  })).values()]
+  const configured = configuredItems?.filter((item) => entries.some((entry) => entry.raw === item.value)) ?? []
+  const configuredValues = new Set(configured.map((item) => item.value))
+  const ordered = configured.length > 0
+    ? [...configured.map((item) => entries.find((entry) => entry.raw === item.value)!), ...entries.filter((entry) => !configuredValues.has(entry.raw))]
+    : entries
+  legend.data = ordered.map((entry) => ({ name: entry.raw }))
+  const labels = new Map(configured.map((item) => [item.value, item.label ?? entries.find((entry) => entry.raw === item.value)?.label ?? item.value]))
+  legend.formatter = (value: string) => labels.get(value) ?? entries.find((entry) => entry.raw === value)?.label ?? value
 }
 
 function percent(value: number | undefined, fallback: number): string {

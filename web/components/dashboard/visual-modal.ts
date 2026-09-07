@@ -3,6 +3,7 @@ import { state } from 'lit/decorators.js'
 import { X } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import { mountVisualFocus, restoreVisualFocus, visualSourceFromEvent, type VisualFocusMount } from './visual-modal-focus'
+import { visualDataActionNotice, visualDataSummary } from './visual-modal-actions'
 import '../shared/record-table'
 
 type VisualActionName = 'focus' | 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'
@@ -293,10 +294,15 @@ export class VisualModal extends LitElement {
   private renderData(detail: VisualActionDetail) {
     const columns = detail.columns ?? []
     const rows = detail.rows ?? []
-    if (columns.length === 0 || rows.length === 0) return html`<div class="empty">No visual data</div>`
+    if (columns.length === 0 || rows.length === 0) return html`
+      <div class="data-shell">
+        <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
+        <div class="empty">No visual data</div>
+      </div>
+    `
     return html`
       <div class="data-shell">
-        <div class="data-summary" role="status">${dataSummary(detail)}</div>
+        <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
         <div class="data-scroll">
           <lv-record-table
             .table=${{
@@ -459,10 +465,10 @@ export class VisualModal extends LitElement {
     const text = toDelimited(detail, '\t')
     try {
       await navigator.clipboard.writeText(text)
-      this.flash('Copied visual data')
+      this.flash(visualDataActionNotice(detail, 'copy-data'))
     } catch {
       this.fallbackCopy(text)
-      this.flash('Copied visual data')
+      this.flash(visualDataActionNotice(detail, 'copy-data'))
     }
   }
 
@@ -488,7 +494,7 @@ export class VisualModal extends LitElement {
     link.click()
     link.remove()
     URL.revokeObjectURL(url)
-    this.flash('Downloaded CSV')
+    this.flash(visualDataActionNotice(detail, 'export-csv'))
   }
 
   private flash(message: string): void {
@@ -518,15 +524,6 @@ function escapeCell(value: unknown, delimiter: ',' | '\t'): string {
 function stringValue(value: unknown): string {
   if (value === null || value === undefined) return ''
   return String(value)
-}
-
-function dataSummary(detail: VisualActionDetail): string {
-  const rows = detail.rows ?? []
-  const totalRows = detail.totalRows ?? rows.length
-  if (detail.dataStatus) return detail.dataStatus
-  const shown = `${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'}`
-  const total = totalRows === rows.length ? shown : `${shown} of ${totalRows.toLocaleString()}`
-  return `${total} from current visual data${detail.truncated ? ' (accessible preview)' : ''}`
 }
 
 function slug(value: string): string {

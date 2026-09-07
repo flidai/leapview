@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
-import { defaultRendererContext } from '../host-controller'
-import { captureEChartsViewState, echartsNavigationDefaults, echartsOption, responsiveEChartsPatch } from './echarts'
+import { Change, defaultRendererContext } from '../host-controller'
+import { captureEChartsViewState, echartsNavigationDefaults, echartsOption, EChartsHandle, preservesEChartsViewState, responsiveEChartsPatch } from './echarts'
 
 function cartesian(dataZoom = true): VisualizationEnvelope {
   return {
@@ -31,9 +31,22 @@ test('ECharts navigation defaults are explicit and renderer-supported only', () 
 test('ECharts responsive patch is deterministic and preserves stable option identity', () => {
   const option = echartsOption(cartesian(), defaultRendererContext) as Record<string, any>
   const compact = responsiveEChartsPatch(option, 320, 240)
-  expect(compact.grid).toMatchObject({ left: 8, right: 8, top: 10, bottom: 12 })
+  expect(compact.grid).toMatchObject({ left: 8, right: 8, top: 10, bottom: 54 })
+  expect(compact.dataZoom).toEqual([{ type: 'inside' }, { type: 'slider', bottom: 12 }])
+  const withBottomLegend = responsiveEChartsPatch({ ...option, legend: { bottom: 0 }, dataZoom: [{ type: 'inside' }, { type: 'slider' }] }, 320, 240)
+  expect(withBottomLegend.grid).toMatchObject({ bottom: 82 })
+  expect(withBottomLegend.dataZoom).toEqual([{ type: 'inside' }, { type: 'slider', bottom: 28 }])
   expect(option.series[0].id).toBe('series:primary:value')
   expect(responsiveEChartsPatch(option, 0, 240)).toEqual({})
+})
+
+test('heatmap options emit a grid so compact responsive layout is applied', () => {
+  const heatmap = cartesian(false) as any
+  heatmap.spec.mark = 'heatmap'
+  heatmap.spec.y = [heatmap.spec.y[0], { dataset: 'primary', field: 'value' }]
+  const option = echartsOption(heatmap, defaultRendererContext) as Record<string, any>
+  expect(option.grid).toBeDefined()
+  expect(responsiveEChartsPatch(option, 320, 240).grid).toMatchObject({ bottom: 12 })
 })
 
 test('ECharts view-state capture keeps supported zoom/pan fields and drops library internals', () => {
@@ -44,6 +57,40 @@ test('ECharts view-state capture keeps supported zoom/pan fields and drops libra
     dataZoom: [{ start: 12, end: 68 }],
     series: [{ id: 'series:hierarchy:graph', center: ['52%', '48%'], zoom: 1.25 }],
   })
+})
+
+test('ECharts view-state preservation requires a compatible mark and enabled navigation', () => {
+  const current = cartesian(true)
+  expect(preservesEChartsViewState(current, structuredClone(current))).toBe(true)
+  expect(preservesEChartsViewState(current, { ...structuredClone(current), spec: { ...current.spec, mark: 'bar' } } as any)).toBe(false)
+  expect(preservesEChartsViewState(current, { ...structuredClone(current), spec: { ...current.spec, x: { dataset: 'primary', field: 'other' } } } as any)).toBe(false)
+  expect(preservesEChartsViewState(current, { ...structuredClone(current), spec: { ...current.spec, y: [{ dataset: 'other', field: 'value' }] } } as any)).toBe(false)
+  expect(preservesEChartsViewState(current, cartesian(false))).toBe(false)
+})
+
+test('ECharts handle reapplies compact layout after updates and restores desktop margins', () => {
+  let current: Record<string, any> = {}
+  const calls: Record<string, any>[] = []
+  const chart = {
+    on() {}, off() {}, resize() {}, dispose() {},
+    setOption(option: Record<string, any>) { calls.push(option); current = { ...current, ...option } },
+    getOption() { return current },
+  }
+  const handle = new EChartsHandle({}, {}, chart as any, {} as any)
+  const initial = cartesian(true)
+  handle.mount(initial, defaultRendererContext)
+  handle.resize(320, 240)
+  const compactCall = calls.at(-1)!
+  expect(compactCall.grid).toMatchObject({ bottom: 54 })
+
+  const updated = structuredClone(initial)
+  updated.dataRevision = 2
+  updated.dataState.dataRevision = 2
+  handle.update(updated, Change.Data, defaultRendererContext)
+  expect(calls.at(-1)!.grid).toMatchObject({ bottom: 54 })
+
+  handle.resize(640, 360)
+  expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
 })
 
 test('ECharts responsive and view-state helpers fail closed on malformed renderer options', () => {

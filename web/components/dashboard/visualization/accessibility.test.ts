@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope } from '../../../generated/visualization'
 import { defaultRendererContext } from './host-controller'
-import { accessibleDataStatus, accessibleVisualizationData, visualizationChangeAnnouncement } from './accessibility'
+import { accessibleDataStatus, accessibleVisualizationData, supportsHostDataActions, visualizationChangeAnnouncement } from './accessibility'
 
 function fixture(rows: unknown[][], completeness: 'complete' | 'partial' | 'truncated' | 'empty' = rows.length === 0 ? 'empty' : 'complete'): VisualizationEnvelope {
   return {
@@ -69,4 +69,26 @@ test('empty previews expose no data and change announcements honor announceChang
   const updated = { ...fixture([['North', 2]]), dataRevision: 2, dataState: { ...fixture([['North', 2]]).dataState, dataRevision: 2 } } as VisualizationEnvelope
   expect(visualizationChangeAnnouncement(empty, updated)).toContain('Orders updated.')
   expect(visualizationChangeAnnouncement(empty, { ...updated, spec: { ...updated.spec, accessibility: { ...updated.spec.accessibility, announceChanges: false } } })).toBe('')
+  const omitted = { ...updated, spec: { ...updated.spec, accessibility: { title: 'Orders', description: 'Orders by label' } } } as VisualizationEnvelope
+  expect(visualizationChangeAnnouncement(empty, omitted)).toBe('')
+})
+
+test('empty partial and truncated frames announce completeness before no-data status', () => {
+  const partial = fixture([], 'partial')
+  const truncated = fixture([], 'truncated')
+  expect(accessibleDataStatus(partial, accessibleVisualizationData(partial))).toBe('Source data is partial. No data rows are available.')
+  expect(accessibleDataStatus(truncated, accessibleVisualizationData(truncated))).toBe('Source data is truncated. No data rows are available.')
+})
+
+test('host data actions are limited to inline non-tabular frames', () => {
+  expect(supportsHostDataActions(fixture([]))).toBe(true)
+  const tiled = { ...fixture([]), dataState: { kind: 'spatial_tiled' } } as unknown as VisualizationEnvelope
+  expect(supportsHostDataActions(tiled)).toBe(false)
+})
+
+test('highlight-only changes are announced when opted in', () => {
+  const previous = fixture([['North', 2]])
+  const next = { ...previous, highlights: [{ sourceVisualID: 'map', interactionID: 'hover', entries: [], label: 'North' }] } as unknown as VisualizationEnvelope
+  expect(visualizationChangeAnnouncement(previous, next)).toContain('1 highlight active.')
+  expect(visualizationChangeAnnouncement(next, { ...next, highlights: [] })).toContain('Highlights cleared.')
 })

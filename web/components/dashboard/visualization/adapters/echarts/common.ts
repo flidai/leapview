@@ -132,7 +132,10 @@ function labelAccessibilitySummary(envelope: VisualizationEnvelope, context: Ren
   const dataset = inlineDataset(envelope)
   const schema = spec.datasets.find((candidate) => candidate.id === dataset?.id)
   if (!dataset || !schema) return ''
-  if (dataset.rows.length === 0) return 'No data rows are available.'
+  if (dataset.rows.length === 0) {
+    const incomplete = dataset.completeness === 'partial' || dataset.completeness === 'truncated'
+    return incomplete ? '' : 'No data rows are available.'
+  }
   const fields = schema.fields.filter((definition) => dataset.columns.includes(definition.id))
   const rowLimit = 6
   const rows = dataset.rows.slice(0, rowLimit).map((row) =>
@@ -149,11 +152,11 @@ function labelAccessibilitySummary(envelope: VisualizationEnvelope, context: Ren
 export function completenessAccessibilitySummary(envelope: VisualizationEnvelope): string {
   if (envelope.dataState.kind !== 'inline') return ''
   const datasets = envelope.dataState.datasets
-  if (datasets.length === 0 || datasets.every((dataset) => dataset.rows.length === 0 || dataset.completeness === 'empty')) return 'No data rows are available.'
   const partial = datasets.find((dataset) => dataset.completeness === 'partial')
   if (partial) return `Data is partial; ${partial.rows.length.toLocaleString()} rows are currently available.`
   const truncated = datasets.find((dataset) => dataset.completeness === 'truncated')
   if (truncated) return `Data is truncated; showing ${truncated.rows.length.toLocaleString()} rows.`
+  if (datasets.length === 0 || datasets.every((dataset) => dataset.rows.length === 0 || dataset.completeness === 'empty')) return 'No data rows are available.'
   return ''
 }
 

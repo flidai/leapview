@@ -5,6 +5,7 @@ import { Change, defaultRendererContext } from '../host-controller'
 import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echartsUpdatePlan, interactionCommandForRow, legendSelectionCommand, normalizeRendererLocale, removeEChartsRendererFrame, waitForEChartsFrame } from './echarts'
 import { echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
 import { CategoryColorRegistry } from './echarts/category-colors'
+import { completenessAccessibilitySummary } from './echarts/common'
 import { proportionalCenterText } from './echarts/proportional'
 
 test('ECharts label policy truncates by grapheme and preserves selected and threshold labels', () => {
@@ -261,7 +262,7 @@ test('ECharts applies governed row formatting with theme colors and redundant cu
   expect(option.series[0].itemStyle.color({ value: ['A', 25] })).toBe('rgb(162 57 48)')
   expect(option.series[0].itemStyle.color({ value: ['B', 75] })).toBe('rgb(71 104 53)')
   expect(option.series[0].label.show).toBe(true)
-  expect(option.series[0].labelLayout({ dataIndex: 0 }).hideOverlap).toBe(false)
+  expect(option.series[0].labelLayout).toEqual({ hideOverlap: false })
   expect(option.series[0].label.formatter({ value: ['A', 25] })).toBe('↓ 25')
   expect(option.series[0].label.formatter({ value: ['B', 75] })).toBe('↑ 75')
 })
@@ -281,6 +282,22 @@ test('ECharts gives explicit icon targets precedence when Cartesian formats shar
   ]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series[0].label.formatter({ value: ['A', 1] })).toBe('↑ 1')
+})
+
+test('ECharts keeps Cartesian conditional icons visible when labels are hidden', () => {
+  const envelope = cartesianFixture('column') as any
+  envelope.spec.presentation.labelPolicy.density = 'hidden'
+  envelope.spec.conditionalFormatting = [{
+    id: 'value-icon', target: 'icon', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'arrow_up' } }],
+      nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'arrow_down' },
+    },
+  }]
+
+  const series = (echartsOption(envelope, defaultRendererContext) as any).series[0]
+  expect(series).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
+  expect(series.label.formatter({ value: ['A', 1] })).toBe('↑ 1')
 })
 
 test('ECharts translates governed heatmap gradients and waterfall rule styles', () => {
@@ -661,6 +678,17 @@ test('ECharts constructs deterministic nested hierarchy data and honors layout p
   expect(option.series[0].data).toEqual([{ name: 'root', value: 10, __lv_dataset: 'primary', __lv_row_index: 0, children: [{ name: 'child', value: 4, __lv_dataset: 'primary', __lv_row_index: 1 }] }])
 })
 
+test('ECharts hierarchy keeps null display labels separate from typed node identity', () => {
+  const envelope = hierarchyFixture('tree') as any
+  envelope.dataState.datasets[0].rows = [
+    [null, null, 10], ['—', null, 9], [1, null, 8], ['1', null, 7],
+  ]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const roots = option.series[0].data[0].children
+  expect(roots.map((node: any) => node.name)).toEqual(['—', '—', '1', '1'])
+  expect(roots.map((node: any) => node.__lv_row_index)).toEqual([0, 1, 2, 3])
+})
+
 test('ECharts hierarchy source nodes select only when their compiled identity tuple is complete', () => {
   const envelope = hierarchyFixture('treemap') as any
   envelope.spec.datasets[0].fields.push(
@@ -718,8 +746,9 @@ test('ECharts incremental plans commit data synchronously, preserve interaction 
   } as any
 
   const data = echartsUpdatePlan(Change.Data, option)
-  expect(data.settings).toEqual({ notMerge: false, lazyUpdate: false, replaceMerge: ['dataset', 'series', 'legend', 'visualMap', 'graphic'] })
-  expect(data.option).toEqual({ dataset: option.dataset, series: option.series, legend: option.legend, visualMap: [], graphic: [], xAxis: option.xAxis, yAxis: option.yAxis })
+  expect(data.settings).toEqual({ notMerge: false, lazyUpdate: false, replaceMerge: ['dataset', 'series', 'legend', 'dataZoom', 'visualMap', 'graphic'] })
+  expect(data.option).toEqual({ dataset: option.dataset, series: option.series, legend: option.legend, dataZoom: option.dataZoom, visualMap: [], graphic: [], xAxis: option.xAxis, yAxis: option.yAxis })
+  expect(echartsUpdatePlan(Change.Data, { ...option, dataZoom: undefined } as any).option.dataZoom).toEqual([])
 
   const selection = echartsUpdatePlan(Change.Selection, option)
   expect(selection.settings.replaceMerge).toEqual(['dataset', 'visualMap'])
@@ -729,9 +758,35 @@ test('ECharts incremental plans commit data synchronously, preserve interaction 
   expect(context.settings.replaceMerge).toBeUndefined()
   expect(context.option.dataset).toBeUndefined()
   expect(context.option.series[0].data).toBeUndefined()
-  expect(context.option.series[0].encode).toBeUndefined()
-  expect(context.option.dataZoom).toBeUndefined()
+    expect(context.option.series[0].encode).toBeUndefined()
+    expect(context.option.dataZoom).toBeUndefined()
 
+})
+
+test('ECharts incremental context and status plans refresh the renderer-owned ARIA description', () => {
+  const option = { aria: { enabled: true, description: 'Updated data summary' }, title: { text: 'Partial data' } } as any
+  expect(echartsUpdatePlan(Change.Context, option).option.aria).toBe(option.aria)
+  expect(echartsUpdatePlan(Change.Status, option).option.aria).toBe(option.aria)
+})
+
+test('ECharts highlight plans replace series and refresh ARIA for apply and clear', () => {
+  const option = { aria: { enabled: true, description: 'Highlights cleared.' }, series: [{ id: 'series:primary:value', itemStyle: { opacity: 0.2 } }] } as any
+  const plan = echartsUpdatePlan(Change.Highlight, option)
+  expect(plan.option.series).toBe(option.series)
+  expect(plan.option.aria).toBe(option.aria)
+  expect(plan.settings.replaceMerge).toEqual(['series'])
+})
+
+test('ECharts completeness ARIA prioritizes partial or truncated empty frames', () => {
+  const partial = cartesianFixture('line') as any
+  partial.dataState.datasets[0].rows = []
+  partial.dataState.datasets[0].completeness = 'partial'
+  const truncated = structuredClone(partial)
+  truncated.dataState.datasets[0].completeness = 'truncated'
+  expect(completenessAccessibilitySummary(partial)).toBe('Data is partial; 0 rows are currently available.')
+  expect(completenessAccessibilitySummary(truncated)).toBe('Data is truncated; showing 0 rows.')
+  expect((echartsOption(partial, defaultRendererContext) as any).aria.description.indexOf('Data is partial')).toBeGreaterThanOrEqual(0)
+  expect((echartsOption(partial, defaultRendererContext) as any).aria.description.indexOf('No data rows')).toBe(-1)
 })
 
 test('ECharts first-frame readiness resolves on the first valid rendered frame and removes its listener', async () => {
@@ -1112,6 +1167,22 @@ test('ECharts translates proportional legend categories into governed selections
     mappings: [{ field: 'orders.status', dataset: 'orders', value: 'A', label: 'A' }],
   })
   expect(legendSelectionCommand(envelope, 'missing')).toBeUndefined()
+})
+
+test('ECharts proportional legends keep raw item names while formatting display labels and rejecting collisions', () => {
+  const envelope = proportionalFixture('pie') as any
+  envelope.spec.datasets[0].fields[0] = { ...envelope.spec.datasets[0].fields[0], role: 'identity', nullable: true }
+  envelope.spec.interactions = [{
+    id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{
+      source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetDatasetID: 'orders',
+    }],
+  }]
+  envelope.dataState.datasets[0].rows = [['—', 1], [null, 2], ['null', 3]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.legend.data).toEqual([{ name: '—' }, { name: 'null' }])
+  expect(option.legend.formatter('null')).toBe('null')
+  expect(legendSelectionCommand(envelope, '—')).toMatchObject({ mappings: [{ value: '—' }] })
+  expect(legendSelectionCommand(envelope, 'null')).toBeUndefined()
 })
 
 test('ECharts wraps a hierarchy forest so every tree root is rendered', () => {

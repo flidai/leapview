@@ -1,5 +1,6 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
+import { categoryIdentity } from './category-colors'
 import { escapeHTML, formatField, inlineDataset, legend, type EChartsTranslation } from './common'
 import { echartsLabelPolicy } from './label-policy'
 
@@ -158,9 +159,12 @@ export function hierarchyData(envelope: VisualizationEnvelope): HierarchyNode[] 
   const parentByID = new Map<string, string | undefined>()
   for (let rowIndex = 0; rowIndex < dataset.rows.length; rowIndex++) {
     const row = dataset.rows[rowIndex]!
-    const name = row[nodeIndex] === null || row[nodeIndex] === undefined ? '—' : String(row[nodeIndex])
-    const parent = parentIndex >= 0 && row[parentIndex] !== null && row[parentIndex] !== undefined && row[parentIndex] !== '' ? String(row[parentIndex]) : undefined
-    const id = parent ? `${parent}\u001f${escapeSegment(name)}` : escapeSegment(name)
+    const rawNode = row[nodeIndex]
+    const name = rawNode === null || rawNode === undefined ? '—' : String(rawNode)
+    const rawParent = parentIndex >= 0 ? row[parentIndex] : undefined
+    const parent = rawParent !== null && rawParent !== undefined && rawParent !== '' ? hierarchyPathIdentity(rawParent) : undefined
+    const identity = categoryIdentity(rawNode)
+    const id = parent ? `${parent}\u001f${escapeSegment(identity)}` : escapeSegment(identity)
     if (byID.has(id)) throw new Error(`duplicate hierarchy node ${JSON.stringify(id)}`)
     byID.set(id, { name, value: valueIndex >= 0 ? row[valueIndex] : undefined, __lv_dataset: dataset.id, __lv_row_index: rowIndex })
     parentByID.set(id, parent)
@@ -182,6 +186,13 @@ export function hierarchyTooltipValue(envelope: VisualizationEnvelope, node: Hie
 }
 
 function escapeSegment(value: string): string { return value.replaceAll('\u001f', '\u001f\u001f') }
+
+function hierarchyPathIdentity(value: unknown): string {
+  if (typeof value === 'string' && value.includes('\u001f')) {
+    return value.split('\u001f').map((segment) => categoryIdentity(segment)).join('\u001f')
+  }
+  return categoryIdentity(value)
+}
 
 function layeredGraphNodes(links: readonly { source: string; target: string }[]) {
   const sources = [...new Set(links.map((link) => link.source))]

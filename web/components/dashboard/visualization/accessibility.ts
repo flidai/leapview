@@ -13,6 +13,14 @@ export type AccessibleVisualizationData = Readonly<{
   truncated: boolean
 }>
 
+/** Host data actions are truthful only when the renderer's inline frame is available. */
+export function supportsHostDataActions(envelope: VisualizationEnvelope): boolean {
+  return envelope.dataState.kind === 'inline'
+    && envelope.spec.kind !== 'table'
+    && envelope.spec.kind !== 'matrix'
+    && envelope.spec.kind !== 'pivot'
+}
+
 export function accessibleVisualizationData(
   envelope: VisualizationEnvelope,
   context: RendererContext = defaultRendererContext,
@@ -70,30 +78,33 @@ export function accessibleStatus(envelope: VisualizationEnvelope): string {
 
 export function accessibleDataStatus(envelope: VisualizationEnvelope, data: AccessibleVisualizationData): string {
   if (envelope.dataState.kind !== 'inline') return 'Data is available through the visual renderer.'
-  if (data.totalRows === 0 || envelope.dataState.datasets.every((dataset) => dataset.rows.length === 0)) return 'No data rows are available.'
-  const label = `${data.totalRows.toLocaleString()} row${data.totalRows === 1 ? '' : 's'} available.`
   const completeness = envelope.dataState.datasets.some((dataset) => dataset.completeness === 'partial')
     ? 'partial'
     : envelope.dataState.datasets.some((dataset) => dataset.completeness === 'truncated')
       ? 'truncated'
       : envelope.dataState.datasets[0]?.completeness
+  const source = completeness === 'partial'
+    ? 'Source data is partial.'
+    : completeness === 'truncated'
+      ? 'Source data is truncated.'
+      : ''
+  if (data.totalRows === 0 || envelope.dataState.datasets.every((dataset) => dataset.rows.length === 0)) {
+    return [source, 'No data rows are available.'].filter(Boolean).join(' ')
+  }
+  const label = `${data.totalRows.toLocaleString()} row${data.totalRows === 1 ? '' : 's'} available.`
   const preview = data.rows.length < data.totalRows
     ? ` Showing the first ${data.rows.length.toLocaleString()} rows in the accessible preview.`
     : ''
-  const source = completeness === 'partial'
-    ? ' Source data is partial.'
-    : completeness === 'truncated'
-      ? ' Source data is truncated.'
-      : ''
-  return `${label}${preview}${source}`
+  return `${label}${preview}${source ? ` ${source}` : ''}`
 }
 
 export function visualizationChangeAnnouncement(previous: VisualizationEnvelope | undefined, next: VisualizationEnvelope): string {
-  if (next.spec.accessibility.announceChanges === false || !previous) return ''
+  if (next.spec.accessibility.announceChanges !== true || !previous) return ''
   const dataChanged = previous.dataRevision !== next.dataRevision
   const statusChanged = previous.status.kind !== next.status.kind || previous.status.message !== next.status.message
   const selectionChanged = JSON.stringify(previous.selection) !== JSON.stringify(next.selection)
-  if (!dataChanged && !statusChanged && !selectionChanged) return ''
+  const highlightChanged = JSON.stringify(previous.highlights) !== JSON.stringify(next.highlights)
+  if (!dataChanged && !statusChanged && !selectionChanged && !highlightChanged) return ''
   const metadata = resolveVisualizationMetadata(next)
   const reasons = [
     dataChanged ? accessibleDataStatus(next, accessibleVisualizationData(next, defaultRendererContext, 6)) : '',
@@ -101,6 +112,9 @@ export function visualizationChangeAnnouncement(previous: VisualizationEnvelope 
     selectionChanged ? next.selection.length > 0
       ? `${next.selection.length.toLocaleString()} selection${next.selection.length === 1 ? '' : 's'} active.`
       : 'Selection cleared.' : '',
+    highlightChanged ? next.highlights.length > 0
+      ? `${next.highlights.length.toLocaleString()} highlight${next.highlights.length === 1 ? '' : 's'} active.`
+      : 'Highlights cleared.' : '',
   ].filter(Boolean)
   return `${metadata.title} updated. ${reasons.join(' ')}`
 }

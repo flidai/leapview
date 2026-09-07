@@ -9,10 +9,11 @@ import type { VisualActionDetail } from '../visual-modal'
 import { defaultRendererContext, normalizeRendererLocale, primerCategoricalPalette, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
 import { visualizationRegistry } from './registry'
 import { adapterObservation } from './telemetry'
-import { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, displayValue, visualizationChangeAnnouncement } from './accessibility'
+import { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, displayValue, supportsHostDataActions, visualizationChangeAnnouncement } from './accessibility'
+import { clearInteractionCommand } from './interaction-command'
 import { resolveVisualizationMetadata } from './metadata'
 
-export { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, type AccessibleVisualizationData, type AccessibleVisualizationColumn } from './accessibility'
+export { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, supportsHostDataActions, type AccessibleVisualizationData, type AccessibleVisualizationColumn } from './accessibility'
 
 export class VisualizationHost extends LitElement {
   @property({ attribute: false }) envelope?: VisualizationEnvelope
@@ -477,23 +478,28 @@ export class VisualizationHost extends LitElement {
 
   private visualActions() {
     const envelope = this.envelope
-    if (!envelope || envelope.spec.kind === 'table' || envelope.spec.kind === 'matrix' || envelope.spec.kind === 'pivot') return null
+    if (!envelope || !supportsHostDataActions(envelope)) return null
     return html`<details class="visual-options">
       <summary aria-label="Visual options" aria-haspopup="menu" title="Visual options">${visualMenuIcon('show-data')}</summary>
       <div class="menu" role="menu">
         <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('export-csv')}>${visualMenuIcon('export-csv')}<span>Export CSV</span></button>
+        ${envelope.selection.length > 0 && clearInteractionCommand(envelope) ? html`<button type="button" role="menuitem" @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>` : null}
       </div>
     </details>`
   }
 
-  private runAction(action: Extract<VisualActionDetail['action'], 'show-data' | 'copy-data' | 'export-csv'>): void {
+  private runAction(action: Extract<VisualActionDetail['action'], 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'>): void {
     const envelope = this.envelope
-    if (!envelope || envelope.spec.kind === 'table' || envelope.spec.kind === 'matrix' || envelope.spec.kind === 'pivot') return
+    if (!envelope || !supportsHostDataActions(envelope)) return
     this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')?.removeAttribute('open')
     const data = accessibleVisualizationData(envelope, this.rendererContext())
     const metadata = resolveVisualizationMetadata(envelope)
+    if (action === 'clear-selection') {
+      const command = clearInteractionCommand(envelope)
+      if (command) this.dispatchEvent(new CustomEvent('lv-interaction-select', { bubbles: true, composed: true, detail: command }))
+    }
     this.dispatchEvent(new CustomEvent<VisualActionDetail>('lv-visual-action', {
       bubbles: true,
       composed: true,

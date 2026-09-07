@@ -30,20 +30,64 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 || option.grid === undefined) return {}
   const compact = width < 480 || height < 280
   const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
+  const bottomLegend = compact && hasBottomLegend(option.legend)
+  const slider = compact && hasSliderDataZoom(option.dataZoom)
+  const compactBottom = 12 + (bottomLegend ? 28 : 0) + (slider ? 42 : 0)
   const grid = grids.map((value: Record<string, any>) => {
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
     return {
       ...source,
-      ...(compact ? { left: compactInset(source.left, 8), right: compactInset(source.right, 8), top: compactInset(source.top, 10), bottom: compactInset(source.bottom, 12) } : {}),
+      ...(compact ? {
+        left: compactInset(source.left, 8),
+        right: compactInset(source.right, 8),
+        top: compactInset(source.top, 10),
+        bottom: compactBottomInset(source.bottom, compactBottom),
+      } : {}),
     }
   })
-  return { grid: Array.isArray(option.grid) ? grid : grid[0] }
+  const patch: Record<string, any> = { grid: Array.isArray(option.grid) ? grid : grid[0] }
+  if (option.legend !== undefined) patch.legend = compact ? compactLegend(option.legend) : option.legend
+  if (option.dataZoom !== undefined) patch.dataZoom = compact ? compactDataZoom(option.dataZoom, bottomLegend) : option.dataZoom
+  return patch
 }
 
 function compactInset(value: unknown, fallback: number): unknown {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.min(value, fallback)
   if (typeof value === 'string') return value
   return fallback
+}
+
+function compactBottomInset(value: unknown, fallback: number): unknown {
+  if (typeof value === 'string') return value
+  return fallback
+}
+
+function hasBottomLegend(value: unknown): boolean {
+  const legends = Array.isArray(value) ? value : [value]
+  return legends.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && (entry as Record<string, unknown>).bottom !== undefined)
+}
+
+function hasSliderDataZoom(value: unknown): boolean {
+  if (!Array.isArray(value)) return false
+  return value.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && (entry as Record<string, unknown>).type === 'slider')
+}
+
+function compactLegend(value: unknown): unknown {
+  const legends = Array.isArray(value) ? value : [value]
+  const result = legends.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const legend = entry as Record<string, unknown>
+    return legend.bottom === undefined ? legend : { ...legend, bottom: 0 }
+  })
+  return Array.isArray(value) ? result : result[0]
+}
+
+function compactDataZoom(value: unknown, bottomLegend: boolean): unknown {
+  if (!Array.isArray(value)) return value
+  return value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || (entry as Record<string, unknown>).type !== 'slider') return entry
+    return { ...(entry as Record<string, unknown>), bottom: bottomLegend ? 28 : 12 }
+  })
 }
 
 export function captureEChartsViewState(option: Record<string, any>): EChartsViewState {
@@ -156,13 +200,15 @@ export function removeEChartsRendererFrame(container: ParentNode, frame: HTMLEle
   if (frame.parentNode === container) frame.remove()
 }
 
-class EChartsHandle implements RendererHandle {
+export class EChartsHandle implements RendererHandle {
   private envelope?: VisualizationEnvelope
   private context?: RendererContext
   private disposed = false
   private readiness: Promise<void> = Promise.resolve()
   private readinessAbort?: AbortController
-  private compactLayout = false
+  private compactLayout?: boolean
+  private lastWidth = 0
+  private lastHeight = 0
 
   constructor(private readonly container: HTMLElement, private readonly frame: HTMLElement, private readonly chart: ECharts, private readonly categoryColors: CategoryColorRegistry) {
     this.chart.on('click', this.handleClick)
@@ -193,16 +239,25 @@ class EChartsHandle implements RendererHandle {
     const plan = echartsUpdatePlan(change, option)
     this.chart.setOption(plan.option, plan.settings)
     if (viewState) this.restoreViewState(viewState)
+    this.applyResponsiveLayout(true)
   }
 
   resize(width: number, height: number): void {
     this.chart.resize({ width, height, silent: true })
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
-    const compact = width < 480 || height < 280
-    if (compact === this.compactLayout || !this.envelope) return
+    this.lastWidth = width
+    this.lastHeight = height
+    this.applyResponsiveLayout(false)
+  }
+
+  private applyResponsiveLayout(force: boolean): void {
+    const envelope = this.envelope
+    if (!envelope || !this.context || this.lastWidth <= 0 || this.lastHeight <= 0) return
+    const compact = this.lastWidth < 480 || this.lastHeight < 280
+    if (!force && compact === this.compactLayout) return
     this.compactLayout = compact
-    const patch = responsiveEChartsPatch(echartsOption(this.envelope, this.context ?? defaultRendererContext, this.categoryColors) as Record<string, any>, width, height)
-    if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: true })
+    const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
+    if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: !force })
   }
 
   async snapshot(): Promise<Blob> {
@@ -299,10 +354,45 @@ class EChartsHandle implements RendererHandle {
 
 }
 
-function preservesEChartsViewState(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {
+export function preservesEChartsViewState(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {
+  const previousMark = 'mark' in previous.spec ? previous.spec.mark : undefined
+  const nextMark = 'mark' in next.spec ? next.spec.mark : undefined
+  if (previous.spec.kind !== next.spec.kind || previousMark !== nextMark) return false
+  if (echartsNavigationChannelSignature(previous.spec) !== echartsNavigationChannelSignature(next.spec)) return false
   const oldNavigation = echartsNavigationDefaults(previous)
   const nextNavigation = echartsNavigationDefaults(next)
   return oldNavigation.dataZoom && nextNavigation.dataZoom || oldNavigation.roam && nextNavigation.roam
+}
+
+function echartsNavigationChannelSignature(spec: VisualizationEnvelope['spec']): string {
+  const channels: Record<string, unknown> = {}
+  const ref = (value: unknown): string | undefined => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const candidate = value as { dataset?: unknown; field?: unknown }
+    return typeof candidate.dataset === 'string' && typeof candidate.field === 'string'
+      ? `${candidate.dataset}:${candidate.field}` : undefined
+  }
+  const refs = (values: unknown): Array<string | undefined> => Array.isArray(values) ? values.map(ref) : [ref(values)]
+  switch (spec.kind) {
+    case 'cartesian':
+      channels.x = ref(spec.x)
+      channels.y = refs(spec.y)
+      channels.series = ref(spec.series)
+      break
+    case 'hierarchy':
+      channels.node = ref(spec.node)
+      channels.parent = ref(spec.parent)
+      channels.source = ref(spec.source)
+      channels.target = ref(spec.target)
+      channels.value = ref(spec.value)
+      break
+    default:
+      break
+  }
+  return JSON.stringify({
+    datasets: spec.datasets.map((dataset) => ({ id: dataset.id, fields: dataset.fields.map((field) => [field.id, field.dataType]) })),
+    channels,
+  })
 }
 
 export function legendSelectionCommand(envelope: VisualizationEnvelope, categoryName: string, context: RendererContext = defaultRendererContext) {
@@ -311,7 +401,10 @@ export function legendSelectionCommand(envelope: VisualizationEnvelope, category
   const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === ref.dataset)
   const categoryIndex = dataset?.columns.indexOf(ref.field) ?? -1
   if (!dataset || categoryIndex < 0) return undefined
-  const row = dataset.rows.find((candidate) => String(candidate[categoryIndex]) === categoryName || formatField(envelope, ref, candidate[categoryIndex], context) === categoryName)
+  const rawMatches = dataset.rows.filter((candidate) => String(candidate[categoryIndex]) === categoryName)
+  const formattedMatches = dataset.rows.filter((candidate) => formatField(envelope, ref, candidate[categoryIndex], context) === categoryName)
+  const matches = rawMatches.length === 1 ? rawMatches : rawMatches.length === 0 && formattedMatches.length === 1 ? formattedMatches : []
+  const row = matches[0]
   return row ? interactionCommandForRow(envelope, dataset.id, row) : undefined
 }
 
@@ -363,17 +456,23 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption): EChart
     patch.dataset = source.dataset
     patch.series = source.series
     patch.legend = source.legend ?? []
+    patch.dataZoom = source.dataZoom ?? []
     patch.visualMap = source.visualMap ?? []
     patch.graphic = source.graphic ?? []
     if (source.aria !== undefined) patch.aria = source.aria
     for (const key of ['xAxis', 'yAxis', 'radar']) {
       if (source[key] !== undefined) patch[key] = source[key]
     }
-    replaceMerge.push('dataset', 'series', 'legend', 'visualMap', 'graphic')
+    replaceMerge.push('dataset', 'series', 'legend', 'dataZoom', 'visualMap', 'graphic')
   } else if ((change & Change.Selection) !== 0) {
     patch.dataset = source.dataset
     patch.visualMap = source.visualMap ?? []
     replaceMerge.push('dataset', 'visualMap')
+  }
+  if ((change & Change.Highlight) !== 0) {
+    patch.series = source.series
+    if (source.aria !== undefined) patch.aria = source.aria
+    if (!replaceMerge.includes('series')) replaceMerge.push('series')
   }
   if ((change & Change.Status) !== 0) {
     patch.title = source.title ?? []
@@ -381,6 +480,7 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption): EChart
     replaceMerge.push('title', 'graphic')
   }
   if ((change & Change.Context) !== 0) Object.assign(patch, echartsContextPatch(source))
+  if ((change & (Change.Context | Change.Status)) !== 0 && source.aria !== undefined) patch.aria = source.aria
   return {
     option: patch,
     settings: { notMerge: false, lazyUpdate: (change & Change.Data) === 0, ...(replaceMerge.length ? { replaceMerge } : {}) },

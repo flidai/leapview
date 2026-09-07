@@ -126,6 +126,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const extent = finiteFieldExtent(envelope, value)
     const primary = context.colors.data[0] ?? context.colors.accent
     return {
+      grid: axes.grid,
       xAxis: axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x'), yAxis: axis(envelope, spec.y[0]!, axisType(envelope, spec.y[0]!, 'category'), context, 'primary_y'),
       visualMap: gradient
         ? {
@@ -420,6 +421,10 @@ function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][n
         }
       : baseFormatter
   const translated = echartsLabelPolicy(envelope, value?.dataset ?? spec.x.dataset, spec.presentation.labelPolicy, formatter, context)
+  if (cue) {
+    translated.label.show = true
+    translated.labelLayout = { hideOverlap: false }
+  }
   translated.label.position = position
   if (color) translated.label.color = color
   else if (authored !== 'outside' && ['bar', 'column', 'waterfall', 'histogram'].includes(spec.mark)) {
@@ -494,8 +499,10 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
     const paletteColor = categoryColors.color(envelope, spec.series!, category.value, context)
     const intentColor = intent?.color ? seriesColor(category.key, intent.color, context) : paletteColor
     const markColor = governedSeriesColor ?? conditionalColorWithFallback(fill, intentColor)
+    const sourceRowIndices = dataset.rows.flatMap((row, rowIndex) => categoryIdentity(row[seriesIndex]) === category.key ? [rowIndex] : [])
     return {
       id: `series:${spec.series?.dataset}:${spec.series?.field}:${token}`, datasetId: datasetID, name: category.name, type: cartesianSeriesType(mark),
+      __lv_source_row_indices: sourceRowIndices,
       ...(horizontal ? { xAxisIndex: combo?.axis === 'secondary' ? 1 : 0 } : { yAxisIndex: combo?.axis === 'secondary' ? 1 : 0 }),
       encode: horizontal ? { x: normalized?.dimension ?? spec.y[0]?.field, y: spec.x.field } : { x: spec.x.field, y: normalized?.dimension ?? spec.y[0]?.field }, smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none', symbolSize: spec.presentation.symbolSize,
       stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || mark === 'area' ? {} : undefined,
@@ -512,7 +519,9 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
     && spec.presentation.labelPolicy.tooltipFallback
     && (values.length > 4 || dataset.rows.length > 24)
   if (crowded) {
+    const cue = conditionalCueFormat(envelope, spec.y[0]!)
     for (const item of series) {
+      if (cue) continue
       item.label = { ...item.label, show: false }
       item.labelLayout = { hideOverlap: true }
     }
@@ -647,6 +656,10 @@ function percentLabel(
       : baseFormatter,
     context,
   )
+  if (cue) {
+    translated.label.show = true
+    translated.labelLayout = { hideOverlap: false }
+  }
   if (color) translated.label.color = color
   return translated
 }
