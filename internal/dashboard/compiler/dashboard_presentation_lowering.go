@@ -88,6 +88,13 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 			}
 			out.ComboSeries = &series
 		}
+		if variant.SeriesIntent != nil {
+			seriesIntent, err := lowerCanonicalSeriesIntent(*variant.SeriesIntent)
+			if err != nil {
+				return nil, err
+			}
+			out.SeriesIntent = &seriesIntent
+		}
 		return out, nil
 	case *document.PointDashboardPresentation:
 		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, nil)
@@ -508,6 +515,9 @@ func LowerCanonicalDashboardPresentationForQuery(value document.DashboardPresent
 			return nil, err
 		}
 	}
+	if err := validateCanonicalSeriesIntent(value, visualType, query); err != nil {
+		return nil, err
+	}
 	if err := validateCanonicalLegendQueryApplicability(value, visualType, query); err != nil {
 		return nil, err
 	}
@@ -691,8 +701,13 @@ func lowerCanonicalComboSeries(values []document.DashboardComboSeries) ([]visual
 	}
 	result := make([]visualizationir.VisualizationComboSeries, len(values))
 	seen := make(map[string]int, len(values))
+	hasBar, hasColumn := false, false
 	for index, value := range values {
-		field := strings.TrimSpace(string(value.Field))
+		rawField := string(value.Field)
+		field := strings.TrimSpace(rawField)
+		if rawField != field {
+			return nil, fmt.Errorf("combo presentation.series[%d].field %q must not contain surrounding whitespace", index, rawField)
+		}
 		if field == "" {
 			return nil, fmt.Errorf("combo presentation.series[%d].field is required", index)
 		}
@@ -704,13 +719,81 @@ func lowerCanonicalComboSeries(values []document.DashboardComboSeries) ([]visual
 		if err != nil {
 			return nil, fmt.Errorf("combo presentation.series[%d]: %w", index, err)
 		}
+		if mark == visualizationir.VisualizationCartesianMarkBar {
+			hasBar = true
+		}
+		if mark == visualizationir.VisualizationCartesianMarkColumn {
+			hasColumn = true
+		}
 		axis, err := lowerComboSeriesAxis(value.Axis)
 		if err != nil {
 			return nil, fmt.Errorf("combo presentation.series[%d]: %w", index, err)
 		}
 		result[index] = visualizationir.VisualizationComboSeries{SeriesValue: field, Mark: mark, Axis: axis}
 	}
+	if hasBar && hasColumn {
+		return nil, fmt.Errorf("combo presentation.series cannot mix bar and column marks because they require different orientations")
+	}
 	return result, nil
+}
+
+// lowerCanonicalSeriesIntent maps the authoring policy into the closed IR
+// enum and validates the fields that do not require a query result frame.
+// Result-name applicability is checked by validateCanonicalSeriesIntent once
+// the governed query has been lowered.
+func lowerCanonicalSeriesIntent(values []document.DashboardSeriesIntent) ([]visualizationir.VisualizationSeriesIntent, error) {
+	if len(values) == 0 {
+		return nil, fmt.Errorf("presentation.seriesIntent must contain at least one intent")
+	}
+	result := make([]visualizationir.VisualizationSeriesIntent, len(values))
+	seenValues := make(map[string]int, len(values))
+	seenOrders := make(map[int32]int, len(values))
+	for index, value := range values {
+		rawValue := string(value.Value)
+		seriesValue := strings.TrimSpace(rawValue)
+		if rawValue != seriesValue {
+			return nil, fmt.Errorf("presentation.seriesIntent[%d].value %q must not contain surrounding whitespace", index, rawValue)
+		}
+		if seriesValue == "" {
+			return nil, fmt.Errorf("presentation.seriesIntent[%d].value is required", index)
+		}
+		if previous, ok := seenValues[seriesValue]; ok {
+			return nil, fmt.Errorf("presentation.seriesIntent[%d].value %q duplicates seriesIntent[%d]", index, seriesValue, previous)
+		}
+		seenValues[seriesValue] = index
+		if value.Order != nil {
+			if *value.Order < 0 {
+				return nil, fmt.Errorf("presentation.seriesIntent[%d].order must be non-negative", index)
+			}
+			if previous, ok := seenOrders[*value.Order]; ok {
+				return nil, fmt.Errorf("presentation.seriesIntent[%d].order %d duplicates seriesIntent[%d]", index, *value.Order, previous)
+			}
+			seenOrders[*value.Order] = index
+		}
+		intent := visualizationir.VisualizationSeriesIntent{Value: seriesValue, Order: value.Order}
+		if value.Color != nil {
+			if !validCanonicalColorIntent(*value.Color) {
+				return nil, fmt.Errorf("presentation.seriesIntent[%d].color %q is unsupported", index, *value.Color)
+			}
+			color := visualizationir.VisualizationColorIntent(*value.Color)
+			intent.Color = &color
+		}
+		result[index] = intent
+	}
+	return result, nil
+}
+
+func validCanonicalColorIntent(intent visualizationir.VisualizationColorIntent) bool {
+	switch intent {
+	case visualizationir.VisualizationColorIntentAccent, visualizationir.VisualizationColorIntentNeutral, visualizationir.VisualizationColorIntentInk,
+		visualizationir.VisualizationColorIntentSuccess, visualizationir.VisualizationColorIntentWarning, visualizationir.VisualizationColorIntentDanger,
+		visualizationir.VisualizationColorIntentData1, visualizationir.VisualizationColorIntentData2, visualizationir.VisualizationColorIntentData3,
+		visualizationir.VisualizationColorIntentData4, visualizationir.VisualizationColorIntentData5, visualizationir.VisualizationColorIntentData6,
+		visualizationir.VisualizationColorIntentData7, visualizationir.VisualizationColorIntentData8:
+		return true
+	default:
+		return false
+	}
 }
 
 func lowerComboSeriesMark(value document.DashboardComboSeriesMark) (visualizationir.VisualizationCartesianMark, error) {
@@ -771,6 +854,43 @@ func validateCanonicalComboSeries(value document.DashboardPresentation, query Lo
 	for metric := range metrics {
 		if _, ok := configured[metric]; !ok {
 			return fmt.Errorf("combo presentation.series is missing compiled metric %q", metric)
+		}
+	}
+	return nil
+}
+
+// validateCanonicalSeriesIntent checks static series policies against compiled
+// metric aliases. Aggregate queries with a category-series binding deliberately
+// defer value resolution to runtime for the ordinary category-series families:
+// category values are data-dependent and a filtered result may legitimately
+// omit an authored value. Combo intents remain metric aliases only.
+func validateCanonicalSeriesIntent(value document.DashboardPresentation, visualType document.DashboardVisualType, query LoweredDashboardQuery) error {
+	variant, ok := value.Value.(*document.CartesianDashboardPresentation)
+	if !ok || variant == nil || variant.SeriesIntent == nil {
+		return nil
+	}
+	if query.Binding.Aggregate == nil {
+		return fmt.Errorf("presentation.seriesIntent requires an aggregate query")
+	}
+	if query.Binding.Aggregate.Series != nil {
+		if visualType == document.DashboardVisualTypeCombo {
+			for index, intent := range *variant.SeriesIntent {
+				return fmt.Errorf("presentation.seriesIntent[%d].value %q must reference a compiled metric alias for combo visuals; dynamic category values are not supported", index, intent.Value)
+			}
+		}
+		return nil
+	}
+	metrics := make(map[string]struct{}, len(query.Binding.Aggregate.Metrics))
+	for _, metric := range query.Binding.Aggregate.Metrics {
+		metrics[metric.Alias] = struct{}{}
+	}
+	for index, intent := range *variant.SeriesIntent {
+		seriesValue := string(intent.Value)
+		if len(metrics) == 1 && intent.Order != nil {
+			return fmt.Errorf("presentation.seriesIntent[%d].order cannot be used with a single compiled metric", index)
+		}
+		if _, ok := metrics[seriesValue]; !ok {
+			return fmt.Errorf("presentation.seriesIntent[%d].value %q must reference a compiled metric result for %s visuals", index, seriesValue, visualType)
 		}
 	}
 	return nil

@@ -563,6 +563,124 @@ test('ECharts uses governed static colors for category series and their legends'
   expect(filtered.series[0].itemStyle.color).toBe(defaultRendererContext.colors.data[5])
 })
 
+test('ECharts keeps typed category-series identities distinct through ordering and filters', () => {
+  const envelope = cartesianSeriesFixture() as any
+  envelope.dataState.datasets[0].rows = [
+    ['Jan', 1, 10], ['Jan', '1', 20], ['Feb', 1, 30], ['Feb', '1', 40],
+  ]
+  envelope.spec.presentation.seriesIntent = [{ value: '1', order: 0, color: 'success' }]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const series = option.series.filter((candidate: any) => candidate.datasetId)
+  expect(series.map((candidate: any) => candidate.name)).toEqual(['1 [string:1]', '1 [number:1]'])
+  expect(new Set(series.map((candidate: any) => candidate.id)).size).toBe(2)
+  expect(new Set(series.map((candidate: any) => candidate.datasetId)).size).toBe(2)
+  expect(series.map((candidate: any) => candidate.itemStyle.color)).toEqual([
+    defaultRendererContext.colors.success,
+    defaultRendererContext.colors.data[0],
+  ])
+  expect(option.dataset.slice(1).map((dataset: any) => dataset.transform.config['='])).toEqual(['1', 1])
+  const reordered = structuredClone(envelope)
+  reordered.dataState.datasets[0].rows.reverse()
+  expect((echartsOption(reordered, defaultRendererContext) as any).series.filter((candidate: any) => candidate.datasetId).map((candidate: any) => candidate.id)).toEqual(series.map((candidate: any) => candidate.id))
+
+  const canonical = structuredClone(envelope)
+  canonical.spec.presentation.seriesIntent = [{ value: '1 [number:1]', order: 0, color: 'danger' }]
+  const canonicalOption = echartsOption(canonical, defaultRendererContext) as any
+  expect(canonicalOption.series.filter((candidate: any) => candidate.datasetId).map((candidate: any) => candidate.name)).toEqual(['1 [number:1]', '1 [string:1]'])
+  expect(canonicalOption.dataset.slice(1).map((dataset: any) => dataset.transform.config['='])).toEqual([1, '1'])
+
+  envelope.spec.datasets[0].fields[1].role = 'identity'
+  envelope.spec.interactions = [{
+    id: 'point_selection', kind: 'select', mode: 'single', requiresStableIdentity: true, targets: ['details'], mappings: [
+      { source: { dataset: 'primary', field: 'series' }, targetFieldID: 'orders.series', targetDatasetID: 'orders' },
+    ],
+  }]
+  expect(interactionCommandForRow(envelope, 'primary', envelope.dataState.datasets[0].rows[0])).toMatchObject({ mappings: [{ value: 1 }] })
+  expect(interactionCommandForRow(envelope, 'primary', envelope.dataState.datasets[0].rows[1])).toMatchObject({ mappings: [{ value: '1' }] })
+})
+
+test('ECharts preserves nullish category-series identities and raw filter values', () => {
+  const envelope = cartesianSeriesFixture() as any
+  envelope.dataState.datasets[0].rows = [
+    ['Jan', null, 10], ['Jan', undefined, 20], ['Feb', null, 30], ['Feb', undefined, 40],
+  ]
+  // Nullish values are authored through the renderer's display names because
+  // seriesIntent values are strings in the visualization contract.
+  envelope.spec.presentation.seriesIntent = [
+    { value: '(undefined)', order: 0, color: 'success' },
+    { value: '(null)', order: 1, color: 'danger' },
+  ]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const series = option.series.filter((candidate: any) => candidate.datasetId)
+  expect(series.map((candidate: any) => candidate.name)).toEqual(['(undefined)', '(null)'])
+  expect(new Set(series.map((candidate: any) => candidate.id)).size).toBe(2)
+  expect(new Set(series.map((candidate: any) => candidate.datasetId)).size).toBe(2)
+  expect(series.map((candidate: any) => candidate.itemStyle.color)).toEqual([
+    defaultRendererContext.colors.success,
+    defaultRendererContext.colors.danger,
+  ])
+  expect(option.dataset.slice(1).map((dataset: any) => dataset.transform.config['='])).toEqual([undefined, null])
+})
+
+test('ECharts lets a single numeric category resolve a string series intent', () => {
+  const envelope = cartesianSeriesFixture() as any
+  envelope.dataState.datasets[0].rows = [['Jan', 7, 10], ['Feb', 7, 20]]
+  envelope.spec.presentation.seriesIntent = [{ value: '7', order: 0, color: 'danger' }]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const series = option.series.find((candidate: any) => candidate.datasetId)
+  expect(series.name).toBe('7')
+  expect(series.itemStyle.color).toBe(defaultRendererContext.colors.danger)
+  expect(option.dataset[1].transform.config['=']).toBe(7)
+})
+
+test('ECharts keeps fallback multi-metric colors bound to fields when order changes', () => {
+  const envelope = cartesianFixture('line', ['label', 'revenue', 'cost']) as any
+  const initial = echartsOption(envelope, defaultRendererContext) as any
+  const initialColors = new Map(initial.series.map((series: any) => [series.name, series.itemStyle.color]))
+
+  envelope.spec.presentation.seriesIntent = [
+    { value: 'cost', order: 0 },
+    { value: 'revenue', order: 1 },
+  ]
+  const reordered = echartsOption(envelope, defaultRendererContext) as any
+  expect(reordered.series.map((series: any) => series.name)).toEqual(['cost', 'revenue'])
+  expect(reordered.series.map((series: any) => [series.name, series.itemStyle.color])).toEqual([
+    ['cost', initialColors.get('cost')], ['revenue', initialColors.get('revenue')],
+  ])
+})
+
+test('ECharts places orderless static intents before unconfigured measures', () => {
+  const envelope = cartesianFixture('line', ['label', 'revenue', 'cost']) as any
+  envelope.spec.presentation.seriesIntent = [{ value: 'cost' }]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series.map((series: any) => series.name)).toEqual(['cost', 'revenue'])
+  expect(option.series.map((series: any) => series.itemStyle.color)).toEqual([
+    defaultRendererContext.colors.data[1], defaultRendererContext.colors.data[0],
+  ])
+})
+
+test('ECharts preserves conditional-over-intent-over-palette precedence for category series', () => {
+  const envelope = cartesianSeriesFixture() as any
+  envelope.spec.presentation.seriesIntent = [{ value: 'delivered', color: 'success' }, { value: 'processing', color: 'warning' }]
+  envelope.spec.conditionalFormatting = [{
+    id: 'status-colors', target: 'series_color', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'field', source: { dataset: 'primary', field: 'series' },
+      values: { delivered: { color: 'danger' } },
+      nullStyle: {}, defaultStyle: {},
+    },
+  }]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const processing = option.series.find((series: any) => series.name === 'processing').itemStyle.color
+  expect(option.series.find((series: any) => series.name === 'delivered').itemStyle.color).toBe(defaultRendererContext.colors.danger)
+  expect(typeof processing === 'function' ? processing({ value: ['Jan', 'processing', 30] }) : processing).toBe(defaultRendererContext.colors.attention)
+})
+
 test('ECharts condenses crowded category-series charts without overlapping labels or legends', () => {
   const envelope = cartesianSeriesFixture() as any
   envelope.spec.mark = 'column'

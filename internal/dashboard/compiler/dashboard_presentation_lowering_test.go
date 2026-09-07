@@ -848,3 +848,97 @@ func TestLowerCanonicalComboPresentationRejectsUnknownDuplicateAndInapplicableSe
 		})
 	}
 }
+
+func TestLowerCanonicalSeriesIntentPreservesPolicyAndAllowsMissingDynamicCategories(t *testing.T) {
+	order0, order1 := int32(0), int32(1)
+	color0, color1 := visualizationir.VisualizationColorIntentSuccess, visualizationir.VisualizationColorIntentData3
+	intents := []document.DashboardSeriesIntent{
+		{Value: "order_count", Order: &order0, Color: &color0},
+		{Value: "revenue", Order: &order1, Color: &color1},
+	}
+	value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", SeriesIntent: &intents}}
+	query := LoweredDashboardQuery{
+		Type:        "aggregate",
+		Binding:     visualizationdefinition.QueryBinding{Aggregate: &visualizationdefinition.AggregateQueryBinding{Metrics: []visualizationdefinition.FieldBinding{{Alias: "revenue"}, {Alias: "order_count"}}}},
+		ResultFrame: []DashboardQueryResultField{{Name: "month"}, {Name: "revenue"}, {Name: "order_count"}},
+	}
+	lowered, err := LowerCanonicalDashboardPresentationForQuery(value, document.DashboardVisualTypeCombo, query)
+	if err != nil {
+		t.Fatalf("lower series intent: %v", err)
+	}
+	presentation := lowered.(visualizationir.CartesianVisualizationPresentation)
+	if presentation.SeriesIntent == nil || len(*presentation.SeriesIntent) != 2 || (*presentation.SeriesIntent)[0].Value != "order_count" || *(*presentation.SeriesIntent)[1].Color != visualizationir.VisualizationColorIntentData3 {
+		t.Fatalf("series intent = %#v", presentation.SeriesIntent)
+	}
+
+	dynamic := query
+	dynamic.Binding.Aggregate.Series = &visualizationdefinition.FieldBinding{Alias: "status"}
+	dynamic.ResultFrame = []DashboardQueryResultField{{Name: "month"}, {Name: "status"}, {Name: "revenue"}}
+	dynamicIntents := []document.DashboardSeriesIntent{{Value: "category-omitted-at-compile-time"}}
+	dynamicValue := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", SeriesIntent: &dynamicIntents}}
+	if _, err := LowerCanonicalDashboardPresentationForQuery(dynamicValue, document.DashboardVisualTypeLine, dynamic); err != nil {
+		t.Fatalf("dynamic category intent should not require a compiled result field: %v", err)
+	}
+	if _, err := LowerCanonicalDashboardPresentationForQuery(dynamicValue, document.DashboardVisualTypeCombo, dynamic); err == nil || !strings.Contains(err.Error(), "presentation.seriesIntent[0].value") || !strings.Contains(err.Error(), "compiled metric alias") {
+		t.Fatalf("dynamic combo category intent error = %v, want path-bearing compiled-alias diagnostic", err)
+	}
+}
+
+func TestLowerCanonicalSeriesIntentAllowsSingleMetricColor(t *testing.T) {
+	color := visualizationir.VisualizationColorIntentSuccess
+	intents := []document.DashboardSeriesIntent{{Value: "revenue", Color: &color}}
+	value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", SeriesIntent: &intents}}
+	query := LoweredDashboardQuery{
+		Type:        "aggregate",
+		Binding:     visualizationdefinition.QueryBinding{Aggregate: &visualizationdefinition.AggregateQueryBinding{Metrics: []visualizationdefinition.FieldBinding{{Alias: "revenue"}}}},
+		ResultFrame: []DashboardQueryResultField{{Name: "revenue"}},
+	}
+	lowered, err := LowerCanonicalDashboardPresentationForQuery(value, document.DashboardVisualTypeLine, query)
+	if err != nil {
+		t.Fatalf("single-metric series intent: %v", err)
+	}
+	presentation := lowered.(visualizationir.CartesianVisualizationPresentation)
+	if presentation.SeriesIntent == nil || len(*presentation.SeriesIntent) != 1 || (*presentation.SeriesIntent)[0].Value != "revenue" || (*presentation.SeriesIntent)[0].Order != nil || (*presentation.SeriesIntent)[0].Color == nil || *(*presentation.SeriesIntent)[0].Color != visualizationir.VisualizationColorIntentSuccess {
+		t.Fatalf("series intent = %#v", presentation.SeriesIntent)
+	}
+	order := int32(0)
+	ordered := []document.DashboardSeriesIntent{{Value: "revenue", Order: &order}}
+	orderedValue := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", SeriesIntent: &ordered}}
+	if _, err := LowerCanonicalDashboardPresentationForQuery(orderedValue, document.DashboardVisualTypeLine, query); err == nil || !strings.Contains(err.Error(), "presentation.seriesIntent[0].order") || !strings.Contains(err.Error(), "single compiled metric") {
+		t.Fatalf("single-metric order error = %v, want path-bearing diagnostic", err)
+	}
+}
+
+func TestLowerCanonicalSeriesIntentRejectsInvalidPolicyAndUnknownMetric(t *testing.T) {
+	order := int32(-1)
+	duplicateOrder := int32(0)
+	invalidColor := visualizationir.VisualizationColorIntent("#fff")
+	validQuery := LoweredDashboardQuery{
+		Type:        "aggregate",
+		Binding:     visualizationdefinition.QueryBinding{Aggregate: &visualizationdefinition.AggregateQueryBinding{Metrics: []visualizationdefinition.FieldBinding{{Alias: "revenue"}}}},
+		ResultFrame: []DashboardQueryResultField{{Name: "month"}, {Name: "revenue"}},
+	}
+	cases := []struct {
+		name    string
+		intents []document.DashboardSeriesIntent
+		want    string
+	}{
+		{name: "empty value", intents: []document.DashboardSeriesIntent{{Value: ""}}, want: "presentation.seriesIntent[0].value is required"},
+		{name: "surrounding whitespace", intents: []document.DashboardSeriesIntent{{Value: " revenue "}}, want: "must not contain surrounding whitespace"},
+		{name: "empty intent list", intents: []document.DashboardSeriesIntent{}, want: "presentation.seriesIntent must contain at least one intent"},
+		{name: "duplicate value", intents: []document.DashboardSeriesIntent{{Value: "revenue"}, {Value: "revenue"}}, want: "duplicates"},
+		{name: "duplicate order", intents: []document.DashboardSeriesIntent{{Value: "revenue", Order: &duplicateOrder}, {Value: "orders", Order: &duplicateOrder}}, want: "order 0 duplicates"},
+		{name: "negative order", intents: []document.DashboardSeriesIntent{{Value: "revenue", Order: &order}}, want: "non-negative"},
+		{name: "closed color", intents: []document.DashboardSeriesIntent{{Value: "revenue", Color: &invalidColor}}, want: "unsupported"},
+		{name: "unknown metric", intents: []document.DashboardSeriesIntent{{Value: "missing"}}, want: "compiled metric result"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", SeriesIntent: &test.intents}}
+			_, err := LowerCanonicalDashboardPresentationForQuery(value, document.DashboardVisualTypeCombo, validQuery)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}

@@ -40,6 +40,7 @@ type CartesianDashboardPresentation struct {
 	LabelPosition    *DashboardLabelPosition                    `json:"labelPosition,omitempty" yaml:"labelPosition,omitempty"`
 	DisplayUnits     *visualizationir.VisualizationDisplayUnits `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
 	Series           *[]DashboardComboSeries                    `json:"series,omitempty" yaml:"series,omitempty"`
+	SeriesIntent     *[]DashboardSeriesIntent                   `json:"seriesIntent,omitempty" yaml:"seriesIntent,omitempty"`
 	Axes             *[]DashboardAxisConfiguration              `json:"axes,omitempty" yaml:"axes,omitempty"`
 	ReferenceLines   *[]DashboardReferenceLine                  `json:"referenceLines,omitempty" yaml:"referenceLines,omitempty"`
 	ReferenceBands   *[]DashboardReferenceBand                  `json:"referenceBands,omitempty" yaml:"referenceBands,omitempty"`
@@ -3698,6 +3699,12 @@ const (
 	DashboardSelectionModeSingle   DashboardSelectionMode = "single"
 	DashboardSelectionModeMultiple DashboardSelectionMode = "multiple"
 )
+
+type DashboardSeriesIntent struct {
+	Value string                                    `json:"value" yaml:"value"`
+	Order *int32                                    `json:"order,omitempty" yaml:"order,omitempty"`
+	Color *visualizationir.VisualizationColorIntent `json:"color,omitempty" yaml:"color,omitempty"`
+}
 
 type DashboardSort struct {
 	Field     string                 `json:"field" yaml:"field"`

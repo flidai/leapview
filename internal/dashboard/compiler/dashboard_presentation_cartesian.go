@@ -86,6 +86,14 @@ func validateCanonicalCartesianPresentationApplicability(variant *document.Carte
 	if err := optionSupported("series", variant.Series != nil, visualType == document.DashboardVisualTypeCombo); err != nil {
 		return err
 	}
+	if err := optionSupported("seriesIntent", variant.SeriesIntent != nil,
+		visualType == document.DashboardVisualTypeLine ||
+			visualType == document.DashboardVisualTypeArea ||
+			visualType == document.DashboardVisualTypeBar ||
+			visualType == document.DashboardVisualTypeColumn ||
+			visualType == document.DashboardVisualTypeCombo); err != nil {
+		return err
+	}
 	// Decision-context declarations are lowered separately, but their authored
 	// presence is part of the same applicability contract. Empty explicitly-
 	// authored collections are still declarations and must not be accepted on

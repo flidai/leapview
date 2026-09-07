@@ -240,8 +240,10 @@ func TestValidateSpecEnforcesStackingAndSeriesIntent(t *testing.T) {
 			name: "percent with dual axes",
 			mutate: func(spec *CartesianVisualizationSpec) {
 				spec.Mark = VisualizationCartesianMarkCombo
+				spec.Series = nil
+				spec.Y = append(spec.Y, spec.Y[0])
 				spec.Presentation.ComboSeries = &[]VisualizationComboSeries{{
-					SeriesValue: "delivered",
+					SeriesValue: "revenue",
 					Mark:        VisualizationCartesianMarkLine,
 					Axis:        VisualizationAxisSecondary,
 				}}
@@ -274,6 +276,46 @@ func TestValidateSpecEnforcesStackingAndSeriesIntent(t *testing.T) {
 				t.Fatalf("ValidateSpec() error = %v, want containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestValidateSpecSeriesIntentSupportsSingleMetricAndRejectsNoOpOrWhitespace(t *testing.T) {
+	t.Parallel()
+
+	base := VisualizationSpecBase{
+		Kind: "cartesian", Title: "Revenue",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "month", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Month"},
+			{ID: "revenue", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "Revenue", Description: "Revenue by month"},
+		Interactions:  []VisualizationInteraction{},
+	}
+	newSpec := func(intents []VisualizationSeriesIntent) VisualizationSpec {
+		return VisualizationSpec{Value: &CartesianVisualizationSpec{
+			VisualizationSpecBase: base, Kind: "cartesian", Mark: VisualizationCartesianMarkLine,
+			X: VisualizationFieldRef{Dataset: "primary", Field: "month"}, Y: []VisualizationFieldRef{{Dataset: "primary", Field: "revenue"}},
+			Presentation: CartesianVisualizationPresentation{
+				VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionBottom),
+				SeriesIntent:              &intents,
+			},
+		}}
+	}
+
+	color := VisualizationColorIntentSuccess
+	if err := ValidateSpec(newSpec([]VisualizationSeriesIntent{{Value: "revenue", Color: &color}})); err != nil {
+		t.Fatalf("single-metric color intent should be valid: %v", err)
+	}
+	order := int32(0)
+	if err := ValidateSpec(newSpec([]VisualizationSeriesIntent{{Value: "revenue", Order: &order}})); err == nil || !strings.Contains(err.Error(), "series intent[0].order") || !strings.Contains(err.Error(), "single metric") {
+		t.Fatalf("single-metric order error = %v, want path-bearing diagnostic", err)
+	}
+	if err := ValidateSpec(newSpec([]VisualizationSeriesIntent{})); err == nil || !strings.Contains(err.Error(), "series intent must contain at least one intent") {
+		t.Fatalf("empty series intent error = %v, want no-op diagnostic", err)
+	}
+	if err := ValidateSpec(newSpec([]VisualizationSeriesIntent{{Value: " revenue "}})); err == nil || !strings.Contains(err.Error(), "series intent[0].value") || !strings.Contains(err.Error(), "surrounding whitespace") {
+		t.Fatalf("surrounding whitespace error = %v, want path-bearing diagnostic", err)
 	}
 }
 
@@ -353,5 +395,63 @@ func TestValidateSpecUsesComboAxisOwnersForContext(t *testing.T) {
 				t.Fatalf("ValidateSpec() error = %v, want containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestValidateSpecRejectsInvalidComboSeriesPolicies(t *testing.T) {
+	t.Parallel()
+
+	base := VisualizationSpecBase{
+		Kind: "cartesian", Title: "Combo",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "month", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Month"},
+			{ID: "revenue", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
+			{ID: "orders", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Orders"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "Combo", Description: "Combo"},
+		Interactions:  []VisualizationInteraction{},
+	}
+	valid := func(series []VisualizationComboSeries) VisualizationSpec {
+		return VisualizationSpec{Value: &CartesianVisualizationSpec{
+			VisualizationSpecBase: base, Kind: "cartesian", Mark: VisualizationCartesianMarkCombo,
+			X:            VisualizationFieldRef{Dataset: "primary", Field: "month"},
+			Y:            []VisualizationFieldRef{{Dataset: "primary", Field: "revenue"}, {Dataset: "primary", Field: "orders"}},
+			Presentation: CartesianVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionBottom), ComboSeries: &series},
+		}}
+	}
+	cases := []struct {
+		name   string
+		series []VisualizationComboSeries
+		want   string
+	}{
+		{name: "surrounding whitespace", series: []VisualizationComboSeries{{SeriesValue: " revenue ", Mark: VisualizationCartesianMarkLine, Axis: VisualizationAxisPrimary}, {SeriesValue: "orders", Mark: VisualizationCartesianMarkArea, Axis: VisualizationAxisSecondary}}, want: "combo series[0].seriesValue"},
+		{name: "duplicate value", series: []VisualizationComboSeries{{SeriesValue: "revenue", Mark: VisualizationCartesianMarkLine, Axis: VisualizationAxisPrimary}, {SeriesValue: "revenue", Mark: VisualizationCartesianMarkArea, Axis: VisualizationAxisSecondary}}, want: "duplicate combo series value"},
+		{name: "unknown metric", series: []VisualizationComboSeries{{SeriesValue: "missing", Mark: VisualizationCartesianMarkLine, Axis: VisualizationAxisPrimary}}, want: "not a compiled metric field"},
+		{name: "missing metric", series: []VisualizationComboSeries{{SeriesValue: "revenue", Mark: VisualizationCartesianMarkLine, Axis: VisualizationAxisPrimary}}, want: "configure every compiled metric"},
+		{name: "mixed orientation", series: []VisualizationComboSeries{{SeriesValue: "revenue", Mark: VisualizationCartesianMarkBar, Axis: VisualizationAxisPrimary}, {SeriesValue: "orders", Mark: VisualizationCartesianMarkColumn, Axis: VisualizationAxisSecondary}}, want: "cannot mix bar and column"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ValidateSpec(valid(test.series)); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateSpec() error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+	dynamic := valid([]VisualizationComboSeries{{SeriesValue: "revenue", Mark: VisualizationCartesianMarkLine, Axis: VisualizationAxisPrimary}, {SeriesValue: "orders", Mark: VisualizationCartesianMarkArea, Axis: VisualizationAxisSecondary}})
+	dynamicSpec := dynamic.Value.(*CartesianVisualizationSpec)
+	dynamicSpec.Presentation.ComboSeries = nil
+	dynamicSpec.Series = &VisualizationFieldRef{Dataset: "primary", Field: "month"}
+	if err := ValidateSpec(dynamic); err == nil || !strings.Contains(err.Error(), "combo.series") || !strings.Contains(err.Error(), "dynamic category series") {
+		t.Fatalf("dynamic combo series error = %v, want path-bearing rejection", err)
+	}
+
+	duplicateOrder := int32(2)
+	intentSpec := valid([]VisualizationComboSeries{{SeriesValue: "revenue", Mark: VisualizationCartesianMarkLine, Axis: VisualizationAxisPrimary}})
+	intentSpec.Value.(*CartesianVisualizationSpec).Presentation.SeriesIntent = &[]VisualizationSeriesIntent{
+		{Value: "revenue", Order: &duplicateOrder}, {Value: "orders", Order: &duplicateOrder},
+	}
+	if err := ValidateSpec(intentSpec); err == nil || !strings.Contains(err.Error(), "duplicate series order") {
+		t.Fatalf("ValidateSpec() duplicate order error = %v", err)
 	}
 }

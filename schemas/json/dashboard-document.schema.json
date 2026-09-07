@@ -133,6 +133,13 @@
           },
           "type": "array"
         },
+        "seriesIntent": {
+          "description": "Stable per-series color and order policy. Category values may be data-dependent for non-combo Cartesian series.",
+          "items": {
+            "$ref": "#/$defs/DashboardSeriesIntent"
+          },
+          "type": "array"
+        },
         "showSymbols": {
           "type": "boolean"
         },
@@ -2408,6 +2415,26 @@
         "multiple"
       ],
       "type": "string"
+    },
+    "DashboardSeriesIntent": {
+      "description": "A stable renderer-neutral policy for one named chart series.",
+      "properties": {
+        "color": {
+          "$ref": "#/$defs/VisualizationColorIntent"
+        },
+        "order": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "DashboardSort": {
       "properties": {
