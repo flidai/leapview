@@ -127,3 +127,21 @@ test('HTML KPI layout requirements come only from explicitly configured features
     minimum: { width: 320, height: 242 },
   })
 })
+
+test('HTML KPI status layout is driven by qualitative ranges', () => {
+  const envelope = {
+    schemaVersion: 12, visualID: 'revenue', rendererID: 'html', specRevision: 'sha256:status', dataRevision: 1,
+    spec: {
+      kind: 'kpi', title: 'Revenue', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' }] }],
+      dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Revenue', description: 'Revenue' }, interactions: [],
+      value: { dataset: 'primary', field: 'value' },
+      presentation: { mode: 'compact', delta: 'absolute', favorableDirection: 'neutral', missingComparison: 'show_unavailable', ranges: [] },
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:status', dataRevision: 1, generation: 1, datasets: [] },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+
+  expect(kpiLayoutFeatures(envelope)).not.toContain('status')
+  envelope.spec.presentation.ranges = [{ minimum: 0, maximum: 100, label: 'On track', tone: 'success' }]
+  expect(kpiLayoutFeatures(envelope)).toContain('status')
+})

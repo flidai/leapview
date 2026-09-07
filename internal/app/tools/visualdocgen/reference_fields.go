@@ -111,7 +111,7 @@ var presentationFieldReferences = map[string]visualdocs.FieldReference{
 	"favorableDirection":    field("string", "neutral", []string{"increase", "decrease", "neutral"}, "States whether an increase or decrease is favorable."),
 	"missingComparison":     field("string", "show_unavailable", []string{"show_unavailable", "hide"}, "Controls how an unavailable comparison is communicated."),
 	"ranges":                field("range list", "none", []string{"ordered non-overlapping ranges"}, "Classifies KPI values with explicit labels and semantic tones."),
-	"thresholds":            field("threshold list", "none", []string{"numeric thresholds"}, "Adds explicit KPI threshold markers with semantic tones."),
+	"thresholds":            field("threshold list", "none", []string{"ordered numeric thresholds"}, "Classifies gauge values into ordered ranges with semantic tones."),
 	"comparison":            field("KPI value binding", "none", nil, "Binds a governed comparison value from a named result dataset."),
 	"goal":                  field("KPI value binding", "none", nil, "Binds a governed goal value from a named result dataset."),
 	"trend":                 field("KPI trend binding", "none", nil, "Binds category and value fields for the KPI trend sparkline."),

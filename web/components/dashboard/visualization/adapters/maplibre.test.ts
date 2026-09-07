@@ -363,6 +363,83 @@ test('MapLibre tiled layers reuse one native source and stable server-provided d
   expect(vectorTileTemplateURL(envelope.dataState.kind === 'spatial_tiled' ? envelope.dataState.tileURL : '', 'https://example.test/dashboard')).toBe('https://example.test/dashboards/orders/visuals/orders-map/tiles/revision/{z}/{x}/{y}.mvt')
 })
 
+test('MapLibre tiled no-value layers weight raw observations and aggregate counts', () => {
+	const envelope = tiledPointEnvelope()
+	if (envelope.spec.kind !== 'geographic' || envelope.dataState.kind !== 'spatial_tiled') throw new Error('tiled map fixture is unavailable')
+	const point = envelope.spec.layers[0]
+	if (!point || point.kind !== 'point') throw new Error('point layer fixture is unavailable')
+	const pointWithoutValue = { ...point, value: undefined }
+	const pointStyle = mapLayer('lv-orders', pointWithoutValue, envelope.dataState, 'lv-map-tiles')
+	const pointWeight = (((pointStyle.paint['circle-radius'][3] as unknown[])[3] as unknown[])[2] as unknown[])[1] as unknown[]
+	expect(pointWeight[3]).toBe(1)
+	expect(JSON.stringify(pointWeight)).toContain('__lv_count')
+	expect(JSON.stringify(pointWeight)).toContain('14999')
+	const density = {
+		id: 'customers', kind: 'density',
+		latitude: { dataset: 'primary', field: 'latitude' }, longitude: { dataset: 'primary', field: 'longitude' },
+		tooltip: [], position: 'above_labels', visibility: { minimumZoom: 0, maximumZoom: 18 },
+		color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#d0d7de' },
+		heat: { radius: 22, intensity: 1.35 }, opacity: .86,
+	} as VisualizationGeographicLayer
+	if (density.kind !== 'density') throw new Error('density layer fixture is unavailable')
+	const raw = mapLayer('lv-customers', density, envelope.dataState, 'lv-map-tiles')
+	const aggregate = tiledAggregateHeatLayer('lv-customers-aggregate', 'lv-map-tiles', density, envelope.dataState)
+	const rawWeight = (raw.paint['heatmap-weight'] as unknown[])[1] as unknown[]
+	expect(rawWeight[3]).toBe(1)
+	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('__lv_count')
+	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('14999')
+	const heat = { ...density, kind: 'heat' } as VisualizationGeographicLayer
+	const heatRaw = mapLayer('lv-heat', heat, envelope.dataState, 'lv-map-tiles')
+	const heatAggregate = tiledAggregateHeatLayer('lv-heat-aggregate', 'lv-map-tiles', heat as Extract<VisualizationGeographicLayer, { kind: 'heat' }>, envelope.dataState)
+	expect(((heatRaw.paint['heatmap-weight'] as unknown[])[1] as unknown[])[3]).toBe(1)
+	expect(JSON.stringify(heatAggregate.paint['heatmap-weight'])).toContain('__lv_count')
+})
+
+test('MapLibre tiled scales merge partial and full authored domains with server domains', () => {
+	const envelope = tiledPointEnvelope()
+	if (envelope.spec.kind !== 'geographic' || envelope.dataState.kind !== 'spatial_tiled') throw new Error('tiled map fixture is unavailable')
+	const point = envelope.spec.layers[0]
+	if (!point || point.kind !== 'point') throw new Error('point layer fixture is unavailable')
+	const partial = {
+		...point,
+		size: { ...point.size, domainMinimum: 100 },
+		color: { ...point.color, domainMinimum: 50 },
+	}
+	const partialStyle = mapLayer('lv-orders', partial, envelope.dataState, 'lv-map-tiles')
+	const partialRadius = JSON.stringify(partialStyle.paint['circle-radius'])
+	const partialColor = JSON.stringify(partialStyle.paint['circle-color'])
+	expect(partialRadius).toContain('100')
+	expect(partialRadius).toContain('400')
+	expect(partialRadius).toContain('4900')
+	expect(partialColor).toContain('50')
+	expect(partialColor).toContain('450')
+	expect(partialColor).toContain('4950')
+	const full = {
+		...point,
+		color: { ...point.color, domainMinimum: 100, domainMidpoint: 200, domainMaximum: 320 },
+	}
+	const fullColor = JSON.stringify(mapLayer('lv-orders', full, envelope.dataState, 'lv-map-tiles').paint['circle-color'])
+	expect(fullColor).toContain('100')
+	expect(fullColor).toContain('200')
+	expect(fullColor).toContain('120')
+	expect(fullColor).toContain('"<="')
+	expect(fullColor).not.toContain('5000')
+})
+
+test('MapLibre tiled scales preserve constant and boundary domain semantics', () => {
+	const envelope = tiledPointEnvelope()
+	if (envelope.spec.kind !== 'geographic' || envelope.dataState.kind !== 'spatial_tiled') throw new Error('tiled map fixture is unavailable')
+	const point = envelope.spec.layers[0]
+	if (!point || point.kind !== 'point') throw new Error('point layer fixture is unavailable')
+	const state = { ...envelope.dataState, rawDomains: [{ field: 'revenue', minimum: 10, maximum: 10 }], aggregateDomains: [{ field: 'revenue', minimum: 100, maximum: 100 }] }
+	const color = JSON.stringify(mapLayer('lv-orders', point, state, 'lv-map-tiles').paint['circle-color'])
+	expect(color).toContain('["case",["==",["to-number",["get","revenue"],0],0],0,1]')
+	const bounded = JSON.stringify(mapLayer('lv-orders', { ...point, color: { ...point.color, domainMinimum: 20, domainMaximum: 80 } }, envelope.dataState, 'lv-map-tiles').paint['circle-color'])
+	expect(bounded).toContain('["max",0,["min",1')
+	expect(bounded).toContain('20')
+	expect(bounded).toContain('80')
+})
+
 test('MapLibre exposes selection controls for inline and tile-backed maps', () => {
   const tiled = tiledPointEnvelope()
   expect(tiled.spec.interactions.some((candidate) => candidate.kind === 'select')).toBe(true)
