@@ -329,3 +329,55 @@ func TestValidateSpecRejectsUndeliveredConditionalFormattingSources(t *testing.T
 		t.Fatalf("delivered pivot metric source rejected: %v", err)
 	}
 }
+
+func TestValidateSpecRejectsMetricSourcesForTabularRowTargets(t *testing.T) {
+	t.Parallel()
+	ref := func(field string) VisualizationFieldRef {
+		return VisualizationFieldRef{Dataset: "primary", Field: field}
+	}
+	color := VisualizationColorIntentDanger
+	icon := VisualizationIconIntentWarning
+	format := func(kind, target, source string) VisualizationSpec {
+		conditional := VisualizationConditionalFormat{
+			ID: "row-metric-source", Target: VisualizationConditionalTargetCellBackground, Field: ref(target),
+			Rule: VisualizationConditionalRule{Value: &FieldVisualizationConditionalRule{
+				VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "field"}, Kind: "field", Source: ref(source),
+				Values: map[string]VisualizationConditionalStyle{"late": {Color: &color, Icon: &icon}}, NullStyle: VisualizationConditionalStyle{Color: &color, Icon: &icon}, DefaultStyle: VisualizationConditionalStyle{Color: &color, Icon: &icon},
+			}},
+		}
+		base := VisualizationSpecBase{
+			Kind: kind, Title: kind, Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+				{ID: "row", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Row"},
+				{ID: "column", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Column"},
+				{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Value"},
+			}}},
+			DataBudget:    VisualizationDataBudget{MaxRows: 10, RequiredCompleteness: VisualizationCompletenessComplete},
+			Accessibility: VisualizationAccessibility{Title: kind, Description: kind},
+			Interactions:  []VisualizationInteraction{}, ConditionalFormatting: &[]VisualizationConditionalFormat{conditional},
+		}
+		presentation := GridVisualizationPresentation{RowHeight: 28, ShowHeader: true}
+		if kind == "matrix" {
+			return VisualizationSpec{Value: &MatrixVisualizationSpec{VisualizationSpecBase: base, Kind: kind, Rows: []VisualizationFieldRef{ref("row")}, Columns: []VisualizationFieldRef{ref("column")}, Metrics: []VisualizationFieldRef{ref("value")}, MetricFormatting: map[string][]TableVisualizationFormattingRule{}, Presentation: presentation}}
+		}
+		return VisualizationSpec{Value: &PivotVisualizationSpec{VisualizationSpecBase: base, Kind: kind, Rows: []VisualizationFieldRef{ref("row")}, Columns: []VisualizationFieldRef{ref("column")}, Metrics: []VisualizationFieldRef{ref("value")}, MetricFormatting: map[string][]TableVisualizationFormattingRule{}, Presentation: presentation}}
+	}
+
+	for _, test := range []struct {
+		kind string
+		want string
+	}{
+		{kind: "matrix", want: "metric source \"value\" cannot drive matrix row target \"row\""},
+		{kind: "pivot", want: "metric source \"value\" cannot drive pivot row target \"row\""},
+	} {
+		t.Run(test.kind+" rejects row target", func(t *testing.T) {
+			if err := ValidateSpec(format(test.kind, "row", "value")); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateSpec() error = %v, want containing %q", err, test.want)
+			}
+		})
+		t.Run(test.kind+" keeps metric remap", func(t *testing.T) {
+			if err := ValidateSpec(format(test.kind, "value", "value")); err != nil {
+				t.Fatalf("metric target with metric source rejected: %v", err)
+			}
+		})
+	}
+}

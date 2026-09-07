@@ -904,10 +904,16 @@ func validateConditionalFormattingSource(spec VisualizationSpec, format Visualiz
 		}
 		kind = "table"
 	case *MatrixVisualizationSpec:
+		if contains(value.Rows, format.Field) && contains(value.Metrics, field) {
+			return fmt.Errorf("metric source %q cannot drive matrix row target %q; metric aliases are emitted only as generated cells", field.Field, format.Field.Field)
+		}
 		delivered = append(delivered, value.Rows...)
 		delivered = append(delivered, value.Metrics...)
 		kind = "matrix"
 	case *PivotVisualizationSpec:
+		if contains(value.Rows, format.Field) && contains(value.Metrics, field) {
+			return fmt.Errorf("metric source %q cannot drive pivot row target %q; metric aliases are emitted only as generated cells", field.Field, format.Field.Field)
+		}
 		delivered = append(delivered, value.Rows...)
 		delivered = append(delivered, value.Metrics...)
 		kind = "pivot"
