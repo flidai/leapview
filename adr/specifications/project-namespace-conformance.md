@@ -321,6 +321,28 @@ names, and physical relation names must not replace durable identity.
 | XPR-01–XPR-05     | Foreign-reference and unsupported-import rejection corpus                                             | Pending |
 | DBT-01–DBT-06     | Reference deployment, upstream dependency, multi-Source closure, and cross-Project rejection tests    | Pending |
 
+### Delivery-plan binding evidence (FAI-669)
+
+The existing delivery plan remains the only binding boundary. Its
+`SourceDigest` carries the portable bundle digest; Project UID, environment,
+target, base generation, target revision, and resolved binding evidence belong
+to the plan, not to the compiler's source bundle. New candidate admission
+verifies the persisted plan and the current target fence in the transaction
+that allocates the candidate and admits its attempt. Existing-candidate
+recovery does not create a new candidate or rebind its source.
+
+| Requirements | Maintained evidence |
+| --- | --- |
+| BND-04 | `TestDeliveryPlanContentDigestRejectsTamperedBindingInputs` in [plan contract tests](../../internal/deployment/plan_delivery_contracts_test.go); exact-plan allocation, stale rollback, and rehashed-plan rejection in [candidate admission tests](../../internal/app/deploymentpostgres/candidate_build_attempt_admission_test.go). |
+| BND-04 | `TestCandidatePlanBindingConcurrentTargetAdvancePreservesLockOrder` in [concurrent admission tests](../../internal/app/deploymentpostgres/candidate_plan_binding_concurrency_test.go) proves lease/target ordering and rejection after a concurrent target advance without committed candidate, attempt, lease, or allocation changes. |
+| BND-04 | `TestPostgresNativeRefreshFinalizerPreservesLeaseThenTargetLockOrder` in [refresh integration tests](../../internal/refresh/module/postgres_native_finalizer_test.go) covers canonical verification and finalization alongside a competing admission fence, preserving lease-before-target ordering and the final activation CAS. |
+| BND-07, PRJ-06, ENV-01 | `TestNativeCreatePlanPostgresBindsPortableSourceToIndependentEnvironmentTargets` in [multi-environment planning tests](../../internal/app/deploymentpostgres/native_plan_binding_postgres_test.go) plans the same canonical source digest under one Project UID with independent target revisions, bindings, and policies, without acquiring credentials or creating candidates or approvals. |
+| API-03 | `TestNativeCreatePlanPostgresRejectsForeignScopeBeforeSourceIO` in [planning tests](../../internal/app/deploymentpostgres/native_plan_binding_postgres_test.go) and `TestNativeDeliveryBuildRequiresExactClaimBeforeAdmission` in [HTTP handler tests](../../internal/deployment/module/native_delivery_test.go) reject foreign scope or missing claims before source work or candidate-preparation admission. |
+| ENV-05 | `TestDeliveryPlanSeparatesExecutionFromProvenance` in [plan contract tests](../../internal/deployment/plan_delivery_contracts_test.go) keeps source revision evidence separate from execution and target identity. |
+
+These tests qualify the delivery-plan binding slice only; they do not mark the
+broader requirement ranges above complete or implement the ResourceUID registry.
+
 Implementation must update the project-delivery and data-contract versioning
 conformance specifications where their current language conflicts with this
 accepted profile. The final combined implementation change must pass:

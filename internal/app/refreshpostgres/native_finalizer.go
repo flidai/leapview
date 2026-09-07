@@ -153,7 +153,11 @@ func (f *PostgresNativeRefreshFinalizerAdapter) FinalizeCanonicalRefreshTx(ctx c
 	if err != nil {
 		return fmt.Errorf("load native refresh generation: %w", err)
 	}
-	target, err := f.Deployment.TargetForShareTx(ctx, tx, targetID)
+	// This is an immutable identity read only. The authoritative target fence
+	// is rechecked by ActivateTx after the delivery lease is acquired; do not
+	// hold a target share lock before lease admission, which would invert the
+	// lease/fence order used by candidate builds.
+	target, err := f.Deployment.TargetTx(ctx, tx, targetID)
 	if err != nil {
 		return fmt.Errorf("load native refresh target: %w", err)
 	}

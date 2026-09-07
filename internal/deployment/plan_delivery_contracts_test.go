@@ -60,6 +60,15 @@ func deliveryTestPlan(t *testing.T) DeliveryPlan {
 	return plan
 }
 
+func deliveryTestRecomputeExecutionDigest(t *testing.T, plan *DeliveryPlan) {
+	t.Helper()
+	var err error
+	plan.ExecutionDigest, err = plan.Execution.ExecutionDigest()
+	if err != nil {
+		t.Fatalf("recompute execution digest: %v", err)
+	}
+}
+
 func TestNewDeliveryPlanDefaultsSourceOwnerBeforeDigest(t *testing.T) {
 	plan := deliveryTestPlan(t)
 	if plan.SourceOwnerID != plan.Provenance.Builder {
@@ -110,6 +119,10 @@ func TestDeliveryPlanSeparatesExecutionFromProvenance(t *testing.T) {
 	if changed.ExecutionDigest != plan.ExecutionDigest {
 		t.Fatalf("provenance changed execution identity: %s != %s", changed.ExecutionDigest, plan.ExecutionDigest)
 	}
+	if changed.ProjectID != plan.ProjectID || changed.TargetID != plan.TargetID || changed.Environment != plan.Environment ||
+		changed.SourceDigest != plan.SourceDigest || changed.BaseGenerationID != plan.BaseGenerationID || changed.BaseTargetRevision != plan.BaseTargetRevision {
+		t.Fatalf("provenance changed source or target binding: changed=%#v plan=%#v", changed, plan)
+	}
 	if changed.Digest == plan.Digest || changed.ProvenanceDigest == plan.ProvenanceDigest {
 		t.Fatal("plan identity did not include provenance evidence")
 	}
@@ -125,6 +138,53 @@ func TestDeliveryPlanSeparatesExecutionFromProvenance(t *testing.T) {
 	}
 	if executionChanged.ExecutionDigest == plan.ExecutionDigest {
 		t.Fatal("result-affecting binding change preserved execution identity")
+	}
+}
+
+func TestDeliveryPlanContentDigestRejectsTamperedBindingInputs(t *testing.T) {
+	plan := deliveryTestPlan(t)
+	mutations := map[string]func(*DeliveryPlan){
+		"project uid": func(changed *DeliveryPlan) {
+			changed.ProjectID = graph.ResourceID("project-2")
+		},
+		"target": func(changed *DeliveryPlan) {
+			changed.TargetID = "target-2"
+		},
+		"environment": func(changed *DeliveryPlan) {
+			changed.Environment = "staging"
+		},
+		"bundle digest": func(changed *DeliveryPlan) {
+			changed.SourceDigest = deliveryTestDigest('9')
+			changed.Execution.SourceArtifactDigest = changed.SourceDigest
+			deliveryTestRecomputeExecutionDigest(t, changed)
+		},
+		"base generation": func(changed *DeliveryPlan) {
+			changed.BaseGenerationID = "generation-2"
+		},
+		"base target revision": func(changed *DeliveryPlan) {
+			changed.BaseTargetRevision++
+		},
+		"resolved binding digest": func(changed *DeliveryPlan) {
+			changed.Execution.BindingDigest = deliveryTestDigest('9')
+			deliveryTestRecomputeExecutionDigest(t, changed)
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			tampered := plan
+			mutate(&tampered)
+			if err := tampered.Validate(); !errors.Is(err, ErrDeliveryConflict) {
+				t.Fatalf("tampered plan validation error = %v, want conflict", err)
+			}
+
+			intentional, err := NewDeliveryPlan(tampered)
+			if err != nil {
+				t.Fatalf("rehash intentional plan: %v", err)
+			}
+			if intentional.Digest == plan.Digest {
+				t.Fatal("intentional binding change retained original content digest")
+			}
+		})
 	}
 }
 

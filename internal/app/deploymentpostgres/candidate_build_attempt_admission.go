@@ -30,6 +30,12 @@ type CandidateBuildAttemptAdmissionInput struct {
 	Lease    deploymentnative.LeaseInput
 	Attempt  deploymentnative.BuildAttemptInput
 	Artifact CandidateBuildArtifactInput
+	// Plan is supplied only for a newly constructed candidate. When present,
+	// admission locks the target after lease acquisition, verifies the exact
+	// plan fence, and allocates the candidate in this same transaction before
+	// beginning the attempt. Recovery callers leave it nil because their
+	// candidate already exists.
+	Plan *deploymentdomain.DeliveryPlan
 	// CatalogID is retained only for the physical admission guard. Physical
 	// attempt lifecycle state is owned by canonical delivery.
 	CatalogID string
@@ -148,6 +154,17 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttemptTx(ctx context
 	if lease.LeaseID != normalized.Lease.LeaseID || lease.TargetID != normalized.Lease.TargetID || lease.OwnerID != normalized.Lease.OwnerID || lease.FencingEpoch <= 0 || lease.State != "active" || !lease.ExpiresAt.Equal(normalized.Lease.ExpiresAt) {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: admitted delivery lease identity drifted", deploymentnative.ErrConflict)
 	}
+	if normalized.Plan != nil {
+		if err := admitCandidatePlanBinding(ctx, tx, a.delivery, *normalized.Plan, normalized); err != nil {
+			return CandidateBuildAttemptAdmissionResult{}, err
+		}
+		if _, err := a.delivery.CreateCandidateAllocatedTx(ctx, tx, deploymentnative.CandidateInput{
+			CandidateID: normalized.Attempt.CandidateID, TargetID: normalized.Lease.TargetID,
+			PlanID: normalized.Attempt.PlanID, ArtifactDigest: normalized.Artifact.ServingArtifactDigest,
+		}); err != nil {
+			return CandidateBuildAttemptAdmissionResult{}, err
+		}
+	}
 	attemptInput := normalized.Attempt
 	attemptInput.CatalogID = normalized.CatalogID
 	attemptInput.FencingEpoch = lease.FencingEpoch
@@ -181,6 +198,40 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttemptTx(ctx context
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: admitted serving artifact identity drifted", deploymentnative.ErrConflict)
 	}
 	return CandidateBuildAttemptAdmissionResult{Lease: lease, Attempt: attempt, Artifact: binding}, nil
+}
+
+func admitCandidatePlanBinding(ctx context.Context, tx deploymentnative.Tx, delivery *deploymentnative.Repository, plan deploymentdomain.DeliveryPlan, input CandidateBuildAttemptAdmissionInput) error {
+	if err := plan.Validate(); err != nil {
+		return err
+	}
+	if plan.ID != input.Attempt.PlanID || plan.Digest != input.Attempt.PlanDigest || plan.TargetID != input.Lease.TargetID || plan.ServingArtifactDigest != input.Artifact.ServingArtifactDigest {
+		return fmt.Errorf("%w: candidate admission plan identity differs", deploymentdomain.ErrDeliveryConflict)
+	}
+	stored, err := delivery.PlanTx(ctx, tx, plan.ID)
+	if err != nil {
+		return err
+	}
+	persisted, err := stored.RichPlan()
+	if err != nil {
+		return err
+	}
+	if err := persisted.Validate(); err != nil {
+		return err
+	}
+	if persisted.Digest != plan.Digest {
+		return fmt.Errorf("%w: candidate admission plan is not the persisted plan", deploymentdomain.ErrDeliveryConflict)
+	}
+	target, err := delivery.TargetForUpdateTx(ctx, tx, input.Lease.TargetID)
+	if err != nil {
+		return err
+	}
+	if target.TargetID != plan.TargetID || target.ProjectID != plan.ProjectID.String() || target.Environment != plan.Environment {
+		return fmt.Errorf("%w: candidate admission target scope differs from delivery plan", deploymentdomain.ErrDeliveryConflict)
+	}
+	if target.TargetRevision != plan.BaseTargetRevision || target.ActiveGenerationID != plan.BaseGenerationID {
+		return fmt.Errorf("%w: candidate admission target fence differs from delivery plan", deploymentdomain.ErrDeliveryStale)
+	}
+	return nil
 }
 
 func normalizeCandidateBuildAttemptAdmissionInput(input CandidateBuildAttemptAdmissionInput) (CandidateBuildAttemptAdmissionInput, error) {

@@ -98,7 +98,7 @@ func (m *Module) writeDeliveryMutationError(w http.ResponseWriter, r *http.Reque
 		status, code, message = http.StatusConflict, "DELIVERY_IDEMPOTENCY_DRIFT", "The delivery idempotency key was reused with different inputs"
 	case errors.Is(err, ErrDeliveryForbidden), errors.Is(err, ErrPublicationForbidden), errors.Is(err, ErrApprovalForbidden), errors.Is(err, ErrActivationForbidden):
 		status, code, message = http.StatusForbidden, "DELIVERY_FORBIDDEN", "The caller is not authorized for this delivery operation"
-	case errors.Is(err, deployment.ErrDeliveryConflict), errors.Is(err, deployment.ErrDeliveryTransition):
+	case errors.Is(err, deployment.ErrDeliveryConflict), errors.Is(err, deployment.ErrDeliveryTransition), errors.Is(err, deployment.ErrProjectClaimConflict):
 		status, code, message = http.StatusConflict, "DELIVERY_CONFLICT", "The delivery operation conflicts with current target state"
 	case errors.Is(err, ErrDeliveryApprovalRequired), errors.Is(err, deployment.ErrApprovalRequired):
 		status, code, message = http.StatusConflict, "DELIVERY_APPROVAL_REQUIRED", "Delivery approval is required by target policy"
@@ -198,6 +198,10 @@ func (m *Module) CreateDeliveryPlan(w http.ResponseWriter, r *http.Request, proj
 		m.writeDeliveryMutationError(w, r, err)
 		return
 	}
+	if m.instanceID == "" || intent.TargetID != m.instanceID {
+		m.writeDeliveryMutationError(w, r, fmt.Errorf("%w: target does not match configured instance", deployment.ErrDeliveryConflict))
+		return
+	}
 	created, err := m.nativeDeliveryMutations.CreatePlan(r.Context(), nativeRequest)
 	if err != nil {
 		m.writeDeliveryMutationError(w, r, err)
@@ -232,6 +236,13 @@ func (m *Module) BuildDeliveryPlan(w http.ResponseWriter, r *http.Request, proje
 	}
 	nativeRequest := NativeDeliveryBuildRequest{ProjectID: projectID, TargetID: m.instanceID, Environment: m.handlerEnvironment(), PlanID: parsedPlanID, PrincipalID: principal.ID, IdempotencyKey: idempotencyKey}
 	if err := nativeRequest.validate(m.handlerEnvironment()); err != nil {
+		m.writeDeliveryMutationError(w, r, err)
+		return
+	}
+	// Verify the durable instance/project claim before acquiring physical
+	// candidate-preparation admission. A foreign or unbootstrapped request
+	// must not consume workload capacity or reach the native build port.
+	if err := m.requireCandidateSynchronizationProject(r.Context(), projectID); err != nil {
 		m.writeDeliveryMutationError(w, r, err)
 		return
 	}

@@ -729,6 +729,26 @@ func (r *Repository) TargetForShareTx(ctx context.Context, tx Tx, id string) (De
 	target.TargetID, target.ProjectID, target.Environment, target.TargetRevision, target.ActiveGenerationID, target.ActivePublicationID, target.CreatedAt, target.UpdatedAt = row.TargetID, row.ProjectID, row.Environment, row.TargetRevision, row.ActiveGenerationID, row.ActivePublicationID, dbTime(row.CreatedAt), dbTime(row.UpdatedAt)
 	return target, nil
 }
+
+// TargetForUpdateTx reads and exclusively locks the delivery target row.
+// Callers that create target-bound consequences use this projection to keep
+// their target-fence proof current until the enclosing transaction commits.
+func (r *Repository) TargetForUpdateTx(ctx context.Context, tx Tx, id string) (DeliveryTarget, error) {
+	if tx == nil {
+		return DeliveryTarget{}, ErrInvalid
+	}
+	id, err := textID(id, "target id")
+	if err != nil {
+		return DeliveryTarget{}, err
+	}
+	if _, err := depdb.New(tx).LockTargetForUpdate(ctx, id); errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryTarget{}, ErrNotFound
+	} else if err != nil {
+		return DeliveryTarget{}, err
+	}
+	return loadTarget(ctx, tx, id)
+}
+
 func (r *Repository) LoadGeneration(ctx context.Context, id string) (DeliveryGeneration, error) {
 	return r.Generation(ctx, id)
 }

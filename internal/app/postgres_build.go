@@ -686,6 +686,8 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	runtimeVersion := identity.Version + ":" + identity.Revision
 	planCoordinator, err := appdeploymentpostgres.NewNativeCreatePlanCoordinator(appdeploymentpostgres.NativeCreatePlanConfig{
 		Repository:      graph.DeploymentRepository,
+		TargetID:        instanceID,
+		Environment:     string(environment),
 		Sources:         nativeProjectSource.CandidateSourceReader,
 		Artifacts:       release,
 		BindingEvidence: candidateConnections,
@@ -739,6 +741,8 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	})
 	buildCoordinator, err := appdeploymentpostgres.NewNativeBuildCoordinator(appdeploymentpostgres.NativeBuildConfig{
 		Repository:            graph.DeploymentRepository,
+		TargetID:              instanceID,
+		Environment:           string(environment),
 		Sources:               nativeProjectSource.CandidateSourceReader,
 		Artifacts:             release,
 		ArtifactRecovery:      release,
