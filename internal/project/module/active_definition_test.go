@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -54,6 +56,30 @@ func (l *projectDefinitionLeaseStub) Identity() projectgraph.ServingIdentity {
 	return projectgraph.ServingIdentity{}
 }
 func (l *projectDefinitionLeaseStub) Release() { l.released = true }
+
+type boundProjectDefinitionLeaseStub struct {
+	projectDefinitionLeaseStub
+	identity projectgraph.ServingIdentity
+	snapshot accesssnapshot.AuthorizationSnapshot
+}
+
+func (l *boundProjectDefinitionLeaseStub) Identity() projectgraph.ServingIdentity {
+	return l.identity
+}
+
+func (l *boundProjectDefinitionLeaseStub) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
+	return l.snapshot
+}
+
+type boundProjectDefinitionProviderStub struct {
+	lease        *boundProjectDefinitionLeaseStub
+	acquisitions int
+}
+
+func (p *boundProjectDefinitionProviderStub) Acquire(context.Context) (projectruntime.Lease, error) {
+	p.acquisitions++
+	return p.lease, nil
+}
 
 func TestActiveProjectDefinitionReaderPinsAndReleasesRuntime(t *testing.T) {
 	provider := &projectDefinitionProviderStub{}
@@ -155,5 +181,56 @@ func TestActiveProjectDefinitionReaderSnapshotRejectsMismatchedPlanner(t *testin
 	}
 	if provider.acquisitions != 1 || provider.lease == nil || !provider.lease.released {
 		t.Fatalf("lease lifecycle = acquisitions:%d lease:%#v, want one acquire/release", provider.acquisitions, provider.lease)
+	}
+}
+
+func TestActiveProjectDefinitionReaderBoundSnapshotUsesOneLeaseIdentityAndControl(t *testing.T) {
+	model, registry, _ := semanticCatalogFixture(t, "us")
+	compiledModel, err := semanticquery.CompileModelWithSemanticAccess(model, semanticquery.SemanticAccessCompileContext{Registry: registry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity("project:demo", "development", "generation_7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: identity.ProjectID, Kind: projectgraph.KindProject, Name: "demo"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := access.ControlState{InstanceID: "instance_demo", ProjectID: identity.ProjectID.String(), Revision: 9}
+	snapshot, err := accesssnapshot.FromControlState(identity, graph, control, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := &boundProjectDefinitionLeaseStub{
+		projectDefinitionLeaseStub: projectDefinitionLeaseStub{runtime: projectDefinitionRuntimeStub{
+			definition: projectmanifest.Project{ID: identity.ProjectID.String(), Title: "Demo", SemanticModels: map[string]*semanticmodel.Model{"sales": model}},
+			compiled:   map[string]*semanticquery.CompiledModel{"sales": compiledModel},
+		}},
+		identity: identity, snapshot: snapshot,
+	}
+	provider := &boundProjectDefinitionProviderStub{lease: lease}
+	reader := NewActiveProjectDefinitionReader(provider)
+	bound, ok := reader.(BoundProjectDefinitionReader)
+	if !ok {
+		t.Fatal("active reader does not expose bound snapshot port")
+	}
+	definition, compiled, gotIdentity, gotControl, err := bound.ProjectDefinitionSnapshotBound(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if definition.ID != identity.ProjectID.String() || compiled["sales"] != compiledModel || !compiled["sales"].MatchesModel(model) {
+		t.Fatalf("bound definition = %#v, compiled = %#v", definition, compiled)
+	}
+	if gotIdentity != identity {
+		t.Fatalf("bound identity = %#v, want %#v", gotIdentity, identity)
+	}
+	wantControl := access.AuthorizationControlRevision{InstanceID: control.InstanceID, ProjectID: control.ProjectID, Revision: control.Revision}
+	if gotControl != wantControl {
+		t.Fatalf("bound control = %#v, want %#v", gotControl, wantControl)
+	}
+	if provider.acquisitions != 1 || !lease.released {
+		t.Fatalf("lease lifecycle = acquisitions:%d released:%t, want one acquire/release", provider.acquisitions, lease.released)
 	}
 }

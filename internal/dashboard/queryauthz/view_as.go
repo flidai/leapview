@@ -86,7 +86,7 @@ func (m Metrics) authorizeViewAs(ctx context.Context, actor Principal, request d
 	if !allowed {
 		return deny(errors.New("actor lacks PROJECT_ADMIN"))
 	}
-	if err := m.recordViewAsAudit(ctx, request, actor.ID, subjectID, capability.ProjectID, "authorized", nil); err != nil {
+	if err := m.recordViewAsAudit(ctx, request, actor.ID, subjectID, capability.ProjectID, "success", nil); err != nil {
 		return request, err
 	}
 	request.PrincipalID = subjectID

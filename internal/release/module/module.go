@@ -52,7 +52,9 @@ var (
 )
 
 type Config struct {
-	Database *sql.DB
+	InstanceID       string
+	SemanticRegistry access.SemanticRegistryReader
+	Database         *sql.DB
 	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port.
 	// It is required whenever release SQLite persistence is configured.
 	AuditIntentRecorder  access.AuditIntentRecorder
@@ -135,6 +137,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	module := &Module{
 		service: service,
 		candidateArtifacts: &candidateArtifactService{
+			instanceID: config.InstanceID, semanticRegistry: config.SemanticRegistry,
 			states:    config.States,
 			artifacts: store, validator: validator,
 			environment:          environment,

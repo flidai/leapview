@@ -913,7 +913,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
+	analyticsModule.SetCandidateSemanticRegistry(instanceID, accessModule)
+	semanticAuditRecorder, _ := accessRepo.(access.CanonicalAuditRecorder)
+	analyticsModule.SetSemanticAudit(instanceID, semanticAuditRecorder, semanticAuditActorFromContext)
 	releaseModule, err := releasemodule.Build(ctx, releasemodule.Config{
+		InstanceID: instanceID, SemanticRegistry: accessModule,
 		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder,
 		States:          servingStateRepo,
 		ManagedDataPins: managedDataModule.BindingValidation(), ManagedDataHook: managedDataModule.BindingValidation(),
@@ -1199,7 +1203,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	projectCatalog, err := projectcatalog.NewService(
 		projectCatalogLeaseProvider{provider: runtimeHostModule.Provider()},
 		projectCatalogSubjectResolver{resolve: accessModule.AuthorizationSubjects},
-		projectcatalog.WithSemanticModelVisibility(semanticCatalogVisibility(accessModule.ResolveSemanticAttributes)),
+		projectcatalog.WithSemanticModelVisibility(semanticCatalogVisibility(accessModule.ResolveSemanticAttributes, projectmodule.SemanticCatalogAuditConfig{
+			Recorder: semanticAuditRecorder, ActorFromContext: semanticAuditActorFromContext,
+		})),
 	)
 	if err != nil {
 		return fail(fmt.Errorf("build project catalog: %w", err))
@@ -1501,7 +1507,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 					}
 				}
 				factory := analyticsModule.ProjectRuntimeFactoryForEnvironment(environment)
-				runtime, err := factory.OpenProject(matCtx, analyticsruntime.ProjectRequest{Models: models, ServingStateID: artifacts.Generation.Identity.GenerationID, ProjectID: artifacts.Generation.Identity.ProjectID, Environment: artifacts.Generation.Identity.Environment, SemanticDigest: artifacts.Artifact.ProjectDigest, ArtifactDigest: artifacts.Generation.ArtifactDigest, SourceDataDigest: artifacts.Generation.DataRevision, CandidateID: candidateID, AuthorizationFingerprint: artifacts.AuthorizationFingerprint, BindingFingerprint: buildInput.Plan.Execution.BindingDigest, SkipInitialRefresh: baseRetained && !refreshAll})
+				runtime, err := factory.OpenProject(matCtx, analyticsruntime.ProjectRequest{CandidateSemanticRegistry: artifacts.Compiler.SemanticRegistry, Models: models, ServingStateID: artifacts.Generation.Identity.GenerationID, ProjectID: artifacts.Generation.Identity.ProjectID, Environment: artifacts.Generation.Identity.Environment, SemanticDigest: artifacts.Artifact.ProjectDigest, ArtifactDigest: artifacts.Generation.ArtifactDigest, SourceDataDigest: artifacts.Generation.DataRevision, CandidateID: candidateID, AuthorizationFingerprint: artifacts.AuthorizationFingerprint, BindingFingerprint: buildInput.Plan.Execution.BindingDigest, SkipInitialRefresh: baseRetained && !refreshAll})
 				if err != nil {
 					return err
 				}

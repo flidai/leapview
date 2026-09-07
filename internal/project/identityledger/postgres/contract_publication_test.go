@@ -2,17 +2,22 @@ package postgres
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/project/contractprojection"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/project/contractversion"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/identityledger"
+	"github.com/flidai/leapview/internal/semanticvalue"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestContractPublicationIsImmutableAndExactlyReplayable(t *testing.T) {
@@ -237,19 +242,36 @@ func TestContractPublicationPreservesSecurityWideningApproval(t *testing.T) {
 	ctx := t.Context()
 	const instanceID = "instance-policy-publication"
 	const authoredID = "semantic:orders"
+	repo.semanticRegistryReader = func(_ context.Context, _ pgx.Tx, instance string) (access.SemanticRegistryContext, error) {
+		return access.SemanticRegistryContext{
+			Control: access.AuthorizationControlRevision{InstanceID: instance, ProjectID: "project:publication", Revision: 1},
+			Registry: access.SemanticAttributeRegistrySnapshot{
+				State:       access.SemanticAttributeRegistryState{Profile: semanticvalue.Profile, Revision: 1, Digest: "sha256:" + strings.Repeat("1", 64)},
+				Definitions: []access.SemanticAttributeDefinition{{ID: "definition:region", Name: "region", Type: semanticvalue.TypeString, Shape: access.SemanticAttributeScalar, Profile: semanticvalue.Profile, DefinitionVersion: 1, Enabled: true}},
+			},
+		}, nil
+	}
 	if _, err := repo.Activate(ctx, candidate(instanceID, "bundle-policy", "", resource(authoredID, projectgraph.KindSemanticModel))); err != nil {
 		t.Fatal(err)
 	}
 	baselineInput := semanticPublicationInput(instanceID, authoredID, "1.0.0", []string{"emea"})
+	baselineInput.PolicyContext.ExpectedRegistry = publicationRegistryReference(instanceID)
 	baseline, err := repo.PublishContract(ctx, baselineInput)
 	if err != nil {
 		t.Fatal(err)
 	}
 	widened := semanticPublicationInput(instanceID, authoredID, "1.1.0", []string{"emea", "amer"})
 	widened.PolicyContext = existingPolicyContext(baseline)
+	widened.PolicyContext.ExpectedRegistry = publicationRegistryReference(instanceID)
 	publication, err := repo.PublishContract(ctx, widened)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if publication.Validation.PolicyEvidence == nil || publication.Validation.PolicyEvidence.Version != identityledger.RegistryPolicyEvidenceVersion || publication.Validation.PolicyEvidence.RegistryTypes == nil {
+		t.Fatalf("typed registry evidence = %#v", publication.Validation.PolicyEvidence)
+	}
+	if len(publication.Validation.PolicyEvidence.RegistryTypes.Definitions) != 1 || publication.Validation.PolicyEvidence.RegistryTypes.Definitions[0].Name != "region" {
+		t.Fatalf("retained typed definitions = %#v", publication.Validation.PolicyEvidence.RegistryTypes.Definitions)
 	}
 	decision, err := publication.PolicyDecision()
 	if err != nil {
@@ -257,6 +279,61 @@ func TestContractPublicationPreservesSecurityWideningApproval(t *testing.T) {
 	}
 	if !decision.ApprovalRequired || decision.ApprovalState != identityledger.PolicyApprovalRequired || decision.Classification.SecurityImpact != contractversion.SecurityWidening {
 		t.Fatalf("security widening approval evidence = %#v", decision)
+	}
+	// Exact replay is sealed by retained v3 evidence. A changed live reader must
+	// not reclassify or rewrite the first publication.
+	originalDigest := publication.Validation.PolicyEvidence.EvidenceDigest
+	repo.semanticRegistryReader = func(_ context.Context, _ pgx.Tx, instance string) (access.SemanticRegistryContext, error) {
+		return access.SemanticRegistryContext{
+			Control: access.AuthorizationControlRevision{InstanceID: instance, ProjectID: "project:publication", Revision: 2},
+			Registry: access.SemanticAttributeRegistrySnapshot{
+				State:       access.SemanticAttributeRegistryState{Profile: semanticvalue.Profile, Revision: 2, Digest: "sha256:" + strings.Repeat("2", 64)},
+				Definitions: []access.SemanticAttributeDefinition{{ID: "definition:region", Name: "region", Type: semanticvalue.TypeBoolean, Shape: access.SemanticAttributeScalar, Profile: semanticvalue.Profile, DefinitionVersion: 2, Enabled: false}},
+			},
+		}, nil
+	}
+	replayed, err := repo.PublishContract(ctx, widened)
+	if err != nil {
+		t.Fatalf("typed exact replay after registry mutation: %v", err)
+	}
+	if replayed.Validation.PolicyEvidence.EvidenceDigest != originalDigest || !identityledger.EqualContractPublicationContent(publication, replayed) {
+		t.Fatalf("typed exact replay changed retained evidence: first=%#v replay=%#v", publication, replayed)
+	}
+}
+
+func TestProtectedPublicationRequiresTrustedRegistryReference(t *testing.T) {
+	repo, _ := newLedgerDatabase(t)
+	ctx := t.Context()
+	const instanceID = "instance-policy-required"
+	const authoredID = "semantic:orders"
+	if _, err := repo.Activate(ctx, candidate(instanceID, "bundle-policy", "", resource(authoredID, projectgraph.KindSemanticModel))); err != nil {
+		t.Fatal(err)
+	}
+	input := semanticPublicationInput(instanceID, authoredID, "1.0.0", []string{"emea"})
+	if _, err := repo.PublishContract(ctx, input); !errors.Is(err, identityledger.ErrPolicyEvidenceConflict) {
+		t.Fatalf("missing trusted registry reader error = %v", err)
+	}
+
+	repo.semanticRegistryReader = func(_ context.Context, _ pgx.Tx, instance string) (access.SemanticRegistryContext, error) {
+		return access.SemanticRegistryContext{
+			Control: access.AuthorizationControlRevision{InstanceID: instance, ProjectID: "project:publication", Revision: 1},
+			Registry: access.SemanticAttributeRegistrySnapshot{
+				State:       access.SemanticAttributeRegistryState{Profile: semanticvalue.Profile, Revision: 1, Digest: "sha256:" + strings.Repeat("1", 64)},
+				Definitions: []access.SemanticAttributeDefinition{{ID: "definition:region", Name: "region", Type: semanticvalue.TypeString, Shape: access.SemanticAttributeScalar, Profile: semanticvalue.Profile, DefinitionVersion: 1, Enabled: true}},
+			},
+		}, nil
+	}
+	input.PolicyContext.ExpectedRegistry = publicationRegistryReference(instanceID)
+	input.PolicyContext.ExpectedRegistry.ProjectID = "project:other"
+	if _, err := repo.PublishContract(ctx, input); !errors.Is(err, identityledger.ErrPolicyEvidenceConflict) {
+		t.Fatalf("cross-project registry reference error = %v", err)
+	}
+}
+
+func publicationRegistryReference(instanceID string) *identityledger.PolicyRegistryReference {
+	return &identityledger.PolicyRegistryReference{
+		InstanceID: instanceID, ProjectID: "project:publication", ControlRevision: 1,
+		Profile: semanticvalue.Profile, Revision: 1, Digest: "sha256:" + strings.Repeat("1", 64),
 	}
 }
 

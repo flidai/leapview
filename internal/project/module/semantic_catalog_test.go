@@ -2,10 +2,13 @@ package module
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -16,13 +19,14 @@ import (
 
 type semanticCatalogLeaseStub struct {
 	identity projectgraph.ServingIdentity
+	snapshot accesssnapshot.AuthorizationSnapshot
 	runtime  projectruntime.Runtime
 }
 
 func (l semanticCatalogLeaseStub) Release()                               {}
 func (l semanticCatalogLeaseStub) Identity() projectgraph.ServingIdentity { return l.identity }
 func (l semanticCatalogLeaseStub) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
-	return accesssnapshot.AuthorizationSnapshot{}
+	return l.snapshot
 }
 func (l semanticCatalogLeaseStub) Runtime() projectruntime.Runtime { return l.runtime }
 
@@ -38,6 +42,16 @@ func (r semanticCatalogRuntimeStub) CompiledSemanticModel(modelID string) (*sema
 	return compiled, ok && compiled != nil
 }
 
+type semanticCatalogAuditRecorder struct {
+	events []access.CanonicalAuditEvent
+	err    error
+}
+
+func (r *semanticCatalogAuditRecorder) RecordCanonicalAuditEvent(_ context.Context, event access.CanonicalAuditEvent) error {
+	r.events = append(r.events, event)
+	return r.err
+}
+
 func TestSemanticCatalogVisibilityAllowsMatchingProtectedPrincipal(t *testing.T) {
 	model, registry, attribute := semanticCatalogFixture(t, "us")
 	compiled, err := semanticquery.CompileModelWithSemanticAccess(model, semanticquery.SemanticAccessCompileContext{Registry: registry})
@@ -45,18 +59,86 @@ func TestSemanticCatalogVisibilityAllowsMatchingProtectedPrincipal(t *testing.T)
 		t.Fatal(err)
 	}
 	identity := semanticCatalogIdentity(t)
+	projectGraph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: identity.ProjectID, Kind: projectgraph.KindProject, Name: "demo"},
+		{ID: "sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.FromControlState(identity, projectGraph, access.ControlState{InstanceID: "instance_demo", ProjectID: identity.ProjectID.String(), Revision: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	lease := semanticCatalogLeaseStub{identity: identity, runtime: semanticCatalogRuntimeStub{
 		definition: projectmanifest.Project{ID: identity.ProjectID.String(), SemanticModels: map[string]*semanticmodel.Model{"sales": model}},
 		compiled:   map[string]*semanticquery.CompiledModel{"sales": compiled},
-	}}
+	}, snapshot: snapshot}
 	resolution := access.SemanticAttributeResolution{
 		Subject:  access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal-1"},
-		Registry: registry, ControlState: access.SemanticAttributeControlState{Profile: semanticvalue.Profile, Revision: 1, Digest: "sha256:control"},
+		Registry: registry, ControlState: access.SemanticAttributeControlState{Profile: semanticvalue.Profile, Revision: 1, Digest: "sha256:" + strings.Repeat("b", 64)},
 		Attributes: []access.EffectiveSemanticAttribute{attribute},
 	}
-	visible, err := SemanticCatalogVisibility(func(context.Context) (access.SemanticAttributeResolution, error) { return resolution, nil })(context.Background(), lease, "sales")
+	recorder := &semanticCatalogAuditRecorder{}
+	ctx := dataquery.WithMetadata(context.Background(), dataquery.Metadata{RequestID: "catalog-request-1", CorrelationID: "catalog-correlation-1"})
+	visible, err := SemanticCatalogVisibility(func(context.Context) (access.SemanticAttributeResolution, error) { return resolution, nil }, SemanticCatalogAuditConfig{
+		Recorder: recorder, ActorFromContext: func(context.Context) (string, error) { return "principal-1", nil },
+	})(ctx, lease, "sales")
 	if err != nil || !visible {
 		t.Fatalf("protected catalog visibility = %v, %v; want true", visible, err)
+	}
+	if len(recorder.events) == 0 {
+		t.Fatal("protected catalog decision was not audited")
+	}
+	if recorder.events[0].RequestID != "catalog-request-1" || recorder.events[0].CorrelationID != "catalog-correlation-1" {
+		t.Fatalf("catalog audit metadata = %#v", recorder.events[0])
+	}
+}
+
+func TestSemanticCatalogVisibilityRequiresAuditForProtectedModel(t *testing.T) {
+	model, registry, attribute := semanticCatalogFixture(t, "us")
+	compiled, err := semanticquery.CompileModelWithSemanticAccess(model, semanticquery.SemanticAccessCompileContext{Registry: registry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := semanticCatalogIdentity(t)
+	projectGraph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: identity.ProjectID, Kind: projectgraph.KindProject, Name: "demo"}, {ID: "sales", Kind: projectgraph.KindSemanticModel, Name: "sales"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.FromControlState(identity, projectGraph, access.ControlState{InstanceID: "instance_demo", ProjectID: identity.ProjectID.String(), Revision: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := semanticCatalogLeaseStub{identity: identity, snapshot: snapshot, runtime: semanticCatalogRuntimeStub{definition: projectmanifest.Project{ID: identity.ProjectID.String(), SemanticModels: map[string]*semanticmodel.Model{"sales": model}}, compiled: map[string]*semanticquery.CompiledModel{"sales": compiled}}}
+	resolution := access.SemanticAttributeResolution{Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal-1"}, Registry: registry, ControlState: access.SemanticAttributeControlState{Profile: semanticvalue.Profile, Revision: 1, Digest: "sha256:" + strings.Repeat("b", 64)}, Attributes: []access.EffectiveSemanticAttribute{attribute}}
+	visible, err := SemanticCatalogVisibility(func(context.Context) (access.SemanticAttributeResolution, error) { return resolution, nil })(context.Background(), lease, "sales")
+	if err != nil || visible {
+		t.Fatalf("protected discovery without audit = %v, %v; want false without error", visible, err)
+	}
+}
+
+func TestSemanticCatalogVisibilityFailsClosedOnAuditWriteFailure(t *testing.T) {
+	model, registry, attribute := semanticCatalogFixture(t, "us")
+	compiled, err := semanticquery.CompileModelWithSemanticAccess(model, semanticquery.SemanticAccessCompileContext{Registry: registry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := semanticCatalogIdentity(t)
+	projectGraph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: identity.ProjectID, Kind: projectgraph.KindProject, Name: "demo"}, {ID: "sales", Kind: projectgraph.KindSemanticModel, Name: "sales"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.FromControlState(identity, projectGraph, access.ControlState{InstanceID: "instance_demo", ProjectID: identity.ProjectID.String(), Revision: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := semanticCatalogLeaseStub{identity: identity, snapshot: snapshot, runtime: semanticCatalogRuntimeStub{definition: projectmanifest.Project{ID: identity.ProjectID.String(), SemanticModels: map[string]*semanticmodel.Model{"sales": model}}, compiled: map[string]*semanticquery.CompiledModel{"sales": compiled}}}
+	resolution := access.SemanticAttributeResolution{Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal-1"}, Registry: registry, ControlState: access.SemanticAttributeControlState{Profile: semanticvalue.Profile, Revision: 1, Digest: "sha256:" + strings.Repeat("b", 64)}, Attributes: []access.EffectiveSemanticAttribute{attribute}}
+	recorder := &semanticCatalogAuditRecorder{err: errors.New("audit store unavailable")}
+	visible, err := SemanticCatalogVisibility(func(context.Context) (access.SemanticAttributeResolution, error) { return resolution, nil }, SemanticCatalogAuditConfig{Recorder: recorder, ActorFromContext: func(context.Context) (string, error) { return "principal-1", nil }})(context.Background(), lease, "sales")
+	if err == nil || visible {
+		t.Fatalf("audit write failure visibility = %v, %v; want false and error", visible, err)
 	}
 }
 
@@ -73,7 +155,7 @@ func TestSemanticCatalogVisibilityDeniesNonMatchingOrMissingResolution(t *testin
 	}}
 	base := access.SemanticAttributeResolution{
 		Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal-1"}, Registry: registry,
-		ControlState: access.SemanticAttributeControlState{Profile: semanticvalue.Profile, Revision: 1, Digest: "sha256:control"}, Attributes: []access.EffectiveSemanticAttribute{attribute},
+		ControlState: access.SemanticAttributeControlState{Profile: semanticvalue.Profile, Revision: 1, Digest: "sha256:" + strings.Repeat("b", 64)}, Attributes: []access.EffectiveSemanticAttribute{attribute},
 	}
 	values, digest, err := access.CanonicalSemanticAttributeValues(registry.Definitions[0], "eu")
 	if err != nil {
@@ -148,7 +230,7 @@ func semanticCatalogIdentity(t testing.TB) projectgraph.ServingIdentity {
 func semanticCatalogFixture(t testing.TB, value string) (*semanticmodel.Model, access.SemanticAttributeRegistrySnapshot, access.EffectiveSemanticAttribute) {
 	t.Helper()
 	definition := access.SemanticAttributeDefinition{ID: "def-region", Name: "region", Type: semanticvalue.TypeString, Shape: access.SemanticAttributeScalar, Profile: semanticvalue.Profile, DefinitionVersion: 1, LifecycleState: access.SemanticAttributeActive, Enabled: true}
-	registry := access.SemanticAttributeRegistrySnapshot{State: access.SemanticAttributeRegistryState{Profile: semanticvalue.Profile, Revision: 7, Digest: "sha256:registry"}, Definitions: []access.SemanticAttributeDefinition{definition}}
+	registry := access.SemanticAttributeRegistrySnapshot{State: access.SemanticAttributeRegistryState{Profile: semanticvalue.Profile, Revision: 7, Digest: "sha256:" + strings.Repeat("a", 64)}, Definitions: []access.SemanticAttributeDefinition{definition}}
 	canonical, digest, err := access.CanonicalSemanticAttributeValues(definition, value)
 	if err != nil {
 		t.Fatalf("canonical semantic attribute value: %v", err)

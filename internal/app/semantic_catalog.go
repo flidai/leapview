@@ -8,6 +8,6 @@ import (
 	projectmodule "github.com/flidai/leapview/internal/project/module"
 )
 
-func semanticCatalogVisibility(resolve func(context.Context) (access.SemanticAttributeResolution, error)) projectcatalog.SemanticModelVisibility {
-	return projectmodule.SemanticCatalogVisibility(resolve)
+func semanticCatalogVisibility(resolve func(context.Context) (access.SemanticAttributeResolution, error), audit ...projectmodule.SemanticCatalogAuditConfig) projectcatalog.SemanticModelVisibility {
+	return projectmodule.SemanticCatalogVisibility(resolve, audit...)
 }

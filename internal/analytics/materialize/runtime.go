@@ -19,12 +19,25 @@ import (
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
 )
+
+// SemanticAuditConfig binds protected semantic reads to the exact serving
+// generation and authenticated actor that owns the request. It is optional
+// while compiling ordinary or candidate runtimes, but mandatory before a
+// protected runtime can execute a read.
+type SemanticAuditConfig struct {
+	InstanceID       string
+	Identity         projectgraph.ServingIdentity
+	Recorder         access.CanonicalAuditRecorder
+	ActorFromContext func(context.Context) (string, error)
+}
 
 type RuntimeConfig struct {
 	SemanticAccessAuthority      SemanticAccessAuthority
 	SemanticAccessCompileContext *semanticquery.SemanticAccessCompileContext
+	SemanticAudit                *SemanticAuditConfig
 	SemanticCache                *SemanticCacheConfig
 	ServingStateID               string
 	ModelID                      string
@@ -64,6 +77,14 @@ type RuntimeConfig struct {
 	OwnQueryCache bool
 }
 
+func cloneSemanticAuditConfig(config *SemanticAuditConfig) *SemanticAuditConfig {
+	if config == nil {
+		return nil
+	}
+	clone := *config
+	return &clone
+}
+
 type ModelTableQuery struct {
 	Table       string
 	Columns     []string
@@ -75,6 +96,7 @@ type ModelTableQuery struct {
 
 type Runtime struct {
 	semanticAccessAuthority SemanticAccessAuthority
+	semanticAudit           *SemanticAuditConfig
 	semanticCache           *SemanticCacheConfig
 	servingStateID          string
 	semanticConsumer        *semanticquery.SemanticAccessConsumer
@@ -245,7 +267,8 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	}
 	runtime = &Runtime{
 		semanticAccessAuthority: config.SemanticAccessAuthority, semanticCache: cloneSemanticCacheConfig(config.SemanticCache), servingStateID: config.ServingStateID,
-		modelID: config.ModelID, model: config.Model, planner: planner, db: config.Database,
+		semanticAudit: cloneSemanticAuditConfig(config.SemanticAudit),
+		modelID:       config.ModelID, model: config.Model, planner: planner, db: config.Database,
 		sources: config.Sources, requiredExtensions: normalizedExtensions(config.RequiredExtensions),
 		queryCache: cache, resultPartition: config.ResultPartition,
 		resultLimits: limits, dependencyEvidence: config.DependencyEvidence,

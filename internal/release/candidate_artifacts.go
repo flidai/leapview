@@ -102,9 +102,12 @@ type CandidateArtifactSet struct {
 }
 
 type CandidateCompilerEvidence struct {
-	Graph    projectgraph.ProjectGraph
-	Manifest projectmanifest.Project
-	Plan     projectcompiler.ProjectPlan
+	// SemanticRegistry is target-side compile evidence, not portable artifact
+	// content. It does not change artifact or release digest authority.
+	SemanticRegistry *access.SemanticRegistryContext `json:"-"`
+	Graph            projectgraph.ProjectGraph
+	Manifest         projectmanifest.Project
+	Plan             projectcompiler.ProjectPlan
 	// RelationExecution and BaseRelationExecution are per-materialization
 	// identities. They let delivery retain unchanged sealed relation refs while
 	// rebuilding only changed/removed relations from the same base catalog.

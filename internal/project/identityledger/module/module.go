@@ -6,7 +6,9 @@ package module
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/flidai/leapview/internal/access"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	ledger "github.com/flidai/leapview/internal/project/identityledger"
@@ -30,6 +32,7 @@ type PolicyContext = ledger.PolicyContext
 type PolicyDecision = ledger.PolicyDecision
 type PolicyEvidence = ledger.PolicyEvidence
 type PolicyPublicationIdentity = ledger.PolicyPublicationIdentity
+type PolicyRegistryReference = ledger.PolicyRegistryReference
 type Outcome = ledger.Outcome
 type OutcomeKind = ledger.OutcomeKind
 type Plan = ledger.Plan
@@ -44,12 +47,13 @@ const (
 	LifecycleActive     = ledger.LifecycleActive
 	LifecycleTombstoned = ledger.LifecycleTombstoned
 
-	PolicyApprovalRequired      = ledger.PolicyApprovalRequired
-	PolicyApprovalNotRequired   = ledger.PolicyApprovalNotRequired
-	PolicyBaselineGenesis       = ledger.PolicyBaselineGenesis
-	PolicyBaselineExisting      = ledger.PolicyBaselineExisting
-	PolicyEvidenceVersion       = ledger.PolicyEvidenceVersion
-	PolicyAffectedResourceScope = ledger.PolicyAffectedResourceScope
+	PolicyApprovalRequired        = ledger.PolicyApprovalRequired
+	PolicyApprovalNotRequired     = ledger.PolicyApprovalNotRequired
+	PolicyBaselineGenesis         = ledger.PolicyBaselineGenesis
+	PolicyBaselineExisting        = ledger.PolicyBaselineExisting
+	PolicyEvidenceVersion         = ledger.PolicyEvidenceVersion
+	RegistryPolicyEvidenceVersion = ledger.RegistryPolicyEvidenceVersion
+	PolicyAffectedResourceScope   = ledger.PolicyAffectedResourceScope
 
 	OperationPublish  = ledger.OperationPublish
 	OperationRollback = ledger.OperationRollback
@@ -146,6 +150,13 @@ type ControlPool interface {
 // and cleanup without opening a network connection.
 type ControlOpener func(context.Context, platformpostgres.Config) (ControlPool, error)
 
+// PostgresRepositoryConfig carries optional Access authority used by protected
+// semantic-model publication. The reader receives the identity ledger's
+// caller-owned transaction and never owns its completion.
+type PostgresRepositoryConfig struct {
+	SemanticRegistryReader func(context.Context, pgx.Tx, string) (access.SemanticRegistryContext, error)
+}
+
 // OpenControl opens the identity ledger's PostgreSQL control authority. Pool
 // setup remains owned by the capability-neutral platform PostgreSQL boundary.
 func OpenControl(ctx context.Context, config platformpostgres.Config) (ControlPool, error) {
@@ -154,8 +165,15 @@ func OpenControl(ctx context.Context, config platformpostgres.Config) (ControlPo
 
 // NewPostgresRepository constructs the durable identity authority adapter.
 // PostgreSQL schema and transaction behavior remain private to the adapter.
-func NewPostgresRepository(pool ControlPool) (Repository, error) {
-	return ledgerpostgres.New(pool)
+func NewPostgresRepository(pool ControlPool, configs ...PostgresRepositoryConfig) (Repository, error) {
+	if len(configs) > 1 {
+		return nil, fmt.Errorf("identity ledger PostgreSQL accepts at most one configuration")
+	}
+	var postgresConfig ledgerpostgres.Config
+	if len(configs) == 1 {
+		postgresConfig.SemanticRegistryReader = configs[0].SemanticRegistryReader
+	}
+	return ledgerpostgres.New(pool, postgresConfig)
 }
 
 // CandidateFromGraph maps exact compiled graph evidence into a ledger

@@ -107,6 +107,19 @@ type ProjectDefinitionReader interface {
 	ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error)
 }
 
+type boundProjectDefinitionReader interface {
+	ProjectDefinitionSnapshotBound(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, projectgraph.ServingIdentity, access.AuthorizationControlRevision, error)
+}
+
+type dataExplorerAuditState struct {
+	identity      projectgraph.ServingIdentity
+	control       access.AuthorizationControlRevision
+	bound         bool
+	requestID     string
+	correlationID string
+	err           error
+}
+
 type DashboardAppearanceStore interface {
 	ListProject(context.Context, projectgraph.ResourceID) (map[projectgraph.ResourceID]dashboardappearance.Record, error)
 	ApplyPatch(context.Context, dashboardappearance.Key, string, dashboardappearance.Patch) (dashboardappearance.Record, error)
@@ -153,19 +166,21 @@ type BrowserHandler struct {
 	// ResolveSemanticAttributes resolves one request-bound access context. The
 	// Explore projection evaluates all protected members against that context
 	// and the compiled policies from its already lease-pinned definition.
-	ResolveSemanticAttributes func(context.Context) (access.SemanticAttributeResolution, error)
-	DashboardAppearances      DashboardAppearanceStore
-	QueryExecutor             DataQueryExecutor
-	Catalog                   CatalogAuthorizer
-	SearchCatalog             ProductSearchCatalog
-	ResolveProjectID          func(context.Context) (projectgraph.ResourceID, error)
-	Environment               string
-	TargetID                  string
-	ConnectionAdministration  connectionadmin.Administration
-	ConnectionCommands        projectui.ConnectionCommandBindings
-	PipelineRunCommand        uicommand.Binding
-	PipelineCancelCommand     uicommand.Binding
-	RunPipeline               func(context.Context, string, string, string) error
+	ResolveSemanticAttributes     func(context.Context) (access.SemanticAttributeResolution, error)
+	SemanticAuditRecorder         access.CanonicalAuditRecorder
+	SemanticAuditActorFromContext func(context.Context) (string, error)
+	DashboardAppearances          DashboardAppearanceStore
+	QueryExecutor                 DataQueryExecutor
+	Catalog                       CatalogAuthorizer
+	SearchCatalog                 ProductSearchCatalog
+	ResolveProjectID              func(context.Context) (projectgraph.ResourceID, error)
+	Environment                   string
+	TargetID                      string
+	ConnectionAdministration      connectionadmin.Administration
+	ConnectionCommands            projectui.ConnectionCommandBindings
+	PipelineRunCommand            uicommand.Binding
+	PipelineCancelCommand         uicommand.Binding
+	RunPipeline                   func(context.Context, string, string, string) error
 	// CancelPipeline receives both the pipeline and run identifiers from the
 	// command. Implementations must verify that the run belongs to that
 	// pipeline before mutating it; keeping the pipeline ID in this callback
@@ -1506,6 +1521,37 @@ func (h *BrowserHandler) dataExplorerSignals(w stdhttp.ResponseWriter, r *stdhtt
 	return h.dataExplorerSignalsForCommand(w, r, command)
 }
 
+func (h *BrowserHandler) dataExplorerDefinitionSnapshot(ctx context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, projectgraph.ServingIdentity, access.AuthorizationControlRevision, bool, error) {
+	if h == nil || h.ProjectDefinitionReader == nil {
+		return projectmanifest.Project{}, nil, projectgraph.ServingIdentity{}, access.AuthorizationControlRevision{}, false, ErrProjectDefinitionUnavailable
+	}
+	if bound, ok := h.ProjectDefinitionReader.(boundProjectDefinitionReader); ok {
+		definition, compiled, identity, control, err := bound.ProjectDefinitionSnapshotBound(ctx)
+		if err == nil {
+			return definition, compiled, identity, control, true, nil
+		}
+		// Older runtime leases may not expose an authorization snapshot. Keep
+		// ordinary, unprotected browser surfaces compatible with that port; the
+		// caller still rejects a protected definition because bound remains false.
+		fallbackDefinition, fallbackCompiled, fallbackErr := h.ProjectDefinitionReader.ProjectDefinitionSnapshot(ctx)
+		if fallbackErr == nil {
+			return fallbackDefinition, fallbackCompiled, projectgraph.ServingIdentity{}, access.AuthorizationControlRevision{}, false, nil
+		}
+		return definition, compiled, identity, control, true, err
+	}
+	definition, compiled, err := h.ProjectDefinitionReader.ProjectDefinitionSnapshot(ctx)
+	return definition, compiled, projectgraph.ServingIdentity{}, access.AuthorizationControlRevision{}, false, err
+}
+
+func projectDefinitionHasProtectedSemanticModel(project projectmanifest.Project) bool {
+	for _, model := range project.SemanticModels {
+		if semanticquery.ModelRequiresSemanticAccess(model) {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
 	command = normalizeDataExplorerCommand(command)
 	project := h.navigationCatalog(r).Project
@@ -1530,17 +1576,27 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
-	definition, compiledModels, err := h.ProjectDefinitionReader.ProjectDefinitionSnapshot(r.Context())
+	definition, compiledModels, identity, control, bound, err := h.dataExplorerDefinitionSnapshot(r.Context())
 	if err != nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
-	accessPredicate, accessErr := h.dataExplorerAccessPredicate(r.Context(), definition, compiledModels)
+	protected := projectDefinitionHasProtectedSemanticModel(definition)
+	if protected && !bound {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+	}
+	auditState := &dataExplorerAuditState{identity: identity, control: control, bound: bound, requestID: strings.TrimSpace(r.Header.Get("X-Request-ID")), correlationID: strings.TrimSpace(r.Header.Get("X-Correlation-ID"))}
+	accessPredicate, accessErr := h.dataExplorerAccessPredicateWithAudit(r.Context(), definition, compiledModels, auditState)
 	if accessErr != nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
 	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels, accessPredicate)
+	if auditState.err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+	}
 	if projection.SemanticAccessDenied {
 		// Keep denied model/member requests indistinguishable from unknown Explore
 		// targets and, importantly, do not execute a widened sanitized query.

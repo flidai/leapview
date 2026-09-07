@@ -763,8 +763,10 @@ func buildApplicationSurfaces(
 		projectAssetVersions = reader
 	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		ResolveSemanticAttributes: routes.accessModule.ResolveSemanticAttributes,
-		Graph:                     capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
+		ResolveSemanticAttributes:     routes.accessModule.ResolveSemanticAttributes,
+		SemanticAuditRecorder:         canonicalAuditRecorder,
+		SemanticAuditActorFromContext: semanticAuditActorFromContext,
+		Graph:                         capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardmodule.NewAppearanceStore(data.Database),

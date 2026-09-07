@@ -435,6 +435,21 @@ func (r *Repository) RecordCanonicalAuditEvent(ctx context.Context, event access
 	if err != nil {
 		return err
 	}
+	if event.Action == access.SemanticDecisionAuditAction {
+		// The existing digest hashes the caller's canonical event strings while
+		// PostgreSQL stores UUID values in normalized form. Reject noncanonical
+		// UUID spellings for this new action so retained reconstruction is exact;
+		// historical actions keep their existing write and digest behavior.
+		if principalID != event.PrincipalID {
+			return errors.New("semantic decision audit principal id must be canonical")
+		}
+		if requestID != event.RequestID {
+			return errors.New("semantic decision audit request id must be canonical")
+		}
+		if correlationID != event.CorrelationID {
+			return errors.New("semantic decision audit correlation id must be canonical")
+		}
+	}
 	outcome := strings.TrimSpace(event.Status)
 	if outcome == "" {
 		outcome = "success"

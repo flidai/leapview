@@ -1039,9 +1039,13 @@ tasks:
       - go test ./internal/platform/postgres/migrations -run '^TestContractPublicationCorrectionPostgreSQL18$' -count=1 -v
       - go test ./internal/project/identityledger/postgres -run '^Test(IdentityHistoryPostgreSQL18ParameterTypes|IdentityLedgerPostgreSQL18Lifecycle|PrepareTransitionIDIsScopedToInstance)$' -count=1 -v
       - go test ./internal/project/identityledger/postgres -run '^TestContractPublication(IsImmutableAndExactlyReplayable|Concurrency|PreservesSecurityWideningApproval)$' -count=1 -v
+      - go test ./internal/project/identityledger/postgres -run '^TestProtectedPublicationRequiresTrustedRegistryReference$' -count=1 -v
       - go test ./internal/project/identityledger/postgres -run '^TestReadLifecycleEvidence' -count=1 -v
       - go test ./internal/access/postgres -run '^TestControlAuthorityPostgreSQL18$' -count=1 -v
       - go test ./internal/access/postgres -run '^TestSemanticAttributeRegistryPostgreSQL18' -count=1 -v
+      - go test ./internal/access/postgres -run '^TestSemanticRegistryContextPostgreSQL18$' -count=1 -v
+      - go test ./internal/access/postgres -run '^TestReadSemanticRegistryTxHoldsRegistryMutationLock$' -count=1 -v
+      - go test ./internal/access/postgres -run '^Test(Read|Record)SemanticDecisionAuditEvent' -count=1 -v
       - go test -tags=duckdb_arrow ./internal/project/module -run '^TestSemanticQualificationPostgreSQL18LifecycleAndAuthority$' -count=1 -v
 
   test:workload:qualify:

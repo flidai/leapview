@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/semanticvalue"
 )
@@ -25,6 +26,45 @@ type semanticConsumerAuthority struct {
 	resolutions []access.SemanticAttributeResolution
 	resolveErr  error
 	calls       int
+}
+
+type semanticAuditTestRecorder struct {
+	mu     sync.Mutex
+	events []access.CanonicalAuditEvent
+	err    error
+}
+
+func (r *semanticAuditTestRecorder) RecordCanonicalAuditEvent(_ context.Context, event access.CanonicalAuditEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	r.events = append(r.events, event)
+	return nil
+}
+
+func (r *semanticAuditTestRecorder) Events() []access.CanonicalAuditEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]access.CanonicalAuditEvent(nil), r.events...)
+}
+
+func semanticAuditTestConfig(t testing.TB, model *semanticmodel.Model) *SemanticAuditConfig {
+	return semanticAuditTestConfigFor(t, model, "serving-test")
+}
+
+func semanticAuditTestConfigFor(t testing.TB, model *semanticmodel.Model, generationID string) *SemanticAuditConfig {
+	t.Helper()
+	if model == nil {
+		t.Fatal("semantic audit test model is required")
+	}
+	return &SemanticAuditConfig{
+		InstanceID:       "instance:test",
+		Identity:         projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "test", GenerationID: generationID},
+		Recorder:         &semanticAuditTestRecorder{},
+		ActorFromContext: func(context.Context) (string, error) { return "principal-1", nil },
+	}
 }
 
 func (a *semanticConsumerAuthority) SemanticAttributeRegistry(context.Context) (access.SemanticAttributeRegistrySnapshot, error) {
@@ -75,10 +115,10 @@ func semanticConsumerResolution(t testing.TB, subjectID string) access.SemanticA
 	return access.SemanticAttributeResolution{
 		Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: subjectID},
 		Registry: access.SemanticAttributeRegistrySnapshot{
-			State:       access.SemanticAttributeRegistryState{Profile: semanticvalue.Profile, Revision: 7, Digest: "sha256:registry"},
+			State:       access.SemanticAttributeRegistryState{Profile: semanticvalue.Profile, Revision: 7, Digest: materializeTestDigest('a')},
 			Definitions: []access.SemanticAttributeDefinition{definition},
 		},
-		ControlState: access.SemanticAttributeControlState{Profile: semanticvalue.Profile, Revision: 11, Digest: "sha256:control"},
+		ControlState: access.SemanticAttributeControlState{Profile: semanticvalue.Profile, Revision: 11, Digest: materializeTestDigest('c')},
 		Attributes: []access.EffectiveSemanticAttribute{{
 			DefinitionID: definition.ID, DefinitionName: definition.Name, DefinitionVersion: definition.DefinitionVersion,
 			Type: definition.Type, Shape: definition.Shape, CanonicalValues: values, ValueDigest: digest, Source: "direct",
@@ -136,13 +176,16 @@ func TestProtectedSemanticActivationVerificationNeedsSeparateCompilerDesign(t *t
 func newSemanticConsumerRuntime(t testing.TB, database Database, authority SemanticAccessAuthority) *Runtime {
 	t.Helper()
 	resolution := semanticConsumerResolution(t, "principal-1")
+	model := semanticConsumerProtectedModel()
 	runtime, err := NewRuntimeView(context.Background(), RuntimeConfig{
 		ModelID:                      "sales",
-		Model:                        semanticConsumerProtectedModel(),
+		Model:                        model,
 		Database:                     database,
 		Sources:                      ownershipSources{},
+		ResultPartition:              materializeTestPartition(t, resultidentity.PartitionProduction, ""),
 		SemanticAccessAuthority:      authority,
 		SemanticAccessCompileContext: &semanticquery.SemanticAccessCompileContext{Registry: resolution.Registry},
+		SemanticAudit:                semanticAuditTestConfig(t, model),
 		ServingStateID:               "serving-test",
 	})
 	if err != nil {
@@ -455,5 +498,186 @@ func TestProtectedSemanticConsumerDeniesImmutableByteCacheOperations(t *testing.
 		return nil
 	}); err == nil || called {
 		t.Fatalf("CoalesceImmutableBytes = called=%v err=%v, want denial before callback", called, err)
+	}
+}
+
+func TestProtectedSemanticAuditRecordsAllowedAndDeniedDecisions(t *testing.T) {
+	t.Run("allowed", func(t *testing.T) {
+		database := &countingCacheRuntimeDatabase{}
+		authority := &semanticConsumerAuthority{resolutions: []access.SemanticAttributeResolution{semanticConsumerResolution(t, "principal-1")}}
+		runtime := newSemanticConsumerRuntime(t, database, authority)
+		if _, err := runtime.ExecuteDataQuery(t.Context(), semanticConsumerRequest()); err != nil {
+			t.Fatalf("allowed protected query: %v", err)
+		}
+		recorder := runtime.semanticAudit.Recorder.(*semanticAuditTestRecorder)
+		events := recorder.Events()
+		if len(events) == 0 {
+			t.Fatal("allowed protected query wrote no audit event")
+		}
+		var found bool
+		for _, event := range events {
+			if event.Status != "success" {
+				continue
+			}
+			found = true
+			if event.Capability != access.CapabilityResourceUse || event.RequestID != "request-1" || event.PrincipalID != "principal-1" {
+				t.Fatalf("allowed audit identity = %#v", event)
+			}
+			evidence, err := access.DecodeSemanticDecisionEvidence(event.MetadataJSON)
+			if err != nil || !evidence.Allowed {
+				t.Fatalf("allowed audit evidence = %#v, err=%v", evidence, err)
+			}
+			if strings.Contains(event.MetadataJSON, "canonicalValues") || strings.Contains(event.MetadataJSON, `"us"`) {
+				t.Fatalf("allowed audit retained raw semantic values: %s", event.MetadataJSON)
+			}
+		}
+		if !found {
+			t.Fatalf("audit events contained no allowed decision: %#v", events)
+		}
+	})
+
+	t.Run("denied", func(t *testing.T) {
+		resolution := semanticConsumerResolution(t, "principal-1")
+		resolution.Attributes = nil
+		database := &countingCacheRuntimeDatabase{}
+		authority := &semanticConsumerAuthority{resolutions: []access.SemanticAttributeResolution{resolution}}
+		runtime := newSemanticConsumerRuntime(t, database, authority)
+		if _, err := runtime.ExecuteDataQuery(t.Context(), semanticConsumerRequest()); err == nil {
+			t.Fatal("denied protected query unexpectedly succeeded")
+		}
+		recorder := runtime.semanticAudit.Recorder.(*semanticAuditTestRecorder)
+		for _, event := range recorder.Events() {
+			if event.Status != "denied" {
+				continue
+			}
+			evidence, err := access.DecodeSemanticDecisionEvidence(event.MetadataJSON)
+			if err != nil || evidence.Allowed {
+				t.Fatalf("denied audit evidence = %#v, err=%v", evidence, err)
+			}
+			return
+		}
+		t.Fatal("denied protected query wrote no denied audit event")
+	})
+}
+
+func TestProtectedSemanticAuditFailureAndMissingConfigRejectBeforeExecution(t *testing.T) {
+	t.Run("recorder failure", func(t *testing.T) {
+		database := &countingCacheRuntimeDatabase{}
+		authority := &semanticConsumerAuthority{resolutions: []access.SemanticAttributeResolution{semanticConsumerResolution(t, "principal-1")}}
+		runtime := newSemanticConsumerRuntime(t, database, authority)
+		runtime.semanticAudit.Recorder.(*semanticAuditTestRecorder).err = errors.New("audit unavailable")
+		if _, err := runtime.ExecuteDataQuery(t.Context(), semanticConsumerRequest()); err == nil {
+			t.Fatal("query with failed audit recorder unexpectedly succeeded")
+		}
+		if got := database.queries.Load(); got != 0 {
+			t.Fatalf("recorder failure database executions = %d, want 0", got)
+		}
+		if got := runtime.queryCache.scope.Stats().Entries; got != 0 {
+			t.Fatalf("recorder failure cache entries = %d, want 0", got)
+		}
+	})
+
+	t.Run("missing config and Arrow sink", func(t *testing.T) {
+		database := &countingCacheRuntimeDatabase{}
+		authority := &semanticConsumerAuthority{resolutions: []access.SemanticAttributeResolution{semanticConsumerResolution(t, "principal-1")}}
+		runtime := newSemanticConsumerRuntime(t, database, authority)
+		runtime.semanticAudit = nil
+		sink := &semanticConsumerTestSink{}
+		if _, err := runtime.ExecuteDataQueryArrow(t.Context(), semanticConsumerRequest(), sink); err == nil {
+			t.Fatal("query without audit config unexpectedly succeeded")
+		}
+		if got := database.queries.Load(); got != 0 {
+			t.Fatalf("missing config database executions = %d, want 0", got)
+		}
+		if got := runtime.queryCache.scope.Stats().Entries; got != 0 {
+			t.Fatalf("missing config cache entries = %d, want 0", got)
+		}
+		if got := sink.schemas.Load() + sink.records.Load(); got != 0 {
+			t.Fatalf("missing config sink callbacks = %d, want 0", got)
+		}
+	})
+}
+
+func TestProtectedSemanticAuditDetachesRuntimeConfig(t *testing.T) {
+	model := semanticConsumerProtectedModel()
+	resolution := semanticConsumerResolution(t, "principal-1")
+	authority := &semanticConsumerAuthority{resolutions: []access.SemanticAttributeResolution{resolution}}
+	config := semanticAuditTestConfig(t, model)
+	runtime, err := NewRuntimeView(t.Context(), RuntimeConfig{
+		ModelID: "sales", Model: model, Database: &countingCacheRuntimeDatabase{}, Sources: ownershipSources{},
+		ResultPartition:         materializeTestPartition(t, resultidentity.PartitionProduction, ""),
+		SemanticAccessAuthority: authority, SemanticAccessCompileContext: &semanticquery.SemanticAccessCompileContext{Registry: resolution.Registry},
+		SemanticAudit: config, ServingStateID: "serving-test",
+	})
+	if err != nil {
+		t.Fatalf("NewRuntimeView: %v", err)
+	}
+	t.Cleanup(func() { _ = runtime.CloseView() })
+	config.InstanceID = "instance:mutated"
+	config.Identity.GenerationID = "serving-mutated"
+	if runtime.semanticAudit.InstanceID != "instance:test" || runtime.semanticAudit.Identity.GenerationID != "serving-test" {
+		t.Fatalf("runtime retained mutable audit config: %#v", runtime.semanticAudit)
+	}
+}
+
+func TestProtectedSemanticAuditRejectsMismatchedServingBindingsBeforeExecution(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*SemanticAuditConfig)
+	}{
+		{name: "generation", mutate: func(config *SemanticAuditConfig) { config.Identity.GenerationID = "serving-other" }},
+		{name: "environment", mutate: func(config *SemanticAuditConfig) { config.Identity.Environment = "other" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			database := &countingCacheRuntimeDatabase{}
+			authority := &semanticConsumerAuthority{resolutions: []access.SemanticAttributeResolution{semanticConsumerResolution(t, "principal-1")}}
+			runtime := newSemanticConsumerRuntime(t, database, authority)
+			test.mutate(runtime.semanticAudit)
+			if _, err := runtime.ExecuteDataQuery(t.Context(), semanticConsumerRequest()); err == nil {
+				t.Fatal("query with mismatched serving identity unexpectedly succeeded")
+			}
+			if got := database.queries.Load(); got != 0 {
+				t.Fatalf("mismatched serving identity database executions = %d, want 0", got)
+			}
+			if got := runtime.queryCache.scope.Stats().Entries; got != 0 {
+				t.Fatalf("mismatched serving identity cache entries = %d, want 0", got)
+			}
+		})
+	}
+}
+
+func TestProtectedSemanticAuditRejectsMismatchedCacheInstanceBeforeExecution(t *testing.T) {
+	runtime, _, database := newSemanticCacheTestRuntime(t, "")
+	runtime.semanticAudit.InstanceID = "instance:other"
+	if _, err := runtime.ExecuteDataQuery(t.Context(), semanticCacheTestRequest()); err == nil {
+		t.Fatal("query with mismatched cache instance unexpectedly succeeded")
+	}
+	if got := database.queries.Load(); got != 0 {
+		t.Fatalf("mismatched cache instance database executions = %d, want 0", got)
+	}
+	if got := runtime.queryCache.scope.Stats().Entries; got != 0 {
+		t.Fatalf("mismatched cache instance entries = %d, want 0", got)
+	}
+}
+
+func TestProtectedSemanticAuditRunsOnResultCacheHit(t *testing.T) {
+	runtime, _, database := newSemanticCacheTestRuntime(t, "")
+	recorder := runtime.semanticAudit.Recorder.(*semanticAuditTestRecorder)
+	request := semanticCacheTestRequest()
+	if _, err := runtime.ExecuteDataQuery(t.Context(), request); err != nil {
+		t.Fatalf("first protected query: %v", err)
+	}
+	first := len(recorder.Events())
+	if first == 0 {
+		t.Fatal("first protected query wrote no audit event")
+	}
+	if _, err := runtime.ExecuteDataQuery(t.Context(), request); err != nil {
+		t.Fatalf("cached protected query: %v", err)
+	}
+	if got := len(recorder.Events()); got <= first {
+		t.Fatalf("cached protected query audit events = %d, first = %d", got, first)
+	}
+	if got := database.queries.Load(); got != 1 {
+		t.Fatalf("cached protected query database executions = %d, want 1", got)
 	}
 }

@@ -109,11 +109,11 @@ func newQualificationDatabase(t *testing.T) qualificationDatabase {
 		t.Fatal(err)
 	}
 	t.Cleanup(runtime.Close)
-	ledger, err := identitypostgres.New(runtime)
+	accessRepo, err := accesspostgres.NewAccess(runtime, accesspostgres.FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	accessRepo, err := accesspostgres.NewAccess(runtime, accesspostgres.FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	ledger, err := identitypostgres.New(runtime, identitypostgres.Config{SemanticRegistryReader: accesspostgres.ReadSemanticRegistryTx})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +181,19 @@ func qualificationAuthorization(t *testing.T, db qualificationDatabase, instance
 		t.Fatal(err)
 	}
 	return revision
+}
+
+func qualificationRegistryReference(t *testing.T, db qualificationDatabase, instance string) *identityledger.PolicyRegistryReference {
+	t.Helper()
+	context, err := db.access.ReadSemanticRegistry(t.Context(), instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &identityledger.PolicyRegistryReference{
+		InstanceID: context.Control.InstanceID, ProjectID: projectgraph.ResourceID(context.Control.ProjectID),
+		ControlRevision: context.Control.Revision, Profile: context.Registry.State.Profile,
+		Revision: context.Registry.State.Revision, Digest: context.Registry.State.Digest,
+	}
 }
 
 func qualificationSeedSemanticAuthority(t *testing.T, db qualificationDatabase) access.SemanticAttributeDefinition {
@@ -317,6 +330,11 @@ func qualificationRuntime(t *testing.T, db qualificationDatabase, cacheScope *re
 		ModelID: qualificationModel.String(), Model: model, Database: executorRef, Sources: qualificationSources{}, SnapshotOnly: true,
 		SemanticAccessAuthority:      qualificationSemanticAuthority{repo: db.access, subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: qualificationSubject}},
 		SemanticAccessCompileContext: &semanticquery.SemanticAccessCompileContext{Registry: registry}, ServingStateID: "serving:qualification",
+		SemanticAudit: &materialize.SemanticAuditConfig{
+			InstanceID: binding.InstanceID,
+			Identity:   projectgraph.ServingIdentity{ProjectID: qualificationProjectID, Environment: "production", GenerationID: "serving:qualification"},
+			Recorder:   db.access, ActorFromContext: func(context.Context) (string, error) { return qualificationSubject, nil },
+		},
 		ResultPartition: partition, DependencyEvidence: evidence, QueryResultCache: cacheScope, ImmutableByteCache: cacheScope,
 		SemanticCache: &materialize.SemanticCacheConfig{Binding: binding, ReadCurrent: reader},
 	})
@@ -330,7 +348,7 @@ func qualificationRuntime(t *testing.T, db qualificationDatabase, cacheScope *re
 func qualificationRequest() dataquery.Query {
 	return dataquery.Query{
 		ProjectID: qualificationProjectID, Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
-		PrincipalID: qualificationSubject, RequestID: "qualification-request", ModelID: qualificationModel.String(), Kind: dataquery.KindSemanticRows,
+		PrincipalID: qualificationSubject, RequestID: "00000000-0000-7000-8000-000000000003", ModelID: qualificationModel.String(), Kind: dataquery.KindSemanticRows,
 		Target: "orders", Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
 		EffectivePolicyFingerprint: "sha256:5555555555555555555555555555555555555555555555555555555555555555",
 	}
@@ -348,17 +366,58 @@ func qualificationQuery(t *testing.T, runtime *materialize.Runtime, want string)
 	return result
 }
 
+// Read through the existing Access repository and verify every retained digest,
+// not just row existence. Repeated requests append fresh events; this is not
+// an idempotent request-retry assertion.
+func qualificationAuditCount(t *testing.T, db qualificationDatabase, instanceID string) int {
+	t.Helper()
+	rows, err := db.runtime.Query(t.Context(), `SELECT audit_id::text FROM audit.audit_event WHERE action=$1 AND metadata->>'instanceId'=$2`, access.SemanticDecisionAuditAction, instanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		event, err := db.access.ReadSemanticDecisionAuditEvent(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		evidence, err := access.DecodeSemanticDecisionEvidence(event.MetadataJSON)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if evidence.InstanceID != instanceID || event.Identity.ProjectID != qualificationProjectID || event.Identity.GenerationID != "serving:qualification" || event.PrincipalID != qualificationSubject || event.Resource.ID() != qualificationModel || event.RequestID != qualificationRequest().RequestID {
+			t.Fatalf("retained semantic decision identity differs: %#v / %#v", event, evidence)
+		}
+	}
+	return len(ids)
+}
+
 func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 	db := newQualificationDatabase(t)
 	project := qualificationProject(t)
 	if _, err := db.ledger.Activate(t.Context(), qualificationCandidate(qualificationInstance, "bundle-1", "", true)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ledger.PublishContract(t.Context(), qualificationSemanticPublication(qualificationInstance, "1.0.0")); err != nil {
-		t.Fatalf("publish semantic contract: %v", err)
-	}
 	qualificationSeedSemanticAuthority(t, db)
 	auth := qualificationAuthorization(t, db, qualificationInstance, project)
+	publication := qualificationSemanticPublication(qualificationInstance, "1.0.0")
+	publication.PolicyContext.ExpectedRegistry = qualificationRegistryReference(t, db, qualificationInstance)
+	if _, err := db.ledger.PublishContract(t.Context(), publication); err != nil {
+		t.Fatalf("publish semantic contract: %v", err)
+	}
 	binding, reader := qualificationBinding(t, db, qualificationInstance, auth)
 	registry, err := db.access.SemanticAttributeRegistry(t.Context())
 	if err != nil {
@@ -377,7 +436,14 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 	firstDB := &qualificationDatabaseExecutor{}
 	firstRuntime := qualificationRuntime(t, db, cacheScope, binding, reader, registry, firstDB, auth.Revision)
 	qualificationQuery(t, firstRuntime, dataquery.CacheMiss)
+	missAuditCount := qualificationAuditCount(t, db, qualificationInstance)
+	if missAuditCount == 0 {
+		t.Fatal("protected execution did not retain semantic decision audit")
+	}
 	qualificationQuery(t, firstRuntime, dataquery.CacheHit)
+	if qualificationAuditCount(t, db, qualificationInstance) <= missAuditCount {
+		t.Fatal("cache hit bypassed fresh durable semantic decision evidence")
+	}
 	if got := firstDB.queries.Load(); got != 1 {
 		t.Fatalf("active miss/hit physical executions = %d, want 1", got)
 	}
@@ -388,10 +454,12 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 	if _, err := db.ledger.Activate(t.Context(), qualificationCandidate(qualificationOther, "bundle-1", "", true)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ledger.PublishContract(t.Context(), qualificationSemanticPublication(qualificationOther, "1.0.0")); err != nil {
+	otherAuth := qualificationAuthorization(t, db, qualificationOther, project)
+	otherPublication := qualificationSemanticPublication(qualificationOther, "1.0.0")
+	otherPublication.PolicyContext.ExpectedRegistry = qualificationRegistryReference(t, db, qualificationOther)
+	if _, err := db.ledger.PublishContract(t.Context(), otherPublication); err != nil {
 		t.Fatal(err)
 	}
-	otherAuth := qualificationAuthorization(t, db, qualificationOther, project)
 	otherEvidence, err := db.ledger.ReadLifecycleEvidence(t.Context(), qualificationOther, qualificationModel, projectgraph.KindSemanticModel, "1.0.0")
 	if err != nil {
 		t.Fatal(err)

@@ -22,6 +22,9 @@ const (
 	// outer ValidationEvidence envelope remains version one because the
 	// existing immutable PostgreSQL check constrains that field to "1".
 	PolicyEvidenceVersion = 2
+	// RegistryPolicyEvidenceVersion adds retained Access-owned type evidence.
+	// Version two remains readable with its original digest preimage.
+	RegistryPolicyEvidenceVersion = 3
 
 	PolicyBaselineGenesis  PolicyBaselineKind = "genesis"
 	PolicyBaselineExisting PolicyBaselineKind = "existing"
@@ -66,6 +69,31 @@ type PolicyContext struct {
 	BaselineKind              PolicyBaselineKind
 	Baseline                  *PolicyPublicationIdentity
 	ExpectedLifecycleSequence int64
+	ExpectedRegistry          *PolicyRegistryReference
+}
+
+// PolicyRegistryReference is an expected revision reference, not registry
+// authority. The publication adapter resolves definitions under its transaction.
+type PolicyRegistryReference struct {
+	InstanceID      string                  `json:"instanceId"`
+	ProjectID       projectgraph.ResourceID `json:"projectId"`
+	ControlRevision int64                   `json:"controlRevision"`
+	Profile         string                  `json:"profile"`
+	Revision        int64                   `json:"revision"`
+	Digest          string                  `json:"digest"`
+}
+
+func (r PolicyRegistryReference) Validate() error {
+	return (contractversion.SemanticRegistryTypes{
+		InstanceID: r.InstanceID, ProjectID: r.ProjectID.String(), ControlRevision: r.ControlRevision,
+		Profile: r.Profile, Revision: r.Revision, Digest: r.Digest,
+	}).Validate()
+}
+
+func (r PolicyRegistryReference) Matches(types contractversion.SemanticRegistryTypes) bool {
+	return r.InstanceID == types.InstanceID && r.ProjectID.String() == types.ProjectID &&
+		r.ControlRevision == types.ControlRevision && r.Profile == types.Profile &&
+		r.Revision == types.Revision && r.Digest == types.Digest
 }
 
 // PolicyAffectedResource is deliberately scoped to the directly published
@@ -83,35 +111,37 @@ type PolicyAffectedResource struct {
 // consumer can distinguish caller intent from the identity actually written,
 // even though they must be equal for a valid record.
 type PolicyEvidence struct {
-	Version           int                       `json:"version"`
-	BaselineKind      PolicyBaselineKind        `json:"baselineKind"`
-	Baseline          PolicyPublicationIdentity `json:"baseline"`
-	Candidate         PolicyPublicationIdentity `json:"candidate"`
-	Publication       PolicyPublicationIdentity `json:"publication"`
-	LifecycleSequence int64                     `json:"lifecycleSequence"`
-	ActiveBundleID    string                    `json:"activeBundleId"`
-	Classification    contractversion.Result    `json:"classification"`
-	ApprovalState     PolicyApprovalState       `json:"approvalState"`
-	AffectedResources []PolicyAffectedResource  `json:"affectedResources"`
-	ChangedDimensions []contractversion.Domain  `json:"changedDimensions"`
-	EvidenceDigest    string                    `json:"evidenceDigest"`
+	Version           int                                    `json:"version"`
+	BaselineKind      PolicyBaselineKind                     `json:"baselineKind"`
+	Baseline          PolicyPublicationIdentity              `json:"baseline"`
+	Candidate         PolicyPublicationIdentity              `json:"candidate"`
+	Publication       PolicyPublicationIdentity              `json:"publication"`
+	LifecycleSequence int64                                  `json:"lifecycleSequence"`
+	ActiveBundleID    string                                 `json:"activeBundleId"`
+	Classification    contractversion.Result                 `json:"classification"`
+	ApprovalState     PolicyApprovalState                    `json:"approvalState"`
+	AffectedResources []PolicyAffectedResource               `json:"affectedResources"`
+	ChangedDimensions []contractversion.Domain               `json:"changedDimensions"`
+	EvidenceDigest    string                                 `json:"evidenceDigest"`
+	RegistryTypes     *contractversion.SemanticRegistryTypes `json:"registryTypes,omitempty"`
 }
 
 // PolicyDecision is the safe read view used by planning. It contains no
 // evaluator and cannot turn missing historical evidence into approval.
 type PolicyDecision struct {
-	BaselineKind      PolicyBaselineKind        `json:"baselineKind"`
-	Baseline          PolicyPublicationIdentity `json:"baseline"`
-	Candidate         PolicyPublicationIdentity `json:"candidate"`
-	Publication       PolicyPublicationIdentity `json:"publication"`
-	LifecycleSequence int64                     `json:"lifecycleSequence"`
-	ActiveBundleID    string                    `json:"activeBundleId"`
-	EvidenceDigest    string                    `json:"evidenceDigest"`
-	ApprovalRequired  bool                      `json:"approvalRequired"`
-	ApprovalState     PolicyApprovalState       `json:"approvalState"`
-	Classification    contractversion.Result    `json:"classification"`
-	ChangedDimensions []contractversion.Domain  `json:"changedDimensions"`
-	AffectedResources []PolicyAffectedResource  `json:"affectedResources"`
+	BaselineKind      PolicyBaselineKind                     `json:"baselineKind"`
+	Baseline          PolicyPublicationIdentity              `json:"baseline"`
+	Candidate         PolicyPublicationIdentity              `json:"candidate"`
+	Publication       PolicyPublicationIdentity              `json:"publication"`
+	LifecycleSequence int64                                  `json:"lifecycleSequence"`
+	ActiveBundleID    string                                 `json:"activeBundleId"`
+	EvidenceDigest    string                                 `json:"evidenceDigest"`
+	ApprovalRequired  bool                                   `json:"approvalRequired"`
+	ApprovalState     PolicyApprovalState                    `json:"approvalState"`
+	Classification    contractversion.Result                 `json:"classification"`
+	ChangedDimensions []contractversion.Domain               `json:"changedDimensions"`
+	AffectedResources []PolicyAffectedResource               `json:"affectedResources"`
+	RegistryTypes     *contractversion.SemanticRegistryTypes `json:"registryTypes,omitempty"`
 }
 
 func (i PolicyPublicationIdentity) Validate() error {
@@ -154,6 +184,14 @@ func EqualPolicyPublicationIdentity(left, right PolicyPublicationIdentity) bool 
 }
 
 func (c PolicyContext) validate(instanceID string, authoredID projectgraph.ResourceID, kind projectgraph.Kind) error {
+	if c.ExpectedRegistry != nil {
+		if err := c.ExpectedRegistry.Validate(); err != nil {
+			return fmt.Errorf("%w: expected registry: %v", ErrPolicyEvidenceInvalid, err)
+		}
+		if kind != projectgraph.KindSemanticModel || c.ExpectedRegistry.InstanceID != instanceID {
+			return fmt.Errorf("%w: expected registry resource scope", ErrPolicyEvidenceInvalid)
+		}
+	}
 	if c.ExpectedLifecycleSequence <= 0 {
 		return fmt.Errorf("%w: expected lifecycle sequence is required", ErrPolicyEvidenceInvalid)
 	}
@@ -189,8 +227,19 @@ func (c PolicyContext) ValidateForPublication(instanceID string, authoredID proj
 // the typed standard-JSON preimage. It intentionally does not mutate or infer
 // omitted values.
 func (e PolicyEvidence) Validate() error {
-	if e.Version != PolicyEvidenceVersion {
+	if e.Version != PolicyEvidenceVersion && e.Version != RegistryPolicyEvidenceVersion {
 		return fmt.Errorf("%w: unsupported policy evidence version", ErrPolicyEvidenceInvalid)
+	}
+	if (e.Version == RegistryPolicyEvidenceVersion) != (e.RegistryTypes != nil) {
+		return fmt.Errorf("%w: registry evidence/version mismatch", ErrPolicyEvidenceInvalid)
+	}
+	if e.RegistryTypes != nil {
+		if err := e.RegistryTypes.Validate(); err != nil {
+			return fmt.Errorf("%w: registry types: %v", ErrPolicyEvidenceInvalid, err)
+		}
+		if e.RegistryTypes.InstanceID != e.Candidate.InstanceID || e.Candidate.ResourceKind != projectgraph.KindSemanticModel {
+			return fmt.Errorf("%w: registry evidence scope mismatch", ErrPolicyEvidenceInvalid)
+		}
 	}
 	if e.BaselineKind != PolicyBaselineGenesis && e.BaselineKind != PolicyBaselineExisting {
 		return fmt.Errorf("%w: baseline kind", ErrPolicyEvidenceInvalid)
@@ -259,6 +308,7 @@ func (e PolicyEvidence) Decision() (PolicyDecision, error) {
 		ApprovalState: e.ApprovalState, Classification: clonePolicyResult(e.Classification),
 		ChangedDimensions: slices.Clone(e.ChangedDimensions),
 		AffectedResources: slices.Clone(e.AffectedResources),
+		RegistryTypes:     cloneRegistryTypes(e.RegistryTypes),
 	}, nil
 }
 
@@ -274,6 +324,7 @@ func (e PolicyEvidence) computeDigest() (string, error) {
 		ActiveBundleID: e.ActiveBundleID, Classification: e.Classification,
 		ApprovalState: e.ApprovalState, AffectedResources: e.AffectedResources,
 		ChangedDimensions: e.ChangedDimensions,
+		RegistryTypes:     e.RegistryTypes,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -283,17 +334,42 @@ func (e PolicyEvidence) computeDigest() (string, error) {
 }
 
 type policyEvidenceDigestPayload struct {
-	Version           int                       `json:"version"`
-	BaselineKind      PolicyBaselineKind        `json:"baselineKind"`
-	Baseline          PolicyPublicationIdentity `json:"baseline"`
-	Candidate         PolicyPublicationIdentity `json:"candidate"`
-	Publication       PolicyPublicationIdentity `json:"publication"`
-	LifecycleSequence int64                     `json:"lifecycleSequence"`
-	ActiveBundleID    string                    `json:"activeBundleId"`
-	Classification    contractversion.Result    `json:"classification"`
-	ApprovalState     PolicyApprovalState       `json:"approvalState"`
-	AffectedResources []PolicyAffectedResource  `json:"affectedResources"`
-	ChangedDimensions []contractversion.Domain  `json:"changedDimensions"`
+	Version           int                                    `json:"version"`
+	BaselineKind      PolicyBaselineKind                     `json:"baselineKind"`
+	Baseline          PolicyPublicationIdentity              `json:"baseline"`
+	Candidate         PolicyPublicationIdentity              `json:"candidate"`
+	Publication       PolicyPublicationIdentity              `json:"publication"`
+	LifecycleSequence int64                                  `json:"lifecycleSequence"`
+	ActiveBundleID    string                                 `json:"activeBundleId"`
+	Classification    contractversion.Result                 `json:"classification"`
+	ApprovalState     PolicyApprovalState                    `json:"approvalState"`
+	AffectedResources []PolicyAffectedResource               `json:"affectedResources"`
+	ChangedDimensions []contractversion.Domain               `json:"changedDimensions"`
+	RegistryTypes     *contractversion.SemanticRegistryTypes `json:"registryTypes,omitempty"`
+}
+
+func cloneRegistryTypes(value *contractversion.SemanticRegistryTypes) *contractversion.SemanticRegistryTypes {
+	if value == nil {
+		return nil
+	}
+	clone := value.Clone()
+	return &clone
+}
+
+// EqualPolicyContextEvidence compares retry intent with retained evidence. It
+// does not consult current registry state or reclassify immutable publications.
+func EqualPolicyContextEvidence(context PolicyContext, evidence *PolicyEvidence) bool {
+	if evidence == nil || evidence.Validate() != nil || context.validate(evidence.Candidate.InstanceID, evidence.Candidate.AuthoredID, evidence.Candidate.ResourceKind) != nil ||
+		context.ExpectedLifecycleSequence != evidence.LifecycleSequence || context.BaselineKind != evidence.BaselineKind {
+		return false
+	}
+	if context.BaselineKind == PolicyBaselineExisting && (context.Baseline == nil || !context.Baseline.equal(evidence.Baseline)) {
+		return false
+	}
+	if context.ExpectedRegistry == nil || evidence.RegistryTypes == nil {
+		return context.ExpectedRegistry == nil && evidence.RegistryTypes == nil
+	}
+	return context.ExpectedRegistry.Matches(*evidence.RegistryTypes)
 }
 
 func validateAffectedResources(resources []PolicyAffectedResource, candidate PolicyPublicationIdentity) error {
@@ -360,17 +436,22 @@ func normalizePolicyEvidence(value PolicyEvidence) (PolicyEvidence, error) {
 	result.AffectedResources = slices.Clone(value.AffectedResources)
 	result.ChangedDimensions = slices.Clone(value.ChangedDimensions)
 	result.Classification.Changes = slices.Clone(value.Classification.Changes)
+	result.RegistryTypes = cloneRegistryTypes(value.RegistryTypes)
 	return result, nil
 }
 
-// NewPolicyEvidence builds server-owned evidence from the classifier result
+// NewPolicyEvidence is a pure evidence derivation helper, not publication
+// admission. Its legacy mode exists to reproduce historical v2 evidence.
+// The PostgreSQL publication adapter alone admits new publications and requires
+// trusted registered types for protected contracts before calling this helper.
+// It builds server-owned evidence from the classifier result
 // and exact publication/lifecycle observations. Callers cannot supply the
 // approval state, affected-resource scope, changed dimensions, or digest.
-func NewPolicyEvidence(context PolicyContext, baseline *ContractPublication, candidate ContractPublication, sequence int64, activeBundleID string, result contractversion.Result) (PolicyEvidence, error) {
+func NewPolicyEvidence(context PolicyContext, baseline *ContractPublication, candidate ContractPublication, sequence int64, activeBundleID string, result contractversion.Result, registry ...contractversion.SemanticRegistryTypes) (PolicyEvidence, error) {
 	if err := result.ValidatePublication(); err != nil {
 		return PolicyEvidence{}, fmt.Errorf("%w: classifier result: %w", ErrPolicyEvidenceInvalid, err)
 	}
-	derived, err := DerivePolicyEvidence(context, baseline, candidate, sequence, activeBundleID)
+	derived, err := DerivePolicyEvidence(context, baseline, candidate, sequence, activeBundleID, registry...)
 	if err != nil {
 		return PolicyEvidence{}, err
 	}
@@ -381,11 +462,25 @@ func NewPolicyEvidence(context PolicyContext, baseline *ContractPublication, can
 }
 
 // DerivePolicyEvidence classifies the exact baseline/candidate pair and seals
-// the result into policy evidence. It is the publication path's single
-// classifier entry point; callers cannot provide summary flags or a digest.
-func DerivePolicyEvidence(context PolicyContext, baseline *ContractPublication, candidate ContractPublication, sequence int64, activeBundleID string) (PolicyEvidence, error) {
+// the result into policy evidence. It is a pure helper, not a registry or
+// publication trust boundary: only the PostgreSQL adapter may use it to publish.
+// Omitted types reproduce historical v2 evidence; new protected publication is
+// admitted only after the adapter resolves trusted types transactionally.
+// Callers cannot provide summary flags or an evidence digest.
+func DerivePolicyEvidence(context PolicyContext, baseline *ContractPublication, candidate ContractPublication, sequence int64, activeBundleID string, registry ...contractversion.SemanticRegistryTypes) (PolicyEvidence, error) {
 	if err := context.validate(candidate.InstanceID, candidate.AuthoredID, candidate.ResourceKind); err != nil {
 		return PolicyEvidence{}, err
+	}
+	if len(registry) > 1 || (context.ExpectedRegistry != nil) != (len(registry) == 1) {
+		return PolicyEvidence{}, fmt.Errorf("%w: expected and resolved registry evidence are required together", ErrPolicyEvidenceInvalid)
+	}
+	if len(registry) == 1 {
+		if err := registry[0].Validate(); err != nil {
+			return PolicyEvidence{}, fmt.Errorf("%w: registry types: %v", ErrPolicyEvidenceInvalid, err)
+		}
+		if !context.ExpectedRegistry.Matches(registry[0]) {
+			return PolicyEvidence{}, fmt.Errorf("%w: resolved registry differs from expected revision", ErrPolicyEvidenceConflict)
+		}
 	}
 	if baseline != nil {
 		identity := policyIdentityFromPublication(*baseline)
@@ -406,20 +501,93 @@ func DerivePolicyEvidence(context PolicyContext, baseline *ContractPublication, 
 			return PolicyEvidence{}, err
 		}
 	}
-	result, err := policyClassification(baseline, candidate)
+	if baseline != nil && len(registry) == 1 {
+		if err := validateRetainedRegistryTypes(*baseline, registry[0]); err != nil {
+			return PolicyEvidence{}, err
+		}
+	}
+	if len(registry) == 1 {
+		if err := validateRegistryTypeSelection(baseline, candidate, registry[0]); err != nil {
+			return PolicyEvidence{}, err
+		}
+	}
+	result, err := policyClassification(baseline, candidate, registry...)
 	if err != nil {
 		return PolicyEvidence{}, err
 	}
-	return newPolicyEvidence(context, baseline, candidate, sequence, activeBundleID, result)
+	return newPolicyEvidence(context, baseline, candidate, sequence, activeBundleID, result, registry...)
 }
 
-func policyClassification(baseline *ContractPublication, candidate ContractPublication) (contractversion.Result, error) {
+func validateRegistryTypeSelection(baseline *ContractPublication, candidate ContractPublication, types contractversion.SemanticRegistryTypes) error {
+	names := map[string]bool{}
+	publications := []ContractPublication{candidate}
+	if baseline != nil {
+		publications = append(publications, *baseline)
+	}
+	for _, publication := range publications {
+		referenced, err := contractversion.ReferencedSemanticAttributes(publication.CanonicalBytes)
+		if err != nil {
+			return err
+		}
+		for _, name := range referenced {
+			names[name] = true
+		}
+	}
+	if len(names) != len(types.Definitions) {
+		return fmt.Errorf("%w: retained type evidence must match referenced attribute union", ErrPolicyEvidenceInvalid)
+	}
+	for _, definition := range types.Definitions {
+		if !names[definition.Name] {
+			return fmt.Errorf("%w: unreferenced registered type evidence", ErrPolicyEvidenceInvalid)
+		}
+	}
+	return nil
+}
+
+// The registry owns immutable type identity. A retained typed baseline must
+// not be silently reinterpreted if a supplied authority violates that identity.
+// Metadata revisions may advance; referenced types may not be reassigned.
+func validateRetainedRegistryTypes(baseline ContractPublication, current contractversion.SemanticRegistryTypes) error {
+	if baseline.Validation.PolicyEvidence == nil || baseline.Validation.PolicyEvidence.RegistryTypes == nil {
+		return nil // Historical evidence did not retain registered types.
+	}
+	decision, err := baseline.PolicyDecision()
+	if err != nil {
+		return err
+	}
+	previous := decision.RegistryTypes
+	if previous.InstanceID != current.InstanceID || previous.ProjectID != current.ProjectID || previous.Profile != current.Profile || previous.Revision > current.Revision || previous.ControlRevision > current.ControlRevision || (previous.Revision == current.Revision && previous.Digest != current.Digest) {
+		return fmt.Errorf("%w: retained registry authority scope/revision differs", ErrPolicyEvidenceConflict)
+	}
+	names, err := contractversion.ReferencedSemanticAttributes(baseline.CanonicalBytes)
+	if err != nil {
+		return err
+	}
+	oldDefinitions := make(map[string]contractversion.RegisteredSemanticType, len(previous.Definitions))
+	for _, definition := range previous.Definitions {
+		oldDefinitions[definition.Name] = definition
+	}
+	newDefinitions := make(map[string]contractversion.RegisteredSemanticType, len(current.Definitions))
+	for _, definition := range current.Definitions {
+		newDefinitions[definition.Name] = definition
+	}
+	for _, name := range names {
+		old, existed := oldDefinitions[name]
+		next, exists := newDefinitions[name]
+		if !existed || !exists || old.ID != next.ID || old.Type != next.Type || old.Shape != next.Shape || next.Version < old.Version {
+			return fmt.Errorf("%w: retained registered type identity changed for %q", ErrPolicyEvidenceConflict, name)
+		}
+	}
+	return nil
+}
+
+func policyClassification(baseline *ContractPublication, candidate ContractPublication, registry ...contractversion.SemanticRegistryTypes) (contractversion.Result, error) {
 	var result contractversion.Result
 	var err error
 	if baseline == nil {
-		result, err = contractversion.ClassifyInitial(candidate.CanonicalBytes)
+		result, err = contractversion.ClassifyInitial(candidate.CanonicalBytes, registry...)
 	} else {
-		result, err = contractversion.ValidateVersionTransition(baseline.CanonicalBytes, candidate.CanonicalBytes)
+		result, err = contractversion.ValidateVersionTransition(baseline.CanonicalBytes, candidate.CanonicalBytes, registry...)
 	}
 	if err != nil {
 		return contractversion.Result{}, fmt.Errorf("%w: classify publication policy: %w", ErrPolicyEvidenceConflict, err)
@@ -427,7 +595,7 @@ func policyClassification(baseline *ContractPublication, candidate ContractPubli
 	return result, nil
 }
 
-func newPolicyEvidence(context PolicyContext, baseline *ContractPublication, candidate ContractPublication, sequence int64, activeBundleID string, result contractversion.Result) (PolicyEvidence, error) {
+func newPolicyEvidence(context PolicyContext, baseline *ContractPublication, candidate ContractPublication, sequence int64, activeBundleID string, result contractversion.Result, registry ...contractversion.SemanticRegistryTypes) (PolicyEvidence, error) {
 	if err := result.ValidatePublication(); err != nil {
 		return PolicyEvidence{}, fmt.Errorf("%w: classifier result: %w", ErrPolicyEvidenceInvalid, err)
 	}
@@ -460,6 +628,10 @@ func newPolicyEvidence(context PolicyContext, baseline *ContractPublication, can
 	if baseline != nil {
 		evidence.Baseline = policyIdentityFromPublication(*baseline)
 	}
+	if len(registry) == 1 {
+		evidence.Version = RegistryPolicyEvidenceVersion
+		evidence.RegistryTypes = cloneRegistryTypes(&registry[0])
+	}
 	if result.RequiresSecurityApproval {
 		evidence.ApprovalState = PolicyApprovalRequired
 	}
@@ -491,7 +663,7 @@ func (p ContractPublication) PolicyDecision() (PolicyDecision, error) {
 		return PolicyDecision{}, err
 	}
 	if p.Validation.Version != 1 || p.Validation.PolicyEvidence == nil {
-		return PolicyDecision{}, fmt.Errorf("%w: publication has no v2 policy evidence", ErrPolicyEvidenceInvalid)
+		return PolicyDecision{}, fmt.Errorf("%w: publication has no policy evidence", ErrPolicyEvidenceInvalid)
 	}
 	if err := validatePublicationContent(p); err != nil {
 		return PolicyDecision{}, err

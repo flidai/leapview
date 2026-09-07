@@ -36,12 +36,12 @@ func (m Metrics) SemanticPlanner(ctx context.Context, modelID string) (*semantic
 	if !ok {
 		return nil, errSemanticPlannerSnapshotStale
 	}
-	return m.bindSemanticPlanner(ctx, planner, model)
+	return m.bindSemanticPlanner(ctx, planner, modelID, model)
 }
 
 // bindSemanticPlanner retains the already selected activation planner. Whole
 // projections must not resolve a second generation while inspecting members.
-func (m Metrics) bindSemanticPlanner(ctx context.Context, planner *semanticquery.Planner, model *semanticmodel.Model) (*semanticquery.Planner, error) {
+func (m Metrics) bindSemanticPlanner(ctx context.Context, planner *semanticquery.Planner, modelID string, model *semanticmodel.Model) (*semanticquery.Planner, error) {
 	if planner == nil || planner.CompiledModel() == nil || !planner.CompiledModel().MatchesModel(model) {
 		return nil, errSemanticPlannerSnapshotStale
 	}
@@ -66,9 +66,13 @@ func (m Metrics) bindSemanticPlanner(ctx context.Context, planner *semanticquery
 	if err := snapshot.ValidateBound(); err != nil {
 		return nil, err
 	}
+	observer, err := m.semanticDecisionObserver(ctx, snapshot, modelID, model, resolved)
+	if err != nil {
+		return nil, err
+	}
 	consumer, err := semanticquery.NewSemanticAccessConsumer(planner, semanticquery.SemanticAccessEvaluationContext{
 		RegistryState: resolved.Registry.State, ControlState: resolved.ControlState, Attributes: resolved.Attributes,
-	}, resolved.Subject.ID, snapshot.Identity().GenerationID)
+	}, resolved.Subject.ID, snapshot.Identity().GenerationID, observer)
 	if err != nil {
 		return nil, DeniedError{Capability: access.CapabilityResourceUse}
 	}
@@ -110,7 +114,7 @@ func (m Metrics) AuthorizeSemanticModelProjection(ctx context.Context, modelID s
 	if !compiledProtected {
 		return nil
 	}
-	planner, err := m.bindSemanticPlanner(ctx, activation, model)
+	planner, err := m.bindSemanticPlanner(ctx, activation, modelID, model)
 	if err != nil {
 		return err
 	}
@@ -248,7 +252,7 @@ func (m Metrics) AuthorizeSemanticTarget(ctx context.Context, modelID string, ta
 		}
 		return denied
 	}
-	if m.resolveSemanticAttributes == nil {
+	if m.resolveSemanticAttributes == nil || m.snapshotFromContext == nil {
 		return denied
 	}
 	resolution, err := m.resolveSemanticAttributes(ctx)
@@ -258,7 +262,20 @@ func (m Metrics) AuthorizeSemanticTarget(ctx context.Context, modelID string, ta
 	evaluation := semanticquery.SemanticAccessEvaluationContext{
 		RegistryState: resolution.Registry.State, ControlState: resolution.ControlState, Attributes: resolution.Attributes,
 	}
-	if !policy.Allows(target, evaluation) {
+	snapshot, err := m.snapshotFromContext(ctx)
+	if err != nil {
+		return denied
+	}
+	observer, err := m.semanticDecisionObserver(ctx, snapshot, modelID, model, resolution)
+	if err != nil {
+		return err
+	}
+	consumer, err := semanticquery.NewSemanticAccessConsumer(planner, evaluation, resolution.Subject.ID, snapshot.Identity().GenerationID, observer)
+	if err != nil {
+		return denied
+	}
+	decision, err := consumer.Evaluate(target)
+	if err != nil || !decision.Allowed {
 		return denied
 	}
 	return nil

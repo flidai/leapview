@@ -161,7 +161,7 @@ type rawChange struct {
 // Classify compares exact canonical projection documents with one unified rule
 // engine. The authored version is deliberately excluded from the content diff;
 // ValidateVersionTransition evaluates it after classification.
-func Classify(baseline, candidate []byte) (Result, error) {
+func Classify(baseline, candidate []byte, registry ...SemanticRegistryTypes) (Result, error) {
 	before, err := decodeDocument(baseline)
 	if err != nil {
 		return Result{}, err
@@ -174,6 +174,20 @@ func Classify(baseline, candidate []byte) (Result, error) {
 		return Result{}, fmt.Errorf("%w: baseline=%s/%s/%s/%s candidate=%s/%s/%s/%s", ErrIdentityMismatch,
 			before.Profile, before.APIVersion, before.Kind, before.AuthoredID,
 			after.Profile, after.APIVersion, after.Kind, after.AuthoredID)
+	}
+	if len(registry) > 1 {
+		return Result{}, fmt.Errorf("%w: multiple registry contexts", ErrInvalidContract)
+	}
+	if len(registry) == 1 {
+		if err := registry[0].Validate(); err != nil {
+			return Result{}, err
+		}
+		if err := bindRegisteredTypes(&before, registry[0], false); err != nil {
+			return Result{}, err
+		}
+		if err := bindRegisteredTypes(&after, registry[0], true); err != nil {
+			return Result{}, err
+		}
 	}
 
 	raw := make([]rawChange, 0)
@@ -197,7 +211,7 @@ func Classify(baseline, candidate []byte) (Result, error) {
 // empty contract envelope carrying the candidate identity. It is separate
 // from Classify so callers cannot accidentally treat a missing baseline as a
 // valid comparison.
-func ClassifyInitial(candidate []byte) (Result, error) {
+func ClassifyInitial(candidate []byte, registry ...SemanticRegistryTypes) (Result, error) {
 	after, err := decodeDocument(candidate)
 	if err != nil {
 		return Result{}, err
@@ -229,7 +243,7 @@ func ClassifyInitial(candidate []byte) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: initial baseline: %v", ErrInvalidContract, err)
 	}
-	result, err := Classify(baseline, candidate)
+	result, err := Classify(baseline, candidate, registry...)
 	if err != nil {
 		return Result{}, err
 	}
@@ -258,7 +272,7 @@ func emptyContract(kind string) map[string]any {
 
 // ValidateVersionTransition applies SemVer policy to the same unified result.
 // Build metadata does not create a distinct baseline.
-func ValidateVersionTransition(baseline, candidate []byte) (Result, error) {
+func ValidateVersionTransition(baseline, candidate []byte, registry ...SemanticRegistryTypes) (Result, error) {
 	before, err := decodeDocument(baseline)
 	if err != nil {
 		return Result{}, err
@@ -267,7 +281,7 @@ func ValidateVersionTransition(baseline, candidate []byte) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	result, err := Classify(baseline, candidate)
+	result, err := Classify(baseline, candidate, registry...)
 	if err != nil {
 		return Result{}, err
 	}

@@ -12,6 +12,9 @@ type Planner struct {
 	compiled              *CompiledModel
 	tableRelation         TableRelation
 	semanticAccessContext *SemanticAccessEvaluationContext
+	// semanticAccessDecisionObserver is an optional request-bound projection
+	// hook. It never participates in evaluating or placing access policy.
+	semanticAccessDecisionObserver SemanticAccessDecisionObserver
 	// semanticAccessConsumerToken is minted by the protected consumer
 	// boundary. It is intentionally not exposed through Planner or Plan; the
 	// PlanIR graph receives it only after the planner has completed its

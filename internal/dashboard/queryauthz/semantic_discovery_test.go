@@ -2,6 +2,7 @@ package authz
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
@@ -38,14 +39,14 @@ func semanticDiscoveryFixture(t *testing.T) (Metrics, *semanticmodel.Model) {
 	orders.RequiredAccessGrants = []string{"region_grant"}
 	model.Datasets["orders"] = orders
 	registry := access.SemanticAttributeRegistrySnapshot{
-		State:       access.SemanticAttributeRegistryState{Profile: semanticvalue.Profile, Revision: 7, Digest: "sha256:registry"},
+		State:       access.SemanticAttributeRegistryState{Profile: semanticvalue.Profile, Revision: 7, Digest: "sha256:" + strings.Repeat("a", 64)},
 		Definitions: []access.SemanticAttributeDefinition{region},
 	}
 	values, digest, err := access.CanonicalSemanticAttributeValues(region, "us")
 	if err != nil {
 		t.Fatal(err)
 	}
-	control := access.SemanticAttributeControlState{Profile: semanticvalue.Profile, Revision: 11, Digest: "sha256:control"}
+	control := access.SemanticAttributeControlState{Profile: semanticvalue.Profile, Revision: 11, Digest: "sha256:" + strings.Repeat("b", 64)}
 	attribute := access.EffectiveSemanticAttribute{
 		DefinitionID: region.ID, DefinitionName: region.Name, DefinitionVersion: region.DefinitionVersion,
 		Type: region.Type, Shape: region.Shape, CanonicalValues: values, ValueDigest: digest, Source: "direct",
@@ -60,12 +61,15 @@ func semanticDiscoveryFixture(t *testing.T) (Metrics, *semanticmodel.Model) {
 	}
 	underlying.model = model
 	metrics := New(semanticDiscoveryPlannerMetrics{canonicalMetrics: underlying, planner: planner}, Options{
+		AuditRecorder:        &canonicalAuditRecorder{},
+		PrincipalFromContext: func(context.Context) (Principal, bool) { return Principal{ID: "alice"}, true },
 		ResolveSemanticAttributes: func(context.Context) (access.SemanticAttributeResolution, error) {
 			subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "alice")
 			return access.SemanticAttributeResolution{Subject: subject, Registry: registry, ControlState: control, Attributes: []access.EffectiveSemanticAttribute{attribute}}, err
 		},
 		SnapshotFromContext: func(context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
-			return canonicalSnapshot(t, nil, nil), nil
+			graph, identity, _, _, _ := canonicalGraph(t)
+			return accesssnapshot.FromControlState(identity, graph, access.ControlState{InstanceID: "instance-test", ProjectID: graph.ProjectID().String(), Revision: 3}, nil)
 		},
 	})
 	return metrics, model

@@ -77,6 +77,7 @@ func newSemanticCacheTestRuntime(t testing.TB, source string) (*Runtime, *semant
 		ResultPartition: materializeTestPartition(t, resultidentity.PartitionProduction, ""), DependencyEvidence: evidence,
 		SemanticAccessAuthority:      authority,
 		SemanticAccessCompileContext: &semanticquery.SemanticAccessCompileContext{Registry: resolution.Registry},
+		SemanticAudit:                semanticAuditTestConfigFor(t, model, "serving:test"),
 		ServingStateID:               "serving:test",
 		SemanticCache:                &SemanticCacheConfig{Binding: binding, ReadCurrent: lifecycle.ReadCurrent},
 	})
@@ -379,6 +380,7 @@ func TestProtectedSemanticCacheUsesNewBindingAfterRestoreOrRollback(t *testing.T
 				ImmutableByteCache: oldRuntime.queryCache.byteScope, DependencyEvidence: oldRuntime.dependencyEvidence,
 				SemanticAccessAuthority:      authority,
 				SemanticAccessCompileContext: &semanticquery.SemanticAccessCompileContext{Registry: resolution.Registry},
+				SemanticAudit:                oldRuntime.semanticAudit,
 				ServingStateID:               oldRuntime.servingStateID,
 				SemanticCache:                &SemanticCacheConfig{Binding: binding, ReadCurrent: lifecycle.ReadCurrent},
 			})

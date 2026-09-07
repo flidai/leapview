@@ -51,8 +51,9 @@ The repository and contract tests cited here qualify only their linked slices,
 not the complete specification. The consumer checkpoint records its focused
 live PostgreSQL 18 Access-resolution evidence separately. FAI-639
 is the compiler/evaluator contextual-resolution slice; FAI-641 is the planner
-slice. FAI-648 adds integration evidence for generated-policy execution and
-PostgreSQL lifecycle-to-cache enforcement. Consumer qualification remains
+slice. FAI-648 adds integration evidence for generated-policy execution,
+PostgreSQL lifecycle-to-cache enforcement, target-registry candidate preflight,
+and registry-bound immutable publication classification. Consumer qualification remains
 partial; production activation and provider-admission integration remain pending.
 
 ## Change control

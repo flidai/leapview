@@ -264,6 +264,22 @@ for later approval input. This is not deployment approval or activation;
 FAI-648/649/632 remain unqualified by this slice. No migration, projection,
 artifact or release digest is changed.
 
+The [FAI-648 gap-closure matrix](semantic-access-qualification.md) additionally
+qualifies target-registry candidate preflight and registered-type input to the
+same classifier/publication path. New nested v3 evidence is Access-derived under
+the existing publication transaction; historical v2 replay/digests remain
+unchanged. This adds no migration or publication store and does not upgrade
+the remaining provider/consumer, activation, or DataPolicy
+cutover boundaries. Reader/writer rollback limitations are recorded in the
+[policy-evidence specification](semantic-access-policy-evidence.md).
+
+The same matrix records the subsequent durable semantic-audit slice as
+LIF-06 PARTIAL: qualified consumers hand redacted existing-evaluator decisions
+to the Access canonical audit store before disclosure, and PostgreSQL retained
+replay verifies the existing intent digest. This is separate from publication
+evidence and does not constitute a new approval, hash, or identity authority.
+Exhaustive consumer/provider and production activation evidence remains open.
+
 The FAI-622 boundary classifies and preserves contract evidence. FAI-662 closes
 the projector, manifest, and database integrity gaps without changing the
 generated wire DTOs, RFC 8785 implementation, compatibility classifier, or

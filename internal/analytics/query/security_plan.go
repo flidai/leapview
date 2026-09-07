@@ -57,6 +57,9 @@ func (p *Planner) securePlanGraph(g *planir.Graph) error {
 	context := *p.semanticAccessContext
 	evaluate := func(target SemanticAccessTarget) (SemanticAccessDecision, error) {
 		d, err := policy.Evaluate(target, context)
+		if observerErr := observeSemanticAccessDecision(p.semanticAccessDecisionObserver, target, d, err); observerErr != nil {
+			return d, observerErr
+		}
 		if err != nil {
 			return d, err
 		}

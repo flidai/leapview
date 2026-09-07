@@ -108,21 +108,26 @@ func (s *QueryAuditSurface) Recorder() queryaudit.Recorder {
 }
 
 type Module struct {
-	semanticAccessAuthority      materialize.SemanticAccessAuthority
-	environment                  *analyticsducklake.Environment
-	cache                        *resultcache.Pool
-	queryAudit                   queryaudit.Repository
-	connectionBindings           connectionbinding.BindingCatalog
-	credentials                  analyticsduckdb.CredentialResolver
-	targetResolvers              connectionbinding.ResolverSet
-	targetID                     string
-	targetEnvironment            string
-	targetClass                  connectionbinding.TargetClass
-	connectionFactory            connectionbinding.RuntimePoolFactory
-	connectionPoolsMu            sync.Mutex
-	connectionPools              *connectionbinding.PoolDirectory
-	candidateRuntimeBindings     candidateRuntimeBindingRegistry
-	activeRuntimeBindingEvidence ActiveRuntimeBindingEvidenceSource
+	semanticAccessAuthority       materialize.SemanticAccessAuthority
+	semanticAuditInstanceID       string
+	semanticAuditRecorder         access.CanonicalAuditRecorder
+	semanticAuditActorFromContext func(context.Context) (string, error)
+	candidateSemanticRegistry     access.SemanticRegistryReader
+	candidateSemanticInstanceID   string
+	environment                   *analyticsducklake.Environment
+	cache                         *resultcache.Pool
+	queryAudit                    queryaudit.Repository
+	connectionBindings            connectionbinding.BindingCatalog
+	credentials                   analyticsduckdb.CredentialResolver
+	targetResolvers               connectionbinding.ResolverSet
+	targetID                      string
+	targetEnvironment             string
+	targetClass                   connectionbinding.TargetClass
+	connectionFactory             connectionbinding.RuntimePoolFactory
+	connectionPoolsMu             sync.Mutex
+	connectionPools               *connectionbinding.PoolDirectory
+	candidateRuntimeBindings      candidateRuntimeBindingRegistry
+	activeRuntimeBindingEvidence  ActiveRuntimeBindingEvidenceSource
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {

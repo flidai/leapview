@@ -29,6 +29,8 @@ import (
 )
 
 type candidateArtifactService struct {
+	instanceID           string
+	semanticRegistry     access.SemanticRegistryReader
 	states               ServingStateRepository
 	artifacts            release.ArtifactStore
 	validator            servingstatevalidate.Service
@@ -81,6 +83,10 @@ func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.C
 		if err == nil {
 			err = fmt.Errorf("retained project artifact does not match synchronized project")
 		}
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	semanticRegistry, err := service.compileCandidateSemanticAccess(ctx, request.Scope.ProjectID, compiledProject.Manifest().SemanticModels)
+	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	baseIdentity, err := request.Scope.BaseIdentity()
@@ -184,7 +190,10 @@ func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.C
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	return release.CandidateArtifactSet{Artifact: release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()}, Extensions: extensions, AuthorizationFingerprint: authorizationFingerprint, Generation: release.CandidateGenerationArtifact{Identity: inspectIdentity, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: candidateRestrictions(authorizationSnapshot), BaseGateEvidence: base.gateEvidence}, Compiler: release.CandidateCompilerEvidence{Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution}}, nil
+	if err := service.validateCandidateSemanticRegistry(ctx, request.Scope.ProjectID, semanticRegistry); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	return release.CandidateArtifactSet{Artifact: release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()}, Extensions: extensions, AuthorizationFingerprint: authorizationFingerprint, Generation: release.CandidateGenerationArtifact{Identity: inspectIdentity, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: candidateRestrictions(authorizationSnapshot), BaseGateEvidence: base.gateEvidence}, Compiler: release.CandidateCompilerEvidence{SemanticRegistry: semanticRegistry, Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution}}, nil
 }
 
 func shortCandidateDigest(value string) string {
@@ -222,6 +231,10 @@ func (service *candidateArtifactService) MaterializeCandidateArtifacts(ctx conte
 func (service *candidateArtifactService) HydrateCandidateArtifacts(ctx context.Context, request release.CandidateArtifactRequest, inspected release.CandidateArtifactSet, identity release.CandidateArtifactIdentity) (release.CandidateArtifactSet, error) {
 	if service == nil || service.states == nil || identity.ServingStateID == "" || identity.ServingArtifactID == "" || identity.ServingArtifactDigest == "" {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
+	}
+	registry, err := service.compileCandidateSemanticAccess(ctx, request.Scope.ProjectID, inspected.Compiler.Manifest.SemanticModels)
+	if err != nil || !sameCandidateSemanticRegistry(registry, inspected.Compiler.SemanticRegistry) {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(fmt.Errorf("rehydrated semantic registry differs from inspected evidence: %v", err))
 	}
 	state, err := service.states.ByID(ctx, servingstate.ID(identity.ServingStateID))
 	if err != nil || state.ProjectID != request.Scope.ProjectID || state.Environment != servingstate.Environment(request.Scope.Environment) || state.Digest == "" || state.Digest != identity.ServingArtifactDigest {
@@ -264,6 +277,9 @@ func (service *candidateArtifactService) HydrateCandidateArtifacts(ctx context.C
 	if err := result.Generation.Identity.Validate(); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	if err := service.validateCandidateSemanticRegistry(ctx, request.Scope.ProjectID, registry); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
 	return result, nil
 }
 
@@ -295,6 +311,13 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	projectID := request.Scope.ProjectID
+	semanticRegistry, err := service.compileCandidateSemanticAccess(ctx, projectID, compiledProject.Manifest().SemanticModels)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if expected != nil && !sameCandidateSemanticRegistry(semanticRegistry, expected.Compiler.SemanticRegistry) {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("materialized semantic registry differs from inspected evidence"))
+	}
 	environment := servingstate.Environment(request.Scope.Environment)
 	baseIdentity, identityErr := request.Scope.BaseIdentity()
 	if identityErr != nil {
@@ -452,12 +475,15 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 	if expected != nil && (!reflect.DeepEqual(expected.Compiler.RelationExecution, relationExecution) || !reflect.DeepEqual(expected.Compiler.BaseRelationExecution, baseRelationExecution)) {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("materialized relation execution evidence differs from inspected plan evidence"))
 	}
+	if err := service.validateCandidateSemanticRegistry(ctx, projectID, semanticRegistry); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
 	return release.CandidateArtifactSet{
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), ContentDigest: validated.Digest, CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()},
 		Extensions:               extensions,
 		AuthorizationFingerprint: authorizationFingerprint,
 		Generation:               release.CandidateGenerationArtifact{Identity: identity, ServingArtifactID: artifact.ID, ArtifactDigest: validated.Digest, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: restrictions, BaseGateEvidence: base.gateEvidence},
-		Compiler:                 release.CandidateCompilerEvidence{Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution},
+		Compiler:                 release.CandidateCompilerEvidence{SemanticRegistry: semanticRegistry, Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution},
 	}, nil
 }
 

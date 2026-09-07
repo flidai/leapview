@@ -60,6 +60,10 @@ func clonePolicyDecision(decision identitymodule.PolicyDecision) identitymodule.
 	decision.Classification.Changes = slices.Clone(decision.Classification.Changes)
 	decision.ChangedDimensions = slices.Clone(decision.ChangedDimensions)
 	decision.AffectedResources = slices.Clone(decision.AffectedResources)
+	if decision.RegistryTypes != nil {
+		registry := decision.RegistryTypes.Clone()
+		decision.RegistryTypes = &registry
+	}
 	return decision
 }
 

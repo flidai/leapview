@@ -590,6 +590,7 @@ type ProjectRuntimeConfig struct {
 	SemanticCacheByModel         map[string]*analyticsmaterialize.SemanticCacheConfig
 	SemanticAccessAuthority      analyticsmaterialize.SemanticAccessAuthority
 	SemanticAccessCompileContext *semanticquery.SemanticAccessCompileContext
+	SemanticAudit                *analyticsmaterialize.SemanticAuditConfig
 	Models                       map[string]*semanticmodel.Model
 	ModelTables                  map[string]semanticmodel.Table
 	Database                     analyticsruntime.ProjectDatabase
@@ -656,6 +657,10 @@ type duckLakeCommitter interface {
 }
 
 func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeConfig) (*ProjectRuntime, error) {
+	if config.SemanticAudit != nil {
+		semanticAudit := *config.SemanticAudit
+		config.SemanticAudit = &semanticAudit
+	}
 	if len(config.Models) == 0 {
 		return nil, fmt.Errorf("project semantic models are required")
 	}
@@ -764,6 +769,7 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 			SemanticCache:                config.SemanticCacheByModel[modelID],
 			SemanticAccessAuthority:      config.SemanticAccessAuthority,
 			SemanticAccessCompileContext: config.SemanticAccessCompileContext,
+			SemanticAudit:                config.SemanticAudit,
 			ServingStateID:               config.ServingStateID,
 			ModelID:                      modelID, Model: model, ResultPartition: config.ResultPartition,
 			Database: r.db, Sources: r.sources, Resolver: r.sources,

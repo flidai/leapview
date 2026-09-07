@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -86,12 +87,10 @@ func (r *Repository) PublishContract(ctx context.Context, input identityledger.C
 			}
 			return existing, nil
 		}
-		finalValidation, err := derivePolicyValidation(prepared, baseline, sequence, lifecycle.ActiveBundleID, *input.PolicyContext)
-		if err != nil {
-			return identityledger.ContractPublication{}, err
-		}
-		prepared.Validation = finalValidation
-		if !identityledger.EqualContractPublicationContent(existing, prepared) {
+		// Existing evidence is immutable. Replay compares the caller-bound
+		// publication identity and checks only; it must never reclassify against
+		// a newer Access registry snapshot.
+		if !equalContractPublicationReplayContent(existing, prepared) || !identityledger.EqualPolicyContextEvidence(*input.PolicyContext, existing.Validation.PolicyEvidence) {
 			return identityledger.ContractPublication{}, fmt.Errorf("%w: %s/%s/%s@%s", identityledger.ErrContractPublicationConflict, prepared.InstanceID, prepared.ResourceKind, prepared.AuthoredID, prepared.VersionBaseline)
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -117,7 +116,11 @@ func (r *Repository) PublishContract(ctx context.Context, input identityledger.C
 			return identityledger.ContractPublication{}, fmt.Errorf("%w: policy baseline is not the latest publication", identityledger.ErrPolicyEvidenceConflict)
 		}
 	}
-	finalValidation, err := derivePolicyValidation(prepared, baseline, sequence, lifecycle.ActiveBundleID, *input.PolicyContext)
+	registryTypes, err := r.registryTypesForPublication(ctx, tx, prepared, baseline, *input.PolicyContext)
+	if err != nil {
+		return identityledger.ContractPublication{}, err
+	}
+	finalValidation, err := derivePolicyValidation(prepared, baseline, sequence, lifecycle.ActiveBundleID, *input.PolicyContext, registryTypes)
 	if err != nil {
 		return identityledger.ContractPublication{}, err
 	}
@@ -265,6 +268,28 @@ func scanContractPublication(row publicationScanner) (identityledger.ContractPub
 
 func contractPublicationKind(kind projectgraph.Kind) bool {
 	return kind == projectgraph.KindSource || kind == projectgraph.KindModel || kind == projectgraph.KindSemanticModel
+}
+
+// equalContractPublicationReplayContent compares caller-owned immutable
+// content while deliberately excluding server-derived policy evidence. The
+// stored evidence is the replay authority and is never regenerated.
+func equalContractPublicationReplayContent(left, right identityledger.ContractPublication) bool {
+	return left.InstanceID == right.InstanceID && left.AuthoredID == right.AuthoredID && left.ResourceKind == right.ResourceKind &&
+		left.Version == right.Version && left.VersionBaseline == right.VersionBaseline && left.ProjectionProfile == right.ProjectionProfile &&
+		bytes.Equal(left.CanonicalBytes, right.CanonicalBytes) && left.Digest == right.Digest &&
+		equalValidationChecks(left.Validation.Checks, right.Validation.Checks)
+}
+
+func equalValidationChecks(left, right []identityledger.ValidationCheck) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func mapContractPublicationDatabaseError(operation string, err error) error {

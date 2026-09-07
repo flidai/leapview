@@ -44,8 +44,40 @@ func (event CanonicalAuditEvent) Validate() error {
 	if err := ValidateCapabilityForKind(event.Resource.Kind(), event.Capability); err != nil {
 		return fmt.Errorf("audit capability: %w", err)
 	}
-	if _, err := event.CanonicalMetadataJSON(); err != nil {
+	metadata, err := event.CanonicalMetadataJSON()
+	if err != nil {
 		return fmt.Errorf("audit metadata: %w", err)
+	}
+	if event.Action == SemanticDecisionAuditAction {
+		if event.Resource.Kind() != graph.KindSemanticModel {
+			return fmt.Errorf("semantic decision audit resource must be a semantic model")
+		}
+		if event.Capability != CapabilityResourceUse && event.Capability != CapabilityResourceRead {
+			return fmt.Errorf("semantic decision audit capability must be RESOURCE_USE or RESOURCE_READ")
+		}
+		switch event.Status {
+		case "success", "denied", "failure":
+		default:
+			return fmt.Errorf("semantic decision audit status is invalid")
+		}
+		evidence, err := DecodeSemanticDecisionEvidence(metadata)
+		if err != nil {
+			return fmt.Errorf("semantic decision audit metadata: %w", err)
+		}
+		switch event.Status {
+		case "success":
+			if !evidence.Allowed {
+				return fmt.Errorf("semantic decision audit success must carry an allowed decision")
+			}
+		case "denied":
+			if evidence.Allowed {
+				return fmt.Errorf("semantic decision audit denial must carry a denied decision")
+			}
+		case "failure":
+			if evidence.Allowed || evidence.Reason != "semantic access evaluation failed" {
+				return fmt.Errorf("semantic decision audit failure must carry evaluation-unavailable evidence")
+			}
+		}
 	}
 	return nil
 }

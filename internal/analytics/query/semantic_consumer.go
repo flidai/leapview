@@ -36,9 +36,17 @@ type semanticAccessConsumerCapability struct {
 
 // NewSemanticAccessConsumer binds a protected consumer to an activation
 // planner, detached runtime attributes, an authenticated principal, and the
-// existing serving-generation identity. The planner's compiled model and
-// table-relation option are retained; no model or policy is recompiled.
-func NewSemanticAccessConsumer(planner *Planner, context SemanticAccessEvaluationContext, principalID, generationIdentity string) (*SemanticAccessConsumer, error) {
+// existing serving-generation identity. An optional decision observer receives
+// detached redacted evaluator projections; it never becomes policy authority.
+// The planner's compiled model and table-relation option are retained; no
+// model or policy is recompiled.
+func NewSemanticAccessConsumer(planner *Planner, context SemanticAccessEvaluationContext, principalID, generationIdentity string, observers ...SemanticAccessDecisionObserver) (*SemanticAccessConsumer, error) {
+	if len(observers) > 1 {
+		return nil, fmt.Errorf("at most one semantic access decision observer is allowed")
+	}
+	if len(observers) == 1 && observers[0] == nil {
+		return nil, fmt.Errorf("semantic access decision observer is required when supplied")
+	}
 	if planner == nil || planner.compiled == nil {
 		return nil, fmt.Errorf("compiled semantic planner is required")
 	}
@@ -63,6 +71,7 @@ func NewSemanticAccessConsumer(planner *Planner, context SemanticAccessEvaluatio
 	if err != nil {
 		return nil, err
 	}
+	requestPlanner.semanticAccessDecisionObserver = observerAt(observers)
 	capability := &semanticAccessConsumerCapability{private: 1}
 	requestPlanner.semanticAccessConsumerToken = capability
 	return &SemanticAccessConsumer{
@@ -121,11 +130,25 @@ func (consumer *SemanticAccessConsumer) Planner() *Planner {
 // Allows is the fail-closed discovery projection of the existing compiled
 // semantic-access evaluator. It never probes data and cannot widen a query.
 func (consumer *SemanticAccessConsumer) Allows(target SemanticAccessTarget) bool {
+	decision, err := consumer.Evaluate(target)
+	return err == nil && decision.Allowed
+}
+
+// Evaluate applies the activation-compiled semantic-access evaluator once and
+// observes its detached redacted decision, when configured.
+func (consumer *SemanticAccessConsumer) Evaluate(target SemanticAccessTarget) (SemanticAccessDecision, error) {
 	if consumer == nil || consumer.planner == nil || consumer.planner.compiled == nil {
-		return false
+		return SemanticAccessDecision{}, fmt.Errorf("semantic access consumer is required")
 	}
 	policy := consumer.planner.compiled.semanticAccess
-	return policy != nil && policy.Protected() && policy.Allows(target, consumer.context)
+	if policy == nil || !policy.Protected() {
+		return SemanticAccessDecision{}, fmt.Errorf("protected semantic access policy is required")
+	}
+	decision, evaluationErr := policy.Evaluate(target, consumer.context)
+	if observerErr := observeSemanticAccessDecision(consumer.planner.semanticAccessDecisionObserver, target, decision, evaluationErr); observerErr != nil {
+		return decision, observerErr
+	}
+	return decision, evaluationErr
 }
 
 // ValidatePlan admits only a plan produced by this consumer's request-bound
@@ -181,7 +204,19 @@ func newConsumerPlanner(source *Planner, context SemanticAccessEvaluationContext
 	if relation := source.TableRelation(); relation != nil {
 		options = append(options, WithTableRelation(relation))
 	}
-	return NewSemanticAccessPlanner(source.compiled, cloneSemanticAccessEvaluationContext(context), options...)
+	planner, err := NewSemanticAccessPlanner(source.compiled, cloneSemanticAccessEvaluationContext(context), options...)
+	if err != nil {
+		return nil, err
+	}
+	planner.semanticAccessDecisionObserver = source.semanticAccessDecisionObserver
+	return planner, nil
+}
+
+func observerAt(observers []SemanticAccessDecisionObserver) SemanticAccessDecisionObserver {
+	if len(observers) == 0 {
+		return nil
+	}
+	return observers[0]
 }
 
 func cloneSemanticAccessEvaluationContext(context SemanticAccessEvaluationContext) SemanticAccessEvaluationContext {

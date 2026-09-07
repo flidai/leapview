@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/identityledger"
 	"github.com/jackc/pgx/v5"
@@ -19,15 +20,34 @@ type beginner interface {
 	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
 }
 
+// SemanticRegistryReader is an Access-owned, caller-transaction-bound read.
+// The identity ledger owns commit/rollback; the reader only observes and
+// locks the Access authority needed for one publication.
+type SemanticRegistryReader func(context.Context, pgx.Tx, string) (access.SemanticRegistryContext, error)
+
+type Config struct {
+	SemanticRegistryReader SemanticRegistryReader
+}
+
 // Repository owns transactional identity reconciliation for a PostgreSQL
 // control database.
-type Repository struct{ db beginner }
+type Repository struct {
+	db                     beginner
+	semanticRegistryReader SemanticRegistryReader
+}
 
-func New(db beginner) (*Repository, error) {
+func New(db beginner, configs ...Config) (*Repository, error) {
 	if db == nil {
 		return nil, errors.New("identity ledger PostgreSQL database is required")
 	}
-	return &Repository{db: db}, nil
+	if len(configs) > 1 {
+		return nil, errors.New("identity ledger PostgreSQL accepts at most one configuration")
+	}
+	var config Config
+	if len(configs) == 1 {
+		config = configs[0]
+	}
+	return &Repository{db: db, semanticRegistryReader: config.SemanticRegistryReader}, nil
 }
 
 // Plan previews candidate outcomes without mutating ledger state. Activation

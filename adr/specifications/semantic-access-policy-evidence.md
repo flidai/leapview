@@ -37,6 +37,20 @@ decisions. The existing validation envelope remains version 1, as required by
 its PostgreSQL constraint; the added nested policy representation carries its
 own explicit version. No outer-envelope version upgrade is performed.
 
+The later [FAI-648 gap-closure layer](semantic-access-qualification.md) adds
+nested version 3 for transactionally resolved registered-type evidence.
+Version 2 keeps its original nil-field digest preimage and remains readable;
+new protected publication requires an Access-owned transaction reader and an
+exact expected registry reference. Version 3 retains only referenced type
+identity/version metadata, not assignments or principal values. Exact replay
+uses retained evidence without reading today's registry. This is not production
+activation or approval.
+
+Deploy v3-capable readers before admitting v3 writes. A version-2-only binary
+rejects version 3 evidence; rolling back that binary cannot preserve policy
+qualification for those rows. Rollback must use a reader-compatible binary,
+not rewrite immutable publication history or downgrade nested evidence.
+
 Nested policy evidence is bounded to 16 KiB inside the existing 64 KiB
 validation envelope; oversized decisions fail closed. Qualify readers and
 writers together before relying on this nested version: the parent binary's

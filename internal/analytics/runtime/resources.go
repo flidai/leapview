@@ -5,6 +5,7 @@ package runtime
 
 import (
 	"context"
+	"github.com/flidai/leapview/internal/access"
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
@@ -33,18 +34,19 @@ type ConnectionResolver interface {
 // ProjectRequest describes a governed analytical project without exposing
 // DuckDB construction or cache implementation details to consumer capabilities.
 type ProjectRequest struct {
-	Models                   map[string]*semanticmodel.Model
-	SnapshotID               int64
-	ServingStateID           string
-	ProjectID                projectgraph.ResourceID
-	Environment              string
-	SemanticDigest           string
-	ArtifactDigest           string
-	SourceDataDigest         string
-	CandidateID              string
-	AuthorizationFingerprint string
-	BindingFingerprint       string
-	RequiredExtensions       []string
+	CandidateSemanticRegistry *access.SemanticRegistryContext `json:"-"`
+	Models                    map[string]*semanticmodel.Model
+	SnapshotID                int64
+	ServingStateID            string
+	ProjectID                 projectgraph.ResourceID
+	Environment               string
+	SemanticDigest            string
+	ArtifactDigest            string
+	SourceDataDigest          string
+	CandidateID               string
+	AuthorizationFingerprint  string
+	BindingFingerprint        string
+	RequiredExtensions        []string
 	// SkipInitialRefresh is used when a private candidate starts from an
 	// exact sealed base and the caller refreshes only impacted relations.
 	SkipInitialRefresh bool

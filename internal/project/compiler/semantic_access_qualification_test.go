@@ -99,13 +99,19 @@ func TestProtectedContractRegistryPlannerAndCacheQualification(t *testing.T) {
 		ProjectionProfile: contractprojection.Profile, PublicationDigest: semanticAccessQualificationDigest,
 		AuthorizationRevision: 11,
 	}
+	auditRecorder := &semanticAccessQualificationAuditRecorder{}
 	runtime, err := materialize.NewRuntimeView(t.Context(), materialize.RuntimeConfig{
 		ModelID: "sales", Model: model, Database: database, Sources: semanticAccessQualificationSources{},
 		TableRelation: func(table string) (string, error) { return "model." + table, nil },
 		SnapshotOnly:  true, ServingStateID: "generation:test", ResultPartition: partition,
 		DependencyEvidence: evidence, SemanticAccessAuthority: authority,
 		SemanticAccessCompileContext: &semanticquery.SemanticAccessCompileContext{Registry: registry},
-		SemanticCache:                &materialize.SemanticCacheConfig{Binding: binding, ReadCurrent: func(context.Context) (resultidentity.SemanticLifecycle, error) { return binding, nil }},
+		SemanticAudit: &materialize.SemanticAuditConfig{
+			InstanceID: binding.InstanceID,
+			Identity:   projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "test", GenerationID: "generation:test"},
+			Recorder:   auditRecorder, ActorFromContext: func(context.Context) (string, error) { return "principal-1", nil },
+		},
+		SemanticCache: &materialize.SemanticCacheConfig{Binding: binding, ReadCurrent: func(context.Context) (resultidentity.SemanticLifecycle, error) { return binding, nil }},
 	})
 	if err != nil {
 		t.Fatalf("open materialize runtime: %v", err)
@@ -129,6 +135,10 @@ func TestProtectedContractRegistryPlannerAndCacheQualification(t *testing.T) {
 	if got := database.queries.Load(); got != 1 {
 		t.Fatalf("first physical query count = %d, want 1", got)
 	}
+	if got := len(auditRecorder.Events()); got == 0 {
+		t.Fatal("protected cache miss wrote no semantic audit evidence")
+	}
+	auditEventsAfterMiss := len(auditRecorder.Events())
 	if len(first.Rows) != 1 || len(first.Columns) != 1 {
 		t.Fatalf("restricted result shape = columns=%#v rows=%#v", first.Columns, first.Rows)
 	}
@@ -160,6 +170,9 @@ func TestProtectedContractRegistryPlannerAndCacheQualification(t *testing.T) {
 	}
 	if second.CacheOutcome != dataquery.CacheHit || database.queries.Load() != 1 {
 		t.Fatalf("cache reuse outcome=%q physical queries=%d, want hit/1", second.CacheOutcome, database.queries.Load())
+	}
+	if got := len(auditRecorder.Events()); got <= auditEventsAfterMiss {
+		t.Fatalf("protected cache hit audit events = %d, after miss = %d", got, auditEventsAfterMiss)
 	}
 	if !reflect.DeepEqual(second.Rows, first.Rows) {
 		t.Fatalf("cached rows = %#v, want the same restricted rows as the miss %#v", second.Rows, first.Rows)
@@ -251,6 +264,24 @@ type semanticAccessQualificationAuthority struct {
 	registry     access.SemanticAttributeRegistrySnapshot
 	resolutions  []access.SemanticAttributeResolution
 	resolutionAt int
+}
+
+type semanticAccessQualificationAuditRecorder struct {
+	mu     sync.Mutex
+	events []access.CanonicalAuditEvent
+}
+
+func (r *semanticAccessQualificationAuditRecorder) RecordCanonicalAuditEvent(_ context.Context, event access.CanonicalAuditEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, event)
+	return nil
+}
+
+func (r *semanticAccessQualificationAuditRecorder) Events() []access.CanonicalAuditEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]access.CanonicalAuditEvent(nil), r.events...)
 }
 
 func (a *semanticAccessQualificationAuthority) SemanticAttributeRegistry(context.Context) (access.SemanticAttributeRegistrySnapshot, error) {

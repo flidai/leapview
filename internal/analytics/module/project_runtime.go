@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
@@ -13,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type projectRuntimeFactory struct {
@@ -24,6 +26,47 @@ type projectRuntimeFactory struct {
 // project runtimes. Access retains ownership of principal and control state.
 func (m *Module) SetSemanticAccessAuthority(authority materialize.SemanticAccessAuthority) {
 	m.semanticAccessAuthority = authority
+}
+
+// SetSemanticAudit supplies the Access-owned canonical audit sink and the
+// authenticated actor resolver for protected production reads. The exact
+// request serving identity is bound when a project runtime is opened; callers
+// cannot provide an independent identity through this setter.
+func (m *Module) SetSemanticAudit(instanceID string, recorder access.CanonicalAuditRecorder, actorFromContext func(context.Context) (string, error)) {
+	m.semanticAuditInstanceID = instanceID
+	m.semanticAuditRecorder = recorder
+	m.semanticAuditActorFromContext = actorFromContext
+}
+
+// SetCandidateSemanticRegistry supplies only definition authority for
+// candidate compilation. It does not configure principal resolution or
+// production semantic access activation.
+func (m *Module) SetCandidateSemanticRegistry(instanceID string, reader access.SemanticRegistryReader) {
+	m.candidateSemanticInstanceID, m.candidateSemanticRegistry = instanceID, reader
+}
+
+func (m *Module) candidateSemanticCompileContext(ctx context.Context, request analyticsruntime.ProjectRequest) (*semanticquery.SemanticAccessCompileContext, error) {
+	if request.CandidateID == "" {
+		return nil, fmt.Errorf("candidate identity is required")
+	}
+	if request.CandidateSemanticRegistry == nil || m.candidateSemanticRegistry == nil || m.candidateSemanticInstanceID == "" {
+		return nil, fmt.Errorf("candidate semantic registry evidence is unavailable")
+	}
+	expected := request.CandidateSemanticRegistry
+	if err := expected.Validate(m.candidateSemanticInstanceID, request.ProjectID); err != nil {
+		return nil, err
+	}
+	current, err := m.candidateSemanticRegistry.ReadSemanticRegistry(ctx, m.candidateSemanticInstanceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := current.Validate(m.candidateSemanticInstanceID, request.ProjectID); err != nil {
+		return nil, err
+	}
+	if !expected.Equal(current) {
+		return nil, fmt.Errorf("candidate semantic registry evidence is stale")
+	}
+	return &semanticquery.SemanticAccessCompileContext{Registry: current.Registry}, nil
 }
 
 func (m *Module) ProjectRuntimeFactory() analyticsruntime.ProjectFactory {
@@ -83,11 +126,19 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		return nil, err
 	}
 	var semanticContext *semanticquery.SemanticAccessCompileContext
+	var semanticAudit *materialize.SemanticAuditConfig
 	protected := false
 	for _, model := range request.Models {
 		protected = protected || semanticquery.ModelRequiresSemanticAccess(model)
 	}
-	if protected && f.module.semanticAccessAuthority != nil {
+	if protected && request.CandidateID != "" {
+		semanticContext, err = f.module.candidateSemanticCompileContext(ctx, request)
+		if err != nil {
+			_ = queryResultCache.Close()
+			_ = immutableByteCache.Close()
+			return nil, err
+		}
+	} else if protected && f.module.semanticAccessAuthority != nil {
 		registry, readErr := f.module.semanticAccessAuthority.SemanticAttributeRegistry(ctx)
 		if readErr != nil {
 			_ = queryResultCache.Close()
@@ -96,9 +147,19 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		}
 		semanticContext = &semanticquery.SemanticAccessCompileContext{Registry: registry}
 	}
+	if protected && request.CandidateID == "" {
+		semanticAudit = &materialize.SemanticAuditConfig{
+			InstanceID: f.module.semanticAuditInstanceID,
+			Identity: projectgraph.ServingIdentity{
+				ProjectID: request.ProjectID, Environment: request.Environment, GenerationID: request.ServingStateID,
+			},
+			Recorder: f.module.semanticAuditRecorder, ActorFromContext: f.module.semanticAuditActorFromContext,
+		}
+	}
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 		SemanticAccessAuthority:      f.module.semanticAccessAuthority,
 		SemanticAccessCompileContext: semanticContext,
+		SemanticAudit:                semanticAudit,
 		Models:                       request.Models, Database: environment,
 		CredentialResolver: f.module.credentials,
 		ConnectionResolver: connectionResolver,
@@ -116,6 +177,14 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		_ = queryResultCache.Close()
 		_ = immutableByteCache.Close()
 		return nil, err
+	}
+	if protected && request.CandidateID != "" {
+		if _, err := f.module.candidateSemanticCompileContext(ctx, request); err != nil {
+			_ = runtime.Close()
+			_ = queryResultCache.Close()
+			_ = immutableByteCache.Close()
+			return nil, err
+		}
 	}
 	return runtime, nil
 }
