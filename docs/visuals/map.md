@@ -130,6 +130,8 @@ visuals:
 ## Density
 
 Emphasize the concentration of observations without requiring a value binding.
+With no value binding, raw features contribute one observation and aggregate
+cells are weighted by their contained row count.
 
 {{< visual id="order_density_map" >}}
 

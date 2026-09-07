@@ -29,7 +29,7 @@ export function mapLayer(id: string, layerOrKind: VisualizationGeographicLayer |
 	if (kind === 'point') {
 		const point = layer?.kind === 'point' ? layer : undefined
 		const minimumRadius = point?.size?.minimumRadius ?? 5, maximumRadius = point?.size?.maximumRadius ?? 10
-		const weight = tiled && point ? tiledWeightExpression(point, tiled) : ['get', '__lv_weight']
+		const weight = tiled && point ? tiledWeightExpression(point, tiled, point.size) : ['get', '__lv_weight']
 		const aggregateMinimumRadius = Math.max(12, minimumRadius)
 		const aggregateMaximumRadius = Math.max(50, maximumRadius)
 		const radius = tiled
@@ -39,7 +39,7 @@ export function mapLayer(id: string, layerOrKind: VisualizationGeographicLayer |
 	}
 	const heat = layer?.kind === 'heat' || layer?.kind === 'density' ? layer : undefined
 	const colors = paletteColors(heat?.color)
-	const weight = tiled && heat ? tiledWeightExpression(heat, tiled) : ['get', '__lv_weight']
+	const weight = tiled && heat ? tiledWeightExpression(heat, tiled, heat.color) : ['get', '__lv_weight']
 	return { id, source: sourceID, ...(tiled ? { 'source-layer': 'primary', filter: ['==', ['boolean', ['get', '__lv_aggregate'], false], false], minzoom: Math.max(heat?.visibility.minimumZoom ?? 0, tiled.rawMinimumZoom), maxzoom: heat?.visibility.maximumZoom } : {}), type: 'heatmap', paint: {
 		'heatmap-weight': ['*', weight, ['case', featureFlag('__lv_selected'), 1, featureFlag('__lv_has_selection'), 0.75, featureFlag('__lv_highlighted'), 1, featureFlag('__lv_has_highlight'), 0.15, 0.75]],
     'heatmap-intensity': heat?.heat.intensity ?? (kind === 'density' ? 1.35 : 1),
@@ -113,24 +113,31 @@ function tiledValueField(layer: Extract<VisualizationGeographicLayer, { kind: 'p
 	return layer.value?.field ?? '__lv_count'
 }
 
-function tiledWeightExpression(layer: Extract<VisualizationGeographicLayer, { kind: 'point' | 'heat' | 'density' }>, state: SpatialTiledVisualizationDataState): unknown[] {
+type TiledScaleDomain = { minimum?: number; maximum?: number; total?: number }
+type AuthoredScaleDomain = { domainMinimum?: number; domainMidpoint?: number; domainMaximum?: number }
+
+function tiledWeightExpression(layer: Extract<VisualizationGeographicLayer, { kind: 'point' | 'heat' | 'density' }>, state: SpatialTiledVisualizationDataState, authored?: AuthoredScaleDomain): unknown[] {
 	const field = tiledValueField(layer)
 	const raw = state.rawDomains.find((domain) => domain.field === field)
 	const aggregate = state.aggregateDomains.find((domain) => domain.field === field)
-	const normalize = (domain: typeof raw): unknown[] => {
-		const minimum = domain?.minimum ?? 0, maximum = domain?.maximum ?? Math.max(minimum + 1, 1)
-		if (minimum === maximum) return ['case', ['==', ['to-number', ['get', field], 0], 0], 0, 1]
-		return ['max', 0, ['min', 1, ['/', ['-', ['to-number', ['get', field], 0], minimum], maximum - minimum]]]
+	if (!layer.value) {
+		// Raw tiles carry one feature per coordinate and do not have a synthetic
+		// count property. Aggregate tiles carry __lv_count, so normalize it against
+		// the exact revision cardinality instead of treating every cell as 1.
+		const countDomain = aggregate ?? countFallbackDomain(state)
+		const rawDomain = resolveTiledDomain(raw, authored, { minimum: 1, maximum: 1 })
+		const aggregateDomain = resolveTiledDomain(countDomain, authored, countFallbackDomain(state))
+		return ['case', ['boolean', ['get', '__lv_aggregate'], false], normalizeTiledValue('__lv_count', aggregateDomain, 1), authoredDomainSpecified(authored) ? normalizeTiledValue('__lv_count', rawDomain, 1) : 1]
 	}
-	return ['case', ['boolean', ['get', '__lv_aggregate'], false], normalize(aggregate), normalize(raw)]
+	const rawDomain = resolveTiledDomain(raw, authored)
+	const aggregateDomain = resolveTiledDomain(aggregate, authored)
+	return ['case', ['boolean', ['get', '__lv_aggregate'], false], normalizeTiledValue(field, aggregateDomain), normalizeTiledValue(field, rawDomain)]
 }
 
 function tiledAggregateHeatWeightExpression(layer: Extract<VisualizationGeographicLayer, { kind: 'heat' | 'density' }>, state: SpatialTiledVisualizationDataState): unknown[] {
 	const field = tiledValueField(layer)
-	const domain = state.aggregateDomains.find((candidate) => candidate.field === field)
-	const minimum = domain?.minimum ?? 0, maximum = domain?.maximum ?? Math.max(minimum + 1, 1)
-	if (minimum === maximum) return ['case', ['==', ['to-number', ['get', field], 0], 0], 0, 1]
-	const normalized = ['max', 0, ['min', 1, ['/', ['-', ['to-number', ['get', field], 0], minimum], maximum - minimum]]]
+	const domain = resolveTiledDomain(state.aggregateDomains.find((candidate) => candidate.field === field), layer.color, !layer.value ? countFallbackDomain(state) : undefined)
+	const normalized = normalizeTiledValue(field, domain, 1)
 	// Whole-filter totals provide a stable aggregate domain across tile loads,
 	// but make low-zoom cell values tiny on large datasets. Square-root scaling
 	// preserves that stable domain while retaining visible differences.
@@ -139,10 +146,49 @@ function tiledAggregateHeatWeightExpression(layer: Extract<VisualizationGeograph
 
 function tiledColorExpression(layer: Extract<VisualizationGeographicLayer, { kind: 'point' | 'heat' | 'density' }>, state: SpatialTiledVisualizationDataState): unknown[] {
 	const colors = paletteColors(layer.color)
-	const weight = tiledWeightExpression(layer, state)
+	const weight = tiledWeightExpression(layer, state, layer.color)
 	const raw = ['interpolate', ['linear'], weight, 0, colors[0], 0.25, colors[1], 0.5, colors[2], 0.75, colors[3], 1, colors[4]]
 	const aggregate = ['interpolate', ['linear'], ['sqrt', weight], 0, colors[2], 0.5, colors[3], 1, colors[4]]
 	return ['case', ['boolean', ['get', '__lv_aggregate'], false], aggregate, raw]
+}
+
+function countFallbackDomain(state: SpatialTiledVisualizationDataState): TiledScaleDomain {
+	const cardinality = state.cardinality.kind === 'exact' && typeof state.cardinality.count === 'number' && Number.isFinite(state.cardinality.count)
+		? Math.max(1, state.cardinality.count)
+		: 1
+	return { minimum: 1, maximum: cardinality }
+}
+
+function authoredDomainSpecified(domain?: AuthoredScaleDomain): boolean {
+	return domain?.domainMinimum !== undefined || domain?.domainMidpoint !== undefined || domain?.domainMaximum !== undefined
+}
+
+function resolveTiledDomain(server: TiledScaleDomain | undefined, authored?: AuthoredScaleDomain, fallback?: TiledScaleDomain): TiledScaleDomain & { midpoint?: number } {
+	let minimum = authored?.domainMinimum ?? server?.minimum ?? fallback?.minimum ?? 0
+	let maximum = authored?.domainMaximum ?? server?.maximum ?? fallback?.maximum ?? Math.max(minimum + 1, 1)
+	// A partial authored domain may be the only bound available (notably for
+	// count-weighted layers, which have no server metric domain). Keep the
+	// existing bounded normalization semantics instead of allowing a negative
+	// span to invert the scale.
+	if (maximum < minimum) {
+		if (authored?.domainMinimum !== undefined && authored.domainMaximum === undefined) maximum = Math.max(minimum + 1, maximum)
+		else if (authored?.domainMaximum !== undefined && authored.domainMinimum === undefined) minimum = Math.min(maximum - 1, minimum)
+		else maximum = minimum
+	}
+	const midpoint = authored?.domainMidpoint
+	return { minimum, maximum, midpoint: midpoint !== undefined && midpoint > minimum && midpoint < maximum ? midpoint : undefined }
+}
+
+function normalizeTiledValue(field: string, domain: TiledScaleDomain & { midpoint?: number }, fallback = 0): unknown[] {
+	const minimum = domain.minimum ?? 0
+	const maximum = domain.maximum ?? Math.max(minimum + 1, 1)
+	const value = ['to-number', ['get', field], fallback]
+	if (minimum === maximum) return ['case', ['==', value, 0], 0, 1]
+	const clamp = (numerator: unknown[], denominator: number): unknown[] => ['max', 0, ['min', 1, ['/', numerator, denominator]]]
+	const linear = clamp(['-', value, minimum], maximum - minimum)
+	if (domain.midpoint === undefined) return linear
+	const midpoint = domain.midpoint
+	return ['case', ['<=', value, midpoint], ['*', 0.5, clamp(['-', value, minimum], midpoint - minimum)], ['+', 0.5, ['*', 0.5, clamp(['-', value, midpoint], maximum - midpoint)]]]
 }
 
 function abbreviatedNumberExpression(field: string): unknown[] {
