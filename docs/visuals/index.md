@@ -82,7 +82,7 @@ All entries below describe renderer-neutral compiled contracts. Unsupported comb
 
 Cartesian conditional formatting is mark-aware: `mark_fill`, `series_color`,
 `label_foreground`, and `icon` remain available on supported Cartesian marks.
-Row-level Cartesian stroke variation is unavailable in ECharts; use
+Row-level mark stroke variation is not part of the rendering contract; use
 `mark_fill` or a label/icon cue instead.
 
 Decision-context field references use stable dataset and field identities. Gradient domains, rule order, null/default outcomes, series order, colors, scale domains, zero policies, units, and tick density are explicit in the compiled IR. Bound titles, subtitles, descriptions, summaries, reference values, and accessibility text recompute when filters or data revisions change and use authored fallbacks when governed data is empty.
