@@ -186,10 +186,92 @@ func TestCompileVisualsValidatesProportionalConditionalFormattingTargets(t *test
 		})
 	}
 
-	visual := proportionalDashboardVisual(visualizationir.VisualizationConditionalTargetMarkStroke)
+	visual := proportionalDashboardVisual(visualizationir.VisualizationConditionalTarget("mark_stroke"))
 	_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"orders-share": visual})
-	if err == nil || !strings.Contains(err.Error(), `visual "orders-share" IR`) || !strings.Contains(err.Error(), `conditional formatting "revenue-gradient"`) || !strings.Contains(err.Error(), `target "mark_stroke" is incompatible with proportional visualizations`) {
+	if err == nil || !strings.Contains(err.Error(), `visual "orders-share" IR`) || !strings.Contains(err.Error(), `conditional formatting "revenue-gradient"`) || !strings.Contains(err.Error(), `unsupported target "mark_stroke"`) {
 		t.Fatalf("compileVisuals() error = %v, want path-bearing proportional target diagnostic", err)
+	}
+}
+
+func TestCompileVisualsRejectsConditionalFormattingTargetOutsideRenderedChannel(t *testing.T) {
+	format := pointGradientFormat("state", visualizationir.VisualizationConditionalTargetMarkFill)
+	visual := document.DashboardVisual{
+		Type: document.DashboardVisualTypeColumn,
+		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+			Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+			DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian", ConditionalFormatting: &[]document.DashboardConditionalFormat{format}}, Type: "cartesian",
+		}},
+	}
+	_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"orders": visual})
+	if err == nil || !strings.Contains(err.Error(), "conditional formatting \"state-gradient\" field: field \"state\" is not rendered by the cartesian y channel") {
+		t.Fatalf("compileVisuals() error = %v, want path-bearing rendered-channel diagnostic", err)
+	}
+}
+
+func TestCompileVisualsRejectsCartesianMarkStrokeTarget(t *testing.T) {
+	t.Parallel()
+
+	for _, visualType := range []document.DashboardVisualType{document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar} {
+		visualType := visualType
+		t.Run(string(visualType), func(t *testing.T) {
+			visual := document.DashboardVisual{
+				Type: visualType,
+				Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+					Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+				}},
+				Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+					DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian", ConditionalFormatting: &[]document.DashboardConditionalFormat{pointGradientFormat("revenue", visualizationir.VisualizationConditionalTarget("mark_stroke"))}}, Type: "cartesian",
+				}},
+			}
+			_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{string(visualType): visual})
+			if err == nil || !strings.Contains(err.Error(), "conditional formatting \"revenue-gradient\" target: unsupported target \"mark_stroke\"") {
+				t.Fatalf("compileVisuals() error = %v, want conditional-format ID/path mark-stroke diagnostic", err)
+			}
+		})
+	}
+}
+
+func TestCompileVisualsConditionalFormattingPreIRErrorIncludesIDAndPath(t *testing.T) {
+	format := pointGradientFormat("missing", visualizationir.VisualizationConditionalTargetMarkFill)
+	visual := document.DashboardVisual{
+		Type: document.DashboardVisualTypeColumn,
+		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+			Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+			DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian", ConditionalFormatting: &[]document.DashboardConditionalFormat{format}}, Type: "cartesian",
+		}},
+	}
+	_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"orders": visual})
+	if err == nil || !strings.Contains(err.Error(), "conditional formatting \"missing-gradient\" field: reference \"missing\" is not a compiled result field") {
+		t.Fatalf("compileVisuals() error = %v, want conditional-format ID and field path", err)
+	}
+}
+
+func TestCompileVisualsBindsWaterfallConditionalFormattingToMetricAlias(t *testing.T) {
+	alias := "order_total"
+	format := pointGradientFormat(alias, visualizationir.VisualizationConditionalTargetMarkFill)
+	visual := document.DashboardVisual{
+		Type: document.DashboardVisualTypeWaterfall,
+		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+			Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{Reference: &document.DashboardMetricReference{Metric: "revenue", Alias: &alias}}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+			DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian", ConditionalFormatting: &[]document.DashboardConditionalFormat{format}}, Type: "cartesian",
+		}},
+	}
+	compiled, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"waterfall": visual})
+	if err != nil {
+		t.Fatalf("compileVisuals() error = %v", err)
+	}
+	spec := compiled["waterfall"].Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	if len(spec.Y) != 2 || spec.Y[1].Field != alias {
+		t.Fatalf("waterfall metric refs = %#v, want metric alias %q at y[1]", spec.Y, alias)
+	}
+	if formats := spec.ConditionalFormatting; formats == nil || len(*formats) != 1 || (*formats)[0].Field.Field != alias {
+		t.Fatalf("waterfall conditional formats = %#v, want alias-bound format", formats)
 	}
 }
 

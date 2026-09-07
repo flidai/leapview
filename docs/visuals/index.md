@@ -81,11 +81,14 @@ All entries below describe renderer-neutral compiled contracts. Unsupported comb
 | Map | Renderer-owned geographic contract | No | No | No | No secondary context datasets |
 
 Conditional-format targets are closed by visual family. Point visuals accept only
-`mark_fill`; supported Cartesian marks retain `mark_fill`, `mark_stroke`,
-`series_color`, `label_foreground`, and `icon`. KPI accepts `visual_background`
+`mark_fill`; supported Cartesian marks retain `mark_fill`, `series_color`,
+`label_foreground`, and `icon`. KPI accepts `visual_background`
 and `kpi_value`, while table, matrix, and pivot accept `cell_foreground`,
 `cell_background`, and `icon`. Proportional visuals (`pie`, `donut`, and
-`funnel`) currently accept `mark_fill` and `series_color`.
+`funnel`) currently accept `mark_fill` and `series_color`. Cartesian conditional
+formatting is mark-aware across its supported marks.
+Row-level mark stroke variation is not part of the rendering contract; use
+`mark_fill` or a label/icon cue instead.
 
 Decision-context field references use stable dataset and field identities. Gradient domains, rule order, null/default outcomes, series order, colors, scale domains, zero policies, units, and tick density are explicit in the compiled IR. Bound titles, subtitles, descriptions, summaries, reference values, and accessibility text recompute when filters or data revisions change and use authored fallbacks when governed data is empty.
 

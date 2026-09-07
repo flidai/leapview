@@ -27,7 +27,8 @@ visuals:
 
 Bind a closed field or numeric rule to compiled result names. Color-driven
 categorical outcomes include a redundant icon cue so meaning is not conveyed by
-color alone.
+color alone. The target `field` must be one of the visible table columns; a
+field-rule `source` may use any field carried by the delivered row.
 
 {{< visual id="orders_table_conditional" >}}
 

@@ -83521,7 +83521,6 @@ components:
       type: string
       enum:
         - mark_fill
-        - mark_stroke
         - series_color
         - label_foreground
         - visual_background

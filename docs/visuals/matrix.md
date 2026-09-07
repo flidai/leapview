@@ -24,3 +24,7 @@ visuals:
       showHeader: true
       striped: false
 ```
+
+Conditional-format targets may name visible row fields or metric aliases.
+Column dimensions are used to generate the cross-tab headers and are not
+visible target columns.

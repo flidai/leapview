@@ -731,7 +731,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 		}
 		targets[targetKey] = struct{}{}
 		if err := validateConditionalFormattingTarget(base.Kind, format); err != nil {
-			return fmt.Errorf("conditional formatting %q: %w", format.ID, err)
+			return fmt.Errorf("conditional formatting %q target: %w", format.ID, err)
 		}
 		if base.Kind == "point" && format.Target == VisualizationConditionalTargetMarkFill {
 			if pointMarkFill {
@@ -740,6 +740,9 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 			pointMarkFill = true
 		}
 		if err := validateFieldRef(format.Field, schemas); err != nil {
+			return fmt.Errorf("conditional formatting %q field: %w", format.ID, err)
+		}
+		if err := validateConditionalFormattingApplicability(spec, format); err != nil {
 			return fmt.Errorf("conditional formatting %q field: %w", format.ID, err)
 		}
 		field, _ := visualizationField(format.Field, schemas)
@@ -796,6 +799,9 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 			if err := validateFieldRef(rule.Source, schemas); err != nil {
 				return fmt.Errorf("conditional formatting %q source: %w", format.ID, err)
 			}
+			if err := validateConditionalFormattingSource(spec, format); err != nil {
+				return fmt.Errorf("conditional formatting %q source: %w", format.ID, err)
+			}
 			if len(rule.Values) == 0 {
 				return fmt.Errorf("conditional formatting %q requires values", format.ID)
 			}
@@ -831,6 +837,126 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 				return fmt.Errorf("conditional formatting %q: %w", format.ID, err)
 			}
 		}
+	}
+	return nil
+}
+
+// validateConditionalFormattingApplicability keeps authored target bindings
+// honest about the channels a renderer actually emits. Schema membership alone
+// is insufficient: ECharts and the table adapter intentionally omit source
+// fields that do not participate in the visible mark or column.
+func validateConditionalFormattingApplicability(spec VisualizationSpec, format VisualizationConditionalFormat) error {
+	contains := func(refs []VisualizationFieldRef, target VisualizationFieldRef) bool {
+		for _, ref := range refs {
+			if ref.Dataset == target.Dataset && ref.Field == target.Field {
+				return true
+			}
+		}
+		return false
+	}
+	field := format.Field
+	switch value := spec.Value.(type) {
+	case *CartesianVisualizationSpec:
+		visible := value.Y
+		channel := "y"
+		switch value.Mark {
+		case VisualizationCartesianMarkHeatmap:
+			visible = nil
+			if len(value.Y) >= 2 {
+				visible = value.Y[1:2]
+			}
+			channel = "y[1] value"
+		case VisualizationCartesianMarkWaterfall:
+			visible = waterfallMetricRefs(value.Y)
+			channel = "value"
+		}
+		if !contains(visible, field) {
+			return fmt.Errorf("field %q is not rendered by the cartesian %s channel", field.Field, channel)
+		}
+	case *ProportionalVisualizationSpec:
+		if field.Dataset != value.Value.Dataset || field.Field != value.Value.Field {
+			return fmt.Errorf("field %q is not rendered by the proportional value channel", field.Field)
+		}
+	case *TableVisualizationSpec:
+		visible := make([]VisualizationFieldRef, 0, len(value.Columns))
+		for _, column := range value.Columns {
+			visible = append(visible, column.Field)
+		}
+		if !contains(visible, field) {
+			return fmt.Errorf("field %q is not a visible table column", field.Field)
+		}
+	case *MatrixVisualizationSpec:
+		if !contains(value.Rows, field) && !contains(value.Metrics, field) {
+			return fmt.Errorf("field %q is not a visible matrix row or metric alias", field.Field)
+		}
+	case *PivotVisualizationSpec:
+		if !contains(value.Rows, field) && !contains(value.Metrics, field) {
+			return fmt.Errorf("field %q is not a visible pivot row or metric alias", field.Field)
+		}
+	}
+	return nil
+}
+
+// waterfallMetricRefs returns the authored metric channel while tolerating
+// both the compiled [start, value] shape and older direct-IR [value, start]
+// fixtures. A malformed all-start shape falls back to its first reference so
+// validation remains safe and deterministic.
+func waterfallMetricRefs(refs []VisualizationFieldRef) []VisualizationFieldRef {
+	for index, ref := range refs {
+		if ref.Field != "start" {
+			return refs[index : index+1]
+		}
+	}
+	if len(refs) > 0 {
+		return refs[:1]
+	}
+	return nil
+}
+
+// validateConditionalFormattingSource limits field-rule sources to values
+// that are actually delivered in tabular rows. Other renderers intentionally
+// preserve full result rows, so their arbitrary source fields remain valid.
+func validateConditionalFormattingSource(spec VisualizationSpec, format VisualizationConditionalFormat) error {
+	rule, ok := format.Rule.Value.(*FieldVisualizationConditionalRule)
+	if !ok || rule == nil {
+		return nil
+	}
+	contains := func(refs []VisualizationFieldRef, target VisualizationFieldRef) bool {
+		for _, ref := range refs {
+			if ref.Dataset == target.Dataset && ref.Field == target.Field {
+				return true
+			}
+		}
+		return false
+	}
+	field := rule.Source
+	var delivered []VisualizationFieldRef
+	var kind string
+	switch value := spec.Value.(type) {
+	case *TableVisualizationSpec:
+		for _, column := range value.Columns {
+			delivered = append(delivered, column.Field)
+		}
+		kind = "table"
+	case *MatrixVisualizationSpec:
+		if contains(value.Rows, format.Field) && contains(value.Metrics, field) {
+			return fmt.Errorf("metric source %q cannot drive matrix row target %q; metric aliases are emitted only as generated cells", field.Field, format.Field.Field)
+		}
+		delivered = append(delivered, value.Rows...)
+		delivered = append(delivered, value.Metrics...)
+		kind = "matrix"
+	case *PivotVisualizationSpec:
+		if contains(value.Rows, format.Field) && contains(value.Metrics, field) {
+			return fmt.Errorf("metric source %q cannot drive pivot row target %q; metric aliases are emitted only as generated cells", field.Field, format.Field.Field)
+		}
+		delivered = append(delivered, value.Rows...)
+		delivered = append(delivered, value.Metrics...)
+		kind = "pivot"
+	default:
+		return nil
+	}
+	if !contains(delivered, field) {
+		return fmt.Errorf("field %q is not delivered in %s rows", field.Field, kind)
 	}
 	return nil
 }
@@ -883,7 +1009,7 @@ func validateConditionalFormattingTarget(kind string, format VisualizationCondit
 	}
 
 	switch format.Target {
-	case VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetMarkStroke, VisualizationConditionalTargetSeriesColor:
+	case VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetSeriesColor:
 		if kind == "kpi" || kind == "table" || kind == "matrix" || kind == "pivot" {
 			return fmt.Errorf("target %q is incompatible with %s visualizations", format.Target, kind)
 		}
