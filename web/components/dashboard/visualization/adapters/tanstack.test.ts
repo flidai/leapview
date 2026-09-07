@@ -128,10 +128,10 @@ test('TanStack matrix adapter projects metric aliases onto visible generated col
         { id: 'status', role: 'dimension', dataType: 'string', nullable: true, label: 'Hidden column' },
         { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: true, label: 'Revenue' },
       ] }], dataBudget: { maxRows: 1000, requiredCompleteness: 'partial' }, accessibility: { title: 'Matrix', description: 'Matrix' }, interactions: [],
-      rows: [{ dataset: 'primary', field: 'state' }], columns: [{ dataset: 'primary', field: 'status' }], metrics: [{ dataset: 'primary', field: 'revenue' }], metricFormatting: {},
+      rows: [{ dataset: 'primary', field: 'state' }], columns: [{ dataset: 'primary', field: 'status' }], metrics: [{ dataset: 'primary', field: 'revenue' }, { dataset: 'primary', field: 'orders' }], metricFormatting: {},
       conditionalFormatting: [{
         id: 'revenue-health', target: 'cell_background', field: { dataset: 'primary', field: 'revenue' },
-        rule: { kind: 'field', source: { dataset: 'primary', field: 'revenue' }, values: { late: { color: 'danger', icon: 'warning' } }, nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'circle' } },
+        rule: { kind: 'field', source: { dataset: 'primary', field: 'orders' }, values: { late: { color: 'danger', icon: 'warning' } }, nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'circle' } },
       }],
       presentation: { rowHeight: 34, striped: true, showHeader: true },
     },
@@ -141,17 +141,40 @@ test('TanStack matrix adapter projects metric aliases onto visible generated col
         { id: 'state', role: 'identity', dataType: 'string', nullable: true, label: 'State', grid: { formatting: [] } },
         { id: 'status', role: 'dimension', dataType: 'string', nullable: true, label: 'Hidden column', grid: { group: 'Hidden', columnValue: 'Delivered', formatting: [] } },
         { id: 'delivered__revenue', role: 'metric', dataType: 'decimal', nullable: true, label: 'Delivered revenue', grid: { group: 'Delivered', metric: 'revenue', columnValue: 'delivered', formatting: [] } },
+        { id: 'delivered__orders', role: 'metric', dataType: 'decimal', nullable: true, label: 'Delivered orders', grid: { group: 'Orders', metric: 'orders', columnValue: 'delivered', formatting: [] } },
+        { id: 'shipped__revenue', role: 'metric', dataType: 'decimal', nullable: true, label: 'Shipped revenue', grid: { group: 'Revenue', metric: 'revenue', columnValue: 'shipped', formatting: [] } },
+        { id: 'shipped__orders', role: 'metric', dataType: 'decimal', nullable: true, label: 'Shipped orders', grid: { group: 'Orders', metric: 'orders', columnValue: 'shipped', formatting: [] } },
       ] },
       cardinality: { kind: 'exact', count: 1 }, availableRows: 1, rowCap: 1000, chunkSize: 50, resetVersion: 1,
       sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }],
-      blocks: { a: { id: 'a', start: 0, rows: [['SP', 'delivered', 42]], requestSeq: 1, resetVersion: 1, sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }] } },
+      blocks: { a: { id: 'a', start: 0, rows: [['SP', 'delivered', 42, 3, 55, 4]], requestSeq: 1, resetVersion: 1, sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }] } },
     }, selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
 
   const table = tableSignal(envelope)
-  expect(table.columns.map((column) => column.key)).toEqual(['state', 'delivered__revenue'])
+  expect(table.columns.map((column) => column.key)).toEqual(['state', 'delivered__revenue', 'shipped__revenue', 'delivered__orders', 'shipped__orders'])
   expect(table.columns[1]?.conditionalFormatting?.[0]).toMatchObject({
     id: 'revenue-health', field: { dataset: 'primary', field: 'delivered__revenue' },
-    rule: { kind: 'field', source: { dataset: 'primary', field: 'delivered__revenue' } },
+    rule: { kind: 'field', source: { dataset: 'primary', field: 'delivered__orders' } },
   })
+  expect(table.columns[2]?.conditionalFormatting?.[0]).toMatchObject({
+    id: 'revenue-health', field: { dataset: 'primary', field: 'shipped__revenue' },
+    rule: { kind: 'field', source: { dataset: 'primary', field: 'shipped__orders' } },
+  })
+
+  const pivotEnvelope = { ...envelope, visualID: 'pivot-conditional', spec: { ...envelope.spec, kind: 'pivot' as const } } as VisualizationEnvelope
+  const pivotTable = tableSignal(pivotEnvelope)
+  expect(pivotTable.columns[1]?.conditionalFormatting?.[0]).toMatchObject({
+    rule: { kind: 'field', source: { dataset: 'primary', field: 'delivered__orders' } },
+  })
+
+  const windowed = envelope.dataState as Extract<VisualizationEnvelope['dataState'], { kind: 'windowed' }>
+  const crossCategory = {
+    ...envelope,
+    dataState: {
+      ...windowed,
+      schema: { ...windowed.schema, fields: windowed.schema.fields.filter((field) => field.id !== 'delivered__orders') },
+    },
+  } as VisualizationEnvelope
+  expect(() => tableSignal(crossCategory)).toThrow(/cannot be validated for generated column "delivered__revenue"/)
 })

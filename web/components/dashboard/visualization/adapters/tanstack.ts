@@ -181,7 +181,7 @@ function conditionalFormatsForField(
 
     // Pivot/matrix result frames replace authored metric aliases with generated
     // cells. Resolve a field-rule source to the generated cell in the same
-    // column group; do not guess another group's cell when it is absent.
+    // pivot category; grid.group is the metric label, not the category.
     const current = schemaFields.find((candidate) => candidate.id === field)
     const currentGrid = current?.grid
     const currentIsGenerated = currentGrid?.metric !== undefined && currentGrid.metric !== current?.id
@@ -189,9 +189,11 @@ function conditionalFormatsForField(
     const sourceField = target.rule.source.field
     const source = schemaFields.find((candidate) => {
       const candidateMetric = candidate.grid?.metric ?? candidate.id
-      return candidateMetric === sourceField && candidate.grid?.columnValue === currentGrid?.columnValue && candidate.grid?.group === currentGrid?.group
+      return candidateMetric === sourceField && candidate.grid?.columnValue !== undefined && candidate.grid.columnValue === currentGrid?.columnValue
     })
-    if (!source) return []
+    if (!source) {
+      throw new Error(`conditional formatting ${JSON.stringify(target.id)} source ${JSON.stringify(sourceField)} cannot be validated for generated column ${JSON.stringify(field)}`)
+    }
     if (source.id === sourceField) return [target]
     return [{ ...target, rule: { ...target.rule, source: { dataset, field: source.id } } }]
   })
