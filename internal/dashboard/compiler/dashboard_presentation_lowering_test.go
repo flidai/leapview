@@ -23,7 +23,7 @@ func TestLowerCanonicalCartesianPresentationPreservesEveryField(t *testing.T) {
 	position := document.DashboardLabelPositionInside
 	units := visualizationir.VisualizationDisplayUnitsMillions
 	value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", Legend: &legend, Labels: &labels, Stacking: &stacking, Orientation: &orientation, ShowSymbols: &showSymbols, Smooth: &smooth, DataZoom: &dataZoom, SymbolSize: &symbolSize, LabelPosition: &position, DisplayUnits: &units}}
-	lowered, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeBar)
+	lowered, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeLine)
 	if err != nil {
 		t.Fatalf("lower presentation: %v", err)
 	}
@@ -741,7 +741,7 @@ func TestLowerCanonicalComboPresentationRejectsUnknownDuplicateAndInapplicableSe
 		{name: "unknown result", visualType: document.DashboardVisualTypeCombo, series: []document.DashboardComboSeries{{Field: "missing", Mark: document.DashboardComboSeriesMark("line"), Axis: document.DashboardComboSeriesAxis("primary")}}, want: "not a compiled result field"},
 		{name: "duplicate result", visualType: document.DashboardVisualTypeCombo, series: []document.DashboardComboSeries{{Field: "revenue", Mark: document.DashboardComboSeriesMark("line"), Axis: document.DashboardComboSeriesAxis("primary")}, {Field: "revenue", Mark: document.DashboardComboSeriesMark("area"), Axis: document.DashboardComboSeriesAxis("secondary")}}, want: "duplicates"},
 		{name: "empty series", visualType: document.DashboardVisualTypeCombo, series: []document.DashboardComboSeries{}, want: "at least one entry"},
-		{name: "non combo visual", visualType: document.DashboardVisualTypeLine, series: []document.DashboardComboSeries{{Field: "revenue", Mark: document.DashboardComboSeriesMark("line"), Axis: document.DashboardComboSeriesAxis("primary")}}, want: "only supported for combo"},
+		{name: "non combo visual", visualType: document.DashboardVisualTypeLine, series: []document.DashboardComboSeries{{Field: "revenue", Mark: document.DashboardComboSeriesMark("line"), Axis: document.DashboardComboSeriesAxis("primary")}}, want: "presentation.series is not supported for line visuals"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

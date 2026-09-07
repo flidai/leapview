@@ -37,6 +37,21 @@ Policies also bound label length by Unicode grapheme, set minimum collision spac
 
 ## Per-mark presentation
 
+Cartesian marks all support the common `labels`, `labelPosition`, `displayUnits`, and `axes` fields. Mark-specific fields are scoped to the renderer paths that consume them:
+
+| Mark | Mark-specific presentation fields |
+| --- | --- |
+| Line | `legend`, `stacking`, `orientation`, `showSymbols`, `smooth`, `step`, `dataZoom`, `symbolSize`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Area | `legend`, `stacking`, `orientation`, `showSymbols`, `smooth`, `step`, `dataZoom`, `symbolSize`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Bar | `legend`, `stacking`, `dataZoom`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Column | `legend`, `stacking`, `orientation`, `dataZoom`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Combo | `legend`, `stacking`, `orientation`, `dataZoom`, `series`, `referenceLines`, `referenceBands`, `eventAnnotations`; conditional line controls (`showSymbols`, `smooth`, `step`, `symbolSize`) apply with the default line series or when a configured series is line or area |
+| Waterfall | `dataZoom`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Heatmap | No additional mark-specific fields |
+| Histogram | `dataZoom` |
+| Candlestick | `legend`, `dataZoom` |
+| Boxplot | `dataZoom` |
+
 Proportional and polar presentations share the common `legend`, `labels`, and `displayUnits` fields where those channels are meaningful. Mark-specific fields are intentionally scoped to the marks that can render them:
 
 | Mark | Mark-specific presentation fields |
