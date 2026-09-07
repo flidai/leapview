@@ -138,6 +138,23 @@ func TestCompileVisualsRejectsConditionalFormattingTargetOutsideRenderedChannel(
 	}
 }
 
+func TestCompileVisualsConditionalFormattingPreIRErrorIncludesIDAndPath(t *testing.T) {
+	format := pointGradientFormat("missing", visualizationir.VisualizationConditionalTargetMarkFill)
+	visual := document.DashboardVisual{
+		Type: document.DashboardVisualTypeColumn,
+		Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+			Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: stringPtr("state")}}, Metrics: []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+			DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian", ConditionalFormatting: &[]document.DashboardConditionalFormat{format}}, Type: "cartesian",
+		}},
+	}
+	_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"orders": visual})
+	if err == nil || !strings.Contains(err.Error(), "conditional formatting \"missing-gradient\" field: reference \"missing\" is not a compiled result field") {
+		t.Fatalf("compileVisuals() error = %v, want conditional-format ID and field path", err)
+	}
+}
+
 func TestCompileVisualsBindsWaterfallConditionalFormattingToMetricAlias(t *testing.T) {
 	alias := "order_total"
 	format := pointGradientFormat(alias, visualizationir.VisualizationConditionalTargetMarkFill)

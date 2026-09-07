@@ -131,7 +131,7 @@ test('TanStack matrix adapter projects metric aliases onto visible generated col
       rows: [{ dataset: 'primary', field: 'state' }], columns: [{ dataset: 'primary', field: 'status' }], metrics: [{ dataset: 'primary', field: 'revenue' }], metricFormatting: {},
       conditionalFormatting: [{
         id: 'revenue-health', target: 'cell_background', field: { dataset: 'primary', field: 'revenue' },
-        rule: { kind: 'rules', rules: [{ operator: 'less_than', value: 50, style: { color: 'danger', icon: 'warning' } }], nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'circle' } },
+        rule: { kind: 'field', source: { dataset: 'primary', field: 'revenue' }, values: { late: { color: 'danger', icon: 'warning' } }, nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'circle' } },
       }],
       presentation: { rowHeight: 34, striped: true, showHeader: true },
     },
@@ -152,5 +152,6 @@ test('TanStack matrix adapter projects metric aliases onto visible generated col
   expect(table.columns.map((column) => column.key)).toEqual(['state', 'delivered__revenue'])
   expect(table.columns[1]?.conditionalFormatting?.[0]).toMatchObject({
     id: 'revenue-health', field: { dataset: 'primary', field: 'delivered__revenue' },
+    rule: { kind: 'field', source: { dataset: 'primary', field: 'delivered__revenue' } },
   })
 })

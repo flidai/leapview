@@ -764,6 +764,9 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 			if err := validateFieldRef(rule.Source, schemas); err != nil {
 				return fmt.Errorf("conditional formatting %q source: %w", format.ID, err)
 			}
+			if err := validateConditionalFormattingSource(spec, format); err != nil {
+				return fmt.Errorf("conditional formatting %q source: %w", format.ID, err)
+			}
 			if len(rule.Values) == 0 {
 				return fmt.Errorf("conditional formatting %q requires values", format.ID)
 			}
@@ -829,11 +832,8 @@ func validateConditionalFormattingApplicability(spec VisualizationSpec, format V
 			}
 			channel = "y[1] value"
 		case VisualizationCartesianMarkWaterfall:
-			visible = nil
-			if len(value.Y) >= 2 {
-				visible = value.Y[1:2]
-			}
-			channel = "y[1] metric"
+			visible = waterfallMetricRefs(value.Y)
+			channel = "value"
 		}
 		if !contains(visible, field) {
 			return fmt.Errorf("field %q is not rendered by the cartesian %s channel", field.Field, channel)
@@ -858,6 +858,64 @@ func validateConditionalFormattingApplicability(spec VisualizationSpec, format V
 		if !contains(value.Rows, field) && !contains(value.Metrics, field) {
 			return fmt.Errorf("field %q is not a visible pivot row or metric alias", field.Field)
 		}
+	}
+	return nil
+}
+
+// waterfallMetricRefs returns the authored metric channel while tolerating
+// both the compiled [start, value] shape and older direct-IR [value, start]
+// fixtures. A malformed all-start shape falls back to its first reference so
+// validation remains safe and deterministic.
+func waterfallMetricRefs(refs []VisualizationFieldRef) []VisualizationFieldRef {
+	for index, ref := range refs {
+		if ref.Field != "start" {
+			return refs[index : index+1]
+		}
+	}
+	if len(refs) > 0 {
+		return refs[:1]
+	}
+	return nil
+}
+
+// validateConditionalFormattingSource limits field-rule sources to values
+// that are actually delivered in tabular rows. Other renderers intentionally
+// preserve full result rows, so their arbitrary source fields remain valid.
+func validateConditionalFormattingSource(spec VisualizationSpec, format VisualizationConditionalFormat) error {
+	rule, ok := format.Rule.Value.(*FieldVisualizationConditionalRule)
+	if !ok || rule == nil {
+		return nil
+	}
+	contains := func(refs []VisualizationFieldRef, target VisualizationFieldRef) bool {
+		for _, ref := range refs {
+			if ref.Dataset == target.Dataset && ref.Field == target.Field {
+				return true
+			}
+		}
+		return false
+	}
+	field := rule.Source
+	var delivered []VisualizationFieldRef
+	var kind string
+	switch value := spec.Value.(type) {
+	case *TableVisualizationSpec:
+		for _, column := range value.Columns {
+			delivered = append(delivered, column.Field)
+		}
+		kind = "table"
+	case *MatrixVisualizationSpec:
+		delivered = append(delivered, value.Rows...)
+		delivered = append(delivered, value.Metrics...)
+		kind = "matrix"
+	case *PivotVisualizationSpec:
+		delivered = append(delivered, value.Rows...)
+		delivered = append(delivered, value.Metrics...)
+		kind = "pivot"
+	default:
+		return nil
+	}
+	if !contains(delivered, field) {
+		return fmt.Errorf("field %q is not delivered in %s rows", field.Field, kind)
 	}
 	return nil
 }

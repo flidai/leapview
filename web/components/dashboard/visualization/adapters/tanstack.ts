@@ -64,7 +64,8 @@ export function tableSignal(envelope: VisualizationEnvelope): TableSignal {
     const metricKey = field?.grid?.metric ?? ref.field
     const metricFormatting = spec.kind === 'matrix' || spec.kind === 'pivot' ? spec.metricFormatting[metricKey] : undefined
     const gridFormatting = field?.grid?.formatting
-    const conditionalFormatting = conditionalFormatsForField(spec.conditionalFormatting ?? [], ref.dataset, ref.field, metricKey)
+    const metricAliases = spec.kind === 'matrix' || spec.kind === 'pivot' ? spec.metrics.map((metric) => metric.field) : []
+    const conditionalFormatting = conditionalFormatsForField(spec.conditionalFormatting ?? [], ref.dataset, ref.field, metricKey, schema?.fields ?? [], metricAliases)
     const grid = authored ?? field?.grid
 	return tableColumn(field, authored?.label, authored?.width, authored?.formatting ?? (gridFormatting?.length ? gridFormatting : metricFormatting), grid ? { ...grid, metric: metricKey } : { metric: metricKey }, conditionalFormatting)
   })
@@ -167,13 +168,32 @@ function tableColumn(
 function conditionalFormatsForField(
   formats: VisualizationConditionalFormat[],
   dataset: string,
-  field: string,
+	field: string,
 	metric: string,
+	schemaFields: VisualizationField[],
+	metricAliases: string[],
 ): VisualizationConditionalFormat[] {
   return formats.flatMap((format) => {
-		if (format.field.dataset !== dataset || (format.field.field !== field && format.field.field !== metric)) return []
-    if (format.field.field === field) return [format]
-    return [{ ...format, field: { dataset, field } }]
+    if (format.field.dataset !== dataset || (format.field.field !== field && format.field.field !== metric)) return []
+    const target = format.field.field === field ? format : { ...format, field: { dataset, field } }
+    if (target.rule.kind !== 'field') return [target]
+    if (target.rule.source.dataset !== dataset || !metricAliases.includes(target.rule.source.field)) return [target]
+
+    // Pivot/matrix result frames replace authored metric aliases with generated
+    // cells. Resolve a field-rule source to the generated cell in the same
+    // column group; do not guess another group's cell when it is absent.
+    const current = schemaFields.find((candidate) => candidate.id === field)
+    const currentGrid = current?.grid
+    const currentIsGenerated = currentGrid?.metric !== undefined && currentGrid.metric !== current?.id
+    if (!currentIsGenerated) return [target]
+    const sourceField = target.rule.source.field
+    const source = schemaFields.find((candidate) => {
+      const candidateMetric = candidate.grid?.metric ?? candidate.id
+      return candidateMetric === sourceField && candidate.grid?.columnValue === currentGrid?.columnValue && candidate.grid?.group === currentGrid?.group
+    })
+    if (!source) return []
+    if (source.id === sourceField) return [target]
+    return [{ ...target, rule: { ...target.rule, source: { dataset, field: source.id } } }]
   })
 }
 

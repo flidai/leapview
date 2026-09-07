@@ -224,7 +224,7 @@ func TestValidateSpecRejectsConditionalFormattingTargetsOutsideVisibleChannels(t
 	}{
 		{name: "cartesian y channel", valid: cartesian(VisualizationCartesianMarkColumn, []VisualizationFieldRef{ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkColumn, []VisualizationFieldRef{ref("value")}, format("x", VisualizationConditionalTargetMarkFill)), want: "not rendered by the cartesian y channel"},
 		{name: "heatmap value channel", valid: cartesian(VisualizationCartesianMarkHeatmap, []VisualizationFieldRef{ref("row"), ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkHeatmap, []VisualizationFieldRef{ref("row"), ref("value")}, format("row", VisualizationConditionalTargetMarkFill)), want: "cartesian y[1] value channel"},
-		{name: "waterfall metric channel", valid: cartesian(VisualizationCartesianMarkWaterfall, []VisualizationFieldRef{ref("start"), ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkWaterfall, []VisualizationFieldRef{ref("start"), ref("value")}, format("start", VisualizationConditionalTargetMarkFill)), want: "cartesian y[1] metric channel"},
+		{name: "waterfall metric channel", valid: cartesian(VisualizationCartesianMarkWaterfall, []VisualizationFieldRef{ref("start"), ref("value")}, format("value", VisualizationConditionalTargetMarkFill)), invalid: cartesian(VisualizationCartesianMarkWaterfall, []VisualizationFieldRef{ref("start"), ref("value")}, format("start", VisualizationConditionalTargetMarkFill)), want: "cartesian value channel"},
 		{name: "proportional value channel", valid: proportional("value", "row"), invalid: proportional("row", "row"), want: "proportional value channel"},
 		{name: "table visible column", valid: table("table", "value", []string{"value"}), invalid: table("table", "column", []string{"value"}), want: "visible table column"},
 		{name: "matrix metric alias", valid: table("matrix", "metric", nil), invalid: table("matrix", "column", nil), want: "visible matrix row or metric alias"},
@@ -240,5 +240,92 @@ func TestValidateSpecRejectsConditionalFormattingTargetsOutsideVisibleChannels(t
 				t.Fatalf("ValidateSpec() error = %v, want containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestValidateSpecAcceptsDirectIRWaterfallValueBeforeStart(t *testing.T) {
+	t.Parallel()
+	ref := func(field string) VisualizationFieldRef {
+		return VisualizationFieldRef{Dataset: "primary", Field: field}
+	}
+	color := VisualizationColorIntentDanger
+	format := VisualizationConditionalFormat{
+		ID: "value", Target: VisualizationConditionalTargetMarkFill, Field: ref("value"),
+		Rule: VisualizationConditionalRule{Value: &GradientVisualizationConditionalRule{
+			VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "gradient"}, Kind: "gradient", Minimum: 0, Maximum: 1,
+			Low: VisualizationConditionalStyle{Color: &color}, High: VisualizationConditionalStyle{Color: &color}, NullStyle: VisualizationConditionalStyle{Color: &color},
+		}},
+	}
+	base := VisualizationSpecBase{
+		Kind: "cartesian", Title: "Waterfall", Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "label", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Label"},
+			{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Value"},
+			{ID: "start", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Start"},
+		}}},
+		DataBudget: VisualizationDataBudget{MaxRows: 10, RequiredCompleteness: VisualizationCompletenessComplete}, Accessibility: VisualizationAccessibility{Title: "Waterfall", Description: "Waterfall"},
+		Interactions: []VisualizationInteraction{}, ConditionalFormatting: &[]VisualizationConditionalFormat{format},
+	}
+	spec := VisualizationSpec{Value: &CartesianVisualizationSpec{
+		VisualizationSpecBase: base, Kind: "cartesian", Mark: VisualizationCartesianMarkWaterfall, X: ref("label"), Y: []VisualizationFieldRef{ref("value"), ref("start")},
+		Presentation: CartesianVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionBottom)},
+	}}
+	if err := ValidateSpec(spec); err != nil {
+		t.Fatalf("direct-IR waterfall [value, start] rejected: %v", err)
+	}
+}
+
+func TestValidateSpecRejectsUndeliveredConditionalFormattingSources(t *testing.T) {
+	t.Parallel()
+	ref := func(field string) VisualizationFieldRef {
+		return VisualizationFieldRef{Dataset: "primary", Field: field}
+	}
+	color := VisualizationColorIntentDanger
+	icon := VisualizationIconIntentWarning
+	fieldRule := func(source string) VisualizationConditionalFormat {
+		return VisualizationConditionalFormat{
+			ID: "source-check", Target: VisualizationConditionalTargetCellBackground, Field: ref("value"),
+			Rule: VisualizationConditionalRule{Value: &FieldVisualizationConditionalRule{
+				VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "field"}, Kind: "field", Source: ref(source),
+				Values: map[string]VisualizationConditionalStyle{"late": {Color: &color, Icon: &icon}}, NullStyle: VisualizationConditionalStyle{Color: &color, Icon: &icon}, DefaultStyle: VisualizationConditionalStyle{Color: &color, Icon: &icon},
+			}},
+		}
+	}
+	base := func(kind string, formats []VisualizationConditionalFormat) VisualizationSpecBase {
+		return VisualizationSpecBase{
+			Kind: kind, Title: kind, Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+				{ID: "row", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Row"},
+				{ID: "column", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Column"},
+				{ID: "status", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Status"},
+				{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Value"},
+				{ID: "hidden_calculation", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Hidden calculation", Provenance: &VisualizationFieldProvenance{Kind: VisualizationFieldProvenanceKindVisualCalculation}},
+			}}},
+			DataBudget: VisualizationDataBudget{MaxRows: 10, RequiredCompleteness: VisualizationCompletenessComplete}, Accessibility: VisualizationAccessibility{Title: kind, Description: kind},
+			Interactions: []VisualizationInteraction{}, ConditionalFormatting: &formats,
+		}
+	}
+	presentation := GridVisualizationPresentation{RowHeight: 28, ShowHeader: true}
+	table := func(source string, columns []VisualizationFieldRef) VisualizationSpec {
+		return VisualizationSpec{Value: &TableVisualizationSpec{VisualizationSpecBase: base("table", []VisualizationConditionalFormat{fieldRule(source)}), Kind: "table", Columns: func() []TableVisualizationColumn {
+			result := make([]TableVisualizationColumn, len(columns))
+			for index, column := range columns {
+				result[index] = TableVisualizationColumn{Field: column, Label: column.Field}
+			}
+			return result
+		}(), Presentation: presentation}}
+	}
+	pivot := func(source string) VisualizationSpec {
+		return VisualizationSpec{Value: &PivotVisualizationSpec{VisualizationSpecBase: base("pivot", []VisualizationConditionalFormat{fieldRule(source)}), Kind: "pivot", Rows: []VisualizationFieldRef{ref("row")}, Columns: []VisualizationFieldRef{ref("column")}, Metrics: []VisualizationFieldRef{ref("value")}, MetricFormatting: map[string][]TableVisualizationFormattingRule{}, Presentation: presentation}}
+	}
+	if err := ValidateSpec(table("status", []VisualizationFieldRef{ref("value"), ref("status")})); err != nil {
+		t.Fatalf("delivered detail-table source rejected: %v", err)
+	}
+	if err := ValidateSpec(table("hidden_calculation", []VisualizationFieldRef{ref("value")})); err == nil || !strings.Contains(err.Error(), "source: field \"hidden_calculation\" is not delivered in table rows") {
+		t.Fatalf("hidden detail calculation source error = %v", err)
+	}
+	if err := ValidateSpec(pivot("column")); err == nil || !strings.Contains(err.Error(), "source: field \"column\" is not delivered in pivot rows") {
+		t.Fatalf("hidden pivot column source error = %v", err)
+	}
+	if err := ValidateSpec(pivot("value")); err != nil {
+		t.Fatalf("delivered pivot metric source rejected: %v", err)
 	}
 }

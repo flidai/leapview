@@ -280,6 +280,22 @@ test('ECharts binds waterfall formatting to the authored metric alias and line s
   }
 })
 
+test('ECharts keeps direct-IR waterfall metric before the start offset', () => {
+  const waterfall = cartesianFixture('waterfall', ['label', 'value', 'start']) as any
+  waterfall.spec.conditionalFormatting = [{
+    id: 'delta', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'rules', rules: [{ operator: 'less_than', value: 0, style: { color: 'danger', icon: 'arrow_down' } }],
+      nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'arrow_up' },
+    },
+  }]
+  waterfall.dataState.datasets[0].rows = [['Returns', -4, 10]]
+  const option = echartsOption(waterfall, defaultRendererContext) as any
+  expect(option.series[0].encode.y).toBe('start')
+  expect(option.series[1].encode.y).toBe('value')
+  expect(option.series[1].itemStyle.color({ value: ['Returns', -4, 10] })).toBe(defaultRendererContext.colors.danger)
+})
+
 test('ECharts interactions translate stable IR field mappings without renderer row keys', () => {
   const envelope = {
     schemaVersion: 9, visualID: 'orders', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 7,

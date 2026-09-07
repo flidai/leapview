@@ -34,10 +34,11 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     return { ...axes, dataZoom, series: [{ id: seriesID(value?.dataset, value?.field), type: 'bar', encode: { x: spec.x.field, y: value?.field }, ...chartLabel(envelope, value, spec, context) }] }
   }
   if (spec.mark === 'waterfall') {
-    const start = spec.y.find((item) => item.field === 'start')
-    // The first channel is the invisible offset; y[1] is the authored metric
-    // regardless of its result alias.
-    const value = spec.y[1]
+    // The generated shape is [start, metric], while older direct IR may use
+    // [metric, start]. Bind the visible series to the first non-offset field
+    // and retain a safe fallback for malformed/direct fixtures.
+    const value = spec.y.find((item) => item.field !== 'start') ?? spec.y[0]
+    const start = spec.y.find((item) => item.field === 'start') ?? spec.y[0]
     const fill = value
       ? conditionalItemColor(envelope, value, 'mark_fill', context) ?? conditionalItemColor(envelope, value, 'series_color', context)
       : undefined
