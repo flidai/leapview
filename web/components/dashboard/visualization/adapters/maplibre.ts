@@ -67,6 +67,14 @@ export function mapVisibleDataSummary(visibleRows: number, aggregateRows: number
   }
 }
 
+export function tiledPointLabelFilter(labelField: string, aggregateMembers = false): any {
+  return ['all', ['!', ['has', 'point_count']], ['!', ['boolean', ['get', '__lv_aggregate'], false]], ...(aggregateMembers ? [['==', ['boolean', ['get', '__lv_clustered'], false], false]] : []), ['!=', ['get', labelField], '']]
+}
+
+export function dataLabelLayerID(layerID: string, aggregateMembers = false): string {
+  return `${layerID}-data-label${aggregateMembers ? '-aggregate' : ''}`
+}
+
 export function vectorTileTemplateURL(template: string, base: string): string {
   return new URL(template, base).toString()
     .replaceAll('%7Bz%7D', '{z}')
@@ -500,7 +508,10 @@ export class MapLibreHandle implements RendererHandle {
 				this.tiledAggregateLayerIDs.push(countID)
 				this.selectableLayerIDs.push(countID)
 			}
-      if (layer.kind === 'point' && layer.label) this.tiledRawLayerIDs.push(this.addDataLabelLayer(this.tiledSourceID, layer, true))
+			if (layer.kind === 'point' && layer.label) {
+				this.tiledRawLayerIDs.push(this.addDataLabelLayer(this.tiledSourceID, layer, true, false, id))
+				this.tiledAggregateLayerIDs.push(this.addDataLabelLayer(this.tiledSourceID, layer, true, true, id))
+			}
       if (layer.kind === 'point') this.selectableLayerIDs.push(id)
       if (layer.tooltip.length > 0) this.tooltipLayerIDs.push(id)
       return { type: 'FeatureCollection', features: [] }
@@ -693,11 +704,12 @@ export class MapLibreHandle implements RendererHandle {
     this.clusterSources.set(countID, sourceID)
   }
 
-	private addDataLabelLayer(sourceID: string, layer: Extract<VisualizationGeographicLayer, { kind: 'point' | 'choropleth' }>, tiled = false): string {
-    const id = `${sourceID}-data-label`
+	private addDataLabelLayer(sourceID: string, layer: Extract<VisualizationGeographicLayer, { kind: 'point' | 'choropleth' }>, tiled = false, aggregateMembers = false, layerID = sourceID): string {
+		const id = dataLabelLayerID(layerID, aggregateMembers)
     const labelField = tiled && layer.label ? layer.label.field : '__lv_label'
     const colors = this.currentDataLabelColors()
-    this.map.addLayer({ id, source: sourceID, ...(tiled ? { 'source-layer': 'primary' } : {}), type: 'symbol', filter: layer.kind === 'point' ? ['all', ['!', ['has', 'point_count']], ['!', ['boolean', ['get', '__lv_aggregate'], false]], ['!=', ['get', labelField], '']] : ['!=', ['get', labelField], ''], minzoom: layer.visibility.minimumZoom, maxzoom: layer.visibility.maximumZoom, layout: {
+    const pointFilter = tiledPointLabelFilter(labelField, aggregateMembers)
+    this.map.addLayer({ id, source: sourceID, ...(tiled ? { 'source-layer': 'primary' } : {}), type: 'symbol', filter: layer.kind === 'point' ? pointFilter : ['!=', ['get', labelField], ''], minzoom: layer.visibility.minimumZoom, maxzoom: layer.visibility.maximumZoom, layout: {
       'text-field': ['get', labelField], 'text-font': ['Noto Sans Medium'], 'text-size': 11, 'text-offset': [0, layer.kind === 'point' ? 1.25 : 0], 'text-anchor': layer.kind === 'point' ? 'top' : 'center', 'text-optional': true,
       ...(layer.kind === 'point' ? { 'text-padding': tiled ? 20 : 8, 'symbol-sort-key': ['-', ['to-number', ['get', '__lv_weight'], 0]] } : {}),
     }, paint: { 'text-color': colors.text, 'text-halo-color': colors.halo, 'text-halo-width': 1.25 } })
@@ -840,7 +852,7 @@ export class MapLibreHandle implements RendererHandle {
     const property = this.envelope?.dataState.kind === 'spatial_tiled' ? value.field : '__lv_value'
     const rangeFilter = mapValueFilterExpression(property, range)
     const rootID = `lv-${layer.id}`
-    const candidateIDs = [rootID, `${rootID}-aggregate`, `${rootID}-aggregate-count`, `${rootID}-data-label`, `${rootID}-selected-outline`]
+	const candidateIDs = [rootID, `${rootID}-aggregate`, `${rootID}-aggregate-count`, `${rootID}-data-label`, `${rootID}-data-label-aggregate`, `${rootID}-selected-outline`]
     for (const id of candidateIDs) {
       if (!this.map.getLayer(id)) continue
       if (!this.legendBaseFilters.has(id)) this.legendBaseFilters.set(id, this.map.getFilter(id) ?? null)

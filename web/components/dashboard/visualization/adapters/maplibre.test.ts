@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
-import { aggregateExpansionCamera, applyBasemapTheme, applyDataLabelTheme, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapDataLabelColors, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setMapStyleAndWait, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
+import { aggregateExpansionCamera, applyBasemapTheme, applyDataLabelTheme, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, dataLabelLayerID, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapDataLabelColors, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setMapStyleAndWait, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPointLabelFilter, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
 test('MapLibre owns usable shadow-DOM styles for map navigation controls', () => {
@@ -543,6 +543,35 @@ test('MapLibre tiled point aggregates encode and label contained coordinate coun
 	expect(JSON.stringify(count.layout['text-field'])).not.toContain('revenue')
 	expect(count.layout['text-size']).toBe(11)
 	expect(count.layout['text-allow-overlap']).toBe(true)
+})
+
+test('MapLibre tiled point labels follow their precision family and keep aggregate members authored', () => {
+	const envelope = tiledPointEnvelope()
+	if (envelope.spec.kind !== 'geographic' || envelope.dataState.kind !== 'spatial_tiled') throw new Error('tiled point fixture is unavailable')
+	const layer = envelope.spec.layers[0]
+	if (!layer || layer.kind !== 'point' || !layer.label) throw new Error('labeled point layer fixture is unavailable')
+	const rawLabel = tiledPointLabelFilter(layer.label.field)
+	const aggregateMemberLabel = tiledPointLabelFilter(layer.label.field, true)
+	const member = { __lv_aggregate: false, __lv_clustered: false, order_id: 'low-1' }
+	const aggregate = { __lv_aggregate: true, __lv_clustered: false, order_id: 'aggregate' }
+	// The aggregate member predicate is intentionally stricter than raw labels:
+	// it excludes actual aggregates while retaining below-threshold members.
+	expect(rawLabel).toEqual(['all', ['!', ['has', 'point_count']], ['!', ['boolean', ['get', '__lv_aggregate'], false]], ['!=', ['get', layer.label.field], '']])
+	expect(aggregateMemberLabel).toEqual(['all', ['!', ['has', 'point_count']], ['!', ['boolean', ['get', '__lv_aggregate'], false]], ['==', ['boolean', ['get', '__lv_clustered'], false], false], ['!=', ['get', layer.label.field], '']])
+	expect(member.__lv_aggregate).toBe(false)
+	expect(aggregate.__lv_aggregate).toBe(true)
+})
+
+test('MapLibre gives each tiled point layer distinct raw and aggregate label IDs', () => {
+	const first = dataLabelLayerID('lv-orders')
+	const firstAggregate = dataLabelLayerID('lv-orders', true)
+	const second = dataLabelLayerID('lv-customers')
+	const secondAggregate = dataLabelLayerID('lv-customers', true)
+	expect(new Set([first, firstAggregate, second, secondAggregate]).size).toBe(4)
+	expect([first, firstAggregate, second, secondAggregate]).toEqual([
+		'lv-orders-data-label', 'lv-orders-data-label-aggregate',
+		'lv-customers-data-label', 'lv-customers-data-label-aggregate',
+	])
 })
 
 test('MapLibre tiled density blends occupied aggregate cells without changing raw heat styling', () => {
