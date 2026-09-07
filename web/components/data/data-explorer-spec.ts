@@ -232,7 +232,7 @@ export function removeExplorationPivot(spec: ExplorationSpec): ExplorationSpec {
 export function explorationPivotValidation(spec: ExplorationSpec, fields: DataExploreFieldSignal[] = []): string[] {
   const pivot = spec.pivot
   if (!pivot) return []
-  const messages: string[] = ['Pivot exploration execution is not supported yet. Clear the pivot before running this exploration.']
+  const messages: string[] = []
   const seen = new Map<string, string>()
   const check = (refs: Array<ExplorationDimensionValue | ExplorationMetricValue>, section: string) => {
     refs.forEach((ref) => {
@@ -251,14 +251,17 @@ export function explorationPivotValidation(spec: ExplorationSpec, fields: DataEx
   check(pivot.rows, 'rows')
   check(pivot.columns, 'columns')
   check(pivot.metrics, 'metric')
-  if ((pivot.rows.length || pivot.columns.length) && !pivot.metrics.length) {
-    messages.push('Add at least one metric before running a pivot.')
-  }
+  if (!pivot.rows.length) messages.push('Add at least one row dimension before running a pivot.')
+  if (!pivot.columns.length) messages.push('Add at least one column dimension before running a pivot.')
+  if (!pivot.metrics.length) messages.push('Add at least one metric before running a pivot.')
   if (pivot.window && (!Number.isInteger(pivot.window.limit) || pivot.window.limit < 1 || pivot.window.limit > 1000)) {
     messages.push('Pivot limit must be between 1 and 1000 rows or columns.')
   }
   if (pivot.window?.offset !== undefined && (!Number.isInteger(pivot.window.offset) || pivot.window.offset < 0)) {
     messages.push('Pivot offset cannot be negative.')
+  }
+  if ((pivot.window?.offset ?? 0) > 0) {
+    messages.push('Pivot row-window offsets are not available yet. Use an offset of 0.')
   }
   return Array.from(new Set(messages))
 }

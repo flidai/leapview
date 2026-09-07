@@ -6,6 +6,7 @@ import (
 	stdhttp "net/http"
 	"strings"
 
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
@@ -39,7 +40,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		exploreCommand.Spec.DatasetID = projectsignals.Optional(value)
 	}
 	command.Explore = &exploreCommand
-	explorer := projectsignals.DataExplorerSignal{Command: command, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, SemanticModels: []projectsignals.DataExploreSemanticModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}, Status: projectsignals.DataExploreStatusSignal{RequestSeq: exploreCommand.RequestSeq, State: "idle"}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: emptyDataExplorerBlocks(command), Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: command.Count, RowHeight: dataExplorerRowHeight, Stale: false}}
+	explorer := projectsignals.DataExplorerSignal{Command: command, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, Views: map[string]visualizationir.VisualizationEnvelope{}, RecommendedView: "table", DefaultView: "table", SemanticModels: []projectsignals.DataExploreSemanticModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}, Status: projectsignals.DataExploreStatusSignal{RequestSeq: exploreCommand.RequestSeq, State: "idle"}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: emptyDataExplorerBlocks(command), Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: command.Count, RowHeight: dataExplorerRowHeight, Stale: false}}
 	_, assets, _, ok := h.assets(w, r)
 	if !ok {
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
@@ -155,6 +156,15 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		}
 		exploreCommand, explorer.Explore.Result = dataExplorerSemanticResult(executionContext, h.QueryExecutor, projectID, exploreCommand, explorer.Explore.Fields, semanticModel, compiledModel)
 		explorer.Explore.Result.Warnings = append(explorer.Explore.Result.Warnings, projection.Warnings...)
+		// The browser command does not carry a server-owned serving snapshot.
+		// Keep freshness explicit but unknown rather than treating a
+		// client-provided header as provenance for governed data.
+		explorer.Explore.Result.Freshness = &projectsignals.DataExploreFreshnessSignal{Source: projectsignals.Pointer("unknown"), Status: "unknown"}
+		viewProjection := ProjectDataExplorerViews(exploreCommand.Spec, explorer.Explore.Result, explorer.Explore.Fields)
+		explorer.Explore.Views = viewProjection.Views
+		explorer.Explore.RecommendedView = viewProjection.RecommendedView
+		explorer.Explore.DefaultView = viewProjection.DefaultView
+		explorer.Explore.Result.Warnings = append(explorer.Explore.Result.Warnings, viewProjection.Warnings...)
 		if errors.Is(executionContext.Err(), context.Canceled) {
 			explorer.Explore.Status = projectsignals.DataExploreStatusSignal{RequestSeq: exploreCommand.RequestSeq, State: "cancelled", Message: projectsignals.Pointer("exploration stopped")}
 		} else if clientKey != "" && !h.dataExplorerLifecycle.currentRun(clientKey, requestSeq, effectiveRunID) {

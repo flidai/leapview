@@ -68,9 +68,30 @@ test('pivot validation reports unsafe role and metric combinations', () => {
   const messages = explorationPivotValidation(spec, [
     { id: 'revenue', label: 'Revenue', kind: 'metric', datasetId: 'orders', compatible: true, selected: false },
   ])
-  expect(messages).toContain('Pivot exploration execution is not supported yet. Clear the pivot before running this exploration.')
+  expect(messages).toContain('Add at least one column dimension before running a pivot.')
   expect(messages).toContain('revenue is a metric; choose a dimension for pivot rows.')
   expect(messages).toContain('Add at least one metric before running a pivot.')
+})
+
+test('pivot validation permits governed totals and blocks unsupported offsets', () => {
+  const spec = {
+    ...baseSpec(),
+    pivot: {
+      rows: [{ field: 'orders.status' }],
+      columns: [{ field: 'orders.channel' }],
+      metrics: [{ field: 'revenue' }],
+      totals: { rows: true, columns: true, grand: true },
+      window: { limit: 50, offset: 0 },
+    },
+  }
+  const fields = [
+    { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', compatible: true, selected: true },
+    { id: 'orders.channel', label: 'Channel', kind: 'dimension', datasetId: 'orders', compatible: true, selected: true },
+    { id: 'revenue', label: 'Revenue', kind: 'metric', datasetId: 'orders', compatible: true, selected: true },
+  ]
+  expect(explorationPivotValidation(spec, fields)).toEqual([])
+  expect(explorationPivotValidation({ ...spec, pivot: { ...spec.pivot, window: { limit: 50, offset: 1 } } }, fields))
+    .toContain('Pivot row-window offsets are not available yet. Use an offset of 0.')
 })
 
 test('row and pivot limits are bounded to the server contract', () => {

@@ -3,6 +3,50 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
+import type { VisualizationEnvelope } from '../../generated/visualization'
+import { currentVisualizationSchemaVersion } from '../../generated/visualization/schema-version'
+
+function explorerTableEnvelope(): VisualizationEnvelope {
+  const specRevision = `sha256:${'2'.repeat(64)}`
+  const field = { id: 'status', role: 'dimension', dataType: 'string', nullable: false, label: 'Status' } as const
+  const sort = [{ field: { dataset: 'primary', field: 'status' }, direction: 'ascending' }] as const
+  return {
+    schemaVersion: currentVisualizationSchemaVersion,
+    visualID: 'explore-table',
+    rendererID: 'tanstack',
+    specRevision,
+    dataRevision: 1,
+    spec: {
+      kind: 'table',
+      title: 'Orders',
+      datasets: [{ id: 'primary', fields: [field] }],
+      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' },
+      accessibility: { title: 'Orders', description: 'Governed Orders result' },
+      interactions: [],
+      columns: [{ field: { dataset: 'primary', field: 'status' }, label: 'Status', formatting: [] }],
+      defaultSort: sort,
+      presentation: { rowHeight: 32, striped: false, showHeader: true },
+    },
+    dataState: {
+      kind: 'windowed',
+      specRevision,
+      dataRevision: 1,
+      generation: 1,
+      schema: { id: 'primary', fields: [field] },
+      cardinality: { kind: 'exact', count: 1 },
+      availableRows: 1,
+      rowCap: 100,
+      chunkSize: 50,
+      resetVersion: 0,
+      sort,
+      blocks: { a: { id: 'a', start: 0, rows: [['delivered']], requestSeq: 1, resetVersion: 0, sort } },
+    },
+    selection: [],
+    highlights: [],
+    status: { kind: 'ready' },
+    diagnostics: [],
+  } as VisualizationEnvelope
+}
 
 let server: Server
 let baseURL = ''
@@ -42,16 +86,20 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  if (!server?.listening) return
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve())
+    server.closeIdleConnections()
+  })
 }, 15_000)
 
 test('Data Explorer retains the last good result through draft and run lifecycle failures', async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-data-explorer') && customElements.get('lv-data-explore-table'))
+    await page.waitForFunction(() => customElements.get('lv-data-explorer') && customElements.get('lv-data-explorer-results') && customElements.get('lv-visualization-host'))
 
-    const state = await page.evaluate(async () => {
+    const state = await page.evaluate(async ({ tableEnvelope }) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       const orders = {
         key: 'model:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model',
@@ -83,6 +131,7 @@ test('Data Explorer retains the last good result through draft and run lifecycle
         command: { mode: 'explore', objectKey: orders.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 1, resetVersion: 1, sort: {}, visibleColumns: [], columnWidths: {}, explore: command },
         explore: {
           command,
+          views: { table: tableEnvelope }, recommendedView: 'table', defaultView: 'table',
           semanticModels: [{ id: 'sales', title: 'Sales', datasets: [
             { id: 'orders', title: 'Orders', fieldCount: 1, entities: [] },
             { id: 'customers', title: 'Customers', fieldCount: 1, entities: [] },
@@ -102,12 +151,15 @@ test('Data Explorer retains the last good result through draft and run lifecycle
           await element.updateComplete
           await new Promise((resolve) => requestAnimationFrame(resolve))
         }
-        const table = element.shadowRoot?.querySelector('lv-data-explore-table') as any
-        await table?.updateComplete
-        const grid = table?.shadowRoot?.querySelector('lv-windowed-table') as any
-        await grid?.updateComplete
+        const results = element.shadowRoot?.querySelector('lv-data-explorer-results') as any
+        await results?.updateComplete
+        const host = results?.shadowRoot?.querySelector('lv-visualization-host') as any
+        await host?.updateComplete
         return {
-          table: grid?.shadowRoot?.textContent ?? '',
+          rows: results?.result?.rows ?? [],
+          hasResultsSurface: Boolean(results),
+          hasSharedHost: Boolean(host),
+          selectedView: results?.shadowRoot?.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim() ?? '',
           failure: element.shadowRoot?.querySelector('.result-failure')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
         }
       }
@@ -115,7 +167,13 @@ test('Data Explorer retains the last good result through draft and run lifecycle
         dataExplorer: {
           selectedKey: selectedObject.key, selectedObject,
           command: { mode: 'explore', objectKey: selectedObject.key, explore: next },
-          explore: { command: next, result: nextResult, status: nextStatus },
+          // Datastar deep-merges objects. Preserve the current view map for
+          // same-context lifecycle updates, but explicitly clear it when the
+          // selected dataset changes.
+          explore: {
+            command: next, result: nextResult, status: nextStatus,
+            ...(selectedObject === orders ? {} : { views: null }),
+          },
         },
       })
       const initial = await settle()
@@ -158,19 +216,28 @@ test('Data Explorer retains the last good result through draft and run lifecycle
       update(customerCommand, { ...result(9), columns: [], rows: [], rowsReturned: 0 }, status(9, 'stale'), customers)
       const changed = await settle()
       return { initial, draft, loading, stopped, errored, transport, failedStop, changed, runVisible: Boolean(element.shadowRoot?.querySelector('.query-actions .text-button')?.textContent?.includes('Run')) }
-    })
+    }, { tableEnvelope: explorerTableEnvelope() })
 
-    expect(state.initial.table).toContain('delivered')
-    expect(state.draft.table).toContain('delivered')
-    expect(state.loading.table).toContain('delivered')
-    expect(state.stopped.table).toContain('delivered')
-    expect(state.errored.table).toContain('delivered')
+    expect(state.initial.rows).toEqual([{ status: 'delivered' }])
+    expect(state.initial.hasResultsSurface).toBe(true)
+    expect(state.initial.hasSharedHost).toBe(true)
+    expect(state.initial.selectedView).toBe('Table')
+    expect(state.draft.rows).toEqual([{ status: 'delivered' }])
+    expect(state.draft.hasSharedHost).toBe(true)
+    expect(state.loading.rows).toEqual([{ status: 'delivered' }])
+    expect(state.loading.hasSharedHost).toBe(true)
+    expect(state.stopped.rows).toEqual([{ status: 'delivered' }])
+    expect(state.stopped.hasSharedHost).toBe(true)
+    expect(state.errored.rows).toEqual([{ status: 'delivered' }])
+    expect(state.errored.hasSharedHost).toBe(true)
     expect(state.errored.failure).toContain('Query service is unavailable.')
-    expect(state.transport.table).toContain('delivered')
+    expect(state.transport.rows).toEqual([{ status: 'delivered' }])
+    expect(state.transport.hasSharedHost).toBe(true)
     expect(state.transport.failure).toContain('service is temporarily unavailable')
     expect(state.failedStop.failure).toContain('service is temporarily unavailable')
     expect(state.runVisible).toBe(true)
-    expect(state.changed.table).not.toContain('delivered')
+    expect(state.changed.rows).not.toContainEqual({ status: 'delivered' })
+    expect(state.changed.hasSharedHost).toBe(false)
   } finally {
     await page.close()
   }

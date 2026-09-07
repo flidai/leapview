@@ -1,10 +1,13 @@
 import type { DataExploreCommand, DataExploreResultSignal, DataExploreStatusSignal } from '../../generated/signals'
+import type { VisualizationEnvelope } from '../../generated/visualization'
 import { explorationSpecFor } from './data-explorer-spec'
 
 const suggestionSequenceByClientID = new Map<string, number>()
 let fallbackDataExplorerClientID = ''
 let suggestionSequenceClock = 0
 let suggestionSequenceClockCounter = 0
+
+export type DataExploreExecutionState = 'idle' | 'pending' | 'running' | 'stopped'
 
 function nextSuggestionSequenceClock(): number {
   const now = Date.now()
@@ -29,6 +32,10 @@ export class DataExplorerClientState {
   private currentRunID = ''
   private semanticResultContextKey = ''
   private lastGoodSemanticResult: DataExploreResultSignal | null = null
+  private lastGoodSemanticViews: Record<string, VisualizationEnvelope> = {}
+  private lastGoodRecommendedView = 'table'
+  private lastGoodDefaultView = 'table'
+  private lastGoodSemanticViewsRequestSeq = 0
 
   clientID(hydrated?: unknown): string {
     const hydratedID = normalizedClientID(hydrated)
@@ -119,6 +126,7 @@ export class DataExplorerClientState {
     result: DataExploreResultSignal,
     status?: DataExploreStatusSignal,
     context?: { projectId?: unknown; generationId?: unknown },
+    executionState: DataExploreExecutionState = 'idle',
   ): DataExploreResultSignal {
     const spec = explorationSpecFor(command)
     const modelID = normalizedClientID(spec.modelId)
@@ -128,19 +136,85 @@ export class DataExplorerClientState {
     if (key !== this.semanticResultContextKey) {
       this.semanticResultContextKey = key
       this.lastGoodSemanticResult = null
+      this.lastGoodSemanticViews = {}
+      this.lastGoodRecommendedView = 'table'
+      this.lastGoodDefaultView = 'table'
+      this.lastGoodSemanticViewsRequestSeq = 0
     }
     const hasData = Boolean(
       result.columns?.length || result.rows?.length || result.rowsReturned > 0 || result.sql || result.plan,
     )
-    const failed = Boolean(result.error || status?.error || status?.state === 'error' || status?.state === 'cancelled')
-    if (key && !failed && hasData && result.requestSeq >= (this.lastGoodSemanticResult?.requestSeq ?? 0)) {
+    const cacheable = isCacheableSemanticResponse(command, result, status, executionState)
+    const previousRequestSeq = this.lastGoodSemanticResult?.requestSeq ?? -1
+    if (key && cacheable && hasData && result.requestSeq >= previousRequestSeq) {
+      const newResult = result.requestSeq > previousRequestSeq
       this.lastGoodSemanticResult = snapshotSemanticResult(result)
+      // The view cache is valid only for the result it was compiled from. A
+      // new accepted result must clear the old envelopes before semanticViews
+      // has a chance to install the matching set from this signal.
+      if (newResult) {
+        this.lastGoodSemanticViews = {}
+        this.lastGoodRecommendedView = 'table'
+        this.lastGoodDefaultView = 'table'
+        this.lastGoodSemanticViewsRequestSeq = 0
+      }
     }
     const cached = this.lastGoodSemanticResult
-    const shouldRetain = failed || !hasData || status?.loading || status?.state === 'loading'
-      || status?.state === 'stale' || status?.state === 'cancelled' || result.requestSeq < (cached?.requestSeq ?? 0)
+    const shouldRetain = Boolean(cached) && (!cacheable || !hasData || result.requestSeq < (cached?.requestSeq ?? 0))
     return cached && shouldRetain ? cached : result
   }
+
+  /** Retains the IR envelopes that belong to the retained semantic result. */
+  semanticViews(
+    command: DataExploreCommand,
+    result: DataExploreResultSignal,
+    views: Record<string, VisualizationEnvelope> | undefined,
+    recommendedView: string | undefined,
+    defaultView: string | undefined,
+    status?: DataExploreStatusSignal,
+    context?: { projectId?: unknown; generationId?: unknown },
+    executionState: DataExploreExecutionState = 'idle',
+  ): { views: Record<string, VisualizationEnvelope>; recommendedView: string; defaultView: string } {
+    // Synchronize context and result retention before deciding which envelope
+    // set belongs on screen.
+    const visibleResult = this.semanticResult(command, result, status, context, executionState)
+    const currentViews = views ?? {}
+    const cacheable = isCacheableSemanticResponse(command, result, status, executionState)
+    const hasCurrentViews = Object.keys(currentViews).length > 0
+    const resultRequestSeq = this.lastGoodSemanticResult?.requestSeq
+    if (cacheable && resultRequestSeq === result.requestSeq && result.requestSeq >= this.lastGoodSemanticViewsRequestSeq) {
+      this.lastGoodSemanticViews = hasCurrentViews ? { ...currentViews } : {}
+      this.lastGoodRecommendedView = hasCurrentViews ? recommendedView || defaultView || 'table' : 'table'
+      this.lastGoodDefaultView = hasCurrentViews ? defaultView || 'table' : 'table'
+      this.lastGoodSemanticViewsRequestSeq = hasCurrentViews ? result.requestSeq : 0
+    }
+    const retainingResult = visibleResult !== result
+    if (retainingResult && Object.keys(this.lastGoodSemanticViews).length > 0) {
+      return {
+        views: this.lastGoodSemanticViews,
+        recommendedView: this.lastGoodRecommendedView,
+        defaultView: this.lastGoodDefaultView,
+      }
+    }
+    return { views: currentViews, recommendedView: recommendedView || defaultView || 'table', defaultView: defaultView || 'table' }
+  }
+}
+
+function isCacheableSemanticResponse(
+  command: DataExploreCommand,
+  result: DataExploreResultSignal,
+  status: DataExploreStatusSignal | undefined,
+  executionState: DataExploreExecutionState,
+): boolean {
+  if (!status || executionState !== 'idle') return false
+  const statusState = String(status.state)
+  if (statusState !== 'success' || status.loading || status.stale) return false
+  if (status.error || result.error) return false
+  const commandRequestSeq = Number(command.requestSeq)
+  const resultRequestSeq = Number(result.requestSeq)
+  const statusRequestSeq = Number(status.requestSeq)
+  if (![commandRequestSeq, resultRequestSeq, statusRequestSeq].every((value) => Number.isSafeInteger(value) && value >= 0)) return false
+  return commandRequestSeq === resultRequestSeq && resultRequestSeq === statusRequestSeq
 }
 
 function snapshotSemanticResult(result: DataExploreResultSignal): DataExploreResultSignal {

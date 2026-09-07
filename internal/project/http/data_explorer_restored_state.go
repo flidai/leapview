@@ -16,6 +16,9 @@ import (
 // operand into a smaller query by dropping it.
 func validateRestoredDataExploreState(command projectsignals.DataExploreCommand, projection DataExplorerProjection, model *semanticmodel.Model, compiledModels map[string]*semanticquery.CompiledModel) error {
 	spec := normalizeExplorationSpec(command.Spec)
+	if err := validateDataExplorerExecutionWindow(spec); err != nil {
+		return err
+	}
 	state := dataExploreStateFromSpec(spec)
 	semanticModelID := strings.TrimSpace(spec.ModelID)
 	selectedSemanticModelID := strings.TrimSpace(projection.Command.Spec.ModelID)

@@ -79,6 +79,27 @@ func TestDataExplorerSemanticExploreRejectsPivotWithoutExecution(t *testing.T) {
 	}
 }
 
+func TestDataExplorerSemanticExploreRejectsNonzeroPivotOffsetWithoutExecution(t *testing.T) {
+	executor := &browserDataQueryStub{}
+	offset := int32(7)
+	spec := exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic-model:sales", DatasetID: projectsignals.Pointer("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+		Pivot: &exploration.ExplorationPivotConfig{
+			Rows: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Columns: []exploration.ExplorationDimensionRef{{Field: "orders.channel"}},
+			Metrics: []exploration.ExplorationMetricRef{{Field: "revenue"}}, Window: &exploration.ExplorationPivotWindow{Offset: &offset, Limit: 10},
+		},
+	}
+	_, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{Spec: spec}, nil, nil)
+	if result.Error == nil || !strings.Contains(*result.Error, "pivot window offset") {
+		t.Fatalf("nonzero pivot offset error = %#v, want explicit unsupported-offset diagnostic", result.Error)
+	}
+	if executor.calls != 0 {
+		t.Fatalf("nonzero pivot offset executed %d analytical queries, want 0", executor.calls)
+	}
+}
+
 func TestDataExplorerSemanticExploreRejectsTypedOperatorBeforeExecution(t *testing.T) {
 	model := &semanticmodel.Model{
 		Tables: map[string]semanticmodel.Table{

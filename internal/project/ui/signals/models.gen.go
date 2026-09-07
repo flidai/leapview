@@ -1070,17 +1070,40 @@ type DataExploreFilterValueSuggestionSignal struct {
 	Value exploration.ExplorationFilterValue `json:"value" yaml:"value"`
 }
 
+type DataExploreFreshnessSignal struct {
+	SnapshotID              *string `json:"snapshotId,omitempty" yaml:"snapshotId,omitempty"`
+	ServingStateID          *string `json:"servingStateId,omitempty" yaml:"servingStateId,omitempty"`
+	LastSuccessfulRefreshAt *string `json:"lastSuccessfulRefreshAt,omitempty" yaml:"lastSuccessfulRefreshAt,omitempty"`
+	Source                  *string `json:"source,omitempty" yaml:"source,omitempty"`
+	Status                  string  `json:"status" yaml:"status"`
+}
+
+type DataExplorePivotTotalSignal struct {
+	Key    map[string]any `json:"key" yaml:"key"`
+	Values map[string]any `json:"values" yaml:"values"`
+}
+
+type DataExplorePivotTotalsSignal struct {
+	Columns  []DataExplorePivotTotalSignal `json:"columns" yaml:"columns"`
+	Grand    []DataExplorePivotTotalSignal `json:"grand" yaml:"grand"`
+	Rows     []DataExplorePivotTotalSignal `json:"rows" yaml:"rows"`
+	Status   string                        `json:"status" yaml:"status"`
+	Warnings []string                      `json:"warnings" yaml:"warnings"`
+}
+
 type DataExploreResultSignal struct {
-	Columns      []DataPreviewColumnSignal `json:"columns" yaml:"columns"`
-	DurationMS   int64                     `json:"durationMs" yaml:"durationMs"`
-	Error        *string                   `json:"error,omitempty" yaml:"error,omitempty"`
-	Plan         *string                   `json:"plan,omitempty" yaml:"plan,omitempty"`
-	RequestSeq   int64                     `json:"requestSeq" yaml:"requestSeq"`
-	Rows         []map[string]any          `json:"rows" yaml:"rows"`
-	RowsReturned int64                     `json:"rowsReturned" yaml:"rowsReturned"`
-	SQL          *string                   `json:"sql,omitempty" yaml:"sql,omitempty"`
-	Truncated    bool                      `json:"truncated" yaml:"truncated"`
-	Warnings     []string                  `json:"warnings" yaml:"warnings"`
+	Columns      []DataPreviewColumnSignal     `json:"columns" yaml:"columns"`
+	DurationMS   int64                         `json:"durationMs" yaml:"durationMs"`
+	Error        *string                       `json:"error,omitempty" yaml:"error,omitempty"`
+	Freshness    *DataExploreFreshnessSignal   `json:"freshness,omitempty" yaml:"freshness,omitempty"`
+	PivotTotals  *DataExplorePivotTotalsSignal `json:"pivotTotals,omitempty" yaml:"pivotTotals,omitempty"`
+	Plan         *string                       `json:"plan,omitempty" yaml:"plan,omitempty"`
+	RequestSeq   int64                         `json:"requestSeq" yaml:"requestSeq"`
+	Rows         []map[string]any              `json:"rows" yaml:"rows"`
+	RowsReturned int64                         `json:"rowsReturned" yaml:"rowsReturned"`
+	SQL          *string                       `json:"sql,omitempty" yaml:"sql,omitempty"`
+	Truncated    bool                          `json:"truncated" yaml:"truncated"`
+	Warnings     []string                      `json:"warnings" yaml:"warnings"`
 }
 
 type DataExploreSemanticModelSignal struct {
@@ -1091,15 +1114,18 @@ type DataExploreSemanticModelSignal struct {
 }
 
 type DataExploreSignal struct {
-	Command               DataExploreCommand                  `json:"command" yaml:"command"`
-	Datasets              []DataExploreDatasetSignal          `json:"datasets" yaml:"datasets"`
-	Fields                []DataExploreFieldSignal            `json:"fields" yaml:"fields"`
-	SemanticModels        []DataExploreSemanticModelSignal    `json:"semanticModels" yaml:"semanticModels"`
-	Result                DataExploreResultSignal             `json:"result" yaml:"result"`
-	Status                DataExploreStatusSignal             `json:"status" yaml:"status"`
-	FilterSuggestions     *DataExploreFilterSuggestionsSignal `json:"filterSuggestions,omitempty" yaml:"filterSuggestions,omitempty"`
-	SelectedDataset       *DataExploreDatasetSignal           `json:"selectedDataset,omitempty" yaml:"selectedDataset,omitempty"`
-	SelectedSemanticModel *DataExploreSemanticModelSignal     `json:"selectedSemanticModel,omitempty" yaml:"selectedSemanticModel,omitempty"`
+	Command               DataExploreCommand                               `json:"command" yaml:"command"`
+	Views                 map[string]visualizationir.VisualizationEnvelope `json:"views" yaml:"views"`
+	RecommendedView       string                                           `json:"recommendedView" yaml:"recommendedView"`
+	DefaultView           string                                           `json:"defaultView" yaml:"defaultView"`
+	Datasets              []DataExploreDatasetSignal                       `json:"datasets" yaml:"datasets"`
+	Fields                []DataExploreFieldSignal                         `json:"fields" yaml:"fields"`
+	SemanticModels        []DataExploreSemanticModelSignal                 `json:"semanticModels" yaml:"semanticModels"`
+	Result                DataExploreResultSignal                          `json:"result" yaml:"result"`
+	Status                DataExploreStatusSignal                          `json:"status" yaml:"status"`
+	FilterSuggestions     *DataExploreFilterSuggestionsSignal              `json:"filterSuggestions,omitempty" yaml:"filterSuggestions,omitempty"`
+	SelectedDataset       *DataExploreDatasetSignal                        `json:"selectedDataset,omitempty" yaml:"selectedDataset,omitempty"`
+	SelectedSemanticModel *DataExploreSemanticModelSignal                  `json:"selectedSemanticModel,omitempty" yaml:"selectedSemanticModel,omitempty"`
 }
 
 type DataExploreStatusSignal struct {
