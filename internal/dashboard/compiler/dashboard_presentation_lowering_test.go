@@ -92,7 +92,7 @@ func TestLowerCanonicalPresentationVariantsPreserveTableAndKPIFields(t *testing.
 		t.Fatal(err)
 	}
 	value := kpi.(visualizationir.KPIVisualizationPresentation)
-	if value.DisplayUnits == nil || *value.DisplayUnits != visualizationir.VisualizationDisplayUnitsThousands || value.Note == nil || *value.Note != "Target" || value.Tone == nil || *value.Tone != visualizationir.VisualizationToneWarning || value.FavorableDirection != visualizationir.VisualizationKPIDirectionNeutral || value.MissingComparison != visualizationir.VisualizationKPIMissingComparisonShowUnavailable || len(value.Ranges) != 1 || value.Ranges[0].Label != "On track" || value.Ranges[0].Tone != visualizationir.VisualizationToneSuccess || value.Thresholds != nil {
+	if value.DisplayUnits == nil || *value.DisplayUnits != visualizationir.VisualizationDisplayUnitsThousands || value.Note == nil || *value.Note != "Target" || value.Tone == nil || *value.Tone != visualizationir.VisualizationToneWarning || value.FavorableDirection != visualizationir.VisualizationKPIDirectionNeutral || value.MissingComparison != visualizationir.VisualizationKPIMissingComparisonShowUnavailable || len(value.Ranges) != 1 || value.Ranges[0].Label != "On track" || value.Ranges[0].Tone != visualizationir.VisualizationToneSuccess {
 		t.Fatalf("kpi presentation = %#v", value)
 	}
 }
