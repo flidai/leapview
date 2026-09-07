@@ -390,7 +390,7 @@ func newDashboardBaselineFixture(tb testing.TB, rows int) *dashboardBaselineFixt
 		tb.Fatal(err)
 	}
 	resultPartition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
-		Kind: resultidentity.PartitionProduction, ProjectID: identity.ProjectID, Environment: identity.Environment,
+		Kind: resultidentity.PartitionProduction, TargetID: "target_test", ProjectID: identity.ProjectID, Environment: identity.Environment,
 	})
 	if err != nil {
 		tb.Fatal(err)

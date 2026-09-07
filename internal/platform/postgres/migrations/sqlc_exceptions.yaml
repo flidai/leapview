@@ -1,0 +1,2 @@
+# ADR-0020 exception inventory. Keep entries exact; static SQL is never allowlisted.
+entries: []

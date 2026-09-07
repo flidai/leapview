@@ -1,23 +1,17 @@
 package compiler
 
-// The flat project loader consumes the project-wide authoring contract (one include list
-// per graph kind), keeps symbolic names in mutable compiler state, and emits a
-// graph whose edges contain only canonical IDs.
+// The flat resource loader consumes resources discovered beneath the fixed
+// source-root directories, keeps symbolic names in mutable compiler state, and
+// emits a graph whose edges contain only canonical IDs.
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/flidai/leapview/internal/access"
-	accesspolicy "github.com/flidai/leapview/internal/access/policy"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
-	"github.com/flidai/leapview/internal/dashboard/publication"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/internal/project/manifest"
 )
 
 func copySources(in map[string]semanticmodel.Source) map[string]semanticmodel.Source {
@@ -63,29 +57,7 @@ func (r resourceResolver) resolve(ref string, expected projectgraph.Kind) (proje
 	return resource.ID, nil
 }
 
-func loadFlatResources(project *Project, spec projectResource) error {
-	if err := loadFlatModels(project, spec.Models.Include); err != nil {
-		return err
-	}
-	if err := loadFlatSemanticModels(project, spec.SemanticModels.Include); err != nil {
-		return err
-	}
-	if err := loadFlatPipelines(project, spec.Pipelines.Include); err != nil {
-		return err
-	}
-	if err := loadFlatDashboards(project, spec.Dashboards.Include); err != nil {
-		return err
-	}
-	if err := loadFlatPublications(project, spec.Publications.Include); err != nil {
-		return err
-	}
-	if err := loadFlatAccess(project, spec.Access.Include); err != nil {
-		return err
-	}
-	return nil
-}
-
-func flatResourceIdentity(project *Project, envelope resourceEnvelope, path, kind string) (string, string, error) {
+func flatResourceIdentity(project *sourceAssembly, envelope resourceEnvelope, path, kind string) (string, string, error) {
 	name := strings.TrimSpace(envelope.Metadata.Name)
 	id := strings.TrimSpace(envelope.Metadata.ID)
 	if id == "" {
@@ -96,9 +68,6 @@ func flatResourceIdentity(project *Project, envelope resourceEnvelope, path, kin
 	}
 	if _, err := projectgraph.NewResourceID(id); err != nil {
 		return "", "", resourceError(path, id, "metadata.id", "%s metadata.id: %v", path, err)
-	}
-	if id == string(project.ID) {
-		return "", "", resourceError(path, id, "metadata.id", "%s metadata.id duplicates project id", path)
 	}
 	if owner, exists := project.ResourceIDOwners[id]; exists {
 		return "", "", resourceError(path, id, "metadata.id", "%s metadata.id duplicates resource %s", path, owner)
@@ -113,20 +82,16 @@ func flatResourceIdentity(project *Project, envelope resourceEnvelope, path, kin
 	return id, name, nil
 }
 
-func loadFlatModels(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
-	if err != nil {
-		return err
-	}
+func loadFlatModels(project *sourceAssembly, paths []string, reader sourceFileReader) error {
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelope(reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "Model" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Model", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -152,25 +117,21 @@ func loadFlatModels(project *Project, includes []string) error {
 	return nil
 }
 
-func loadFlatSemanticModels(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
-	if err != nil {
-		return err
-	}
+func loadFlatSemanticModels(project *sourceAssembly, paths []string, reader sourceFileReader) error {
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelope(reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "SemanticModel" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want SemanticModel", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		var spec projectSemanticModelSpec
-		if err := envelope.Spec.Decode(&spec); err != nil {
+		spec, aiContext, err := decodeSemanticModelResource(path, content)
+		if err != nil {
 			return resourceError(path, envelopeResourceID(envelope, ""), "spec", "%s spec: %s", path, err)
 		}
 		id, name, err := flatResourceIdentity(project, envelope, path, "semantic_model")
@@ -182,26 +143,22 @@ func loadFlatSemanticModels(project *Project, includes []string) error {
 		}
 		project.SemanticModels[name] = spec
 		project.ResourceSources[id] = string(content)
-		project.SemanticModelAIContexts[name] = envelope.AIContext
+		project.SemanticModelAIContexts[name] = aiContext
 		project.SemanticModelIDs[name], project.SemanticModelPaths[name] = id, path
 	}
 	return nil
 }
 
-func loadFlatPipelines(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
-	if err != nil {
-		return err
-	}
+func loadFlatPipelines(project *sourceAssembly, paths []string, reader sourceFileReader) error {
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelope(reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "Pipeline" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Pipeline", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -209,7 +166,7 @@ func loadFlatPipelines(project *Project, includes []string) error {
 		if err != nil {
 			return err
 		}
-		pipeline, err := LoadRefreshPipeline(path)
+		pipeline, err := LoadRefreshPipelineWithReader(reader, path)
 		if err != nil {
 			return resourceError(path, id, "spec", "Pipeline %q: %v", name, err)
 		}
@@ -221,13 +178,9 @@ func loadFlatPipelines(project *Project, includes []string) error {
 	return nil
 }
 
-func loadFlatDashboards(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
-	if err != nil {
-		return err
-	}
+func loadFlatDashboards(project *sourceAssembly, paths []string, reader sourceFileReader) error {
 	for _, path := range paths {
-		document, err := LoadDashboardDocumentForProject(path, project.BaseDir)
+		document, err := loadDashboardDocumentForSourceRootWithReader(path, project.BaseDir, reader)
 		if err != nil {
 			return err
 		}
@@ -252,105 +205,8 @@ func loadFlatDashboards(project *Project, includes []string) error {
 	return nil
 }
 
-// Kept as a tiny indirection so the dashboard decoder stays focused on the
-// project resource envelope.
-func appearanceValidate(p dashboardappearance.Patch) error {
-	return dashboardappearance.ValidatePatch(p)
-}
-
-func loadFlatPublications(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
-	if err != nil {
-		return err
-	}
-	for _, path := range paths {
-		envelope, err := readEnvelope(path)
-		if err != nil {
-			return err
-		}
-		if envelope.Kind != "DashboardPublication" {
-			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want DashboardPublication", path, envelope.Kind)
-		}
-		var spec dashboardPublicationSpec
-		if err := envelope.Spec.Decode(&spec); err != nil {
-			return resourceError(path, envelopeResourceID(envelope, ""), "spec", "%s spec: %s", path, err)
-		}
-		id, name, err := flatResourceIdentity(project, envelope, path, "dashboard_publication")
-		if err != nil {
-			return err
-		}
-		project.Publications[name] = publication.Definition{Name: id, Dashboard: strings.TrimSpace(spec.Dashboard), DefaultPage: strings.TrimSpace(spec.DefaultPage), AllowedOrigins: append([]string(nil), spec.Embedding.AllowedOrigins...)}
-		project.PublicationPaths[name] = path
-	}
-	return nil
-}
-
-func loadFlatAccess(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
-	if err != nil {
-		return err
-	}
-	for _, path := range paths {
-		envelope, err := readEnvelope(path)
-		if err != nil {
-			return err
-		}
-		id, name, err := flatResourceIdentity(project, envelope, path, strings.ToLower(envelope.Kind))
-		if err != nil {
-			return err
-		}
-		switch envelope.Kind {
-		case "Group":
-			var spec projectGroupSpec
-			if err := envelope.Spec.Decode(&spec); err != nil {
-				return err
-			}
-			group := projectAccessGroup(name, spec)
-			group.ID = id
-			project.Access.Groups[name] = group
-		case "RoleBinding":
-			var spec projectRoleBindingSpec
-			if err := envelope.Spec.Decode(&spec); err != nil {
-				return err
-			}
-			binding := projectAccessRoleBinding(name, spec)
-			binding.ID = id
-			project.Access.RoleBindings[name] = binding
-		case "Grant":
-			var spec projectGrantSpec
-			if err := envelope.Spec.Decode(&spec); err != nil {
-				return err
-			}
-			grant := projectAccessGrant(name, spec)
-			grant.ID, grant.Name = id, name
-			project.Access.Grants[name] = grant
-		case "DataPolicy":
-			var spec projectDataPolicySpec
-			if err := envelope.Spec.Decode(&spec); err != nil {
-				return err
-			}
-			policy, err := projectAccessDataPolicy(name, spec)
-			if err != nil {
-				return err
-			}
-			policy.ID, policy.Name = id, name
-			project.Access.DataPolicies[name] = policy
-		default:
-			return resourceError(path, id, "kind", "%s kind = %q is not a project access sidecar", path, envelope.Kind)
-		}
-		project.AccessPaths[name], project.ResourcePaths[id] = path, path
-	}
-	return nil
-}
-
-func validateFlatProject(project Project) error {
-	if project.ID == "" {
-		return resourceError("", "", "metadata.id", "project metadata.id is required")
-	}
-	if _, err := projectgraph.NewResourceID(string(project.ID)); err != nil {
-		return err
-	}
-	resources, err := flatResources(project)
+func validateSourceAssembly(project sourceAssembly) error {
+	resources, err := sourceResources(project)
 	if err != nil {
 		return err
 	}
@@ -384,7 +240,7 @@ func validateFlatProject(project Project) error {
 		}
 	}
 	if len(project.Models) > 0 {
-		sourceAliases, sourceReverse, err := sourceAliasesForProject(project)
+		sourceAliases, sourceReverse, err := sourceAliasesForAssembly(project)
 		if err != nil {
 			return err
 		}
@@ -406,7 +262,7 @@ func validateFlatProject(project Project) error {
 			runtimeTables[name] = table
 			runtimeDatasets[name] = semanticmodel.SemanticDatasetSpec{Model: name}
 		}
-		validatedModel := &semanticmodel.Model{Name: project.Name, Connections: copyConnections(project.Connections), Sources: aliasedSources, Datasets: runtimeDatasets, Tables: runtimeTables}
+		validatedModel := &semanticmodel.Model{Name: "source-root", Connections: copyConnections(project.Connections), Sources: aliasedSources, Datasets: runtimeDatasets, Tables: runtimeTables}
 		if err := deriveModelSQLDependencies(validatedModel); err != nil {
 			for name := range project.Models {
 				return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec", "Model %q SQL validation: %v", name, err)
@@ -479,170 +335,14 @@ func validateFlatProject(project Project) error {
 			return resourceError(project.PipelinePaths[name], project.PipelineIDs[name], "spec.selection.semanticModel", "Pipeline %q references unknown authored SemanticModel name %q", name, selection)
 		}
 	}
-	for name, pub := range project.Publications {
-		if _, err := resolver.resolve(pub.Dashboard, projectgraph.KindDashboard); err != nil {
-			return resourceError(project.PublicationPaths[name], project.ResourceIDs["dashboard_publication:"+name], "spec.dashboard", "DashboardPublication %q: %v", name, err)
-		}
-		dashboard := project.Dashboards[authoredNameByID(pub.Dashboard, project.DashboardIDs)]
-		if dashboard == nil {
-			return resourceError(project.PublicationPaths[name], project.ResourceIDs["dashboard_publication:"+name], "spec.dashboard", "DashboardPublication %q references unknown Dashboard %q", name, pub.Dashboard)
-		}
-		if strings.TrimSpace(pub.DefaultPage) != "" {
-			found := false
-			for _, page := range dashboard.Spec.Pages {
-				if page.ID == pub.DefaultPage {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return resourceError(project.PublicationPaths[name], project.ResourceIDs["dashboard_publication:"+name], "spec.defaultPage", "DashboardPublication %q references unknown page %q", name, pub.DefaultPage)
-			}
-		}
-		origins := make([]string, 0, len(pub.AllowedOrigins))
-		seenOrigins := map[string]struct{}{}
-		for index, authored := range pub.AllowedOrigins {
-			origin, err := validatePublicationOrigin(authored)
-			if err != nil {
-				return resourceError(project.PublicationPaths[name], project.ResourceIDs["dashboard_publication:"+name], fmt.Sprintf("spec.embedding.allowedOrigins[%d]", index), "DashboardPublication %q origin %q: %v", name, authored, err)
-			}
-			if _, exists := seenOrigins[origin]; exists {
-				return resourceError(project.PublicationPaths[name], project.ResourceIDs["dashboard_publication:"+name], "spec.embedding.allowedOrigins", "DashboardPublication %q has duplicate origin %q", name, origin)
-			}
-			seenOrigins[origin] = struct{}{}
-			origins = append(origins, origin)
-		}
-		sort.Strings(origins)
-		pub.AllowedOrigins = origins
-		project.Publications[name] = pub
-	}
-	return validateFlatAccess(project, resolver)
-}
-
-func validateFlatAccess(project Project, resolver resourceResolver) error {
-	validRoles := map[string]struct{}{"owner": {}, "admin": {}, "deployer": {}, "data_deployer": {}, "contributor": {}, "editor": {}, "member": {}, "viewer": {}}
-	for name, group := range project.Access.Groups {
-		for index, member := range group.Members {
-			if strings.TrimSpace(member.PrincipalID) == "" && strings.TrimSpace(member.Email) == "" {
-				return resourceError(project.AccessPaths[name], project.ResourceIDs["group:"+name], fmt.Sprintf("spec.members[%d]", index), "Group %q member requires principalId or email", name)
-			}
-		}
-	}
-	for name, binding := range project.Access.RoleBindings {
-		if _, ok := validRoles[binding.Role]; !ok {
-			return resourceError(project.AccessPaths[name], project.ResourceIDs["rolebinding:"+name], "spec.role", "RoleBinding %q references unknown role %q", name, binding.Role)
-		}
-		if err := validateFlatAccessSubject(project, name, "RoleBinding", binding.Subject, false); err != nil {
-			return err
-		}
-	}
-	validObjectKinds := map[string]projectgraph.Kind{"project": projectgraph.KindProject, "connection": projectgraph.KindConnection, "source": projectgraph.KindSource, "model": projectgraph.KindModel, "semantic_model": projectgraph.KindSemanticModel, "pipeline": projectgraph.KindPipeline, "dashboard": projectgraph.KindDashboard}
-	for name, grant := range project.Access.Grants {
-		kind, ok := validObjectKinds[grant.Object.Kind]
-		if !ok {
-			return resourceError(project.AccessPaths[name], project.ResourceIDs["grant:"+name], "spec.object.kind", "Grant %q has unsupported object kind %q", name, grant.Object.Kind)
-		}
-		if !validCapabilityForKind(grant.Capability, grant.Object.Kind) {
-			return resourceError(project.AccessPaths[name], project.ResourceIDs["grant:"+name], "spec.capability", "Grant %q has unsupported capability %q for %s", name, grant.Capability, grant.Object.Kind)
-		}
-		if _, err := resolver.resolve(grant.Object.ID, kind); err != nil {
-			return resourceError(project.AccessPaths[name], project.ResourceIDs["grant:"+name], "spec.object.id", "Grant %q: %v", name, err)
-		}
-		if grant.Subject.Kind == "dashboard_publication" {
-			return resourceError(project.AccessPaths[name], project.ResourceIDs["grant:"+name], "spec.subject.kind", "Grant %q cannot target dashboard publication", name)
-		}
-		if err := validateFlatAccessSubject(project, name, "Grant", grant.Subject, false); err != nil {
-			return err
-		}
-	}
-	for name, policy := range project.Access.DataPolicies {
-		if policy.PolicyType != "row_filter" && policy.PolicyType != "column_mask" {
-			return resourceError(project.AccessPaths[name], project.ResourceIDs["datapolicy:"+name], "spec.policyType", "DataPolicy %q has unsupported policyType %q", name, policy.PolicyType)
-		}
-		if strings.TrimSpace(policy.ExpressionJSON) == "" {
-			return resourceError(project.AccessPaths[name], project.ResourceIDs["datapolicy:"+name], "spec.expression", "DataPolicy %q requires expression", name)
-		}
-		if policy.Object.Kind != "source" && policy.Object.Kind != "model" && policy.Object.Kind != "semantic_model" {
-			return resourceError(project.AccessPaths[name], project.ResourceIDs["datapolicy:"+name], "spec.object.kind", "DataPolicy %q has unsupported object kind %q", name, policy.Object.Kind)
-		}
-		if strings.TrimSpace(policy.Object.ID) == "" {
-			return resourceError(project.AccessPaths[name], project.ResourceIDs["datapolicy:"+name], "spec.object.id", "DataPolicy %q object id is required", name)
-		}
-		if kind, ok := validObjectKinds[policy.Object.Kind]; ok {
-			if _, err := resolver.resolve(policy.Object.ID, kind); err != nil {
-				return resourceError(project.AccessPaths[name], project.ResourceIDs["datapolicy:"+name], "spec.object.id", "DataPolicy %q: %v", name, err)
-			}
-		}
-		if _, err := accesspolicy.Compile(policy.ID, policy.PolicyType, policy.ExpressionJSON); err != nil {
-			return resourceError(project.AccessPaths[name], project.ResourceIDs["datapolicy:"+name], "spec.expression", "DataPolicy %q expression: %v", name, err)
-		}
-		if err := validateFlatAccessSubject(project, name, "DataPolicy", policy.Subject, true); err != nil {
-			return err
-		}
-	}
 	return nil
-}
-
-func validateFlatAccessSubject(project Project, name, kind string, subject manifest.Subject, allowPublication bool) error {
-	path := project.AccessPaths[name]
-	id := project.ResourceIDs[strings.ToLower(kind)+":"+name]
-	switch subject.Kind {
-	case "principal":
-		if strings.TrimSpace(subject.PrincipalID) == "" && strings.TrimSpace(subject.Email) == "" {
-			return resourceError(path, id, "spec.subject", "%s %q principal subject requires principalId or email", kind, name)
-		}
-	case "service_principal":
-		if strings.TrimSpace(subject.PrincipalID) == "" {
-			return resourceError(path, id, "spec.subject.principalId", "%s %q service_principal subject requires principalId", kind, name)
-		}
-	case "group":
-		if strings.TrimSpace(subject.Group) == "" {
-			return resourceError(path, id, "spec.subject.group", "%s %q group subject requires group", kind, name)
-		}
-		if _, ok := project.Access.Groups[authoredNameByID(subject.Group, accessIDsByName(project, "group"))]; !ok {
-			return resourceError(path, id, "spec.subject.group", "%s %q references unknown Group %q", kind, name, subject.Group)
-		}
-	case "dashboard_publication":
-		if !allowPublication {
-			return resourceError(path, id, "spec.subject.kind", "%s %q does not support dashboard publication subjects", kind, name)
-		}
-		if _, ok := project.Publications[authoredNameByID(subject.Publication, accessIDsByName(project, "dashboard_publication"))]; !ok {
-			return resourceError(path, id, "spec.subject.publication", "%s %q references unknown DashboardPublication %q", kind, name, subject.Publication)
-		}
-	default:
-		return resourceError(path, id, "spec.subject.kind", "%s %q has unsupported subject kind %q", kind, name, subject.Kind)
-	}
-	return nil
-}
-
-func validCapabilityForKind(capability, kind string) bool {
-	resourceKind, err := projectgraph.ParseKind(kind)
-	if err != nil {
-		return false
-	}
-	canonicalCapability, err := access.ParseCapability(capability)
-	if err != nil {
-		return false
-	}
-	return access.SupportsCapability(resourceKind, canonicalCapability)
-}
-
-func accessIDsByName(project Project, kind string) map[string]string {
-	result := map[string]string{}
-	for key, id := range project.ResourceIDs {
-		prefix, name, ok := strings.Cut(key, ":")
-		if ok && prefix == kind {
-			result[name] = id
-		}
-	}
-	return result
 }
 
 func flatResourceMetadata(envelope metadata, fallback string) projectgraph.Metadata {
 	return projectgraph.Metadata{DisplayName: firstNonEmpty(envelope.DisplayName, envelope.Title, fallback), Description: envelope.Description, Owner: envelope.Owner, Domain: envelope.Domain, Tags: append([]string(nil), envelope.Tags...), Documentation: envelope.Documentation}
 }
 
-func projectRelativePath(project *Project, path string) string {
+func projectRelativePath(project *sourceAssembly, path string) string {
 	base, err := filepath.Abs(project.BaseDir)
 	if err != nil {
 		return ""
@@ -658,32 +358,31 @@ func projectRelativePath(project *Project, path string) string {
 	return filepath.ToSlash(relative)
 }
 
-func flatResources(project Project) ([]projectgraph.Resource, error) {
-	resources := make([]projectgraph.Resource, 0, len(project.ResourceIDs)+1)
-	resources = append(resources, projectgraph.Resource{ID: project.ID, Kind: projectgraph.KindProject, Name: project.Name, Metadata: project.Metadata, Provenance: projectgraph.Provenance{Origin: "project", Path: projectRelativePath(&project, project.ProjectPath)}})
+func sourceResources(project sourceAssembly) ([]projectgraph.Resource, error) {
+	resources := make([]projectgraph.Resource, 0, len(project.ResourceIDs))
 	for name, id := range project.SourceIDs {
-		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindSource, Name: name, Metadata: project.ResourceMetadata[id], Provenance: projectgraph.Provenance{Origin: "project", Path: projectRelativePath(&project, project.SourcePaths[name])}})
+		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindSource, Name: name, Metadata: project.ResourceMetadata[id], Provenance: projectgraph.Provenance{Origin: "source", Path: projectRelativePath(&project, project.SourcePaths[name])}})
 	}
 	for name, id := range project.ModelIDs {
-		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindModel, Name: name, Metadata: project.ResourceMetadata[id], Provenance: projectgraph.Provenance{Origin: "project", Path: projectRelativePath(&project, project.ModelPaths[name])}})
+		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindModel, Name: name, Metadata: project.ResourceMetadata[id], Provenance: projectgraph.Provenance{Origin: "source", Path: projectRelativePath(&project, project.ModelPaths[name])}})
 	}
 	for name, id := range project.SemanticModelIDs {
-		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindSemanticModel, Name: name, Metadata: project.ResourceMetadata[id], Provenance: projectgraph.Provenance{Origin: "project", Path: projectRelativePath(&project, project.SemanticModelPaths[name])}})
+		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindSemanticModel, Name: name, Metadata: project.ResourceMetadata[id], Provenance: projectgraph.Provenance{Origin: "source", Path: projectRelativePath(&project, project.SemanticModelPaths[name])}})
 	}
 	for name, id := range project.DashboardIDs {
-		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindDashboard, Name: name, Metadata: project.DashboardMetadata[name], Provenance: projectgraph.Provenance{Origin: "project", Path: projectRelativePath(&project, project.DashboardPaths[name])}})
+		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindDashboard, Name: name, Metadata: project.DashboardMetadata[name], Provenance: projectgraph.Provenance{Origin: "source", Path: projectRelativePath(&project, project.DashboardPaths[name])}})
 	}
 	for name, id := range project.PipelineIDs {
-		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindPipeline, Name: name, Metadata: project.ResourceMetadata[id], Provenance: projectgraph.Provenance{Origin: "project", Path: projectRelativePath(&project, project.PipelinePaths[name])}})
+		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindPipeline, Name: name, Metadata: project.ResourceMetadata[id], Provenance: projectgraph.Provenance{Origin: "source", Path: projectRelativePath(&project, project.PipelinePaths[name])}})
 	}
 	for name, id := range project.ConnectionIDs {
-		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindConnection, Name: name, Metadata: project.ResourceMetadata[id], Provenance: projectgraph.Provenance{Origin: "project", Path: projectRelativePath(&project, project.ConnectionPaths[name])}})
+		resources = append(resources, projectgraph.Resource{ID: projectgraph.ResourceID(id), Kind: projectgraph.KindConnection, Name: name, Metadata: project.ResourceMetadata[id], Provenance: projectgraph.Provenance{Origin: "source", Path: projectRelativePath(&project, project.ConnectionPaths[name])}})
 	}
 	return resources, nil
 }
 
-func compileProjectGraph(project Project) (projectgraph.ProjectGraph, error) {
-	resources, err := flatResources(project)
+func compileGraph(project sourceAssembly) (projectgraph.ProjectGraph, error) {
+	resources, err := sourceResources(project)
 	if err != nil {
 		return projectgraph.ProjectGraph{}, err
 	}
@@ -772,6 +471,3 @@ func compileProjectGraph(project Project) (projectgraph.ProjectGraph, error) {
 	})
 	return projectgraph.NewProjectGraph(resources, edges)
 }
-
-// Graph returns the compiled graph retained by a flat Project.
-func (project Project) GraphValue() projectgraph.ProjectGraph { return project.Graph }

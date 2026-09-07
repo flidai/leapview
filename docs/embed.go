@@ -3,7 +3,7 @@ package docs
 
 import "embed"
 
-// Files contains the unified catalog, FTS5 search index, authored articles, generated
+// Files contains the unified catalog, search index, authored articles, generated
 // references, downloadable schemas, and API contract.
 //
 //go:embed *

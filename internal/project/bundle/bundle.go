@@ -1,10 +1,11 @@
-// Package bundle owns the deterministic source-and-compiled project bundle.
-// A bundle contains one compiled/project.json and no target selector. Serving
+// Package bundle owns the deterministic source-and-compiled source bundle.
+// A bundle contains one compiled/source-bundle.json and no target selector. Serving
 // environment and generation identity are introduced by deployment (LEA-374).
 package bundle
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -19,6 +20,7 @@ import (
 	"strings"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/platform/digest"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
@@ -27,35 +29,44 @@ import (
 )
 
 const (
-	BundleFormat           = "tar.gz"
-	ProjectFile            = "leapview.yaml"
-	CompiledProjectFile    = "compiled/project.json"
-	projectBundleVersion   = 1
-	compiledProjectVersion = 2
-	projectAPIVersion      = "leapview.dev/v1"
+	BundleFormat             = "tar.gz"
+	BundleContentType        = "application/gzip"
+	CompiledSourceBundleFile = "compiled/source-bundle.json"
+	// CompiledProjectFile is retained as the serving-loader compatibility name;
+	// Project-free bundles always use CompiledSourceBundleFile on the wire.
+	CompiledProjectFile         = CompiledSourceBundleFile
+	sourceBundleVersion         = 2
+	compiledSourceBundleVersion = 3
+	sourceBundleAPIVersion      = "leapview.dev/v1"
+	MaxBundleBytes              = int64(64 << 20)
+	MaxBundleUncompressedBytes  = int64(128 << 20)
+	MaxBundleFileBytes          = int64(64 << 20)
+	MaxBundleFiles              = 10_000
 )
 
-// Validation is the project-level projection consumed by deployment and
+// Validation is the source-bundle projection consumed by deployment and
 // runtime adapters. It deliberately has no target/environment selector.
 type Validation struct {
-	Digest        string
-	ManifestJSON  string
-	RootDir       string
+	Digest       string
+	ManifestJSON string
+	RootDir      string
+	// ProjectID and ProjectDigest are empty for portable source bundles. They
+	// remain available to native serving adapters while target binding is
+	// introduced outside this package.
 	ProjectID     string
 	ProjectDigest string
+	BundleDigest  string
 	Graph         projectgraph.ProjectGraph
-	Manifest      projectmanifest.Project
+	Manifest      projectmanifest.ResourceManifest
 }
 
 // Manifest is the deterministic bundle index. Files lists authored source
-// files; the compiled path is a generated project artifact and is validated
+// files; the compiled path is a generated source-bundle artifact and is validated
 // separately by CompiledSHA256.
 type Manifest struct {
 	Version        int            `json:"version"`
-	ProjectID      string         `json:"projectId"`
-	ProjectDigest  string         `json:"projectDigest"`
+	BundleDigest   string         `json:"bundleDigest"`
 	GraphDigest    string         `json:"graphDigest"`
-	CatalogPath    string         `json:"catalogPath"`
 	CompiledPath   string         `json:"compiledPath"`
 	CompiledSHA256 string         `json:"compiledSha256"`
 	Files          []ManifestFile `json:"files"`
@@ -67,24 +78,29 @@ type ManifestFile struct {
 	Size   int64  `json:"size"`
 }
 
-// Plan is the compiler's canonical project-wide plan contract. Keeping this
-// alias avoids a second bundle-specific plan schema drifting from compiler.
-type Plan = projectcompiler.ProjectPlan
-
-// CompiledProjectArtifact is the generated project contract retained in
-// compiled/project.json. It contains one graph, one project manifest, and one
-// project plan. Environment and generation are intentionally absent.
-type CompiledProjectArtifact struct {
+// CompiledSourceBundleArtifact is the generated source bundle contract retained in
+// compiled/source-bundle.json. It contains one graph, one resource manifest,
+// and one bundle-wide plan. Environment and generation are intentionally absent.
+type CompiledSourceBundleArtifact struct {
 	Version       int                               `json:"version"`
-	ProjectID     projectgraph.ResourceID           `json:"projectId"`
-	ProjectDigest string                            `json:"projectDigest"`
+	ProjectID     projectgraph.ResourceID           `json:"-"`
+	ProjectDigest string                            `json:"-"`
+	BundleDigest  string                            `json:"bundleDigest"`
 	GraphDigest   string                            `json:"graphDigest"`
 	Validation    CompiledArtifactValidation        `json:"validation"`
-	Manifest      projectmanifest.Project           `json:"manifest"`
+	Manifest      projectmanifest.ResourceManifest  `json:"manifest"`
 	Runtime       projectartifact.RuntimeProjection `json:"runtime"`
 	Graph         projectgraph.ProjectGraph         `json:"graph"`
-	Plan          Plan                              `json:"plan"`
+	Plan          projectcompiler.BundlePlan        `json:"plan"`
 }
+
+// CompiledProjectArtifact is the serving-loader compatibility name. Its wire
+// representation is the portable source bundle; target identity is never
+// serialized by this package.
+type CompiledProjectArtifact = CompiledSourceBundleArtifact
+
+// Plan is the portable compiler plan contract.
+type Plan = projectcompiler.BundlePlan
 
 type CompiledArtifactValidation struct {
 	Status        string                       `json:"status"`
@@ -98,57 +114,57 @@ type CompiledArtifactDiagnostic struct {
 	Message  string `json:"message"`
 }
 
-// PackProjectOptions is the explicit compiler-to-bundle seam. LEA-372's
-// compiler supplies Project and Plan. SourceRoot defaults to the authored
-// project path's directory; SourceFiles can be used by an export adapter when
-// the checkout is unavailable.
-type PackProjectOptions struct {
-	Project     projectartifact.Project
-	Plan        projectcompiler.ProjectPlan
-	SourceRoot  string
-	SourceFiles map[string][]byte
+// PackSourceBundleOptions is the explicit compiler-to-bundle seam. LEA-372's
+// compiler supplies SourceBundle and Plan. SourceRoot may repeat sourceRoot for
+// callers that carry the root in options; SourceFiles can be used by an export
+// adapter when the checkout is unavailable.
+type PackSourceBundleOptions struct {
+	SourceBundle projectartifact.SourceBundle
+	Plan         projectcompiler.BundlePlan
+	SourceRoot   string
+	SourceFiles  map[string][]byte
 }
 
-// PackProject writes authored source and one generated compiled/project.json.
-// The supplied project is already compiled and immutable; this package never
+// PackSourceBundle writes source-root files and one generated compiled/source-bundle.json.
+// The supplied source bundle is already compiled and immutable; this package never
 // recompiles or selects a target.
-func PackProject(projectPath string, options PackProjectOptions, out io.Writer) (Manifest, string, error) {
+func PackSourceBundle(sourceRoot string, options PackSourceBundleOptions, out io.Writer) (Manifest, string, error) {
 	if out == nil {
 		return Manifest{}, "", errors.New("bundle output is required")
 	}
-	if options.Project.ProjectID() == "" {
-		return Manifest{}, "", errors.New("compiled project artifact is required")
+	if err := options.SourceBundle.Graph().Validate(); err != nil {
+		return Manifest{}, "", fmt.Errorf("source bundle is required: %w", err)
 	}
-	absoluteProjectPath, err := filepath.Abs(projectPath)
+	root, err := filepath.Abs(sourceRoot)
 	if err != nil {
 		return Manifest{}, "", err
 	}
-	root := options.SourceRoot
-	if root == "" {
-		root = filepath.Dir(absoluteProjectPath)
-	} else if root, err = filepath.Abs(root); err != nil {
-		return Manifest{}, "", err
-	}
-	if _, err := relativeBundlePath(root, absoluteProjectPath); err != nil {
-		return Manifest{}, "", err
+	if options.SourceRoot != "" {
+		optionRoot, optionErr := filepath.Abs(options.SourceRoot)
+		if optionErr != nil {
+			return Manifest{}, "", optionErr
+		}
+		if filepath.Clean(optionRoot) != filepath.Clean(root) {
+			return Manifest{}, "", errors.New("source root is specified twice with different values")
+		}
 	}
 	sources := options.SourceFiles
 	if sources == nil {
-		files, err := collectProjectBundleFiles(root, absoluteProjectPath, options.Project)
+		files, err := collectSourceBundleFiles(root, options.SourceBundle)
 		if err != nil {
 			return Manifest{}, "", err
 		}
-		sources, err = readSourceFiles(root, absoluteProjectPath, files)
+		sources, err = readSourceFiles(root, files)
 		if err != nil {
 			return Manifest{}, "", err
 		}
 	} else {
-		sources, err = validateSuppliedSourceFiles(root, absoluteProjectPath, sources, options.Project)
+		sources, err = validateSuppliedSourceFiles(root, sources, options.SourceBundle)
 		if err != nil {
 			return Manifest{}, "", err
 		}
 	}
-	compiled, err := compiledProject(options.Project, options.Plan)
+	compiled, err := compiledSourceBundle(options.SourceBundle, options.Plan)
 	if err != nil {
 		return Manifest{}, "", err
 	}
@@ -156,17 +172,20 @@ func PackProject(projectPath string, options PackProjectOptions, out io.Writer) 
 	if err != nil {
 		return Manifest{}, "", err
 	}
-	manifest := newManifest(options.Project, compiledBytes, sources)
-	return writeBundleBytes(sources, map[string][]byte{CompiledProjectFile: compiledBytes}, manifest, out)
+	manifest := newManifest(options.SourceBundle, compiledBytes, sources)
+	return writeBundleBytes(sources, map[string][]byte{CompiledSourceBundleFile: compiledBytes}, manifest, out)
 }
 
-// PackCompiledProject writes only the generated project artifact and manifest.
+// PackCompiledSourceBundle writes only the generated source bundle artifact and manifest.
 // It is useful when source bytes were retained separately by a release store.
-func PackCompiledProject(project projectartifact.Project, plan projectcompiler.ProjectPlan, out io.Writer) (Manifest, string, error) {
-	if out == nil || project.ProjectID() == "" {
-		return Manifest{}, "", errors.New("compiled project artifact and output are required")
+func PackCompiledSourceBundle(sourceBundle projectartifact.SourceBundle, plan projectcompiler.BundlePlan, out io.Writer) (Manifest, string, error) {
+	if out == nil {
+		return Manifest{}, "", errors.New("compiled source bundle and output are required")
 	}
-	compiled, err := compiledProject(project, plan)
+	if err := sourceBundle.Graph().Validate(); err != nil {
+		return Manifest{}, "", fmt.Errorf("source bundle is required: %w", err)
+	}
+	compiled, err := compiledSourceBundle(sourceBundle, plan)
 	if err != nil {
 		return Manifest{}, "", err
 	}
@@ -174,34 +193,38 @@ func PackCompiledProject(project projectartifact.Project, plan projectcompiler.P
 	if err != nil {
 		return Manifest{}, "", err
 	}
-	manifest := newManifest(project, compiledBytes, nil)
-	return writeBundleBytes(nil, map[string][]byte{CompiledProjectFile: compiledBytes}, manifest, out)
+	manifest := newManifest(sourceBundle, compiledBytes, nil)
+	return writeBundleBytes(nil, map[string][]byte{CompiledSourceBundleFile: compiledBytes}, manifest, out)
 }
 
-func compiledProject(project projectartifact.Project, plan projectcompiler.ProjectPlan) (CompiledProjectArtifact, error) {
-	graph := project.Graph()
+// PackCompiledProject is retained for serving callers while the compiled
+// artifact contract is portable. It accepts the source bundle and explicit
+// bundle plan; no target Project identity is inferred here.
+func PackCompiledProject(sourceBundle projectartifact.SourceBundle, plan projectcompiler.BundlePlan, out io.Writer) (Manifest, string, error) {
+	return PackCompiledSourceBundle(sourceBundle, plan, out)
+}
+
+func compiledSourceBundle(sourceBundle projectartifact.SourceBundle, plan projectcompiler.BundlePlan) (CompiledSourceBundleArtifact, error) {
+	graph := sourceBundle.Graph()
 	if err := graph.Validate(); err != nil {
-		return CompiledProjectArtifact{}, err
+		return CompiledSourceBundleArtifact{}, err
 	}
-	if err := validatePlan(plan, graph, project.Manifest()); err != nil {
-		return CompiledProjectArtifact{}, err
+	if err := validatePlan(plan, graph); err != nil {
+		return CompiledSourceBundleArtifact{}, err
 	}
-	compiled := CompiledProjectArtifact{
-		Version:   compiledProjectVersion,
-		ProjectID: graph.ProjectID(), ProjectDigest: project.Digest(), GraphDigest: graph.Digest(),
-		Validation: CompiledArtifactValidation{Status: "passed", SchemaVersion: projectAPIVersion},
-		Manifest:   project.Manifest(), Runtime: project.RuntimeProjection(), Graph: graph, Plan: plan,
+	compiled := CompiledSourceBundleArtifact{
+		Version:      compiledSourceBundleVersion,
+		BundleDigest: sourceBundle.Digest(), GraphDigest: graph.Digest(),
+		Validation: CompiledArtifactValidation{Status: "passed", SchemaVersion: sourceBundleAPIVersion},
+		Manifest:   sourceBundle.Manifest(), Runtime: sourceBundle.RuntimeProjection(), Graph: graph, Plan: plan,
 	}
-	if err := ValidateCompiledProjectArtifact(compiled); err != nil {
-		return CompiledProjectArtifact{}, err
+	if err := ValidateCompiledSourceBundleArtifact(compiled); err != nil {
+		return CompiledSourceBundleArtifact{}, err
 	}
 	return compiled, nil
 }
 
-func validatePlan(plan projectcompiler.ProjectPlan, graph projectgraph.ProjectGraph, manifest projectmanifest.Project) error {
-	if plan.Project != graph.ProjectID().String() {
-		return fmt.Errorf("project plan identity = %q, graph = %q", plan.Project, graph.ProjectID())
-	}
+func validatePlan(plan projectcompiler.BundlePlan, graph projectgraph.ProjectGraph) error {
 	expected := map[string][]string{
 		"connections":    resourceIDsByKind(graph, projectgraph.KindConnection),
 		"sources":        resourceIDsByKind(graph, projectgraph.KindSource),
@@ -209,30 +232,25 @@ func validatePlan(plan projectcompiler.ProjectPlan, graph projectgraph.ProjectGr
 		"semanticModels": resourceIDsByKind(graph, projectgraph.KindSemanticModel),
 		"pipelines":      resourceIDsByKind(graph, projectgraph.KindPipeline),
 		"dashboards":     resourceIDsByKind(graph, projectgraph.KindDashboard),
-		"groups":         accessIDs(manifest.Access.Groups),
-		"roleBindings":   accessIDs(manifest.Access.RoleBindings),
-		"grants":         accessIDs(manifest.Access.Grants),
-		"dataPolicies":   accessIDs(manifest.Access.DataPolicies),
 	}
 	actual := map[string][]string{
 		"connections": plan.Connections, "sources": plan.Sources, "models": plan.Models,
 		"semanticModels": plan.SemanticModels, "pipelines": plan.Pipelines,
-		"dashboards": plan.Dashboards, "groups": plan.Groups, "roleBindings": plan.RoleBindings,
-		"grants": plan.Grants, "dataPolicies": plan.DataPolicies,
+		"dashboards": plan.Dashboards,
 	}
 	for kind, want := range expected {
 		if !equalStringSlices(actual[kind], want) {
-			return fmt.Errorf("project plan %s = %v, want graph resources %v", kind, actual[kind], want)
+			return fmt.Errorf("bundle plan %s = %v, want graph resources %v", kind, actual[kind], want)
 		}
 	}
 	for index, change := range plan.Changes {
 		if !projectgraph.ResourceID(change.ID).Valid() || strings.TrimSpace(change.Action) == "" {
-			return fmt.Errorf("project plan change %d has invalid identity", index)
+			return fmt.Errorf("bundle plan change %d has invalid identity", index)
 		}
 	}
 	for index, change := range plan.DependencyChanges {
 		if !projectgraph.ResourceID(change.From).Valid() || !projectgraph.ResourceID(change.To).Valid() || strings.TrimSpace(change.Action) == "" {
-			return fmt.Errorf("project plan dependency change %d has invalid identity", index)
+			return fmt.Errorf("bundle plan dependency change %d has invalid identity", index)
 		}
 	}
 	return nil
@@ -243,27 +261,6 @@ func resourceIDsByKind(graph projectgraph.ProjectGraph, kind projectgraph.Kind) 
 	for _, resource := range graph.Resources() {
 		if resource.Kind == kind {
 			ids = append(ids, resource.ID.String())
-		}
-	}
-	sort.Strings(ids)
-	return ids
-}
-
-func accessIDs[T any](values map[string]T) []string {
-	ids := make([]string, 0, len(values))
-	for _, value := range values {
-		data, err := json.Marshal(value)
-		if err != nil {
-			panic(fmt.Sprintf("encode access resource: %v", err))
-		}
-		var wire struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(data, &wire); err != nil {
-			panic(fmt.Sprintf("decode access resource: %v", err))
-		}
-		if strings.TrimSpace(wire.ID) != "" {
-			ids = append(ids, wire.ID)
 		}
 	}
 	sort.Strings(ids)
@@ -282,38 +279,23 @@ func equalStringSlices(left, right []string) bool {
 	return true
 }
 
-func newManifest(project projectartifact.Project, compiled []byte, sourceFiles map[string][]byte) Manifest {
-	graph := project.Graph()
-	catalogPath := CompiledProjectFile
-	for path := range sourceFiles {
-		if clean, err := safeBundlePath(path); err == nil && clean == ProjectFile {
-			catalogPath = ProjectFile
-			break
-		}
-	}
+func newManifest(sourceBundle projectartifact.SourceBundle, compiled []byte, sourceFiles map[string][]byte) Manifest {
+	graph := sourceBundle.Graph()
 	manifest := Manifest{
-		Version: projectBundleVersion, ProjectID: graph.ProjectID().String(), ProjectDigest: project.Digest(),
-		GraphDigest: graph.Digest(), CatalogPath: catalogPath, CompiledPath: CompiledProjectFile,
+		Version: sourceBundleVersion, BundleDigest: sourceBundle.Digest(), GraphDigest: graph.Digest(), CompiledPath: CompiledSourceBundleFile,
 		CompiledSHA256: digestBytes(compiled), Files: make([]ManifestFile, 0, len(sourceFiles)),
 	}
 	return manifest
 }
 
-func readSourceFiles(root, projectPath string, files []string) (map[string][]byte, error) {
+func readSourceFiles(root string, files []string) (map[string][]byte, error) {
 	result := make(map[string][]byte, len(files))
-	projectRel, err := relativeBundlePath(root, projectPath)
-	if err != nil {
-		return nil, err
-	}
 	for _, rel := range files {
-		rel, err = safeBundlePath(rel)
+		rel, err := safeBundlePath(rel)
 		if err != nil {
 			return nil, err
 		}
 		path := filepath.Join(root, filepath.FromSlash(rel))
-		if rel == projectRel {
-			path = projectPath
-		}
 		info, err := os.Stat(path)
 		if err != nil {
 			return nil, err
@@ -330,36 +312,47 @@ func readSourceFiles(root, projectPath string, files []string) (map[string][]byt
 	return result, nil
 }
 
-func collectProjectBundleFiles(baseDir, projectPath string, project projectartifact.Project) ([]string, error) {
-	relProject, err := relativeBundlePath(baseDir, projectPath)
-	if err != nil {
-		return nil, err
-	}
-	paths := map[string]struct{}{relProject: {}}
-	manifest := project.Manifest()
-	graph := project.Graph()
-	if err := validateResourceFiles(project); err != nil {
+func collectSourceBundleFiles(baseDir string, sourceBundle projectartifact.SourceBundle) ([]string, error) {
+	paths := map[string]struct{}{}
+	manifest := sourceBundle.Manifest()
+	graph := sourceBundle.Graph()
+	if err := validateResourceFiles(sourceBundle); err != nil {
 		return nil, err
 	}
 	for resourceID, path := range manifest.ResourceFiles {
 		if strings.TrimSpace(path) == "" {
 			return nil, fmt.Errorf("manifest resource file %q has an empty path", resourceID)
 		}
-		cleanPath, err := safeBundlePath(path)
-		if err != nil {
+		if _, err := safeBundlePath(path); err != nil {
 			return nil, fmt.Errorf("manifest resource file %q: %w", path, err)
-		}
-		if resourceID == graph.ProjectID().String() && cleanPath != relProject {
-			return nil, fmt.Errorf("manifest project resource path = %q, want %q", cleanPath, relProject)
 		}
 		if err := addAuthoredPath(paths, baseDir, path); err != nil {
 			return nil, fmt.Errorf("manifest resource file %q: %w", path, err)
 		}
 	}
 	for _, resource := range graph.Resources() {
-		if path := strings.TrimSpace(resource.Provenance.Path); path != "" {
-			if err := addAuthoredPath(paths, baseDir, path); err != nil {
-				return nil, fmt.Errorf("graph resource %s provenance %q: %w", resource.ID, path, err)
+		path := strings.TrimSpace(resource.Provenance.Path)
+		if path == "" {
+			continue
+		}
+		if err := addAuthoredPath(paths, baseDir, path); err != nil {
+			return nil, fmt.Errorf("graph resource %s provenance %q: %w", resource.ID, path, err)
+		}
+		if resource.Kind != projectgraph.KindDashboard {
+			continue
+		}
+		dashboardPath := filepath.Join(baseDir, filepath.FromSlash(path))
+		value, err := projectcompiler.LoadDashboardDocument(dashboardPath)
+		if err != nil {
+			return nil, fmt.Errorf("load dashboard source %q: %w", path, err)
+		}
+		expanded, err := document.ExpandDashboardFragments(value, dashboardPath, baseDir)
+		if err != nil {
+			return nil, fmt.Errorf("expand dashboard source %q: %w", path, err)
+		}
+		for _, fragmentPath := range expanded.Paths {
+			if err := addAuthoredPath(paths, baseDir, fragmentPath); err != nil {
+				return nil, fmt.Errorf("dashboard fragment %q: %w", fragmentPath, err)
 			}
 		}
 	}
@@ -371,8 +364,8 @@ func collectProjectBundleFiles(baseDir, projectPath string, project projectartif
 	return files, nil
 }
 
-func validateSuppliedSourceFiles(baseDir, projectPath string, sourceFiles map[string][]byte, project projectartifact.Project) (map[string][]byte, error) {
-	expected, err := collectProjectBundleFiles(baseDir, projectPath, project)
+func validateSuppliedSourceFiles(baseDir string, sourceFiles map[string][]byte, sourceBundle projectartifact.SourceBundle) (map[string][]byte, error) {
+	expected, err := collectSourceBundleFiles(baseDir, sourceBundle)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +383,7 @@ func validateSuppliedSourceFiles(baseDir, projectPath string, sourceFiles map[st
 			return nil, fmt.Errorf("source file %q is duplicated", clean)
 		}
 		if _, ok := want[clean]; !ok {
-			return nil, fmt.Errorf("source file %q is not an expected project resource", clean)
+			return nil, fmt.Errorf("source file %q is not an expected source-bundle resource", clean)
 		}
 		result[clean] = append([]byte(nil), content...)
 	}
@@ -402,39 +395,17 @@ func validateSuppliedSourceFiles(baseDir, projectPath string, sourceFiles map[st
 	return result, nil
 }
 
-func validateResourceFiles(project projectartifact.Project) error {
-	graph := project.Graph()
-	manifest := project.Manifest()
-	expected := map[string]struct{}{graph.ProjectID().String(): {}}
+func validateResourceFiles(sourceBundle projectartifact.SourceBundle) error {
+	graph := sourceBundle.Graph()
+	manifest := sourceBundle.Manifest()
+	expected := map[string]struct{}{}
 	for _, resource := range graph.Resources() {
 		expected[resource.ID.String()] = struct{}{}
-	}
-	for _, id := range manifest.NameIndex.Publications {
-		if strings.TrimSpace(id) != "" {
-			expected[id] = struct{}{}
-		}
-	}
-	for id := range manifest.Publications {
-		if strings.TrimSpace(id) != "" {
-			expected[id] = struct{}{}
-		}
-	}
-	for _, id := range accessIDs(manifest.Access.Groups) {
-		expected[id] = struct{}{}
-	}
-	for _, id := range accessIDs(manifest.Access.RoleBindings) {
-		expected[id] = struct{}{}
-	}
-	for _, id := range accessIDs(manifest.Access.Grants) {
-		expected[id] = struct{}{}
-	}
-	for _, id := range accessIDs(manifest.Access.DataPolicies) {
-		expected[id] = struct{}{}
 	}
 	actual := make(map[string]struct{}, len(manifest.ResourceFiles))
 	for id := range manifest.ResourceFiles {
 		if _, ok := expected[id]; !ok {
-			return fmt.Errorf("manifest resource file key %q is not a project resource", id)
+			return fmt.Errorf("manifest resource file key %q is not a source-bundle resource", id)
 		}
 		actual[id] = struct{}{}
 	}
@@ -458,13 +429,39 @@ func addAuthoredPath(paths map[string]struct{}, baseDir, value string) error {
 	if err != nil {
 		return err
 	}
+	if clean == "leapview.yaml" {
+		return errors.New("legacy project root path is not supported in a source bundle")
+	}
 	paths[clean] = struct{}{}
 	return nil
 }
 
 func writeBundleBytes(sourceFiles, generatedFiles map[string][]byte, manifest Manifest, out io.Writer) (Manifest, string, error) {
+	if len(sourceFiles)+len(generatedFiles)+1 > MaxBundleFiles {
+		return Manifest{}, "", fmt.Errorf("bundle file count exceeds limit %d", MaxBundleFiles)
+	}
+	var uncompressedBytes int64
+	for path, content := range sourceFiles {
+		if int64(len(content)) > MaxBundleFileBytes {
+			return Manifest{}, "", fmt.Errorf("bundle file %q exceeds maximum file size %d", path, MaxBundleFileBytes)
+		}
+		if int64(len(content)) > MaxBundleUncompressedBytes-uncompressedBytes {
+			return Manifest{}, "", fmt.Errorf("bundle uncompressed size exceeds limit %d", MaxBundleUncompressedBytes)
+		}
+		uncompressedBytes += int64(len(content))
+	}
+	for path, content := range generatedFiles {
+		if int64(len(content)) > MaxBundleFileBytes {
+			return Manifest{}, "", fmt.Errorf("bundle file %q exceeds maximum file size %d", path, MaxBundleFileBytes)
+		}
+		if int64(len(content)) > MaxBundleUncompressedBytes-uncompressedBytes {
+			return Manifest{}, "", fmt.Errorf("bundle uncompressed size exceeds limit %d", MaxBundleUncompressedBytes)
+		}
+		uncompressedBytes += int64(len(content))
+	}
 	hash := sha256.New()
-	gz := gzip.NewWriter(io.MultiWriter(out, hash))
+	limitedOut := &bundleSizeWriter{out: io.MultiWriter(out, hash)}
+	gz := gzip.NewWriter(limitedOut)
 	tw := tar.NewWriter(gz)
 	seen := map[string]struct{}{}
 	sourcePaths := sortedKeys(sourceFiles)
@@ -501,6 +498,12 @@ func writeBundleBytes(sourceFiles, generatedFiles map[string][]byte, manifest Ma
 	if err != nil {
 		return Manifest{}, "", err
 	}
+	if int64(len(manifestBytes)) > MaxBundleFileBytes {
+		return Manifest{}, "", fmt.Errorf("bundle file %q exceeds maximum file size %d", "manifest.json", MaxBundleFileBytes)
+	}
+	if int64(len(manifestBytes)) > MaxBundleUncompressedBytes-uncompressedBytes {
+		return Manifest{}, "", fmt.Errorf("bundle uncompressed size exceeds limit %d", MaxBundleUncompressedBytes)
+	}
 	if _, ok := seen["manifest.json"]; ok {
 		return Manifest{}, "", errors.New("bundle generated path manifest.json duplicates an existing file")
 	}
@@ -517,6 +520,20 @@ func writeBundleBytes(sourceFiles, generatedFiles map[string][]byte, manifest Ma
 	return manifest, "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+type bundleSizeWriter struct {
+	out io.Writer
+	n   int64
+}
+
+func (w *bundleSizeWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > MaxBundleBytes-w.n {
+		return 0, fmt.Errorf("bundle compressed size exceeds limit %d", MaxBundleBytes)
+	}
+	n, err := w.out.Write(p)
+	w.n += int64(n)
+	return n, err
+}
+
 func writeTarFile(tw *tar.Writer, name string, content []byte) error {
 	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(content))}); err != nil {
 		return err
@@ -525,13 +542,13 @@ func writeTarFile(tw *tar.Writer, name string, content []byte) error {
 	return err
 }
 
-// ValidateArtifact extracts and validates one project bundle.
+// ValidateArtifact extracts and validates one source bundle.
 func ValidateArtifact(path string) (Validation, error) {
 	digestValue, err := fileDigest(path)
 	if err != nil {
 		return Validation{}, err
 	}
-	root, err := os.MkdirTemp("", "leapview-deploy-project-*")
+	root, err := os.MkdirTemp("", "leapview-deploy-source-bundle-*")
 	if err != nil {
 		return Validation{}, err
 	}
@@ -548,7 +565,7 @@ func ValidateArtifact(path string) (Validation, error) {
 		os.RemoveAll(root)
 		return Validation{}, err
 	}
-	compiled, err := readCompiledProjectArtifact(root, manifest)
+	compiled, err := readCompiledSourceBundleArtifact(root, manifest)
 	if err != nil {
 		os.RemoveAll(root)
 		return Validation{}, err
@@ -559,44 +576,200 @@ func ValidateArtifact(path string) (Validation, error) {
 		return Validation{}, err
 	}
 	return Validation{Digest: digestValue, ManifestJSON: string(manifestJSON), RootDir: root,
-		ProjectID: compiled.ProjectID.String(), ProjectDigest: compiled.ProjectDigest,
-		Graph: compiled.Graph, Manifest: compiled.Manifest}, nil
+		BundleDigest: compiled.BundleDigest, Graph: compiled.Graph, Manifest: compiled.Manifest}, nil
 }
 
-func ValidateCompiledProjectArtifact(compiled CompiledProjectArtifact) error {
-	if compiled.Version != compiledProjectVersion {
-		return fmt.Errorf("compiled project artifact version = %d, want %d", compiled.Version, compiledProjectVersion)
+// ValidateArtifactBytes validates one bounded portable bundle without
+// extracting it. It mirrors ValidateArtifactReader for object-backed callers.
+func ValidateArtifactBytes(data []byte) (Validation, CompiledProjectArtifact, error) {
+	if int64(len(data)) > MaxBundleBytes {
+		return Validation{}, CompiledProjectArtifact{}, fmt.Errorf("bundle compressed size exceeds limit %d", MaxBundleBytes)
+	}
+	return validateArtifactBytes(data)
+}
+
+func ValidateArtifactReader(reader io.Reader, expectedSize int64) (Validation, CompiledProjectArtifact, error) {
+	if reader == nil {
+		return Validation{}, CompiledProjectArtifact{}, errors.New("bundle reader is required")
+	}
+	if expectedSize < 0 || expectedSize > MaxBundleBytes {
+		return Validation{}, CompiledProjectArtifact{}, fmt.Errorf("bundle expected size %d is outside limit", expectedSize)
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, MaxBundleBytes+1))
+	if err != nil {
+		return Validation{}, CompiledProjectArtifact{}, fmt.Errorf("read bundle: %w", err)
+	}
+	if int64(len(data)) != expectedSize {
+		return Validation{}, CompiledProjectArtifact{}, fmt.Errorf("bundle compressed size = %d, want %d", len(data), expectedSize)
+	}
+	return validateArtifactBytes(data)
+}
+
+func validateArtifactBytes(data []byte) (Validation, CompiledProjectArtifact, error) {
+	entries, err := readBundleEntries(bytes.NewReader(data))
+	if err != nil {
+		return Validation{}, CompiledProjectArtifact{}, err
+	}
+	manifestData, ok := entries["manifest.json"]
+	if !ok {
+		return Validation{}, CompiledProjectArtifact{}, errors.New("bundle manifest.json is missing")
+	}
+	manifest, err := decodeManifest(manifestData)
+	if err != nil {
+		return Validation{}, CompiledProjectArtifact{}, err
+	}
+	if _, err := validateManifestEntries(entries, manifest); err != nil {
+		return Validation{}, CompiledProjectArtifact{}, err
+	}
+	compiledData, ok := entries[CompiledSourceBundleFile]
+	if !ok {
+		return Validation{}, CompiledProjectArtifact{}, errors.New("compiled source bundle artifact is missing")
+	}
+	compiled, err := decodeCompiledSourceBundleArtifact(compiledData, manifest)
+	if err != nil {
+		return Validation{}, CompiledProjectArtifact{}, err
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return Validation{}, CompiledProjectArtifact{}, err
+	}
+	return Validation{Digest: digestBytesPrefixed(data), ManifestJSON: string(manifestJSON), BundleDigest: compiled.BundleDigest, Graph: compiled.Graph, Manifest: compiled.Manifest}, compiled, nil
+}
+
+func readBundleEntries(data io.Reader) (map[string][]byte, error) {
+	if data == nil {
+		return nil, errors.New("bundle reader is required")
+	}
+	// Buffer the bounded compressed object once. This gives the reader and byte
+	// APIs identical digest input and lets us reject bytes after the gzip member.
+	raw, err := io.ReadAll(io.LimitReader(data, MaxBundleBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read bundle: %w", err)
+	}
+	if int64(len(raw)) > MaxBundleBytes {
+		return nil, fmt.Errorf("bundle compressed size exceeds limit %d", MaxBundleBytes)
+	}
+	compressed := bufio.NewReader(bytes.NewReader(raw))
+	gz, err := gzip.NewReader(compressed)
+	if err != nil {
+		return nil, fmt.Errorf("decode bundle gzip: %w", err)
+	}
+	gz.Multistream(false)
+	tr := tar.NewReader(gz)
+	entries := make(map[string][]byte)
+	var expanded int64
+	for count := 0; ; count++ {
+		header, nextErr := tr.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			_ = gz.Close()
+			return nil, fmt.Errorf("decode bundle tar: %w", nextErr)
+		}
+		if count >= MaxBundleFiles {
+			_ = gz.Close()
+			return nil, fmt.Errorf("bundle file count exceeds limit %d", MaxBundleFiles)
+		}
+		if header.Format == tar.FormatGNU || header.PAXRecords["path"] != "" || header.PAXRecords["linkpath"] != "" {
+			_ = gz.Close()
+			return nil, fmt.Errorf("unsupported extended bundle path %q", header.Name)
+		}
+		rel, pathErr := safeBundlePath(header.Name)
+		if pathErr != nil {
+			_ = gz.Close()
+			return nil, pathErr
+		}
+		if _, exists := entries[rel]; exists {
+			_ = gz.Close()
+			return nil, fmt.Errorf("duplicate bundle entry %q", rel)
+		}
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			_ = gz.Close()
+			return nil, fmt.Errorf("unsupported bundle entry %q", header.Name)
+		}
+		if header.Size < 0 || header.Size > MaxBundleFileBytes {
+			_ = gz.Close()
+			return nil, fmt.Errorf("bundle file %q exceeds maximum file size %d", rel, MaxBundleFileBytes)
+		}
+		if header.Size > MaxBundleUncompressedBytes-expanded {
+			_ = gz.Close()
+			return nil, fmt.Errorf("bundle uncompressed size exceeds limit %d", MaxBundleUncompressedBytes)
+		}
+		content, readErr := io.ReadAll(io.LimitReader(tr, MaxBundleFileBytes+1))
+		if readErr != nil {
+			_ = gz.Close()
+			return nil, fmt.Errorf("read bundle file %q: %w", rel, readErr)
+		}
+		if int64(len(content)) != header.Size {
+			_ = gz.Close()
+			return nil, fmt.Errorf("bundle file %q size = %d, want %d", rel, len(content), header.Size)
+		}
+		expanded += int64(len(content))
+		entries[rel] = content
+	}
+	// tar.Reader stops at its two zero blocks. Consume the decompressed stream
+	// to distinguish a valid end-of-archive from trailing tar bytes.
+	trailingTar, tailErr := io.ReadAll(gz)
+	if tailErr != nil {
+		_ = gz.Close()
+		return nil, fmt.Errorf("decode bundle trailing data: %w", tailErr)
+	}
+	if len(trailingTar) != 0 {
+		_ = gz.Close()
+		return nil, errors.New("bundle archive contains trailing tar data")
+	}
+	if err := gz.Close(); err != nil {
+		return nil, fmt.Errorf("close bundle gzip: %w", err)
+	}
+	// Multistream(false) leaves bytes after the first gzip member in the
+	// buffered source. Any such bytes are trailing archive data, including a
+	// second valid gzip member.
+	trailingGzip, err := io.ReadAll(compressed)
+	if err != nil {
+		return nil, fmt.Errorf("read bundle trailing bytes: %w", err)
+	}
+	if len(trailingGzip) != 0 {
+		return nil, errors.New("bundle archive contains trailing gzip data")
+	}
+	return entries, nil
+}
+
+func ValidateCompiledSourceBundleArtifact(compiled CompiledSourceBundleArtifact) error {
+	if compiled.Version != compiledSourceBundleVersion {
+		return fmt.Errorf("compiled source bundle version = %d, want %d", compiled.Version, compiledSourceBundleVersion)
 	}
 	if err := compiled.Graph.Validate(); err != nil {
-		return fmt.Errorf("compiled project graph: %w", err)
+		return fmt.Errorf("compiled source bundle graph: %w", err)
 	}
-	if compiled.ProjectID != compiled.Graph.ProjectID() || compiled.Manifest.ID != compiled.ProjectID.String() {
-		return fmt.Errorf("compiled project identity does not match graph project id %q", compiled.ProjectID)
-	}
-	if err := digest.ValidateSHA256Identity(compiled.ProjectDigest); err != nil {
-		return fmt.Errorf("compiled project digest must be a canonical SHA-256 digest: %w", err)
+	if err := digest.ValidateSHA256Identity(compiled.BundleDigest); err != nil {
+		return fmt.Errorf("compiled bundle digest must be a canonical SHA-256 digest: %w", err)
 	}
 	if compiled.GraphDigest != compiled.Graph.Digest() {
 		return fmt.Errorf("compiled graph digest = %q, want %q", compiled.GraphDigest, compiled.Graph.Digest())
 	}
 	manifest := compiled.Manifest
 	if err := projectartifact.RestoreRuntimeProjection(&manifest, compiled.Runtime); err != nil {
-		return fmt.Errorf("compiled project runtime projection: %w", err)
+		return fmt.Errorf("compiled source bundle runtime projection: %w", err)
 	}
-	reconstructed, err := projectartifact.NewProject(compiled.Graph, manifest)
+	reconstructed, err := projectartifact.NewSourceBundle(compiled.Graph, manifest)
 	if err != nil {
-		return fmt.Errorf("compiled project manifest: %w", err)
+		return fmt.Errorf("compiled source bundle manifest: %w", err)
 	}
-	if reconstructed.Digest() != compiled.ProjectDigest {
-		return fmt.Errorf("compiled project digest = %q, reconstructed manifest digest = %q", compiled.ProjectDigest, reconstructed.Digest())
+	if reconstructed.Digest() != compiled.BundleDigest {
+		return fmt.Errorf("compiled bundle digest = %q, reconstructed source bundle digest = %q", compiled.BundleDigest, reconstructed.Digest())
 	}
-	if compiled.Validation.Status != "passed" || compiled.Validation.SchemaVersion != projectAPIVersion {
-		return fmt.Errorf("compiled project validation must be passed %s", projectAPIVersion)
+	if compiled.Validation.Status != "passed" || compiled.Validation.SchemaVersion != sourceBundleAPIVersion {
+		return fmt.Errorf("compiled source bundle validation must be passed %s", sourceBundleAPIVersion)
 	}
-	if err := validatePlan(compiled.Plan, compiled.Graph, compiled.Manifest); err != nil {
+	if err := validatePlan(compiled.Plan, compiled.Graph); err != nil {
 		return err
 	}
 	return nil
+}
+
+func ValidateCompiledProjectArtifact(compiled CompiledProjectArtifact) error {
+	return ValidateCompiledSourceBundleArtifact(compiled)
 }
 
 func readManifest(root string) (Manifest, error) {
@@ -604,6 +777,10 @@ func readManifest(root string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
+	return decodeManifest(data)
+}
+
+func decodeManifest(data []byte) (Manifest, error) {
 	if err := rejectDuplicateJSONKeys(data); err != nil {
 		return Manifest{}, fmt.Errorf("decode bundle manifest: %w", err)
 	}
@@ -619,64 +796,72 @@ func readManifest(root string) (Manifest, error) {
 	} else if !errors.Is(err, io.EOF) {
 		return Manifest{}, fmt.Errorf("bundle manifest trailing data: %w", err)
 	}
-	if manifest.Version != projectBundleVersion {
+	if manifest.Version != sourceBundleVersion {
 		return Manifest{}, fmt.Errorf("unsupported bundle manifest version %d", manifest.Version)
 	}
-	if manifest.CatalogPath != ProjectFile && manifest.CatalogPath != CompiledProjectFile {
-		return Manifest{}, fmt.Errorf("catalog path = %q, want %q or %q", manifest.CatalogPath, ProjectFile, CompiledProjectFile)
-	}
-	if manifest.CompiledPath != CompiledProjectFile {
-		return Manifest{}, fmt.Errorf("compiled path = %q, want %q", manifest.CompiledPath, CompiledProjectFile)
+	if manifest.CompiledPath != CompiledSourceBundleFile {
+		return Manifest{}, fmt.Errorf("compiled path = %q, want %q", manifest.CompiledPath, CompiledSourceBundleFile)
 	}
 	return manifest, nil
 }
 
-func LoadCompiledProjectArtifact(root string) (CompiledProjectArtifact, Manifest, error) {
+func LoadCompiledSourceBundleArtifact(root string) (CompiledSourceBundleArtifact, Manifest, error) {
 	manifest, err := readManifest(root)
 	if err != nil {
-		return CompiledProjectArtifact{}, Manifest{}, err
+		return CompiledSourceBundleArtifact{}, Manifest{}, err
 	}
-	compiled, err := readCompiledProjectArtifact(root, manifest)
+	compiled, err := readCompiledSourceBundleArtifact(root, manifest)
 	if err != nil {
-		return CompiledProjectArtifact{}, Manifest{}, err
+		return CompiledSourceBundleArtifact{}, Manifest{}, err
 	}
 	return compiled, manifest, nil
 }
 
-func readCompiledProjectArtifact(root string, manifest Manifest) (CompiledProjectArtifact, error) {
-	if manifest.CompiledPath != CompiledProjectFile {
-		return CompiledProjectArtifact{}, fmt.Errorf("compiled path = %q, want %q", manifest.CompiledPath, CompiledProjectFile)
+func LoadCompiledProjectArtifact(root string) (CompiledProjectArtifact, Manifest, error) {
+	return LoadCompiledSourceBundleArtifact(root)
+}
+
+func readCompiledSourceBundleArtifact(root string, manifest Manifest) (CompiledSourceBundleArtifact, error) {
+	if manifest.CompiledPath != CompiledSourceBundleFile {
+		return CompiledSourceBundleArtifact{}, fmt.Errorf("compiled path = %q, want %q", manifest.CompiledPath, CompiledSourceBundleFile)
 	}
-	data, err := os.ReadFile(filepath.Join(root, CompiledProjectFile))
+	data, err := os.ReadFile(filepath.Join(root, CompiledSourceBundleFile))
 	if err != nil {
-		return CompiledProjectArtifact{}, err
+		return CompiledSourceBundleArtifact{}, err
+	}
+	return decodeCompiledSourceBundleArtifact(data, manifest)
+}
+
+func decodeCompiledSourceBundleArtifact(data []byte, manifest Manifest) (CompiledSourceBundleArtifact, error) {
+	if manifest.CompiledPath != CompiledSourceBundleFile {
+		return CompiledSourceBundleArtifact{}, fmt.Errorf("compiled path = %q, want %q", manifest.CompiledPath, CompiledSourceBundleFile)
 	}
 	if manifest.CompiledSHA256 != digestBytes(data) {
-		return CompiledProjectArtifact{}, errors.New("compiled project artifact digest mismatch")
+		return CompiledSourceBundleArtifact{}, errors.New("compiled source bundle digest mismatch")
 	}
 	if err := rejectDuplicateJSONKeys(data); err != nil {
-		return CompiledProjectArtifact{}, fmt.Errorf("decode compiled project artifact: %w", err)
+		return CompiledSourceBundleArtifact{}, fmt.Errorf("decode compiled source bundle: %w", err)
 	}
-	var compiled CompiledProjectArtifact
+	var compiled CompiledSourceBundleArtifact
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&compiled); err != nil {
-		return CompiledProjectArtifact{}, err
+		return CompiledSourceBundleArtifact{}, err
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err == nil {
-		return CompiledProjectArtifact{}, errors.New("compiled project artifact contains trailing JSON value")
+		return CompiledSourceBundleArtifact{}, errors.New("compiled source bundle contains trailing JSON value")
 	} else if !errors.Is(err, io.EOF) {
-		return CompiledProjectArtifact{}, fmt.Errorf("compiled project artifact trailing data: %w", err)
+		return CompiledSourceBundleArtifact{}, fmt.Errorf("compiled source bundle trailing data: %w", err)
 	}
-	if err := ValidateCompiledProjectArtifact(compiled); err != nil {
-		return CompiledProjectArtifact{}, err
+	if err := ValidateCompiledSourceBundleArtifact(compiled); err != nil {
+		return CompiledSourceBundleArtifact{}, err
 	}
 	if err := projectartifact.RestoreRuntimeProjection(&compiled.Manifest, compiled.Runtime); err != nil {
-		return CompiledProjectArtifact{}, fmt.Errorf("compiled project runtime projection: %w", err)
+		return CompiledSourceBundleArtifact{}, fmt.Errorf("compiled source bundle runtime projection: %w", err)
 	}
-	if compiled.ProjectID.String() != manifest.ProjectID || compiled.ProjectDigest != manifest.ProjectDigest || compiled.GraphDigest != manifest.GraphDigest {
-		return CompiledProjectArtifact{}, errors.New("compiled project identity does not match bundle manifest")
+	if compiled.BundleDigest != manifest.BundleDigest || compiled.GraphDigest != manifest.GraphDigest {
+		return CompiledSourceBundleArtifact{}, errors.New("compiled source bundle identity does not match bundle manifest")
 	}
 	return compiled, nil
 }
@@ -753,36 +938,28 @@ func decodeUniqueJSON(decoder *json.Decoder, target *any) error {
 }
 
 func validateManifestFiles(root string, manifest Manifest) (string, error) {
-	catalogRel, err := safeBundlePath(manifest.CatalogPath)
-	if err != nil {
-		return "", fmt.Errorf("invalid catalog path: %w", err)
-	}
 	compiledRel, err := safeBundlePath(manifest.CompiledPath)
 	if err != nil {
 		return "", fmt.Errorf("invalid compiled path: %w", err)
 	}
-	if catalogRel != ProjectFile && catalogRel != CompiledProjectFile {
-		return "", fmt.Errorf("catalog path = %q, want %q or %q", manifest.CatalogPath, ProjectFile, CompiledProjectFile)
-	}
-	if compiledRel != CompiledProjectFile {
-		return "", fmt.Errorf("compiled path = %q, want %q", manifest.CompiledPath, CompiledProjectFile)
+	if compiledRel != CompiledSourceBundleFile {
+		return "", fmt.Errorf("compiled path = %q, want %q", manifest.CompiledPath, CompiledSourceBundleFile)
 	}
 	seen := map[string]struct{}{}
 	allowed := map[string]struct{}{"manifest.json": {}, compiledRel: {}}
-	hasCatalog := catalogRel == compiledRel
 	for _, file := range manifest.Files {
 		rel, err := safeBundlePath(file.Path)
 		if err != nil {
 			return "", fmt.Errorf("invalid manifest file path %q: %w", file.Path, err)
+		}
+		if rel == "leapview.yaml" {
+			return "", errors.New("legacy project root path is not supported in a source bundle")
 		}
 		if _, ok := seen[rel]; ok {
 			return "", fmt.Errorf("duplicate manifest file path %q", rel)
 		}
 		seen[rel] = struct{}{}
 		allowed[rel] = struct{}{}
-		if rel == catalogRel {
-			hasCatalog = true
-		}
 		bytes, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			return "", err
@@ -792,13 +969,50 @@ func validateManifestFiles(root string, manifest Manifest) (string, error) {
 			return "", fmt.Errorf("file %s digest or size mismatch", file.Path)
 		}
 	}
-	if !hasCatalog {
-		return "", fmt.Errorf("catalog path %q is not listed in manifest files", manifest.CatalogPath)
-	}
 	if err := validateNoUnlistedBundleFiles(root, allowed); err != nil {
 		return "", err
 	}
-	return catalogRel, nil
+	return compiledRel, nil
+}
+
+func validateManifestEntries(entries map[string][]byte, manifest Manifest) (string, error) {
+	compiledRel, err := safeBundlePath(manifest.CompiledPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid compiled path: %w", err)
+	}
+	if compiledRel != CompiledSourceBundleFile {
+		return "", fmt.Errorf("compiled path = %q, want %q", manifest.CompiledPath, CompiledSourceBundleFile)
+	}
+	seen := map[string]struct{}{}
+	allowed := map[string]struct{}{"manifest.json": {}, compiledRel: {}}
+	for _, file := range manifest.Files {
+		rel, err := safeBundlePath(file.Path)
+		if err != nil {
+			return "", fmt.Errorf("invalid manifest file path %q: %w", file.Path, err)
+		}
+		if rel == "leapview.yaml" {
+			return "", errors.New("legacy project root path is not supported in a source bundle")
+		}
+		if _, ok := seen[rel]; ok {
+			return "", fmt.Errorf("duplicate manifest file path %q", rel)
+		}
+		seen[rel] = struct{}{}
+		allowed[rel] = struct{}{}
+		content, ok := entries[rel]
+		if !ok {
+			return "", os.ErrNotExist
+		}
+		sum := sha256.Sum256(content)
+		if hex.EncodeToString(sum[:]) != file.SHA256 || int64(len(content)) != file.Size {
+			return "", fmt.Errorf("file %s digest or size mismatch", file.Path)
+		}
+	}
+	for rel := range entries {
+		if _, ok := allowed[rel]; !ok {
+			return "", fmt.Errorf("bundle file %q is not listed in manifest", rel)
+		}
+	}
+	return compiledRel, nil
 }
 
 func validateNoUnlistedBundleFiles(root string, allowed map[string]struct{}) error {
@@ -827,51 +1041,104 @@ func ExtractArtifact(path, dest string) error {
 		return err
 	}
 	defer file.Close()
-	gz, err := gzip.NewReader(file)
+	if info, statErr := file.Stat(); statErr != nil {
+		return statErr
+	} else if info.Size() > MaxBundleBytes {
+		return fmt.Errorf("bundle compressed size exceeds limit %d", MaxBundleBytes)
+	}
+	compressed := bufio.NewReader(file)
+	gz, err := gzip.NewReader(compressed)
 	if err != nil {
 		return err
 	}
-	defer gz.Close()
+	gz.Multistream(false)
 	tr := tar.NewReader(gz)
 	seen := map[string]struct{}{}
-	for {
+	var expanded int64
+	for count := 0; ; count++ {
 		header, err := tr.Next()
 		if err == io.EOF {
-			return nil
+			break
 		}
 		if err != nil {
+			_ = gz.Close()
 			return err
+		}
+		if count >= MaxBundleFiles {
+			_ = gz.Close()
+			return fmt.Errorf("bundle file count exceeds limit %d", MaxBundleFiles)
+		}
+		if header.Format == tar.FormatGNU || header.PAXRecords["path"] != "" || header.PAXRecords["linkpath"] != "" {
+			_ = gz.Close()
+			return fmt.Errorf("unsupported extended bundle path %q", header.Name)
 		}
 		rel, err := safeBundlePath(header.Name)
 		if err != nil {
+			_ = gz.Close()
 			return err
 		}
 		if _, ok := seen[rel]; ok {
+			_ = gz.Close()
 			return fmt.Errorf("duplicate bundle entry %q", rel)
 		}
 		seen[rel] = struct{}{}
-		target, err := secureBundleTarget(dest, rel)
-		if err != nil {
-			return err
-		}
 		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			_ = gz.Close()
 			return fmt.Errorf("unsupported bundle entry %q", header.Name)
 		}
+		if header.Size < 0 || header.Size > MaxBundleFileBytes {
+			_ = gz.Close()
+			return fmt.Errorf("bundle file %q exceeds maximum file size %d", rel, MaxBundleFileBytes)
+		}
+		if header.Size > MaxBundleUncompressedBytes-expanded {
+			_ = gz.Close()
+			return fmt.Errorf("bundle uncompressed size exceeds limit %d", MaxBundleUncompressedBytes)
+		}
+		target, err := secureBundleTarget(dest, rel)
+		if err != nil {
+			_ = gz.Close()
+			return err
+		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			_ = gz.Close()
 			return err
 		}
 		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 		if err != nil {
+			_ = gz.Close()
 			return err
 		}
-		if _, err := io.Copy(out, tr); err != nil {
+		if _, err := io.CopyN(out, tr, header.Size); err != nil {
 			out.Close()
+			_ = gz.Close()
 			return err
 		}
+		expanded += header.Size
 		if err := out.Close(); err != nil {
+			_ = gz.Close()
 			return err
 		}
 	}
+	trailingTar, err := io.ReadAll(gz)
+	if err != nil {
+		_ = gz.Close()
+		return err
+	}
+	if len(trailingTar) != 0 {
+		_ = gz.Close()
+		return errors.New("bundle archive contains trailing tar data")
+	}
+	if err := gz.Close(); err != nil {
+		return err
+	}
+	trailingGzip, err := io.ReadAll(compressed)
+	if err != nil {
+		return err
+	}
+	if len(trailingGzip) != 0 {
+		return errors.New("bundle archive contains trailing gzip data")
+	}
+	return nil
 }
 
 func secureBundleTarget(dest, rel string) (string, error) {
@@ -941,6 +1208,10 @@ func digestBytes(value []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func digestBytesPrefixed(value []byte) string {
+	return "sha256:" + digestBytes(value)
+}
+
 func sortedKeys(values map[string][]byte) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -951,6 +1222,12 @@ func sortedKeys(values map[string][]byte) []string {
 }
 
 func safeBundlePath(path string) (string, error) {
+	// Tar paths are slash-separated on every platform. Rejecting backslashes
+	// keeps validation independent of the host OS and prevents a bundle that is
+	// benign on Unix from becoming traversal on Windows.
+	if strings.Contains(path, `\`) {
+		return "", fmt.Errorf("bundle path %q contains a backslash", path)
+	}
 	if filepath.IsAbs(path) {
 		return "", fmt.Errorf("bundle path %q must be relative", path)
 	}

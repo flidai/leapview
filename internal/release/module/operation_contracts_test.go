@@ -15,9 +15,8 @@ func TestReleaseLifecycleOperationContracts(t *testing.T) {
 		idempotency string
 		guarantee   string
 	}{
-		"createRelease":         {auditAction: releaseCreatedAuditAction, privilege: "RESOURCE_PUBLISH", idempotency: "required", guarantee: "transactional"},
-		"uploadReleaseArtifact": {auditAction: releaseArtifactUploadedAuditAction, privilege: "RESOURCE_PUBLISH", guarantee: "transactional"},
-		"finalizeRelease":       {auditAction: releaseValidatingAuditAction, privilege: "RESOURCE_PUBLISH", idempotency: "required", guarantee: "transactional"},
+		"createRelease":   {auditAction: releaseCreatedAuditAction, privilege: "RESOURCE_PUBLISH", idempotency: "required", guarantee: "transactional"},
+		"finalizeRelease": {auditAction: releaseValidatingAuditAction, privilege: "RESOURCE_PUBLISH", idempotency: "required", guarantee: "transactional"},
 	}
 	for operationID, expected := range commands {
 		contract, ok := contracts[operationID]

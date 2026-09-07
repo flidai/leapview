@@ -4,13 +4,8 @@ import {
   getDiscriminatedUnion,
   getDiscriminatedUnionFromInheritance,
   getDiscriminator,
-  getMaxLength,
-  getMaxValue,
-  getMinLength,
-  getMinValue,
   getOverloadedOperation,
   getOverloads,
-  getPattern,
   getService,
   getSummary,
   isArrayModelType,
@@ -55,6 +50,7 @@ import {
   getContracts,
   getMetadata,
   getMinProperties,
+  getUniqueItems,
   getNamedFailures,
   getPropertyNames,
   getResponseShape,
@@ -63,6 +59,7 @@ import {
   getTransportErrors,
   getUI,
   getUnauditedReason,
+  hasExactNumbers,
   isTarget,
   isManual,
   isQuery,
@@ -72,6 +69,7 @@ import { discoverHttpServices } from "./phase-discovery.js";
 import { emitDocumentFile } from "./phase-emission.js";
 import { normalizeDocument } from "./phase-normalization.js";
 import { qualifiedNamespaceName, readPackageMetadata } from "./phase-naming.js";
+import { withSchemaConstraints } from "./schema-constraints.js";
 import {
   hasErrorDiagnostics,
   validateOutputFile,
@@ -276,6 +274,7 @@ interface Schema {
   one_of?: SchemaRef[];
   discriminator?: { property_name: string; mapping: Record<string, string> };
   enum?: string[];
+  exact_numbers?: boolean;
   extensions?: Record<string, unknown>;
 }
 
@@ -294,6 +293,9 @@ interface SchemaRef {
   maximum?: number;
   min_length?: number;
   max_length?: number;
+  min_items?: number;
+  max_items?: number;
+  unique_items?: boolean;
   min_properties?: number;
   pattern?: string;
   items?: SchemaRef;
@@ -321,7 +323,10 @@ class IRBuilder {
   schemaRef(type: Type, context: string): SchemaRef {
     if (type.kind === "Model") {
       if (isArrayModelType(type)) {
-        return { type: "array", items: this.schemaRef(type.indexer.value, `${context} items`) };
+        return withSchemaConstraints(this.program, type, {
+          type: "array",
+          items: this.schemaRef(type.indexer.value, `${context} items`),
+        });
       }
       if (isRecordModelType(type)) {
         return {
@@ -540,13 +545,19 @@ class IRBuilder {
   }
 
   private unionSchema(type: Union): Schema {
+    const withUnionMetadata = (schema: Schema): Schema => {
+      if (hasExactNumbers({ program: this.program }, type)) {
+        schema.exact_numbers = true;
+      }
+      return schema;
+    };
     const scalarVariants = [...type.variants.values()];
     if (scalarVariants.length > 0 && scalarVariants.every((variant) => isJSONScalarType(variant.type))) {
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-      };
+      });
     }
     // A compact authored reference may intentionally be either a JSON scalar
     // (for example an unaliased metric name) or a closed object carrying the
@@ -557,11 +568,11 @@ class IRBuilder {
     // a strict scalar/object wrapper; contextual visual/query compatibility
     // remains compiler-owned.
     if (scalarVariants.some((variant) => isJSONScalarType(variant.type))) {
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-      };
+      });
     }
     const [union, diagnostics] = getDiscriminatedUnion(this.program, type);
     if (union) {
@@ -601,7 +612,7 @@ class IRBuilder {
         oneOf.push({ ref: name });
         mapping[value] = name;
       }
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: oneOf,
@@ -609,7 +620,7 @@ class IRBuilder {
           property_name: union.options.discriminatorPropertyName,
           mapping,
         },
-      };
+      });
     }
 
     // A structural object union is useful when the authored object remains
@@ -619,11 +630,11 @@ class IRBuilder {
     // all-or-none shape and language emitters can dispatch by strict field
     // decoding. Discriminators remain reserved for explicitly tagged unions.
     if (scalarVariants.every((variant) => variant.type.kind === "Model")) {
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-      };
+      });
     }
 
     if (!type.name) {
@@ -660,6 +671,9 @@ class IRBuilder {
     const minProperties = getMinProperties({ program: this.program }, property);
     if (minProperties !== undefined) {
       schema.min_properties = minProperties;
+    }
+    if (getUniqueItems({ program: this.program }, property)) {
+      schema.unique_items = true;
     }
     const schemaProperty: SchemaProperty = {
       schema,
@@ -2179,46 +2193,6 @@ function securityScheme(scheme: HttpAuth): SecurityScheme {
     default:
       return { type: scheme.type };
   }
-}
-
-function withSchemaConstraints(program: Program, target: Type, schema: SchemaRef): SchemaRef {
-  const candidates = schemaConstraintCandidates(target);
-  const minimum = firstSchemaConstraint(candidates, (candidate) => getMinValue(program, candidate));
-  const maximum = firstSchemaConstraint(candidates, (candidate) => getMaxValue(program, candidate));
-  const minLength = firstSchemaConstraint(candidates, (candidate) => getMinLength(program, candidate));
-  const maxLength = firstSchemaConstraint(candidates, (candidate) => getMaxLength(program, candidate));
-  const pattern = firstSchemaConstraint(candidates, (candidate) => getPattern(program, candidate));
-  return prune({
-    ...schema,
-    minimum,
-    maximum,
-    min_length: minLength,
-    max_length: maxLength,
-    pattern,
-  }) as SchemaRef;
-}
-
-function schemaConstraintCandidates(target: Type): Type[] {
-  const candidates: Type[] = [target];
-  let current: Type | undefined = target.kind === "ModelProperty" ? target.type : target;
-  if (current !== target) {
-    candidates.push(current);
-  }
-  while (current?.kind === "Scalar" && current.baseScalar) {
-    current = current.baseScalar;
-    candidates.push(current);
-  }
-  return candidates;
-}
-
-function firstSchemaConstraint<T>(candidates: Type[], read: (candidate: Type) => T | undefined): T | undefined {
-  for (const candidate of candidates) {
-    const value = read(candidate);
-    if (value !== undefined) {
-      return value;
-    }
-  }
-  return undefined;
 }
 
 function scalarSchemaRef(scalar: Scalar): SchemaRef {

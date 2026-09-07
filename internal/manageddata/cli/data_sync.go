@@ -20,6 +20,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	manageddataapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/localplan"
+	"github.com/flidai/leapview/internal/manageddata/qualificationbarrier"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/spf13/cobra"
 )
@@ -31,8 +32,8 @@ const (
 
 // SyncRequest describes one Managed Data staging operation.
 type SyncRequest struct {
-	ProjectPath string
-	ProjectID   string
+	SourceRoot string
+	ProjectID  string
 	// Connection is the user-facing selector (usually an authored name).
 	Connection string
 	// ConnectionID is the canonical authored ID sent to the target API.
@@ -49,7 +50,7 @@ type SyncRequest struct {
 type dataSyncRequest = SyncRequest
 
 func dataSyncCommand(ctx context.Context, planner dataPlanner, dependencies Dependencies, opts *options) *cobra.Command {
-	var projectPath string
+	sourceRoot := "dashboards"
 	var connection string
 	var from string
 	format := "text"
@@ -71,17 +72,11 @@ func dataSyncCommand(ctx context.Context, planner dataPlanner, dependencies Depe
 			if err != nil {
 				return err
 			}
-			if dependencies.LoadProjectID == nil {
-				return fmt.Errorf("Managed Data project identity loader is required")
-			}
-			projectID, err := dependencies.LoadProjectID(projectPath)
-			if err != nil {
-				return fmt.Errorf("load project: %w", err)
-			}
+			projectID := strings.TrimSpace(credentials.ProjectID)
 			if strings.TrimSpace(projectID) == "" {
-				return fmt.Errorf("project name is required")
+				return fmt.Errorf("target-bound Project identity is required; provide --project-id or use a target profile")
 			}
-			plan, err := planner.Plan(ctx, localplan.Request{ProjectPath: projectPath, Connection: connection, From: from})
+			plan, err := planner.Plan(ctx, localplan.Request{SourceRoot: sourceRoot, Connection: connection, From: from})
 			if err != nil {
 				return err
 			}
@@ -93,13 +88,13 @@ func dataSyncCommand(ctx context.Context, planner dataPlanner, dependencies Depe
 				httpClient = http.DefaultClient
 			}
 			return runDataSync(ctx, dataSyncRequest{
-				ProjectPath: projectPath, ProjectID: projectID, Connection: connection, ConnectionID: plan.Connection, Root: plan.Root,
+				SourceRoot: sourceRoot, ProjectID: projectID, Connection: connection, ConnectionID: plan.Connection, Root: plan.Root,
 				Target: credentials.Target, Token: credentials.Token, Plan: plan, Out: cmd.OutOrStdout(), HTTPClient: httpClient,
 				Format: format,
 			})
 		},
 	}
-	command.Flags().StringVar(&projectPath, "project", filepath.Join("dashboards", "leapview.yaml"), "project catalog path")
+	command.Flags().StringVar(&sourceRoot, "source-root", sourceRoot, "analytics source root")
 	command.Flags().StringVar(&connection, "connection", "", "project-global managed connection")
 	command.Flags().StringVar(&from, "from", "", "local filesystem root to ingest")
 	command.Flags().StringVar(&format, "format", format, "output format: text or json")
@@ -305,7 +300,7 @@ func transferManagedDataFile(ctx context.Context, client *managedDataCLIClient, 
 		if upload.Negotiation.Tus == nil || upload.Negotiation.S3Multipart != nil {
 			return fmt.Errorf("invalid tus negotiation for %q", file.Path)
 		}
-		return uploadManagedDataTus(ctx, client, request.Root, file, *upload.Negotiation.Tus)
+		return uploadManagedDataTusForProject(ctx, client, request.Root, request.ProjectID, file, *upload.Negotiation.Tus)
 	case manageddataapi.ManagedDataUploadProtocolS3Multipart:
 		if upload.Negotiation.S3Multipart == nil || upload.Negotiation.Tus != nil {
 			return fmt.Errorf("invalid S3 multipart negotiation for %q", file.Path)
@@ -317,6 +312,10 @@ func transferManagedDataFile(ctx context.Context, client *managedDataCLIClient, 
 }
 
 func uploadManagedDataTus(ctx context.Context, client *managedDataCLIClient, root string, expected manageddata.File, negotiation manageddataapi.ManagedDataTusUploadNegotiation) error {
+	return uploadManagedDataTusForProject(ctx, client, root, "", expected, negotiation)
+}
+
+func uploadManagedDataTusForProject(ctx context.Context, client *managedDataCLIClient, root, projectID string, expected manageddata.File, negotiation manageddataapi.ManagedDataTusUploadNegotiation) error {
 	endpoint, err := sameOriginUploadURL(client.target, negotiation.Endpoint, negotiation.UploadId)
 	if err != nil {
 		return fmt.Errorf("invalid tus negotiation for %q", expected.Path)
@@ -351,6 +350,9 @@ func uploadManagedDataTus(ctx context.Context, client *managedDataCLIClient, roo
 			failures = 0
 			if newOffset == expected.Size {
 				return verifySourceFile(ctx, root, expected)
+			}
+			if err := qualificationbarrier.WaitAfterPartialTusPatch(ctx, projectID); err != nil {
+				return err
 			}
 			continue
 		}

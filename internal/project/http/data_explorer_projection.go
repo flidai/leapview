@@ -43,7 +43,7 @@ type explorerModelBinding struct {
 // compiled semantic bindings. Asset visibility is authoritative for every
 // output: manifest entries that do not have a visible serving asset are never
 // exposed to the browser.
-func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project projectmanifest.Project, command projectsignals.DataExploreCommand, compiledModels map[string]*semanticquery.CompiledModel) DataExplorerProjection {
+func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project projectmanifest.ResourceManifest, command projectsignals.DataExploreCommand, compiledModels map[string]*semanticquery.CompiledModel) DataExplorerProjection {
 	visible := make(map[string]projectview.DevelopAssetView, len(assets))
 	for _, asset := range assets {
 		if strings.TrimSpace(asset.ID) == "" {

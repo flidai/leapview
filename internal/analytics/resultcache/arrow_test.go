@@ -12,11 +12,11 @@ import (
 func TestArrowLookupLeaseSurvivesEviction(t *testing.T) {
 	allocator := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	defer allocator.AssertSize(t, 0)
-	pool, err := New(Limits{RuntimeEntries: 1, RuntimeBytes: 1 << 20, NodeEntries: 1, NodeBytes: 1 << 20})
+	pool, err := New(Limits{PartitionEntries: 1, PartitionBytes: 1 << 20, NodeEntries: 1, NodeBytes: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := pool.OpenScope(ScopeID{RuntimeID: "r"})
+	scope, err := pool.OpenScope(ScopeID{RuntimeID: "r", PartitionID: "r"})
 	if err != nil {
 		t.Fatal(err)
 	}

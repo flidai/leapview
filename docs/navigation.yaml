@@ -254,15 +254,20 @@ sections:
         type: how-to
         summary: Monitor health, query activity, refreshes, and deployments.
         source: articles/operate/observability.md
+      - slug: guides/operate/postgresql-operations
+        title: PostgreSQL operations and high availability
+        type: how-to
+        summary: Operate named PostgreSQL pools, provider-managed HA, maintenance, and failover validation.
+        source: articles/operate/postgresql-operations.md
       - slug: guides/operate/backup-restore
         title: Backup and restore
         type: how-to
-        summary: Create, validate, and restore consistent instance backups.
+        summary: Coordinate external PostgreSQL PITR and DuckLake/object-store recovery; LeapView provides no backup archive.
         source: articles/operate/backup-restore.md
       - slug: guides/operate/upgrades
         title: Upgrades and migrations
         type: how-to
-        summary: Upgrade binaries and persistent state with rollback boundaries.
+        summary: Plan provider-managed image upgrades and persistent-state migrations with explicit rollback boundaries.
         source: articles/operate/upgrades.md
       - slug: guides/operate/plan-build-publish
         title: Operate the plan → build → publish delivery contract
@@ -270,9 +275,9 @@ sections:
         summary: Bootstrap an admitted physical pool and operate immutable target-bound delivery.
         source: articles/operate/plan-build-publish.md
       - slug: guides/operate/delivery-recovery
-        title: Delivery reachability audit and bounded repair
-        type: how-to
-        summary: Audit immutable delivery roots offline and apply a fail-closed quarantine repair.
+        title: Delivery reachability and recovery boundaries
+        type: explanation
+        summary: Inspect delivery state and understand the provider-native recovery boundary.
         source: articles/operate/delivery-recovery.md
       - slug: guides/operate/troubleshooting
         title: Operational troubleshooting
@@ -376,6 +381,11 @@ sections:
         type: how-to
         summary: Query dashboards and semantic models through stable contracts.
         source: articles/integrate/headless-bi.md
+      - slug: guides/integrate/dbt-warehouse-boundary
+        title: Use dbt at the warehouse boundary
+        type: how-to
+        summary: Publish tested dbt marts and consume their physical contract through ordinary LeapView resources.
+        source: articles/integrate/dbt-warehouse-boundary.md
       - slug: guides/integrate/public-dashboards
         title: Public and embedded dashboards
         type: how-to
@@ -454,7 +464,7 @@ sections:
             generated: true
       - id: configuration
         title: Configuration
-        summary: Generated fields and JSON Schemas for every resource kind.
+        summary: Generated fields and JSON Schemas for the six source-root resource kinds.
         collection:
           kind: catalog
           catalog: reference/config/catalog.json
@@ -535,16 +545,16 @@ sections:
             type: explanation
             summary: Follow routing, query execution, and streamed UI updates.
             source: articles/architecture/runtime.md
-          - slug: architecture/postgresql-authority-reconciliation
-            title: PostgreSQL authority reconciliation
-            type: explanation
-            summary: Understand the reconciled PostgreSQL ownership, transaction, role, and compatibility boundaries.
-            source: articles/architecture/postgresql-authority-reconciliation.md
           - slug: architecture/semantic-attribute-registry
             title: Semantic attribute registry and control plane
             type: explanation
             summary: Understand typed semantic attribute identity, ownership, lifecycle, and compatibility boundaries.
             source: articles/architecture/semantic-attribute-registry.md
+          - slug: architecture/semantic-access-planner
+            title: Semantic access planner boundary
+            type: explanation
+            summary: Place typed authorization barriers before protected scans participate in relational operations.
+            source: articles/architecture/semantic-access-planner.md
           - slug: architecture/arrow-optimization-evidence
             title: Evidence-gated Arrow optimization
             type: explanation

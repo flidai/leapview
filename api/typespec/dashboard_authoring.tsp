@@ -661,7 +661,7 @@ interface DashboardAuthoring {
   @post
   @apigen.authz(#{ mode: "authenticated" })
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_created", guarantee: "transactional", failures: #[] })
-  createDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringCreateRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
+  createDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @body body: DashboardAuthoringCreateRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
 
   @summary("Execute one dashboard authoring command")
   @route("/commands")
@@ -669,14 +669,14 @@ interface DashboardAuthoring {
   @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("dashboard.builder.command")
   @apigen.command(#{ auditAction: "dashboard_authoring.command_executed", guarantee: "transactional", failures: #[] })
-  executeDashboardAuthoringCommand(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringCommandRequest): OkJson<DashboardAuthoringMutationResponse> | CommonErrors;
+  executeDashboardAuthoringCommand(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @body body: DashboardAuthoringCommandRequest): OkJson<DashboardAuthoringMutationResponse> | CommonErrors;
 
   @summary("Fork a dashboard source into a new draft")
   @route("/forks")
   @post
   @apigen.authz(#{ mode: "authenticated" })
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_forked", guarantee: "transactional", failures: #[] })
-  forkDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringForkRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
+  forkDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @body body: DashboardAuthoringForkRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
 
   @summary("Preview one exact dashboard draft revision")
   @route("/dashboards/{dashboard}/drafts/{draft}/preview")

@@ -60,6 +60,7 @@ type apiGenDispatcher struct {
 	buildIdentity      buildinfo.Identity
 	managedDataTus     http.Handler
 	arrowQueries       bool
+	nativeDelivery     bool
 }
 
 func (a apiGenDispatcher) GetInstance(w http.ResponseWriter, _ *http.Request) {

@@ -57,6 +57,10 @@ type aggregateResolution struct {
 // resulting grouped rows. Datasets are never joined to each other before their
 // metrics have been reduced to the requested conformed dimensions.
 func (p *Planner) planAggregate(request Request) (Plan, error) {
+	return p.planAggregateInternal(request, true)
+}
+
+func (p *Planner) planAggregateInternal(request Request, secure bool) (Plan, error) {
 	resolved, err := p.resolveAggregate(request)
 	if err != nil {
 		return Plan{}, err
@@ -72,7 +76,7 @@ func (p *Planner) planAggregate(request Request) (Plan, error) {
 			return Plan{}, err
 		}
 	}
-	return p.renderAggregatePlanIR(request, resolved)
+	return p.renderAggregatePlanIRInternal(request, resolved, secure)
 }
 
 func uniqueStrings(values []string) []string {
@@ -92,12 +96,21 @@ func uniqueStrings(values []string) []string {
 }
 
 func (p *Planner) renderAggregatePlanIR(request Request, resolved aggregateResolution) (Plan, error) {
+	return p.renderAggregatePlanIRInternal(request, resolved, true)
+}
+
+func (p *Planner) renderAggregatePlanIRInternal(request Request, resolved aggregateResolution, secure bool) (Plan, error) {
 	irGraph, err := p.buildAggregatePlanIR(request, resolved)
 	if err != nil {
 		return Plan{}, err
 	}
 	if err := irGraph.Validate(); err != nil {
 		return Plan{}, fmt.Errorf("validate aggregate plan IR: %w", err)
+	}
+	if secure {
+		if _, err := p.securePlanGraph(irGraph, aggregateMemberRefs(p, request, resolved)...); err != nil {
+			return Plan{}, err
+		}
 	}
 	rendered, err := planir.RenderDuckDB(irGraph)
 	if err != nil {
@@ -121,7 +134,7 @@ func (p *Planner) renderAggregatePlanIR(request Request, resolved aggregateResol
 	for _, column := range rendered.Columns {
 		columnSet[column] = true
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Mode: mode,
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, Mode: mode,
 		Datasets: append([]string{}, resolved.Datasets...), StitchDimensions: stitchDimensions,
 		PhysicalDependencies: uniqueStrings(append(append([]string(nil), lineage.Datasets...), lineage.PhysicalFields...)),
 		RelationshipPaths:    lineage.RelationshipPaths, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil

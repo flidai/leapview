@@ -4,7 +4,7 @@ Status: accepted
 
 Decision date: 2026-09-01
 
-Implementation: pending
+Implementation: partial
 
 Deciders: LeapView maintainers
 
@@ -168,12 +168,12 @@ spec:
       datatype: String
       bindings:
         orders:
-          field: region
+          field: orders.region
     customerEmail:
       datatype: String
       bindings:
         orders:
-          field: customer_email
+          field: orders.customer_email
       requiredAccessGrants: [canViewPII]
 ```
 
@@ -199,6 +199,15 @@ without persisting a claim value. Direct principal and active-group
 assignments and claims from the opaque `trustedclaims.Envelope` may be resolved
 together. A
 source conflict is an error, never an implicit precedence decision.
+
+Registry and control snapshot admission validates the full row projection in
+addition to recomputing the persisted digest: lifecycle and stewardship/name
+invariants, definition references and type/shape agreement, and assignment or
+mapping tombstone state must be consistent. These derived checks do not change
+the registry/control digest wire formats. PostgreSQL readers perform bounded
+before/after state validation under READ COMMITTED and retry once; a second
+change or a row/digest mismatch fails closed. Effective-value resolution also
+checks registry and control state before and after resolution.
 
 The initial value types are typed scalar and homogeneous list values supported
 by the semantic field vocabulary. A scalar attribute satisfies an access grant
@@ -333,16 +342,19 @@ concepts, targets, bypasses, precedence, or masking require another ADR.
 
 ### FAI-637 implementation boundary
 
-ADR-0017 remains **Implementation: pending**. FAI-637 implements the
+ADR-0017 remains **Implementation: partial**. FAI-637 implements the
 access-owned PostgreSQL control-plane slice: the profile-qualified definition
 registry, direct principal/group assignment rows, trusted claim-mapping rows,
 their lifecycle/version/digest/audit invariants, typed value ingress, a
 source-bound trusted-claim verifier boundary, effective direct/group
 resolution behind the opaque `trustedclaims.Envelope` boundary, and
-platform-admin management endpoints. It does
-not yet implement the SemanticModel policy compiler, planner security barrier,
-catalog or query enforcement, semantic generation references, cache/event
-invalidation, or ordinary semantic consumer integration.
+platform-admin management endpoints. FAI-639 now implements the bounded
+SemanticModel policy compiler/evaluator handoff described below, including
+target qualification and typed PlanIR predicates. It does not implement the
+planner security barrier, catalog or query enforcement, semantic generation
+references, cache/event invalidation, or ordinary semantic consumer
+integration. FAI-641 supplies the separate planner barrier boundary; consumer
+integration and the remaining lifecycle capabilities belong to later slices.
 
 The source names SAML, OIDC, embed, and service token are accepted as closed
 mapping/verifier vocabulary only. FAI-637 does not claim an OIDC, SAML, embed,
@@ -351,13 +363,115 @@ input is the opaque `trustedclaims.Envelope` boundary; wiring a real provider
 through the verifier and into a principal authorization context remains
 pending.
 
+FAI-619 qualifies only the generated structural SemanticModel contract and
+compatibility lowering boundary. Its fixtures do not claim semantic access
+policy compilation, planner security barriers, or consumer admission. FAI-639
+now supplies the compiler/evaluator boundary described below; FAI-641 supplies
+planner security-barrier construction, while FAI-642 consumer admission remains
+pending. VAL-11 remains Partial until generated canonicalization and complete
+control-plane/runtime equivalence are evidenced.
+
+### FAI-639 compiler/evaluator boundary
+
+FAI-639 preserves the authority split rather than moving instance state into
+the portable project artifact. The generated TypeSpec SemanticModel contract
+is lowered by the project compiler into the runtime `SemanticAccessPolicy`.
+That lowering is target-independent: it validates the closed shape, names,
+non-empty lists, duplicate references, and exact scalar/list literals (number
+tokens retain their JSON spelling), but it does not resolve registry
+definitions or principal values. The executable semantic-model snapshot
+deep-copies this policy so serving state cannot be changed through authored
+maps or slices after activation.
+
+`CompileSemanticAccessPolicy` is the target-qualification boundary. It accepts
+one target instance, semantic-model ID, semantic generation, compiled semantic
+lineage, and a complete registry snapshot. It recomputes the canonical registry
+digest and rejects inconsistent lineage, malformed or mixed registry identity,
+duplicate names or IDs, missing/disabled or
+incompatible definitions, invalid stewardship ownership, and filters that do
+not name a directly bound compatible semantic dimension. It canonicalizes
+grant values using the registered logical type, rejects canonical duplicates,
+and propagates required grants through dataset, relationship, dimension,
+metric, filter, and metric-dependency lineage. The result is immutable,
+target-qualified policy metadata with a deterministic canonical policy digest;
+it contains no principal or trusted-claim values and does not place a planner
+barrier.
+
+`EvaluateSemanticAccess` is deliberately separate from compilation. It
+consumes a `SemanticAccessAttributeSnapshot` and the current
+`SemanticAccessAuthority`. Both carry complete registry/control snapshots, not
+unqualified digest strings; the evaluator recomputes their FAI-636/637 digests,
+requires the authority instance to match the target, and rejects stale or mixed
+state. It also recomputes the effective-attribute digest and checks every
+value's definition/type/shape/source. Claim-derived values require an immutable
+`SemanticAttributeClaimEvidence` produced from the opaque verifier envelope,
+exact active control mappings, mapped canonical values, target/principal, and
+validity interval; evaluation checks that evidence at the authority's current
+observation time. Missing, malformed, expired, stale, or tampered state fails
+closed. FAI-639 does not fetch repositories, verify raw provider tokens, or
+construct a principal context itself.
+
+Direct-derived values (`direct` or `direct+trusted_claim`) additionally require
+opaque access-owned `SemanticAttributeDirectEvidence`. It binds the target
+instance and principal to the exact control state, the principal plus active-
+group subject closure, active assignment IDs/versions, and effective value
+identities. A value digest by itself is not assignment authority. Claim-derived
+values retain opaque verified-envelope evidence bound to the same control state
+and principal, exact mapping IDs/versions and source identity, the envelope's
+validity interval, and verifier fingerprints; raw values and claims are not
+identity inputs.
+
+The subject closure supplied when direct evidence is sealed is a trusted
+access-capability input, not a consumer assertion. FAI-642 composition must
+obtain it from the authoritative principal/group resolver and must not expose
+the evidence constructor as a request or browser boundary.
+
+Grant decisions use the profile's scalar equality, list-overlap, and logical
+AND rules. A satisfiable dataset access filter becomes a closed typed PlanIR
+predicate: scalar attributes produce `compare`/`=` with a typed literal, list
+attributes produce `in` with typed literals, and multiple filters compose with
+`and`. Relationship-bound members retain the complete dataset closure so later
+planner enforcement cannot drop a joined dataset's filter. Field names remain governed references and values remain typed PlanIR
+values; no SQL or template string is produced. Dataset predicates and denials
+are inherited by member decisions. Every multi-dataset dimension or metric
+decision carries `DatasetPredicates`, a complete map from each required dataset
+(including relationship/dependency datasets) to its typed predicate;
+`Predicate` is only the primary-dataset convenience view. FAI-641 must not
+infer that one predicate covers a multi-dataset object.
+
+The policy digest is over deterministic canonical qualified policy metadata.
+The evaluator's decision identity additionally binds profile, instance,
+semantic model and generation, principal/actor, registry and control
+profile/revision/digest, effective-attribute digest, policy digest, grant
+results, filter evidence (including value digests and predicate kinds), and
+sorted object outcomes. Direct-assignment and verified-claim evidence digests
+are bound when present. Raw effective values and provider claims are excluded
+from both identity projections. These identities are an in-process handoff
+and audit/cache input; FAI-639 does not yet publish invalidation events or
+partition consumer/result caches.
+
+FAI-641 owns consumption of this decision and typed PlanIR
+output in the governed planner. In particular, it must attach a security
+barrier at every protected dataset occurrence before joins, outer-join null
+extension, aggregation, suggestions, totals, rewrites, and execution.
+FAI-642 separately owns wiring the same admission to catalogs and every
+semantic consumer. The [planner boundary](../docs/articles/architecture/semantic-access-planner.md)
+records the scan-occurrence and trusted-input contract. FAI-639's
+compiler/evaluator tests are not evidence that those barriers, catalog rules,
+consumer adapters, generation references, cache invalidation, or end-to-end
+query enforcement exist.
+
 ### Immediate invalidation identity
 
-FAI-637 establishes, but does not yet consume, durable invalidation inputs.
-The future authorization-sensitive identity is the tuple
+FAI-637 establishes durable invalidation inputs, and FAI-639 now computes the
+effective-attribute, policy, and decision identities used to consume them.
+Neither slice publishes invalidation events or implements consumer caches.
+The authorization-sensitive identity contract is the tuple
 `(instance, semantic generation, principal, registry profile/revision/digest,
 control profile/revision/digest, effective attribute-set digest, normalized
-semantic-policy identity)`. The effective attribute-set digest is an ordered
+semantic-policy identity)`. FAI-639 materializes this contract in the
+evaluator's deterministic decision identity, while the cache/event consumers
+remain future work. The effective attribute-set digest is an ordered
 projection of definition ID/version/type/shape, canonical value digest, and
 source; raw values and raw provider claims are excluded. Runtime trusted input
 also binds its credential/token fingerprint and validity interval.
@@ -413,14 +527,18 @@ its own governed consumption contract rather than reuse of internal resources.
   rejects access-policy fields on every resource other than SemanticModel. The
   current FAI-637 slice does not claim that the existing legacy compiler and
   consumer paths have completed this migration.
-- Schema and compiler fixtures cover the normative cases in the semantic
-  access-policy conformance specification, including unknown fields, dangling
-  grants, incompatible attributes, unbound dimensions, and prohibited identity
-  or executable-string fields.
-- Query authorization tests prove fail-closed scalar and list matching,
-  all-grants and all-filters composition, discovery filtering, direct-reference
-  rejection, parameterized planning, and identical enforcement for every
-  semantic consumer.
+- FAI-619's generated-boundary, structural, extracted-YAML, and compiler
+  compatibility fixtures cover the migrated structural surface. FAI-639's
+  compiler/evaluator fixtures cover the lowering, registry qualification,
+  opaque assignment/envelope evidence, trusted snapshot checks, complete
+  multi-dataset predicate maps, bounded reader/admission checks, deterministic
+  identities, grant evaluation, and typed PlanIR predicate handoff. Neither
+  slice claims FAI-641 planner or consumer integration.
+- Future query authorization tests must prove fail-closed scalar and list
+  matching, all-grants and all-filters composition, discovery filtering,
+  direct-reference rejection, parameterized planning, and identical
+  enforcement for every semantic consumer; FAI-639's evaluator tests do not
+  satisfy those planner or consumer requirements.
 - Extracted normative YAML examples parse and validate against the generated
   SemanticModel schema; cross-path golden fixtures prove identical typed
   canonicalization and the 1,024-value bound.

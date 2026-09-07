@@ -74,7 +74,7 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	if err := repo.RecordAuditEvent(t.Context(), access.AuditEventInput{Action: "extended.valid", MetadataJSON: `{}`}); err != nil {
 		t.Fatalf("object audit metadata rejected: %v", err)
 	}
-	projectRef, err := access.NewResourceRef("project_extended", graph.KindProject)
+	projectRef, err := access.NewResourceRef("project_extended", graph.KindProjectNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +140,9 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	if err != nil || markerTime.Before(time.Now().UTC().Add(-time.Minute)) {
 		t.Fatalf("database initialization marker = %q (%v)", marker, err)
 	}
+	if initialized, err := repo.Initialized(t.Context()); err != nil || !initialized {
+		t.Fatalf("repository initialization marker lookup = %t (%v)", initialized, err)
+	}
 	if _, err := repo.InitializeInstance(t.Context(), access.InstanceInitializationInput{Email: "second@example.com", Environment: "production", Now: time.Now()}, nil); !errors.Is(err, access.ErrInstanceAlreadyInitialized) {
 		t.Fatalf("second initialization error = %v", err)
 	}
@@ -190,6 +193,34 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	if _, err := repo.AuthoringCredentialByAccessTokenHash(t.Context(), hashHex("access-extended-next"), time.Unix(1, 0)); err != nil {
 		t.Fatalf("resolve rotated credential with stale caller time: %v", err)
 	}
+	replay := access.AuthoringCredentialRotation{
+		RefreshTokenHash: refreshHash, CredentialID: "ac_extended_replay",
+		AccessTokenHash: hashHex("access-extended-replay"), RefreshTokenHashNew: hashHex("refresh-extended-replay"),
+		AccessExpiresAt: now.Add(45 * time.Minute), RefreshExpiresAt: now.Add(3 * time.Hour),
+	}
+	if _, err := repo.RotateAuthoringCredential(t.Context(), replay); !errors.Is(err, access.ErrAuthoringRefreshReplay) {
+		t.Fatalf("old refresh replay error = %v", err)
+	}
+	var revoked bool
+	var replayAudits int
+	if err := db.admin.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL FROM access.authoring_session WHERE id='as_extended'`).Scan(&revoked); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.admin.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE action='authoring.refresh.replay' AND resource_id='as_extended'`).Scan(&replayAudits); err != nil {
+		t.Fatal(err)
+	}
+	if !revoked || replayAudits != 1 {
+		t.Fatalf("replay containment revoked=%t audit_count=%d", revoked, replayAudits)
+	}
+	if _, err := repo.RotateAuthoringCredential(t.Context(), replay); !errors.Is(err, access.ErrAuthoringRefreshReplay) {
+		t.Fatalf("contained refresh replay error = %v", err)
+	}
+	if err := db.admin.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE action='authoring.refresh.replay' AND resource_id='as_extended'`).Scan(&replayAudits); err != nil {
+		t.Fatal(err)
+	}
+	if replayAudits != 1 {
+		t.Fatalf("idempotent replay audit count=%d, want 1", replayAudits)
+	}
 	if _, err := db.admin.Exec(t.Context(), `UPDATE access.device_authorization SET consumed_at=NULL WHERE id='da_extended'`); err == nil {
 		t.Fatal("device consumption rewind accepted")
 	}
@@ -199,7 +230,6 @@ func TestAccessExtendedPostgreSQL18SnapshotAndPublicationAdapters(t *testing.T) 
 	db := newStandaloneAccessDatabase(t)
 	ctx := t.Context()
 	project, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_adapter", Kind: graph.KindProject, Name: "adapter"},
 		{ID: "dashboard_adapter", Kind: graph.KindDashboard, Name: "dashboard"},
 	}, nil)
 	if err != nil {
@@ -309,14 +339,14 @@ func TestAccessExtendedPostgreSQL18SnapshotAndPublicationAdapters(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ActivateDashboardPublicationPrincipalTx(ctx, tx, project.ProjectID(), "public"); err != nil {
+	if err := ActivateDashboardPublicationPrincipalTx(ctx, tx, identity.ProjectID, "public"); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("activate dashboard publication principal: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	publicationID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("dashboard_publication:"+project.ProjectID().String()+".public")).String()
+	publicationID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("dashboard_publication:"+identity.ProjectID.String()+".public")).String()
 	var principalKind string
 	if err := db.admin.QueryRow(ctx, `SELECT principal_type FROM access.principal WHERE id=$1::uuid`, publicationID).Scan(&principalKind); err != nil {
 		t.Fatal(err)
@@ -328,7 +358,7 @@ func TestAccessExtendedPostgreSQL18SnapshotAndPublicationAdapters(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ActivateDashboardPublicationPrincipalTx(ctx, tx, project.ProjectID(), strings.Repeat("x", 513)); err == nil {
+	if err := ActivateDashboardPublicationPrincipalTx(ctx, tx, identity.ProjectID, strings.Repeat("x", 513)); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("oversized publication name accepted")
 	}

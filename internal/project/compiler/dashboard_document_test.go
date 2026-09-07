@@ -11,7 +11,7 @@ import (
 	configschema "github.com/flidai/leapview/internal/project/schema"
 )
 
-func TestLoadDashboardDocumentForProjectExpandsIncludes(t *testing.T) {
+func TestLoadDashboardDocumentForSourceRootExpandsIncludes(t *testing.T) {
 	root := t.TempDir()
 	dashboardDir := filepath.Join(root, "dashboards")
 	if err := os.MkdirAll(dashboardDir, 0o755); err != nil {
@@ -42,7 +42,7 @@ spec:
 	if err := os.WriteFile(filepath.Join(dashboardDir, "pages.yaml"), []byte("pages:\n  - id: overview\n    title: Overview\n    components: []\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	value, err := LoadDashboardDocumentForProject(dashboardPath, root)
+	value, err := LoadDashboardDocumentForSourceRoot(dashboardPath, root)
 	if err != nil {
 		t.Fatal(err)
 	}

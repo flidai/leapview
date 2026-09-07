@@ -11,6 +11,7 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/platform/observability"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 func TestHealthRoutesRemainUnauthenticated(t *testing.T) {
@@ -60,8 +61,9 @@ func TestCorrelationIdentitySurvivesEarlyMiddlewareFailure(t *testing.T) {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusMisdirectedRequest)
 	}
 	requestID := response.Header().Get("X-Request-ID")
-	if !strings.HasPrefix(requestID, "req_") {
-		t.Fatalf("response request ID = %q, want generated req_ identity", requestID)
+	parsed, err := uuid.Parse(requestID)
+	if err != nil || parsed.String() != requestID || parsed.Version() != 7 {
+		t.Fatalf("response request ID = %q, want canonical UUIDv7 identity", requestID)
 	}
 	if got := response.Header().Get("X-Correlation-ID"); got != requestID {
 		t.Fatalf("response correlation ID = %q, want request ID %q", got, requestID)

@@ -1,13 +1,10 @@
 package runtimefactory
 
 import (
-	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
@@ -22,7 +19,6 @@ import (
 
 func TestPipelineScopeRelationIDsUsesOpaqueGraphIdentity(t *testing.T) {
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project:delivery", Kind: projectgraph.KindProject, Name: "delivery"},
 		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
 		{ID: "model:customer_orders", Kind: projectgraph.KindModel, Name: "customer_orders"},
 	}, nil)
@@ -46,7 +42,7 @@ func TestPipelineScopeRelationIDsUsesOpaqueGraphIdentity(t *testing.T) {
 }
 
 func TestPipelinePlanRejectsRefreshOfRelationOutsideExactScope(t *testing.T) {
-	artifact := dashboardPhysicalArtifact(t, "Sales", false)
+	artifact := dashboardPhysicalArtifact(t, "Sales")
 	projectID := projectgraph.ResourceID("project:dashboard")
 	sourceDigest := deliveryPlanDigest('a')
 	pipelinePlan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
@@ -65,7 +61,7 @@ func TestPipelinePlanRejectsRefreshOfRelationOutsideExactScope(t *testing.T) {
 		Artifact:   release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: artifact.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version},
 		Generation: release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
 		Compiler: release.CandidateCompilerEvidence{
-			Graph: artifact.Graph(), Artifact: artifact, Plan: projectcompiler.ProjectPlan{Project: projectID.String()},
+			Graph: artifact.Graph(), Artifact: artifact, Plan: projectcompiler.BundlePlan{},
 			RelationExecution:     map[string]string{"model:orders": deliveryPlanDigest('1'), "model:customers": deliveryPlanDigest('2')},
 			BaseRelationExecution: map[string]string{"model:orders": deliveryPlanDigest('1')},
 		},
@@ -74,8 +70,8 @@ func TestPipelinePlanRejectsRefreshOfRelationOutsideExactScope(t *testing.T) {
 		ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: sourceDigest, Operation: deployment.DeliveryOperationRestatement, PipelinePlan: &pipelinePlan,
 		Candidate: deployment.Candidate{ID: "candidate_pipeline", TargetID: "target_prod", Scope: deployment.CandidateScope{ProjectID: projectID, Environment: "prod", BaseGenerationID: "generation_0"}},
 	}
-	_, err = CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{}, time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC), &deployment.DeliveryReuseInput{
-		CatalogDigest: deliveryPlanDigest('c'), BaseCatalogDigest: deliveryPlanDigest('c'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
+	_, err = CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC), &deployment.DeliveryReuseInput{
+		ClosureDigest: deliveryPlanDigest('c'), BaseClosureDigest: deliveryPlanDigest('c'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
 	})
 	if err == nil || !strings.Contains(err.Error(), `relation "model:customers" is outside materialization scope`) {
 		t.Fatalf("pipeline plan error = %v, want exact-scope rejection", err)
@@ -83,7 +79,7 @@ func TestPipelinePlanRejectsRefreshOfRelationOutsideExactScope(t *testing.T) {
 }
 
 func TestPipelinePlanRetainsExactUnselectedRelationWithoutReexecutingIt(t *testing.T) {
-	artifact := dashboardPhysicalArtifact(t, "Sales", false)
+	artifact := dashboardPhysicalArtifact(t, "Sales")
 	projectID := projectgraph.ResourceID("project:dashboard")
 	sourceDigest := deliveryPlanDigest('a')
 	pipelinePlan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
@@ -104,7 +100,7 @@ func TestPipelinePlanRetainsExactUnselectedRelationWithoutReexecutingIt(t *testi
 		// relation is retained from the sealed base and is never re-executed.
 		Generation: release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: false},
 		Compiler: release.CandidateCompilerEvidence{
-			Graph: artifact.Graph(), Artifact: artifact, Plan: projectcompiler.ProjectPlan{Project: projectID.String()},
+			Graph: artifact.Graph(), Artifact: artifact, Plan: projectcompiler.BundlePlan{},
 			RelationExecution:     map[string]string{"model:orders": deliveryPlanDigest('1'), "model:customers": deliveryPlanDigest('2')},
 			BaseRelationExecution: map[string]string{"model:orders": deliveryPlanDigest('1'), "model:customers": deliveryPlanDigest('2')},
 		},
@@ -121,8 +117,8 @@ func TestPipelinePlanRetainsExactUnselectedRelationWithoutReexecutingIt(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{}, base.CreatedAt, &deployment.DeliveryReuseInput{
-		BaseContextDigest: baseContext, CatalogDigest: deliveryPlanDigest('c'), BaseCatalogDigest: deliveryPlanDigest('c'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
+	request, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, base.CreatedAt, &deployment.DeliveryReuseInput{
+		BaseContextDigest: baseContext, ClosureDigest: deliveryPlanDigest('c'), BaseClosureDigest: deliveryPlanDigest('c'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
 	})
 	if err != nil {
 		t.Fatalf("plan scoped refresh with an exact sealed sibling: %v", err)
@@ -145,7 +141,7 @@ func TestCandidatePlanExecutionIdentityIncludesDataModeAndEffectiveBindings(t *t
 			Identity: identity, DataRevision: "snapshot:7", DataMode: release.GenerationDataReuseBase, Deterministic: true,
 			Connections: []release.CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}},
 		},
-		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{Project: "project_delivery"}},
+		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.BundlePlan{}},
 	}
 	input := deployment.DeliveryCandidateBuildInput{
 		ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: base.Artifact.SourceDigest,
@@ -191,25 +187,6 @@ func TestCandidatePlanExecutionIdentityIncludesDataModeAndEffectiveBindings(t *t
 	}
 }
 
-func TestQualificationRequestForCandidateCarriesReviewerPolicyDigest(t *testing.T) {
-	authorizationFingerprint := deliveryPlanDigest('c')
-	request := QualificationRequestForCandidate(release.CandidateArtifactSet{
-		AuthorizationFingerprint: authorizationFingerprint,
-		Generation: release.CandidateGenerationArtifact{
-			Identity: projectgraph.ServingIdentity{GenerationID: "candidate_qualification"},
-		},
-	})
-	if request.PolicyDigest != authorizationFingerprint {
-		t.Fatalf("qualification policy digest = %q, want authorization fingerprint %q", request.PolicyDigest, authorizationFingerprint)
-	}
-	if request.ReviewerPolicyDigest != authorizationFingerprint {
-		t.Fatalf("qualification reviewer policy digest = %q, want authorization fingerprint %q", request.ReviewerPolicyDigest, authorizationFingerprint)
-	}
-	if request.Policy == nil {
-		t.Fatal("qualification request has no policy callback")
-	}
-}
-
 func TestCandidatePlanPreservesSemanticRelationshipPathsAndQualificationScope(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_delivery")
 	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "candidate_relationships")
@@ -220,8 +197,8 @@ func TestCandidatePlanPreservesSemanticRelationshipPathsAndQualificationScope(t 
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: deliveryPlanDigest('a'), ProjectDigest: deliveryPlanDigest('b'), CompilerVersion: "compiler:v1", SchemaVersion: 1},
 		AuthorizationFingerprint: deliveryPlanDigest('c'),
 		Generation:               release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
-		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{
-			Project: "project_delivery", DependencyChanges: []projectcompiler.ProjectPlanDependencyChange{{From: "orders", To: "customers", Type: "uses_model", ResourceKind: string(projectgraph.KindModel), Action: "change"}, {From: "customers", To: "regions", Type: "uses_model", ResourceKind: string(projectgraph.KindModel), Action: "change"}},
+		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.BundlePlan{
+			DependencyChanges: []projectcompiler.BundlePlanDependencyChange{{From: "orders", To: "customers", Type: "uses_model", ResourceKind: string(projectgraph.KindModel), Action: "change"}, {From: "customers", To: "regions", Type: "uses_model", ResourceKind: string(projectgraph.KindModel), Action: "change"}},
 		}},
 	}
 	input := deployment.DeliveryCandidateBuildInput{ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: artifacts.Artifact.SourceDigest, Candidate: deployment.Candidate{ID: "candidate_relationships", TargetID: "target_prod", Scope: deployment.CandidateScope{ProjectID: projectID, Environment: "prod"}}}
@@ -255,7 +232,7 @@ func TestCandidatePlanReuseDecisionUsesExactActiveIdentity(t *testing.T) {
 			Identity: identity, DataRevision: "snapshot:7", DataMode: release.GenerationDataReuseBase, Deterministic: true,
 			Connections: []release.CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}},
 		},
-		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{Project: "project_delivery"}},
+		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.BundlePlan{}},
 	}
 	input := deployment.DeliveryCandidateBuildInput{
 		ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: artifacts.Artifact.SourceDigest,
@@ -265,33 +242,60 @@ func TestCandidatePlanReuseDecisionUsesExactActiveIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseExecution, err := baseRequest.Execution.ExecutionDigest()
+	refreshRevision, err := release.CandidateSourcesDataRevision(artifacts.Artifact.SourceDigest, artifacts.Generation.ManagedDataPins)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshConfig := candidateDataConfigDigest(input.Candidate.TargetID, input.Candidate.Scope.Environment, release.GenerationDataRefreshSources, refreshRevision)
+	if baseRequest.Execution.ConfigDigest != refreshConfig || !strings.Contains(baseRequest.Evidence.PhysicalWorkStatement, "refreshes compiled project relations") || !strings.Contains(baseRequest.Evidence.ReuseStatement, "does not reuse") {
+		t.Fatalf("unavailable reuse identity left stale plan execution/evidence: config=%q physical=%q reuse=%q", baseRequest.Execution.ConfigDigest, baseRequest.Evidence.PhysicalWorkStatement, baseRequest.Evidence.ReuseStatement)
+	}
+	// Reuse is evaluated against the hypothetical retained-snapshot execution;
+	// a rejected decision is reconciled to refresh_sources before persistence.
+	baseExecutionInputs := baseRequest.Execution
+	baseExecutionInputs.ConfigDigest = candidateDataConfigDigest(input.Candidate.TargetID, input.Candidate.Scope.Environment, release.GenerationDataReuseBase, artifacts.Generation.DataRevision)
+	baseExecution, err := baseExecutionInputs.ExecutionDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseContext, err := baseRequest.Execution.ContextDigest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	reuse := &deployment.DeliveryReuseInput{
-		BaseExecutionDigest: baseExecution, CatalogDigest: deliveryPlanDigest('d'), BaseCatalogDigest: deliveryPlanDigest('d'),
+		BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext, ClosureDigest: deliveryPlanDigest('d'), BaseClosureDigest: deliveryPlanDigest('d'),
 		PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('e'), BaseCompatibilityDigest: deliveryPlanDigest('e'), Deterministic: true,
 	}
-	exact, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{}, baseRequest.CreatedAt, reuse)
+	exact, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, reuse)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(exact.Evidence.Reuse) != 1 || !exact.Evidence.Reuse[0].Reusable || exact.Evidence.Reuse[0].ReuseKeyDigest == "" {
 		t.Fatalf("exact active identity reuse = %#v", exact.Evidence.Reuse)
 	}
+	if exact.Execution.ConfigDigest != baseExecutionInputs.ConfigDigest || !strings.Contains(exact.Evidence.ReuseStatement, "reuses") {
+		t.Fatalf("exact reuse execution/evidence = config:%q reuse:%q", exact.Execution.ConfigDigest, exact.Evidence.ReuseStatement)
+	}
+	missingContext := *reuse
+	missingContext.BaseContextDigest = ""
+	if _, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, &missingContext); err == nil || !strings.Contains(err.Error(), "execution context identity is incomplete") {
+		t.Fatalf("missing active context identity error = %v, want fail-closed rejection", err)
+	}
 	changed := *reuse
-	changed.BaseCatalogDigest = deliveryPlanDigest('f')
-	mismatch, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{}, baseRequest.CreatedAt, &changed)
+	changed.BaseClosureDigest = deliveryPlanDigest('f')
+	mismatch, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, &changed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(mismatch.Evidence.Reuse) != 1 || mismatch.Evidence.Reuse[0].Reusable {
 		t.Fatalf("mismatching active identity unexpectedly reused: %#v", mismatch.Evidence.Reuse)
 	}
+	if mismatch.Execution.ConfigDigest != refreshConfig || !strings.Contains(mismatch.Evidence.PhysicalWorkStatement, "refreshes compiled project relations") || !strings.Contains(mismatch.Evidence.ReuseStatement, "does not reuse") {
+		t.Fatalf("mismatching identity left stale execution/evidence: config=%q physical=%q reuse=%q", mismatch.Execution.ConfigDigest, mismatch.Evidence.PhysicalWorkStatement, mismatch.Evidence.ReuseStatement)
+	}
 	undeclared := artifacts
 	undeclared.Generation.Deterministic = false
-	nondeterministic, err := CandidatePlanRequestWithPolicyAndReuse(input, undeclared, "runtime:v1", CandidateDeliveryPolicy{}, baseRequest.CreatedAt, reuse)
+	nondeterministic, err := CandidatePlanRequestWithPolicyAndReuse(input, undeclared, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, reuse)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +317,7 @@ func TestCandidatePlanEmitsRelationScopedReuseDecisions(t *testing.T) {
 		// while still retaining unchanged base references.
 		Generation: release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:revision", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
 		Compiler: release.CandidateCompilerEvidence{
-			Plan:                  projectcompiler.ProjectPlan{Project: "project_delivery"},
+			Plan:                  projectcompiler.BundlePlan{},
 			RelationExecution:     map[string]string{"model_orders": deliveryPlanDigest('1'), "model_customers": deliveryPlanDigest('2')},
 			BaseRelationExecution: map[string]string{"model_orders": deliveryPlanDigest('1'), "model_customers": deliveryPlanDigest('9')},
 		},
@@ -331,81 +335,12 @@ func TestCandidatePlanEmitsRelationScopedReuseDecisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{}, base.CreatedAt, &deployment.DeliveryReuseInput{BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext, CatalogDigest: deliveryPlanDigest('d'), BaseCatalogDigest: deliveryPlanDigest('d'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('e'), BaseCompatibilityDigest: deliveryPlanDigest('e'), Deterministic: true})
+	request, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, base.CreatedAt, &deployment.DeliveryReuseInput{BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext, ClosureDigest: deliveryPlanDigest('d'), BaseClosureDigest: deliveryPlanDigest('d'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('e'), BaseCompatibilityDigest: deliveryPlanDigest('e'), Deterministic: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(request.Evidence.Reuse) != 2 || request.Evidence.Reuse[0].ResourceID != "model_customers" || request.Evidence.Reuse[0].Reusable || !request.Evidence.Reuse[0].RetainBase || request.Evidence.Reuse[1].ResourceID != "model_orders" || !request.Evidence.Reuse[1].Reusable {
 		t.Fatalf("relation reuse evidence = %#v", request.Evidence.Reuse)
-	}
-}
-
-func TestRestatementPlanUsesExplicitCandidateLevelFullRefresh(t *testing.T) {
-	projectID := projectgraph.ResourceID("project_delivery")
-	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "candidate_restatement")
-	if err != nil {
-		t.Fatal(err)
-	}
-	artifacts := release.CandidateArtifactSet{
-		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: deliveryPlanDigest('a'), ProjectDigest: deliveryPlanDigest('b'), CompilerVersion: "compiler:v1", SchemaVersion: 1},
-		AuthorizationFingerprint: deliveryPlanDigest('c'),
-		Generation:               release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:revision", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
-		Compiler:                 release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{Project: "project_delivery"}, RelationExecution: map[string]string{"model_orders": deliveryPlanDigest('1')}, BaseRelationExecution: map[string]string{"model_orders": deliveryPlanDigest('1')}},
-	}
-	input := deployment.DeliveryCandidateBuildInput{ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: artifacts.Artifact.SourceDigest, Operation: deployment.DeliveryOperationRestatement, Candidate: deployment.Candidate{ID: "candidate_restatement", TargetID: "target_prod", Scope: deployment.CandidateScope{ProjectID: projectID, Environment: "prod", BaseGenerationID: "generation_0"}}}
-	request, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{}, time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC), &deployment.DeliveryReuseInput{
-		BaseExecutionDigest: deliveryPlanDigest('1'), CatalogDigest: deliveryPlanDigest('2'), BaseCatalogDigest: deliveryPlanDigest('2'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('3'), BaseCompatibilityDigest: deliveryPlanDigest('3'), Deterministic: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(request.Evidence.Reuse) != 1 || request.Evidence.Reuse[0].ResourceID != input.Candidate.ID || request.Evidence.Reuse[0].Reusable || request.Evidence.Reuse[0].RetainBase {
-		t.Fatalf("restatement reuse evidence = %#v, want explicit candidate-level full refresh", request.Evidence.Reuse)
-	}
-	plan := &deployment.DeliveryPlan{Operation: deployment.DeliveryOperationRestatement, Evidence: request.Evidence}
-	if err := validateReuseEvidenceCoverage(plan, artifacts, input.Candidate.ID); err != nil {
-		t.Fatalf("restatement candidate-level evidence rejected: %v", err)
-	}
-}
-
-func TestRestatementPlanEvidenceAcceptsStablePlanIdentityDuringPhysicalBuild(t *testing.T) {
-	artifacts := release.CandidateArtifactSet{Compiler: release.CandidateCompilerEvidence{
-		RelationExecution: map[string]string{"model_orders": deliveryPlanDigest('1')},
-	}}
-	plan := &deployment.DeliveryPlan{
-		ID:        "plan-planning-candidate",
-		Operation: deployment.DeliveryOperationRestatement,
-		Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{
-			ResourceID: "planning-candidate",
-			Reason:     "operation requires explicit full materialization",
-		}}},
-	}
-	if err := validateReuseEvidenceCoverage(plan, artifacts, "candidate-physical-build"); err != nil {
-		t.Fatalf("durable restatement plan identity rejected during physical build: %v", err)
-	}
-	plan.Evidence.Reuse[0].Reusable = true
-	if err := validateReuseEvidenceCoverage(plan, artifacts, "candidate-physical-build"); err == nil {
-		t.Fatal("durable restatement plan identity retained a base")
-	}
-}
-
-func TestCandidateRunnerForcesRestatementRefreshFromReuseBase(t *testing.T) {
-	baseCalled := false
-	runner := &candidateCatalogRunner{
-		config: CandidateCatalogRunnerConfig{Base: func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error) {
-			baseCalled = true
-			return nil, errors.New("restatement base resolver must not run")
-		}},
-		input:     deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate-restatement"}},
-		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseBase}},
-	}
-	plan := deployment.DeliveryPlan{Operation: deployment.DeliveryOperationRestatement, BaseGenerationID: "generation-1", Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "candidate-restatement", Reason: "operation requires explicit full materialization"}}}}
-	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: plan})
-	if err == nil || baseCalled {
-		t.Fatalf("restatement reused base: err=%v baseCalled=%v", err, baseCalled)
-	}
-	if runner.artifacts.Generation.DataMode != release.GenerationDataRefreshSources {
-		t.Fatalf("restatement data mode = %q, want %q", runner.artifacts.Generation.DataMode, release.GenerationDataRefreshSources)
 	}
 }
 
@@ -420,7 +355,7 @@ func TestCandidatePlanPolicyOnlyChangeRetainsPhysicalRelations(t *testing.T) {
 		AuthorizationFingerprint: deliveryPlanDigest('c'),
 		Generation:               release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataReuseBase, Deterministic: true},
 		Compiler: release.CandidateCompilerEvidence{
-			Plan:                  projectcompiler.ProjectPlan{Project: "project_delivery"},
+			Plan:                  projectcompiler.BundlePlan{},
 			RelationExecution:     map[string]string{"model_orders": deliveryPlanDigest('1')},
 			BaseRelationExecution: map[string]string{"model_orders": deliveryPlanDigest('1')},
 		},
@@ -440,9 +375,9 @@ func TestCandidatePlanPolicyOnlyChangeRetainsPhysicalRelations(t *testing.T) {
 	}
 	changed := base
 	changed.AuthorizationFingerprint = deliveryPlanDigest('d')
-	request, err := CandidatePlanRequestWithPolicyAndReuse(input, changed, "runtime:v1", CandidateDeliveryPolicy{}, baseRequest.CreatedAt, &deployment.DeliveryReuseInput{
+	request, err := CandidatePlanRequestWithPolicyAndReuse(input, changed, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, &deployment.DeliveryReuseInput{
 		BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext,
-		CatalogDigest: deliveryPlanDigest('e'), BaseCatalogDigest: deliveryPlanDigest('e'),
+		ClosureDigest: deliveryPlanDigest('e'), BaseClosureDigest: deliveryPlanDigest('e'),
 		PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('f'), BaseCompatibilityDigest: deliveryPlanDigest('f'), Deterministic: true,
 	})
 	if err != nil {
@@ -464,8 +399,8 @@ func TestCandidatePlanPolicyOnlyChangeRetainsPhysicalRelations(t *testing.T) {
 }
 
 func TestCandidatePlanDashboardOnlyChangeRetainsPhysicalRelations(t *testing.T) {
-	baseArtifact := dashboardPhysicalArtifact(t, "Dashboard v1", false)
-	changedArtifact := dashboardPhysicalArtifact(t, "Dashboard v2", true)
+	baseArtifact := dashboardPhysicalArtifact(t, "Dashboard v1")
+	changedArtifact := dashboardPhysicalArtifact(t, "Dashboard v2")
 	relationContext := "sha256:" + strings.Repeat("a", 64)
 	baseRelations, err := baseArtifact.RelationExecutionDigests(relationContext)
 	if err != nil {
@@ -490,7 +425,7 @@ func TestCandidatePlanDashboardOnlyChangeRetainsPhysicalRelations(t *testing.T) 
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: deliveryPlanDigest('a'), ProjectDigest: baseArtifact.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version},
 		AuthorizationFingerprint: deliveryPlanDigest('b'),
 		Generation:               release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataReuseBase, Deterministic: true},
-		Compiler:                 release.CandidateCompilerEvidence{Graph: baseArtifact.Graph(), Plan: projectcompiler.ProjectPlan{Project: "project:dashboard"}, Artifact: baseArtifact, RelationExecution: baseRelations, BaseRelationExecution: baseRelations},
+		Compiler:                 release.CandidateCompilerEvidence{Graph: baseArtifact.Graph(), Plan: projectcompiler.BundlePlan{}, Artifact: baseArtifact, RelationExecution: baseRelations, BaseRelationExecution: baseRelations},
 	}
 	input := deployment.DeliveryCandidateBuildInput{ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: base.Artifact.SourceDigest, Candidate: deployment.Candidate{ID: "candidate_dashboard_only", TargetID: "target_prod", Scope: deployment.CandidateScope{ProjectID: projectID, Environment: "prod", BaseGenerationID: "generation_0"}}}
 	baseRequest, err := CandidatePlanRequest(input, base, "runtime:v1", time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC))
@@ -509,9 +444,9 @@ func TestCandidatePlanDashboardOnlyChangeRetainsPhysicalRelations(t *testing.T) 
 	changed.Artifact.ProjectDigest = changedArtifact.Digest()
 	changed.Compiler.Graph = changedArtifact.Graph()
 	changed.Compiler.Artifact = changedArtifact
-	request, err := CandidatePlanRequestWithPolicyAndReuse(input, changed, "runtime:v1", CandidateDeliveryPolicy{}, baseRequest.CreatedAt, &deployment.DeliveryReuseInput{
+	request, err := CandidatePlanRequestWithPolicyAndReuse(input, changed, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, &deployment.DeliveryReuseInput{
 		BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext,
-		CatalogDigest: deliveryPlanDigest('c'), BaseCatalogDigest: deliveryPlanDigest('c'),
+		ClosureDigest: deliveryPlanDigest('c'), BaseClosureDigest: deliveryPlanDigest('c'),
 		PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
 	})
 	if err != nil {
@@ -532,14 +467,13 @@ func TestCandidatePlanDashboardOnlyChangeRetainsPhysicalRelations(t *testing.T) 
 	}
 }
 
-func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string, accessVariant bool) projectartifact.Project {
+func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string) projectartifact.SourceBundle {
 	t.Helper()
 	pathLocation := &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{
 		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: "orders.csv", Format: "csv"},
 		Format:                 "csv",
 	}}
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project:dashboard", Kind: projectgraph.KindProject, Name: "dashboard"},
 		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse"},
 		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},
 		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
@@ -554,132 +488,18 @@ func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string, accessVarian
 	if err != nil {
 		t.Fatal(err)
 	}
-	access := projectmanifest.AccessPolicy{}
-	if accessVariant {
-		access = projectmanifest.AccessPolicy{Groups: map[string]projectmanifest.Group{"analysts": {ID: "analysts", Name: "Analysts"}}}
-	}
-	artifact, err := projectartifact.NewProject(graphValue, projectmanifest.Project{
-		ID: "project:dashboard", Name: "dashboard",
+	artifact, err := projectartifact.NewSourceBundle(graphValue, projectmanifest.ResourceManifest{
 		Connections:          map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
 		Sources:              map[string]semanticmodel.Source{"source:orders": {Connection: "connection:warehouse", Format: "csv", Path: "orders.csv", PathLocation: pathLocation, EffectivePathLocation: pathLocation}},
 		Models:               map[string]semanticmodel.Table{"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}}},
 		SemanticModels:       map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}}}}},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{"dashboard:sales": {ID: "dashboard:sales", Title: dashboardTitle, SemanticModel: "semantic:sales"}},
 		DashboardSources:     map[string]projectmanifest.DashboardSource{"dashboard:sales": {Document: dashboarddocument.DashboardDocument{APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1, Kind: dashboarddocument.DashboardResourceKindDashboard, Metadata: dashboarddocument.DashboardMetadata{ID: "dashboard:sales", Name: "sales_dashboard"}, Spec: dashboarddocument.DashboardSpec{SemanticModel: "semantic:sales"}}}},
-		Access:               access,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return artifact
-}
-
-func TestReuseEvidenceCoverageRequiresExactCurrentRelations(t *testing.T) {
-	artifacts := release.CandidateArtifactSet{Compiler: release.CandidateCompilerEvidence{RelationExecution: map[string]string{
-		"model_orders": deliveryPlanDigest('1'), "model_customers": deliveryPlanDigest('2'),
-	}}}
-	valid := func(ids ...string) *deployment.DeliveryPlan {
-		decisions := make([]deployment.DeliveryReuseDecision, len(ids))
-		for i, id := range ids {
-			decisions[i] = deployment.DeliveryReuseDecision{ResourceID: id, Reusable: true}
-		}
-		return &deployment.DeliveryPlan{Evidence: deployment.DeliveryPlanEvidence{Reuse: decisions}}
-	}
-	for name, plan := range map[string]*deployment.DeliveryPlan{
-		"missing":   valid("model_orders"),
-		"unknown":   valid("model_orders", "model_regions"),
-		"duplicate": valid("model_orders", "model_orders"),
-	} {
-		if err := validateReuseEvidenceCoverage(plan, artifacts, "candidate-1"); err == nil {
-			t.Errorf("%s relation evidence unexpectedly accepted", name)
-		}
-	}
-	if err := validateReuseEvidenceCoverage(valid("model_orders", "model_customers"), artifacts, "candidate-1"); err != nil {
-		t.Fatalf("exact relation evidence rejected: %v", err)
-	}
-	if err := validateReuseEvidenceCoverage(&deployment.DeliveryPlan{Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "other", Reusable: true}}}}, release.CandidateArtifactSet{}, "candidate-1"); err == nil {
-		t.Fatal("candidate-level evidence accepted wrong resource ID")
-	}
-}
-
-func TestCandidateRunnerRejectsPartialRelationEvidenceBeforeBase(t *testing.T) {
-	baseCalled := false
-	runner := &candidateCatalogRunner{
-		config: CandidateCatalogRunnerConfig{Base: func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error) {
-			baseCalled = true
-			return nil, errors.New("base resolver must not run")
-		}},
-		input: deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate-1"}},
-		artifacts: release.CandidateArtifactSet{Compiler: release.CandidateCompilerEvidence{RelationExecution: map[string]string{
-			"model_orders": deliveryPlanDigest('1'), "model_customers": deliveryPlanDigest('2'),
-		}}},
-	}
-	plan := deployment.DeliveryPlan{BaseGenerationID: "generation-1", Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "model_orders", Reusable: true}}}}
-	if _, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: plan}); err == nil || baseCalled {
-		t.Fatalf("partial relation evidence err=%v baseCalled=%v", err, baseCalled)
-	}
-}
-
-func TestCandidateRunnerRebuildsWhenReuseDecisionMismatches(t *testing.T) {
-	basePlan := deployment.DeliveryPlan{Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "candidate_1", Reusable: false, Reason: "catalog compatibility identity changed"}}}}
-	baseCalled := false
-	runner := &candidateCatalogRunner{
-		config: CandidateCatalogRunnerConfig{
-			Base: func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error) {
-				baseCalled = true
-				return nil, nil
-			},
-		},
-		input:     deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate_1"}},
-		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseBase}},
-	}
-	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: basePlan})
-	if err == nil || baseCalled {
-		t.Fatalf("mismatching reuse decision err=%v baseCalled=%v", err, baseCalled)
-	}
-	if runner.artifacts.Generation.DataMode != release.GenerationDataRefreshSources {
-		t.Fatalf("mismatching reuse decision left data mode %q", runner.artifacts.Generation.DataMode)
-	}
-}
-
-func TestCandidateRunnerUsesBaseForExactReuseDecision(t *testing.T) {
-	baseCalled := false
-	runner := &candidateCatalogRunner{
-		config: CandidateCatalogRunnerConfig{
-			Base: func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error) {
-				baseCalled = true
-				return nil, errors.New("base resolver reached")
-			},
-		},
-		input:     deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate_1"}},
-		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseBase}},
-	}
-	plan := deployment.DeliveryPlan{BaseGenerationID: "generation_1", Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "candidate_1", Reusable: true, Reason: "exact identity"}}}}
-	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: plan})
-	if err == nil || !strings.Contains(err.Error(), "base resolver reached") || !baseCalled {
-		t.Fatalf("exact reuse err=%v baseCalled=%v", err, baseCalled)
-	}
-}
-
-func TestCandidateRunnerMissingReuseDecisionRebuilds(t *testing.T) {
-	baseCalled := false
-	runner := &candidateCatalogRunner{
-		config: CandidateCatalogRunnerConfig{
-			Base: func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error) {
-				baseCalled = true
-				return nil, errors.New("base resolver must not run")
-			},
-		},
-		input:     deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate_1"}},
-		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseBase}},
-	}
-	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: deployment.DeliveryPlan{BaseGenerationID: "generation_1"}})
-	if err == nil || baseCalled {
-		t.Fatalf("missing reuse decision err=%v baseCalled=%v", err, baseCalled)
-	}
-	if runner.artifacts.Generation.DataMode != release.GenerationDataRefreshSources {
-		t.Fatalf("missing reuse decision left data mode %q", runner.artifacts.Generation.DataMode)
-	}
 }
 
 func deliveryPlanDigest(char byte) string { return "sha256:" + strings.Repeat(string(char), 64) }

@@ -17,27 +17,26 @@ func dataCommand(ctx context.Context, _ *rootOptions) *cobra.Command {
 	return manageddatacli.Command(ctx, manageddatacli.Dependencies{
 		Client:          capabilityAPIClient{},
 		HTTPClient:      http.DefaultClient,
-		LoadPlanProject: loadManagedDataPlanProject,
-		LoadProjectID:   loadProjectID,
+		LoadPlanCatalog: loadManagedDataPlanCatalog,
 	})
 }
 
-func loadManagedDataPlanProject(path string) (localplan.Project, error) {
-	project, err := projectcompiler.LoadProject(path)
+func loadManagedDataPlanCatalog(path string) (localplan.SourceCatalog, error) {
+	project, err := projectcompiler.LoadSourceRoot(path)
 	if err != nil {
-		return localplan.Project{}, err
+		return localplan.SourceCatalog{}, err
 	}
-	projection := localplan.Project{
+	projection := localplan.SourceCatalog{
 		Connections: make(map[string]localplan.Connection, len(project.Connections)),
 		Sources:     make(map[string]localplan.Source, len(project.Sources)),
 	}
 	for name, connection := range project.Connections {
 		stableID := project.ConnectionIDs[name]
 		if stableID == "" || stableID != strings.TrimSpace(stableID) {
-			return localplan.Project{}, fmt.Errorf("connection %q has no canonical stable ID", name)
+			return localplan.SourceCatalog{}, fmt.Errorf("connection %q has no canonical stable ID", name)
 		}
 		if _, err := projectgraph.NewResourceID(stableID); err != nil {
-			return localplan.Project{}, fmt.Errorf("connection %q has invalid stable ID %q: %w", name, stableID, err)
+			return localplan.SourceCatalog{}, fmt.Errorf("connection %q has invalid stable ID %q: %w", name, stableID, err)
 		}
 		projection.Connections[name] = localplan.Connection{ID: stableID, Kind: connection.Kind, Root: connection.Root, Scope: connection.Scope}
 	}
@@ -45,12 +44,4 @@ func loadManagedDataPlanProject(path string) (localplan.Project, error) {
 		projection.Sources[name] = localplan.Source{Connection: source.Connection, Path: source.Path, Format: source.Format}
 	}
 	return projection, nil
-}
-
-func loadProjectID(path string) (string, error) {
-	project, err := projectcompiler.LoadProject(path)
-	if err != nil {
-		return "", err
-	}
-	return project.ID.String(), nil
 }

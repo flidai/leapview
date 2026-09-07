@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// TestAuthoredProjectFixturesUseFlatGraph keeps checked-in evaluation and
+// TestAuthoredSourceFixturesUseDiscoveredGraph keeps checked-in evaluation and
 // visual-documentation projects aligned with the project-wide authoring
 // contract. A legacy workspace directory or metadata field must not silently
 // become an accepted example again.
-func TestAuthoredProjectFixturesUseFlatGraph(t *testing.T) {
+func TestAuthoredSourceFixturesUseDiscoveredGraph(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	fixtures := []string{
 		filepath.Join(root, "evaluation", "project"),
@@ -20,9 +20,8 @@ func TestAuthoredProjectFixturesUseFlatGraph(t *testing.T) {
 	for _, dir := range fixtures {
 		dir := dir
 		t.Run(filepath.ToSlash(dir), func(t *testing.T) {
-			projectPath := filepath.Join(dir, "leapview.yaml")
-			if _, err := LoadProject(projectPath); err != nil {
-				t.Fatalf("LoadProject(%q): %v", projectPath, err)
+			if _, err := LoadSourceRoot(dir); err != nil {
+				t.Fatalf("LoadSourceRoot(%q): %v", dir, err)
 			}
 			err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
 				if err != nil {

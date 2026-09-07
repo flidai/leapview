@@ -235,7 +235,7 @@ func classifyPath(changedPath string, jobs *Jobs, reasons map[string]struct{}) s
 		jobs.GoMatrix = unionGoShards(jobs.GoMatrix, allGoShards())
 		jobs.UIRouteQA = true
 		jobs.ProductionImage = true
-		reasons["runtime project"] = struct{}{}
+		reasons["runtime analytics source"] = struct{}{}
 		return ""
 	}
 	if strings.HasPrefix(changedPath, "web/") {

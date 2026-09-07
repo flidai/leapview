@@ -3,7 +3,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,28 +14,27 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
-	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
-	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
-	"github.com/flidai/leapview/internal/platform/transaction"
 	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	refreshanalytics "github.com/flidai/leapview/internal/refresh/analyticsruntime"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
-	refreshsqlite "github.com/flidai/leapview/internal/refresh/sqlite"
-	"github.com/flidai/leapview/internal/runtimehost"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/internal/workload"
+	"github.com/flidai/leapview/pkg/jobs"
 )
-
-type Dispatcher interface {
-	Run(context.Context)
-}
 
 type Scheduler interface {
 	DispatchDue(context.Context) error
+}
+
+func classifyQueueAdmissionError(err error) error {
+	if errors.Is(err, refreshpostgres.ErrConflict) {
+		return refreshrun.ErrInvocationConflict
+	}
+	return err
 }
 
 // PublishedDataVersion is the durable data snapshot established by the
@@ -51,14 +49,15 @@ type PublishedDataVersion struct {
 type PublishedDataVersionResolver func(context.Context, projectgraph.ServingIdentity) (PublishedDataVersion, bool, error)
 
 type Config struct {
-	Database            *sql.DB
-	ApplyAccessSnapshot func(context.Context, transaction.Transaction, string) error
+	// Persistence is the capability-owned refresh store.  Production callers
+	// inject a complete PostgreSQL bundle.
+	Persistence *Persistence
+	// Production requires the typed PostgreSQL persistence bundle.
+	Production          bool
 	HTTP                HTTPConfig
 	Authorization       AuthorizationConfig
 	Service             refreshrun.Service
-	Analytics           analyticsmaterialization.Executor
 	Artifacts           refreshrun.ArtifactLoader
-	ManagedData         runtimehost.ManagedDataResolver
 	Admission           workload.Admitter
 	LeaseTimeout        time.Duration
 	ResolveIdentity     func(context.Context) (projectgraph.ServingIdentity, error)
@@ -66,18 +65,19 @@ type Config struct {
 	WorkloadStats       func() workload.Stats
 	RunFinished         func(context.Context, refreshrun.RunRecord)
 	Events              EventStore
-	Workflow            jobplatform.WorkflowRecorder
 	AuditIntentRecorder access.AuditIntentRecorder
 	Clock               refreshschedule.Clock
-	EnableDispatcher    bool
 	EnableScheduler     bool
-	Dispatcher          Dispatcher
 	Scheduler           Scheduler
 	ReconcileSchedules  func(context.Context) error
 	ScheduleInterval    time.Duration
 	Logger              *slog.Logger
 	RecoveryLifecycle   *RecoveryLifecycle
 	RecoveryInterval    time.Duration
+	// RecoveryEnvironment is the exact configured serving environment used by
+	// startup reconciliation. It is never inferred from a mutable active
+	// serving pointer.
+	RecoveryEnvironment string
 }
 
 type HTTPConfig struct {
@@ -102,36 +102,49 @@ type AuthorizationConfig struct {
 }
 
 type Module struct {
-	handler            materializehttp.Handler
-	runs               *refreshsqlite.SQLRunRepository
-	schedules          *refreshsqlite.Repository
-	service            refreshrun.Service
-	refreshClock       refreshschedule.Clock
-	dispatcher         Dispatcher
-	scheduler          Scheduler
-	reconcileSchedules func(context.Context) error
-	scheduleInterval   time.Duration
-	leaseTimeout       time.Duration
-	logger             *slog.Logger
-	events             EventStore
-	durableAudit       bool
-	refreshExecution   apigencommand.AsyncExecutionContract
-	resolveIdentity    func(context.Context) (projectgraph.ServingIdentity, error)
-	publishedVersion   PublishedDataVersionResolver
-	recoveryLifecycle  *RecoveryLifecycle
-	recoveryInterval   time.Duration
+	handler             materializehttp.Handler
+	runs                RunPersistence
+	schedules           refreshschedule.Repository
+	service             refreshrun.Service
+	refreshClock        refreshschedule.Clock
+	scheduler           Scheduler
+	reconcileSchedules  func(context.Context) error
+	scheduleInterval    time.Duration
+	leaseTimeout        time.Duration
+	logger              *slog.Logger
+	events              EventStore
+	durableAudit        bool
+	refreshExecution    apigencommand.AsyncExecutionContract
+	resolveIdentity     func(context.Context) (projectgraph.ServingIdentity, error)
+	publishedVersion    PublishedDataVersionResolver
+	recoveryLifecycle   *RecoveryLifecycle
+	recoveryInterval    time.Duration
+	runFinishedCallback func(context.Context, refreshrun.JobRecord)
 
-	mu          sync.Mutex
-	background  context.Context
-	cancel      context.CancelFunc
-	started     bool
-	stopping    bool
-	stopped     bool
-	dispatching bool
-	wg          sync.WaitGroup
+	mu         sync.Mutex
+	background context.Context
+	cancel     context.CancelFunc
+	started    bool
+	stopping   bool
+	stopped    bool
+	wg         sync.WaitGroup
+}
+
+func durableRefreshAudit(config Config) bool {
+	// Build validates the concrete native repository before this value can
+	// reach a live module. Keep the audit guarantee independent of repository
+	// implementation detail.
+	return config.AuditIntentRecorder != nil || (config.Persistence != nil && config.Persistence.isNative())
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
+	if config.Production {
+		if config.Persistence == nil || !config.Persistence.isNative() {
+			return nil, errors.New("production refresh module requires PostgreSQL persistence")
+		}
+	} else if config.Persistence != nil && config.Persistence.isNative() {
+		return nil, errors.New("native PostgreSQL refresh persistence requires production refresh mode")
+	}
 	if config.RecoveryLifecycle != nil {
 		if err := config.RecoveryLifecycle.Validate(); err != nil {
 			return nil, fmt.Errorf("configure scheduled recovery qualification: %w", err)
@@ -165,17 +178,22 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			RunnerConfigured: config.HTTP.RunnerConfigured,
 			ServingIdentity:  config.HTTP.ServingIdentity,
 		},
-		dispatcher: config.Dispatcher, scheduler: config.Scheduler,
+		scheduler:          config.Scheduler,
 		refreshClock:       config.Clock,
 		reconcileSchedules: config.ReconcileSchedules, scheduleInterval: interval,
 		leaseTimeout: leaseTimeout, logger: logger,
-		events:            config.Events,
-		durableAudit:      config.AuditIntentRecorder != nil,
+		events: config.Events,
+		// Native PostgreSQL admission records the generated create audit intent
+		// inside the same transaction as the operation, run tree, queue job, and
+		// initial lifecycle event. It therefore satisfies the transactional
+		// command guarantee without the legacy post-commit audit recorder.
+		durableAudit:      durableRefreshAudit(config),
 		refreshExecution:  refreshExecution,
 		resolveIdentity:   config.ResolveIdentity,
 		publishedVersion:  config.PublishedVersion,
 		recoveryLifecycle: config.RecoveryLifecycle, recoveryInterval: recoveryInterval,
 	}
+	m.runFinishedCallback = m.runFinished(config.RunFinished)
 	m.handler.CurrentPrincipal = func(r *http.Request) (materializehttp.Principal, bool) {
 		if config.HTTP.CurrentPrincipal == nil {
 			return materializehttp.Principal{}, false
@@ -190,42 +208,40 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return authorizePipeline(r, identity, pipelineID, access.CapabilityResourceUse, config.Authorization)
 	}
 	m.handler.RunCreated = m.verifyRunCreated
-	if config.AuditIntentRecorder != nil {
+	// Native PostgreSQL admission records generated create audit intents
+	// through its transaction-aware persistence writer.
+	if config.AuditIntentRecorder != nil || (config.Persistence != nil && config.Persistence.isNative()) {
 		m.handler.BuildAuditIntent = buildRefreshAuditIntent
 	}
-	if config.Database == nil {
+	if config.Persistence == nil {
+		if config.EnableScheduler || config.Service.Runs != nil || config.RecoveryLifecycle != nil {
+			return nil, errors.New("refresh persistence is required")
+		}
 		return m, nil
 	}
-	if config.Workflow == nil {
-		return nil, errors.New("refresh workflow recorder is required")
+	persistence := *config.Persistence
+	if err := persistence.Validate(); err != nil {
+		return nil, err
 	}
-	m.runs = refreshsqlite.NewSQLRunRepositoryWithWorkflowAndAudit(config.Database, config.Workflow, refreshsqlite.RunWorkflowConfig{
-		ResourceKind: refreshExecution.ResourceKind,
-		InitialEvent: refreshExecution.InitialEvent,
-		InitialState: refreshExecution.InitialState,
-	}, config.AuditIntentRecorder)
-	m.schedules = newSQLiteRepository(config.Database)
+	if config.Production {
+		publication, ok := persistence.Publication.(*postgresPublicationPersistence)
+		if !ok || publication == nil || isNilPostgresCapability(publication.nativeFinalizer) {
+			return nil, errors.New("production refresh module requires a native finalizer")
+		}
+	}
+	if config.RecoveryLifecycle != nil && persistence.Recovery == nil {
+		return nil, errors.New("refresh recovery persistence is required when recovery lifecycle is configured")
+	}
+	m.runs = persistence.Runs
+	m.schedules = persistence.Schedules
 	m.service = config.Service
 	if m.service.Artifacts == nil {
 		m.service.Artifacts = config.Artifacts
 	}
-	if m.service.Materializer == nil {
-		m.service.Materializer = refreshanalytics.RefreshMaterializer{
-			Executor: config.Analytics, ManagedData: config.ManagedData,
-		}
-	}
 	m.service.Runs = m.runs
-	m.service.DataVersions = m.schedules
-	m.service.Publication = refreshsqlite.NewPublicationUnitOfWork(config.Database, config.ApplyAccessSnapshot)
-	if m.dispatcher == nil && config.EnableDispatcher {
-		if config.ResolveIdentity == nil {
-			return nil, errors.New("refresh dispatcher identity resolver is required")
-		}
-		m.dispatcher = refreshrun.Dispatcher{
-			Runs: m.runs, Service: m.service, Admitter: config.Admission,
-			LeaseTimeout: config.LeaseTimeout, Logger: logger, ResolveIdentity: config.ResolveIdentity,
-			WorkloadStats: config.WorkloadStats, RunFinished: m.runFinished(config.RunFinished),
-		}
+	m.service.Publication = persistence.Publication
+	if config.RecoveryLifecycle != nil && persistence.Recovery != nil {
+		config.RecoveryLifecycle.Repository = persistence.Recovery
 	}
 	if m.scheduler == nil && config.EnableScheduler {
 		if config.ResolveIdentity == nil {
@@ -243,7 +259,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 					if result.Run.Status == refreshrun.RunStatusSkipped {
 						return refreshschedule.ErrOccurrenceSkipped
 					}
-					m.Dispatch(ctx)
 				}
 				return err
 			},
@@ -253,8 +268,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		m.reconcileSchedules = m.Reconcile
 	}
 	m.handler.Repository = func() (refreshrun.RunRepository, error) { return m.runs, nil }
-	m.handler.DispatchQueued = func() { m.Dispatch(context.Background()) }
-	m.handler.QueuePipeline = func(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID string) (refreshrun.RunRecord, error) {
+	m.handler.QueuePipeline = func(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID, idempotencyKey string) (refreshrun.RunRecord, error) {
 		pipelineIDValue, parseErr := projectgraph.NewResourceID(pipelineID)
 		if parseErr != nil {
 			return refreshrun.RunRecord{}, parseErr
@@ -266,9 +280,10 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
 			Identity: identity, PrincipalID: principalID, EstimatedMemoryBytes: 1,
 			PipelineID: pipelineIDValue, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
-			AuditIntent: intent,
+			AuditIntent: intent, IdempotencyKey: idempotencyKey,
 		})
 		if err != nil {
+			err = classifyQueueAdmissionError(err)
 			m.logger.ErrorContext(ctx, "queue refresh pipeline failed",
 				slog.String("project_id", identity.ProjectID.String()),
 				slog.String("serving_state_id", identity.GenerationID),
@@ -281,11 +296,31 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	return m, nil
 }
 
-func Recover(ctx context.Context, database *sql.DB, environment string) error {
-	if database == nil || environment == "" {
+// JobHandlers maps refresh pipeline execution into River. Dependency child
+// runs remain capability-owned rows completed by the pipeline transaction.
+func (m *Module) JobHandlers() []jobs.Handler {
+	if m == nil || m.runs == nil {
 		return nil
 	}
-	return refreshsqlite.NewSQLRunRepository(database).FailRunsForTerminalServingStates(ctx, environment, "refresh did not complete")
+	run := func(ctx context.Context, job jobs.Job) error {
+		persistence, ok := m.runs.(*postgresRunPersistence)
+		if !ok || persistence == nil || persistence.jobs == nil {
+			return errors.New("River refresh persistence is unavailable")
+		}
+		claimed, err := persistence.jobs.ClaimRiverJob(ctx, job, m.leaseTimeout)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if m.runFinishedCallback != nil {
+				m.runFinishedCallback(context.Background(), claimed)
+			}
+		}()
+		return m.service.ExecuteClaimedJob(ctx, claimed)
+	}
+	return []jobs.Handler{
+		jobs.HandlerFunc{JobKind: refreshrun.JobKindRefreshPipeline, Run: run},
+	}
 }
 
 func (m *Module) QueuePipelineRefresh(ctx context.Context, input refreshrun.QueuePipelineInput) (refreshrun.QueueAssetResult, error) {
@@ -350,7 +385,11 @@ func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity project
 		if scopeErr != nil {
 			return scopeErr
 		}
-		prior, getErr := m.runs.GetRun(ctx, scope, retryOf)
+		runs, readErr := m.readRuns()
+		if readErr != nil {
+			return readErr
+		}
+		prior, getErr := runs.GetRun(ctx, scope, retryOf)
 		if getErr != nil || !scope.Matches(prior.Identity) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.PipelineID != pipeline || prior.Status == refreshrun.RunStatusQueued || prior.Status == refreshrun.RunStatusRunning {
 			return errors.New("refresh retry is invalid")
 		}
@@ -368,7 +407,6 @@ func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity project
 	if err := m.verifyRunCreated(ctx, result.Run); err != nil {
 		return err
 	}
-	m.Dispatch(ctx)
 	return nil
 }
 
@@ -389,11 +427,19 @@ func (m *Module) CancelPipelineRefreshForUI(ctx context.Context, identity projec
 	if err != nil {
 		return err
 	}
-	prior, err := m.runs.GetRun(ctx, scope, runID)
+	runs, readErr := m.readRuns()
+	if readErr != nil {
+		return readErr
+	}
+	prior, err := runs.GetRun(ctx, scope, runID)
 	if err != nil || !scope.Matches(prior.Identity) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.ParentRunID != "" || prior.PipelineID != pipeline || prior.TargetID != pipeline {
 		return errors.New("refresh run not found")
 	}
-	row, err := m.runs.CancelRun(ctx, prior.Identity, runID)
+	cancel, cancelErr := m.readRuns()
+	if cancelErr != nil {
+		return cancelErr
+	}
+	row, err := cancel.CancelRun(ctx, prior.Identity, runID)
 	if err != nil {
 		return err
 	}
@@ -464,11 +510,16 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 		state.Unavailable = true
 		return state, nil
 	}
+	runStore, readErr := m.readRuns()
+	if readErr != nil {
+		state.Unavailable = true
+		return state, nil
+	}
 	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: environment}
 	if err := scope.Validate(); err != nil {
 		return state, err
 	}
-	runs, err := m.runs.ListTargetRuns(ctx, scope, refreshrun.TargetRefreshPipeline, pipelineID, refreshrun.RunPage{Limit: 50})
+	runs, err := runStore.ListTargetRuns(ctx, scope, refreshrun.TargetRefreshPipeline, pipelineID, refreshrun.RunPage{Limit: 50})
 	if err != nil {
 		return state, err
 	}
@@ -479,7 +530,7 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 	if len(state.Runs) > 0 {
 		state.Latest = state.Runs[0]
 	}
-	latest, ok, err := m.runs.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetRefreshPipeline, pipelineID)
+	latest, ok, err := runStore.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetRefreshPipeline, pipelineID)
 	if err != nil {
 		return state, err
 	}
@@ -528,11 +579,16 @@ func (m *Module) ModelRefreshState(ctx context.Context, projectID projectgraph.R
 		state.Unavailable = true
 		return state, nil
 	}
+	runStore, readErr := m.readRuns()
+	if readErr != nil {
+		state.Unavailable = true
+		return state, nil
+	}
 	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: environment}
 	if err := scope.Validate(); err != nil {
 		return state, err
 	}
-	runs, err := m.runs.ListTargetRuns(ctx, scope, refreshrun.TargetModel, modelID, refreshrun.RunPage{Limit: 50})
+	runs, err := runStore.ListTargetRuns(ctx, scope, refreshrun.TargetModel, modelID, refreshrun.RunPage{Limit: 50})
 	if err != nil {
 		return state, err
 	}
@@ -543,7 +599,7 @@ func (m *Module) ModelRefreshState(ctx context.Context, projectID projectgraph.R
 	if len(state.Runs) > 0 {
 		state.Latest = state.Runs[0]
 	}
-	latest, ok, err := m.runs.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetModel, modelID)
+	latest, ok, err := runStore.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetModel, modelID)
 	if err != nil {
 		return state, err
 	}
@@ -570,11 +626,16 @@ func (m *Module) SemanticModelRefreshState(ctx context.Context, projectID projec
 		state.Unavailable = true
 		return state, nil
 	}
+	runStore, readErr := m.readRuns()
+	if readErr != nil {
+		state.Unavailable = true
+		return state, nil
+	}
 	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: environment}
 	if err := scope.Validate(); err != nil {
 		return state, err
 	}
-	runs, err := m.runs.ListSemanticModelRuns(ctx, scope, semanticModelID, refreshrun.RunPage{Limit: 50})
+	runs, err := runStore.ListSemanticModelRuns(ctx, scope, semanticModelID, refreshrun.RunPage{Limit: 50})
 	if err != nil {
 		return state, err
 	}
@@ -585,7 +646,7 @@ func (m *Module) SemanticModelRefreshState(ctx context.Context, projectID projec
 	if len(state.Runs) > 0 {
 		state.Latest = state.Runs[0]
 	}
-	latest, ok, err := m.runs.LatestSuccessfulSemanticModelRun(ctx, scope, semanticModelID)
+	latest, ok, err := runStore.LatestSuccessfulSemanticModelRun(ctx, scope, semanticModelID)
 	if err != nil {
 		return state, err
 	}
@@ -726,6 +787,29 @@ func (m *Module) Reconcile(ctx context.Context) error {
 		if state.Source != servingstate.SourcePublish || state.DuckLakeSnapshotID <= 0 {
 			continue
 		}
+		if m.publishedVersion != nil {
+			published, found, publishedErr := m.publishedVersion(ctx, identity)
+			if publishedErr != nil {
+				reconcileErrors = append(reconcileErrors, publishedErr)
+				continue
+			}
+			if !found {
+				reconcileErrors = append(reconcileErrors, errors.New("canonical publication data version is unavailable"))
+				continue
+			}
+			if published.SnapshotID <= 0 || published.RefreshedAt.IsZero() {
+				reconcileErrors = append(reconcileErrors, errors.New("canonical publication data version is incomplete"))
+				continue
+			}
+			if published.SnapshotID != state.DuckLakeSnapshotID {
+				reconcileErrors = append(reconcileErrors, fmt.Errorf("canonical publication snapshot %d differs from serving-state snapshot %d", published.SnapshotID, state.DuckLakeSnapshotID))
+				continue
+			}
+			// Deployment publication owns this baseline. The resolver has already
+			// proved the exact committed publication, so refresh must not create a
+			// duplicate refresh.data_version row or publish a second invalidation.
+			continue
+		}
 		refreshedAt, err := parseServingStateTime(state.ActivatedAt)
 		if err != nil {
 			reconcileErrors = append(reconcileErrors, err)
@@ -807,46 +891,12 @@ func (m *Module) Start(ctx context.Context) error {
 		m.wg.Add(1)
 		go m.runScheduler(background)
 	}
-	if m.dispatcher != nil {
-		m.wg.Add(1)
-		go m.runDispatcherRecovery(background)
-	}
 	if m.recoveryLifecycle != nil {
 		m.wg.Add(1)
 		go m.runRecoveryLifecycle(background)
 	}
 	m.mu.Unlock()
-	m.Dispatch(background)
 	return nil
-}
-
-func (m *Module) Dispatch(ctx context.Context) {
-	if m == nil || m.dispatcher == nil {
-		return
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	m.mu.Lock()
-	if m.stopping || m.stopped || m.dispatching {
-		m.mu.Unlock()
-		return
-	}
-	if m.background != nil {
-		ctx = m.background
-	}
-	m.dispatching = true
-	m.wg.Add(1)
-	m.mu.Unlock()
-	go func() {
-		defer func() {
-			m.mu.Lock()
-			m.dispatching = false
-			m.mu.Unlock()
-			m.wg.Done()
-		}()
-		m.dispatcher.Run(ctx)
-	}()
 }
 
 func (m *Module) runScheduler(ctx context.Context) {
@@ -870,20 +920,6 @@ func (m *Module) runScheduler(ctx context.Context) {
 			return
 		case <-ticker.C:
 			dispatch()
-		}
-	}
-}
-
-func (m *Module) runDispatcherRecovery(ctx context.Context) {
-	defer m.wg.Done()
-	ticker := time.NewTicker(m.leaseTimeout)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			m.Dispatch(ctx)
 		}
 	}
 }

@@ -12,8 +12,9 @@ import (
 var _ access.InstanceInitializer = (*Repository)(nil)
 
 // Initialized reports whether the access-owned one-shot initialization marker
-// exists. Native replay and acknowledgement therefore consult the same
-// authority that performs initialization.
+// exists. The marker lives in access.platform_setting, not the platform
+// bootstrap settings table, so native Admin replay and acknowledgement share
+// the exact authority that performs initialization.
 func (r *Repository) Initialized(ctx context.Context) (bool, error) {
 	db, err := r.requireDB()
 	if err != nil {

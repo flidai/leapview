@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 const (
@@ -61,9 +63,11 @@ type Config struct {
 	// RuntimeRole is compared with current_user during connection admission.
 	RuntimeRole string
 	Intent      Intent
-	// RequireTLS rejects URLs whose sslmode permits a plaintext connection.
-	// Production callers should set this true; conformance tests may use an
-	// explicitly disabled local URL and leave it false.
+	// RequireTLS requires TLS with both certificate-chain and server-hostname
+	// verification. In particular, sslmode=require and verify-ca are rejected:
+	// the former skips certificate verification and the latter skips hostname
+	// verification. Conformance tests may use an explicitly disabled local URL
+	// and leave this false.
 	RequireTLS bool
 
 	MinConns int32
@@ -83,6 +87,112 @@ type RuntimeConfig struct {
 	DuckLake Config
 }
 
+// ControlPlaneConfig describes the independently authenticated control-plane roles.
+// The migrator pool is used only during startup schema application, the
+// runtime pool serves normal read/write requests, maintenance is a required
+// one-connection read/write pool for bounded maintenance operations, and the
+// optional readonly pool is reserved for bounded reporting/backup reads.
+// Every role receives its own URL and credentials; this type never derives
+// one credential from another or falls back to a shared superuser connection.
+type ControlPlaneConfig struct {
+	Migrator    Config
+	Runtime     Config
+	Maintenance Config
+	Readonly    *Config
+}
+
+// ControlPlanePools owns independently budgeted control-plane pools.  The
+// migrator is retained so callers can run a startup migration transaction and
+// then close it before serving traffic; Runtime, Maintenance and Readonly
+// remain available for their respective authorities.
+type ControlPlanePools struct {
+	Migrator    *Pool
+	Runtime     *Pool
+	Maintenance *Pool
+	Readonly    *Pool
+}
+
+// Close closes every configured pool.  It is safe to call on a nil value and
+// deliberately closes the readonly/runtime pools before the migrator so a
+// shutdown cannot race an in-flight startup migration.
+func (p *ControlPlanePools) Close() {
+	if p == nil {
+		return
+	}
+	if p.Readonly != nil {
+		p.Readonly.Close()
+	}
+	if p.Maintenance != nil {
+		p.Maintenance.Close()
+	}
+	if p.Runtime != nil {
+		p.Runtime.Close()
+	}
+	if p.Migrator != nil {
+		p.Migrator.Close()
+	}
+}
+
+// OpenControlPlane opens the required migrator, runtime, and maintenance
+// pools and, when supplied, an explicit readonly pool. Opening is fail-closed:
+// a failed later pool closes every pool already opened and returns the
+// original contextual error. Migration execution remains the caller's
+// responsibility so the pool package cannot accidentally hide a transaction
+// boundary.
+func OpenControlPlane(ctx context.Context, cfg ControlPlaneConfig) (*ControlPlanePools, error) {
+	migrator, err := Open(ctx, cfg.Migrator)
+	if err != nil {
+		return nil, fmt.Errorf("open PostgreSQL control migrator pool: %w", err)
+	}
+	pools, err := OpenServingControlPlane(ctx, cfg)
+	if err != nil {
+		migrator.Close()
+		return nil, err
+	}
+	pools.Migrator = migrator
+	return pools, nil
+}
+
+// OpenServingControlPlane opens only the runtime, maintenance, and optional
+// readonly pools. Production serving uses this path so owner-capable migration
+// credentials never enter the process and startup cannot mutate the schema.
+func OpenServingControlPlane(ctx context.Context, cfg ControlPlaneConfig) (*ControlPlanePools, error) {
+	if strings.TrimSpace(cfg.Maintenance.URL) == "" {
+		return nil, errors.New("PostgreSQL control maintenance URL is required")
+	}
+	if cfg.Maintenance.Intent != "" && cfg.Maintenance.Intent != IntentReadWrite {
+		return nil, errors.New("PostgreSQL control maintenance pool must be read-write")
+	}
+	if cfg.Maintenance.MinConns == 0 {
+		cfg.Maintenance.MinConns = 1
+	}
+	if cfg.Maintenance.MaxConns == 0 {
+		cfg.Maintenance.MaxConns = 1
+	}
+	if cfg.Maintenance.MinConns != 1 || cfg.Maintenance.MaxConns != 1 {
+		return nil, errors.New("PostgreSQL control maintenance pool must use exactly one connection")
+	}
+	runtime, err := Open(ctx, cfg.Runtime)
+	if err != nil {
+		return nil, fmt.Errorf("open PostgreSQL control runtime pool: %w", err)
+	}
+	maintenance, err := Open(ctx, cfg.Maintenance)
+	if err != nil {
+		runtime.Close()
+		return nil, fmt.Errorf("open PostgreSQL control maintenance pool: %w", err)
+	}
+	var readonly *Pool
+	if cfg.Readonly != nil {
+		readonly, err = Open(ctx, *cfg.Readonly)
+		if err != nil {
+			maintenance.Close()
+			runtime.Close()
+			return nil, fmt.Errorf("open PostgreSQL control readonly pool: %w", err)
+		}
+	}
+	return &ControlPlanePools{Runtime: runtime, Maintenance: maintenance, Readonly: readonly}, nil
+}
+
 // Pool is a bounded pgxpool with an acquisition deadline. The embedded pool
 // is intentionally not exposed directly so callers use the same bounded
 // Acquire contract for every capability.
@@ -92,12 +202,32 @@ type Pool struct {
 	config         Config
 }
 
-// SchemaRevision is the platform-owned migration readiness record. Generated
-// sqlc rows remain internal to this package.
-type SchemaRevision struct {
-	Revision    int64
-	MigrationID string
-	Checksum    string
+// SQLDB exposes the migration-only database/sql adapter required by Goose.
+// Runtime repositories continue to use native pgx. The returned handle shares
+// this pool's connections and must be closed by the caller before Pool.Close.
+func (p *Pool) SQLDB() (*sql.DB, error) {
+	if p == nil || p.pool == nil {
+		return nil, errors.New("postgres pool is nil")
+	}
+	return stdlib.OpenDBFromPool(p.pool), nil
+}
+
+// NativePool exposes the admitted pgx pool only to infrastructure adapters
+// whose mature package integration requires pgx's concrete transaction type
+// (currently River). Product repositories continue to depend on Pool's
+// bounded methods and must not use this as a general escape hatch.
+func (p *Pool) NativePool() *pgxpool.Pool {
+	if p == nil {
+		return nil
+	}
+	return p.pool
+}
+
+// Extension is the installed PostgreSQL extension identity used by the
+// post-migration production admission gate.
+type Extension struct {
+	Name   string
+	Schema string
 }
 
 // PoolConfig returns the normalized policy used to construct the pool.
@@ -113,9 +243,6 @@ func (p *Pool) PoolConfig() Config {
 func (p *Pool) Acquire(ctx context.Context) (*pgxpool.Conn, error) {
 	if p == nil || p.pool == nil {
 		return nil, errors.New("postgres pool is nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if p.acquireTimeout <= 0 {
 		return p.pool.Acquire(ctx)
@@ -182,11 +309,19 @@ func (p *Pool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 // Begin starts a caller-owned transaction on a connection obtained through
 // the bounded acquisition policy. Commit or Rollback releases the connection.
 func (p *Pool) Begin(ctx context.Context) (pgx.Tx, error) {
+	return p.BeginTx(ctx, pgx.TxOptions{})
+}
+
+// BeginTx starts a caller-owned transaction with an explicit transaction
+// mode. It preserves the pool's bounded acquisition policy while allowing
+// capability adapters to request an explicit isolation level rather than
+// inheriting a server default.
+func (p *Pool) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
 	conn, err := p.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
-	tx, err := conn.Begin(ctx)
+	tx, err := conn.BeginTx(ctx, options)
 	if err != nil {
 		conn.Release()
 		return nil, err
@@ -293,26 +428,55 @@ func (p *Pool) Ping(ctx context.Context) error {
 	})
 }
 
-// SchemaRevision returns the exact durable identity for one baseline
-// revision, allowing application composition to fail closed on checksum drift.
-func (p *Pool) SchemaRevision(ctx context.Context, revision int64) (SchemaRevision, error) {
+// CurrentDatabase returns PostgreSQL's authoritative database identity. The
+// query is generated from the platform capability SQLC package so callers do
+// not hand-roll a static query at the composition boundary.
+func (p *Pool) CurrentDatabase(ctx context.Context) (string, error) {
 	if p == nil || p.pool == nil {
-		return SchemaRevision{}, errors.New("postgres pool is nil")
+		return "", errors.New("postgres pool is nil")
 	}
-	var record platformdb.GetSchemaRevisionRow
-	err := p.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
-		var err error
-		record, err = platformdb.New(conn).GetSchemaRevision(ctx, revision)
-		return err
-	})
+	return platformdb.New(p).CurrentDatabase(ctx)
+}
+
+// RequiredExtension returns one exact installed extension and its owning
+// schema. Missing extensions remain a query error so admission fails closed.
+func (p *Pool) RequiredExtension(ctx context.Context, name string) (Extension, error) {
+	if p == nil || p.pool == nil {
+		return Extension{}, errors.New("postgres pool is nil")
+	}
+	record, err := platformdb.New(p).RequiredExtension(ctx, name)
 	if err != nil {
-		return SchemaRevision{}, err
+		return Extension{}, err
 	}
-	return SchemaRevision{
-		Revision:    record.Revision,
-		MigrationID: record.MigrationID,
-		Checksum:    record.Checksum,
-	}, nil
+	return Extension{Name: record.ExtensionName, Schema: record.SchemaName}, nil
+}
+
+func (p *Pool) HasSchemaPrivilege(ctx context.Context, object, privilege string) (bool, error) {
+	if p == nil || p.pool == nil {
+		return false, errors.New("postgres pool is nil")
+	}
+	return platformdb.New(p).HasSchemaPrivilege(ctx, platformdb.HasSchemaPrivilegeParams{SchemaName: object, PrivilegeName: privilege})
+}
+
+func (p *Pool) HasTablePrivilege(ctx context.Context, object, privilege string) (bool, error) {
+	if p == nil || p.pool == nil {
+		return false, errors.New("postgres pool is nil")
+	}
+	return platformdb.New(p).HasTablePrivilege(ctx, platformdb.HasTablePrivilegeParams{TableName: object, PrivilegeName: privilege})
+}
+
+func (p *Pool) HasFunctionPrivilege(ctx context.Context, object, privilege string) (bool, error) {
+	if p == nil || p.pool == nil {
+		return false, errors.New("postgres pool is nil")
+	}
+	return platformdb.New(p).HasFunctionPrivilege(ctx, platformdb.HasFunctionPrivilegeParams{FunctionName: object, PrivilegeName: privilege})
+}
+
+func (p *Pool) HasCurrentDatabasePrivilege(ctx context.Context, privilege string) (bool, error) {
+	if p == nil || p.pool == nil {
+		return false, errors.New("postgres pool is nil")
+	}
+	return platformdb.New(p).HasCurrentDatabasePrivilege(ctx, privilege)
 }
 
 // Close releases all pooled connections. It is safe to call on a nil Pool.
@@ -392,7 +556,7 @@ func Open(ctx context.Context, cfg Config) (*Pool, error) {
 	}
 	poolConfig, err := pgxpool.ParseConfig(cfg.URL)
 	if err != nil {
-		return nil, fmt.Errorf("parse PostgreSQL URL: %w", err)
+		return nil, errors.New("PostgreSQL URL is malformed")
 	}
 	if err := ConfigurePool(poolConfig, cfg); err != nil {
 		return nil, err
@@ -438,14 +602,22 @@ func ConfigurePool(poolConfig *pgxpool.Config, cfg Config) error {
 	return nil
 }
 
-// ValidateProbeSQL is the single startup probe used to establish the server
-// capability tuple. Keeping it exported lets conformance tests assert the
-// exact probe through a fake without requiring a live database.
-const ValidateProbeSQL = `SELECT current_setting('server_version_num'), current_user, current_setting('default_transaction_read_only'), pg_is_in_recovery()`
-
 // Probe is the read-only query seam used by Validate.
 type Probe interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// probeDBTX preserves the narrow Probe fake seam while satisfying sqlc's
+// pgx/v5 DBTX interface. Validate only invokes QueryRow; the other methods are
+// deliberately unreachable and return an explicit error if that changes.
+type probeDBTX struct{ Probe }
+
+func (p probeDBTX) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, errors.New("PostgreSQL validation probe does not support Exec")
+}
+
+func (p probeDBTX) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, errors.New("PostgreSQL validation probe does not support Query")
 }
 
 // Validate checks PostgreSQL major version, runtime role, and read/write
@@ -458,11 +630,11 @@ func Validate(ctx context.Context, probe Probe, cfg Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	var versionNum, role, readOnly string
-	var recovery bool
-	if err := probe.QueryRow(ctx, ValidateProbeSQL).Scan(&versionNum, &role, &readOnly, &recovery); err != nil {
+	row, err := platformdb.New(probeDBTX{Probe: probe}).Probe(ctx)
+	if err != nil {
 		return fmt.Errorf("probe PostgreSQL capabilities: %w", err)
 	}
+	versionNum, role, readOnly, recovery := row.ServerVersionNum, row.RuntimeRole, row.DefaultTransactionReadOnly, row.InRecovery
 	major, err := parseMajor(versionNum)
 	if err != nil {
 		return fmt.Errorf("invalid PostgreSQL server version %q: %w", versionNum, err)
@@ -501,12 +673,15 @@ func (c Config) Validate() error {
 	if c.RequireTLS {
 		parsed, err := url.Parse(c.URL)
 		if err != nil {
-			return fmt.Errorf("parse PostgreSQL URL for TLS validation: %w", err)
+			return errors.New("PostgreSQL URL is malformed")
 		}
-		switch strings.ToLower(strings.TrimSpace(parsed.Query().Get("sslmode"))) {
-		case "require", "verify-ca", "verify-full":
-		default:
-			return errors.New("PostgreSQL URL must set sslmode=require, verify-ca, or verify-full when TLS is required")
+		query, err := url.ParseQuery(parsed.RawQuery)
+		if err != nil {
+			return errors.New("PostgreSQL URL is malformed")
+		}
+		sslModes := query["sslmode"]
+		if len(sslModes) != 1 || strings.TrimSpace(sslModes[0]) != "verify-full" {
+			return errors.New("PostgreSQL URL must set sslmode=verify-full when TLS is required")
 		}
 	}
 	if c.ExpectedMajor <= 0 {

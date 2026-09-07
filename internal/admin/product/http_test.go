@@ -6,12 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/go-chi/chi/v5"
 )
@@ -105,16 +103,8 @@ func TestHandlerUploadsAndServesImmutableLogo(t *testing.T) {
 
 func testHandler(t *testing.T, status Status) *Handler {
 	t.Helper()
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	service, err := NewWithStorage(newMemoryStorage(), &memoryBlobs{values: map[string][]byte{}})
 	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	service, err := New(store.SQLDB(), &memoryBlobs{values: map[string][]byte{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO principals (id, email, display_name) VALUES ('principal_admin', 'admin@example.test', 'Admin')`); err != nil {
 		t.Fatal(err)
 	}
 	handler, err := NewHandler(HTTPConfig{Service: service, Status: status, CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal_admin"}, true }})

@@ -75,10 +75,11 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Production configuration](/docs/guides/operate/production-configuration): Configure secrets, storage, auth, and runtime boundaries.
 - [Self-hosting](/docs/guides/operate/self-hosting): Build and run a supported single-node deployment.
 - [Health and observability](/docs/guides/operate/observability): Monitor health, query activity, refreshes, and deployments.
-- [Backup and restore](/docs/guides/operate/backup-restore): Create, validate, and restore consistent instance backups.
-- [Upgrades and migrations](/docs/guides/operate/upgrades): Upgrade binaries and persistent state with rollback boundaries.
+- [PostgreSQL operations and high availability](/docs/guides/operate/postgresql-operations): Operate named PostgreSQL pools, provider-managed HA, maintenance, and failover validation.
+- [Backup and restore](/docs/guides/operate/backup-restore): Coordinate external PostgreSQL PITR and DuckLake/object-store recovery; LeapView provides no backup archive.
+- [Upgrades and migrations](/docs/guides/operate/upgrades): Plan provider-managed image upgrades and persistent-state migrations with explicit rollback boundaries.
 - [Operate the plan → build → publish delivery contract](/docs/guides/operate/plan-build-publish): Bootstrap an admitted physical pool and operate immutable target-bound delivery.
-- [Delivery reachability audit and bounded repair](/docs/guides/operate/delivery-recovery): Audit immutable delivery roots offline and apply a fail-closed quarantine repair.
+- [Delivery reachability and recovery boundaries](/docs/guides/operate/delivery-recovery): Inspect delivery state and understand the provider-native recovery boundary.
 - [Operational troubleshooting](/docs/guides/operate/troubleshooting): Diagnose deployment and runtime failures systematically.
 
 ### Security and administration
@@ -103,6 +104,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [API quickstart](/docs/guides/integrate/api-quickstart): Authenticate and call the headless API.
 - [API conventions](/docs/guides/integrate/api-conventions): Handle authentication, errors, and pagination consistently.
 - [Headless BI queries](/docs/guides/integrate/headless-bi): Query dashboards and semantic models through stable contracts.
+- [Use dbt at the warehouse boundary](/docs/guides/integrate/dbt-warehouse-boundary): Publish tested dbt marts and consume their physical contract through ordinary LeapView resources.
 - [Public and embedded dashboards](/docs/guides/integrate/public-dashboards): Publish an anonymous governed dashboard and embed it on an allowed origin.
 - [Agent integrations](/docs/guides/integrate/agent): Use global conversations and the shared governed tool catalog.
 - [Use the agent tool catalog](/docs/guides/integrate/agent-tools): Find, inspect, and query governed resources through the curated tool surface.
@@ -144,17 +146,11 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 #### Configuration
 
 - [Configuration reference](/docs/config): Choose a resource kind and open its generated field reference and JSON Schema.
-- [Project configuration](/docs/config/project): Fields and validation rules for the Project YAML resource.
 - [Connection configuration](/docs/config/connection): Fields and validation rules for the Connection YAML resource.
 - [Source configuration](/docs/config/source): Fields and validation rules for the Source YAML resource.
 - [Model configuration](/docs/config/model): Fields and validation rules for the Model YAML resource.
 - [Semantic Model configuration](/docs/config/semantic-model): Fields and validation rules for the SemanticModel YAML resource.
 - [Pipeline configuration](/docs/config/pipeline): Fields and validation rules for the Pipeline YAML resource.
-- [Group configuration](/docs/config/group): Fields and validation rules for the Group YAML resource.
-- [Role Binding configuration](/docs/config/role-binding): Fields and validation rules for the RoleBinding YAML resource.
-- [Grant configuration](/docs/config/grant): Fields and validation rules for the Grant YAML resource.
-- [Data Policy configuration](/docs/config/data-policy): Fields and validation rules for the DataPolicy YAML resource.
-- [Dashboard Publication configuration](/docs/config/dashboard-publication): Fields and validation rules for the DashboardPublication YAML resource.
 - [Dashboard configuration](/docs/config/dashboard-document): Fields and validation rules for the Dashboard YAML resource.
 
 #### CLI commands
@@ -163,13 +159,13 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview admin](/docs/cli/admin): Administrative utilities
 - [leapview agent](/docs/cli/agent): Use the LeapView governed BI agent
 - [leapview api](/docs/cli/api): Call any generated LeapView API operation
+- [leapview bootstrap-project](/docs/cli/bootstrap-project): Bootstrap a target with this deployment authority's ProjectUID
 - [leapview build](/docs/cli/build): Build and seal a target-owned delivery plan
 - [leapview config](/docs/cli/config): Inspect and validate process-global configuration
 - [leapview dashboards](/docs/cli/dashboards): Inspect dashboards
 - [leapview data](/docs/cli/data): Manage project-global data revisions
 - [leapview deploy](/docs/cli/deploy): Deprecated composition of plan, build, and publish
-- [leapview dev](/docs/cli/dev): Synchronize a project into your private target candidate
-- [leapview evaluate](/docs/cli/evaluate): Run the self-contained local evaluation server
+- [leapview dev](/docs/cli/dev): Synchronize a source root into your private target candidate
 - [leapview healthcheck](/docs/cli/healthcheck): Check the local LeapView readiness endpoint
 - [leapview login](/docs/cli/login): Sign in to a LeapView target for project authoring
 - [leapview logout](/docs/cli/logout): Revoke a LeapView authoring session and remove local credentials
@@ -181,7 +177,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview semantic-model](/docs/cli/semantic-model): Compile and interchange semantic models
 - [leapview semantic-models](/docs/cli/semantic-models): Inspect semantic models
 - [leapview serve](/docs/cli/serve): Run the LeapView HTTP server
-- [leapview validate](/docs/cli/validate): Validate a configuration-as-code project
+- [leapview validate](/docs/cli/validate): Validate a LeapView source root
 - [leapview version](/docs/cli/version): Report the LeapView build identity
 
 #### API reference
@@ -240,8 +236,8 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 
 - [Architecture overview](/docs/architecture): See how the monolith, contracts, storage, and browser components fit together.
 - [Runtime architecture](/docs/architecture/runtime): Follow routing, query execution, and streamed UI updates.
-- [PostgreSQL authority reconciliation](/docs/architecture/postgresql-authority-reconciliation): Understand the reconciled PostgreSQL ownership, transaction, role, and compatibility boundaries.
 - [Semantic attribute registry and control plane](/docs/architecture/semantic-attribute-registry): Understand typed semantic attribute identity, ownership, lifecycle, and compatibility boundaries.
+- [Semantic access planner boundary](/docs/architecture/semantic-access-planner): Place typed authorization barriers before protected scans participate in relational operations.
 - [Evidence-gated Arrow optimization](/docs/architecture/arrow-optimization-evidence): Measure dashboard Arrow boundaries before approving a production migration.
 - [Dashboard native Arrow response contract](/docs/architecture/dashboard-native-arrow-contract): Define the native-v1 schema, protocol, governance, pagination, and compatibility oracle for future dashboard Arrow experiments.
 - [Cross-role journey qualification](/docs/architecture/journey-qualification): Map FAI-492 consumer, creator, and operator states to executable assembled-app checks and evidence rules.

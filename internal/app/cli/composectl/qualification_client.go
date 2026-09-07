@@ -13,11 +13,13 @@ import (
 
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/handler"
+	"github.com/google/uuid"
 )
 
 type QualificationClientWorkerOptions struct {
 	Target          string
-	Project         string
+	SourceRoot      string
+	ProjectID       string
 	SourceRevision  string
 	KeyringPassword string
 }
@@ -29,14 +31,6 @@ type qualificationLoginChallenge struct {
 
 func parseQualificationCandidate(output, sourceRevision string) (QualificationCandidate, error) {
 	return parseQualificationCandidateWithPlan(output, sourceRevision, true)
-}
-
-// parseQualificationCandidateBootstrap accepts the candidate projection emitted
-// before the first serving generation exists. Bootstrap synchronization still
-// prepares the target-owned candidate, but deliberately does not resolve a
-// delivery plan until the first generation is active.
-func parseQualificationCandidateBootstrap(output, sourceRevision string) (QualificationCandidate, error) {
-	return parseQualificationCandidateWithPlan(output, sourceRevision, false)
 }
 
 func parseQualificationCandidateWithPlan(output, sourceRevision string, requirePlan bool) (QualificationCandidate, error) {
@@ -88,6 +82,47 @@ func parseQualificationCandidateWithPlan(output, sourceRevision string, requireP
 	return result, nil
 }
 
+// validateQualificationNativeCandidate keeps image qualification tied to the
+// PostgreSQL delivery identity domain. The transport parser accepts opaque
+// identifiers, while the qualification client only runs against the native
+// production target and therefore requires its UUID identities.
+func validateQualificationNativeCandidate(candidate QualificationCandidate) error {
+	for name, value := range map[string]string{
+		"candidate": candidate.ID,
+		"plan":      candidate.PlanID,
+		"principal": candidate.PrincipalID,
+	} {
+		if err := validateQualificationNativeUUID(value, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateQualificationNativePublication(publication QualificationPublication) error {
+	for name, value := range map[string]string{
+		"publication": publication.DeploymentID,
+		"candidate":   publication.CandidateID,
+		"generation":  publication.GenerationID,
+		"plan":        publication.PlanID,
+		"principal":   publication.PrincipalID,
+	} {
+		if err := validateQualificationNativeUUID(value, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateQualificationNativeUUID(value, name string) error {
+	value = strings.TrimSpace(value)
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed == uuid.Nil || parsed.String() != value {
+		return fmt.Errorf("native delivery %s identity is not a canonical UUID", name)
+	}
+	return nil
+}
+
 func parseQualificationPublication(
 	output string,
 	candidate QualificationCandidate,
@@ -135,11 +170,12 @@ func (c *Controller) RunQualificationClientWorker(
 	options QualificationClientWorkerOptions,
 ) error {
 	options.Target = strings.TrimSpace(options.Target)
-	options.Project = strings.TrimSpace(options.Project)
+	options.SourceRoot = strings.TrimSpace(options.SourceRoot)
+	options.ProjectID = strings.TrimSpace(options.ProjectID)
 	options.SourceRevision = strings.TrimSpace(options.SourceRevision)
 	options.KeyringPassword = strings.TrimSpace(options.KeyringPassword)
-	if options.Target == "" || options.Project == "" || options.KeyringPassword == "" {
-		return fmt.Errorf("qualification client worker requires target, project, and keyring password")
+	if options.Target == "" || options.SourceRoot == "" || options.ProjectID == "" || options.KeyringPassword == "" {
+		return fmt.Errorf("qualification client worker requires target, source root, project ID, and keyring password")
 	}
 	runtimeDir, err := os.MkdirTemp("", "leapview-qualification-keyring-*")
 	if err != nil {
@@ -184,6 +220,9 @@ func (c *Controller) RunQualificationClientWorker(
 				return QualificationCandidate{}, err
 			}
 			currentCandidate, err = parseQualificationCandidate(output, options.SourceRevision)
+			if err == nil {
+				err = validateQualificationNativeCandidate(currentCandidate)
+			}
 			return currentCandidate, err
 		}),
 		"publish": handler.New(func(callCtx context.Context) (QualificationPublication, error) {
@@ -200,7 +239,14 @@ func (c *Controller) RunQualificationClientWorker(
 			if err != nil {
 				return QualificationPublication{}, err
 			}
-			return parseQualificationPublication(output, currentCandidate)
+			publication, err := parseQualificationPublication(output, currentCandidate)
+			if err != nil {
+				return QualificationPublication{}, err
+			}
+			if err := validateQualificationNativePublication(publication); err != nil {
+				return QualificationPublication{}, err
+			}
+			return publication, nil
 		}),
 	}, &jrpc2.ServerOptions{
 		AllowPush:   true,
@@ -224,7 +270,8 @@ func qualificationDevArguments(options QualificationClientWorkerOptions) []strin
 	arguments := []string{
 		"--once",
 		"--no-browser",
-		"--project", options.Project,
+		"--source-root", options.SourceRoot,
+		"--project-id", options.ProjectID,
 		"--target", options.Target,
 		"--format", "json",
 	}
@@ -299,7 +346,7 @@ func runQualificationLogin(
 		"leapview",
 		"login",
 		options.Target,
-		"--project", options.Project,
+		"--project-id", options.ProjectID,
 		"--no-browser",
 		"--format", "json",
 	)
@@ -307,7 +354,10 @@ func runQualificationLogin(
 	var output bytes.Buffer
 	reader, writer := io.Pipe()
 	command.Stdout = io.MultiWriter(&output, writer)
-	command.Stderr = io.MultiWriter(&output, writer)
+	// JSON mode makes stdout a machine protocol. Keep stderr in the bounded
+	// diagnostic transcript, but never feed human diagnostics into the event
+	// decoder.
+	command.Stderr = &output
 	if err := command.Start(); err != nil {
 		_ = writer.Close()
 		return fmt.Errorf("start leapview login: %w", err)
@@ -364,11 +414,11 @@ func runQualificationLogin(
 	_ = writer.Close()
 	scanErr := <-scanned
 	_ = reader.Close()
-	if scanErr != nil {
-		return fmt.Errorf("read leapview login: %w", scanErr)
-	}
 	if waitErr != nil {
 		return fmt.Errorf("leapview login: %w: %s", waitErr, redactQualificationLog(output.Bytes(), 100))
+	}
+	if scanErr != nil {
+		return fmt.Errorf("read leapview login: %w", scanErr)
 	}
 	return nil
 }

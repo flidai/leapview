@@ -1,0 +1,20 @@
+apiVersion: leapview.dev/v1
+kind: Source
+metadata:
+  id: source:warehouse.fct_orders
+  name: warehouse.fct_orders
+  displayName: Published order mart
+spec:
+  connection: warehouse
+  location:
+    type: path
+    path: fct_orders.parquet
+    format: parquet
+  schema:
+    mode: strict
+    fields:
+      order_id: {datatype: String, nullable: true}
+      customer_id: {datatype: String, nullable: true}
+      order_date: {datatype: Date, nullable: true}
+      order_status: {datatype: String, nullable: true}
+      revenue: {datatype: Float, nullable: true}

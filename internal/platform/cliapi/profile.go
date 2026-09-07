@@ -1,6 +1,8 @@
 package cliapi
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
@@ -17,7 +20,18 @@ import (
 
 const profileDocumentVersion = 1
 
-var ErrProfileNotFound = errors.New("target profile not found")
+var (
+	ErrProfileNotFound          = errors.New("target profile not found")
+	ErrProjectAuthorityConflict = errors.New("project authority identity conflicts with durable state")
+)
+
+// ProjectAuthority is the singleton issuer record owned by this local
+// deployment authority. It is independent of source roots, target profiles,
+// repositories, and serving environments.
+type ProjectAuthority struct {
+	IssuerID   string `json:"issuerId"`
+	ProjectUID string `json:"projectUid"`
+}
 
 // TargetProfile contains target identity and a reference to a native-store
 // account. Secret material is never part of this document.
@@ -35,8 +49,9 @@ type NamedTargetProfile struct {
 }
 
 type profileDocument struct {
-	Version int                      `json:"version"`
-	Targets map[string]TargetProfile `json:"targets"`
+	Version          int                      `json:"version"`
+	ProjectAuthority *ProjectAuthority        `json:"projectAuthority,omitempty"`
+	Targets          map[string]TargetProfile `json:"targets"`
 }
 
 // ProfileStore persists non-secret CLI target metadata in a versioned document.
@@ -47,6 +62,97 @@ type ProfileStore struct {
 
 func NewProfileStore(path string) *ProfileStore {
 	return &ProfileStore{path: path}
+}
+
+// ResolveProjectAuthority returns the durable singleton ProjectUID. On first
+// use it persists either the explicitly issued UID or a newly minted opaque
+// UID under the same cross-process lock used for target metadata. Existing
+// authority state can only be replayed exactly; it is never replaced.
+func (store *ProfileStore) ResolveProjectAuthority(externallyIssuedUID string, validateResourceID func(string) error) (ProjectAuthority, error) {
+	if validateResourceID == nil {
+		return ProjectAuthority{}, errors.New("project authority ResourceID validator is required")
+	}
+	externallyIssuedUID = strings.TrimSpace(externallyIssuedUID)
+	if externallyIssuedUID != "" {
+		if err := validateResourceID(externallyIssuedUID); err != nil {
+			return ProjectAuthority{}, fmt.Errorf("validate externally issued ProjectUID: %w", err)
+		}
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	lock, err := store.acquireProjectAuthorityLock()
+	if err != nil {
+		return ProjectAuthority{}, err
+	}
+	defer lock.Release()
+	document, err := store.loadProjectAuthority(validateResourceID)
+	if err != nil {
+		return ProjectAuthority{}, err
+	}
+	if document.ProjectAuthority != nil {
+		if externallyIssuedUID != "" && document.ProjectAuthority.ProjectUID != externallyIssuedUID {
+			return ProjectAuthority{}, fmt.Errorf("%w: stored %q, requested %q", ErrProjectAuthorityConflict, document.ProjectAuthority.ProjectUID, externallyIssuedUID)
+		}
+		return *document.ProjectAuthority, nil
+	}
+	issuerID, err := mintAuthorityResourceID("lvissuer_", validateResourceID)
+	if err != nil {
+		return ProjectAuthority{}, err
+	}
+	projectUID := externallyIssuedUID
+	if projectUID == "" {
+		projectUID, err = mintAuthorityResourceID("lvproject_", validateResourceID)
+		if err != nil {
+			return ProjectAuthority{}, err
+		}
+	}
+	authority := ProjectAuthority{IssuerID: issuerID, ProjectUID: projectUID}
+	document.ProjectAuthority = &authority
+	if err := store.save(document); err != nil {
+		return ProjectAuthority{}, err
+	}
+	return authority, nil
+}
+
+func (store *ProfileStore) acquireProjectAuthorityLock() (*instancelock.Lock, error) {
+	var lastErr error
+	for attempt := 0; attempt < 100; attempt++ {
+		lock, err := store.acquireMutationLock()
+		if err == nil {
+			return lock, nil
+		}
+		lastErr = err
+		time.Sleep(5 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("acquire project authority state lock: %w", lastErr)
+}
+
+func mintAuthorityResourceID(prefix string, validateResourceID func(string) error) (string, error) {
+	var entropy [24]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
+		return "", fmt.Errorf("mint project authority identity: %w", err)
+	}
+	value := prefix + base64.RawURLEncoding.EncodeToString(entropy[:])
+	if err := validateResourceID(value); err != nil {
+		return "", fmt.Errorf("mint project authority identity: %w", err)
+	}
+	return value, nil
+}
+
+func (store *ProfileStore) loadProjectAuthority(validateResourceID func(string) error) (profileDocument, error) {
+	document, err := store.load()
+	if err != nil {
+		return profileDocument{}, err
+	}
+	if document.ProjectAuthority != nil {
+		if err := validateResourceID(document.ProjectAuthority.IssuerID); err != nil {
+			return profileDocument{}, fmt.Errorf("stored project issuer identity is invalid: %w", err)
+		}
+		if err := validateResourceID(document.ProjectAuthority.ProjectUID); err != nil {
+			return profileDocument{}, fmt.Errorf("stored ProjectUID is invalid: %w", err)
+		}
+	}
+	return document, nil
 }
 
 func (store *ProfileStore) Get(name string) (TargetProfile, error) {

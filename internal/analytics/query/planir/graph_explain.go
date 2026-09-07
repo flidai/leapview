@@ -24,8 +24,19 @@ func (g *Graph) Explain() (string, error) {
 		switch value := n.(type) {
 		case ScanDataset:
 			fmt.Fprintf(&b, " dataset=%s", value.Dataset)
+			if value.RequiresSecurityBarrier {
+				fmt.Fprint(&b, " security_required=true")
+			}
+		case SecurityBarrier:
+			fmt.Fprintf(&b, " dataset=%s policy=%s decision=%s", value.Dataset, value.PolicyDigest, value.DecisionDigest)
+			if value.Predicate != nil {
+				fmt.Fprintf(&b, " predicate=%s", predicateExplain(*value.Predicate))
+			}
 		case TraverseRelationship:
 			fmt.Fprintf(&b, " path=%s(%s->%s)", value.Path.Name, value.Path.FromDataset, value.Path.ToDataset)
+			if value.TargetInput != "" {
+				fmt.Fprintf(&b, " target_input=%s", value.TargetInput)
+			}
 		case FilterRows:
 			fmt.Fprintf(&b, " source=%s", value.Source)
 			if value.Name != "" {

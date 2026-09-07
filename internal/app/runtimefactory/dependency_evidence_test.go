@@ -31,7 +31,7 @@ func (s *activationEvidenceStub) ResultIdentityEvidence(_ context.Context, ident
 
 func TestDependencyEvidenceForProductionRuntimeIsReusable(t *testing.T) {
 	graphValue, manifest := dependencyEvidenceProjectFixture(t)
-	artifact, err := projectartifact.NewProject(graphValue, manifest)
+	artifact, err := projectartifact.NewSourceBundle(graphValue, manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestDependencyEvidenceForProductionRuntimeIsReusable(t *testing.T) {
 	}}
 	evidenceByModel, err := dependencyEvidenceForRuntime(
 		context.Background(), identity,
-		projectbundle.CompiledProjectArtifact{ProjectID: "project:demo", Graph: graphValue, Manifest: manifest},
+		projectbundle.CompiledSourceBundleArtifact{Graph: graphValue, Manifest: manifest},
 		artifact,
 		runtimehost.ManagedDataResolution{Revisions: map[string]string{"connection:warehouse": dependencyEvidenceTestDigest('b')}},
 		nil,
@@ -78,12 +78,12 @@ func TestDependencyEvidenceForProductionRuntimeIsReusable(t *testing.T) {
 
 func TestDependencyEvidenceFailsClosedPerExternalBundleBranch(t *testing.T) {
 	graphValue, manifest := dependencyEvidenceProjectWithExternalDataset(t, false)
-	artifact, err := projectartifact.NewProject(graphValue, manifest)
+	artifact, err := projectartifact.NewSourceBundle(graphValue, manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	evidenceByModel, err := buildDependencyEvidence(
-		projectbundle.CompiledProjectArtifact{ProjectID: "project:demo", Graph: graphValue, Manifest: manifest},
+		projectbundle.CompiledSourceBundleArtifact{Graph: graphValue, Manifest: manifest},
 		artifact,
 		map[string]string{
 			"connection:warehouse": dependencyEvidenceTestDigest('b'),
@@ -122,12 +122,12 @@ func TestDependencyEvidenceFailsClosedPerExternalBundleBranch(t *testing.T) {
 
 func TestDependencyEvidenceMixedSourceLineageIsUnavailable(t *testing.T) {
 	graphValue, manifest := dependencyEvidenceProjectWithExternalDataset(t, true)
-	artifact, err := projectartifact.NewProject(graphValue, manifest)
+	artifact, err := projectartifact.NewSourceBundle(graphValue, manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	evidenceByModel, err := buildDependencyEvidence(
-		projectbundle.CompiledProjectArtifact{ProjectID: "project:demo", Graph: graphValue, Manifest: manifest},
+		projectbundle.CompiledSourceBundleArtifact{Graph: graphValue, Manifest: manifest},
 		artifact,
 		map[string]string{
 			"connection:warehouse": dependencyEvidenceTestDigest('b'),
@@ -178,12 +178,12 @@ func TestDependencyEvidenceSQLLineageFailsClosedWithoutPersistedEvidence(t *test
 		}
 		manifest.SemanticModels["semantic:sales"].Tables["orders"] = semanticTable
 
-		artifact, err := projectartifact.NewProject(graphValue, manifest)
+		artifact, err := projectartifact.NewSourceBundle(graphValue, manifest)
 		if err != nil {
 			t.Fatal(err)
 		}
 		evidenceByModel, err := buildDependencyEvidence(
-			projectbundle.CompiledProjectArtifact{ProjectID: "project:demo", Graph: graphValue, Manifest: manifest},
+			projectbundle.CompiledSourceBundleArtifact{Graph: graphValue, Manifest: manifest},
 			artifact,
 			map[string]string{"connection:warehouse": dependencyEvidenceTestDigest('b')},
 			dependencyEvidenceActivation(map[string]string{"connection:warehouse": "managed"}),
@@ -213,10 +213,9 @@ func TestDependencyEvidenceSQLLineageFailsClosedWithoutPersistedEvidence(t *test
 	}
 }
 
-func dependencyEvidenceProjectFixture(t *testing.T) (projectgraph.ProjectGraph, projectmanifest.Project) {
+func dependencyEvidenceProjectFixture(t *testing.T) (projectgraph.ProjectGraph, projectmanifest.ResourceManifest) {
 	t.Helper()
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project:demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse"},
 		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},
 		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
@@ -229,8 +228,7 @@ func dependencyEvidenceProjectFixture(t *testing.T) (projectgraph.ProjectGraph, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest := projectmanifest.Project{
-		ID: "project:demo", Name: "demo",
+	manifest := projectmanifest.ResourceManifest{
 		Connections: map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{
 			"source:orders": {Connection: "connection:warehouse"},
@@ -262,7 +260,7 @@ func dependencyEvidenceProjectFixture(t *testing.T) (projectgraph.ProjectGraph, 
 	return graphValue, manifest
 }
 
-func dependencyEvidenceProjectWithExternalDataset(t *testing.T, mixedLineage bool) (projectgraph.ProjectGraph, projectmanifest.Project) {
+func dependencyEvidenceProjectWithExternalDataset(t *testing.T, mixedLineage bool) (projectgraph.ProjectGraph, projectmanifest.ResourceManifest) {
 	t.Helper()
 	baseGraph, manifest := dependencyEvidenceProjectFixture(t)
 	resources := append(baseGraph.Resources(),
@@ -357,7 +355,7 @@ func TestCapabilityDigestUsesExactCanonicalEvidence(t *testing.T) {
 
 func TestCandidateAndProductionCapabilityEvidenceDeriveCompatibleDependencies(t *testing.T) {
 	graphValue, manifest := dependencyEvidenceProjectFixture(t)
-	artifact, err := projectartifact.NewProject(graphValue, manifest)
+	artifact, err := projectartifact.NewSourceBundle(graphValue, manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +368,7 @@ func TestCandidateAndProductionCapabilityEvidenceDeriveCompatibleDependencies(t 
 		BindingKinds: map[string]string{"connection:warehouse": "managed"},
 		Capabilities: []runtimehost.RuntimeCapabilityEvidence{dependencyEvidenceTestCapability('1')},
 	}
-	compiled := projectbundle.CompiledProjectArtifact{ProjectID: "project:demo", Graph: graphValue, Manifest: manifest}
+	compiled := projectbundle.CompiledSourceBundleArtifact{Graph: graphValue, Manifest: manifest}
 	managed := runtimehost.ManagedDataResolution{Revisions: map[string]string{"connection:warehouse": dependencyEvidenceTestDigest('b')}}
 	production, err := dependencyEvidenceForRuntime(
 		t.Context(), identity, compiled, artifact, managed, nil,
@@ -432,14 +430,14 @@ func TestDependencyEvidenceRelationProjectionIgnoresPresentationAndRotatesExecut
 	baseTable.Columns = map[string]semanticmodel.ModelColumn{"order_id": {Name: "order_id", Datatype: semanticmodel.DataTypeString}}
 	baseManifest.Models["model:orders"] = baseTable
 
-	dependencyFor := func(manifest projectmanifest.Project, revision byte) resultidentity.Dependency {
+	dependencyFor := func(manifest projectmanifest.ResourceManifest, revision byte) resultidentity.Dependency {
 		t.Helper()
-		artifact, err := projectartifact.NewProject(graphValue, manifest)
+		artifact, err := projectartifact.NewSourceBundle(graphValue, manifest)
 		if err != nil {
 			t.Fatal(err)
 		}
 		evidence, err := buildDependencyEvidence(
-			projectbundle.CompiledProjectArtifact{ProjectID: "project:demo", Graph: graphValue, Manifest: manifest},
+			projectbundle.CompiledSourceBundleArtifact{Graph: graphValue, Manifest: manifest},
 			artifact,
 			map[string]string{"connection:warehouse": dependencyEvidenceTestDigest(revision)},
 			ActivationEvidence{
@@ -494,7 +492,7 @@ func TestDependencyEvidenceRelationProjectionIgnoresPresentationAndRotatesExecut
 	}
 }
 
-func cloneDependencyEvidenceManifest(value projectmanifest.Project) projectmanifest.Project {
+func cloneDependencyEvidenceManifest(value projectmanifest.ResourceManifest) projectmanifest.ResourceManifest {
 	clone := value
 	clone.Connections = make(map[string]semanticmodel.Connection, len(value.Connections))
 	for id, connection := range value.Connections {

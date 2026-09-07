@@ -3,6 +3,7 @@ package materialize
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -66,6 +67,34 @@ func TestBundlePlanningCancellationEmitsCanceledAdmission(t *testing.T) {
 	require.Zero(t, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
 		return observation.Phase == dataquery.CacheObservationAdmission && observation.AdmissionReason == dataquery.CacheAdmissionReasonPlanningFailed
 	}))
+}
+
+func TestResultEquivalenceAuthorizationProjectionIsSharedByScalarAndBundle(t *testing.T) {
+	base := "sha256:" + strings.Repeat("a", 64)
+	firstRequest := dataquery.Query{AuthorizationFields: []dataquery.Field{
+		{Field: "orders.customer_email", Alias: "email"},
+		{Field: "orders.customer_id", Alias: "id"},
+		{Field: "orders.customer_email", Alias: "duplicate"},
+	}}
+	// Aliases, declaration order, and duplicate entries are not authorization
+	// semantics. Only the canonical field-name set should affect the identity.
+	sameRequest := dataquery.Query{AuthorizationFields: []dataquery.Field{
+		{Field: "orders.customer_id", Alias: "renamed"},
+		{Field: "orders.customer_email", Alias: "other"},
+	}}
+	differentRequest := dataquery.Query{AuthorizationFields: []dataquery.Field{{Field: "orders.customer_name"}}}
+
+	first := materializeResultEquivalenceDigest(base, firstRequest)
+	same := materializeResultEquivalenceDigest(base, sameRequest)
+	different := materializeResultEquivalenceDigest(base, differentRequest)
+	require.NotEqual(t, base, first)
+	require.Equal(t, first, same)
+	require.NotEqual(t, first, different)
+
+	plan := semanticquery.BundlePlan{Branches: []semanticquery.BundleBranch{{ID: "orders", ResultEquivalenceDigest: base}}}
+	require.Equal(t, first, branchResultEquivalenceDigest(plan, "orders", firstRequest))
+	require.Equal(t, same, branchResultEquivalenceDigest(plan, "orders", sameRequest))
+	require.NotEqual(t, first, branchResultEquivalenceDigest(plan, "orders", differentRequest))
 }
 
 func TestBundlePlanningCancellationDuringPlannerCallEmitsCanceledAdmission(t *testing.T) {

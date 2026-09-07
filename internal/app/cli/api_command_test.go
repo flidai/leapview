@@ -183,7 +183,7 @@ func TestAPICommandCallDefaultsJSONBodyFileContentTypeFromGeneratedContract(t *t
 }
 
 func TestAPICommandCallDefaultsBinaryBodyFileContentTypeFromGeneratedContract(t *testing.T) {
-	bodyPath := filepath.Join(t.TempDir(), "artifact.tar.gz")
+	bodyPath := filepath.Join(t.TempDir(), "source.tar.gz")
 	if err := os.WriteFile(bodyPath, []byte("bundle"), 0o644); err != nil {
 		t.Fatalf("write body file: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestAPICommandCallDefaultsBinaryBodyFileContentTypeFromGeneratedContract(t 
 		if r.Method != http.MethodPut {
 			t.Fatalf("method = %s", r.Method)
 		}
-		if r.URL.Path != "/api/v1/projects/project/releases/release_1/artifact" {
+		if r.URL.Path != "/api/v1/projects/project/candidate-sync/blobs/digest_1" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
 		if got := r.Header.Get("Content-Type"); got != "application/octet-stream" {
@@ -204,11 +204,11 @@ func TestAPICommandCallDefaultsBinaryBodyFileContentTypeFromGeneratedContract(t 
 	captureStdout(t, func() {
 		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token"})
 		cmd.SetArgs([]string{
-			"call", "uploadReleaseArtifact",
+			"call", "uploadProjectCandidateSourceBlob",
 			"--target", server.URL,
 			"--token", "token",
 			"--path", "project=project",
-			"--path", "release=release_1",
+			"--path", "digest=digest_1",
 			"--body-file", bodyPath,
 		})
 		if err := cmd.Execute(); err != nil {

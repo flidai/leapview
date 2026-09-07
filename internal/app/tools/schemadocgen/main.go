@@ -60,6 +60,12 @@ func generate(schemaDir, exampleDir, outDir string) error {
 			continue
 		}
 		slug := strings.TrimSuffix(entry.Name(), ".schema.json")
+		// The authoring source root contains only analytical resource kinds. The
+		// remaining schemas describe target-owned access/publication inputs and
+		// must not leak into the public YAML configuration catalog.
+		if configurationDocumentOrder(slug) >= len(configurationDocumentOrderList) {
+			continue
+		}
 		contents, err := os.ReadFile(filepath.Join(schemaDir, entry.Name()))
 		if err != nil {
 			return err
@@ -102,13 +108,21 @@ func generate(schemaDir, exampleDir, outDir string) error {
 }
 
 func configurationDocumentOrder(slug string) int {
-	order := []string{"project", "connection", "source", "model", "semantic-model", "pipeline", "dashboard", "group", "role-binding", "grant", "data-policy", "dashboard-publication"}
-	for index, candidate := range order {
+	for index, candidate := range configurationDocumentOrderList {
 		if slug == candidate {
 			return index
 		}
 	}
-	return len(order)
+	return len(configurationDocumentOrderList)
+}
+
+var configurationDocumentOrderList = []string{
+	"connection",
+	"source",
+	"model",
+	"semantic-model",
+	"pipeline",
+	"dashboard-document",
 }
 
 func examplesByKind(root string) (map[string]string, error) {

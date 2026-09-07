@@ -138,6 +138,7 @@ interface RefreshRuns {
   @post
   @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("refresh.cancel")
+  @apigen.failsWith(RefreshRunConflictFailure)
   @apigen.failsWith(RefreshRunNotFoundFailure)
   @apigen.failsWith(RefreshRunNotCancellableFailure)
   @apigen.failsWith(RefreshServiceUnavailableFailure)

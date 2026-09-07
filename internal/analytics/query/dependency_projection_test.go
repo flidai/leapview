@@ -175,6 +175,21 @@ func TestPlanResultDependenciesFailsClosedWithoutPlanIR(t *testing.T) {
 	}
 }
 
+func TestPlanDeterminismRequiresPlannerProducedPlanIR(t *testing.T) {
+	model := testModel()
+	planner := mustNewCompiledPlanner(t, model)
+	plan, err := planner.Plan(Request{Dataset: "orders", Dimensions: []Field{{Field: "orders.order_id"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Deterministic {
+		t.Fatal("planner-produced PlanIR was not marked deterministic")
+	}
+	if (Plan{SQL: "SELECT random()"}).Deterministic {
+		t.Fatal("opaque SQL plan was marked deterministic")
+	}
+}
+
 func TestPlanResultDependenciesIgnoreSnapshotQualifiedRelations(t *testing.T) {
 	request := Request{
 		Dimensions: []Field{{Field: "customer_state"}},

@@ -26,7 +26,7 @@ var ErrCandidateCheckpointNotFound = errors.New("candidate checkpoint not found"
 // CandidateCheckpoint is the non-secret, immutable handoff from dev to publish.
 // It binds the candidate to both the local entrypoint and the remote target.
 type CandidateCheckpoint struct {
-	ProjectPath       string `json:"projectPath"`
+	SourceRoot        string `json:"sourceRoot"`
 	TargetOrigin      string `json:"targetOrigin"`
 	TargetSelector    string `json:"targetSelector,omitempty"`
 	TargetID          string `json:"targetId"`
@@ -104,26 +104,26 @@ func (store *CandidateCheckpointStore) Save(checkpoint CandidateCheckpoint) erro
 		return err
 	}
 	document.Candidates[candidateCheckpointKey(
-		normalized.ProjectPath,
+		normalized.SourceRoot,
 		normalized.TargetOrigin,
 		normalized.CandidateKey,
 	)] = normalized
 	return store.save(document)
 }
 
-func (store *CandidateCheckpointStore) Load(projectPath, targetOrigin string) (CandidateCheckpoint, error) {
-	return store.LoadCandidate(projectPath, targetOrigin, "default")
+func (store *CandidateCheckpointStore) Load(sourceRoot, targetOrigin string) (CandidateCheckpoint, error) {
+	return store.LoadCandidate(sourceRoot, targetOrigin, "default")
 }
 
 func (store *CandidateCheckpointStore) LoadCandidate(
-	projectPath,
+	sourceRoot,
 	targetOrigin,
 	candidateKey string,
 ) (CandidateCheckpoint, error) {
 	if store == nil {
 		return CandidateCheckpoint{}, fmt.Errorf("candidate checkpoint store is required")
 	}
-	absolute, err := canonicalProjectPath(projectPath)
+	absolute, err := canonicalSourceRoot(sourceRoot)
 	if err != nil {
 		return CandidateCheckpoint{}, err
 	}
@@ -150,7 +150,7 @@ func (store *CandidateCheckpointStore) LoadCandidate(
 	if err != nil {
 		return CandidateCheckpoint{}, fmt.Errorf("stored candidate checkpoint is invalid: %w", err)
 	}
-	if normalized.ProjectPath != absolute || normalized.TargetOrigin != origin ||
+	if normalized.SourceRoot != absolute || normalized.TargetOrigin != origin ||
 		normalized.CandidateKey != candidateKey {
 		return CandidateCheckpoint{}, fmt.Errorf("stored candidate checkpoint identity does not match lookup")
 	}
@@ -350,7 +350,7 @@ func (store *CandidateCheckpointStore) acquireMutationLock() (*instancelock.Lock
 
 func normalizeCandidateCheckpoint(checkpoint CandidateCheckpoint) (CandidateCheckpoint, error) {
 	var err error
-	checkpoint.ProjectPath, err = canonicalProjectPath(checkpoint.ProjectPath)
+	checkpoint.SourceRoot, err = canonicalSourceRoot(checkpoint.SourceRoot)
 	if err != nil {
 		return CandidateCheckpoint{}, err
 	}
@@ -384,14 +384,14 @@ func normalizeCandidateCheckpoint(checkpoint CandidateCheckpoint) (CandidateChec
 	return checkpoint, nil
 }
 
-func canonicalProjectPath(value string) (string, error) {
+func canonicalSourceRoot(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", fmt.Errorf("project path is required")
+		return "", fmt.Errorf("source root is required")
 	}
 	absolute, err := filepath.Abs(value)
 	if err != nil {
-		return "", fmt.Errorf("resolve project path: %w", err)
+		return "", fmt.Errorf("resolve source root: %w", err)
 	}
 	return filepath.Clean(absolute), nil
 }
@@ -408,9 +408,9 @@ func canonicalCheckpointOrigin(value string) (string, error) {
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
-func candidateCheckpointKey(projectPath, targetOrigin, candidateKey string) string {
+func candidateCheckpointKey(sourceRoot, targetOrigin, candidateKey string) string {
 	sum := sha256.Sum256([]byte(
-		projectPath + "\x00" + targetOrigin + "\x00" +
+		sourceRoot + "\x00" + targetOrigin + "\x00" +
 			normalizeCheckpointCandidateKey(candidateKey),
 	))
 	return hex.EncodeToString(sum[:])

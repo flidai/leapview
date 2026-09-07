@@ -32,6 +32,7 @@ func (m *Model) ExecutionSnapshot() *Model {
 	clone.Dimensions = snapshotSemanticDimensions(m.Dimensions)
 	clone.Filters = snapshotSemanticFilters(m.Filters)
 	clone.Metrics = snapshotMetrics(m.Metrics)
+	clone.AccessPolicy = cloneSemanticAccessPolicy(m.AccessPolicy)
 	return &clone
 }
 

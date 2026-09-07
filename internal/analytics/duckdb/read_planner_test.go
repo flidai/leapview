@@ -212,6 +212,46 @@ func TestPlanModelTableCompilesCountStarToInlineRowPresence(t *testing.T) {
 	}
 }
 
+func TestPlanModelTableInNamespaceRewritesIntraModelReferences(t *testing.T) {
+	ctx := context.Background()
+	db := openPlanningRuntimeDB(t)
+	defer db.Close()
+	const namespace = "_candidate_namespace"
+	if _, err := db.ExecContext(ctx, "CREATE SCHEMA "+namespace+"; CREATE TABLE "+namespace+".orders (id INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "id", Ordinal: 1, PhysicalType: "INTEGER"}}}},
+			"summary": {
+				ModelDependencies:   []string{"orders"},
+				Columns:             map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}},
+				SQLAnalysisEvidence: &semanticmodel.SQLAnalysisEvidence{Validated: true, ModelRefs: []string{"orders"}},
+				Execution:           semanticmodel.ExecutionDefinition{SQL: "SELECT model.orders.id FROM model.orders"},
+			},
+		},
+	}
+	plan, err := PlanModelTableInNamespace(ctx, db, model, "summary", model.Tables["summary"], namespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.SQL, "CREATE OR REPLACE TABLE "+namespace+".summary AS") || !strings.Contains(plan.SQL, "FROM "+namespace+".orders") || strings.Contains(plan.SQL, "model.") {
+		t.Fatalf("namespaced plan SQL = %s", plan.SQL)
+	}
+}
+
+func TestPlanModelTableInNamespaceRejectsInvalidNamespace(t *testing.T) {
+	db := openPlanningRuntimeDB(t)
+	defer db.Close()
+	model := planningModel(nil, semanticmodel.Table{Execution: semanticmodel.ExecutionDefinition{SQL: "SELECT 1 AS id"}, Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}})
+	for _, namespace := range []string{"candidate;drop", strings.Repeat("a", 64)} {
+		if _, err := PlanModelTableInNamespace(context.Background(), db, model, "orders", model.Tables["orders"], namespace); err == nil || !strings.Contains(err.Error(), "relation namespace") {
+			t.Fatalf("namespace %q unexpectedly accepted: %v", namespace, err)
+		}
+	}
+}
+
 func TestPlanModelTableAliasesUnaliasedInlineSourceRefs(t *testing.T) {
 	ctx := context.Background()
 	db := openPlanningRuntimeDB(t)

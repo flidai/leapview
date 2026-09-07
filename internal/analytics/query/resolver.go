@@ -9,8 +9,10 @@ import (
 )
 
 type Planner struct {
-	compiled      *CompiledModel
-	tableRelation TableRelation
+	compiled              *CompiledModel
+	tableRelation         TableRelation
+	semanticAccessPolicy  *CompiledSemanticAccessPolicy
+	semanticAccessProvider func() (SemanticAccessAttributeSnapshot, SemanticAccessAuthority, error)
 }
 
 // datasetTable resolves a semantic alias through the compiled serving

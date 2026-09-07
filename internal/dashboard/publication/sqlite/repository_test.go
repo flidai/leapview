@@ -4,17 +4,55 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	publicationdb "github.com/flidai/leapview/internal/dashboard/internal/db"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+// sqliteAuditIntentRecorder is intentionally test-only. SQLite no longer
+// owns durable audit policy; these tests only need a transaction-scoped sink
+// to prove that publication mutations and their handoff commit together.
+type sqliteAuditIntentRecorder struct{}
+
+func (sqliteAuditIntentRecorder) RecordAuditIntent(ctx context.Context, tx transaction.Transaction, intent access.AuditIntent) error {
+	if tx == nil {
+		return errors.New("audit intent transaction is required")
+	}
+	canonical, err := intent.Canonicalize()
+	if err != nil {
+		return err
+	}
+	digest, err := canonical.PayloadDigest()
+	if err != nil {
+		return err
+	}
+	var storedDigest string
+	err = tx.QueryRowContext(ctx, `
+INSERT INTO audit_outbox
+ (event_id, source, operation, principal_id, action, resource_kind, resource_id, capability, outcome,
+  request_id, correlation_id, aggregate_key, aggregate_sequence, metadata_json, payload_digest)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(event_id) DO UPDATE SET event_id = excluded.event_id
+RETURNING payload_digest`,
+		canonical.EventID, canonical.Source, canonical.Operation, canonical.PrincipalID, canonical.Action,
+		canonical.ResourceKind, canonical.ResourceID, canonical.Capability.String(), canonical.Outcome,
+		canonical.RequestID, canonical.CorrelationID, canonical.AggregateKey, canonical.AggregateSequence,
+		canonical.MetadataJSON, digest).Scan(&storedDigest)
+	if err != nil {
+		return fmt.Errorf("record audit intent: %w", err)
+	}
+	if storedDigest != digest {
+		return fmt.Errorf("%w: event %s stored %s received %s", access.ErrAuditIntentConflict, canonical.EventID, storedDigest, digest)
+	}
+	return nil
+}
 
 func TestMapPublicationRejectsInvalidPersistedProjectID(t *testing.T) {
 	_, err := mapPublication(publicationdb.DashboardPublication{
@@ -40,7 +78,7 @@ func TestReconcilePreservesPublicIDAcrossProjectCutover(t *testing.T) {
 	input := publication.ReconcileInput{ProjectID: projectgraph.ResourceID("site"), ServingStateID: "state_1", ActorID: "owner", Publications: map[string]publication.Definition{"website": definition("digest-1")}}
 	reconcile(t, ctx, db, input)
 	first := mustGet(t, repo, ctx, projectgraph.ResourceID("site"), "website")
-	if first.PublicID == "" || first.Status() != publication.StatusActive {
+	if first.PublicID == "" || first.Status() != publication.StatusActive || first.Revision != 1 {
 		t.Fatalf("first = %#v", first)
 	}
 
@@ -48,15 +86,20 @@ func TestReconcilePreservesPublicIDAcrossProjectCutover(t *testing.T) {
 	input.Publications["website"] = definition("digest-2")
 	reconcile(t, ctx, db, input)
 	second := mustGet(t, repo, ctx, projectgraph.ResourceID("site"), "website")
-	if second.PublicID != first.PublicID || second.ServingStateID != "state_2" || second.ConfigurationDigest != "digest-2" {
+	if second.PublicID != first.PublicID || second.ServingStateID != "state_2" || second.ConfigurationDigest != "digest-2" || second.Revision != 2 {
 		t.Fatalf("second = %#v", second)
+	}
+	reconcile(t, ctx, db, input)
+	unchanged := mustGet(t, repo, ctx, projectgraph.ResourceID("site"), "website")
+	if unchanged.Revision != second.Revision {
+		t.Fatalf("unchanged reconciliation revision = %d, want %d", unchanged.Revision, second.Revision)
 	}
 
 	input.ServingStateID = "state_3"
 	input.Publications = map[string]publication.Definition{}
 	reconcile(t, ctx, db, input)
 	disabled := mustGet(t, repo, ctx, projectgraph.ResourceID("site"), "website")
-	if disabled.Status() != publication.StatusUnconfigured || disabled.PublicID != first.PublicID {
+	if disabled.Status() != publication.StatusUnconfigured || disabled.PublicID != first.PublicID || disabled.Revision != 3 {
 		t.Fatalf("disabled = %#v", disabled)
 	}
 }
@@ -72,7 +115,7 @@ func TestReconcileRejectsMissingProjectIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = ReconcileTx(ctx, tx, publication.ReconcileInput{ServingStateID: "generation"}, func(context.Context, transaction.Transaction, projectgraph.ResourceID, string) error { return nil })
+	err = new(Repository).ReconcileTx(ctx, tx, publication.ReconcileInput{ServingStateID: "generation"}, func(context.Context, transaction.Transaction, projectgraph.ResourceID, string) error { return nil })
 	_ = tx.Rollback()
 	if err == nil {
 		t.Fatal("ReconcileTx accepted missing project identity")
@@ -90,15 +133,14 @@ func TestPublicationMutationCommitsAuditIntentInSameTransaction(t *testing.T) {
 	seedProject(t, db)
 	reconcile(t, ctx, db, publication.ReconcileInput{ProjectID: projectgraph.ResourceID("site"), ServingStateID: "state_1", ActorID: "owner", Publications: map[string]publication.Definition{"website": definition("digest-1")}})
 
-	accessRepo := accesssqlite.NewRepository(db)
 	var captured access.AuditIntent
 	recorder := access.AuditIntentRecorderFunc(func(ctx context.Context, tx transaction.Transaction, intent access.AuditIntent) error {
 		captured = intent
-		return accessRepo.RecordAuditIntent(ctx, tx, intent)
+		return (sqliteAuditIntentRecorder{}).RecordAuditIntent(ctx, tx, intent)
 	})
 	repo := NewRepositoryWithAudit(db, recorder)
 	intent := publicationAuditIntent("event-publication-commit")
-	if _, err := repo.Suspend(publication.WithAuditIntent(ctx, intent), projectgraph.ResourceID("site"), "website", "principal-a"); err != nil {
+	if _, err := repo.Suspend(publication.WithAuditIntent(ctx, intent), projectgraph.ResourceID("site"), "website", "principal-a", 1); err != nil {
 		t.Fatal(err)
 	}
 	row := mustGet(t, repo, ctx, projectgraph.ResourceID("site"), "website")
@@ -121,7 +163,7 @@ func TestPublicationMutationCommitsAuditIntentInSameTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := accessRepo.RecordAuditIntent(ctx, tx, captured); err != nil {
+	if err := (sqliteAuditIntentRecorder{}).RecordAuditIntent(ctx, tx, captured); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("idempotent replay: %v", err)
 	}
@@ -143,7 +185,7 @@ func TestPublicationMutationRollsBackWhenAuditIntentFails(t *testing.T) {
 	repo := NewRepositoryWithAudit(db, access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
 		return errors.New("audit unavailable")
 	}))
-	_, err = repo.Suspend(publication.WithAuditIntent(ctx, publicationAuditIntent("event-publication-rollback")), projectgraph.ResourceID("site"), "website", "principal-a")
+	_, err = repo.Suspend(publication.WithAuditIntent(ctx, publicationAuditIntent("event-publication-rollback")), projectgraph.ResourceID("site"), "website", "principal-a", 1)
 	if err == nil || !strings.Contains(err.Error(), "audit unavailable") {
 		t.Fatalf("suspend error = %v", err)
 	}
@@ -170,10 +212,10 @@ func TestPublicationMutationRejectsSecretAuditMetadataAndRollsBack(t *testing.T)
 	db := store.SQLDB()
 	seedProject(t, db)
 	reconcile(t, ctx, db, publication.ReconcileInput{ProjectID: projectgraph.ResourceID("site"), ServingStateID: "state_1", ActorID: "owner", Publications: map[string]publication.Definition{"website": definition("digest-1")}})
-	repo := NewRepositoryWithAudit(db, accesssqlite.NewRepository(db))
+	repo := NewRepositoryWithAudit(db, sqliteAuditIntentRecorder{})
 	intent := publicationAuditIntent("event-publication-secret")
 	intent.MetadataJSON = `{"secret":"must-not-persist"}`
-	_, err = repo.Suspend(publication.WithAuditIntent(ctx, intent), projectgraph.ResourceID("site"), "website", "principal-a")
+	_, err = repo.Suspend(publication.WithAuditIntent(ctx, intent), projectgraph.ResourceID("site"), "website", "principal-a", 1)
 	if err == nil || !strings.Contains(err.Error(), "metadata key") {
 		t.Fatalf("secret metadata error = %v", err)
 	}
@@ -204,7 +246,7 @@ func reconcile(t *testing.T, ctx context.Context, db *sql.DB, input publication.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileTx(ctx, tx, input, func(context.Context, transaction.Transaction, projectgraph.ResourceID, string) error { return nil }); err != nil {
+	if err := new(Repository).ReconcileTx(ctx, tx, input, func(context.Context, transaction.Transaction, projectgraph.ResourceID, string) error { return nil }); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}

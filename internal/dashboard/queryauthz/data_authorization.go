@@ -338,13 +338,17 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	if ok, err := m.authorizeDataQuery(ctx, snapshot, principalID, capabilityAction, request, objects); err != nil {
-		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
-		return request, nil, err
-	} else if !ok {
-		err := DeniedError{PrincipalID: principalID, Capability: capabilityAction}
-		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
-		return request, nil, err
+	bootstrapCandidateOwner := candidateQuery && candidateCapability.BootstrapAuthorized &&
+		!viewAsQuery && request.PrincipalID == candidateCapability.OwnerPrincipalID
+	if !bootstrapCandidateOwner {
+		if ok, err := m.authorizeDataQuery(ctx, snapshot, principalID, capabilityAction, request, objects); err != nil {
+			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
+			return request, nil, err
+		} else if !ok {
+			err := DeniedError{PrincipalID: principalID, Capability: capabilityAction}
+			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
+			return request, nil, err
+		}
 	}
 	governed, policies, err := m.applyDataPolicies(ctx, request, objects, resourceIndex)
 	if err != nil {
@@ -510,7 +514,11 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 		}
 		semanticObjects = append(semanticObjects, modelObject)
 	}
-	physicalObjects := make([]access.ResourceRef, 0, len(dependencies.Datasets)+len(dependencies.PhysicalFields))
+	// Dependency cardinality is compiler-controlled, but do not combine two
+	// independently sized slices into an allocation hint: the addition can
+	// overflow before make applies its own bounds check. Appends retain the
+	// same bounded result without an attacker-controlled capacity calculation.
+	physicalObjects := make([]access.ResourceRef, 0)
 	datasets := map[string]access.ResourceRef{}
 	for _, datasetName := range dependencies.Datasets {
 		dataset, ok := resourceIndex.byName(datasetName, projectgraph.KindModel)
@@ -633,7 +641,7 @@ func (m Metrics) recordDataAccessAudit(ctx context.Context, request dataquery.Qu
 	}
 	resource, ok := canonicalResourceByID(snapshot.Project(), request.ModelID, projectgraph.KindSemanticModel)
 	if !ok {
-		resource, err = access.NewResourceRef(request.ProjectID, projectgraph.KindProject)
+		resource, err = access.NewResourceRef(request.ProjectID, projectgraph.KindProjectNamespace)
 		if err != nil {
 			return err
 		}
@@ -1005,7 +1013,7 @@ func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Qu
 			return effectiveDataPolicySet{}, err
 		}
 	}
-	if projectResource, err := access.NewResourceRef(request.ProjectID, projectgraph.KindProject); err == nil {
+	if projectResource, err := access.NewResourceRef(request.ProjectID, projectgraph.KindProjectNamespace); err == nil {
 		if err := addObject(projectResource); err != nil {
 			return effectiveDataPolicySet{}, err
 		}
@@ -1258,7 +1266,7 @@ func (m Metrics) authorizationSnapshot(ctx context.Context, projectID projectgra
 	if err := snapshot.ValidateBound(); err != nil {
 		return accesssnapshot.AuthorizationSnapshot{}, err
 	}
-	if snapshot.Identity().ProjectID != projectID || snapshot.Project().ProjectID() != projectID || m.Metrics.Catalog().Project.ID != projectID {
+	if snapshot.Identity().ProjectID != projectID || m.Metrics.Catalog().Project.ID != projectID {
 		return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("authorization snapshot project identity does not match active project %q", projectID)
 	}
 	return snapshot, nil

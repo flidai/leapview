@@ -20,17 +20,16 @@ import (
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
 
-// Initialize performs production bootstrap through the native PostgreSQL
-// access authority. Evaluation and development continue to use the existing
-// offline service, including its local credential recovery behavior.
+// Initialize performs bootstrap through the native PostgreSQL access
+// authority. Non-production targets do not expose this operation.
 func (o Operations) Initialize(ctx context.Context, request adminoffline.InitializeRequest, out io.Writer) error {
 	deps := o.Dependencies.withDefaults()
 	cfg, err := deps.LoadConfig()
 	if err != nil {
 		return err
 	}
-	if !cfg.Production || cfg.EvaluationMode {
-		return o.Operations.Initialize(ctx, request, out)
+	if !cfg.Production {
+		return ErrNativeAdminUnavailable
 	}
 	// Match the offline service's admission checks before opening a native
 	// connection or taking the instance lock. A nil writer must not allow a
@@ -87,17 +86,16 @@ func (o Operations) Initialize(ctx context.Context, request adminoffline.Initial
 	return service.Initialize(ctx, request, out)
 }
 
-// AcknowledgeInitialCredentials removes the recoverable production bootstrap
+// AcknowledgeInitialCredentials removes the recoverable PostgreSQL bootstrap
 // bundle only after confirming that the native instance marker exists.
-// Evaluation and development retain the offline implementation unchanged.
 func (o Operations) AcknowledgeInitialCredentials(ctx context.Context) error {
 	deps := o.Dependencies.withDefaults()
 	cfg, err := deps.LoadConfig()
 	if err != nil {
 		return err
 	}
-	if !cfg.Production || cfg.EvaluationMode {
-		return o.Operations.AcknowledgeInitialCredentials(ctx)
+	if !cfg.Production {
+		return ErrNativeAdminUnavailable
 	}
 	accessConfig, err := productionAccessConfig(cfg)
 	if err != nil {
@@ -202,10 +200,7 @@ func productionAccessConfig(cfg config.Config) (platformpostgres.Config, error) 
 	if !cfg.PostgresRequireTLS {
 		return platformpostgres.Config{}, errors.New("production admin initialization requires LEAPVIEW_POSTGRES_REQUIRE_TLS=true")
 	}
-	if err := cfg.ValidatePostgres(); err != nil {
-		return platformpostgres.Config{}, fmt.Errorf("invalid PostgreSQL application configuration: %w", err)
-	}
-	accessConfig := cfg.PostgresControlRuntimeConfig()
+	accessConfig := cfg.PostgresControlPlaneConfig().Runtime
 	if err := accessConfig.Validate(); err != nil {
 		return platformpostgres.Config{}, fmt.Errorf("invalid PostgreSQL control runtime configuration: %w", err)
 	}
@@ -213,10 +208,7 @@ func productionAccessConfig(cfg config.Config) (platformpostgres.Config, error) 
 }
 
 func prepareProductionBaseline(ctx context.Context, cfg config.Config) error {
-	if err := cfg.ValidatePostgres(); err != nil {
-		return fmt.Errorf("invalid PostgreSQL application configuration: %w", err)
-	}
-	migratorConfig := cfg.PostgresControlMigratorConfig()
+	migratorConfig := cfg.PostgresControlPlaneConfig().Migrator
 	if err := migratorConfig.Validate(); err != nil {
 		return fmt.Errorf("invalid PostgreSQL control migrator configuration: %w", err)
 	}
@@ -225,16 +217,13 @@ func prepareProductionBaseline(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("open PostgreSQL control migrator: %w", err)
 	}
 	defer pool.Close()
-	tx, err := pool.Begin(ctx)
+	db, err := pool.SQLDB()
 	if err != nil {
-		return fmt.Errorf("begin PostgreSQL control baseline migration: %w", err)
+		return fmt.Errorf("open PostgreSQL Goose migration adapter: %w", err)
 	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	if err := postgresbaseline.Apply(ctx, tx); err != nil {
+	defer db.Close()
+	if err := postgresbaseline.ApplyWithMigrationFence(ctx, pool.NativePool(), db); err != nil {
 		return fmt.Errorf("apply PostgreSQL control baseline: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit PostgreSQL control baseline: %w", err)
 	}
 	return nil
 }

@@ -1,11 +1,8 @@
 package ui
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"net/url"
 	"strings"
-	"time"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
@@ -15,6 +12,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	"github.com/google/uuid"
 
 	"github.com/flidai/leapview/internal/dashboard"
 	g "maragu.dev/gomponents"
@@ -329,9 +327,9 @@ func firstProvider(providers []webpage.Provider) webpage.Provider {
 }
 
 func newStreamInstanceID() string {
-	var bytes [16]byte
-	if _, err := rand.Read(bytes[:]); err == nil {
-		return hex.EncodeToString(bytes[:])
+	id, err := uuid.NewV7()
+	if err != nil {
+		return ""
 	}
-	return hex.EncodeToString([]byte(time.Now().UTC().Format(time.RFC3339Nano)))
+	return id.String()
 }

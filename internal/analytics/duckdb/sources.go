@@ -910,6 +910,19 @@ func validateIdentifier(value string) error {
 	return nil
 }
 
+func validateRelationNamespace(value string) error {
+	if err := validateIdentifier(value); err != nil {
+		return err
+	}
+	if value != strings.ToLower(value) {
+		return fmt.Errorf("relation namespace %q must be lowercase canonical", value)
+	}
+	if len(value) > 63 {
+		return fmt.Errorf("relation namespace %q exceeds 63 bytes", value)
+	}
+	return nil
+}
+
 func SQLString(path string) string {
 	return sqlString(path)
 }

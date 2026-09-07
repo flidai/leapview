@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/admin/personalsettings"
@@ -16,6 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
+	"github.com/flidai/leapview/internal/dashboard/publication"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -221,10 +223,33 @@ func (h Handler) PublicationCommand(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 	if err := h.PublicationMutation(r, signals.AdminPublicationCommand); err != nil {
-		nethttp.Error(w, err.Error(), nethttp.StatusConflict)
+		status := publicationMutationStatus(err)
+		nethttp.Error(w, nethttp.StatusText(status), status)
 		return
 	}
 	_ = pagestream.Redirect(w, r, "/admin/publications")
+}
+
+func publicationMutationStatus(err error) int {
+	if kind, ok := apigenfailure.KindOf(err); ok {
+		switch kind {
+		case "precondition":
+			return nethttp.StatusPreconditionFailed
+		case "not_found":
+			return nethttp.StatusNotFound
+		case "conflict":
+			return nethttp.StatusConflict
+		case "audit_unavailable", "authorization_unavailable", "service_unavailable", "unavailable":
+			return nethttp.StatusServiceUnavailable
+		}
+	}
+	if errors.Is(err, publication.ErrNotFound) {
+		return nethttp.StatusNotFound
+	}
+	if errors.Is(err, publication.ErrConflict) {
+		return nethttp.StatusConflict
+	}
+	return nethttp.StatusServiceUnavailable
 }
 
 func (h Handler) PersonalSettingsCommand(w nethttp.ResponseWriter, r *nethttp.Request) {

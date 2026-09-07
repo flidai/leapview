@@ -213,26 +213,6 @@ interface Releases {
   @extension("x-leapview-object-scope", "project")
   getRelease(@path project: ResourceId, @path release: string): OkJson<ReleaseResponse> | CommonErrors;
 
-  @summary("Upload an immutable project-generation artifact")
-  @route("/{release}/artifact")
-  @put
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(ReleaseConflictFailure)
-  @apigen.failsWith(ReleaseImmutableFailure)
-  @apigen.failsWith(ReleaseArtifactDigestMismatchFailure)
-  @apigen.command(#{
-    auditAction: "release.artifact_uploaded",
-    guarantee: "transactional",
-    failures: #[
-      #{ kind: "invalid", statusCode: 422, code: "INVALID_RELEASE", publicDetail: "The release artifact request is invalid." },
-      #{ kind: "not_found", statusCode: 404, code: "RELEASE_NOT_FOUND", publicDetail: "Release artifact not found." },
-    ],
-  })
-  @apigen.auditPayload(ReleaseArtifactUploadedAuditPayload)
-  @apigen.manual
-  uploadReleaseArtifact(@path @apigen.target project: ResourceId, @path release: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<ReleaseArtifactResponse> | CommonErrors;
-
   @summary("Finalize and validate a release")
   @route("/{release}/finalize")
   @post

@@ -13,13 +13,16 @@ VALUES (sqlc.arg(id), sqlc.arg(name), sqlc.arg(redirect_uris)::jsonb,
         sqlc.arg(token_endpoint_auth_method), sqlc.narg(principal_id));
 
 -- name: EnsureOAuthClient :exec
+-- Infer the repeated id parameter as text once, then cast that text to the
+-- principal UUID. PostgreSQL rejects one prepared parameter inferred as both
+-- text and uuid.
 INSERT INTO access.oauth_client
     (id, name, redirect_uris, grant_types, response_types, scopes, audience,
      public_client, token_endpoint_auth_method, principal_id)
-VALUES (sqlc.arg(id), sqlc.arg(name), sqlc.arg(redirect_uris)::jsonb,
+VALUES (sqlc.arg(id)::text, sqlc.arg(name), sqlc.arg(redirect_uris)::jsonb,
         sqlc.arg(grant_types)::jsonb, sqlc.arg(response_types)::jsonb,
         sqlc.arg(scopes)::jsonb, sqlc.arg(audience)::jsonb,
-        false, 'client_secret_post', sqlc.arg(id)::uuid)
+        false, 'client_secret_post', (sqlc.arg(id)::text)::uuid)
 ON CONFLICT (id) DO UPDATE
 SET name = EXCLUDED.name,
     scopes = EXCLUDED.scopes,
@@ -126,3 +129,9 @@ FROM refresh;
 UPDATE access.oauth_session
 SET active = false
 WHERE kind = sqlc.arg(kind) AND request_id = sqlc.arg(request_id) AND active = true;
+
+-- name: RevokePrincipalOAuthSessions :exec
+UPDATE access.oauth_session
+SET active = false
+WHERE active = true
+  AND request_json->'session'->>'subject' = (sqlc.arg(principal_id)::uuid)::text;

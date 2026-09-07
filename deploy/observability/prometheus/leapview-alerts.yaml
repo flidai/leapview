@@ -37,108 +37,138 @@ groups:
           description: "The process-owned DuckDB runtime on {{ $labels.instance }} reports a fatal cleanup-safety failure."
           runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#duckdb-fatal-health-alert-fires"
 
-      - alert: LeapViewRecoveryQualificationLedgerScrapeFailure
-        expr: max by (job, instance) (leapview_recovery_qualification_scrape_error{job="leapview"}) > 0
-        for: 5m
-        labels:
-          service: leapview
-          severity: warning
-        annotations:
-          summary: "LeapView recovery qualification ledger on {{ $labels.instance }} is unavailable"
-          description: "LeapView has been unable to collect recovery qualification ledger status on {{ $labels.instance }} for more than 5 minutes."
-          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
-
-      - alert: LeapViewRecoveryQualificationOverdue
-        expr: max by (job, instance) (leapview_recovery_qualification_overdue{job="leapview"}) > 0
-        for: 10m
-        labels:
-          service: leapview
-          severity: critical
-        annotations:
-          summary: "LeapView recovery qualification on {{ $labels.instance }} is overdue"
-          description: "At least one recovery qualification on {{ $labels.instance }} has remained past its policy-defined stale deadline for more than 10 minutes."
-          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
-
-      - alert: LeapViewRecoveryQualificationEvidencePublicationFailure
-        expr: max by (job, instance) (leapview_recovery_qualification_evidence{job="leapview",state="failed"}) > 0
-        for: 15m
-        labels:
-          service: leapview
-          severity: warning
-        annotations:
-          summary: "LeapView recovery evidence publication on {{ $labels.instance }} is failing"
-          description: "At least one recovery qualification on {{ $labels.instance }} has remained in failed evidence publication state for more than 15 minutes."
-          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
-
-      - alert: LeapViewAuditOutboxMetricsCollectionFailure
+      - alert: LeapViewPostgresPoolSaturation
         expr: |
-          max by (job, instance) (
-            leapview_audit_outbox_scrape_error{job="leapview"}
-          ) > 0
-          or
           (
-            max by (job, instance) (up{job="leapview"}) == 1
-            unless on (job, instance)
-            max by (job, instance) (leapview_audit_outbox_scrape_error{job="leapview"})
-          )
-        for: 5m
-        labels:
-          service: leapview
-          severity: critical
-        annotations:
-          summary: "LeapView audit-outbox telemetry on {{ $labels.instance }} is unavailable"
-          description: "Audit-outbox aggregate metrics on {{ $labels.instance }} have failed collection or remained absent from an otherwise scrapeable target for more than 5 minutes."
-          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-metrics-collection-failure-alert-fires"
-
-      - alert: LeapViewAuditOutboxTerminalIntents
-        expr: |
-          sum by (job, instance) (
-            leapview_audit_outbox_intents{job="leapview",state=~"poison|quarantined"}
+            max by (job, instance, pool) (
+              leapview_postgres_pool_acquired_connections{job="leapview"}
+            )
+            /
+            max by (job, instance, pool) (
+              leapview_postgres_pool_max_connections{job="leapview"}
+            )
+          ) >= 0.90
+          and on (job, instance, pool)
+          max by (job, instance, pool) (
+            leapview_postgres_pool_max_connections{job="leapview"}
           ) > 0
-        for: 5m
-        labels:
-          service: leapview
-          severity: critical
-        annotations:
-          summary: "LeapView audit outbox on {{ $labels.instance }} contains terminal intents"
-          description: "At least one poison or quarantined audit intent has remained on {{ $labels.instance }} for more than 5 minutes."
-          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-terminal-intents-alert-fires"
-
-      - alert: LeapViewAuditOutboxExcessiveBacklog
-        expr: |
-          sum by (job, instance) (
-            leapview_audit_outbox_intents{job="leapview",state=~"pending|retry|leased|poison|quarantined"}
-          ) > 10000
-          or
-          max by (job, instance) (
-            leapview_audit_outbox_oldest_undelivered_age_seconds{job="leapview"}
-          ) > 3600
         for: 10m
         labels:
           service: leapview
           severity: warning
         annotations:
-          summary: "LeapView audit outbox on {{ $labels.instance }} has an excessive undelivered backlog"
-          description: "The audit-outbox backlog on {{ $labels.instance }} has remained beyond a code-owned readiness boundary (more than 10,000 undelivered intents or an oldest age greater than 1 hour) for more than 10 minutes."
-          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-excessive-backlog-alert-fires"
+          summary: "LeapView PostgreSQL pool {{ $labels.pool }} on {{ $labels.instance }} is saturated"
+          description: "The {{ $labels.pool }} PostgreSQL pool on {{ $labels.instance }} has remained at or above 90% acquired capacity for more than 10 minutes."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-saturation-alert-fires"
 
-      - alert: LeapViewAuditOutboxCapacityExhausted
+      - alert: LeapViewPostgresPoolCriticalSaturation
         expr: |
-          max by (job, instance) (
-            leapview_audit_outbox_capacity{job="leapview"}
+          (
+            max by (job, instance, pool) (
+              leapview_postgres_pool_acquired_connections{job="leapview"}
+            )
+            /
+            max by (job, instance, pool) (
+              leapview_postgres_pool_max_connections{job="leapview"}
+            )
+          ) >= 0.98
+          and on (job, instance, pool)
+          max by (job, instance, pool) (
+            leapview_postgres_pool_max_connections{job="leapview"}
           ) > 0
-          and on (job, instance)
-          max by (job, instance) (
-            leapview_audit_outbox_capacity_remaining{job="leapview"}
-          ) <= 0
         for: 5m
         labels:
           service: leapview
           severity: critical
         annotations:
-          summary: "LeapView audit outbox on {{ $labels.instance }} has exhausted undelivered capacity"
-          description: "Configured audit-outbox undelivered capacity on {{ $labels.instance }} has remained exhausted for more than 5 minutes."
-          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-capacity-exhausted-alert-fires"
+          summary: "LeapView PostgreSQL pool {{ $labels.pool }} on {{ $labels.instance }} has critical saturation"
+          description: "The {{ $labels.pool }} PostgreSQL pool on {{ $labels.instance }} has remained at or above 98% acquired capacity for more than 5 minutes."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-critical-saturation-alert-fires"
+
+      - alert: LeapViewPostgresPoolNoHeadroom
+        expr: |
+          (
+            (
+              max by (job, instance, pool) (
+                leapview_postgres_pool_idle_connections{job="leapview"}
+              ) == 0
+              and on (job, instance, pool)
+              (
+                max by (job, instance, pool) (
+                  leapview_postgres_pool_acquired_connections{job="leapview"}
+                )
+                /
+                max by (job, instance, pool) (
+                  leapview_postgres_pool_max_connections{job="leapview"}
+                )
+              ) >= 0.95
+            )
+            or
+            sum by (job, instance, pool) (
+              rate(leapview_postgres_pool_empty_acquire_count_total{job="leapview"}[5m])
+            ) > 0
+          )
+          and on (job, instance, pool)
+          max by (job, instance, pool) (
+            leapview_postgres_pool_max_connections{job="leapview"}
+          ) > 0
+        for: 5m
+        labels:
+          service: leapview
+          severity: critical
+        annotations:
+          summary: "LeapView PostgreSQL pool {{ $labels.pool }} on {{ $labels.instance }} has no headroom"
+          description: "The {{ $labels.pool }} PostgreSQL pool on {{ $labels.instance }} has had no idle capacity at high utilization or has waited for an empty pool for more than 5 minutes."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-no-headroom-alert-fires"
+
+      - alert: LeapViewPostgresPoolCanceledAcquire
+        expr: |
+          sum by (job, instance, pool) (
+            rate(leapview_postgres_pool_canceled_acquire_count_total{job="leapview"}[5m])
+          ) > 0
+        for: 10m
+        labels:
+          service: leapview
+          severity: warning
+        annotations:
+          summary: "LeapView PostgreSQL pool {{ $labels.pool }} on {{ $labels.instance }} has canceled acquires"
+          description: "The {{ $labels.pool }} PostgreSQL pool on {{ $labels.instance }} has recorded canceled connection acquisitions for more than 10 minutes."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-canceled-acquire-alert-fires"
+
+      - alert: LeapViewPostgresPoolAcquireLatency
+        expr: |
+          (
+            sum by (job, instance, pool) (
+              rate(leapview_postgres_pool_acquire_duration_seconds_total{job="leapview"}[10m])
+            )
+            /
+            sum by (job, instance, pool) (
+              rate(leapview_postgres_pool_acquire_count_total{job="leapview"}[10m])
+            )
+          ) > 2
+          and on (job, instance, pool)
+          sum by (job, instance, pool) (
+            rate(leapview_postgres_pool_acquire_count_total{job="leapview"}[10m])
+          ) > 0
+        for: 10m
+        labels:
+          service: leapview
+          severity: warning
+        annotations:
+          summary: "LeapView PostgreSQL pool {{ $labels.pool }} on {{ $labels.instance }} has high acquire latency"
+          description: "The ten-minute average connection-acquire wait for the {{ $labels.pool }} PostgreSQL pool on {{ $labels.instance }} has remained above 2 seconds for more than 10 minutes."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-acquire-latency-alert-fires"
+
+      - alert: LeapViewPostgresPoolConnectionChurn
+        expr: max by (job, instance, pool) (leapview_postgres_pool_constructing_connections{job="leapview"}) > 0
+        for: 10m
+        labels:
+          service: leapview
+          severity: warning
+        annotations:
+          summary: "LeapView PostgreSQL pool {{ $labels.pool }} on {{ $labels.instance }} is constructing connections"
+          description: "The {{ $labels.pool }} PostgreSQL pool on {{ $labels.instance }} has continuously had connections under construction for more than 10 minutes."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-connection-churn-alert-fires"
 
       - alert: LeapViewDashboardRefreshFastBurn
         expr: |

@@ -32,11 +32,7 @@ type DBTX interface {
 
 // Tx is a strict caller-owned transaction. Repository methods never commit or
 // roll back this value, allowing bootstrap state to share a larger mutation.
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 // Repository owns only platform bootstrap tables.
 type Repository struct{ db DBTX }
@@ -90,7 +86,7 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return ErrInvalid
 	}
-	_, err := tx.Exec(contextOrBackground(ctx), schemaSQL) // sqlc-exception: schema-ddl
+	_, err := tx.Exec(ctx, schemaSQL) // sqlc-exception: schema-ddl
 	return err
 }
 
@@ -106,13 +102,6 @@ func (r *Repository) WithTx(tx Tx) *Repository {
 	return &Repository{db: tx}
 }
 
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
-}
-
 func (r *Repository) valid() bool { return r != nil && r.db != nil }
 
 // GetSetting reads a startup setting by canonical key.
@@ -124,7 +113,7 @@ func (r *Repository) GetSetting(ctx context.Context, key string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	value, err := bootstrapdb.New(r.db).GetSetting(contextOrBackground(ctx), key)
+	value, err := bootstrapdb.New(r.db).GetSetting(ctx, key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -142,7 +131,7 @@ func (r *Repository) UpsertSetting(ctx context.Context, key, value string) error
 	if err != nil {
 		return err
 	}
-	return bootstrapdb.New(r.db).UpsertSetting(contextOrBackground(ctx), bootstrapdb.UpsertSettingParams{Key: key, Value: value})
+	return bootstrapdb.New(r.db).UpsertSetting(ctx, bootstrapdb.UpsertSettingParams{Key: key, Value: value})
 }
 
 // SetSetting is an alias retained for callers using setter vocabulary.
@@ -160,7 +149,7 @@ func (r *Repository) InsertSettingIfMissing(ctx context.Context, key, value stri
 	if err != nil {
 		return false, err
 	}
-	rows, err := bootstrapdb.New(r.db).InsertSettingIfMissing(contextOrBackground(ctx), bootstrapdb.InsertSettingIfMissingParams{Key: key, Value: value})
+	rows, err := bootstrapdb.New(r.db).InsertSettingIfMissing(ctx, bootstrapdb.InsertSettingIfMissingParams{Key: key, Value: value})
 	return rows == 1, err
 }
 
@@ -172,7 +161,6 @@ func (r *Repository) InstanceID(ctx context.Context) (string, error) {
 	if !r.valid() {
 		return "", ErrInvalid
 	}
-	ctx = contextOrBackground(ctx)
 	return instanceID(ctx, r.db)
 }
 
@@ -182,7 +170,7 @@ func (r *Repository) EnsureInstanceID(ctx context.Context, id string) error {
 	if !r.valid() {
 		return ErrInvalid
 	}
-	return ensureInstanceID(contextOrBackground(ctx), r.db, id)
+	return ensureInstanceID(ctx, r.db, id)
 }
 
 // InstanceIDTx is the caller-owned transaction form of InstanceID. The
@@ -191,14 +179,14 @@ func (r *Repository) InstanceIDTx(ctx context.Context, tx Tx) (string, error) {
 	if tx == nil {
 		return "", ErrInvalid
 	}
-	return instanceID(contextOrBackground(ctx), tx)
+	return instanceID(ctx, tx)
 }
 
 func (r *Repository) EnsureInstanceIDTx(ctx context.Context, tx Tx, id string) error {
 	if tx == nil {
 		return ErrInvalid
 	}
-	return ensureInstanceID(contextOrBackground(ctx), tx, id)
+	return ensureInstanceID(ctx, tx, id)
 }
 
 // InstanceEnvironment reads the permanent environment binding.
@@ -206,7 +194,7 @@ func (r *Repository) InstanceEnvironment(ctx context.Context) (string, error) {
 	if !r.valid() {
 		return "", ErrInvalid
 	}
-	row, err := bootstrapdb.New(r.db).GetInstanceEnvironment(contextOrBackground(ctx))
+	row, err := bootstrapdb.New(r.db).GetInstanceEnvironment(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -223,14 +211,14 @@ func (r *Repository) BindInstanceEnvironment(ctx context.Context, environment st
 	if !r.valid() {
 		return ErrInvalid
 	}
-	return bindEnvironment(contextOrBackground(ctx), r.db, environment)
+	return bindEnvironment(ctx, r.db, environment)
 }
 
 func (r *Repository) BindInstanceEnvironmentTx(ctx context.Context, tx Tx, environment string) error {
 	if tx == nil {
 		return ErrInvalid
 	}
-	return bindEnvironment(contextOrBackground(ctx), tx, environment)
+	return bindEnvironment(ctx, tx, environment)
 }
 
 // ClaimProject persists the singleton instance project claim. The claim is
@@ -240,21 +228,21 @@ func (r *Repository) ClaimProject(ctx context.Context, input ProjectClaimInput) 
 	if !r.valid() {
 		return ProjectClaim{}, ErrInvalid
 	}
-	return claimProject(contextOrBackground(ctx), r.db, input)
+	return claimProject(ctx, r.db, input)
 }
 
 func (r *Repository) ClaimProjectTx(ctx context.Context, tx Tx, input ProjectClaimInput) (ProjectClaim, error) {
 	if tx == nil {
 		return ProjectClaim{}, ErrInvalid
 	}
-	return claimProject(contextOrBackground(ctx), tx, input)
+	return claimProject(ctx, tx, input)
 }
 
 func (r *Repository) GetProjectClaim(ctx context.Context) (ProjectClaim, error) {
 	if !r.valid() {
 		return ProjectClaim{}, ErrInvalid
 	}
-	return getProjectClaim(contextOrBackground(ctx), r.db)
+	return getProjectClaim(ctx, r.db)
 }
 
 func instanceID(ctx context.Context, db DBTX) (string, error) {

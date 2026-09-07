@@ -109,10 +109,6 @@ type Supply struct {
 // ExtensionSupply is a descriptive alias used by deployment composition.
 type ExtensionSupply = Supply
 
-// NewSupply is an explicit constructor alias for callers that prefer the
-// domain name in dependency-injection code.
-func NewSupply(config Config) (*Supply, error) { return New(config) }
-
 var _ extension.Admission = (*Supply)(nil)
 var _ extension.Preparation = (*Supply)(nil)
 

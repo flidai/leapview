@@ -221,6 +221,7 @@ model AdminPublicationSignal {
   `dashboard`: string;
   `defaultPage`: string;
   `status`: string;
+  `revision`: int64;
   `origins`: string[];
   `generation`?: string;
   `publicUrl`: string;
@@ -239,6 +240,7 @@ model AdminPublicationCommand {
   `projectId`: string;
   `publication`: string;
   `action`: string;
+  `expectedRevision`: int64;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })

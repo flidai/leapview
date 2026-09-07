@@ -2,6 +2,7 @@ package adminpostgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,17 +25,23 @@ import (
 
 const assumeControlOwnerSQL = `SET LOCAL ROLE leapview_control_owner`
 
-// BootstrapPhysicalPool keeps the production admission path on the native
-// PostgreSQL authorities while evaluation and development retain the explicit
-// offline adapter.
+// BootstrapPhysicalPool admits one physical pool through native PostgreSQL
+// and PostgreSQL-backed DuckLake authorities. Non-production targets do not
+// expose this operation.
 func (o Operations) BootstrapPhysicalPool(ctx context.Context, request adminoffline.PhysicalPoolBootstrapRequest, out io.Writer) error {
 	deps := o.Dependencies.withDefaults()
 	cfg, err := deps.LoadConfig()
 	if err != nil {
 		return err
 	}
-	if !cfg.Production || cfg.EvaluationMode {
-		return o.Operations.BootstrapPhysicalPool(ctx, request, out)
+	if !cfg.Production {
+		// Local development may bootstrap its loopback-only physical pool so
+		// `task dev` can exercise the complete candidate/MCP journey. The same
+		// PostgreSQL role and database boundaries remain mandatory; only TLS and
+		// production admission gates differ.
+		if err := cfg.ValidatePostgresDevelopment(); err != nil {
+			return fmt.Errorf("validate development PostgreSQL physical-pool configuration: %w", err)
+		}
 	}
 	pool, compatibilityDigest, err := validatePhysicalPoolBootstrap(request)
 	if err != nil {
@@ -72,6 +79,17 @@ func validatePhysicalPoolBootstrap(request adminoffline.PhysicalPoolBootstrapReq
 	if err := request.Pool.Validate(); err != nil {
 		return physicalpool.PhysicalPool{}, "", fmt.Errorf("physical-pool identity: %w", err)
 	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "tenant", value: request.Pool.Tenant},
+		{name: "region", value: request.Pool.Region},
+	} {
+		if field.value == "" || field.value != strings.TrimSpace(field.value) {
+			return physicalpool.PhysicalPool{}, "", fmt.Errorf("physical-pool identity: %s is required and must be canonical", field.name)
+		}
+	}
 	if err := request.Evidence.Verify(); err != nil {
 		return physicalpool.PhysicalPool{}, "", fmt.Errorf("physical-pool conformance evidence: %w", err)
 	}
@@ -85,8 +103,11 @@ func validatePhysicalPoolBootstrap(request adminoffline.PhysicalPoolBootstrapReq
 	if err != nil {
 		return physicalpool.PhysicalPool{}, "", err
 	}
-	digest, err := request.Evidence.Compatibility.Digest()
-	return pool, digest, err
+	compatibilityDigest, err := request.Evidence.Compatibility.Digest()
+	if err != nil {
+		return physicalpool.PhysicalPool{}, "", err
+	}
+	return pool, compatibilityDigest, nil
 }
 
 func writePhysicalPoolBootstrapResult(out io.Writer, result adminoffline.PhysicalPoolBootstrapResult) error {
@@ -98,6 +119,8 @@ func writePhysicalPoolBootstrapResult(out io.Writer, result adminoffline.Physica
 }
 
 func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request adminoffline.PhysicalPoolBootstrapRequest) (result adminoffline.PhysicalPoolBootstrapResult, err error) {
+	// CLI/offline lifecycle entrypoints may be invoked without a request context;
+	// normalize before opening migration and catalog resources.
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -105,14 +128,11 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 	if err != nil {
 		return result, err
 	}
-	if !cfg.PostgresRequireTLS {
+	if cfg.Production && !cfg.PostgresRequireTLS {
 		return result, errors.New("production physical-pool bootstrap requires LEAPVIEW_POSTGRES_REQUIRE_TLS=true")
 	}
-	if err := cfg.ValidatePostgres(); err != nil {
-		return result, fmt.Errorf("invalid PostgreSQL application configuration: %w", err)
-	}
-	controlConfig := cfg.PostgresControlMigratorConfig()
-	catalogConfig := cfg.PostgresDuckLakeMigratorConfig()
+	controlConfig := cfg.PostgresControlPlaneConfig().Migrator
+	_, catalogConfig := cfg.PostgresDuckLakeUpgradeConfig()
 	if err := controlConfig.Validate(); err != nil {
 		return result, fmt.Errorf("invalid PostgreSQL control migrator configuration: %w", err)
 	}
@@ -132,7 +152,7 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 		return result, fmt.Errorf("open PostgreSQL control migrator: %w", err)
 	}
 	defer control.Close()
-	if err := postgresbaseline.Verify(ctx, control); err != nil {
+	if err := postgresbaseline.VerifyProvider(ctx, control); err != nil {
 		return result, fmt.Errorf("verify PostgreSQL control baseline: %w", err)
 	}
 	catalogAdmin, err := platformpostgres.OpenDuckLake(ctx, catalogConfig)
@@ -147,11 +167,11 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 	if err := ducklakepostgres.ValidateDatabaseIdentity(controlIdentity, ducklakepostgres.DefaultControlDatabase, controlConfig.RuntimeRole); err != nil {
 		return result, err
 	}
-	catalogDatabaseIdentity, err := ducklakepostgres.ReadDatabaseIdentity(ctx, catalogAdmin)
+	catalogIdentity, err := ducklakepostgres.ReadDatabaseIdentity(ctx, catalogAdmin)
 	if err != nil {
 		return result, err
 	}
-	if err := ducklakepostgres.ValidateDatabaseIdentity(catalogDatabaseIdentity, ducklakepostgres.DefaultDuckLakeDatabase, catalogConfig.RuntimeRole); err != nil {
+	if err := ducklakepostgres.ValidateDatabaseIdentity(catalogIdentity, ducklakepostgres.DefaultDuckLakeDatabase, catalogConfig.RuntimeRole); err != nil {
 		return result, err
 	}
 
@@ -164,8 +184,11 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 			_ = tx.Rollback(context.WithoutCancel(ctx))
 		}
 	}()
-	// sqlc-exception:analyzer-incompatible. PostgreSQL SET LOCAL ROLE cannot be prepared by sqlc vet.
-	if _, err = tx.Exec(ctx, assumeControlOwnerSQL); err != nil {
+	// The authenticated migrator is deliberately NOINHERIT. Assume its fixed
+	// owner capability only inside this caller-owned transaction so pool and
+	// catalog registration cannot leak owner authority to later operations.
+	// sqlc-exception: analyzer-incompatible. PostgreSQL SET LOCAL ROLE cannot be prepared by sqlc vet.
+	if _, err := tx.Exec(ctx, assumeControlOwnerSQL); err != nil {
 		return result, fmt.Errorf("assume PostgreSQL control owner role: %w", err)
 	}
 	ownerID, err := platformbootstrap.New(tx).InstanceID(ctx)
@@ -185,8 +208,7 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 	if err != nil {
 		return result, err
 	}
-	implementation := strings.ToLower(admission.Compatibility.StorageImplementation)
-	if implementation == "local" || implementation == "filesystem" {
+	if implementation := strings.ToLower(admission.Compatibility.StorageImplementation); implementation == "local" || implementation == "filesystem" {
 		if err := os.MkdirAll(dataPath, 0o700); err != nil {
 			return result, fmt.Errorf("create local physical-pool namespace: %w", err)
 		}
@@ -215,7 +237,7 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 		return result, err
 	}
 	credentialBootstrap, err := postgresducklake.NewCredentialBootstrap(postgresducklake.CredentialConfig{
-		PostgresURL: catalogConfig.URL, Contract: contract, ExtensionAdmission: extensionSupply, S3: s3Config,
+		PostgresURL: catalogConfig.URL, AllowPlaintextLoopback: !cfg.Production, Contract: contract, ExtensionAdmission: extensionSupply, S3: s3Config,
 	})
 	if err != nil {
 		return result, err
@@ -239,27 +261,51 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 	if err := environment.Close(); err != nil {
 		return result, fmt.Errorf("close DuckLake bootstrap session: %w", err)
 	}
-	if err := ducklakepostgres.ProvisionCatalogPrivileges(ctx, catalogAdmin, metadataSchema, cfg.PostgresDuckLakeRuntimeRoleName(), cfg.PostgresDuckLakeMaintenanceRoleName()); err != nil {
+	runtimeRole := cfg.PostgresDuckLakeRuntimeConfig().RuntimeRole
+	if err := ducklakepostgres.ProvisionCatalogRuntimePrivileges(ctx, catalogAdmin, metadataSchema, runtimeRole); err != nil {
 		return result, err
 	}
-	registration, err := ducklakepostgres.ReadCatalogRegistrationEvidence(ctx, catalogAdmin, metadataSchema)
+	maintenanceRole := cfg.PostgresDuckLakeMaintenanceConfig().RuntimeRole
+	if err := ducklakepostgres.ProvisionCatalogMaintenancePrivileges(ctx, catalogAdmin, metadataSchema, maintenanceRole); err != nil {
+		return result, err
+	}
+	registrationEvidence, err := ducklakepostgres.ReadCatalogRegistrationEvidence(ctx, catalogAdmin, metadataSchema)
 	if err != nil {
 		return result, err
 	}
-	identity, err := ducklakepostgres.DeriveCatalogIdentity(createdPool.ID.String(), registration.CatalogDatabase, compatibilityDigest, registration.CatalogSchemaVersion)
+	identity, err := ducklakepostgres.DeriveCatalogIdentity(createdPool.ID.String(), registrationEvidence.CatalogDatabase)
 	if err != nil {
 		return result, err
 	}
-	if err := ducklakepostgres.BootstrapCatalog(ctx, tx, identity, ducklakepostgres.RuntimeCompatibility{
-		DuckDBRuntime:        createdAdmission.Compatibility.DuckDBRuntime,
-		DuckLakeExtension:    createdAdmission.Compatibility.DuckLakeExtension,
-		CatalogFormat:        createdAdmission.Compatibility.CatalogFormat,
-		CompatibilityDigest:  compatibilityDigest,
-		CatalogSchemaVersion: registration.CatalogSchemaVersion,
+	runtimeCompatibility := ducklakepostgres.RuntimeCompatibility{
+		RuntimeTuple: ducklakepostgres.RuntimeTuple{
+			DuckDBRuntime: createdAdmission.Compatibility.DuckDBRuntime, DuckLakeExtension: createdAdmission.Compatibility.DuckLakeExtension,
+			CatalogFormat: createdAdmission.Compatibility.CatalogFormat,
+		},
+		CompatibilityDigest: compatibilityDigest, CatalogSchemaVersion: registrationEvidence.CatalogSchemaVersion,
+	}
+	if _, _, err := ducklakepostgres.BootstrapCatalog(ctx, tx, identity, runtimeCompatibility); err != nil {
+		return result, err
+	}
+	beginEvidence, err := json.Marshal(map[string]any{
+		"backup_verified": true, "bootstrap": true, "conformance_evidence_digest": request.Evidence.Digest, "drain_verified": true,
+	})
+	if err != nil {
+		return result, err
+	}
+	completionEvidence, err := json.Marshal(map[string]any{
+		"bootstrap": true, "catalog_registration_verified": true, "conformance_evidence_digest": request.Evidence.Digest,
+	})
+	if err != nil {
+		return result, err
+	}
+	if _, err := ducklakepostgres.QualifyCatalogBootstrap(ctx, tx, ducklakepostgres.CatalogBootstrapQualificationInput{
+		PhysicalPoolID: identity.PhysicalPoolID, CatalogID: identity.CatalogID, OwnerID: ownerID,
+		Compatibility: runtimeCompatibility, BeginEvidence: beginEvidence, CompletionEvidence: completionEvidence,
 	}); err != nil {
-		return result, err
+		return result, fmt.Errorf("qualify initial PostgreSQL-backed DuckLake catalog: %w", err)
 	}
-	if err = tx.Commit(ctx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return result, err
 	}
 	return adminoffline.PhysicalPoolBootstrapResult{

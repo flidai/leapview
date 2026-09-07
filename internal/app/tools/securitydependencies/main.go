@@ -16,6 +16,7 @@ import (
 func main() {
 	rootFlag := flag.String("root", "", "repository root (defaults to the git top-level)")
 	timeoutFlag := flag.Duration("timeout", defaultTimeout, "maximum duration for each scanner command")
+	refreshFlag := flag.Bool("refresh-javascript-evidence", false, "run live JavaScript audits and atomically refresh vulnerability evidence")
 	flag.Parse()
 	root, err := resolveRoot(*rootFlag)
 	if err != nil {
@@ -25,7 +26,11 @@ func main() {
 		fail("dependency security: invalid timeout", errors.New("timeout must be positive"))
 	}
 	runner := &runner{root: root, timeout: *timeoutFlag, stdout: os.Stdout, stderr: os.Stderr}
-	if err := runner.run(); err != nil {
+	run := runner.run
+	if *refreshFlag {
+		run = runner.runRefresh
+	}
+	if err := run(); err != nil {
 		fail("dependency security", err)
 	}
 }

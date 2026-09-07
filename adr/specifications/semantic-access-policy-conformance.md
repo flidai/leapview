@@ -27,12 +27,41 @@ specification. It currently adds the PostgreSQL definition registry (revision
 2), durable principal/group assignments and trusted-claim mappings (revision
 3), shared typed canonicalization at those boundaries, a source-bound trusted
 claim verifier package, effective direct/group resolution behind the opaque
-`trustedclaims.Envelope` boundary, and platform-admin control APIs. It does not
-yet implement the SemanticModel
-policy compiler, planner security barrier, catalog or query consumer
-integration, source-provider adapters, semantic generation references, or
-cache/event invalidation. Those requirements remain normative targets and
-their evidence remains pending or partial below.
+`trustedclaims.Envelope` boundary, and platform-admin control APIs.
+
+FAI-639 adds a bounded compiler/evaluator slice. The generated SemanticModel
+contract is lowered into a detached runtime policy without embedding registry
+or principal values. A target-qualified compiler checks semantic lineage,
+registry identity, active typed definitions, direct filter bindings, and
+transitive grant requirements, then emits deterministic policy metadata and a
+policy digest. An evaluator consumes a trusted effective-value snapshot plus
+complete registry/control authority snapshots, recomputes their canonical
+digests, checks target-qualified identity agreement and value digests, requires
+opaque access-owned assignment evidence for direct-derived values bound to the
+exact control state and principal/group closure, and verified-envelope
+evidence for claim-derived values bound to the exact control mappings and
+verified envelope. It evaluates grants and emits typed PlanIR equality/IN/AND
+predicates plus deterministic decision identity and non-sensitive filter
+evidence. Multi-dataset member decisions carry a complete per-dataset predicate
+set. PostgreSQL
+registry/control reads use bounded before/after validation under READ
+COMMITTED; snapshot admission validates derived lifecycle, name,
+definition-reference, and tombstone consistency without changing the persisted
+digest wire formats. It does not fetch repositories or verify raw provider
+tokens, attach planner barriers, filter catalogs, execute queries, or publish
+cache invalidation.
+
+FAI-641 owns planner security-barrier enforcement; FAI-642 separately owns
+discovery and semantic-consumer integration. Source-provider adapters, semantic generation references, and
+cache/event invalidation also remain pending or partial below.
+
+FAI-619 is the structural contract authority. Its generated SemanticModel
+boundary and compatibility-lowering fixtures are complemented by FAI-639's
+runtime lowering and compiler/evaluator fixtures, but neither qualifies
+planner security barriers or consumer admission. FAI-641 adds the separate
+planner boundary; FAI-642 consumer admission remains pending.
+VAL-11 remains Partial until generated canonicalization and the complete
+control-plane and runtime equivalence paths are evidenced.
 
 ## Change control
 
@@ -81,26 +110,27 @@ spec:
       datatype: String
       bindings:
         orders:
-          field: region
+          field: orders.region
     customerEmail:
       datatype: String
       bindings:
         orders:
-          field: customer_email
+          field: orders.customer_email
       requiredAccessGrants:
         - canViewPII
-  measures:
-    revenue:
-      dataset: orders
-      aggregation: sum
-      input:
-        field: revenue
-    cost:
-      dataset: orders
-      aggregation: sum
-      input:
-        field: cost
   metrics:
+    revenue:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input:
+        field: orders.revenue
+    cost:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input:
+        field: orders.cost
     grossMargin:
       type: derived
       expression: revenue - cost
@@ -543,17 +573,18 @@ remain unqualified, so LIF is not complete.
 | Requirement range | Evidence | Status |
 |---|---|---|
 | CHG-01–CHG-04 | Profile-version, historical-policy, and normative-change checks | Pending |
-| STR-01–STR-12 | Generated TypeSpec, JSON Schema, DTO, extracted-YAML, and authoring-registry fixtures | Pending |
+| FAI-619 structural authority + FAI-639 compiler/evaluator boundary | [`api/data-resources/main.tsp`](../../api/data-resources/main.tsp), generated [JSON Schema](../../internal/project/contracts/gen/data-resources.schema.json) and [Go DTOs](../../internal/project/contracts/models.gen.go), [generated-boundary fixtures](../../internal/project/contracts/contracts_test.go), [structural and extracted-YAML fixtures](../../internal/project/schema/semantic_access_contract_test.go), [generated-schema matrix](../../internal/project/schema/semantic_model_generated_schema_test.go), compiler compatibility/exact-number fixtures, [FAI-639 lowering fixtures](../../internal/project/compiler/data_resources_test.go), [compiler fixtures](../../internal/project/compiler/semantic_model_lowering_test.go), [snapshot fixtures](../../internal/analytics/model/semantic_access_test.go), [policy compiler/evaluator fixtures](../../internal/analytics/query/semantic_access_compile_test.go) / [evaluator fixtures](../../internal/analytics/query/semantic_access_evaluate_test.go), [direct assignment evidence](../../internal/access/semantic_attribute_direct_evidence_test.go), [verified claim evidence](../../internal/access/semantic_attribute_claim_evidence_test.go), [snapshot admission validation](../../internal/access/semantic_attribute_snapshot_validation_test.go), [bounded registry reader fixtures](../../internal/access/postgres/semantic_attribute_registry_snapshot_test.go), and the [planner/consumer boundary architecture guard](../../internal/platform/architecture/semantic_access_compiler_test.go). These prove the structural and bounded compiler/evaluator boundaries, opaque evidence, complete member predicate propagation, reader stability, and digest-preserving admission checks only; FAI-641 planner evidence is tracked separately below; FAI-642 consumer integration remains pending. | Partial |
+| STR-01–STR-12 | The FAI-619 generated-boundary, structural, extracted-YAML, and compiler fixtures above cover the generated surface; FAI-639 adds local grant-reference and registry/type qualification. STR-08 remains partial because standalone transitional `DataPolicy` rejection and complete target/generation admission are not evidenced by this slice. | Partial |
 | ATT-01–ATT-04, ATT-08, ATT-11–ATT-12 | PostgreSQL registry/control migrations and repositories, typed API envelopes, canonical-value tests, trustedclaims structural tests, and platform-admin route/attenuation tests | Partial: durable definition/assignment/mapping boundaries are implemented; principal-context integration, source adapters, and semantic-consumer admission are not. |
-| ATT-05–ATT-07, ATT-09–ATT-10 | Control snapshot identity and disable/tombstone behavior exist; generation-reference, provider-admission, runtime expiry wiring, dependent-object invalidation, and rollback retention checks remain unqualified | Partial |
+| ATT-05–ATT-07, ATT-09–ATT-10 | Control snapshot identity and disable/tombstone behavior exist. Bounded before/after registry/control reads, effective-resolution stability checks, opaque direct-assignment evidence, verified-envelope evidence, and derived lifecycle/name/definition-reference/tombstone admission checks are covered; generation-reference, provider-admission, runtime expiry wiring, dependent-object invalidation, and rollback retention checks remain unqualified | Partial |
 | VAL-01–VAL-10 | [`internal/semanticvalue`](../../internal/semanticvalue/value.go), its [unit](../../internal/semanticvalue/value_test.go) and [cross-path](../../internal/semanticvalue/crosspath_test.go) tests, the independent [`profile-v1.json`](../../internal/semanticvalue/testdata/profile-v1.json) fixture, and semantic-filter integration | Implemented at the shared semantic-value boundary; typed control ingress also consumes it |
-| VAL-11 | The shared `internal/semanticvalue` canonicalizer is used by registry, assignment, mapping, effective-value, and semantic-filter paths. Generated canonicalization plus complete control-plane claim-ingestion, candidate-validation, runtime-evaluation, policy-digest, cache, and audit-projection equivalence remain unqualified. | Partial |
-| GRT-01–GRT-10 | Access-grant compiler and evaluator fixtures | Pending |
-| FLT-01–FLT-10 | Semantic planner, parameterization, cardinality, and fail-closed tests | Pending |
-| PLN-01–PLN-09 | Security-barrier IR validation and join, aggregate, rollup, and rewrite golden plans | Pending |
+| VAL-11 | The shared `internal/semanticvalue` canonicalizer is used by registry, assignment, mapping, effective-value, semantic-filter, and FAI-639 compiler/evaluator paths. Generated canonicalization plus complete control-plane claim-ingestion, candidate-validation, runtime-evaluation, policy-digest, cache, and audit-projection equivalence remain unqualified. | Partial |
+| GRT-01–GRT-10 | FAI-639 [policy compiler fixtures](../../internal/analytics/query/semantic_access_compile_test.go) and [evaluator fixtures](../../internal/analytics/query/semantic_access_evaluate_test.go) cover target-independent lowering, registry-qualified grant references, canonical typed matching, logical-AND requirements, transitive member decisions, opaque direct-assignment and verified-claim evidence, stale/tampered snapshot rejection, complete multi-dataset member predicate sets, and deterministic outcomes. Provider-adapter expiry wiring, all consumer admission, and end-to-end discovery/execution remain unqualified. | Partial |
+| FLT-01–FLT-10 | FAI-639 compiler/evaluator fixtures cover direct compatible dimension binding, scalar `compare`/`=` and list `in` typed PlanIR output, filter `and` composition, complete per-dataset predicate propagation, value-digest/evidence identity, and fail-closed missing/stale values. FAI-641 adds planner placement and bound-parameter execution tests below; discovery and consumer enforcement remain unqualified. | Partial |
+| PLN-01–PLN-09 | FAI-641 [planner boundary](../../docs/articles/architecture/semantic-access-planner.md), [barrier fixtures](../../internal/analytics/query/planir/security_test.go), and [executable join/aggregation and mutation regressions](../../internal/analytics/query/planir/security_review_test.go) establish explicit pre-relational barriers and fail-closed seals. Existing relationship traversal supports LEFT JOIN; arbitrary join-kind, rollup/cache substitution, and consumer-wide qualification are not claimed by this slice. | Partial |
 | ENF-01–ENF-11 | Catalog, dashboard, Explore, agent, export, API, and embed integration tests | Pending |
 | CMP-01–CMP-06 | Policy-diff, compatibility, security-impact, version, and approval fixtures | Pending |
-| LIF-01–LIF-08 | Registry/control revision+digest identities and transactional control audit are implemented; cache partitioning, immediate event invalidation, semantic planning, generation references, and complete audit projection are not | Partial |
+| LIF-01–LIF-08 | Registry/control revision+digest identities, bounded reader validation, digest-preserving snapshot admission, deterministic policy/decision/evidence identities, and transactional control audit are implemented; cache partitioning, immediate event invalidation, semantic planning, generation references, and complete audit projection are not | Partial |
 | OUT-01–OUT-05 | Negative schema, architecture, and documentation checks | Pending |
 
 ## Maintained verification

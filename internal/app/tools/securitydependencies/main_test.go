@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,221 @@ import (
 
 	"github.com/flidai/leapview/internal/app/securitypolicy"
 )
+
+func TestCommandMarksTimeoutAsLifecycleFailure(t *testing.T) {
+	r := &runner{timeout: 10 * time.Millisecond}
+	result := r.command(t.TempDir(), "sh", "-c", "sleep 1")
+	if !result.timedOut || !errors.Is(result.err, context.DeadlineExceeded) {
+		t.Fatalf("timeout result = %+v, want deadline lifecycle markers", result)
+	}
+}
+
+func TestScanGoRejectsLifecycleDiagnosticsAndIncompleteStreams(t *testing.T) {
+	contract := exceptionContract{Exceptions: []securitypolicy.Exception{{
+		Scanner: "govulncheck", Rule: "GO-2026-test", Resource: "example/module",
+	}}}
+	complete := []byte(govulnConfigMessage + "\n" + govulnSBOMMessage + "\n" + `{"osv":{"id":"GO-2026-test"}}
+{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module"}]}}`)
+	tests := map[string]commandResult{
+		"timeout with partial JSON": {stdout: []byte(`{"finding":`), status: 1, timedOut: true},
+		"canceled":                  {stdout: complete, status: 1, canceled: true},
+		"signaled":                  {stdout: complete, status: 1, signaled: true},
+		"stderr diagnostic":         {stdout: complete, stderr: []byte("network provider unavailable\n"), status: 1},
+		"unexpected command error":  {stdout: complete, status: 1, err: errors.New("provider transport failed")},
+		"partial JSON":              {stdout: []byte(`{"finding":`), status: 1},
+		"malformed status zero":     {stdout: []byte(`{"finding":`), status: 0},
+	}
+	for name, result := range tests {
+		t.Run(name, func(t *testing.T) {
+			var calls int
+			r := &runner{
+				stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{},
+				goCommand: func(string, ...string) commandResult { calls++; return result },
+			}
+			if err := r.scanGo("/fixture/go.mod", &contract); err == nil {
+				t.Fatal("unsafe govulncheck result was accepted")
+			}
+			if calls != 1 {
+				t.Fatalf("govulncheck was invoked %d times, want 1", calls)
+			}
+		})
+	}
+}
+
+const govulnConfigMessage = `{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scanner_version":"v1.6.0","db":"https://vuln.go.dev","db_last_modified":"2026-09-04T00:00:00Z","scan_level":"symbol","scan_mode":"source"}}`
+const govulnSBOMMessage = `{"SBOM":{"go_version":"go1.25.0","modules":[{"path":"example/root"}],"roots":["example/root"]}}`
+const cleanGovulnStream = govulnConfigMessage + "\n" + govulnSBOMMessage
+
+func cleanGovulnCommandResult() commandResult {
+	return commandResult{stdout: []byte(cleanGovulnStream)}
+}
+
+const cleanGovulnVersionOutput = "Go: go1.25.0\nScanner: govulncheck@v1.6.0\nDB: https://vuln.go.dev\nDB updated: 2026-09-04T00:00:00Z\n\n"
+
+func cleanGovulnCommandResultForArgs(args ...string) commandResult {
+	if containsString(args, "install") {
+		return commandResult{}
+	}
+	if containsString(args, "-version") {
+		return commandResult{stdout: []byte(cleanGovulnVersionOutput)}
+	}
+	return cleanGovulnCommandResult()
+}
+
+func TestPrepareGovulncheckFailsClosedOnProvisioningContract(t *testing.T) {
+	tests := []struct {
+		name       string
+		install    commandResult
+		version    commandResult
+		wantErr    string
+		wantBinary bool
+	}{
+		{name: "clean", install: commandResult{}, version: commandResult{stdout: []byte(cleanGovulnVersionOutput)}, wantBinary: true},
+		{name: "permitted download progress", install: commandResult{stderr: []byte("go: downloading golang.org/x/vuln v1.6.0\ngo: downloading golang.org/x/tools v0.49.0\n")}, version: commandResult{stdout: []byte(cleanGovulnVersionOutput)}, wantBinary: true},
+		{name: "unknown stderr", install: commandResult{stderr: []byte("network provider unavailable\n")}, version: commandResult{stdout: []byte("Scanner: govulncheck@v1.6.0\n")}, wantErr: "unknown diagnostics"},
+		{name: "wrong identity", install: commandResult{}, version: commandResult{stdout: []byte("Scanner: govulncheck@v1.5.0\n")}, wantErr: "identity"},
+		{name: "missing identity", install: commandResult{}, version: commandResult{}, wantErr: "identity"},
+		{name: "install stdout", install: commandResult{stdout: []byte("installed\n")}, version: commandResult{stdout: []byte(cleanGovulnVersionOutput)}, wantErr: "stdout"},
+		{name: "version stderr", install: commandResult{}, version: commandResult{stdout: []byte(cleanGovulnVersionOutput), stderr: []byte("go: downloading example.com/module v1.0.0\n")}, wantErr: "stderr"},
+		{name: "duplicate identity", install: commandResult{}, version: commandResult{stdout: []byte(cleanGovulnVersionOutput + "Scanner: govulncheck@v1.6.0\n")}, wantErr: "identity"},
+		{name: "extraneous identity output", install: commandResult{}, version: commandResult{stdout: []byte("diagnostic\n" + cleanGovulnVersionOutput)}, wantErr: "identity"},
+		{name: "nonzero status", install: commandResult{status: 1}, version: commandResult{stdout: []byte("Scanner: govulncheck@v1.6.0\n")}, wantErr: "status 1"},
+		{name: "lifecycle error", install: commandResult{timedOut: true}, version: commandResult{stdout: []byte("Scanner: govulncheck@v1.6.0\n")}, wantErr: "lifecycle"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			var installCalls, versionCalls int
+			r := &runner{
+				root: t.TempDir(), timeout: time.Second, stdout: &stdout, stderr: &stderr,
+				goInstallCommand: func(string, string, ...string) commandResult { installCalls++; return test.install },
+				govulnCommand: func(_ string, _ string, args ...string) commandResult {
+					if containsString(args, "-version") {
+						versionCalls++
+					}
+					return test.version
+				},
+			}
+			binary, cleanup, err := r.prepareGovulncheck()
+			if test.wantErr == "" {
+				if err != nil || !test.wantBinary || binary == "" {
+					t.Fatalf("prepareGovulncheck() = %q, %v; want binary", binary, err)
+				}
+				cleanup()
+			} else if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("prepareGovulncheck() error = %v, want %q", err, test.wantErr)
+			}
+			if installCalls != 1 {
+				t.Fatalf("install calls = %d, want 1", installCalls)
+			}
+			wantVersionCalls := 1
+			if test.wantErr == "status 1" || test.wantErr == "lifecycle" || test.name == "unknown stderr" || test.name == "install stdout" {
+				wantVersionCalls = 0
+			}
+			if versionCalls != wantVersionCalls {
+				t.Fatalf("version calls = %d, want %d", versionCalls, wantVersionCalls)
+			}
+		})
+	}
+}
+
+func TestRunBootstrapsGovulncheckOnceForMultipleModules(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "go.mod", "module example/root\n\ngo 1.25\n")
+	writeFixture(t, root, "nested/go.mod", "module example/nested\n\ngo 1.25\n")
+	var installCalls, versionCalls, scanCalls int
+	var installedGOBIN string
+	var stdout, stderr bytes.Buffer
+	r := &runner{
+		root: root, timeout: time.Second, stdout: &stdout, stderr: &stderr,
+		goInstallCommand: func(_ string, gobin string, args ...string) commandResult {
+			installCalls++
+			if gobin == "" || len(args) != 2 || args[0] != "install" || args[1] != "golang.org/x/vuln/cmd/govulncheck@v1.6.0" {
+				t.Fatalf("bootstrap command = gobin %q args %v", gobin, args)
+			}
+			installedGOBIN = gobin
+			return commandResult{}
+		},
+		govulnCommand: func(_ string, binary string, args ...string) commandResult {
+			if !filepath.IsAbs(binary) || filepath.Dir(binary) != installedGOBIN {
+				t.Fatalf("govulncheck binary = %q, want absolute path in %q", binary, installedGOBIN)
+			}
+			if containsString(args, "-version") {
+				versionCalls++
+				return commandResult{stdout: []byte(cleanGovulnVersionOutput)}
+			}
+			scanCalls++
+			return cleanGovulnCommandResult()
+		},
+	}
+	if err := r.run(); err == nil || !strings.Contains(err.Error(), "checked-in JavaScript") {
+		t.Fatalf("run() error = %v, want evidence failure after Go scans", err)
+	}
+	if installCalls != 1 || versionCalls != 1 || scanCalls != 2 {
+		t.Fatalf("bootstrap/scanner calls = install:%d version:%d scan:%d, want 1/1/2", installCalls, versionCalls, scanCalls)
+	}
+	if _, err := os.Stat(installedGOBIN); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("private govulncheck directory was not removed: %v", err)
+	}
+}
+
+func TestScanGoEvaluatesStatusZeroJSONFindings(t *testing.T) {
+	vulnerable := []byte(cleanGovulnStream + "\n" +
+		`{"osv":{"id":"GO-2026-test"}}` + "\n" +
+		`{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module","package":"example/module/pkg","function":"Vulnerable"}]}}`)
+	moduleOnly := []byte(cleanGovulnStream + "\n" +
+		`{"osv":{"id":"GO-2026-test"}}` + "\n" +
+		`{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module"}]}}`)
+	packageOnly := []byte(cleanGovulnStream + "\n" +
+		`{"osv":{"id":"GO-2026-test"}}` + "\n" +
+		`{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module","package":"example/module/pkg"}]}}`)
+	called := []byte(cleanGovulnStream + "\n" +
+		`{"osv":{"id":"GO-2026-test"}}` + "\n" +
+		`{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module","package":"example/module/pkg","function":"Vulnerable"},{"module":"example/root","package":"example/root","function":"main"}]}}`)
+	tests := []struct {
+		name    string
+		result  commandResult
+		wantErr string
+	}{
+		{name: "clean", result: commandResult{stdout: []byte(cleanGovulnStream)}},
+		{name: "finding with documented json status", result: commandResult{stdout: vulnerable}, wantErr: "reported finding GO-2026-test in example/module"},
+		{name: "multi-frame called finding", result: commandResult{stdout: called}, wantErr: "reported finding GO-2026-test in example/module"},
+		{name: "module finding is informational", result: commandResult{stdout: moduleOnly}},
+		{name: "package finding is informational", result: commandResult{stdout: packageOnly}},
+		{name: "unknown nonzero status", result: commandResult{stdout: []byte(cleanGovulnStream), status: 2}, wantErr: "status 2"},
+		{name: "progress without config", result: commandResult{stdout: []byte(`{"progress":{"message":"checking"}}`)}, wantErr: "config must be the first message"},
+		{name: "empty envelope", result: commandResult{stdout: []byte(`{}`)}, wantErr: "exactly one field"},
+		{name: "wrong scanner version", result: commandResult{stdout: []byte(strings.Replace(cleanGovulnStream, `"scanner_version":"v1.6.0"`, `"scanner_version":"v1.5.0"`, 1))}, wantErr: "config identity is unsupported"},
+		{name: "missing scan level", result: commandResult{stdout: []byte(strings.Replace(cleanGovulnStream, `,"scan_level":"symbol"`, "", 1))}, wantErr: "config identity is unsupported"},
+		{name: "wrong scan level", result: commandResult{stdout: []byte(strings.Replace(cleanGovulnStream, `"scan_level":"symbol"`, `"scan_level":"package"`, 1))}, wantErr: "config identity is unsupported"},
+		{name: "config only", result: commandResult{stdout: []byte(govulnConfigMessage)}, wantErr: "source SBOM is missing"},
+		{name: "empty source sbom", result: commandResult{stdout: []byte(govulnConfigMessage + "\n" + `{"SBOM":{}}`)}, wantErr: "source SBOM is incomplete"},
+		{name: "function without package", result: commandResult{stdout: []byte(cleanGovulnStream + "\n" + `{"osv":{"id":"GO-2026-test"}}` + "\n" + `{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module","function":"Vulnerable"}]}}`)}, wantErr: "finding trace is malformed"},
+		{name: "mixed package and call trace", result: commandResult{stdout: []byte(cleanGovulnStream + "\n" + `{"osv":{"id":"GO-2026-test"}}` + "\n" + `{"finding":{"osv":"GO-2026-test","trace":[{"module":"example/module","package":"example/module/pkg"},{"module":"example/root","package":"example/root","function":"main"}]}}`)}, wantErr: "finding trace is malformed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var gotArgs []string
+			r := &runner{
+				stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{},
+				goCommand: func(_ string, args ...string) commandResult {
+					gotArgs = append([]string(nil), args...)
+					return test.result
+				},
+			}
+			err := r.scanGo("/fixture/go.mod", nil)
+			if test.wantErr == "" && err != nil {
+				t.Fatalf("clean stream rejected: %v", err)
+			}
+			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+				t.Fatalf("scanGo error = %v, want %q", err, test.wantErr)
+			}
+			if !containsString(gotArgs, "-json") {
+				t.Fatalf("govulncheck args = %v, want JSON mode", gotArgs)
+			}
+		})
+	}
+}
 
 func TestDiscoverMaintainedFilesAndExclusions(t *testing.T) {
 	root := t.TempDir()
@@ -39,16 +256,14 @@ func TestRunnerUsesPinnedScannersAndRejectsFindings(t *testing.T) {
 	setFakeScannerEnv(t, bin, log, "")
 	var stdout, stderr bytes.Buffer
 	r := &runner{root: root, timeout: time.Second, stdout: &stdout, stderr: &stderr}
-	if err := r.run(); err != nil {
+	if err := r.runRefresh(); err != nil {
 		t.Fatalf("run() error = %v\nstdout=%s\nstderr=%s\nlog=%s", err, stdout.String(), stderr.String(), mustRead(t, log))
 	}
 	logs := mustRead(t, log)
 	for _, fragment := range []string{
-		"go|" + root + "|run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...",
-		"go|" + filepath.Join(root, "nested") + "|run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...",
-		"bun|" + root + "|audit --audit-level critical",
-		"bun|" + filepath.Join(root, "desktop") + "|audit --audit-level critical",
-		"npm|" + filepath.Join(root, "typespec") + "|audit --package-lock-only --audit-level=critical --ignore-scripts",
+		"bun|" + root + "|audit --audit-level critical --json",
+		"bun|" + filepath.Join(root, "desktop") + "|audit --audit-level critical --json",
+		"npm|" + filepath.Join(root, "typespec") + "|audit --package-lock-only --audit-level=critical --ignore-scripts --json",
 	} {
 		if !strings.Contains(logs, fragment) {
 			t.Errorf("scanner log does not contain %q:\n%s", fragment, logs)
@@ -58,7 +273,7 @@ func TestRunnerUsesPinnedScannersAndRejectsFindings(t *testing.T) {
 	setFakeScannerMode(t, "vulnerable")
 	stdout.Reset()
 	stderr.Reset()
-	if err := r.run(); err == nil || !strings.Contains(stderr.String(), "critical dependency finding") {
+	if err := r.runRefresh(); err == nil || !strings.Contains(err.Error(), "Critical JavaScript dependency finding") {
 		t.Fatalf("vulnerable scanner was not rejected: err=%v stderr=%q", err, stderr.String())
 	}
 }
@@ -112,14 +327,38 @@ func TestTypedJSONParsersRejectMalformedFindings(t *testing.T) {
 	if count, critical, err := bunFindingCounts([]byte(`{"pkg":[{"severity":"moderate"}]}`)); err != nil || count != 1 || critical != 0 {
 		t.Fatalf("valid Bun result = (%d, %d, %v)", count, critical, err)
 	}
-	for _, data := range []string{`[]`, `{"pkg":{}}`, `{"pkg":null}`, `{"pkg":[{"severity":3}]}`, `{"pkg":[null]}`} {
+	if count, critical, err := bunFindingCounts([]byte(`{"pkg":[{"severity":"low"},{"severity":"critical"}]}`)); err != nil || count != 2 || critical != 1 {
+		t.Fatalf("valid low and critical Bun results = (%d, %d, %v)", count, critical, err)
+	}
+	for _, data := range []string{
+		`[]`,
+		`{"pkg":{}}`,
+		`{"pkg":null}`,
+		`{"pkg":[{"severity":3}]}`,
+		`{"pkg":[{"severity":null}]}`,
+		`{"pkg":[{"severity":""}]}`,
+		`{"pkg":[{"severity":" "}]}`,
+		`{"pkg":[{"severity":"unknown"}]}`,
+		`{"pkg":[null]}`,
+	} {
 		if _, _, err := bunFindingCounts([]byte(data)); err == nil {
 			t.Errorf("bunFindingCounts(%s) accepted malformed JSON", data)
 		}
 	}
-	if got, ok := decodeGovulnFindings([]byte(`{"finding":{}} trailing`)); ok || got != nil {
-		t.Fatalf("malformed govulncheck stream was accepted: %#v, %v", got, ok)
+	for _, data := range []string{`{"finding":{}} trailing`, `null`, `[]`, `"diagnostic"`, `{}`, `{"progress":{}}`} {
+		if stream, err := parseGovulnStream([]byte(data)); err == nil {
+			t.Fatalf("malformed govulncheck stream was accepted: %s -> %#v", data, stream)
+		}
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDiagnosticsAreBoundedAndRedacted(t *testing.T) {
@@ -139,7 +378,7 @@ func TestDiagnosticsAreBoundedAndRedacted(t *testing.T) {
 func scannerFixture(t *testing.T) (root, bin, log string) {
 	t.Helper()
 	root = t.TempDir()
-	for _, path := range []string{"go.mod", "nested/go.mod", "bun.lock", "desktop/bun.lock", "typespec/package-lock.json"} {
+	for _, path := range []string{"go.mod", "nested/go.mod", "bun.lock", "package.json", "desktop/bun.lock", "desktop/package.json", "typespec/package-lock.json", "typespec/package.json"} {
 		writeFixture(t, root, path, "{}\n")
 	}
 	bin = filepath.Join(root, "bin")
@@ -151,17 +390,66 @@ func scannerFixture(t *testing.T) (root, bin, log string) {
 set -eu
 tool="$(basename "$0")"
 printf '%s|%s|%s\n' "$tool" "$PWD" "$*" >> "$SECURITY_TEST_LOG"
-if [[ "$tool" == "go" || "$tool" == "npm" ]]; then exit 0; fi
+if [[ "$1" == "--version" ]]; then printf '1.0.0\n'; exit 0; fi
+if [[ "$tool" == "go" ]]; then exit 0; fi
+if [[ "$tool" == "npm" ]]; then printf '{"metadata":{"dependencies":{"total":1},"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0,"total":0}},"vulnerabilities":{}}\n'; exit 0; fi
 case "${SECURITY_TEST_MODE:-}" in
 vulnerable)
-  if [[ "$tool" == "bun" ]]; then printf 'critical dependency finding\n' >&2; exit 1; fi ;;
+  if [[ "$tool" == "bun" ]]; then printf '{"example-package":[{"id":"GHSA-test-1","severity":"critical"}]}\n'; exit 1; fi ;;
 bun-malformed)
   if [[ "$tool" == "bun" ]]; then printf 'malformed scanner output\n'; exit 1; fi ;;
 bun-nonblocking)
   if [[ "$tool" == "bun" ]]; then printf '{"example-package":[{"id":123,"severity":"moderate"}]}\n'; exit 1; fi ;;
 bun-outage)
   if [[ "$tool" == "bun" ]]; then printf '{}\n'; printf 'bun scanner unavailable\n' >&2; exit 70; fi ;;
+bun-transport-recovery-then-exhausted)
+  if [[ "$tool" == "bun" ]]; then
+    if [[ "$PWD" == */desktop ]]; then
+      printf 'malformed scanner output\n'
+      printf 'Timeout: audit request failed\n' >&2
+      exit 70
+    fi
+    if [[ ! -f "$SECURITY_TEST_LOG.attempt" ]]; then
+      : > "$SECURITY_TEST_LOG.attempt"
+      printf 'Timeout: audit request failed\n' >&2
+      exit 70
+    fi
+    printf '{"example-package":[{"id":123,"severity":"moderate"}]}\n'
+    exit 1
+  fi ;;
+bun-transport-exhausted)
+  if [[ "$tool" == "bun" ]]; then
+    printf 'malformed scanner output\n'
+    printf 'TOKEN=sentinel_value\n' >&2
+    printf 'ConnectionClosed: audit request failed\n' >&2
+    exit 70
+  fi ;;
+bun-valid-transport-recovery)
+  if [[ "$tool" == "bun" ]]; then
+    if [[ ! -f "$SECURITY_TEST_LOG.valid-attempt" ]]; then
+      : > "$SECURITY_TEST_LOG.valid-attempt"
+      printf '{"example-package":[{"id":123,"severity":"moderate"}]}\n'
+      printf 'Timeout: audit request failed\n' >&2
+      exit 1
+    fi
+    printf '{"example-package":[{"id":123,"severity":"moderate"}]}\n'
+    exit 1
+  fi ;;
+bun-unknown-malformed)
+  if [[ "$tool" == "bun" ]]; then
+    printf 'malformed scanner output\n'
+    printf 'unrecognized scanner failure\n' >&2
+    exit 1
+  fi ;;
+bun-critical-transport)
+  if [[ "$tool" == "bun" ]]; then
+    printf '{"example-package":[{"id":"GHSA-test-1","severity":"critical"}]}\n'
+    printf 'Timeout: audit request failed\n' >&2
+    exit 1
+  fi ;;
 esac
+if [[ "$tool" == "bun" ]]; then printf '{}\n'; fi
+if [[ "$tool" == "npm" ]]; then printf '{"vulnerabilities":{}}\n'; fi
 exit 0
 `
 	for _, tool := range []string{"go", "bun", "npm"} {

@@ -204,6 +204,16 @@ func TestTargetBindingValidationEvidenceAdvancesOptimistically(t *testing.T) {
 	}
 }
 
+func TestTargetBindingValidateRejectsNonCanonicalTargetID(t *testing.T) {
+	binding := validTargetBinding(t)
+	for _, targetID := range []TargetID{"", " lvinst_prod", "lvinst prod", TargetID(strings.Repeat("a", 161))} {
+		binding.TargetID = targetID
+		if err := binding.Validate(); !errors.Is(err, ErrInvalidBinding) {
+			t.Fatalf("Validate target id %q error = %v, want invalid binding", targetID, err)
+		}
+	}
+}
+
 func TestTargetBindingConfigurationUpdateInvalidatesPriorRuntimeEvidence(t *testing.T) {
 	binding := validTargetBinding(t)
 	validated, err := binding.MarkValidated("secret:v1", binding.UpdatedAt.Add(time.Minute))

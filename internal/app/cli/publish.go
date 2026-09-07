@@ -16,9 +16,8 @@ import (
 )
 
 type projectPublishOperations struct {
-	client        cliapi.Client
-	requireActive bool
-	checkpoints   *projectcli.CandidateCheckpointStore
+	client      cliapi.Client
+	checkpoints *projectcli.CandidateCheckpointStore
 }
 
 func publishCommand(ctx context.Context) *cobra.Command {

@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
-
-var artifactDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // ErrOccurrenceSkipped reports a terminal policy decision that has already
 // been persisted by the trigger implementation. The scheduler must not
@@ -31,8 +29,14 @@ type ReconcileInput struct {
 }
 
 type Occurrence struct {
-	Identity   projectgraph.ServingIdentity
-	PipelineID projectgraph.ResourceID
+	// Storage claim identity is opaque to scheduling policy but must round-trip
+	// unchanged so release/attach operations remain owner- and fence-bound.
+	OccurrenceID   string
+	LeaseOwner     string
+	LeaseRevision  int64
+	LeaseExpiresAt time.Time
+	Identity       projectgraph.ServingIdentity
+	PipelineID     projectgraph.ResourceID
 	// MatchingScheduleIDs is evidence only. It is sorted canonically and does
 	// not participate in occurrence uniqueness, so overlapping expressions and
 	// schedule renames cannot create duplicate executions.
@@ -91,8 +95,8 @@ func ValidateScope(identity projectgraph.ServingIdentity) error {
 // ValidateArtifactDigest accepts only the canonical public artifact digest;
 // callers must not trim or normalize an authored value before validating it.
 func ValidateArtifactDigest(value string) error {
-	if !artifactDigestPattern.MatchString(value) {
-		return errors.New("artifact digest must be canonical sha256")
+	if err := platformdigest.ValidateSHA256Identity(value); err != nil {
+		return fmt.Errorf("artifact digest must be canonical sha256: %w", err)
 	}
 	return nil
 }

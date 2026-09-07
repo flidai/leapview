@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 
+	analyticscache "github.com/flidai/leapview/internal/analytics/cache"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
@@ -61,14 +63,15 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 			projectID: request.ProjectID, environment: request.Environment,
 		}
 	}
-	queryResultCache, err := f.module.cache.OpenSharedScope(resultcache.ScopeID{
-		RuntimeID: projectResultCacheIdentity(partition),
+	runtimeIdentity := projectRuntimeCacheIdentity(request)
+	queryResultCache, err := f.module.cache.OpenScope(resultcache.ScopeID{
+		RuntimeID: runtimeIdentity + "\x00results", PartitionID: analyticscache.PartitionIdentity(partition),
 	})
 	if err != nil {
 		return nil, err
 	}
 	immutableByteCache, err := f.module.cache.OpenScope(resultcache.ScopeID{
-		RuntimeID: projectRuntimeCacheIdentity(request),
+		RuntimeID: runtimeIdentity + "\x00bytes", PartitionID: "runtime-bytes:" + runtimeIdentity,
 	})
 	if err != nil {
 		_ = queryResultCache.Close()
@@ -82,8 +85,10 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		ImmutableByteCache: immutableByteCache, ResultLimits: request.ResultLimits,
 		SnapshotID: request.SnapshotID, ServingStateID: request.ServingStateID,
 		ProjectID: request.ProjectID, Environment: request.Environment,
+		TargetType: "deployment", TargetID: request.TargetID,
 		SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
 		SourceDataDigest:   request.SourceDataDigest,
+		RelationNamespace:  request.RelationNamespace,
 		DependencyEvidence: request.DependencyEvidence,
 		RequiredExtensions: request.RequiredExtensions,
 		SkipInitialRefresh: request.SkipInitialRefresh,
@@ -97,13 +102,17 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 }
 
 func projectResultPartition(request analyticsruntime.ProjectRequest) (resultidentity.Partition, error) {
+	targetID := strings.TrimSpace(request.TargetID)
+	if targetID == "" || targetID != request.TargetID {
+		return resultidentity.Partition{}, fmt.Errorf("query result cache partition: target ID must be non-empty and canonical")
+	}
 	kind := resultidentity.PartitionProduction
 	if request.CandidateID != "" {
 		kind = resultidentity.PartitionCandidate
 	}
 	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
 		Kind: kind, ProjectID: request.ProjectID, Environment: request.Environment,
-		CandidateID: request.CandidateID,
+		CandidateID: request.CandidateID, TargetID: targetID,
 	})
 	if err != nil {
 		return resultidentity.Partition{}, fmt.Errorf("query result cache partition: %w", err)

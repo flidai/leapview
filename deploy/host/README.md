@@ -10,7 +10,7 @@ host prerequisites, pull an immutable LeapView image, extract that image's
 deployment payload, and invoke `leapviewctl host install`. The Go installer
 validates the typed configuration and payload, stages it under
 `/opt/leapview/releases/<digest>`, atomically activates the `current` generation,
-initializes the instance once, starts it, and enables the common backup timers.
+initializes the instance once, and starts it.
 
 Provider adapters supply a private JSON document with this schema:
 
@@ -33,50 +33,25 @@ shared `bootstrap-ubuntu.sh`; it contains no application lifecycle logic.
 The production image carries the matching payload under
 `/usr/local/share/leapview/deployment`. A digest therefore selects the server,
 controller, Compose files, proxy defaults, and host operations assets together.
-Host upgrades stage that payload before downtime, switch it with the application
-image, and restore the previous payload if health checks fail or the operator
-requests rollback.
-
-Mutable instance configuration, backup archives, and rollback markers remain
-under `/opt/leapview`; operational files are stable symbolic links through
-`/opt/leapview/current`. A crash while staging a release therefore cannot expose
-a mixture of payload versions.
+Mutable instance configuration remains under `/opt/leapview`; operational files
+are stable symbolic links through `/opt/leapview/current`.
 
 After installation, every provider exposes the same operations interface:
 
 ```sh
 leapviewctl status
 leapviewctl logs
-leapviewctl backup
-leapviewctl restore <archive>
-leapviewctl upgrade --transition-policy release-transition-policy.json ghcr.io/flidai/leapview@sha256:<digest>
-leapviewctl rollback --transition-policy release-transition-policy.json --confirm
+leapviewctl start
 ```
 
-The maintained deployment workflow verifies the GitHub artifact attestation for
-the selected digest before creating infrastructure. Operators performing a
-manual upgrade should apply the same gate before connecting to the host:
-
-```sh
-gh attestation verify \
-  oci://ghcr.io/flidai/leapview@sha256:<digest> \
-  --repo flidai/leapview
-```
-
-Every operator-created archive has a required SHA-256 sidecar that is verified
-before a restore stops the running service. To configure restic, create the
-root-only `/etc/leapview/restic.env` with `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`,
-and any backend credentials, then initialize the repository explicitly:
-
-```sh
-chmod 0600 /etc/leapview/restic.env
-/usr/local/sbin/leapview-backup-hook --init
-```
-
-The daily timer creates and uploads backups. A separate weekly timer applies
-retention, prunes unused data, and runs `restic check`; repository access errors
-never trigger implicit initialization.
+Application-level backup and restore commands are not part of the generic host
+deployment. PostgreSQL backups and PITR, along with DuckLake or object-storage
+snapshots, versioning, replication, and recovery, are provider-native concerns
+and must be configured and exercised through the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations), [Backup and restore
+guide](/docs/guides/operate/backup-restore), and relevant provider before
+reopening traffic.
 
 DNS, provider firewalls, server creation, provider snapshots, and destruction
 remain provider responsibilities. Provider adapters must not implement Docker
-Compose, initialization, backup retention, upgrade, or rollback behavior.
+Compose, initialization, or application backup/restore behavior.

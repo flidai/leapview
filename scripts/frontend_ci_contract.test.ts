@@ -1,0 +1,34 @@
+import { expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { parse } from 'yaml'
+
+const shards = ['core', 'reports', 'chat', 'data', 'site']
+const tasks = parse(readFileSync('Taskfile.yml', 'utf8')).tasks
+
+test('local frontend validation runs every bounded shard without suppressing failure', () => {
+  expect(tasks['ci:lane:frontend'].cmds).toEqual(shards.map((shard) => ({
+    task: 'ci:lane:frontend:shard', vars: { SHARD: shard },
+  })))
+  expect(tasks['ci:lane:frontend:shard'].cmds).toEqual([
+    'node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}',
+  ])
+  expect(tasks['ci:lane:frontend:local'].cmds).toEqual([{ task: 'ci:lane:frontend' }])
+  expect(tasks['ci:lane:frontend'].ignore_error).toBeUndefined()
+  expect(tasks['ci:lane:frontend:shard'].ignore_error).toBeUndefined()
+})
+
+for (const workflow of ['ci', 'merge-validation', 'nightly']) {
+  test(`${workflow} requires all isolated frontend shards with the existing watchdog bound`, () => {
+    const config = parse(readFileSync(`.github/workflows/${workflow}.yml`, 'utf8'))
+    const job = config.jobs['frontend-validation']
+    expect(job.strategy.matrix.shard).toEqual(shards)
+    expect(job.strategy['fail-fast']).toBe(false)
+    expect(job['continue-on-error']).toBeUndefined()
+    expect(job.steps.find((step: any) => step.name === 'Run frontend validation').run)
+      .toBe('task ci:lane:frontend:shard SHARD=${{ matrix.shard }}')
+    const gate = config.jobs['ci-gate']
+    expect(gate.needs).toContain('frontend-validation')
+    expect(gate.steps.some((step: any) => step.env?.FRONTEND_RESULT === "${{ needs.frontend-validation.result }}"))
+      .toBe(true)
+  })
+}
