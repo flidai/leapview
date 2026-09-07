@@ -102,6 +102,15 @@
         "legend": {
           "$ref": "#/$defs/DashboardLegendPosition"
         },
+        "legendItems": {
+          "items": {
+            "$ref": "#/$defs/DashboardLegendItem"
+          },
+          "type": "array"
+        },
+        "legendTitle": {
+          "type": "string"
+        },
         "orientation": {
           "$ref": "#/$defs/DashboardOrientation"
         },
@@ -141,6 +150,12 @@
           "format": "double",
           "type": "number"
         },
+        "tooltip": {
+          "items": {
+            "$ref": "#/$defs/DashboardTooltip"
+          },
+          "type": "array"
+        },
         "type": {
           "enum": [
             "cartesian"
@@ -150,6 +165,30 @@
       },
       "required": [
         "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "CompactVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "compact"
+          ],
+          "type": "string"
+        },
+        "maximumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -178,6 +217,38 @@
         "operator",
         "type",
         "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "CurrencyVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "properties": {
+        "currency": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "currency"
+          ],
+          "type": "string"
+        },
+        "maximumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "minimumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "currency",
+        "kind"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -1090,9 +1161,7 @@
         },
         "tooltip": {
           "items": {
-            "minLength": 1,
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
+            "$ref": "#/$defs/DashboardTooltip"
           },
           "type": "array"
         }
@@ -1471,6 +1540,22 @@
           "type": "integer"
         }
       },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardLegendItem": {
+      "description": "One canonical legend value. Array order is the display order.",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
       "type": "object",
       "unevaluatedProperties": false
     },
@@ -2489,6 +2574,39 @@
       ],
       "type": "string"
     },
+    "DashboardTooltip": {
+      "oneOf": [
+        {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/DashboardTooltipItem"
+        }
+      ]
+    },
+    "DashboardTooltipItem": {
+      "description": "One ordered tooltip field projection. Compact string entries remain supported.",
+      "properties": {
+        "field": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "format": {
+          "$ref": "#/$defs/VisualizationFormat"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "DashboardVisual": {
       "properties": {
         "accessibility": {
@@ -2745,6 +2863,30 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "DurationVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "duration"
+          ],
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "unit"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "FieldDashboardReferenceValue": {
       "allOf": [
         {
@@ -2901,6 +3043,15 @@
         },
         "legend": {
           "$ref": "#/$defs/DashboardLegendPosition"
+        },
+        "legendItems": {
+          "items": {
+            "$ref": "#/$defs/DashboardLegendItem"
+          },
+          "type": "array"
+        },
+        "legendTitle": {
+          "type": "string"
         },
         "nodeGap": {
           "format": "double",
@@ -3122,6 +3273,34 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "NumberVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "number"
+          ],
+          "type": "string"
+        },
+        "maximumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "minimumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "NumericRangeDashboardFilterControl": {
       "allOf": [
         {
@@ -3138,6 +3317,34 @@
       },
       "required": [
         "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "PercentVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "percent"
+          ],
+          "type": "string"
+        },
+        "maximumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "minimumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -3293,6 +3500,15 @@
         "legend": {
           "$ref": "#/$defs/DashboardLegendPosition"
         },
+        "legendItems": {
+          "items": {
+            "$ref": "#/$defs/DashboardLegendItem"
+          },
+          "type": "array"
+        },
+        "legendTitle": {
+          "type": "string"
+        },
         "overplot": {
           "$ref": "#/$defs/PointDashboardOverplot"
         },
@@ -3318,9 +3534,7 @@
         },
         "tooltip": {
           "items": {
-            "minLength": 1,
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
+            "$ref": "#/$defs/DashboardTooltip"
           },
           "type": "array"
         },
@@ -3396,6 +3610,15 @@
         "legend": {
           "$ref": "#/$defs/DashboardLegendPosition"
         },
+        "legendItems": {
+          "items": {
+            "$ref": "#/$defs/DashboardLegendItem"
+          },
+          "type": "array"
+        },
+        "legendTitle": {
+          "type": "string"
+        },
         "maximum": {
           "format": "double",
           "type": "number"
@@ -3463,6 +3686,15 @@
         "legend": {
           "$ref": "#/$defs/DashboardLegendPosition"
         },
+        "legendItems": {
+          "items": {
+            "$ref": "#/$defs/DashboardLegendItem"
+          },
+          "type": "array"
+        },
+        "legendTitle": {
+          "type": "string"
+        },
         "orientation": {
           "$ref": "#/$defs/DashboardOrientation"
         },
@@ -3475,6 +3707,12 @@
         },
         "sort": {
           "$ref": "#/$defs/VisualizationSortDirection"
+        },
+        "tooltip": {
+          "items": {
+            "$ref": "#/$defs/DashboardTooltip"
+          },
+          "type": "array"
         },
         "type": {
           "enum": [
@@ -3867,6 +4105,32 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "TemporalVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "properties": {
+        "dateStyle": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "temporal"
+          ],
+          "type": "string"
+        },
+        "timeStyle": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "TextDashboardFilterControl": {
       "allOf": [
         {
@@ -4168,6 +4432,39 @@
         "trillions"
       ],
       "type": "string"
+    },
+    "VisualizationFormat": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NumberVisualizationFormat"
+        },
+        {
+          "$ref": "#/$defs/CurrencyVisualizationFormat"
+        },
+        {
+          "$ref": "#/$defs/PercentVisualizationFormat"
+        },
+        {
+          "$ref": "#/$defs/CompactVisualizationFormat"
+        },
+        {
+          "$ref": "#/$defs/DurationVisualizationFormat"
+        },
+        {
+          "$ref": "#/$defs/TemporalVisualizationFormat"
+        }
+      ]
+    },
+    "VisualizationFormatBase": {
+      "properties": {
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
     },
     "VisualizationGraphFocus": {
       "enum": [

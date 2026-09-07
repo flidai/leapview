@@ -1,6 +1,6 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
-import { displayUnitForField, formatDisplayField, formatField, inlineDataset, legend, toneColor, type EChartsTranslation } from './common'
+import { displayUnitForField, formatDisplayField, formatField, inlineDataset, legendDecoration, toneColor, type EChartsTranslation } from './common'
 import { echartsLabelPolicy, truncateVisualizationLabel } from './label-policy'
 import { parseDecimal } from '../../decimal'
 
@@ -114,7 +114,7 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
     context,
   )
   return {
-    dataset: undefined, legend: legend(spec.presentation.legend, context),
+    dataset: undefined, ...legendDecoration(spec.presentation.legend, context, false, spec.series ? spec.presentation : undefined, spec.series ? seriesValues.map((value) => ({ value, name: value })) : undefined),
     radar: {
       indicator: categories.map((name, index) => ({ name, max: maxima[index], color: context.colors.muted })),
       axisLine: { lineStyle: { color: context.colors.grid } },

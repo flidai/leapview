@@ -281,6 +281,7 @@ type ProportionalVisualizationSpec struct {
 	Category     VisualizationFieldRef                 `json:"category" yaml:"category"`
 	Value        VisualizationFieldRef                 `json:"value" yaml:"value"`
 	Series       *VisualizationFieldRef                `json:"series,omitempty" yaml:"series,omitempty"`
+	Tooltip      *[]VisualizationFieldRef              `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
 	Presentation ProportionalVisualizationPresentation `json:"presentation" yaml:"presentation"`
 }
 
@@ -2286,12 +2287,13 @@ func (value *VisualizationGeographicLayer) Base() (*VisualizationGeographicLayer
 }
 
 type VisualizationGeographicLayerBase struct {
-	ID         string                        `json:"id" yaml:"id"`
-	Kind       string                        `json:"kind" yaml:"kind"`
-	Label      *VisualizationFieldRef        `json:"label,omitempty" yaml:"label,omitempty"`
-	Tooltip    []VisualizationFieldRef       `json:"tooltip" yaml:"tooltip"`
-	Position   VisualizationMapLayerPosition `json:"position" yaml:"position"`
-	Visibility VisualizationMapVisibility    `json:"visibility" yaml:"visibility"`
+	ID           string                        `json:"id" yaml:"id"`
+	Kind         string                        `json:"kind" yaml:"kind"`
+	Label        *VisualizationFieldRef        `json:"label,omitempty" yaml:"label,omitempty"`
+	Tooltip      []VisualizationFieldRef       `json:"tooltip" yaml:"tooltip"`
+	TooltipItems *[]VisualizationTooltipItem   `json:"tooltipItems,omitempty" yaml:"tooltipItems,omitempty"`
+	Position     VisualizationMapLayerPosition `json:"position" yaml:"position"`
+	Visibility   VisualizationMapVisibility    `json:"visibility" yaml:"visibility"`
 }
 
 type VisualizationGeographicMetadata struct {
@@ -2520,6 +2522,11 @@ const (
 	VisualizationLabelPriorityThreshold VisualizationLabelPriority = "threshold"
 )
 
+type VisualizationLegendItem struct {
+	Value string  `json:"value" yaml:"value"`
+	Label *string `json:"label,omitempty" yaml:"label,omitempty"`
+}
+
 type VisualizationLegendPosition string
 
 const (
@@ -2729,6 +2736,8 @@ type VisualizationPresentation struct {
 	Legend       VisualizationLegendPosition `json:"legend" yaml:"legend"`
 	LabelPolicy  VisualizationLabelPolicy    `json:"labelPolicy" yaml:"labelPolicy"`
 	DisplayUnits *VisualizationDisplayUnits  `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	LegendTitle  *string                     `json:"legendTitle,omitempty" yaml:"legendTitle,omitempty"`
+	LegendItems  *[]VisualizationLegendItem  `json:"legendItems,omitempty" yaml:"legendItems,omitempty"`
 }
 
 type VisualizationProportionalMark string
@@ -3946,6 +3955,7 @@ type VisualizationSpecBase struct {
 	ConditionalFormatting *[]VisualizationConditionalFormat `json:"conditionalFormatting,omitempty" yaml:"conditionalFormatting,omitempty"`
 	MetadataBindings      *VisualizationMetadataBindings    `json:"metadataBindings,omitempty" yaml:"metadataBindings,omitempty"`
 	Calculations          *[]VisualizationCalculation       `json:"calculations,omitempty" yaml:"calculations,omitempty"`
+	TooltipItems          *[]VisualizationTooltipItem       `json:"tooltipItems,omitempty" yaml:"tooltipItems,omitempty"`
 }
 
 type VisualizationStackingMode string
@@ -4009,6 +4019,12 @@ const (
 	VisualizationToneWarning VisualizationTone = "warning"
 	VisualizationToneDanger  VisualizationTone = "danger"
 )
+
+type VisualizationTooltipItem struct {
+	Field  VisualizationFieldRef `json:"field" yaml:"field"`
+	Label  *string               `json:"label,omitempty" yaml:"label,omitempty"`
+	Format *VisualizationFormat  `json:"format,omitempty" yaml:"format,omitempty"`
+}
 
 type VisualizationWeekStart string
 

@@ -1,6 +1,7 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import { defaultRendererContext, type RendererContext } from '../../host-controller'
 import { formatValue } from '../../format'
+import { formatTooltipEntries, formatTooltipValue } from '../../tooltip-format'
 import { geographicDataset } from './data'
 
 export type RenderedFeatureLocator = Readonly<{ layer?: { id?: string }; properties?: Record<string, unknown> | null }>
@@ -12,15 +13,19 @@ export function mapTooltipEntries(envelope: VisualizationEnvelope, features: rea
 			const layerID = feature.layer?.id?.replace(/^lv-/, '')
 			const layer = envelope.spec.layers.find((candidate) => candidate.id === layerID)
 			if (!layer || !feature.properties) continue
-			const fields = layer.tooltip.length ? layer.tooltip : 'label' in layer && layer.label ? [layer.label] : []
+			if (layer.kind === 'reference') continue
+			const configuredItems = layer.tooltipItems
+			if (configuredItems !== undefined && configuredItems.length === 0) return []
+			const fields = configuredItems !== undefined
+				? configuredItems.map((item) => item.field)
+				: layer.tooltip.length ? layer.tooltip : 'label' in layer && layer.label ? [layer.label] : []
 			const entries = fields.flatMap((reference) => {
 				const schema = envelope.spec.datasets.find((candidate) => candidate.id === reference.dataset)
 				const field = schema?.fields.find((candidate) => candidate.id === reference.field)
 				const raw = feature.properties?.[reference.field]
 				if (!field || raw === undefined) return []
-				let value: string
-				try { value = field.format ? formatValue(context.locale, field.format, raw) : raw == null ? '—' : String(raw) } catch { value = raw == null ? '—' : String(raw) }
-				return [{ label: field.label, value }]
+				const item = configuredItems?.find((candidate) => candidate.field.dataset === reference.dataset && candidate.field.field === reference.field)
+				return [{ label: item?.label ?? field.label, value: formatTooltipValue(envelope, reference, raw, context, item?.format) }]
 			})
 			if (feature.properties.__lv_aggregate === true) {
 				const coordinateCount = feature.properties.__lv_coordinate_count
@@ -38,18 +43,12 @@ export function mapTooltipEntries(envelope: VisualizationEnvelope, features: rea
     const layer = envelope.spec.layers.find((candidate) => candidate.id === layerID)
     const row = dataset?.rows[rowIndex]
     if (!dataset || !layer || !row) continue
-    const fields = layer.tooltip.length ? layer.tooltip : layer.label ? [layer.label] : []
-    return fields.flatMap((reference) => {
-      if (reference.dataset !== datasetID) return []
-      const column = dataset.columns.indexOf(reference.field)
-      if (column < 0 || column >= row.length) return []
-      const schema = envelope.spec.datasets.find((candidate) => candidate.id === datasetID)
-      const field = schema?.fields.find((candidate) => candidate.id === reference.field)
-      const raw = row[column]
-      let value: string
-      try { value = field?.format ? formatValue(context.locale, field.format, raw) : raw == null ? '—' : String(raw) } catch { value = raw == null ? '—' : String(raw) }
-      return [{ label: field?.label ?? reference.field, value }]
-    })
+    if (layer.kind === 'reference') continue
+    const configuredItems = layer.tooltipItems
+    const fields = configuredItems !== undefined
+      ? configuredItems.map((item) => item.field)
+      : layer.tooltip.length ? layer.tooltip : layer.label ? [layer.label] : []
+    return formatTooltipEntries(envelope, row, datasetID, context, fields, configuredItems)
   }
   return []
 }
@@ -69,8 +68,8 @@ export function mapAccessibleData(envelope: VisualizationEnvelope, limit = 100, 
     if (reference?.dataset === schema.id && !fieldIDs.includes(reference.field)) fieldIDs.push(reference.field)
   }
   for (const layer of envelope.spec.layers) {
-    for (const reference of layer.tooltip) add(reference)
-    if (layer.tooltip.length > 0) continue
+    for (const reference of layer.tooltipItems?.map((item) => item.field) ?? layer.tooltip) add(reference)
+    if ((layer.tooltipItems !== undefined && layer.tooltipItems.length > 0) || layer.tooltip.length > 0) continue
     add(layer.label)
     if (layer.kind === 'choropleth') { add(layer.join); add(layer.value); add(layer.category) }
     if (layer.kind === 'point') { add(layer.latitude); add(layer.longitude); add(layer.value); add(layer.category) }
@@ -105,8 +104,8 @@ export function mapAccessibleRenderedFeatures(
     if (reference?.dataset === schema.id && !fieldIDs.includes(reference.field)) fieldIDs.push(reference.field)
   }
   for (const layer of envelope.spec.layers) {
-    for (const reference of layer.tooltip) add(reference)
-    if (layer.tooltip.length === 0) add(layer.label)
+    for (const reference of layer.tooltipItems?.map((item) => item.field) ?? layer.tooltip) add(reference)
+    if ((layer.tooltipItems === undefined || layer.tooltipItems.length === 0) && layer.tooltip.length === 0) add(layer.label)
     if (layer.kind === 'point' || layer.kind === 'heat' || layer.kind === 'density') {
       add(layer.latitude); add(layer.longitude); add(layer.value)
     }

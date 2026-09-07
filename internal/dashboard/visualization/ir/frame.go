@@ -371,6 +371,9 @@ func validateSpecification(spec VisualizationSpec, base VisualizationSpecBase) (
 	if len(schemas) == 0 {
 		return nil, fmt.Errorf("visualization requires at least one dataset")
 	}
+	if err := validateTooltipAndLegendMetadata(spec, base, schemas); err != nil {
+		return nil, err
+	}
 	if err := validateVisualCalculations(base.Calculations, schemas); err != nil {
 		return nil, err
 	}
@@ -440,11 +443,393 @@ func validateGeographicReferenceTooltips(spec VisualizationSpec) error {
 		if err != nil {
 			return err
 		}
-		if _, ok := layer.Value.(*VisualizationReferenceLayer); ok && len(base.Tooltip) > 0 {
-			return fmt.Errorf("spec.layers[%d].tooltip: reference layers do not support tooltip fields because reference geometry has no query-row locator", index)
+		if _, ok := layer.Value.(*VisualizationReferenceLayer); ok {
+			if len(base.Tooltip) > 0 {
+				return fmt.Errorf("spec.layers[%d].tooltip: reference layers do not support tooltip fields because reference geometry has no query-row locator", index)
+			}
+			if base.TooltipItems != nil {
+				return fmt.Errorf("spec.layers[%d].tooltipItems: reference layers do not support tooltip fields because reference geometry has no query-row locator", index)
+			}
 		}
 	}
 	return nil
+}
+
+func validateTooltipAndLegendMetadata(spec VisualizationSpec, base VisualizationSpecBase, schemas map[string]VisualizationDatasetSchema) error {
+	if base.TooltipItems != nil {
+		switch spec.Value.(type) {
+		case *CartesianVisualizationSpec:
+			// Row-backed families own the root tooltip projection.
+			value := spec.Value.(*CartesianVisualizationSpec)
+			if value.Tooltip != nil {
+				if err := validateTooltipRefsMatch("spec.tooltipItems", "spec.tooltip", *base.TooltipItems, *value.Tooltip); err != nil {
+					return err
+				}
+			}
+			if err := validateTooltipItemList("spec.tooltipItems", *base.TooltipItems, schemas, value.X.Dataset); err != nil {
+				return err
+			}
+		case *PointVisualizationSpec:
+			// Row-backed families own the root tooltip projection.
+			value := spec.Value.(*PointVisualizationSpec)
+			if value.Tooltip != nil {
+				if err := validateTooltipRefsMatch("spec.tooltipItems", "spec.tooltip", *base.TooltipItems, *value.Tooltip); err != nil {
+					return err
+				}
+			}
+			if err := validateTooltipItemList("spec.tooltipItems", *base.TooltipItems, schemas, value.X.Dataset); err != nil {
+				return err
+			}
+		case *ProportionalVisualizationSpec:
+			// Row-backed families own the root tooltip projection.
+			value := spec.Value.(*ProportionalVisualizationSpec)
+			if value.Tooltip != nil {
+				if err := validateTooltipRefsMatch("spec.tooltipItems", "spec.tooltip", *base.TooltipItems, *value.Tooltip); err != nil {
+					return err
+				}
+			}
+			if err := validateTooltipItemList("spec.tooltipItems", *base.TooltipItems, schemas, value.Category.Dataset); err != nil {
+				return err
+			}
+		case *GeographicVisualizationSpec:
+			return fmt.Errorf("spec.tooltipItems is unsupported for geographic visuals; tooltip projections belong to row-backed geographic layers")
+		default:
+			return fmt.Errorf("spec.tooltipItems is unsupported for %s visuals", base.Kind)
+		}
+	}
+	switch value := spec.Value.(type) {
+	case *CartesianVisualizationSpec:
+		if value.Tooltip != nil {
+			if err := validateTooltipRefList("spec.tooltip", *value.Tooltip, schemas, value.X.Dataset); err != nil {
+				return err
+			}
+		}
+	case *PointVisualizationSpec:
+		if value.Tooltip != nil {
+			if err := validateTooltipRefList("spec.tooltip", *value.Tooltip, schemas, value.X.Dataset); err != nil {
+				return err
+			}
+		}
+	case *ProportionalVisualizationSpec:
+		if value.Tooltip != nil {
+			if err := validateTooltipRefList("spec.tooltip", *value.Tooltip, schemas, value.Category.Dataset); err != nil {
+				return err
+			}
+		}
+	}
+	if err := validatePresentationLegendMetadata(spec); err != nil {
+		return err
+	}
+	if geographic, ok := spec.Value.(*GeographicVisualizationSpec); ok {
+		for index, layer := range geographic.Layers {
+			layerBase, err := layer.Base()
+			if err != nil {
+				return err
+			}
+			if _, reference := layer.Value.(*VisualizationReferenceLayer); reference {
+				if layerBase.TooltipItems != nil {
+					return fmt.Errorf("spec.layers[%d].tooltipItems: reference layers do not support tooltip fields because reference geometry has no query-row locator", index)
+				}
+				continue
+			}
+			if layerBase.TooltipItems != nil || layerBase.Tooltip != nil {
+				rowDataset, err := geographicLayerRowDataset(layer)
+				if err != nil {
+					return fmt.Errorf("spec.layers[%d]: %w", index, err)
+				}
+				if layerBase.Tooltip != nil {
+					if layerBase.TooltipItems != nil {
+						if err := validateTooltipRefsMatch(fmt.Sprintf("spec.layers[%d].tooltipItems", index), fmt.Sprintf("spec.layers[%d].tooltip", index), *layerBase.TooltipItems, layerBase.Tooltip); err != nil {
+							return err
+						}
+					}
+					if err := validateTooltipRefList(fmt.Sprintf("spec.layers[%d].tooltip", index), layerBase.Tooltip, schemas, rowDataset); err != nil {
+						return err
+					}
+				}
+				if layerBase.TooltipItems != nil {
+					if err := validateTooltipItemList(fmt.Sprintf("spec.layers[%d].tooltipItems", index), *layerBase.TooltipItems, schemas, rowDataset); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateTooltipRefsMatch(itemsPath, refsPath string, items []VisualizationTooltipItem, refs []VisualizationFieldRef) error {
+	if len(items) != len(refs) {
+		return fmt.Errorf("%s and %s must contain the same ordered field refs (got %d and %d)", itemsPath, refsPath, len(items), len(refs))
+	}
+	for index, item := range items {
+		if item.Field != refs[index] {
+			return fmt.Errorf("%s[%d].field must match %s[%d]", itemsPath, index, refsPath, index)
+		}
+	}
+	return nil
+}
+
+func validateTooltipRefList(path string, refs []VisualizationFieldRef, schemas map[string]VisualizationDatasetSchema, rowDataset string) error {
+	for index, ref := range refs {
+		if err := validateFieldRef(ref, schemas); err != nil {
+			return fmt.Errorf("%s[%d].field: %w", path, index, err)
+		}
+		if ref.Dataset != rowDataset {
+			return fmt.Errorf("%s[%d].field dataset %q does not match row dataset %q", path, index, ref.Dataset, rowDataset)
+		}
+	}
+	return nil
+}
+
+// geographicLayerRowDataset returns the dataset whose rows back a geographic
+// layer's rendered features. Tooltip fields must come from that same dataset;
+// renderers do not have a join available for arbitrary secondary datasets.
+func geographicLayerRowDataset(layer VisualizationGeographicLayer) (string, error) {
+	switch value := layer.Value.(type) {
+	case *VisualizationPointLayer:
+		if value == nil {
+			return "", fmt.Errorf("geographic layer variant is nil")
+		}
+		return value.Latitude.Dataset, nil
+	case *VisualizationChoroplethLayer:
+		if value == nil {
+			return "", fmt.Errorf("geographic layer variant is nil")
+		}
+		return value.Join.Dataset, nil
+	case *VisualizationHeatLayer:
+		if value == nil {
+			return "", fmt.Errorf("geographic layer variant is nil")
+		}
+		return value.Latitude.Dataset, nil
+	case *VisualizationDensityLayer:
+		if value == nil {
+			return "", fmt.Errorf("geographic layer variant is nil")
+		}
+		return value.Latitude.Dataset, nil
+	case *VisualizationPathLayer:
+		if value == nil {
+			return "", fmt.Errorf("geographic layer variant is nil")
+		}
+		return value.Latitude.Dataset, nil
+	case *VisualizationReferenceLayer:
+		return "", nil
+	case nil:
+		return "", fmt.Errorf("geographic layer variant is required")
+	default:
+		return "", fmt.Errorf("unsupported geographic layer variant %T", value)
+	}
+}
+
+func validateTooltipItemList(path string, items []VisualizationTooltipItem, schemas map[string]VisualizationDatasetSchema, rowDataset string) error {
+	seen := make(map[string]int, len(items))
+	for index, item := range items {
+		if err := validateFieldRef(item.Field, schemas); err != nil {
+			return fmt.Errorf("%s[%d].field: %w", path, index, err)
+		}
+		if item.Field.Dataset != rowDataset {
+			return fmt.Errorf("%s[%d].field dataset %q does not match row dataset %q", path, index, item.Field.Dataset, rowDataset)
+		}
+		key := item.Field.Dataset + "\x00" + item.Field.Field
+		if previous, ok := seen[key]; ok {
+			return fmt.Errorf("%s[%d].field duplicates %s[%d]", path, index, path, previous)
+		}
+		seen[key] = index
+		if item.Label != nil {
+			if err := validateMetadataText(*item.Label, fmt.Sprintf("%s[%d].label", path, index)); err != nil {
+				return err
+			}
+		}
+		field, _ := visualizationField(item.Field, schemas)
+		if err := validateVisualizationTooltipFormat(item.Format, field.DataType, fmt.Sprintf("%s[%d].format", path, index)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePresentationLegendMetadata(spec VisualizationSpec) error {
+	var presentation *VisualizationPresentation
+	switch value := spec.Value.(type) {
+	case *CartesianVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+		hasMetadata := value.Presentation.LegendTitle != nil || value.Presentation.LegendItems != nil
+		if hasMetadata && (value.Mark != VisualizationCartesianMarkLine && value.Mark != VisualizationCartesianMarkArea && value.Mark != VisualizationCartesianMarkBar && value.Mark != VisualizationCartesianMarkColumn && value.Mark != VisualizationCartesianMarkCombo && value.Mark != VisualizationCartesianMarkCandlestick) {
+			return fmt.Errorf("spec.presentation.legend metadata is unsupported for %s cartesian visuals", value.Mark)
+		}
+		if value.Mark == VisualizationCartesianMarkCandlestick && value.Presentation.LegendItems != nil {
+			return fmt.Errorf("spec.presentation.legendItems is unsupported for candlestick visuals")
+		}
+		if value.Series == nil && value.Presentation.LegendItems != nil {
+			allowed := make(map[string]struct{}, len(value.Y))
+			for _, field := range value.Y {
+				allowed[field.Field] = struct{}{}
+			}
+			for index, item := range *value.Presentation.LegendItems {
+				itemValue := strings.TrimSpace(item.Value)
+				if _, ok := allowed[itemValue]; !ok {
+					return fmt.Errorf("spec.presentation.legendItems[%d].value %q is not a compiled metric field", index, itemValue)
+				}
+			}
+		}
+	case *PointVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+		hasMetadata := value.Presentation.LegendTitle != nil || value.Presentation.LegendItems != nil
+		if hasMetadata && (value.Color == nil || value.ColorScale == nil || value.ColorScale.Kind != VisualizationPointColorScaleKindCategorical) {
+			return fmt.Errorf("spec.presentation.legend metadata requires a categorical point color series")
+		}
+	case *ProportionalVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+	case *PolarVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+		hasMetadata := value.Presentation.LegendTitle != nil || value.Presentation.LegendItems != nil
+		if hasMetadata && (value.Mark != VisualizationPolarMarkRadar || value.Series == nil) {
+			return fmt.Errorf("spec.presentation.legend metadata requires a radar series")
+		}
+	case *HierarchyVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+		if value.Presentation.LegendTitle != nil || value.Presentation.LegendItems != nil {
+			return fmt.Errorf("spec.presentation.legend metadata is unsupported for hierarchy visuals without named series")
+		}
+	case *GeographicVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+		if value.Presentation.LegendTitle != nil || value.Presentation.LegendItems != nil {
+			return fmt.Errorf("spec.presentation.legend metadata is unsupported for geographic visuals")
+		}
+	default:
+		return nil
+	}
+	if presentation.Legend != VisualizationLegendPositionHidden {
+		// Compact legends retain existing defaults. Configured metadata is
+		// validated below and is meaningful only when a legend is visible.
+	} else if presentation.LegendTitle != nil || presentation.LegendItems != nil {
+		return fmt.Errorf("spec.presentation.legend metadata cannot be used with a hidden legend")
+	}
+	if presentation.LegendTitle != nil {
+		if err := validateMetadataText(*presentation.LegendTitle, "spec.presentation.legendTitle"); err != nil {
+			return err
+		}
+	}
+	if presentation.LegendItems != nil {
+		if len(*presentation.LegendItems) == 0 {
+			return fmt.Errorf("spec.presentation.legendItems must contain at least one item")
+		}
+		seen := make(map[string]int, len(*presentation.LegendItems))
+		for index, item := range *presentation.LegendItems {
+			value := strings.TrimSpace(item.Value)
+			if value != item.Value {
+				return fmt.Errorf("spec.presentation.legendItems[%d].value must not contain surrounding whitespace", index)
+			}
+			if value == "" {
+				return fmt.Errorf("spec.presentation.legendItems[%d].value must not be empty", index)
+			}
+			if previous, ok := seen[value]; ok {
+				return fmt.Errorf("spec.presentation.legendItems[%d].value duplicates legendItems[%d]", index, previous)
+			}
+			seen[value] = index
+			if item.Label != nil {
+				if err := validateMetadataText(*item.Label, fmt.Sprintf("spec.presentation.legendItems[%d].label", index)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateMetadataText(value, path string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s must not be empty", path)
+	}
+	if len([]rune(value)) > 128 {
+		return fmt.Errorf("%s must not exceed 128 characters", path)
+	}
+	return nil
+}
+
+func validateVisualizationTooltipFormat(format *VisualizationFormat, dataType VisualizationDataType, path string) error {
+	if format == nil {
+		return nil
+	}
+	numeric := dataType == VisualizationDataTypeInteger || dataType == VisualizationDataTypeDecimal || dataType == VisualizationDataTypeFloat
+	temporal := dataType == VisualizationDataTypeDate || dataType == VisualizationDataTypeTemporal
+	switch value := format.Value.(type) {
+	case *NumberVisualizationFormat:
+		if !numeric {
+			return fmt.Errorf("%s kind number is incompatible with %s data", path, dataType)
+		}
+		return validateIRFractionDigits(value.MinimumFractionDigits, value.MaximumFractionDigits, path)
+	case *CurrencyVisualizationFormat:
+		if !numeric {
+			return fmt.Errorf("%s kind currency is incompatible with %s data", path, dataType)
+		}
+		if strings.TrimSpace(value.Currency) == "" {
+			return fmt.Errorf("%s.currency must not be empty", path)
+		}
+		if strings.TrimSpace(value.Currency) != value.Currency {
+			return fmt.Errorf("%s.currency must not contain surrounding whitespace", path)
+		}
+		switch strings.TrimSpace(value.Currency) {
+		case "USD", "BRL", "EUR":
+		default:
+			return fmt.Errorf("%s.currency %q is unsupported; supported currencies are USD, BRL, and EUR", path, value.Currency)
+		}
+		return validateIRFractionDigits(value.MinimumFractionDigits, value.MaximumFractionDigits, path)
+	case *PercentVisualizationFormat:
+		if !numeric {
+			return fmt.Errorf("%s kind percent is incompatible with %s data", path, dataType)
+		}
+		return validateIRFractionDigits(value.MinimumFractionDigits, value.MaximumFractionDigits, path)
+	case *CompactVisualizationFormat:
+		if !numeric {
+			return fmt.Errorf("%s kind compact is incompatible with %s data", path, dataType)
+		}
+		return validateIRFractionDigits(nil, value.MaximumFractionDigits, path)
+	case *DurationVisualizationFormat:
+		if !numeric {
+			return fmt.Errorf("%s kind duration is incompatible with %s data", path, dataType)
+		}
+		if strings.TrimSpace(value.Unit) == "" {
+			return fmt.Errorf("%s.unit must not be empty", path)
+		}
+		if strings.TrimSpace(value.Unit) != value.Unit {
+			return fmt.Errorf("%s.unit must not contain surrounding whitespace", path)
+		}
+		switch strings.TrimSpace(value.Unit) {
+		case "milliseconds", "seconds", "minutes", "hours", "days":
+		default:
+			return fmt.Errorf("%s.unit %q is unsupported; supported units are milliseconds, seconds, minutes, hours, and days", path, value.Unit)
+		}
+	case *TemporalVisualizationFormat:
+		if !temporal {
+			return fmt.Errorf("%s kind temporal is incompatible with %s data", path, dataType)
+		}
+		if (value.DateStyle != nil && !validIRTemporalStyle(*value.DateStyle)) || (value.TimeStyle != nil && !validIRTemporalStyle(*value.TimeStyle)) {
+			return fmt.Errorf("%s dateStyle/timeStyle is unsupported", path)
+		}
+	default:
+		return fmt.Errorf("%s format variant is required", path)
+	}
+	return nil
+}
+
+func validateIRFractionDigits(minimum, maximum *int32, path string) error {
+	if (minimum != nil && (*minimum < 0 || *minimum > 12)) || (maximum != nil && (*maximum < 0 || *maximum > 12)) {
+		return fmt.Errorf("%s fraction digits must be between 0 and 12", path)
+	}
+	if minimum != nil && maximum != nil && *minimum > *maximum {
+		return fmt.Errorf("%s minimumFractionDigits must be less than or equal to maximumFractionDigits", path)
+	}
+	return nil
+}
+
+func validIRTemporalStyle(value string) bool {
+	switch value {
+	case "full", "long", "medium", "short":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateLabelPolicy(spec VisualizationSpec) error {

@@ -27,6 +27,18 @@ func validateCanonicalCartesianPresentationApplicability(variant *document.Carte
 			visualType == document.DashboardVisualTypeCandlestick); err != nil {
 		return err
 	}
+	legendSupported := visualType == document.DashboardVisualTypeLine ||
+		visualType == document.DashboardVisualTypeArea ||
+		visualType == document.DashboardVisualTypeBar ||
+		visualType == document.DashboardVisualTypeColumn ||
+		visualType == document.DashboardVisualTypeCombo ||
+		visualType == document.DashboardVisualTypeCandlestick
+	if err := optionSupported("legendTitle", variant.LegendTitle != nil, legendSupported); err != nil {
+		return err
+	}
+	if err := optionSupported("legendItems", variant.LegendItems != nil, legendSupported && visualType != document.DashboardVisualTypeCandlestick); err != nil {
+		return err
+	}
 	if err := optionSupported("stacking", variant.Stacking != nil,
 		visualType == document.DashboardVisualTypeLine ||
 			visualType == document.DashboardVisualTypeArea ||

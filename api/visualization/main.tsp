@@ -477,6 +477,19 @@ model VisualizationFormat {
   `kind`: string;
 }
 
+/** Ordered tooltip projection; labels and formats are display-only. */
+model VisualizationTooltipItem {
+  `field`: VisualizationFieldRef;
+  `label`?: string;
+  `format`?: VisualizationFormat;
+}
+
+/** Canonical legend value with an optional display label. */
+model VisualizationLegendItem {
+  `value`: string;
+  `label`?: string;
+}
+
 model NumberVisualizationFormat extends VisualizationFormat {
   `kind`: "number";
   `minimumFractionDigits`?: int32;
@@ -751,6 +764,8 @@ model VisualizationPresentation {
   `legend`: VisualizationLegendPosition;
   `labelPolicy`: VisualizationLabelPolicy;
   `displayUnits`?: VisualizationDisplayUnits;
+  `legendTitle`?: string;
+  `legendItems`?: VisualizationLegendItem[];
 }
 
 model VisualizationThreshold {
@@ -897,6 +912,7 @@ model VisualizationSpec {
   `conditionalFormatting`?: VisualizationConditionalFormat[];
   `metadataBindings`?: VisualizationMetadataBindings;
   `calculations`?: VisualizationCalculation[];
+  `tooltipItems`?: VisualizationTooltipItem[];
 }
 
 model CartesianVisualizationSpec extends VisualizationSpec {
@@ -937,6 +953,7 @@ model ProportionalVisualizationSpec extends VisualizationSpec {
   `category`: VisualizationFieldRef;
   `value`: VisualizationFieldRef;
   `series`?: VisualizationFieldRef;
+  `tooltip`?: VisualizationFieldRef[];
   `presentation`: ProportionalVisualizationPresentation;
 }
 
@@ -1196,6 +1213,7 @@ model VisualizationGeographicLayer {
   `kind`: string;
   `label`?: VisualizationFieldRef;
   `tooltip`: VisualizationFieldRef[];
+  `tooltipItems`?: VisualizationTooltipItem[];
   `position`: VisualizationMapLayerPosition;
   `visibility`: VisualizationMapVisibility;
 }
@@ -1440,7 +1458,7 @@ model VisualizationDiagnostic {
 @apigen.contract(#{ kind: "visualization-envelope", tags: #["visualization", "ir"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "visualization-envelope" })
 model VisualizationEnvelope {
-  `schemaVersion`: 13;
+  `schemaVersion`: 14;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;

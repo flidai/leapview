@@ -68,7 +68,7 @@ export function coordinateGeometry(envelope: VisualizationEnvelope, layer: Visua
       __lv_has_selection: envelope.selection.length > 0,
       __lv_highlighted: highlight.matchedRows.has(index),
       __lv_has_highlight: highlight.active,
-      ...((layer.kind === 'point' || layer.tooltip.length > 0) ? rowLocator(dataset.id, index, layer.id) : {}),
+      ...((layer.kind === 'point' || layer.tooltip.length > 0 || (layer.tooltipItems?.length ?? 0) > 0) ? rowLocator(dataset.id, index, layer.id) : {}),
     } })
   }
   return { type: 'FeatureCollection', features }

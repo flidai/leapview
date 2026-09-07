@@ -62425,6 +62425,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         stacking:
@@ -62509,6 +62519,11 @@ components:
               id: example
               label: example
               tone: neutral
+        tooltip:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
       example:
         axes:
           - dateUnit: automatic
@@ -62543,6 +62558,10 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         orientation: horizontal
         referenceBands:
           - axis: x
@@ -62563,6 +62582,7 @@ components:
         stacking: none
         step: true
         symbolSize: 1
+        tooltip: []
         type: example
     CartesianVisualizationPresentation:
       type: object
@@ -68546,11 +68566,8 @@ components:
         tooltip:
           type: array
           items:
-            type: string
-            minLength: 1
-            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example:
-            - example
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
         position:
           $ref: '#/components/schemas/VisualizationMapLayerPosition'
         minimumZoom:
@@ -68566,8 +68583,7 @@ components:
         maximumZoom: 1
         minimumZoom: 1
         position: below_labels
-        tooltip:
-          - example
+        tooltip: []
     DashboardGradientConditionalRule:
       type: object
       allOf:
@@ -68971,6 +68987,21 @@ components:
         gap: 1
         padding: 1
         rowHeight: 1
+    DashboardLegendItem:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          example: example
+        label:
+          type: string
+          example: example
+      description: One canonical legend value. Array order is the display order.
+      example:
+        label: example
+        value: example
     DashboardLegendPosition:
       type: string
       enum:
@@ -70942,6 +70973,32 @@ components:
         - quarter
         - year
       example: second
+    DashboardTooltip:
+      oneOf:
+        - type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+        - $ref: '#/components/schemas/DashboardTooltipItem'
+    DashboardTooltipItem:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        label:
+          type: string
+          example: example
+        format:
+          $ref: '#/components/schemas/VisualizationFormat'
+      description: One ordered tooltip field projection. Compact string entries remain
+        supported.
+      example:
+        field: example
+        label: example
     DashboardVisual:
       type: object
       required:
@@ -74133,6 +74190,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         orientation:
@@ -74173,6 +74240,10 @@ components:
           tooltipFallback: true
         layout: standard
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         nodeGap: 1
         orientation: horizontal
         roam: true
@@ -75953,6 +76024,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         identity:
@@ -75991,11 +76072,8 @@ components:
         tooltip:
           type: array
           items:
-            type: string
-            minLength: 1
-            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example:
-            - example
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
         colorScale:
           $ref: '#/components/schemas/PointDashboardColorScale'
         sizeScale:
@@ -76099,6 +76177,10 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         overplot:
           largeMode: automatic
           largeThreshold: 1
@@ -76120,8 +76202,7 @@ components:
           maximumPixels: 1
           minimum: 1
           minimumPixels: 1
-        tooltip:
-          - example
+        tooltip: []
         type: example
         x: example
         'y': example
@@ -76414,6 +76495,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         displayUnits:
@@ -76458,6 +76549,10 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         maximum: 1
         minimum: 1
         progressWidth: 1
@@ -77452,6 +77547,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         displayUnits:
@@ -77478,6 +77583,11 @@ components:
           $ref: '#/components/schemas/DashboardProportionalAlignment'
         sort:
           $ref: '#/components/schemas/VisualizationSortDirection'
+        tooltip:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
       example:
         align: left
         centerLabel: example
@@ -77492,10 +77602,15 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         orientation: horizontal
         outerRadius: 1
         rose: true
         sort: ascending
+        tooltip: []
         type: example
     ProportionalVisualizationPresentation:
       type: object
@@ -77561,6 +77676,13 @@ components:
           $ref: '#/components/schemas/VisualizationFieldRef'
         series:
           $ref: '#/components/schemas/VisualizationFieldRef'
+        tooltip:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationFieldRef'
+          example:
+            - dataset: example
+              field: example
         presentation:
           $ref: '#/components/schemas/ProportionalVisualizationPresentation'
       example:
@@ -77581,6 +77703,9 @@ components:
         series:
           dataset: example
           field: example
+        tooltip:
+          - dataset: example
+            field: example
         value:
           dataset: example
           field: example
@@ -84281,6 +84406,15 @@ components:
           example:
             - dataset: example
               field: example
+        tooltipItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationTooltipItem'
+          example:
+            - field:
+                dataset: example
+                field: example
+              label: example
         position:
           $ref: '#/components/schemas/VisualizationMapLayerPosition'
         visibility:
@@ -84295,6 +84429,11 @@ components:
         tooltip:
           - dataset: example
             field: example
+        tooltipItems:
+          - field:
+              dataset: example
+              field: example
+            label: example
         visibility:
           maximumZoom: 1
           minimumZoom: 1
@@ -84892,6 +85031,21 @@ components:
         - anomaly
         - threshold
       example: selected
+    VisualizationLegendItem:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          example: example
+        label:
+          type: string
+          example: example
+      description: Canonical legend value with an optional display label.
+      example:
+        label: example
+        value: example
     VisualizationLegendPosition:
       type: string
       enum:
@@ -85491,6 +85645,16 @@ components:
           $ref: '#/components/schemas/VisualizationLabelPolicy'
         displayUnits:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationLegendItem'
+          example:
+            - label: example
+              value: example
       example:
         displayUnits: auto
         labelPolicy:
@@ -85501,6 +85665,10 @@ components:
             - selected
           tooltipFallback: true
         legend: hidden
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
     VisualizationProportionalMark:
       type: string
       enum:
@@ -86148,6 +86316,15 @@ components:
                 field: example
               template: running_total
               window: 1
+        tooltipItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationTooltipItem'
+          example:
+            - field:
+                dataset: example
+                field: example
+              label: example
       example:
         accessibility:
           announceChanges: true
@@ -86276,6 +86453,11 @@ components:
             suffix: example
         subtitle: example
         title: example
+        tooltipItems:
+          - field:
+              dataset: example
+              field: example
+            label: example
     VisualizationSpecKind:
       type: string
       enum:
@@ -86408,6 +86590,24 @@ components:
         - warning
         - danger
       example: neutral
+    VisualizationTooltipItem:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          $ref: '#/components/schemas/VisualizationFieldRef'
+        label:
+          type: string
+          example: example
+        format:
+          $ref: '#/components/schemas/VisualizationFormat'
+      description: Ordered tooltip projection; labels and formats are display-only.
+      example:
+        field:
+          dataset: example
+          field: example
+        label: example
     VisualizationWeekStart:
       type: string
       enum:

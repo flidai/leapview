@@ -4,6 +4,12 @@ Use a map for governed observations with geographic coordinates or a named
 geometry asset. Geographic presentation and layer fields are typed and lower
 directly into the renderer-independent map Visual IR.
 
+Layer `tooltip` fields are projected in authored order. Use the structured
+tooltip item form when a row needs a display label or format override; an
+explicit empty list suppresses hover rows. Values are escaped by the MapLibre
+overlay, null values display as `—`, and reference layers do not support row
+tooltips.
+
 Every preview on this page is generated from the YAML shown below against the
 fixed documentation dataset.
 

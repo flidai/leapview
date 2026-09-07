@@ -278,13 +278,12 @@ func TestCompileVisualsBindsWaterfallConditionalFormattingToMetricAlias(t *testi
 func TestCanonicalGeographicReferenceLayerTooltipContract(t *testing.T) {
 	t.Parallel()
 
-	for name, tooltip := range map[string]*[]string{
+	for name, tooltip := range map[string]*[]document.DashboardTooltip{
 		"omitted": nil,
-		"empty":   func() *[]string { values := []string{}; return &values }(),
 	} {
 		name, tooltip := name, tooltip
 		t.Run(name, func(t *testing.T) {
-			layers, err := canonicalGeographicLayers(referenceMapPresentation(tooltip), LoweredDashboardQuery{})
+			layers, err := canonicalGeographicLayers(referenceMapPresentation(tooltip), LoweredDashboardQuery{}, nil)
 			if err != nil {
 				t.Fatalf("canonicalGeographicLayers() error = %v", err)
 			}
@@ -294,14 +293,28 @@ func TestCanonicalGeographicReferenceLayerTooltipContract(t *testing.T) {
 		})
 	}
 
-	tooltip := []string{"state"}
-	_, err := canonicalGeographicLayers(referenceMapPresentation(&tooltip), LoweredDashboardQuery{})
-	if err == nil || !strings.Contains(err.Error(), "presentation.layers[0].tooltip") || !strings.Contains(err.Error(), "query-row locator") {
-		t.Fatalf("canonicalGeographicLayers() error = %v, want a path-bearing reference tooltip diagnostic", err)
+	for name, tooltip := range map[string]*[]document.DashboardTooltip{
+		"empty": func() *[]document.DashboardTooltip { values := []document.DashboardTooltip{}; return &values }(),
+		"structured": func() *[]document.DashboardTooltip {
+			values := []document.DashboardTooltip{{Item: &document.DashboardTooltipItem{Field: "state"}}}
+			return &values
+		}(),
+		"compact": func() *[]document.DashboardTooltip {
+			values := []document.DashboardTooltip{{String: pointStringPtr("state")}}
+			return &values
+		}(),
+	} {
+		name, tooltip := name, tooltip
+		t.Run(name, func(t *testing.T) {
+			_, err := canonicalGeographicLayers(referenceMapPresentation(tooltip), LoweredDashboardQuery{}, nil)
+			if err == nil || !strings.Contains(err.Error(), "presentation.layers[0].tooltip") || !strings.Contains(err.Error(), "query-row locator") {
+				t.Fatalf("canonicalGeographicLayers() error = %v, want a path-bearing reference tooltip diagnostic", err)
+			}
+		})
 	}
 }
 
-func referenceMapPresentation(tooltip *[]string) *document.GeographicDashboardPresentation {
+func referenceMapPresentation(tooltip *[]document.DashboardTooltip) *document.GeographicDashboardPresentation {
 	layers := []document.DashboardGeographicLayer{{Value: &document.DashboardReferenceGeographicLayer{
 		DashboardGeographicLayerBase: document.DashboardGeographicLayerBase{
 			DashboardGeographicLayerOptions: document.DashboardGeographicLayerOptions{ID: "boundaries", Tooltip: tooltip},

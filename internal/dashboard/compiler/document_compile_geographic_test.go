@@ -31,7 +31,7 @@ func TestCanonicalGeographicLayersLowerPointAndChoroplethLabels(t *testing.T) {
 		GeometryAsset: "brazil_states", Join: "state", Label: &label,
 	}
 
-	pointLayer, err := canonicalPointGeographicLayer(&point, query)
+	pointLayer, err := canonicalPointGeographicLayer(&point, query, nil)
 	if err != nil {
 		t.Fatalf("lower point layer: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestCanonicalGeographicLayersLowerPointAndChoroplethLabels(t *testing.T) {
 		t.Fatalf("point label = %#v, want primary.city", pointValue)
 	}
 
-	choroplethLayer, err := canonicalChoroplethGeographicLayer(&choropleth, query)
+	choroplethLayer, err := canonicalChoroplethGeographicLayer(&choropleth, query, nil)
 	if err != nil {
 		t.Fatalf("lower choropleth layer: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestCanonicalGeographicLayerLabelReferencesUseActionablePath(t *testing.T) 
 	presentation := document.GeographicDashboardPresentation{
 		Layers: &[]document.DashboardGeographicLayer{{Value: &layer}},
 	}
-	_, err := canonicalGeographicLayers(&presentation, LoweredDashboardQuery{ResultFrame: []DashboardQueryResultField{{Name: "latitude"}, {Name: "longitude"}}})
+	_, err := canonicalGeographicLayers(&presentation, LoweredDashboardQuery{ResultFrame: []DashboardQueryResultField{{Name: "latitude"}, {Name: "longitude"}}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "presentation.layers[0]: label:") || !strings.Contains(err.Error(), `reference "unknown" is not a compiled result field`) {
 		t.Fatalf("invalid point label error = %v, want presentation.layers[0]: label: unknown field path", err)
 	}

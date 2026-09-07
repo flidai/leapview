@@ -148,7 +148,7 @@ func fieldBindingByAlias(fields []visualizationdefinition.FieldBinding, alias st
 	return visualizationdefinition.FieldBinding{}, false
 }
 
-func canonicalGeographicLayers(value *document.GeographicDashboardPresentation, query LoweredDashboardQuery) ([]visualizationir.VisualizationGeographicLayer, error) {
+func canonicalGeographicLayers(value *document.GeographicDashboardPresentation, query LoweredDashboardQuery, fields []visualizationir.VisualizationField) ([]visualizationir.VisualizationGeographicLayer, error) {
 	if value == nil || value.Layers == nil {
 		return nil, nil
 	}
@@ -164,47 +164,53 @@ func canonicalGeographicLayers(value *document.GeographicDashboardPresentation, 
 			if variant == nil {
 				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
-			layer, err = canonicalPointGeographicLayer(variant, query)
+			layer, err = canonicalPointGeographicLayer(variant, query, fields)
 		case *document.DashboardChoroplethGeographicLayer:
 			if variant == nil {
 				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
-			layer, err = canonicalChoroplethGeographicLayer(variant, query)
+			layer, err = canonicalChoroplethGeographicLayer(variant, query, fields)
 		case *document.DashboardReferenceGeographicLayer:
 			if variant == nil {
 				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
-			if variant.Tooltip != nil && len(*variant.Tooltip) > 0 {
+			if variant.Tooltip != nil {
 				return nil, fmt.Errorf("presentation.layers[%d].tooltip: reference layers do not support tooltip fields because reference geometry has no query-row locator", index)
 			}
-			layer, err = canonicalReferenceGeographicLayer(variant, query)
+			layer, err = canonicalReferenceGeographicLayer(variant, query, fields)
 		case *document.DashboardHeatGeographicLayer:
 			if variant == nil {
 				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
-			layer, err = canonicalHeatGeographicLayer(variant, query)
+			layer, err = canonicalHeatGeographicLayer(variant, query, fields)
 		case *document.DashboardDensityGeographicLayer:
 			if variant == nil {
 				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
-			layer, err = canonicalDensityGeographicLayer(variant, query)
+			layer, err = canonicalDensityGeographicLayer(variant, query, fields)
 		case *document.DashboardPathGeographicLayer:
 			if variant == nil {
 				return nil, fmt.Errorf("presentation.layers[%d] variant is nil", index)
 			}
-			layer, err = canonicalPathGeographicLayer(variant, query)
+			layer, err = canonicalPathGeographicLayer(variant, query, fields)
 		default:
 			return nil, fmt.Errorf("presentation.layers[%d] uses unsupported variant %T", index, authored.Value)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("presentation.layers[%d]: %w", index, err)
+			message := err.Error()
+			if strings.HasPrefix(message, "tooltip: presentation.tooltip[") {
+				message = strings.TrimPrefix(message, "tooltip: ")
+				message = strings.Replace(message, "presentation.tooltip[", fmt.Sprintf("presentation.layers[%d].tooltip[", index), 1)
+				return nil, fmt.Errorf("%s", message)
+			}
+			return nil, fmt.Errorf("presentation.layers[%d]: %s", index, message)
 		}
 		result = append(result, layer)
 	}
 	return result, nil
 }
 
-func canonicalMapLayerBase(base *document.DashboardGeographicLayerBase, kind string, label *string, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayerBase, error) {
+func canonicalMapLayerBase(base *document.DashboardGeographicLayerBase, kind string, label *string, query LoweredDashboardQuery, fields []visualizationir.VisualizationField) (visualizationir.VisualizationGeographicLayerBase, error) {
 	if base == nil {
 		return visualizationir.VisualizationGeographicLayerBase{}, fmt.Errorf("map layer base is required")
 	}
@@ -231,14 +237,12 @@ func canonicalMapLayerBase(base *document.DashboardGeographicLayerBase, kind str
 		out.Label = &labelRef
 	}
 	if base.Tooltip != nil {
-		out.Tooltip = make([]visualizationir.VisualizationFieldRef, 0, len(*base.Tooltip))
-		for _, name := range *base.Tooltip {
-			ref, err := canonicalResultRef(query, "primary", name)
-			if err != nil {
-				return visualizationir.VisualizationGeographicLayerBase{}, fmt.Errorf("tooltip %q: %w", name, err)
-			}
-			out.Tooltip = append(out.Tooltip, ref)
+		items, refs, err := canonicalTooltipItems(base.Tooltip, query, fields)
+		if err != nil {
+			return visualizationir.VisualizationGeographicLayerBase{}, fmt.Errorf("tooltip: %w", err)
 		}
+		out.Tooltip = refs
+		out.TooltipItems = &items
 	}
 	if base.Position != nil {
 		out.Position = *base.Position
@@ -413,8 +417,8 @@ func canonicalMapOpacity(value *float64) (float64, error) {
 	return opacity, nil
 }
 
-func canonicalPointGeographicLayer(layer *document.DashboardPointGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
-	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, layer.Label, query)
+func canonicalPointGeographicLayer(layer *document.DashboardPointGeographicLayer, query LoweredDashboardQuery, fields []visualizationir.VisualizationField) (visualizationir.VisualizationGeographicLayer, error) {
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, layer.Label, query, fields)
 	if err != nil {
 		return visualizationir.VisualizationGeographicLayer{}, err
 	}
@@ -453,8 +457,8 @@ func canonicalPointGeographicLayer(layer *document.DashboardPointGeographicLayer
 	return visualizationir.VisualizationGeographicLayer{Value: &visualizationir.VisualizationPointLayer{VisualizationGeographicLayerBase: base, Kind: layer.Kind, Latitude: latitude, Longitude: longitude, Value: value, Category: category, Size: size, Color: canonicalMapColor(layer.Color), Stroke: stroke, Cluster: cluster, Opacity: opacity}}, nil
 }
 
-func canonicalChoroplethGeographicLayer(layer *document.DashboardChoroplethGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
-	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, layer.Label, query)
+func canonicalChoroplethGeographicLayer(layer *document.DashboardChoroplethGeographicLayer, query LoweredDashboardQuery, fields []visualizationir.VisualizationField) (visualizationir.VisualizationGeographicLayer, error) {
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, layer.Label, query, fields)
 	if err != nil {
 		return visualizationir.VisualizationGeographicLayer{}, err
 	}
@@ -485,8 +489,8 @@ func canonicalChoroplethGeographicLayer(layer *document.DashboardChoroplethGeogr
 	return visualizationir.VisualizationGeographicLayer{Value: &visualizationir.VisualizationChoroplethLayer{VisualizationGeographicLayerBase: base, Kind: layer.Kind, Geometry: geometryAsset, Join: join, Value: value, Category: category, Color: canonicalMapColor(layer.Color), Stroke: stroke, Opacity: opacity}}, nil
 }
 
-func canonicalReferenceGeographicLayer(layer *document.DashboardReferenceGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
-	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, nil, query)
+func canonicalReferenceGeographicLayer(layer *document.DashboardReferenceGeographicLayer, query LoweredDashboardQuery, fields []visualizationir.VisualizationField) (visualizationir.VisualizationGeographicLayer, error) {
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, nil, query, fields)
 	if err != nil {
 		return visualizationir.VisualizationGeographicLayer{}, err
 	}
@@ -505,16 +509,16 @@ func canonicalReferenceGeographicLayer(layer *document.DashboardReferenceGeograp
 	return visualizationir.VisualizationGeographicLayer{Value: &visualizationir.VisualizationReferenceLayer{VisualizationGeographicLayerBase: base, Kind: layer.Kind, Geometry: geometryAsset, Color: canonicalMapColor(layer.Color), Stroke: stroke, Opacity: opacity}}, nil
 }
 
-func canonicalHeatGeographicLayer(layer *document.DashboardHeatGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
-	return canonicalHeatOrDensityGeographicLayer(layer.Kind, layer.Latitude, layer.Longitude, layer.Value, layer.Color, layer.Heat, layer.Opacity, query, true, &layer.DashboardGeographicLayerBase)
+func canonicalHeatGeographicLayer(layer *document.DashboardHeatGeographicLayer, query LoweredDashboardQuery, fields []visualizationir.VisualizationField) (visualizationir.VisualizationGeographicLayer, error) {
+	return canonicalHeatOrDensityGeographicLayer(layer.Kind, layer.Latitude, layer.Longitude, layer.Value, layer.Color, layer.Heat, layer.Opacity, query, fields, true, &layer.DashboardGeographicLayerBase)
 }
 
-func canonicalDensityGeographicLayer(layer *document.DashboardDensityGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
-	return canonicalHeatOrDensityGeographicLayer(layer.Kind, layer.Latitude, layer.Longitude, layer.Value, layer.Color, layer.Heat, layer.Opacity, query, false, &layer.DashboardGeographicLayerBase)
+func canonicalDensityGeographicLayer(layer *document.DashboardDensityGeographicLayer, query LoweredDashboardQuery, fields []visualizationir.VisualizationField) (visualizationir.VisualizationGeographicLayer, error) {
+	return canonicalHeatOrDensityGeographicLayer(layer.Kind, layer.Latitude, layer.Longitude, layer.Value, layer.Color, layer.Heat, layer.Opacity, query, fields, false, &layer.DashboardGeographicLayerBase)
 }
 
-func canonicalHeatOrDensityGeographicLayer(kind, latitudeName, longitudeName string, valueName *string, color *document.DashboardMapColorScale, heatStyle *document.DashboardMapHeatStyle, opacityValue *float64, query LoweredDashboardQuery, heat bool, baseValue *document.DashboardGeographicLayerBase) (visualizationir.VisualizationGeographicLayer, error) {
-	base, err := canonicalMapLayerBase(baseValue, kind, nil, query)
+func canonicalHeatOrDensityGeographicLayer(kind, latitudeName, longitudeName string, valueName *string, color *document.DashboardMapColorScale, heatStyle *document.DashboardMapHeatStyle, opacityValue *float64, query LoweredDashboardQuery, fields []visualizationir.VisualizationField, heat bool, baseValue *document.DashboardGeographicLayerBase) (visualizationir.VisualizationGeographicLayer, error) {
+	base, err := canonicalMapLayerBase(baseValue, kind, nil, query, fields)
 	if err != nil {
 		return visualizationir.VisualizationGeographicLayer{}, err
 	}
@@ -544,8 +548,8 @@ func canonicalHeatOrDensityGeographicLayer(kind, latitudeName, longitudeName str
 	return visualizationir.VisualizationGeographicLayer{Value: &visualizationir.VisualizationDensityLayer{VisualizationGeographicLayerBase: base, Kind: kind, Latitude: latitude, Longitude: longitude, Value: value, Color: canonicalMapColor(color), Heat: heatValue, Opacity: opacity}}, nil
 }
 
-func canonicalPathGeographicLayer(layer *document.DashboardPathGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
-	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, nil, query)
+func canonicalPathGeographicLayer(layer *document.DashboardPathGeographicLayer, query LoweredDashboardQuery, fields []visualizationir.VisualizationField) (visualizationir.VisualizationGeographicLayer, error) {
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, nil, query, fields)
 	if err != nil {
 		return visualizationir.VisualizationGeographicLayer{}, err
 	}

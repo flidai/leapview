@@ -27,6 +27,7 @@ class FakeMap {
   readonly removedControls: unknown[] = []
   readonly styleCalls: unknown[] = []
   readonly layerBefore = new Map<string, string | undefined>()
+  readonly queryLayerCalls: string[][] = []
   renderedFeatures: unknown[] = []
   clusterZoomPromise: Promise<number> = Promise.resolve(8)
   readonly canvas: HTMLCanvasElement
@@ -115,7 +116,10 @@ class FakeMap {
   easeTo(options: { center?: [number, number]; zoom?: number }): void { this.jumpTo(options) }
   addControl(control: unknown, _position?: string): void { this.addedControls.push(control) }
   removeControl(control: unknown): void { this.removedControls.push(control) }
-  queryRenderedFeatures(): unknown[] { return this.renderedFeatures }
+  queryRenderedFeatures(_pointOrOptions?: unknown, options?: { layers?: string[] }): unknown[] {
+    if (options?.layers) this.queryLayerCalls.push([...options.layers])
+    return this.renderedFeatures
+  }
   getFilter(_id: string): unknown { return undefined }
   setFilter(_id: string, _filter: unknown): void {}
   setLayerZoomRange(_id: string, _minimum: number, _maximum: number): void {}
@@ -342,6 +346,44 @@ test('MapLibre mounted labels resolve theme and repaint in place on context-only
     expect(darkPaint).toEqual({ text: '#f0f6fc', halo: '#0d1821' })
     await handle.update(explicit, Change.Context, context('dark'))
     expect(layerPaint(map, 'lv-points-data-label')).toEqual(darkPaint)
+    handle.dispose()
+  } finally {
+    restoreDomGlobals()
+    dom.window.close()
+  }
+})
+
+test('MapLibre registers tooltipItems-only row-backed layers for pointer hover', async () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
+  const restoreDomGlobals = installDomGlobals(dom)
+  globalThis.fetch = async () => new Response('{}', { status: 200 })
+  try {
+    const inline = await labelEnvelope()
+    if (inline.spec.kind !== 'geographic') throw new Error('geographic map fixture is unavailable')
+    const point = inline.spec.layers.find((layer) => layer.kind === 'point')
+    if (!point) throw new Error('point map fixture is unavailable')
+    const heat = {
+      id: 'heat', kind: 'heat' as const,
+      latitude: point.latitude, longitude: point.longitude, label: point.label,
+      tooltip: [], tooltipItems: [{ field: { dataset: 'primary', field: 'name' }, label: 'Place' }],
+      position: point.position, visibility: point.visibility, color: point.color,
+      heat: { radius: 24, intensity: 1 }, opacity: point.opacity,
+    }
+    const envelope = { ...inline, visualID: 'tooltip-items-only', spec: { ...inline.spec, layers: [heat] } } as unknown as VisualizationEnvelope
+    const container = dom.window.document.createElement('div')
+    const frame = dom.window.document.createElement('div')
+    const attribution = dom.window.document.createElement('div')
+    const map = new FakeMap()
+    map.renderedFeatures = [{ layer: { id: 'lv-heat' }, properties: { __lv_dataset: 'primary', __lv_row_index: 0, __lv_layer_id: 'heat' } }]
+    const handle = new MapLibreHandle(container, frame, map as never, attribution, context('light'))
+    await handle.update(envelope, Change.All, context('light'))
+    map.queryLayerCalls.length = 0
+    map.fire('mousemove', { point: { x: 4, y: 4 } })
+    expect(map.queryLayerCalls).toContainEqual(['lv-heat'])
+    const tooltip = frame.querySelector<HTMLElement>('[role="tooltip"]')!
+    expect(tooltip.hidden).toBe(false)
+    expect(tooltip.textContent).toContain('Place')
+    expect(tooltip.textContent).toContain('São Paulo')
     handle.dispose()
   } finally {
     restoreDomGlobals()

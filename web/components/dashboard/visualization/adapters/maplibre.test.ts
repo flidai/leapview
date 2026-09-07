@@ -330,6 +330,38 @@ test('MapLibre tooltips use compiled fields and contractual formatting without e
   expect(entries.some((entry) => entry.value.includes('governed'))).toBe(false)
 })
 
+test('MapLibre layer tooltip items preserve order, labels, formats, and explicit empty rows', () => {
+
+  const envelope = selectableEnvelope() as any
+  const layer = envelope.spec.layers[0]
+  layer.label = { dataset: 'primary', field: 'state' }
+  envelope.spec.datasets[0].fields.find((field: any) => field.id === 'value').format = { kind: 'currency', currency: 'USD' }
+  layer.tooltipItems = [
+    { field: { dataset: 'primary', field: 'value' }, label: 'Net', format: { kind: 'currency', currency: 'USD' } },
+    { field: { dataset: 'primary', field: 'state' }, label: 'Region' },
+  ]
+  expect(mapTooltipEntries(envelope, [{ layer: { id: 'lv-states' }, properties: { __lv_dataset: 'primary', __lv_row_index: 0, __lv_layer_id: 'states' } }])).toEqual([
+    { label: 'Net', value: '$10.00' }, { label: 'Region', value: 'SP' },
+  ])
+  layer.tooltipItems = []
+  expect(mapTooltipEntries(envelope, [{ layer: { id: 'lv-states' }, properties: { __lv_dataset: 'primary', __lv_row_index: 0, __lv_layer_id: 'states' } }])).toEqual([])
+  expect(mapAccessibleData(envelope).columns.map((column) => column.id)).toContain('state')
+})
+
+test('MapLibre aggregate tooltip items keep the precision context and authored metric format', () => {
+  const envelope = tiledPointEnvelope() as any
+  envelope.spec.layers[0].tooltipItems = [{ field: { dataset: 'primary', field: 'revenue' }, label: 'Net', format: { kind: 'currency', currency: 'USD' } }]
+  expect(mapTooltipEntries(envelope, [{ layer: { id: 'lv-orders' }, properties: { __lv_aggregate: true, __lv_coordinate_count: 12, revenue: 1250 } }])).toEqual([
+    { label: 'Precision', value: 'Aggregated area' }, { label: 'Contained locations', value: '12' }, { label: 'Net', value: '$1,250.00' },
+  ])
+})
+
+test('MapLibre tiled empty tooltip items suppress aggregate context rows', () => {
+	const envelope = tiledPointEnvelope() as any
+	envelope.spec.layers[0].tooltipItems = []
+	expect(mapTooltipEntries(envelope, [{ layer: { id: 'lv-orders' }, properties: { __lv_aggregate: true, __lv_coordinate_count: 12, revenue: 1250 } }])).toEqual([])
+})
+
 test('MapLibre aggregate tooltips lead with the business metric and retain location count', () => {
 	const envelope = tiledPointEnvelope()
 	const entries = mapTooltipEntries(envelope, [{

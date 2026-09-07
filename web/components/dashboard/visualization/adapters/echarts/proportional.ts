@@ -1,6 +1,6 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
-import { formatDisplayField, formatField, inlineDataset, legend, type EChartsTranslation } from './common'
+import { formatDisplayField, formatField, inlineDataset, legendDecoration, type EChartsTranslation } from './common'
 import { conditionalItemColor } from './conditional-color'
 import { echartsLabelPolicy } from './label-policy'
 import type { CategoryColorRegistry } from './category-colors'
@@ -55,6 +55,12 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     },
   }
   if (radius !== undefined) series.radius = radius
+  if (presentation.legendTitle !== undefined) {
+    if (presentation.legend === 'left') series.left = '12%'
+    if (presentation.legend === 'right') series.right = '12%'
+    if (presentation.legend === 'top') series.top = '12%'
+    if (presentation.legend === 'bottom') series.bottom = '12%'
+  }
   if (spec.mark === 'funnel') {
     series.orient = presentation.orientation
     if (outside && presentation.orientation === 'vertical') {
@@ -97,11 +103,13 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     }],
   }
   const repeatsColors = uniqueValueCount(categoryValues) > context.colors.data.length
+  const decoration = legendDecoration(presentation.legend, context, true, presentation, categoryValues.map((value) => ({ value: String(value), name: String(value) })))
+  const graphics = [...(decoration.graphic ?? []), ...(center.graphic ?? [])]
   return {
-    legend: legend(presentation.legend, context, true),
+    ...decoration,
+    ...(graphics.length ? { graphic: graphics } : {}),
     series: [series],
     aria: { decal: { show: repeatsColors } },
-    ...center,
   }
 }
 

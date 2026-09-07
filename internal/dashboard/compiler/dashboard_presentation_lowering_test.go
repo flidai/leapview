@@ -46,8 +46,12 @@ func TestLowerCanonicalPointPresentationPreservesOverplotAndLabels(t *testing.T)
 	value := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
 		Type: "point", Legend: &legend, Labels: &labels,
 		Identity: []string{"order_id"}, X: "delivery_days", Y: "revenue",
-		Color: pointStringPtr("status"), Tooltip: &[]string{"order_id", "status", "delivery_days", "revenue"},
-		Overplot: &document.PointDashboardOverplot{Strategy: visualizationir.VisualizationPointOverplotStrategyOpacity, Opacity: &opacity, LargeMode: &largeMode, LargeThreshold: &threshold},
+		Color: pointStringPtr("status"), Tooltip: &[]document.DashboardTooltip{
+			{String: pointStringPtr("order_id")}, {String: pointStringPtr("status")},
+			{String: pointStringPtr("delivery_days")}, {String: pointStringPtr("revenue")},
+		},
+		ColorScale: &document.PointDashboardColorScale{Kind: visualizationir.VisualizationPointColorScaleKindCategorical},
+		Overplot:   &document.PointDashboardOverplot{Strategy: visualizationir.VisualizationPointOverplotStrategyOpacity, Opacity: &opacity, LargeMode: &largeMode, LargeThreshold: &threshold},
 	}}
 	lowered, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeScatter)
 	if err != nil {
