@@ -150,3 +150,71 @@ func TestValidateSpecAllowsGovernedProportionalCategoryColors(t *testing.T) {
 		t.Fatalf("valid proportional conditional formatting: %v", err)
 	}
 }
+
+func TestValidateConditionalFormattingTargetAllowlists(t *testing.T) {
+	t.Parallel()
+
+	allTargets := []VisualizationConditionalTarget{
+		VisualizationConditionalTargetMarkFill,
+		VisualizationConditionalTargetMarkStroke,
+		VisualizationConditionalTargetSeriesColor,
+		VisualizationConditionalTargetLabelForeground,
+		VisualizationConditionalTargetVisualBackground,
+		VisualizationConditionalTargetCellForeground,
+		VisualizationConditionalTargetCellBackground,
+		VisualizationConditionalTargetKpiValue,
+		VisualizationConditionalTargetIcon,
+	}
+	tests := []struct {
+		kind    string
+		allowed []VisualizationConditionalTarget
+	}{
+		{kind: "point", allowed: []VisualizationConditionalTarget{VisualizationConditionalTargetMarkFill}},
+		{kind: "proportional", allowed: []VisualizationConditionalTarget{
+			VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetSeriesColor,
+		}},
+		{kind: "kpi", allowed: []VisualizationConditionalTarget{
+			VisualizationConditionalTargetVisualBackground, VisualizationConditionalTargetKpiValue,
+		}},
+		{kind: "table", allowed: []VisualizationConditionalTarget{
+			VisualizationConditionalTargetCellForeground, VisualizationConditionalTargetCellBackground, VisualizationConditionalTargetIcon,
+		}},
+		{kind: "matrix", allowed: []VisualizationConditionalTarget{
+			VisualizationConditionalTargetCellForeground, VisualizationConditionalTargetCellBackground, VisualizationConditionalTargetIcon,
+		}},
+		{kind: "pivot", allowed: []VisualizationConditionalTarget{
+			VisualizationConditionalTargetCellForeground, VisualizationConditionalTargetCellBackground, VisualizationConditionalTargetIcon,
+		}},
+		{kind: "cartesian", allowed: []VisualizationConditionalTarget{
+			VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetMarkStroke,
+			VisualizationConditionalTargetSeriesColor, VisualizationConditionalTargetLabelForeground,
+			VisualizationConditionalTargetIcon,
+		}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.kind, func(t *testing.T) {
+			t.Parallel()
+			allowed := make(map[VisualizationConditionalTarget]struct{}, len(test.allowed))
+			for _, target := range test.allowed {
+				allowed[target] = struct{}{}
+			}
+			for _, target := range allTargets {
+				target := target
+				t.Run(string(target), func(t *testing.T) {
+					_, wantAllowed := allowed[target]
+					err := validateConditionalFormattingTarget(test.kind, VisualizationConditionalFormat{Target: target})
+					if wantAllowed {
+						if err != nil {
+							t.Fatalf("target %q rejected for %s: %v", target, test.kind, err)
+						}
+						return
+					}
+					if err == nil {
+						t.Fatalf("target %q accepted for %s; error = %v", target, test.kind, err)
+					}
+				})
+			}
+		})
+	}
+}

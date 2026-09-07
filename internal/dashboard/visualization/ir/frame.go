@@ -821,9 +821,32 @@ func specSupportsConditionalFormatting(spec VisualizationSpec) bool {
 }
 
 func validateConditionalFormattingTarget(kind string, format VisualizationConditionalFormat) error {
-	if kind == "point" && format.Target != VisualizationConditionalTargetMarkFill {
-		return fmt.Errorf("target %q is incompatible with point visualizations; use %q", format.Target, VisualizationConditionalTargetMarkFill)
+	// Keep target validation aligned with the renderer-owned channels. These
+	// families intentionally do not inherit every target that happens to be
+	// present in the shared conditional-format enum.
+	switch kind {
+	case "point":
+		if format.Target != VisualizationConditionalTargetMarkFill {
+			return fmt.Errorf("target %q is incompatible with point visualizations; use %q", format.Target, VisualizationConditionalTargetMarkFill)
+		}
+		return nil
+	case "proportional":
+		if format.Target != VisualizationConditionalTargetMarkFill && format.Target != VisualizationConditionalTargetSeriesColor {
+			return fmt.Errorf("target %q is incompatible with proportional visualizations", format.Target)
+		}
+		return nil
+	case "kpi":
+		if format.Target != VisualizationConditionalTargetVisualBackground && format.Target != VisualizationConditionalTargetKpiValue {
+			return fmt.Errorf("target %q is incompatible with KPI visualizations", format.Target)
+		}
+		return nil
+	case "table", "matrix", "pivot":
+		if format.Target != VisualizationConditionalTargetCellForeground && format.Target != VisualizationConditionalTargetCellBackground && format.Target != VisualizationConditionalTargetIcon {
+			return fmt.Errorf("target %q is incompatible with %s visualizations", format.Target, kind)
+		}
+		return nil
 	}
+
 	switch format.Target {
 	case VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetMarkStroke, VisualizationConditionalTargetSeriesColor:
 		if kind == "kpi" || kind == "table" || kind == "matrix" || kind == "pivot" {
