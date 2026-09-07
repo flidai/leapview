@@ -148,7 +148,6 @@ type KPIVisualizationPresentation struct {
 	DisplayUnits       *VisualizationDisplayUnits         `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
 	Note               *string                            `json:"note,omitempty" yaml:"note,omitempty"`
 	Tone               *VisualizationTone                 `json:"tone,omitempty" yaml:"tone,omitempty"`
-	Thresholds         *[]VisualizationThreshold          `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
 }
 
 type KPIVisualizationSpec struct {

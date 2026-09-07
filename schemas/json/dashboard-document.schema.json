@@ -3011,12 +3011,6 @@
           },
           "type": "array"
         },
-        "thresholds": {
-          "items": {
-            "$ref": "#/$defs/VisualizationThreshold"
-          },
-          "type": "array"
-        },
         "tone": {
           "$ref": "#/$defs/VisualizationTone"
         },

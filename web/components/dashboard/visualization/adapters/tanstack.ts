@@ -76,7 +76,7 @@ export function tableSignal(envelope: VisualizationEnvelope): TableSignal {
   const interaction = tableInteraction(spec)
   return {
     id: envelope.visualID, version: 2, type: spec.kind, title: resolveVisualizationMetadata(envelope).title,
-    style: { density: spec.presentation.rowHeight <= 30 ? 'compact' : spec.presentation.rowHeight >= 42 ? 'spacious' : 'comfortable', zebra: spec.presentation.striped, grid: 'rows' },
+    style: { density: spec.presentation.rowHeight <= 30 ? 'compact' : spec.presentation.rowHeight >= 42 ? 'spacious' : 'comfortable', zebra: spec.presentation.striped, grid: 'rows', showHeader: spec.presentation.showHeader },
     interaction, selection: tableSelection(envelope, interaction), columns,
     highlight: tableHighlight(envelope, schema?.id ?? 'primary'),
     cardinality: { kind: state.kind === 'windowed' ? state.cardinality.kind : 'exact', value: cardinalityCount },

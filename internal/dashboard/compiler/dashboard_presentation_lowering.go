@@ -402,9 +402,6 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if variant.Ranges != nil {
 			out.Ranges = append([]visualizationir.VisualizationKPIQualitativeRange(nil), (*variant.Ranges)...)
 		}
-		if variant.Thresholds != nil {
-			out.Thresholds = variant.Thresholds
-		}
 		return out, nil
 	default:
 		return nil, fmt.Errorf("unsupported Dashboard presentation variant %T", value.Value)

@@ -105,6 +105,14 @@ func TestDashboardDocumentRejectsUnknownUnionDiscriminator(t *testing.T) {
 	}
 }
 
+func TestDashboardKPIGeneratedDecoderRejectsRemovedThresholds(t *testing.T) {
+	var presentation DashboardPresentation
+	err := json.Unmarshal([]byte(`{"type":"kpi","thresholds":[{"value":50,"tone":"warning"}]}`), &presentation)
+	if err == nil || !strings.Contains(err.Error(), `unknown field "thresholds"`) {
+		t.Fatalf("KPI thresholds error = %v, want generated unknown-field diagnostic", err)
+	}
+}
+
 func TestCanonicalYAMLFixtureUsesGeneratedJSONContract(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join("testdata", "canonical.yaml"))
 	if err != nil {
