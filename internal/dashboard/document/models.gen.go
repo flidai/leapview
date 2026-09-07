@@ -3955,7 +3955,6 @@ type PointDashboardColorScale struct {
 	Kind    visualizationir.VisualizationPointColorScaleKind `json:"kind" yaml:"kind"`
 	Minimum *float64                                         `json:"minimum,omitempty" yaml:"minimum,omitempty"`
 	Maximum *float64                                         `json:"maximum,omitempty" yaml:"maximum,omitempty"`
-	Scheme  *string                                          `json:"scheme,omitempty" yaml:"scheme,omitempty"`
 }
 
 type PointDashboardOverplot struct {

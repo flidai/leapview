@@ -84151,15 +84151,11 @@ components:
           type: number
           format: double
           example: 1
-        scheme:
-          type: string
-          example: example
       description: A governed result-frame binding used by a point/scatter visual.
       example:
         kind: categorical
         maximum: 1
         minimum: 1
-        scheme: example
     PointDashboardOverplot:
       type: object
       required:
@@ -84322,7 +84318,6 @@ components:
           kind: categorical
           maximum: 1
           minimum: 1
-          scheme: example
         eventAnnotations:
           - axis: x
             description: example
@@ -84410,14 +84405,10 @@ components:
           type: number
           format: double
           example: 1
-        scheme:
-          type: string
-          example: example
       example:
         kind: categorical
         maximum: 1
         minimum: 1
-        scheme: example
     PointVisualizationPresentation:
       type: object
       allOf:
@@ -84589,7 +84580,6 @@ components:
           kind: categorical
           maximum: 1
           minimum: 1
-          scheme: example
         eventAnnotations:
           - axis: x
             description: example

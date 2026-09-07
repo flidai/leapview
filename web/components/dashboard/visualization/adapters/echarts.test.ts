@@ -118,7 +118,7 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   expect(temporal.xAxis.axisLabel.formatter(Date.UTC(2026, 0, 2))).not.toContain('1767')
 
   expect(brushSelectionCommands(envelope, {
-    batch: [{ selected: [{ dataIndex: [1, 0, 1] }] }],
+    batch: [{ selected: [{ seriesIndex: 0, dataIndex: [1, 0, 1] }] }],
   })).toEqual([
     {
       sourceKind: 'visual', sourceId: 'delivery', interactionKind: 'point_selection', action: 'replace', toggle: true,

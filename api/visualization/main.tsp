@@ -738,7 +738,6 @@ model PointVisualizationColorScale {
   `kind`: VisualizationPointColorScaleKind;
   `minimum`?: float64;
   `maximum`?: float64;
-  `scheme`?: string;
 }
 
 model PointVisualizationSizeScale {

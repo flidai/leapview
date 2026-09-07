@@ -534,8 +534,22 @@ func validatePointSpecification(spec VisualizationSpec, schemas map[string]Visua
 	if point.Color == nil && point.ColorScale != nil {
 		return fmt.Errorf("point color scale requires a color field")
 	}
-	if scale := point.ColorScale; scale != nil && scale.Minimum != nil && scale.Maximum != nil && *scale.Minimum >= *scale.Maximum {
-		return fmt.Errorf("point color scale minimum must be less than maximum")
+	if scale := point.ColorScale; scale != nil {
+		if scale.Kind != VisualizationPointColorScaleKindCategorical && scale.Kind != VisualizationPointColorScaleKindQuantitative {
+			return fmt.Errorf("point color scale kind %q is unsupported", scale.Kind)
+		}
+		if scale.Kind == VisualizationPointColorScaleKindCategorical && (scale.Minimum != nil || scale.Maximum != nil) {
+			return fmt.Errorf("point color scale domain requires a quantitative scale")
+		}
+		if scale.Minimum != nil && !finite(*scale.Minimum) {
+			return fmt.Errorf("point color scale minimum must be finite")
+		}
+		if scale.Maximum != nil && !finite(*scale.Maximum) {
+			return fmt.Errorf("point color scale maximum must be finite")
+		}
+		if scale.Minimum != nil && scale.Maximum != nil && *scale.Minimum >= *scale.Maximum {
+			return fmt.Errorf("point color scale minimum must be less than maximum")
+		}
 	}
 	if point.Presentation.Opacity <= 0 || point.Presentation.Opacity > 1 {
 		return fmt.Errorf("point opacity must be greater than zero and at most one")
@@ -667,6 +681,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 	}
 	ids := make(map[string]struct{}, len(*base.ConditionalFormatting))
 	targets := make(map[string]struct{}, len(*base.ConditionalFormatting))
+	pointMarkFill := false
 	for _, format := range *base.ConditionalFormatting {
 		if strings.TrimSpace(format.ID) == "" {
 			return fmt.Errorf("conditional formatting ID is required")
@@ -682,6 +697,12 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 		targets[targetKey] = struct{}{}
 		if err := validateConditionalFormattingTarget(base.Kind, format); err != nil {
 			return fmt.Errorf("conditional formatting %q: %w", format.ID, err)
+		}
+		if base.Kind == "point" && format.Target == VisualizationConditionalTargetMarkFill {
+			if pointMarkFill {
+				return fmt.Errorf("conditional formatting %q: point visualizations allow one mark_fill rule", format.ID)
+			}
+			pointMarkFill = true
 		}
 		if err := validateFieldRef(format.Field, schemas); err != nil {
 			return fmt.Errorf("conditional formatting %q field: %w", format.ID, err)
@@ -770,6 +791,11 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 		default:
 			return fmt.Errorf("conditional formatting %q has unsupported rule %T", format.ID, rule)
 		}
+		if base.Kind == "point" && format.Target == VisualizationConditionalTargetMarkFill {
+			if err := validatePointMarkFillColors(format.Rule); err != nil {
+				return fmt.Errorf("conditional formatting %q: %w", format.ID, err)
+			}
+		}
 	}
 	return nil
 }
@@ -795,6 +821,9 @@ func specSupportsConditionalFormatting(spec VisualizationSpec) bool {
 }
 
 func validateConditionalFormattingTarget(kind string, format VisualizationConditionalFormat) error {
+	if kind == "point" && format.Target != VisualizationConditionalTargetMarkFill {
+		return fmt.Errorf("target %q is incompatible with point visualizations; use %q", format.Target, VisualizationConditionalTargetMarkFill)
+	}
 	switch format.Target {
 	case VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetMarkStroke, VisualizationConditionalTargetSeriesColor:
 		if kind == "kpi" || kind == "table" || kind == "matrix" || kind == "pivot" {

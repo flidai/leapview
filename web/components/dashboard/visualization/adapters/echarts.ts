@@ -8,7 +8,7 @@ import { CategoryColorRegistry, categoryColorRegistryFor } from './echarts/categ
 import { cartesianOption } from './echarts/cartesian'
 import { hierarchyOption } from './echarts/hierarchy'
 import { polarOption } from './echarts/polar'
-import { pointOption } from './echarts/point'
+import { pointCategoryRowIndexes, pointOption } from './echarts/point'
 import { proportionalCenterText, proportionalOption } from './echarts/proportional'
 
 export { interactionCommandForRow, normalizeRendererLocale }
@@ -57,6 +57,7 @@ function seriesRowIndices(
   rows: readonly (readonly unknown[])[],
   series: Record<string, any>,
 ): number[] {
+  if (Array.isArray(series.__lv_source_row_indices)) return series.__lv_source_row_indices
   if (envelope.spec.kind !== 'cartesian' || !envelope.spec.series || series.name === undefined) {
     return rows.map((_, index) => index)
   }
@@ -225,12 +226,18 @@ export function brushSelectionCommands(envelope: VisualizationEnvelope, params: 
   const datasetID = envelope.spec.x.dataset
   const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === datasetID)
   if (!dataset) return []
-  const event = params as { batch?: Array<{ selected?: Array<{ dataIndex?: number[] }> }> }
+  const categoryRows = pointCategoryRowIndexes(envelope, dataset.columns, dataset.rows)
+  const event = params as { batch?: Array<{ seriesIndex?: number; selected?: Array<{ seriesIndex?: number; dataIndex?: number[] }> }> }
   const indexes = new Set<number>()
   for (const batch of event.batch ?? []) {
     for (const selected of batch.selected ?? []) {
       for (const index of selected.dataIndex ?? []) {
-        if (Number.isInteger(index) && index >= 0 && index < dataset.rows.length) indexes.add(index)
+        if (!Number.isInteger(index) || index < 0) continue
+        const seriesIndex = selected.seriesIndex ?? batch.seriesIndex
+        const sourceIndex = categoryRows !== undefined && seriesIndex !== undefined
+          ? categoryRows[seriesIndex]?.[index]
+          : index
+        if (sourceIndex !== undefined && sourceIndex >= 0 && sourceIndex < dataset.rows.length) indexes.add(sourceIndex)
       }
     }
   }

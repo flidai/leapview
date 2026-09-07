@@ -3198,9 +3198,6 @@
         "minimum": {
           "format": "double",
           "type": "number"
-        },
-        "scheme": {
-          "type": "string"
         }
       },
       "required": [

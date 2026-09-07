@@ -8363,9 +8363,6 @@
                           },
                           "minimum": {
                             "type": "number"
-                          },
-                          "scheme": {
-                            "type": "string"
                           }
                         },
                         "required": [
