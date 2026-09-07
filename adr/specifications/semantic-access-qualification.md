@@ -1,8 +1,8 @@
 # ADR-0017 semantic-access qualification matrix
 
-Gap-closure layer on `ganesh/fai-648-gap-closure`, based on
-`ganesh/fai-648-semantic-access-qualification` at
-`0ae8ac64db80f498a50626d155ea8ac810e19840` (2026-09-06).
+Audit-closure layer on `ganesh/fai-648-audit-closure`, based on
+`ganesh/fai-648-gap-closure` at
+`5662faf99946f654877b9ad9eaaa15f7f8ad6bfd` (2026-09-07).
 This is an evidence matrix, not an activation or deployment qualification.
 The linked conformance specification contains 98 distinct normative IDs: CHG
 4, STR 12, ATT 12, VAL 11, GRT 10, FLT 10, PLN 9, ENF 11, CMP 6, LIF 8,
@@ -60,12 +60,14 @@ were changed.
 The gap-closure stacked layer is `ganesh/fai-648-gap-closure`, based on qualification
 commit `0ae8ac64db80f498a50626d155ea8ac810e19840`. The five original failures
 were reviewed before implementation. The previous layer's validation and
-52/45/5 matrix totals above are retained as historical evidence. The current
+52/45/5 matrix totals above are retained as historical evidence. Its completed
 matrix is 54 PASS, 46 PARTIAL, 2 FAIL, and 0 NOT APPLICABLE: ATT-06 now has
 candidate-boundary evidence and CMP-02 has trusted typed publication evidence.
-LIF-06 has durable, verified decision evidence on the qualified paths, but remains
-PARTIAL because exhaustive consumer/provider and production activation evidence
-is not established. Other work in progress is not a PASS.
+At that checkpoint LIF-06 remained PARTIAL because exhaustive consumer/provider
+and production activation evidence was not established. The LIF-06-only closure
+below separates its normative audit requirement from activation and completes
+the reviewed consumer and retained-event proof. Other work in progress is not
+a PASS.
 
 | Original failure | Existing implementation | Missing behavior or evidence | Owner and bounded action |
 | --- | --- | --- | --- |
@@ -181,8 +183,9 @@ test). These are local qualification artifacts, not publication evidence.
 
 `STR-08` and the second clause of `ENF-06` fail because standalone DataPolicy
 is deliberately retained until FAI-649. They are cutover-owned limitations,
-not instructions to remove DataPolicy in this layer. `LIF-06` is PARTIAL on
-executed consumer and persistence evidence, not implementation existence alone.
+not instructions to remove DataPolicy in this layer. The gap-closure checkpoint
+left `LIF-06` PARTIAL on executed consumer and persistence evidence; its scoped
+follow-up qualification is recorded below.
 
 Partial rows preserve the remaining provider/expiry, every-consumer and plan
 shape, diagnostics/audit, and activation/approval evidence boundaries. Unsupported
@@ -195,6 +198,45 @@ publication-integrity boundary. FAI-649 still depends on qualified upstream
 consumer/control evidence and FAI-616; FAI-632 cannot close active ADR scope
 before that chain and the cutover evidence are complete. Neither issue is
 started here.
+
+## LIF-06-only audit closure
+
+The [audit qualification evidence](semantic-access-audit-qualification.md)
+records the exact requirement, consumer × audit matrix, named tests, race and
+PostgreSQL results, and full-CI execution. It closes LIF-06 without enabling a
+new consumer, provider, delegated execution mode, or production activation.
+The current matrix is **55 PASS, 45 PARTIAL, 2 FAIL, 0 NOT APPLICABLE**; only
+LIF-06 changes from PARTIAL to PASS relative to the 54/46/2 parent.
+
+All five production protected-consumer constructor sites attach the existing
+observer. Queryauthz-backed API fixtures now prove persisted bound decisions
+before disclosure and fail closed on semantic-recorder errors. Catalog,
+Explorer, discovery and materialize/cache evidence is compositional through
+those reviewed owners; this is not an independent provider/route activation
+fixture for every surface. Metadata-only and unimplemented export paths are
+explicitly excluded from the LIF-06 consumer inventory.
+
+The existing Access/PostgreSQL repository now verifies an exact already-bound
+expected event after checking its retained intent digest. Another valid event
+cannot substitute different instance, subject, actor, generation, member,
+policy, registry/control revision, decision or denial evidence. Historical
+records remain readable after mutations; they never authorize current output.
+Independent authority/lifecycle races and real PostgreSQL tombstone, restore,
+rollback and revision changes prove the existing fences still reject stale
+execution, while captured original audit events replay unchanged. No audit
+schema, evaluator, identity, digest authority, migration or lifecycle behavior
+was changed.
+
+The broader partial rows, FAI-649-owned STR-08/ENF-06 failures and FAI-632
+dependency remain unchanged. FAI-648 stays **IMPLEMENTED / PARTIAL** overall.
+Focused audit/consumer/race tests and the independent required PostgreSQL 18
+gate pass. Aggregate `task ci` is **not green**: the first attempt hit a
+non-reproducing admin browser timeout; its normal retry passed the browser
+suites but failed an unchanged MinIO fixture upload with HTTP 507
+`XMinioStorageFull`. The shared Docker filesystem was nearly full. The linked
+audit evidence records exact failures and commands; a complete CI retry needs
+restored runner storage capacity. This limitation does not claim a new audit
+defect or promote broader activation readiness.
 
 ## Requirement matrix
 
@@ -290,7 +332,7 @@ started here.
 | LIF-03 attribute value registry mapping policy or generation changes invalidate affected caches | PARTIAL | materialize and lifecycle | [semantic_cache.go](../../internal/analytics/materialize/semantic_cache.go) validateSemanticCacheLifecycle | [semantic_cache_test.go](../../internal/analytics/materialize/semantic_cache_test.go) TestProtectedSemanticCacheReusesOnlyUnchangedLifecycle, [semantic_qualification_postgres_test.go](../../internal/project/module/semantic_qualification_postgres_test.go) TestSemanticQualificationPostgreSQL18LifecycleAndAuthority | Read-through current-state mismatch rejects addressed stale reuse; full provider, mapping-removal, and every admitted cache-class qualification remains incomplete. This does not prescribe push invalidation or a new transport. |
 | LIF-04 candidate planning classifies policy changes and records affected dashboards queries agents APIs and members | PARTIAL | identityledger and project module | [contract_policy_plan.go](../../internal/project/module/contract_policy_plan.go) contractPolicyImpact | [contract_policy_plan_test.go](../../internal/project/module/contract_policy_plan_test.go) TestContractPolicyImpactUsesExistingDependencyGraph, TestContractPolicyApprovalInputPreservesSecurityWidening | Only direct publication resource is persisted; graph projection reports dependents but not every named consumer. |
 | LIF-05 policy removal or weakening is not descriptive and widening may require explicit approval | PARTIAL | identityledger and deployment | [policy_evidence.go](../../internal/project/identityledger/policy_evidence.go) ApprovalState | [policy_evidence_test.go](../../internal/project/identityledger/policy_evidence_test.go) TestPolicyEvidenceRejectsTamperedApprovalState, [contract_policy_plan_test.go](../../internal/project/module/contract_policy_plan_test.go) TestContractPolicyApprovalInputPreservesSecurityWidening | Approval-required input is not a completed approval or deployment decision. |
-| LIF-06 durable audit binds request principal actor generation member policy IDs attribute version decision and denial reason | PARTIAL | query observation, existing consumer owners, and Access audit persistence | [semantic_audit.go](../../internal/analytics/query/semantic_audit.go), [semantic_decision_audit.go](../../internal/access/semantic_decision_audit.go), and [semantic_decision_audit.go](../../internal/access/postgres/semantic_decision_audit.go) | [semantic_audit_test.go](../../internal/dashboard/queryauthz/semantic_audit_test.go) TestSemanticDiscoveryAuditBindsAuthorizedDelegatedActor; [semantic_consumer_test.go](../../internal/analytics/materialize/semantic_consumer_test.go) TestProtectedSemanticAuditRunsOnResultCacheHit; [semantic_decision_audit_test.go](../../internal/access/postgres/semantic_decision_audit_test.go) TestReadSemanticDecisionAuditEventPostgreSQL18RuntimeVerifiesRetention, TestReadSemanticDecisionAuditEventRejectsStoredDigestTampering; [semantic_qualification_postgres_test.go](../../internal/project/module/semantic_qualification_postgres_test.go) TestSemanticQualificationPostgreSQL18LifecycleAndAuthority | Qualified materialize/cache, discovery/explain, catalog and Explorer paths persist redacted bound decisions before disclosure; retained replay verifies the existing digest and runtime immutability. Invalid unresolved selectors fail closed without fabricating a member event. Exhaustive provider/consumer and production activation coverage remains unqualified; direct execution does not enable delegated actors. |
+| LIF-06 durable audit binds request principal actor generation member policy IDs attribute version decision and denial reason | PASS | query observation, existing consumer owners, and Access audit persistence | [semantic_audit.go](../../internal/analytics/query/semantic_audit.go), [semantic_decision_audit.go](../../internal/access/semantic_decision_audit.go), and [semantic_decision_audit.go](../../internal/access/postgres/semantic_decision_audit.go) | [semantic_audit_test.go](../../internal/dashboard/queryauthz/semantic_audit_test.go) TestSemanticDiscoveryAuditBindsAuthorizedDelegatedActor; [semantic_audit_qualification_test.go](../../internal/dashboard/semanticapi/semantic_audit_qualification_test.go) TestSemanticAPIAuditRecordsExplainAndQueryBeforeOutput, TestSemanticAPIAuditWriteFailurePreventsGovernedOutputs; [semantic_audit_lifecycle_test.go](../../internal/analytics/materialize/semantic_audit_lifecycle_test.go) TestProtectedSemanticAuditBindsDecisionAcrossAuthorityAndLifecycleRaces; [semantic_decision_audit_test.go](../../internal/access/postgres/semantic_decision_audit_test.go) TestVerifySemanticDecisionAuditEventRequiresExactExpectedBinding, TestReadSemanticDecisionAuditEventRejectsStoredDigestTampering; [semantic_qualification_postgres_test.go](../../internal/project/module/semantic_qualification_postgres_test.go) TestSemanticQualificationPostgreSQL18LifecycleAndAuthority; [semantic_decision_audit_test.go](../../internal/platform/architecture/semantic_decision_audit_test.go) TestSemanticDecisionAuditCoversEveryProductionConsumerConstructor | [Audit coverage matrix](semantic-access-audit-qualification.md) proves the reviewed consumer constructors, immutable redacted binding, exact retained replay and existing stale-output fences. Shared surfaces use compositional evidence, not separate provider activation fixtures. Historical allowed decisions do not certify delivery or authorize fresh execution. Metadata-only and unimplemented exporters are outside LIF-06; broader ENF/provider/activation rows remain unchanged. |
 | LIF-07 audit logs metrics traces and errors exclude raw unrestricted attribute values | PARTIAL | access and query | [semantic_access.go](../../internal/analytics/query/semantic_access.go) redacted outcomes and [semantic_attribute_audit.go](../../internal/access/semantic_attribute_audit.go) | [semantic_access_test.go](../../internal/analytics/query/semantic_access_test.go) TestSemanticAccessNoImplicitBypassAndRedactedGrantOutcomes, [semantic_attribute_control_unit_test.go](../../internal/access/postgres/semantic_attribute_control_unit_test.go) TestDirectPGXSemanticAttributeControlAuditProjectionOmitsValues | Broad logging metrics traces and error projection equivalence is not qualified. |
 | LIF-08 control mutations and authored deployments are distinct audit events with common correlation boundary | PARTIAL | access and identityledger | [semantic_attribute_audit.go](../../internal/access/semantic_attribute_audit.go) and [policy_evidence.go](../../internal/project/identityledger/policy_evidence.go) | [semantic_attribute_control_unit_test.go](../../internal/access/postgres/semantic_attribute_control_unit_test.go) TestDirectPGXSemanticAttributeControlAuditProjectionOmitsValues, [policy_evidence_test.go](../../internal/project/identityledger/policy_evidence_test.go) TestPolicyEvidenceRoundTripIsDeterministic | Separate evidence types exist, but cross-domain correlation and durable policy audit are not proven. |
 | OUT-01 no authored SQL Liquid Go templates regex functions scripts or general expression language | PASS | contracts and schema | [main.tsp](../../api/data-resources/main.tsp) closed SemanticAccessGrant and SemanticAccessFilter | [semantic_access_contract_test.go](../../internal/project/schema/semantic_access_contract_test.go) TestSemanticModelAccessPolicyStructuralContract | This PASS is limited to the SemanticModel access-policy sub-contract; STR-08 separately records the transitional DataPolicy contradiction. |

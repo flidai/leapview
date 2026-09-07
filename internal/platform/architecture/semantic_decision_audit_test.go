@@ -61,3 +61,54 @@ func TestSemanticDecisionAuditReusesConsumerAndDigestAuthorities(t *testing.T) {
 		}
 	}
 }
+
+// Every production protected-consumer constructor must explicitly attach the
+// existing observer. Route adapters delegate to these owners; they must not
+// create a second, unaudited execution consumer. Pure compiler planners are
+// deliberately not consumers and remain outside this inventory.
+func TestSemanticDecisionAuditCoversEveryProductionConsumerConstructor(t *testing.T) {
+	owners := map[string]int{
+		"internal/analytics/materialize/semantic_consumer.go":  1,
+		"internal/dashboard/queryauthz/semantic_discovery.go":  2,
+		"internal/project/module/semantic_catalog.go":          1,
+		"internal/project/http/data_explorer_authorization.go": 1,
+	}
+	seen := make(map[string]int)
+	for _, file := range productionGoFiles(t) {
+		parsed, err := parser.ParseFile(token.NewFileSet(), file.path, file.body, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			name := ""
+			switch function := call.Fun.(type) {
+			case *ast.Ident:
+				name = function.Name
+			case *ast.SelectorExpr:
+				name = function.Sel.Name
+			}
+			if name != "NewSemanticAccessConsumer" {
+				return true
+			}
+			seen[file.path]++
+			if owners[file.path] == 0 {
+				t.Errorf("%s introduces an unqualified semantic decision consumer", file.path)
+			}
+			if len(call.Args) != 5 || call.Ellipsis.IsValid() {
+				t.Errorf("%s must bind exactly one explicit decision observer", file.path)
+			} else if observer, ok := call.Args[4].(*ast.Ident); ok && observer.Name == "nil" {
+				t.Errorf("%s supplies a nil decision observer", file.path)
+			}
+			return true
+		})
+	}
+	for owner, count := range owners {
+		if seen[owner] != count {
+			t.Errorf("%s has %d consumer constructors, want reviewed inventory %d", owner, seen[owner], count)
+		}
+	}
+}

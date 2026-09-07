@@ -1045,7 +1045,7 @@ tasks:
       - go test ./internal/access/postgres -run '^TestSemanticAttributeRegistryPostgreSQL18' -count=1 -v
       - go test ./internal/access/postgres -run '^TestSemanticRegistryContextPostgreSQL18$' -count=1 -v
       - go test ./internal/access/postgres -run '^TestReadSemanticRegistryTxHoldsRegistryMutationLock$' -count=1 -v
-      - go test ./internal/access/postgres -run '^Test(Read|Record)SemanticDecisionAuditEvent' -count=1 -v
+      - go test ./internal/access/postgres -run '^Test(Read|Record|Verify)SemanticDecisionAuditEvent' -count=1 -v
       - go test -tags=duckdb_arrow ./internal/project/module -run '^TestSemanticQualificationPostgreSQL18LifecycleAndAuthority$' -count=1 -v
 
   test:workload:qualify:

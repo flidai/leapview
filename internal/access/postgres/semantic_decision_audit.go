@@ -81,3 +81,36 @@ func (r *Repository) ReadSemanticDecisionAuditEvent(ctx context.Context, auditID
 	}
 	return event, nil
 }
+
+// VerifySemanticDecisionAuditEvent verifies that a retained event is the exact
+// event expected by a caller. The expected event is an already-bound
+// CanonicalAuditEvent supplied by the caller; this method does not read live
+// registry, control, or lifecycle state. Historical reads remain valid after
+// those authorities advance, while a caller with an exact expected binding can
+// reject substitution of another valid retained event.
+func (r *Repository) VerifySemanticDecisionAuditEvent(ctx context.Context, auditID string, expected access.CanonicalAuditEvent) error {
+	if expected.Action != access.SemanticDecisionAuditAction {
+		return fmt.Errorf("%w: expected event action is not semantic access", errSemanticDecisionAuditVerification)
+	}
+	if err := expected.Validate(); err != nil {
+		return fmt.Errorf("%w: expected canonical event: %v", errSemanticDecisionAuditVerification, err)
+	}
+	canonicalMetadata, err := expected.CanonicalMetadataJSON()
+	if err != nil {
+		return fmt.Errorf("%w: expected canonical metadata: %v", errSemanticDecisionAuditVerification, err)
+	}
+	expected.MetadataJSON = canonicalMetadata
+
+	actual, err := r.ReadSemanticDecisionAuditEvent(ctx, auditID)
+	if err != nil {
+		return err
+	}
+	if actual.Identity != expected.Identity || actual.PrincipalID != expected.PrincipalID ||
+		actual.Action != expected.Action || actual.Resource.ID() != expected.Resource.ID() ||
+		actual.Resource.Kind() != expected.Resource.Kind() || actual.Capability != expected.Capability ||
+		actual.Status != expected.Status || actual.RequestID != expected.RequestID ||
+		actual.CorrelationID != expected.CorrelationID || actual.MetadataJSON != expected.MetadataJSON {
+		return fmt.Errorf("%w: retained event does not match expected identity and evidence", errSemanticDecisionAuditVerification)
+	}
+	return nil
+}

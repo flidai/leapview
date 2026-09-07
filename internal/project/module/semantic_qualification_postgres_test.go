@@ -366,12 +366,18 @@ func qualificationQuery(t *testing.T, runtime *materialize.Runtime, want string)
 	return result
 }
 
+type qualificationAuditRecord struct {
+	ID       string
+	Event    access.CanonicalAuditEvent
+	Evidence access.SemanticDecisionEvidence
+}
+
 // Read through the existing Access repository and verify every retained digest,
 // not just row existence. Repeated requests append fresh events; this is not
 // an idempotent request-retry assertion.
-func qualificationAuditCount(t *testing.T, db qualificationDatabase, instanceID string) int {
+func qualificationAuditRecords(t *testing.T, db qualificationDatabase, instanceID string) []qualificationAuditRecord {
 	t.Helper()
-	rows, err := db.runtime.Query(t.Context(), `SELECT audit_id::text FROM audit.audit_event WHERE action=$1 AND metadata->>'instanceId'=$2`, access.SemanticDecisionAuditAction, instanceID)
+	rows, err := db.runtime.Query(t.Context(), `SELECT audit_id::text FROM audit.audit_event WHERE action=$1 AND metadata->>'instanceId'=$2 ORDER BY occurred_at, audit_id`, access.SemanticDecisionAuditAction, instanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,6 +395,7 @@ func qualificationAuditCount(t *testing.T, db qualificationDatabase, instanceID 
 	if err != nil {
 		t.Fatal(err)
 	}
+	records := make([]qualificationAuditRecord, 0, len(ids))
 	for _, id := range ids {
 		event, err := db.access.ReadSemanticDecisionAuditEvent(t.Context(), id)
 		if err != nil {
@@ -401,8 +408,105 @@ func qualificationAuditCount(t *testing.T, db qualificationDatabase, instanceID 
 		if evidence.InstanceID != instanceID || event.Identity.ProjectID != qualificationProjectID || event.Identity.GenerationID != "serving:qualification" || event.PrincipalID != qualificationSubject || event.Resource.ID() != qualificationModel || event.RequestID != qualificationRequest().RequestID {
 			t.Fatalf("retained semantic decision identity differs: %#v / %#v", event, evidence)
 		}
+		records = append(records, qualificationAuditRecord{ID: id, Event: event, Evidence: evidence})
 	}
-	return len(ids)
+	return records
+}
+
+func qualificationAuditCount(t *testing.T, db qualificationDatabase, instanceID string) int {
+	t.Helper()
+	return len(qualificationAuditRecords(t, db, instanceID))
+}
+
+func qualificationAuditDelta(before, after []qualificationAuditRecord) []qualificationAuditRecord {
+	seen := make(map[string]struct{}, len(before))
+	for _, record := range before {
+		seen[record.ID] = struct{}{}
+	}
+	delta := make([]qualificationAuditRecord, 0, len(after)-len(before))
+	for _, record := range after {
+		if _, ok := seen[record.ID]; !ok {
+			delta = append(delta, record)
+		}
+	}
+	return delta
+}
+
+func qualificationAssertCurrentAuditEvidence(t *testing.T, records []qualificationAuditRecord, resolution access.SemanticAttributeResolution) {
+	t.Helper()
+	modelDigest, err := semanticquery.SemanticModelDigest(qualificationModelDefinition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range records {
+		if record.Event.Status != "success" || !record.Evidence.Allowed || record.Evidence.Reason != "" {
+			t.Fatalf("fresh protected decision was not successful: %#v", record.Event)
+		}
+		if record.Evidence.ActorPrincipalID != qualificationSubject || record.Evidence.SemanticModelDigest != modelDigest {
+			t.Fatalf("audit actor/model binding differs from admitted request: %#v", record.Evidence)
+		}
+		if record.Evidence.Registry.Profile != resolution.Registry.State.Profile || record.Evidence.Registry.Revision != resolution.Registry.State.Revision || record.Evidence.Registry.Digest != resolution.Registry.State.Digest {
+			t.Fatalf("audit registry evidence differs from admitted authority: %#v / %#v", record.Evidence, resolution.Registry.State)
+		}
+		if record.Evidence.Control.Profile != resolution.ControlState.Profile || record.Evidence.Control.Revision != resolution.ControlState.Revision || record.Evidence.Control.Digest != resolution.ControlState.Digest {
+			t.Fatalf("audit control evidence differs from admitted authority: %#v / %#v", record.Evidence, resolution.ControlState)
+		}
+		if record.Evidence.Target.Dataset != "orders" || record.Evidence.Target.Dimension != "" || record.Evidence.Target.Metric != "" {
+			t.Fatalf("audit target differs from admitted dataset: %#v", record.Evidence.Target)
+		}
+		foundGrant := false
+		for _, grant := range record.Evidence.Grants {
+			if grant.Grant == "regiongrant" && grant.UserAttribute == "region" && grant.Satisfied {
+				foundGrant = true
+			}
+			if grant.Grant == "" || grant.UserAttribute == "" || grant.AttributeDefinitionID == "" || grant.AttributeDefinitionVersion <= 0 {
+				t.Fatalf("audit grant identity is incomplete: %#v", grant)
+			}
+		}
+		if !foundGrant {
+			t.Fatalf("audit omitted the required grant outcome: %#v", record.Evidence.Grants)
+		}
+		for _, filter := range record.Evidence.Filters {
+			if filter.Identity == "" || filter.Dataset == "" || filter.Dimension == "" || filter.UserAttribute == "" || filter.AttributeDefinitionID == "" || filter.AttributeDefinitionVersion <= 0 {
+				t.Fatalf("audit filter identity is incomplete: %#v", filter)
+			}
+		}
+		for _, attribute := range resolution.Attributes {
+			foundAttribute := false
+			for _, retained := range record.Evidence.Attributes {
+				if retained.DefinitionID == attribute.DefinitionID && retained.DefinitionName == attribute.DefinitionName && retained.DefinitionVersion == attribute.DefinitionVersion && retained.Source == attribute.Source && retained.ValueDigest == attribute.ValueDigest {
+					foundAttribute = true
+					break
+				}
+			}
+			if !foundAttribute {
+				t.Fatalf("audit omitted effective attribute identity %q: %#v", attribute.DefinitionID, record.Evidence.Attributes)
+			}
+		}
+	}
+}
+
+func qualificationFreshRuntimeAudit(t *testing.T, db qualificationDatabase, instanceID string, runtime *materialize.Runtime, resolution access.SemanticAttributeResolution, database *qualificationDatabaseExecutor) []qualificationAuditRecord {
+	t.Helper()
+	before := qualificationAuditRecords(t, db, instanceID)
+	qualificationQuery(t, runtime, dataquery.CacheMiss)
+	afterMiss := qualificationAuditRecords(t, db, instanceID)
+	miss := qualificationAuditDelta(before, afterMiss)
+	if len(miss) == 0 {
+		t.Fatal("fresh protected cache miss wrote no semantic decision audit")
+	}
+	qualificationAssertCurrentAuditEvidence(t, miss, resolution)
+	qualificationQuery(t, runtime, dataquery.CacheHit)
+	afterHit := qualificationAuditRecords(t, db, instanceID)
+	hit := qualificationAuditDelta(afterMiss, afterHit)
+	if len(hit) == 0 {
+		t.Fatal("fresh protected cache hit wrote no semantic decision audit")
+	}
+	qualificationAssertCurrentAuditEvidence(t, hit, resolution)
+	if got := database.queries.Load(); got != 1 {
+		t.Fatalf("fresh protected miss/hit physical executions = %d, want 1", got)
+	}
+	return append(miss, hit...)
 }
 
 func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
@@ -435,18 +539,11 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 
 	firstDB := &qualificationDatabaseExecutor{}
 	firstRuntime := qualificationRuntime(t, db, cacheScope, binding, reader, registry, firstDB, auth.Revision)
-	qualificationQuery(t, firstRuntime, dataquery.CacheMiss)
-	missAuditCount := qualificationAuditCount(t, db, qualificationInstance)
-	if missAuditCount == 0 {
-		t.Fatal("protected execution did not retain semantic decision audit")
+	firstResolution, err := db.access.ResolveSemanticAttributes(t.Context(), access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: qualificationSubject})
+	if err != nil {
+		t.Fatal(err)
 	}
-	qualificationQuery(t, firstRuntime, dataquery.CacheHit)
-	if qualificationAuditCount(t, db, qualificationInstance) <= missAuditCount {
-		t.Fatal("cache hit bypassed fresh durable semantic decision evidence")
-	}
-	if got := firstDB.queries.Load(); got != 1 {
-		t.Fatalf("active miss/hit physical executions = %d, want 1", got)
-	}
+	historical := qualificationFreshRuntimeAudit(t, db, qualificationInstance, firstRuntime, firstResolution, firstDB)
 
 	// A second instance starts with the same lifecycle/publication/control
 	// values as the first, except for InstanceID. It must not consume the
@@ -483,14 +580,20 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 	}
 	otherDB := &qualificationDatabaseExecutor{}
 	otherRuntime := qualificationRuntime(t, db, cacheScope, otherBinding, otherReader, otherRegistry, otherDB, otherAuth.Revision)
-	qualificationQuery(t, otherRuntime, dataquery.CacheMiss)
-	qualificationQuery(t, otherRuntime, dataquery.CacheHit)
-	if got := otherDB.queries.Load(); got != 1 {
-		t.Fatalf("cross-instance miss/hit physical executions = %d, want 1", got)
+	otherResolution, err := db.access.ResolveSemanticAttributes(t.Context(), access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: qualificationSubject})
+	if err != nil {
+		t.Fatal(err)
 	}
+	qualificationFreshRuntimeAudit(t, db, qualificationOther, otherRuntime, otherResolution, otherDB)
+	beforeFirstReplay := qualificationAuditRecords(t, db, qualificationInstance)
 	qualificationQuery(t, firstRuntime, dataquery.CacheHit)
+	afterFirstReplay := qualificationAuditRecords(t, db, qualificationInstance)
+	historical = append(historical, qualificationAuditDelta(beforeFirstReplay, afterFirstReplay)...)
 	if got := firstDB.queries.Load(); got != 1 {
 		t.Fatalf("first-instance re-hit physical executions = %d, want 1", got)
+	}
+	if got := len(afterFirstReplay); got < 3 {
+		t.Fatalf("first-instance replay audit count = %d, want at least 3", got)
 	}
 
 	// Removing the authored resource leaves its immutable publication readable,
@@ -498,9 +601,12 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 	if _, err := db.ledger.Activate(t.Context(), qualificationCandidate(qualificationInstance, "bundle-2", "bundle-1", false)); err != nil {
 		t.Fatal(err)
 	}
+	beforeTombstone := qualificationAuditRecords(t, db, qualificationInstance)
 	if _, err := firstRuntime.ExecuteDataQuery(t.Context(), qualificationRequest()); err == nil {
 		t.Fatal("tombstoned resource reused protected cache")
 	}
+	afterTombstone := qualificationAuditRecords(t, db, qualificationInstance)
+	historical = append(historical, qualificationAuditDelta(beforeTombstone, afterTombstone)...)
 	if got := firstDB.queries.Load(); got != 1 {
 		t.Fatalf("tombstone physical executions = %d, want 1", got)
 	}
@@ -521,14 +627,17 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	restoredRuntime := qualificationRuntime(t, db, cacheScope, restoredBinding, restoredReader, restoredRegistry, restoredDB, restoredAuth.Revision)
-	qualificationQuery(t, restoredRuntime, dataquery.CacheMiss)
-	qualificationQuery(t, restoredRuntime, dataquery.CacheHit)
-	if got := restoredDB.queries.Load(); got != 1 {
-		t.Fatalf("restored miss/hit physical executions = %d, want 1", got)
+	restoredResolution, err := db.access.ResolveSemanticAttributes(t.Context(), access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: qualificationSubject})
+	if err != nil {
+		t.Fatal(err)
 	}
+	historical = append(historical, qualificationFreshRuntimeAudit(t, db, qualificationInstance, restoredRuntime, restoredResolution, restoredDB)...)
+	beforePreRestore := qualificationAuditRecords(t, db, qualificationInstance)
 	if _, err := firstRuntime.ExecuteDataQuery(t.Context(), qualificationRequest()); err == nil {
 		t.Fatal("old pre-restore runtime accepted restored lifecycle")
 	}
+	afterPreRestore := qualificationAuditRecords(t, db, qualificationInstance)
+	historical = append(historical, qualificationAuditDelta(beforePreRestore, afterPreRestore)...)
 	if got := firstDB.queries.Load(); got != 1 {
 		t.Fatalf("pre-restore stale physical executions = %d, want 1", got)
 	}
@@ -536,9 +645,12 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 	if _, err := db.ledger.Rollback(t.Context(), identityledger.Rollback{InstanceID: qualificationInstance, BundleID: "bundle-1", ExpectedBundleID: "bundle-3", ActorID: "qualification-test", Reason: "qualification rollback"}); err != nil {
 		t.Fatal(err)
 	}
+	beforePreRollback := qualificationAuditRecords(t, db, qualificationInstance)
 	if _, err := restoredRuntime.ExecuteDataQuery(t.Context(), qualificationRequest()); err == nil {
 		t.Fatal("pre-rollback runtime accepted rollback lifecycle")
 	}
+	afterPreRollback := qualificationAuditRecords(t, db, qualificationInstance)
+	historical = append(historical, qualificationAuditDelta(beforePreRollback, afterPreRollback)...)
 	if got := restoredDB.queries.Load(); got != 1 {
 		t.Fatalf("pre-rollback stale physical executions = %d, want 1", got)
 	}
@@ -553,11 +665,11 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 	}
 	rollbackDB := &qualificationDatabaseExecutor{}
 	rollbackRuntime := qualificationRuntime(t, db, cacheScope, rollbackBinding, rollbackReader, rollbackRegistry, rollbackDB, rollbackAuth.Revision)
-	qualificationQuery(t, rollbackRuntime, dataquery.CacheMiss)
-	qualificationQuery(t, rollbackRuntime, dataquery.CacheHit)
-	if got := rollbackDB.queries.Load(); got != 1 {
-		t.Fatalf("rollback miss/hit physical executions = %d, want 1", got)
+	rollbackResolution, err := db.access.ResolveSemanticAttributes(t.Context(), access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: qualificationSubject})
+	if err != nil {
+		t.Fatal(err)
 	}
+	historical = append(historical, qualificationFreshRuntimeAudit(t, db, qualificationInstance, rollbackRuntime, rollbackResolution, rollbackDB)...)
 
 	// Real role/control mutation fences the runtime's retained lifecycle. Then
 	// a fresh runtime is admitted at the new control revision so the semantic
@@ -566,9 +678,12 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 	if _, err := db.access.CreateRoleAssignment(t.Context(), access.RoleAssignmentInput{ID: assignmentID, InstanceID: qualificationInstance, ProjectID: qualificationProjectID.String(), Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: qualificationSubject}, Role: string(access.ProjectRoleViewer), Name: "qualification viewer", ActorID: qualificationActor}); err != nil {
 		t.Fatal(err)
 	}
+	beforeRoleControl := qualificationAuditRecords(t, db, qualificationInstance)
 	if _, err := rollbackRuntime.ExecuteDataQuery(t.Context(), qualificationRequest()); err == nil {
 		t.Fatal("role/control mutation reused protected cache")
 	}
+	afterRoleControl := qualificationAuditRecords(t, db, qualificationInstance)
+	historical = append(historical, qualificationAuditDelta(beforeRoleControl, afterRoleControl)...)
 	if got := rollbackDB.queries.Load(); got != 1 {
 		t.Fatalf("role/control stale physical executions = %d, want 1", got)
 	}
@@ -583,8 +698,11 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 	}
 	controlDB := &qualificationDatabaseExecutor{}
 	controlRuntime := qualificationRuntime(t, db, cacheScope, controlBinding, controlReader, controlRegistry, controlDB, controlAuth.Revision)
-	qualificationQuery(t, controlRuntime, dataquery.CacheMiss)
-	qualificationQuery(t, controlRuntime, dataquery.CacheHit)
+	controlResolution, err := db.access.ResolveSemanticAttributes(t.Context(), access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: qualificationSubject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	historical = append(historical, qualificationFreshRuntimeAudit(t, db, qualificationInstance, controlRuntime, controlResolution, controlDB)...)
 
 	definition, err := db.access.SemanticAttributeDefinition(t.Context(), "region")
 	if err != nil {
@@ -598,9 +716,12 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	beforeRegistry := qualificationAuditRecords(t, db, qualificationInstance)
 	if _, err := controlRuntime.ExecuteDataQuery(t.Context(), qualificationRequest()); err == nil {
 		t.Fatal("registry mutation reused protected cache")
 	}
+	afterRegistry := qualificationAuditRecords(t, db, qualificationInstance)
+	historical = append(historical, qualificationAuditDelta(beforeRegistry, afterRegistry)...)
 	if got := controlDB.queries.Load(); got != 1 {
 		t.Fatalf("registry stale physical executions = %d, want 1", got)
 	}
@@ -618,17 +739,31 @@ func TestSemanticQualificationPostgreSQL18LifecycleAndAuthority(t *testing.T) {
 	}
 	registryDB := &qualificationDatabaseExecutor{}
 	registryRuntime := qualificationRuntime(t, db, cacheScope, registryBinding, registryReader, registrySnapshot, registryDB, controlAuth.Revision)
-	qualificationQuery(t, registryRuntime, dataquery.CacheMiss)
-	qualificationQuery(t, registryRuntime, dataquery.CacheHit)
+	registryResolution, err := db.access.ResolveSemanticAttributes(t.Context(), access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: qualificationSubject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	historical = append(historical, qualificationFreshRuntimeAudit(t, db, qualificationInstance, registryRuntime, registryResolution, registryDB)...)
 
 	if _, err := db.access.SetSemanticAttributeAssignment(t.Context(), access.SemanticAttributeAssignmentInput{AssignmentID: currentAssignment.ID, DefinitionID: updatedDefinition.ID, Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: qualificationSubject}, Values: []string{"eu"}, ExpectedVersion: currentAssignment.AssignmentVersion, Mutation: access.SemanticAttributeMutationContext{ActorPrincipalID: qualificationActor}}); err != nil {
 		t.Fatal(err)
 	}
+	beforeAssignment := qualificationAuditRecords(t, db, qualificationInstance)
 	if _, err := registryRuntime.ExecuteDataQuery(t.Context(), qualificationRequest()); err == nil {
 		t.Fatal("assignment mutation reused protected cache")
 	}
+	afterAssignment := qualificationAuditRecords(t, db, qualificationInstance)
+	historical = append(historical, qualificationAuditDelta(beforeAssignment, afterAssignment)...)
 	if got := registryDB.queries.Load(); got != 1 {
 		t.Fatalf("assignment stale physical executions = %d, want 1", got)
+	}
+	// Verify the original event objects captured before each transition, not a
+	// freshly read copy. This proves retained historical evidence remains
+	// immutable and cannot be substituted by a later valid decision.
+	for _, record := range historical {
+		if err := db.access.VerifySemanticDecisionAuditEvent(t.Context(), record.ID, record.Event); err != nil {
+			t.Fatalf("historical semantic decision %s failed retained replay verification: %v", record.ID, err)
+		}
 	}
 }
 
