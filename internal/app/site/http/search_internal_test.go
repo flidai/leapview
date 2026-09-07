@@ -21,7 +21,7 @@ func TestDocumentationSearchSupportsSafePrefixQueries(t *testing.T) {
 		t.Fatal("prefix search does not include semantic models")
 	}
 
-	// Search input is data, not raw FTS5 syntax.
+	// Search input is data, not raw search syntax.
 	results = searchSiteDocuments(`semantic "relationships" *`)
 	if !containsDocument(results, "concepts/semantic-models") {
 		t.Fatal("syntax-like search does not include semantic models")

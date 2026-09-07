@@ -2,15 +2,38 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/admin/ui"
 	"github.com/flidai/leapview/internal/agent/api"
+	"github.com/flidai/leapview/internal/dashboard/publication"
 )
+
+func TestPublicationMutationStatusPreservesDomainSemantics(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{name: "not found", err: publication.ErrNotFound, status: http.StatusNotFound},
+		{name: "conflict", err: publication.ErrConflict, status: http.StatusConflict},
+		{name: "precondition", err: apigenfailure.Wrap("precondition", publication.ErrConflict), status: http.StatusPreconditionFailed},
+		{name: "audit unavailable", err: apigenfailure.New("audit_unavailable", "private"), status: http.StatusServiceUnavailable},
+		{name: "unknown storage", err: errors.New("private database detail"), status: http.StatusServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := publicationMutationStatus(test.err); got != test.status {
+				t.Fatalf("status = %d, want %d", got, test.status)
+			}
+		})
+	}
+}
 
 func TestDirectoryListReadsSkipUnrelatedAdminProviders(t *testing.T) {
 	agentCalls, publicationCalls := 0, 0

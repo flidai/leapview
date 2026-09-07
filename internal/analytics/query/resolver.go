@@ -6,11 +6,19 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/query/planir"
 )
 
 type Planner struct {
-	compiled      *CompiledModel
-	tableRelation TableRelation
+	compiled                             *CompiledModel
+	tableRelation                        TableRelation
+	semanticAccessPolicy                 *CompiledSemanticAccessPolicy
+	semanticAccessProvider               func() (SemanticAccessAttributeSnapshot, SemanticAccessAuthority, error)
+	semanticAccessExpectedDecisionDigest string
+	// semanticAccessAdmissionHook is installed only by a request-bound
+	// SemanticAccessConsumer. It observes the graph after the existing access
+	// placement/seal and never becomes part of PlanIR or the serialized Plan.
+	semanticAccessAdmissionHook func(*planir.Graph, semanticAccessAdmission) error
 }
 
 // datasetTable resolves a semantic alias through the compiled serving

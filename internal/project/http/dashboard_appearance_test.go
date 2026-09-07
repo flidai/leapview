@@ -90,7 +90,7 @@ func TestDashboardAppearanceReloadPrefersPersistedValueOverAuthoredValue(t *test
 	}}
 	h := &BrowserHandler{
 		DashboardAppearances: store,
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{DashboardSources: map[string]projectmanifest.DashboardSource{
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{DashboardSources: map[string]projectmanifest.DashboardSource{
 			dashboardID.String(): {Document: dashboarddocument.DashboardDocument{Metadata: dashboarddocument.DashboardMetadata{ID: dashboardID.String()}, Spec: dashboarddocument.DashboardSpec{Appearance: &dashboarddocument.DashboardAppearance{Icon: &authoredIcon, Color: &authoredColor}}}},
 		}}},
 	}

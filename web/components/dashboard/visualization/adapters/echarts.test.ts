@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { Change, defaultRendererContext } from '../host-controller'
-import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echartsUpdatePlan, heatmapFocusDataZoom, interactionCommandForRow, legendSelectionCommand, normalizeRendererLocale, removeEChartsRendererFrame, waitForEChartsFrame } from './echarts'
+import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echartsUpdatePlan, heatmapFocusDataZoom, heatmapFocusZoomEnabled, interactionCommandForRow, legendSelectionCommand, normalizeRendererLocale, removeEChartsRendererFrame, waitForEChartsFrame } from './echarts'
 import { constrainEChartsLabelToDataRect, echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
 import { CategoryColorRegistry } from './echarts/category-colors'
 import { proportionalCenterText } from './echarts/proportional'
@@ -74,6 +74,18 @@ test('ECharts heatmap focus keeps a draggable full-range slider and restores the
     { id: 'dataZoom:heatmap:inside', type: 'inside', disabled: false, start: 0, end: 37.5 },
     { id: 'dataZoom:heatmap:slider', type: 'slider', show: true, bottom: 64, showDetail: false, brushSelect: false, start: 0, end: 37.5 },
   ])
+})
+
+test('ECharts heatmap focus requires initialized generated zoom controls', () => {
+  const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
+  const populated = echartsOption(envelope, defaultRendererContext) as any
+  expect(populated.dataZoom).toHaveLength(2)
+  expect(heatmapFocusZoomEnabled(envelope, true)).toBe(true)
+
+  envelope.dataState.datasets[0].rows = []
+  const empty = echartsOption(envelope, defaultRendererContext) as any
+  expect(empty.dataZoom).toEqual([])
+  expect(heatmapFocusZoomEnabled(envelope, false)).toBe(false)
 })
 
 test('ECharts renders governed bivariate points, bubbles, labels, color, and stable brushes', () => {
@@ -904,6 +916,11 @@ test('ECharts incremental plans commit data synchronously, preserve interaction 
   expect(initialDataZoom.settings.replaceMerge).toEqual(['dataset', 'series', 'legend', 'visualMap', 'graphic', 'dataZoom'])
   expect(initialDataZoom.option.dataZoom).toEqual(option.dataZoom)
   expect(initialDataZoom.option.grid).toEqual(option.grid)
+
+  const refreshedHeatmapDataZoom = echartsUpdatePlan(Change.Data, option, false, true)
+  expect(refreshedHeatmapDataZoom.settings.replaceMerge).toEqual(['dataset', 'series', 'legend', 'visualMap', 'graphic', 'dataZoom', 'grid'])
+  expect(refreshedHeatmapDataZoom.option.dataZoom).toEqual(option.dataZoom)
+  expect(refreshedHeatmapDataZoom.option.grid).toEqual(option.grid)
 
   const emptyHeatmap = { ...option, dataZoom: [], grid: { ...option.grid, bottom: 64 } }
   const resetDataZoom = echartsUpdatePlan(Change.Data, emptyHeatmap)

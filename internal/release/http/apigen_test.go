@@ -19,9 +19,6 @@ func TestAPIGenDispatcherMapsReleaseTransportInputs(t *testing.T) {
 
 	dispatcher.CreateRelease(recorder, request, "p1", releasegen.GenCreateReleaseHeaders{IdempotencyKey: "create-1"})
 	dispatcher.ListReleases(recorder, request, "p1", releasegen.GenListReleasesParams{Limit: int32Ptr(25), PageToken: stringPtr("page-1")})
-	dispatcher.UploadReleaseArtifact(recorder, request, "p1", "r1", releasegen.GenUploadReleaseArtifactHeaders{
-		ContentType: "application/octet-stream", ContentDigest: "sha256:artifact",
-	})
 	dispatcher.FinalizeRelease(recorder, request, "p1", "r1", releasegen.GenFinalizeReleaseHeaders{IdempotencyKey: "finalize-1"})
 	dispatcher.ListReleaseEvents(recorder, request, "p1", "r1", releasegen.GenListReleaseEventsParams{
 		Limit: int32Ptr(10), PageToken: stringPtr("event-page"),
@@ -36,12 +33,6 @@ func TestAPIGenDispatcherMapsReleaseTransportInputs(t *testing.T) {
 	if got, want := *handler.listPageToken, "page-1"; got != want {
 		t.Fatalf("list page token = %q, want %q", got, want)
 	}
-	if got, want := handler.contentType, "application/octet-stream"; got != want {
-		t.Fatalf("artifact content type = %q, want %q", got, want)
-	}
-	if got, want := handler.contentDigest, "sha256:artifact"; got != want {
-		t.Fatalf("artifact content digest = %q, want %q", got, want)
-	}
 	if got, want := handler.finalizeKey, "finalize-1"; got != want {
 		t.Fatalf("finalize idempotency key = %q, want %q", got, want)
 	}
@@ -54,9 +45,9 @@ func TestAPIGenDispatcherMapsReleaseTransportInputs(t *testing.T) {
 }
 
 type recordingReleaseHandler struct {
-	createKey, contentType, contentDigest, finalizeKey string
-	listLimit, eventLimit                              *int32
-	listPageToken, eventPageToken                      *string
+	createKey, finalizeKey        string
+	listLimit, eventLimit         *int32
+	listPageToken, eventPageToken *string
 }
 
 func (h *recordingReleaseHandler) CreateRelease(_ stdhttp.ResponseWriter, _ *stdhttp.Request, _, key string) {
@@ -68,10 +59,6 @@ func (h *recordingReleaseHandler) ListReleases(_ stdhttp.ResponseWriter, _ *stdh
 }
 
 func (*recordingReleaseHandler) GetRelease(stdhttp.ResponseWriter, *stdhttp.Request, string, string) {
-}
-
-func (h *recordingReleaseHandler) UploadReleaseArtifact(_ stdhttp.ResponseWriter, _ *stdhttp.Request, _, _, contentType, contentDigest string) {
-	h.contentType, h.contentDigest = contentType, contentDigest
 }
 
 func (h *recordingReleaseHandler) FinalizeRelease(_ stdhttp.ResponseWriter, _ *stdhttp.Request, _, _, key string) {

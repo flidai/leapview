@@ -14,7 +14,7 @@ import (
 
 func TestWatcherDebouncesReachableChangesAndIgnoresUnrelatedFiles(t *testing.T) {
 	root := t.TempDir()
-	projectPath := filepath.Join(root, "leapview.yaml")
+	projectPath := root
 	modelPath := filepath.Join(root, "models", "orders.yaml")
 	builder := &countingBuilder{snapshot: testSnapshot("watch")}
 	remote := &recordingRemote{}
@@ -62,7 +62,7 @@ func TestWatcherDebouncesReachableChangesAndIgnoresUnrelatedFiles(t *testing.T) 
 
 func TestWatcherRecognizesNewlyReachableFileAndAddsItsDirectory(t *testing.T) {
 	root := t.TempDir()
-	projectPath := filepath.Join(root, "leapview.yaml")
+	projectPath := root
 	modelPath := filepath.Join(root, "models", "orders.yaml")
 	newPath := filepath.Join(root, "models", "customers.yaml")
 	var sourcesMu sync.Mutex
@@ -107,15 +107,13 @@ func TestWatcherRecognizesNewlyReachableFileAndAddsItsDirectory(t *testing.T) {
 
 func TestWatcherReceivesRealFilesystemChanges(t *testing.T) {
 	root := t.TempDir()
-	projectPath := filepath.Join(root, "leapview.yaml")
+	projectPath := root
 	modelPath := filepath.Join(root, "models", "orders.yaml")
 	if err := os.MkdirAll(filepath.Dir(modelPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{projectPath, modelPath} {
-		if err := os.WriteFile(path, []byte("initial"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(modelPath, []byte("initial"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	builder := &countingBuilder{snapshot: testSnapshot("real-watch")}
 	service, err := New(builder, &recordingRemote{})
@@ -148,7 +146,7 @@ func TestWatcherReceivesRealFilesystemChanges(t *testing.T) {
 
 func TestWatcherRetriesRemoteFailureWithoutAnotherFileChange(t *testing.T) {
 	root := t.TempDir()
-	projectPath := filepath.Join(root, "leapview.yaml")
+	projectPath := root
 	snapshot := testSnapshot("retry-watch")
 	builder := &countingBuilder{snapshot: snapshot}
 	remote := &recordingRemote{errors: []error{errors.New("target disconnected"), nil}}

@@ -29,7 +29,9 @@ var contractsCUE string
 type Kind string
 
 const (
-	KindProject              Kind = "project"
+	// KindProjectNamespace classifies rejected control-plane and migration
+	// examples. Project documents are not analytics source-root authoring.
+	KindProjectNamespace     Kind = "project"
 	KindConnection           Kind = "connection"
 	KindSource               Kind = "source"
 	KindModel                Kind = "model"
@@ -101,17 +103,23 @@ func ValidateFile(kind Kind, path string) error {
 }
 
 func ValidateBytes(kind Kind, filename string, content []byte) error {
+	if removedPublicAuthoringKind(kind) {
+		return &Error{Diagnostics: []Diagnostic{{
+			File: filename, Line: 1, Column: 1, Severity: SeverityError, Code: "schema.kind.removed",
+			Message: fmt.Sprintf("%s is not a supported authored resource; administer access, publication, and Project state through the instance control API", kind),
+		}}}
+	}
 	if kind == KindDashboard {
 		return validateDashboardDocument(filename, content)
 	}
 	if kind == KindPipeline {
 		return validatePipelineDocument(filename, content)
 	}
-	// Connection, Source, and Model structure is owned by the generated
+	// Connection, Source, Model, and SemanticModel structure is owned by the generated
 	// TypeSpec contracts. ValidateBytes is also called directly by schema tests
-	// and callers, so route all three kinds through the same generated JSON
+	// and callers, so route all four kinds through the same generated JSON
 	// Schema boundary used by DecodeResource.
-	if kind == KindConnection || kind == KindSource || kind == KindModel {
+	if kind == KindConnection || kind == KindSource || kind == KindModel || kind == KindSemanticModel {
 		return validateGeneratedResource(kind, filename, content)
 	}
 	ctx, value, definition, err := compiledDefinition(kind)
@@ -139,13 +147,16 @@ func ValidateBytes(kind Kind, filename string, content []byte) error {
 }
 
 func JSONSchema(kind Kind) ([]byte, error) {
+	if removedPublicAuthoringKind(kind) {
+		return nil, fmt.Errorf("public authoring schema %q was removed; administer access, publication, and Project state through the instance control API", kind)
+	}
 	if kind == KindDashboard {
 		return append([]byte(nil), canonicalschemas.DashboardDocumentSchema...), nil
 	}
 	if kind == KindPipeline {
 		return append([]byte(nil), canonicalschemas.PipelineSchema...), nil
 	}
-	if kind == KindConnection || kind == KindSource || kind == KindModel {
+	if kind == KindConnection || kind == KindSource || kind == KindModel || kind == KindSemanticModel {
 		return generatedJSONSchema(kind)
 	}
 	ctx, value, _, err := compiledDefinition(kind)
@@ -181,7 +192,7 @@ func generatedJSONSchema(kind Kind) ([]byte, error) {
 	if err := json.Unmarshal(projectcontracts.DataResourcesSchema, &payload); err != nil {
 		return nil, fmt.Errorf("decode generated data-resource schema: %w", err)
 	}
-	rootName := map[Kind]string{KindConnection: "Connection", KindSource: "Source", KindModel: "Model"}[kind]
+	rootName := map[Kind]string{KindConnection: "Connection", KindSource: "Source", KindModel: "Model", KindSemanticModel: "SemanticModel"}[kind]
 	if rootName == "" {
 		return nil, fmt.Errorf("generated schema is not available for %s", kind)
 	}
@@ -190,6 +201,16 @@ func generatedJSONSchema(kind Kind) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("generated schema root %q is missing", rootName)
 	}
+	// Before SemanticModel joined this bundle, the three existing per-kind
+	// exports shared the Connection/Source/Model definition set. Preserve those
+	// snapshots while keeping SemanticModel-only definitions out of unrelated
+	// public schemas. The SemanticModel export contains only its reachable
+	// generated contract graph.
+	reachableRoots := []string{rootName}
+	if kind != KindSemanticModel {
+		reachableRoots = []string{"Connection", "Source", "Model"}
+	}
+	payload["$defs"] = reachableGeneratedDefinitions(definitions, reachableRoots...)
 	for _, key := range []string{"$ref", "anyOf", "properties", "required", "type", "unevaluatedProperties"} {
 		delete(payload, key)
 	}
@@ -204,7 +225,7 @@ func generatedJSONSchema(kind Kind) ([]byte, error) {
 			}
 		}
 	}
-	// The generated document's contract list describes all three roots. A
+	// The generated document's contract list describes all resource roots. A
 	// per-kind export should describe exactly one resource.
 	contracts, _ := payload["x-apigen-contracts"].([]any)
 	filtered := make([]any, 0, 1)
@@ -229,6 +250,46 @@ func generatedJSONSchema(kind Kind) ([]byte, error) {
 	return append(pretty, '\n'), nil
 }
 
+func reachableGeneratedDefinitions(definitions map[string]any, roots ...string) map[string]any {
+	reachable := make(map[string]any)
+	pending := append([]string(nil), roots...)
+	for len(pending) > 0 {
+		name := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if _, seen := reachable[name]; seen {
+			continue
+		}
+		definition, ok := definitions[name]
+		if !ok {
+			continue
+		}
+		reachable[name] = definition
+		walkJSONSchema(definition, func(reference string) {
+			const prefix = "#/$defs/"
+			if strings.HasPrefix(reference, prefix) {
+				pending = append(pending, strings.TrimPrefix(reference, prefix))
+			}
+		})
+	}
+	return reachable
+}
+
+func walkJSONSchema(value any, visitReference func(string)) {
+	switch value := value.(type) {
+	case map[string]any:
+		if reference, ok := value["$ref"].(string); ok {
+			visitReference(reference)
+		}
+		for _, child := range value {
+			walkJSONSchema(child, visitReference)
+		}
+	case []any:
+		for _, child := range value {
+			walkJSONSchema(child, visitReference)
+		}
+	}
+}
+
 func compiledDefinition(kind Kind) (*cue.Context, cue.Value, string, error) {
 	definition, err := definitionName(kind)
 	if err != nil {
@@ -244,7 +305,7 @@ func compiledDefinition(kind Kind) (*cue.Context, cue.Value, string, error) {
 }
 
 func JSONSchemaFiles() (map[string][]byte, error) {
-	kinds := []Kind{KindProject, KindConnection, KindSource, KindModel, KindSemanticModel, KindPipeline, KindDashboard, KindGroup, KindRoleBinding, KindGrant, KindDataPolicy, KindDashboardPublication}
+	kinds := []Kind{KindConnection, KindSource, KindModel, KindSemanticModel, KindPipeline, KindDashboard}
 	files := map[string][]byte{}
 	for _, kind := range kinds {
 		content, err := JSONSchema(kind)
@@ -254,6 +315,15 @@ func JSONSchemaFiles() (map[string][]byte, error) {
 		files[JSONSchemaFilename(kind)] = content
 	}
 	return files, nil
+}
+
+func removedPublicAuthoringKind(kind Kind) bool {
+	switch kind {
+	case KindProjectNamespace, KindGroup, KindRoleBinding, KindGrant, KindDataPolicy, KindDashboardPublication:
+		return true
+	default:
+		return false
+	}
 }
 
 var (
@@ -397,8 +467,6 @@ func validateDashboardDocument(filename string, content []byte) error {
 
 func JSONSchemaFilename(kind Kind) string {
 	switch kind {
-	case KindProject:
-		return "project.schema.json"
 	case KindConnection:
 		return "connection.schema.json"
 	case KindSource:
@@ -411,16 +479,6 @@ func JSONSchemaFilename(kind Kind) string {
 		return "pipeline.schema.json"
 	case KindDashboard:
 		return "dashboard-document.schema.json"
-	case KindGroup:
-		return "group.schema.json"
-	case KindRoleBinding:
-		return "role-binding.schema.json"
-	case KindGrant:
-		return "grant.schema.json"
-	case KindDataPolicy:
-		return "data-policy.schema.json"
-	case KindDashboardPublication:
-		return "dashboard-publication.schema.json"
 	default:
 		return string(kind) + ".schema.json"
 	}
@@ -473,24 +531,10 @@ func dashboardFieldPath(path []string) string {
 
 func definitionName(kind Kind) (string, error) {
 	switch kind {
-	case KindProject:
-		return "Project", nil
-	case KindSemanticModel:
-		return "SemanticModelResource", nil
 	case KindPipeline:
 		return "PipelineResource", nil
 	case KindDashboard:
 		return "DashboardResource", nil
-	case KindGroup:
-		return "GroupResource", nil
-	case KindRoleBinding:
-		return "RoleBindingResource", nil
-	case KindGrant:
-		return "GrantResource", nil
-	case KindDataPolicy:
-		return "DataPolicyResource", nil
-	case KindDashboardPublication:
-		return "DashboardPublicationResource", nil
 	default:
 		return "", fmt.Errorf("unknown schema kind %q", kind)
 	}
@@ -634,17 +678,6 @@ type schemaPath struct {
 }
 
 var schemaOverlays = map[Kind]schemaOverlay{
-	KindProject: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-		collections: []collectionRule{
-			definitionCollection("#Project", "connections", collectionMapping),
-			definitionCollection("#Project", "sources", collectionMapping),
-			definitionCollection("#Project", "models", collectionMapping),
-			definitionCollection("#Project", "semanticModels", collectionMapping),
-			definitionCollection("#Project", "pipelines", collectionMapping),
-			definitionCollection("#Project", "dashboards", collectionMapping),
-		},
-	},
 	KindConnection: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
 	},
@@ -653,12 +686,6 @@ var schemaOverlays = map[Kind]schemaOverlay{
 	},
 	KindModel: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindSemanticModel: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-		collections: []collectionRule{
-			definitionCollection("#ProjectSemanticModelSpec", "datasets", collectionMapping),
-		},
 	},
 	KindPipeline: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
@@ -669,21 +696,6 @@ var schemaOverlays = map[Kind]schemaOverlay{
 			definitionCollection("#DashboardSpec", "visuals", collectionMapping),
 			definitionCollection("#DashboardSpec", "pages", collectionSequence),
 		},
-	},
-	KindGroup: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindRoleBinding: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindGrant: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindDataPolicy: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindDashboardPublication: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
 	},
 }
 

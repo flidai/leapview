@@ -11,15 +11,6 @@ on:
         description: Full source commit recorded by the image attestation
         required: true
         type: string
-      transition_policy_url:
-        description: HTTPS URL for the candidate-bound release-transition-policy.json
-        required: true
-        type: string
-      transition_policy_sha256:
-        description: SHA-256 of the candidate-bound transition policy
-        required: true
-        type: string
-
 permissions:
   contents: read
   id-token: write
@@ -65,19 +56,6 @@ jobs:
 
       - name: Pin Terraform to the admitted image
         run: echo "TF_VAR_leapview_image=${{ steps.admission.outputs.image }}" >> "$GITHUB_ENV"
-
-      - name: Fetch verified candidate-bound transition policy
-        env:
-          POLICY_URL: ${{ inputs.transition_policy_url }}
-          POLICY_SHA256: ${{ inputs.transition_policy_sha256 }}
-        run: |
-          [[ "$POLICY_URL" == https://* ]]
-          [[ "$POLICY_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          policy="$RUNNER_TEMP/release-transition-policy.json"
-          curl --fail --location --retry 4 --retry-all-errors --silent --show-error \
-            --output "$policy" "$POLICY_URL"
-          printf '%s  %s\n' "$POLICY_SHA256" "$policy" | sha256sum --check
-          echo "TF_VAR_release_transition_policy_path=$policy" >> "$GITHUB_ENV"
 
       - name: Fetch ephemeral infrastructure secrets
         uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
@@ -169,30 +147,6 @@ jobs:
             echo "first-login credentials were retrievable more than once" >&2
             exit 1
           fi
-
-      - name: Verify backup and restore
-        working-directory: deploy/hetzner
-        run: |
-          server_ip="$(terraform output -raw server_ipv4)"
-          ssh -i "$RUNNER_TEMP/leapview-ci" root@"$server_ip" 'bash -se' <<'REMOTE'
-          install -m 0600 /dev/null /etc/leapview/restic.env
-          printf '%s\n' \
-            'RESTIC_REPOSITORY=/opt/leapview/qualification-restic' \
-            'RESTIC_PASSWORD=ephemeral-qualification-only' \
-            > /etc/leapview/restic.env
-          set -a
-          source /etc/leapview/restic.env
-          set +a
-          leapview-backup-hook --init
-          archive="$(leapviewctl backup)"
-          restore_root=/opt/leapview/qualification-restic-restore
-          restic restore latest --tag leapview --target "$restore_root"
-          cmp "$archive" "$restore_root$archive"
-          cmp "$archive.sha256" "$restore_root$archive.sha256"
-          leapviewctl restore "$archive"
-          leapview-backup-hook --maintain
-          leapviewctl status
-          REMOTE
 
       - name: Destroy ephemeral deployment
         if: always()

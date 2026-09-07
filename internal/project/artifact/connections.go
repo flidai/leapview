@@ -29,7 +29,7 @@ type ConnectionActivation struct {
 	Access              semanticmodel.ConnectionAccess
 }
 
-func (p Project) ConnectionActivations() ([]ConnectionActivation, error) {
+func (p SourceBundle) ConnectionActivations() ([]ConnectionActivation, error) {
 	connections := p.Connections()
 	ids := make([]string, 0, len(connections))
 	for id := range connections {
@@ -67,7 +67,7 @@ func (p Project) ConnectionActivations() ([]ConnectionActivation, error) {
 // source mappings are deliberately omitted so callers fail closed per source.
 // The admitted runtime binding kind must exactly match the artifact connector;
 // a revision is never trusted across a binding mismatch.
-func (p Project) SourceDataIdentityEvidence(revisions, bindingKinds map[string]string) (map[projectgraph.ResourceID]sourcedataidentity.Evidence, error) {
+func (p SourceBundle) SourceDataIdentityEvidence(revisions, bindingKinds map[string]string) (map[projectgraph.ResourceID]sourcedataidentity.Evidence, error) {
 	manifest := p.Manifest()
 	aliasCapacity, err := sourceDataIdentityAliasCapacity(len(manifest.Connections))
 	if err != nil {

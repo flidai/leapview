@@ -111,6 +111,7 @@ func TestCacheValidityTelemetryCoversFixedReasonsWithoutIdentityLabels(t *testin
 		{dataquery.CacheAdmissionBypassed, dataquery.CacheAdmissionReasonDependencyInvalid},
 		{dataquery.CacheAdmissionBypassed, dataquery.CacheAdmissionReasonPolicyInvalid},
 		{dataquery.CacheAdmissionBypassed, dataquery.CacheAdmissionReasonPartitionInvalid},
+		{dataquery.CacheAdmissionBypassed, dataquery.CacheAdmissionReasonNonDeterministic},
 	} {
 		telemetry.DashboardCacheObservationObserved(dataquery.CacheObservation{Phase: dataquery.CacheObservationAdmission, Decision: test.decision, AdmissionReason: test.reason})
 	}
@@ -146,7 +147,7 @@ func TestCacheValidityTelemetryCoversFixedReasonsWithoutIdentityLabels(t *testin
 		t.Fatal(err)
 	}
 	wantSeries := map[string]int{
-		"leapview_dashboard_query_cache_admissions_total": 9,
+		"leapview_dashboard_query_cache_admissions_total": 10,
 		"leapview_dashboard_query_cache_misses_total":     5,
 		"leapview_dashboard_query_cache_hits_total":       3,
 		"leapview_dashboard_query_cache_stores_total":     4,

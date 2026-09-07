@@ -63,12 +63,20 @@ func (h Handler) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	report, model := resolved.Definition, resolved.Model
+	if err := authorizeDashboardReportVisuals(r.Context(), metrics, dashboardID, report); err != nil {
+		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
+		return
+	}
 	writeJSON(w, nethttp.StatusOK, DashboardManifestProjection(report, model, metrics.Pages(dashboardID)))
 }
 
 func (h Handler) ListDashboardComponents(w nethttp.ResponseWriter, r *nethttp.Request) {
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
+		return
+	}
+	if err := authorizeDashboardReportVisuals(r.Context(), h.Metrics, chi.URLParam(r, "dashboard"), report); err != nil {
+		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
 		return
 	}
 	out := make([]api.DashboardComponentResponse, 0, len(page.Visuals))
@@ -85,6 +93,10 @@ func (h Handler) ListDashboardComponents(w nethttp.ResponseWriter, r *nethttp.Re
 func (h Handler) GetDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request) {
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
+		return
+	}
+	if err := authorizeDashboardReportVisuals(r.Context(), h.Metrics, chi.URLParam(r, "dashboard"), report); err != nil {
+		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
 		return
 	}
 	components := make([]api.DashboardComponentResponse, 0, len(page.Visuals))
@@ -110,6 +122,10 @@ func (h Handler) GetDashboardFilter(w nethttp.ResponseWriter, r *nethttp.Request
 	filter, exists := report.FilterDefinitions[binding.Filter]
 	if !exists {
 		writeJSONError(w, fmt.Errorf("filter definition %q not found", binding.Filter), nethttp.StatusNotFound)
+		return
+	}
+	if err := authorizeDashboardFilterField(r.Context(), h.Metrics, chi.URLParam(r, "dashboard"), filter.Dataset, filter.Field); err != nil {
+		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
 		return
 	}
 	component, _ := pageComponentForFilter(page, binding.Scope, binding.ID)
@@ -148,6 +164,10 @@ func (h Handler) GetDashboardFilter(w nethttp.ResponseWriter, r *nethttp.Request
 }
 
 func (h Handler) GetDashboardVisual(w nethttp.ResponseWriter, r *nethttp.Request) {
+	metrics, metricsOK := h.biMetrics(w, r)
+	if !metricsOK {
+		return
+	}
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
 		return
@@ -161,6 +181,10 @@ func (h Handler) GetDashboardVisual(w nethttp.ResponseWriter, r *nethttp.Request
 	}
 	if !onPage {
 		writeJSONError(w, fmt.Errorf("visual %q not found on page %q", visualID, page.ID), nethttp.StatusNotFound)
+		return
+	}
+	if err := authorizeDashboardVisual(r.Context(), metrics, chi.URLParam(r, "dashboard"), definition); err != nil {
+		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, DashboardVisualProjection(definition, component))
@@ -178,6 +202,10 @@ func (h Handler) QueryDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request
 	}
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
+		return
+	}
+	if err := authorizeDashboardReportVisuals(r.Context(), metrics, chi.URLParam(r, "dashboard"), report); err != nil {
+		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
 		return
 	}
 	dashboardID := chi.URLParam(r, "dashboard")
@@ -222,6 +250,10 @@ func (h Handler) QueryDashboardVisualData(w nethttp.ResponseWriter, r *nethttp.R
 	_, onPage := pageComponentForVisual(page, visualID)
 	if !onPage {
 		writeJSONError(w, fmt.Errorf("visual %q not found on page %q", visualID, page.ID), nethttp.StatusNotFound)
+		return
+	}
+	if err := authorizeDashboardVisual(r.Context(), metrics, chi.URLParam(r, "dashboard"), definition); err != nil {
+		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
 		return
 	}
 	if isGridQueryKind(definition.Query.Kind) {
@@ -392,6 +424,10 @@ func (h Handler) ListDashboardFilterOptions(w nethttp.ResponseWriter, r *nethttp
 		writeJSONError(w, fmt.Errorf("filter definition %q not found", binding.Filter), nethttp.StatusNotFound)
 		return
 	}
+	if err := authorizeDashboardFilterField(r.Context(), metrics, chi.URLParam(r, "dashboard"), definition.Dataset, definition.Field); err != nil {
+		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
+		return
+	}
 	filters, err := dashboardQueryFilters(report, page.ID, input.FilterState, input.InteractionSelections, input.SpatialSelections)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
@@ -403,6 +439,10 @@ func (h Handler) ListDashboardFilterOptions(w nethttp.ResponseWriter, r *nethttp
 		out = append(out, api.DashboardFilterOptionResponse{Value: fmt.Sprint(option.Value.Value), Label: option.Label})
 	}
 	if definition.Options.Kind == "distinct" {
+		if !dashboardSemanticCacheAllowed(metrics, metrics.ModelIDForDashboard(dashboardID)) {
+			writeJSONError(w, requireDashboardSemanticAuthorization(errDashboardSemanticAuthorityUnavailable), nethttp.StatusServiceUnavailable)
+			return
+		}
 		queryMetrics, supported := metrics.(compiledFilterOptionMetrics)
 		if !supported {
 			writeJSONError(w, fmt.Errorf("compiled filter options are not supported by this runtime"), nethttp.StatusNotImplemented)

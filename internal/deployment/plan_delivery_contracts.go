@@ -69,6 +69,19 @@ func validateDeliveryText(name, value string, required bool) error {
 	return nil
 }
 
+// trim removes the ASCII whitespace accepted by the legacy delivery
+// contracts. Keep it package-local for the lease, runtime, and GC validators
+// that still canonicalize their free-form reason and object fields.
+func trim(value string) string {
+	for len(value) > 0 && (value[0] == ' ' || value[0] == '\t' || value[0] == '\n' || value[0] == '\r') {
+		value = value[1:]
+	}
+	for len(value) > 0 && (value[len(value)-1] == ' ' || value[len(value)-1] == '\t' || value[len(value)-1] == '\n' || value[len(value)-1] == '\r') {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
 func validateDeliveryTime(name string, value time.Time, required bool) error {
 	if required && value.IsZero() {
 		return fmt.Errorf("%w: %s is required", ErrDeliveryInvalid, name)
@@ -315,12 +328,13 @@ func (provenance DeliveryProvenance) Validate() error {
 // DeliveryGovernance controls expiry, authorization, and qualification. It
 // does not alter the execution digest.
 type DeliveryGovernance struct {
-	PolicyDigest          string    `json:"policyDigest"`
-	AuthorizationDigest   string    `json:"authorizationDigest"`
-	QualificationDigest   string    `json:"qualificationDigest"`
-	ExpiresAt             time.Time `json:"expiresAt"`
-	RequiresApproval      bool      `json:"requiresApproval"`
-	ObservedInputsAllowed bool      `json:"observedInputsAllowed"`
+	PolicyDigest           string    `json:"policyDigest"`
+	AuthorizationDigest    string    `json:"authorizationDigest"`
+	QualificationDigest    string    `json:"qualificationDigest"`
+	ExpiresAt              time.Time `json:"expiresAt"`
+	RequiresApproval       bool      `json:"requiresApproval"`
+	ApprovalPolicyRevision int64     `json:"approvalPolicyRevision"`
+	ObservedInputsAllowed  bool      `json:"observedInputsAllowed"`
 }
 
 func (governance DeliveryGovernance) Validate() error {
@@ -331,6 +345,9 @@ func (governance DeliveryGovernance) Validate() error {
 		if err := ValidateDeliveryDigest(value); err != nil {
 			return fmt.Errorf("%s digest: %w", name, err)
 		}
+	}
+	if governance.ApprovalPolicyRevision <= 0 {
+		return fmt.Errorf("%w: approval policy revision must be positive", ErrDeliveryInvalid)
 	}
 	return validateDeliveryTime("plan expiry", governance.ExpiresAt, true)
 }

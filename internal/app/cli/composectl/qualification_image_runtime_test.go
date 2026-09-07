@@ -2,10 +2,12 @@ package composectl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -20,28 +22,6 @@ func (f qualificationExecutorFunc) Execute(ctx context.Context, request qualific
 }
 
 func TestProductionImageRuntimeQualificationIsOwnedByGo(t *testing.T) {
-	metricsToken := ""
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/healthz":
-			response.WriteHeader(http.StatusOK)
-		case "/readyz":
-			response.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = io.WriteString(response, `{"checks":{"deliveryStartup":"missing_physical_pool_admission,target_revision_missing"},"status":"not_ready"}`)
-		case "/metrics":
-			authorization := request.Header.Get("Authorization")
-			if authorization == "" {
-				response.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-			metricsToken = strings.TrimPrefix(authorization, "Bearer ")
-			_, _ = io.WriteString(response, "# HELP leapview_http_request_duration_seconds duration\n")
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	defer server.Close()
-
 	var requests [][]string
 	executor := qualificationExecutorFunc(func(_ context.Context, request qualificationCommandRequest) ([]byte, error) {
 		arguments := append([]string(nil), request.Arguments...)
@@ -52,10 +32,12 @@ func TestProductionImageRuntimeQualificationIsOwnedByGo(t *testing.T) {
 			return []byte("1000\n"), nil
 		case strings.Contains(joined, "--entrypoint id") && slices.Contains(arguments, "-g"):
 			return []byte("1000\n"), nil
-		case len(arguments) > 0 && arguments[0] == "port":
-			return []byte(strings.TrimPrefix(server.URL, "http://") + "\n"), nil
-		case len(arguments) > 0 && arguments[0] == "inspect" && slices.Contains(arguments, "{{.State.Health.Status}}"):
-			return []byte("unhealthy\n"), nil
+		case len(arguments) > 0 && arguments[0] == "inspect" && slices.Contains(arguments, "{{.State.Status}}"):
+			return []byte("exited\n"), nil
+		case len(arguments) > 0 && arguments[0] == "inspect" && slices.Contains(arguments, "{{.State.ExitCode}}"):
+			return []byte("1\n"), nil
+		case len(arguments) > 0 && arguments[0] == "logs":
+			return []byte("production serve requires LEAPVIEW_POSTGRES_CONTROL_URL\n"), nil
 		default:
 			return []byte("ok\n"), nil
 		}
@@ -66,17 +48,18 @@ func TestProductionImageRuntimeQualificationIsOwnedByGo(t *testing.T) {
 	require.NoError(t, err)
 
 	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
-	result, err := controller.qualifyProductionImageRuntime(t.Context(), image)
-	require.NoError(t, err)
-	if result.metricsToken == "" || metricsToken != result.metricsToken {
-		t.Fatal("runtime qualification did not generate a metrics token")
-	}
-	assertQualificationDockerRun(t, requests, image, "8080", []string{
+	require.NoError(t, controller.qualifyProductionImageRuntime(t.Context(), image))
+	assertQualificationDockerRun(t, requests, image, "", []string{
 		"--read-only",
+		"--network", "none",
 		"--tmpfs", "/var/lib/leapview:rw,exec,nosuid,nodev,mode=0700,uid=1000,gid=1000,size=128m",
 		"--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777,size=64m",
+		"--env", "LEAPVIEW_POSTGRES_CONTROL_URL=",
 		"--env", "LEAPVIEW_API_TOKEN_ONLY_AUTH=1",
 	})
+	for _, request := range requests {
+		require.NotContains(t, request, "127.0.0.1::8080")
+	}
 	assertQualificationCleanup(t, requests)
 }
 
@@ -99,6 +82,38 @@ func TestProductionImageQualificationCanRequireImmutableDigest(t *testing.T) {
 	if called {
 		t.Fatal("mutable image validation must fail before invoking Docker")
 	}
+}
+
+func TestProductionImageQualificationRunsPolicyPerformanceAfterAuthoring(t *testing.T) {
+	imageQualification, err := os.ReadFile("qualification_image.go")
+	require.NoError(t, err)
+	source := string(imageQualification)
+	authoring := strings.Index(source, "authoringReport, err := c.runQualificationAuthoring")
+	performance := strings.Index(source, "instanceController.runQualificationPerformance")
+	nativeReads := strings.LastIndex(source, "nativeTopology.AssertNativeDeliveryReads(ctx)")
+	if authoring < 0 || performance < 0 || nativeReads < 0 {
+		t.Fatalf("production qualification is missing authoring, performance, or native-read phase")
+	}
+	if !(authoring < performance && performance < nativeReads) {
+		t.Fatalf("production qualification phase order is authoring=%d performance=%d native-reads=%d", authoring, performance, nativeReads)
+	}
+
+	policyPath := filepath.Join("..", "..", "..", "..", "deploy", "compose", "qualification", "performance-policy.json")
+	policyJSON, err := os.ReadFile(policyPath)
+	require.NoError(t, err)
+	var policy struct {
+		Assumptions struct {
+			Samples struct {
+				RefreshRuns int `json:"refreshRuns"`
+			} `json:"samples"`
+		} `json:"assumptions"`
+	}
+	require.NoError(t, json.Unmarshal(policyJSON, &policy))
+	require.Equal(t, 3, policy.Assumptions.Samples.RefreshRuns)
+
+	performanceScript, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "deploy", "compose", "qualification", "performance.mjs"))
+	require.NoError(t, err)
+	require.Contains(t, string(performanceScript), "for (let index = 0; index < policy.assumptions.samples.refreshRuns; index += 1)")
 }
 
 func TestSiteImageQualificationIsOwnedByGo(t *testing.T) {
@@ -151,7 +166,7 @@ func TestSiteImageQualificationIsOwnedByGo(t *testing.T) {
 func assertQualificationDockerRun(t *testing.T, requests [][]string, image, port string, required []string) {
 	t.Helper()
 	for _, request := range requests {
-		if len(request) == 0 || request[0] != "run" || !slices.Contains(request, image) || !slices.Contains(request, "127.0.0.1::"+port) {
+		if len(request) == 0 || request[0] != "run" || !slices.Contains(request, "--detach") || !slices.Contains(request, image) || (port != "" && !slices.Contains(request, "127.0.0.1::"+port)) {
 			continue
 		}
 		joined := strings.Join(request, "\x00")

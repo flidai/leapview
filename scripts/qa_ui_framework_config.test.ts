@@ -9,6 +9,13 @@ test('UI framework QA gives the managed dev task its full readiness budget', asy
   expect(source).toContain("LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts)")
 })
 
+test('UI framework QA waits for asynchronous publication activation', async () => {
+  const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
+
+  expect(source).toContain('await waitForProjectReady(started)')
+  expect(source).toContain("new URL('/explore', baseURL)")
+})
+
 test('development startup reuses the bounded CI fixture supply', async () => {
   const source = await readFile('scripts/dev-server.sh', 'utf8')
 
@@ -21,6 +28,65 @@ test('development MCP smoke queries an authored semantic metric', async () => {
 
   expect(source).toContain('metrics: [{field: "revenue"}]')
   expect(source).not.toContain('metrics: [{field: "sales_orders.revenue"}]')
+})
+
+test('development readiness files are published only after PostgreSQL bootstrap', async () => {
+  const source = await readFile('scripts/dev-server.sh', 'utf8')
+
+  expect(source).toContain('rm -f "$PORT_FILE" "$PID_FILE"')
+  const bootstrap = source.indexOf('bootstrap_local_physical_pool')
+  const readiness = source.lastIndexOf('echo "$port" > "$PORT_FILE"')
+  expect(bootstrap).toBeGreaterThanOrEqual(0)
+  expect(readiness).toBeGreaterThan(bootstrap)
+  expect(source).toContain('Publish the readiness contract only after the final server')
+})
+
+test('maintained headless workflows use the managed PostgreSQL dev lifecycle', async () => {
+  const [agent, capture, taskfile] = await Promise.all([
+    readFile('scripts/agent_e2e.sh', 'utf8'),
+    readFile('scripts/capture_site_product.ts', 'utf8'),
+    readFile('Taskfile.yml', 'utf8'),
+  ])
+
+  expect(agent).toContain('./scripts/postgres-dev.sh up')
+  expect(agent).toContain('./scripts/dev-server.sh start')
+  expect(agent).not.toContain('"$BIN" serve')
+  expect(agent).toContain('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+  expect(capture).toContain("run(['task', 'postgres:dev:up'])")
+  expect(capture).toContain("'./scripts/dev-server.sh', 'start'")
+  expect(capture).not.toContain('Bun.spawn([binary]')
+  expect(taskfile).toContain('agent:e2e:')
+  expect(taskfile).toContain('site:product-screenshot:')
+})
+
+test('PostgreSQL helper preserves generated credentials across repeated up runs', async () => {
+  const source = await readFile('scripts/postgres-dev.sh', 'utf8')
+
+  expect(source).toContain('generated env file is the durable source for local credentials')
+  expect(source).toContain('LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD |')
+  expect(source).toContain('LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD)')
+  expect(source).toContain('LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD=%s')
+  expect(source).toContain('chmod 600 "$ENV_FILE"')
+
+  const composeUp = source.indexOf('compose up --detach --wait')
+  const isolationCheck = source.indexOf('check_isolation', composeUp)
+  const runtimeEnvWrite = source.indexOf('write_runtime_env', composeUp)
+  expect(composeUp).toBeGreaterThanOrEqual(0)
+  expect(isolationCheck).toBeGreaterThan(composeUp)
+  expect(runtimeEnvWrite).toBeGreaterThan(isolationCheck)
+})
+
+test('managed development keeps bypass HTTP loopback-only and preserves caller overrides', async () => {
+  const [server, agent, capture] = await Promise.all([
+    readFile('scripts/dev-server.sh', 'utf8'),
+    readFile('scripts/agent_e2e.sh', 'utf8'),
+    readFile('scripts/capture_site_product.ts', 'utf8'),
+  ])
+
+  expect(server).toContain('LEAPVIEW_ADDR="127.0.0.1:$port"')
+  expect(server).toContain('if [[ -z "${!name:-}" ]]')
+  expect(agent).toContain('LEAPVIEW_ADDR="127.0.0.1:$PORT"')
+  expect(capture).toContain('LEAPVIEW_ADDR: `127.0.0.1:${port}`')
 })
 
 test('browser QA uses canonical project resource IDs', async () => {

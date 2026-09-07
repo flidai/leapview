@@ -7,19 +7,21 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/flidai/leapview/internal/dashboard/document"
 )
 
-// SourceFiles resolves the concrete authored files reachable from the project
-// manifest. Consumers use this projection instead of scanning the repository.
-func SourceFiles(projectPath string) ([]string, error) {
-	project, err := LoadProject(projectPath)
+// SourceFiles resolves the concrete authored files beneath a source root.
+// Consumers use this projection instead of scanning the repository.
+func SourceFiles(sourceRoot string) ([]string, error) {
+	project, err := LoadSourceRoot(sourceRoot)
 	if err != nil {
 		return nil, err
 	}
-	return sourceFilesFromProject(projectPath, project)
+	return sourceFilesFromAssembly(sourceRoot, project)
 }
 
-func sourceFilesFromProject(projectPath string, project Project) ([]string, error) {
+func sourceFilesFromAssembly(sourceRoot string, project sourceAssembly) ([]string, error) {
 	root, err := filepath.Abs(project.BaseDir)
 	if err != nil {
 		return nil, err
@@ -28,7 +30,7 @@ func sourceFilesFromProject(projectPath string, project Project) ([]string, erro
 	if err != nil {
 		return nil, fmt.Errorf("resolve project boundary %q: %w", root, err)
 	}
-	projectPath, err = filepath.Abs(projectPath)
+	sourceRoot, err = filepath.Abs(sourceRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -52,8 +54,14 @@ func sourceFilesFromProject(projectPath string, project Project) ([]string, erro
 		seen[filepath.Clean(path)] = struct{}{}
 		return nil
 	}
-	if err := add(projectPath); err != nil {
-		return nil, err
+	entrypoint := sourceRoot
+	if resolvedEntrypoint, resolveErr := filepath.EvalSymlinks(sourceRoot); resolveErr == nil {
+		entrypoint = resolvedEntrypoint
+	}
+	if filepath.Clean(entrypoint) != filepath.Clean(resolvedRoot) {
+		if err := add(sourceRoot); err != nil {
+			return nil, err
+		}
 	}
 	addPaths := func(paths map[string]string) error {
 		for _, path := range paths {
@@ -78,13 +86,25 @@ func sourceFilesFromProject(projectPath string, project Project) ([]string, erro
 	if err := addPaths(project.DashboardPaths); err != nil {
 		return nil, err
 	}
+	for _, dashboardPath := range project.DashboardPaths {
+		value, err := LoadDashboardDocument(dashboardPath)
+		if err != nil {
+			return nil, err
+		}
+		expanded, err := document.ExpandDashboardFragments(value, dashboardPath, sourceRoot)
+		if err != nil {
+			return nil, err
+		}
+		for _, fragmentPath := range expanded.Paths {
+			if !filepath.IsAbs(fragmentPath) {
+				fragmentPath = filepath.Join(root, filepath.FromSlash(fragmentPath))
+			}
+			if err := add(fragmentPath); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if err := addPaths(project.PipelinePaths); err != nil {
-		return nil, err
-	}
-	if err := addPaths(project.PublicationPaths); err != nil {
-		return nil, err
-	}
-	if err := addPaths(project.AccessPaths); err != nil {
 		return nil, err
 	}
 	files := make([]string, 0, len(seen))

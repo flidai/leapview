@@ -11,7 +11,7 @@ Follow one reviewable loop:
 1. Confirm the unchanged sample dashboard works.
 2. Trace the resources that compose it.
 3. Change one semantic label and one dashboard note.
-4. Validate and plan the complete project.
+4. Validate and plan the complete source root.
 5. Deploy to development and verify the rendered behavior.
 
 ```mermaid
@@ -24,7 +24,9 @@ flowchart LR
 
 ## Start the sample project
 
-Prepare the Olist sample data and start the managed development server:
+Prepare the Olist sample data and start the managed development server. The
+development task provisions a worktree-local PostgreSQL service and admits
+its local physical pool before publishing the sample candidate:
 
 ```sh
 task bootstrap
@@ -38,7 +40,6 @@ The server writes worktree-local process state and logs beneath `.tmp/`. Open th
 The report is assembled from these files:
 
 ```text
-dashboards/leapview.yaml
 dashboards/connections/olist.yaml
 dashboards/sources/olist.*.yaml
 dashboards/models/*.yaml
@@ -48,7 +49,7 @@ dashboards/dashboards/executive-sales.yaml
 dashboards/access/*.yaml
 ```
 
-Read them from the outside in. The project discovers shared Olist inputs, Models, the `sales` semantic model, refresh pipelines, dashboards, and access rules from one graph. The dashboard refers to fields and metrics exposed by the `sales` semantic model.
+Read them from the outside in. The source-root loader discovers shared Olist inputs, Models, the `sales` semantic model, refresh pipelines, dashboards, and access rules into one graph. The dashboard refers to fields and metrics exposed by the `sales` semantic model.
 
 ## Add a semantic metric
 
@@ -69,7 +70,7 @@ For a first change, update only the label to `Average revenue per order`. This c
 Validate the entire project, not just the edited file:
 
 ```sh
-go run ./cmd/leapview validate --project dashboards/leapview.yaml
+go run ./cmd/leapview validate --source-root dashboards
 ```
 
 If validation reports a location, fix the resource before continuing. Common first-edit failures are incorrect indentation, an unknown field, or a reference to a semantic name that does not exist.
@@ -96,7 +97,7 @@ The visual owns its semantic query and typed presentation. A page component late
 Inspect the candidate before activating it:
 
 ```sh
-PLAN_JSON=$(go run ./cmd/leapview plan dashboards/leapview.yaml --format json)
+PLAN_JSON=$(go run ./cmd/leapview plan --source-root dashboards --format json)
 PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -r .planId)
 BUILD_JSON=$(go run ./cmd/leapview build "$PLAN_ID" --format json)
 CANDIDATE_ID=$(printf '%s' "$BUILD_JSON" | jq -r .candidateId)
@@ -114,8 +115,8 @@ task dev:publish
 Run validation and planning once more immediately before deployment if another edit occurred after the earlier checks:
 
 ```sh
-go run ./cmd/leapview validate --project dashboards/leapview.yaml
-go run ./cmd/leapview plan dashboards/leapview.yaml
+go run ./cmd/leapview validate --source-root dashboards
+go run ./cmd/leapview plan --source-root dashboards
 ```
 
 The plan should contain only the resources you intended to change. Unexpected additions or removals usually indicate a discovery-pattern or stable-ID mistake.

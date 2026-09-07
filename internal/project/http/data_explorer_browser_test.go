@@ -41,8 +41,7 @@ func TestDataExplorerSemanticDatasetDeepLinksHydrateDistinctModelBindings(t *tes
 			{ID: modelID, ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
 			{ID: semanticModelID, ProjectID: projectID, ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{}`},
 		}}},
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
-			ID:             projectID,
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
 			Models:         map[string]semanticmodel.Table{modelID: {ModelName: "orders"}},
 			SemanticModels: map[string]*semanticmodel.Model{semanticModelID: model},
 			NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": modelID}},

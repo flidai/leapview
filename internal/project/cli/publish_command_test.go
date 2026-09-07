@@ -18,8 +18,8 @@ import (
 func TestCandidateCheckpointStoreRoundTripsExactNonSecretIdentity(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "authoring.json")
 	store := NewCandidateCheckpointStore(path)
-	projectPath := filepath.Join(t.TempDir(), "leapview.yaml")
-	checkpoint := candidateCheckpoint(projectPath)
+	sourceRoot := t.TempDir()
+	checkpoint := candidateCheckpoint(sourceRoot)
 
 	if err := store.Save(checkpoint); err != nil {
 		t.Fatal(err)
@@ -32,7 +32,7 @@ func TestCandidateCheckpointStoreRoundTripsExactNonSecretIdentity(t *testing.T) 
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
 	}
-	loaded, err := store.Load(projectPath, checkpoint.TargetOrigin)
+	loaded, err := store.Load(sourceRoot, checkpoint.TargetOrigin)
 	require.NoError(t, err)
 	if loaded != checkpoint {
 		t.Fatalf("loaded = %#v, want %#v", loaded, checkpoint)
@@ -50,8 +50,8 @@ func TestCandidateCheckpointStoreRefusesReadModifyWriteWhileAnotherProcessOwnsLo
 	directory := t.TempDir()
 	path := filepath.Join(directory, "authoring.json")
 	store := NewCandidateCheckpointStore(path)
-	projectPath := filepath.Join(t.TempDir(), "leapview.yaml")
-	existing := candidateCheckpoint(projectPath)
+	sourceRoot := t.TempDir()
+	existing := candidateCheckpoint(sourceRoot)
 	if err := store.Save(existing); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestCandidateCheckpointStoreRefusesReadModifyWriteWhileAnotherProcessOwnsLo
 		t.Fatal("Save succeeded while another process owned the checkpoint lock")
 	}
 	loaded, err := store.LoadCandidate(
-		existing.ProjectPath,
+		existing.SourceRoot,
 		existing.TargetOrigin,
 		existing.CandidateKey,
 	)
@@ -74,7 +74,7 @@ func TestCandidateCheckpointStoreRefusesReadModifyWriteWhileAnotherProcessOwnsLo
 		t.Fatalf("existing checkpoint was corrupted: %#v, %v", loaded, err)
 	}
 	if _, err := store.LoadCandidate(
-		concurrent.ProjectPath,
+		concurrent.SourceRoot,
 		concurrent.TargetOrigin,
 		concurrent.CandidateKey,
 	); !errors.Is(err, ErrCandidateCheckpointNotFound) {
@@ -117,11 +117,11 @@ func TestCandidateCheckpointStoreIsolatesStableAuthoringKeys(t *testing.T) {
 	store := NewCandidateCheckpointStore(
 		filepath.Join(t.TempDir(), "authoring.json"),
 	)
-	projectPath := filepath.Join(t.TempDir(), "leapview.yaml")
-	first := candidateCheckpoint(projectPath)
+	sourceRoot := t.TempDir()
+	first := candidateCheckpoint(sourceRoot)
 	first.CandidateKey = "github:pull/41"
 	first.CandidateID = "cand_41"
-	second := candidateCheckpoint(projectPath)
+	second := candidateCheckpoint(sourceRoot)
 	second.CandidateKey = "github:pull/42"
 	second.CandidateID = "cand_42"
 	if err := store.Save(first); err != nil {
@@ -131,7 +131,7 @@ func TestCandidateCheckpointStoreIsolatesStableAuthoringKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, err := store.LoadCandidate(
-		projectPath,
+		sourceRoot,
 		first.TargetOrigin,
 		first.CandidateKey,
 	)
@@ -139,7 +139,7 @@ func TestCandidateCheckpointStoreIsolatesStableAuthoringKeys(t *testing.T) {
 		t.Fatalf("LoadCandidate() = %#v, %v", loaded, err)
 	}
 	loaded, err = store.LoadCandidate(
-		projectPath,
+		sourceRoot,
 		second.TargetOrigin,
 		second.CandidateKey,
 	)
@@ -154,13 +154,13 @@ func TestCandidateCheckpointStoreFailsClosedForUnknownOrSecretFields(t *testing.
 		t.Fatal(err)
 	}
 	store := NewCandidateCheckpointStore(path)
-	if _, err := store.Load("leapview.yaml", "https://target.example"); err == nil {
+	if _, err := store.Load("dashboards", "https://target.example"); err == nil {
 		t.Fatal("Load() accepted a secret-bearing unknown field")
 	}
 	if err := os.WriteFile(path, []byte(`{"version":1,"candidates":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Load("leapview.yaml", "https://target.example"); !errors.Is(err, ErrCandidateCheckpointNotFound) {
+	if _, err := store.Load("dashboards", "https://target.example"); !errors.Is(err, ErrCandidateCheckpointNotFound) {
 		t.Fatalf("Load() error = %v, want ErrCandidateCheckpointNotFound", err)
 	}
 	if err := os.WriteFile(
@@ -171,7 +171,7 @@ func TestCandidateCheckpointStoreFailsClosedForUnknownOrSecretFields(t *testing.
 		t.Fatal(err)
 	}
 	if _, err := store.Load(
-		"leapview.yaml",
+		"dashboards",
 		"https://target.example",
 	); err == nil {
 		t.Fatal("Load() accepted trailing JSON content")
@@ -179,9 +179,9 @@ func TestCandidateCheckpointStoreFailsClosedForUnknownOrSecretFields(t *testing.
 }
 
 func TestPublishCommandUsesExactCheckpointWithoutReadingProjectSource(t *testing.T) {
-	projectPath := filepath.Join(t.TempDir(), "missing.yaml")
+	sourceRoot := filepath.Join(t.TempDir(), "missing-source-root")
 	store := NewCandidateCheckpointStore(filepath.Join(t.TempDir(), "authoring.json"))
-	checkpoint := candidateCheckpoint(projectPath)
+	checkpoint := candidateCheckpoint(sourceRoot)
 	if err := store.Save(checkpoint); err != nil {
 		t.Fatal(err)
 	}
@@ -247,13 +247,13 @@ func (operations *publishOperations) Publish(
 	return nil
 }
 
-func candidateCheckpoint(projectPath string) CandidateCheckpoint {
-	absolute, err := filepath.Abs(projectPath)
+func candidateCheckpoint(sourceRoot string) CandidateCheckpoint {
+	absolute, err := filepath.Abs(sourceRoot)
 	if err != nil {
 		panic(err)
 	}
 	return CandidateCheckpoint{
-		ProjectPath: absolute, TargetOrigin: "https://target.example",
+		SourceRoot: absolute, TargetOrigin: "https://target.example",
 		TargetID: "target_1", Environment: "production", ProjectID: "finance",
 		CandidateID: "cand_1", CandidateKey: "default", CandidateRevision: 7,
 		ArtifactDigest:   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

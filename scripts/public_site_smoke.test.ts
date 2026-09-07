@@ -7,7 +7,7 @@ const release: PublicReleaseManifest = {
   version: '0.2.0-rc.1',
   tag: 'v0.2.0-rc.1',
   revision: 'dfb3086d59284c6597180e99a7d07f41e36a7f7e',
-  image: 'ghcr.io/yacobolo/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9',
+  image: 'ghcr.io/flidai/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9',
   releaseUrl: 'https://github.com/flidai/leapview/releases/tag/v0.2.0-rc.1',
   artifacts: [
     {

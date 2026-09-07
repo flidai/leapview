@@ -7,32 +7,24 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/flidai/leapview/internal/platform/http/idempotency"
 	platformdb "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite/idempotencydb"
 )
 
-type Record struct {
-	State           string
-	Digest          string
-	Owner           string
-	OwnerSession    string
-	LeaseExpires    time.Time
-	LeaseGeneration int64
-	Status          int
-	Header          http.Header
-	Body            []byte
-}
+// Record aliases the engine-neutral contract. Keeping this alias preserves
+// the SQLite fixture API while preventing consumers from depending on it.
+type Record = idempotency.Record
 
 type Store struct {
 	q       *platformdb.Queries
 	session string
 }
 
-var ErrLeaseLost = errors.New("idempotency lease lost")
+var ErrLeaseLost = idempotency.ErrLeaseLost
 
 func NewStore(db platformdb.DBTX) *Store {
 	return NewStoreWithSession(db, newSessionID())

@@ -15,7 +15,7 @@ import (
 var yamlErrorLine = regexp.MustCompile(`\bline ([0-9]+)\b`)
 
 var schemaKinds = map[string]configschema.Kind{
-	"Project":              configschema.KindProject,
+	"Project":              configschema.KindProjectNamespace,
 	"Connection":           configschema.KindConnection,
 	"Source":               configschema.KindSource,
 	"Group":                configschema.KindGroup,

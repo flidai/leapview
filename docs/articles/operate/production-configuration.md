@@ -59,9 +59,11 @@ Rotating a static password does not itself revoke database sessions already acce
 
 ## Persistent storage
 
-Configure a durable `LEAPVIEW_HOME` and the paths required for the control-plane database, global DuckLake catalog, analytical data, artifacts, and managed-data runtime. The service identity must own these private paths; they should not be served by the reverse proxy.
+Configure a durable `LEAPVIEW_HOME` for runtime state, DuckDB temporary data, artifacts, and managed-data runtime. Production DuckLake catalog authority is the configured PostgreSQL DuckLake database; do not provision or configure a writable local DuckLake catalog path. The service identity must own local runtime paths; they should not be served by the reverse proxy.
 
-Choose `local` or `s3` for managed data. The S3 backend requires bucket and region, a private local staging/cache directory, and either ambient credentials or a complete key pair. Enable bucket versioning and native backup/replication because instance backups do not contain authoritative S3 objects.
+Choose `local` or `s3` for managed data. The S3 backend requires bucket and region, a private local staging/cache directory, and either ambient credentials or a complete key pair. Enable bucket versioning and provider-native replication or backup for authoritative S3 objects; LeapView does not create an instance archive for them. Coordinate those external recovery points with PostgreSQL and DuckLake using the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore).
+
+The separate immutable S3 object store has a stricter provider contract: the provider must enforce `If-None-Match: *` on `PutObject` when the key already exists. Versioning alone is insufficient because accepting a second create-only write changes the current object even when the older version remains recoverable. Qualify that behavior against the real bucket before production admission. Configure `AES256` (SSE-S3), `aws:kms` (SSE-KMS), or `sse-c` (SSE-C) according to provider support. SSE-C requires an HTTPS connection, a standard-base64 32-byte customer key stored only in the deployment secret manager, and a non-secret opaque key-epoch reference; retain old key versions for every object generation that may need recovery.
 
 Set upload size, file-count, free-space, session TTL, and garbage-collection limits according to actual capacity. The revision size limit must be at least the single-file limit.
 
@@ -86,11 +88,11 @@ Before exposing traffic:
 
 1. `leapview config validate --production` succeeds.
 2. TLS, allowed hosts, secure cookies, and callback URLs match the public address.
-3. Persistent paths and external stores are writable and backed up.
+3. Persistent paths and external stores are writable, and provider-native recovery is configured using the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore).
 4. Authentication works without development bypass.
 5. Metrics require the intended token and are not publicly browsable.
 6. Readiness fails when required persistent dependencies are unavailable.
-7. A backup and isolated restore have been tested.
+7. The provider-native PostgreSQL/PITR and DuckLake/object-store recovery procedures in the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore) have been exercised in an isolated environment.
 8. Query and refresh limits fit host capacity.
 9. MCP OAuth discovery uses the intended deployment origin and `/mcp` rejects general API tokens.
 

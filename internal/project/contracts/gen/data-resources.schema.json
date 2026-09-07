@@ -54,6 +54,119 @@
       ],
       "type": "object"
     },
+    "AggregateSemanticMetric": {
+      "properties": {
+        "aggregation": {
+          "enum": [
+            "sum",
+            "count",
+            "count_distinct",
+            "avg",
+            "min",
+            "max"
+          ],
+          "type": "string"
+        },
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "dataset": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "empty": {
+          "enum": [
+            "zero",
+            "null"
+          ],
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "input": {
+          "$ref": "#/$defs/SemanticMetricInput"
+        },
+        "label": {
+          "type": "string"
+        },
+        "requiredAccessGrants": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "timeDimension": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "aggregate"
+          ],
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "where": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "aggregation",
+        "dataset",
+        "input",
+        "type"
+      ],
+      "type": "object"
+    },
+    "AllSemanticFilter": {
+      "properties": {
+        "all": {
+          "items": {
+            "$ref": "#/$defs/SemanticFilter"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "all"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "AnySemanticFilter": {
+      "properties": {
+        "any": {
+          "items": {
+            "$ref": "#/$defs/SemanticFilter"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "any"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "AzureBlobConnection": {
       "allOf": [
         {
@@ -349,6 +462,51 @@
         "tableLike": true
       }
     },
+    "DerivedSemanticMetric": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "description": {
+          "type": "string"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string"
+        },
+        "requiredAccessGrants": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "type": {
+          "enum": [
+            "derived"
+          ],
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "expression",
+        "type"
+      ],
+      "type": "object"
+    },
     "DirectModelDefinition": {
       "allOf": [
         {
@@ -407,6 +565,40 @@
         "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
+    },
+    "EqualsSemanticFilter": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "equals"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/SemanticLiteral"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "ExcelPathSourceLocation": {
       "allOf": [
@@ -481,6 +673,28 @@
       ],
       "type": "object"
     },
+    "FieldsSemanticRelationshipEndpoint": {
+      "properties": {
+        "dataset": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "dataset",
+        "fields"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "FreshnessDuration": {
       "properties": {
         "amount": {
@@ -544,6 +758,74 @@
         "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
+    },
+    "GreaterThanOrEqualSemanticFilter": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "greater_than_or_equal"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/SemanticLiteral"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "GreaterThanSemanticFilter": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "greater_than"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/SemanticLiteral"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "HTTPConnection": {
       "allOf": [
@@ -627,6 +909,44 @@
         "tableLike": true
       }
     },
+    "InSemanticFilter": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "in"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "value": {
+          "items": {
+            "$ref": "#/$defs/SemanticLiteral"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "InferredSourceSchema": {
       "properties": {
         "mode": {
@@ -640,6 +960,66 @@
         "mode"
       ],
       "type": "object"
+    },
+    "IsNotNullSemanticFilter": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "is_not_null"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "field",
+        "operator"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "IsNullSemanticFilter": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "is_null"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "field",
+        "operator"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "JSONPathSourceLocation": {
       "allOf": [
@@ -728,6 +1108,74 @@
         "sourceSecretType": "lance",
         "tableLike": true
       }
+    },
+    "LessThanOrEqualSemanticFilter": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "less_than_or_equal"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/SemanticLiteral"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "LessThanSemanticFilter": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "less_than"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/SemanticLiteral"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "ManagedConnection": {
       "allOf": [
@@ -1092,6 +1540,24 @@
         "supportStatus": "stable"
       }
     },
+    "NamedSemanticRelationshipEndpoint": {
+      "properties": {
+        "dataset": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "entity": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset",
+        "entity"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "NonNullModelCheck": {
       "properties": {
         "field": {
@@ -1117,6 +1583,90 @@
         "type"
       ],
       "type": "object"
+    },
+    "NotEqualsSemanticFilter": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "not_equals"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/SemanticLiteral"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "NotInSemanticFilter": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "not_in"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "value": {
+          "items": {
+            "$ref": "#/$defs/SemanticLiteral"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "NotSemanticFilter": {
+      "properties": {
+        "not": {
+          "$ref": "#/$defs/SemanticFilter"
+        }
+      },
+      "required": [
+        "not"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "ParquetPathSourceLocation": {
       "allOf": [
@@ -1337,6 +1887,57 @@
         "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
+    },
+    "RatioSemanticMetric": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "denominator": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string"
+        },
+        "numerator": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "requiredAccessGrants": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "type": {
+          "enum": [
+            "ratio"
+          ],
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "denominator",
+        "numerator",
+        "type"
+      ],
+      "type": "object"
     },
     "ReaderDefaults": {
       "description": "Connection defaults are closed by reader format; arbitrary option maps are not public.",
@@ -1638,6 +2239,556 @@
         "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
+    },
+    "SemanticAccessFilter": {
+      "properties": {
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "userAttribute": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "userAttribute"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticAccessGrant": {
+      "properties": {
+        "allowedValues": {
+          "$ref": "#/$defs/SemanticAllowedValues",
+          "uniqueItems": true
+        },
+        "userAttribute": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "allowedValues",
+        "userAttribute"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticAllowedValues": {
+      "oneOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 1024,
+          "minItems": 1,
+          "type": "array"
+        },
+        {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 1024,
+          "minItems": 1,
+          "type": "array"
+        },
+        {
+          "items": {
+            "type": "boolean"
+          },
+          "maxItems": 1024,
+          "minItems": 1,
+          "type": "array"
+        }
+      ]
+    },
+    "SemanticDataset": {
+      "properties": {
+        "accessFilters": {
+          "items": {
+            "$ref": "#/$defs/SemanticAccessFilter"
+          },
+          "type": "array"
+        },
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "defaultTimeDimension": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "model": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+          "type": "string"
+        },
+        "requiredAccessGrants": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticDimension": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "bindings": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SemanticDimensionBinding"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "datatype": {
+          "enum": [
+            "String",
+            "Integer",
+            "Decimal",
+            "Float",
+            "Boolean",
+            "Date",
+            "Time",
+            "DateTime",
+            "DateTimeTz",
+            "Opaque"
+          ],
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "requiredAccessGrants": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "time": {
+          "$ref": "#/$defs/SemanticTimeSemantics"
+        }
+      },
+      "required": [
+        "bindings",
+        "datatype"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticDimensionBinding": {
+      "properties": {
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticFilter": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/EqualsSemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/NotEqualsSemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/InSemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/NotInSemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/LessThanSemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/LessThanOrEqualSemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/GreaterThanSemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/GreaterThanOrEqualSemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/IsNullSemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/IsNotNullSemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/AllSemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/AnySemanticFilter"
+        },
+        {
+          "$ref": "#/$defs/NotSemanticFilter"
+        }
+      ]
+    },
+    "SemanticLiteral": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "format": "double",
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "SemanticMetric": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SemanticMetricAggregateVariant"
+        },
+        {
+          "$ref": "#/$defs/SemanticMetricDerivedVariant"
+        },
+        {
+          "$ref": "#/$defs/SemanticMetricRatioVariant"
+        }
+      ]
+    },
+    "SemanticMetricAggregateVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/AggregateSemanticMetric"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "aggregate"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticMetricDerivedVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DerivedSemanticMetric"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "derived"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticMetricInput": {
+      "properties": {
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticMetricRatioVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RatioSemanticMetric"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "ratio"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticModel": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "apiVersion": {
+          "enum": [
+            "leapview.dev/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "SemanticModel"
+          ],
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/SemanticModelMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/SemanticModelSpec"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-semantic-access-profile": "leapview.semantic-access/v1"
+    },
+    "SemanticModelMetadata": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "documentation": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/ResourceProvenance"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticModelSpec": {
+      "properties": {
+        "accessGrants": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SemanticAccessGrant"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "datasets": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SemanticDataset"
+          },
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "dimensions": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SemanticDimension"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "filters": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SemanticFilter"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "metrics": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SemanticMetric"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "relationships": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SemanticRelationship"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "datasets",
+        "metrics"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticRelationship": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "description": {
+          "type": "string"
+        },
+        "from": {
+          "$ref": "#/$defs/SemanticRelationshipEndpoint"
+        },
+        "to": {
+          "$ref": "#/$defs/SemanticRelationshipEndpoint"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SemanticRelationshipEndpoint": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NamedSemanticRelationshipEndpoint"
+        },
+        {
+          "$ref": "#/$defs/FieldsSemanticRelationshipEndpoint"
+        }
+      ]
+    },
+    "SemanticTimeSemantics": {
+      "properties": {
+        "calendar": {
+          "type": "string"
+        },
+        "grains": {
+          "items": {
+            "enum": [
+              "second",
+              "minute",
+              "hour",
+              "day",
+              "week",
+              "month",
+              "quarter",
+              "year"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "nativeGrain": {
+          "enum": [
+            "second",
+            "minute",
+            "hour",
+            "day",
+            "week",
+            "month",
+            "quarter",
+            "year"
+          ],
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "grains",
+        "nativeGrain"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "Source": {
       "properties": {
@@ -2054,10 +3205,13 @@
       "$ref": "#/$defs/Model"
     },
     {
+      "$ref": "#/$defs/SemanticModel"
+    },
+    {
       "$ref": "#/$defs/Source"
     }
   ],
-  "description": "Strict authored Connection, Source, and Model-definition contracts.",
+  "description": "Strict authored Connection, Source, Model, and SemanticModel contracts.",
   "title": "LeapView v1 data-resource contracts",
   "x-apigen-contracts": [
     {
@@ -2081,6 +3235,18 @@
         "model",
         "data-resource"
       ]
+    },
+    {
+      "kind": "resource",
+      "name": "SemanticModel",
+      "schema": {
+        "$ref": "#/$defs/SemanticModel"
+      },
+      "tags": [
+        "semantic-model",
+        "data-resource"
+      ],
+      "x-leapview-semantic-access-profile": "leapview.semantic-access/v1"
     },
     {
       "kind": "resource",

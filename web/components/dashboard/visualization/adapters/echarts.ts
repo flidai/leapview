@@ -130,10 +130,14 @@ class EChartsHandle implements RendererHandle {
     const option = echartsOption(envelope, context, this.categoryColors)
     const initializeDataZoom = !this.dataZoomInitialized && hasEChartsDataZoom(option)
     const resetDataZoom = hasEmptyEChartsDataZoom(option)
-    const plan = echartsUpdatePlan(change, option, initializeDataZoom)
+    const refreshHeatmapDataZoom = isHeatmapWithDataZoom(envelope) && (change & Change.Data) !== 0 && hasEChartsDataZoom(option)
+    const plan = echartsUpdatePlan(change, option, initializeDataZoom, refreshHeatmapDataZoom)
     if ((change & Change.Spec) !== 0 || initializeDataZoom || resetDataZoom) this.dataZoomInitialized = hasEChartsDataZoom(option)
+    if (isHeatmapWithDataZoom(envelope) && ((change & Change.Spec) !== 0 || refreshHeatmapDataZoom || resetDataZoom)) {
+      this.focusedHeatmapFullData = false
+    }
     this.chart.setOption(plan.option, plan.settings)
-    if ((change & Change.Spec) !== 0 || initializeDataZoom) this.syncHeatmapFocusZoom(true)
+    if ((change & Change.Spec) !== 0 || initializeDataZoom || refreshHeatmapDataZoom || resetDataZoom) this.syncHeatmapFocusZoom(true)
   }
 
   resize(width: number, height: number): void {
@@ -222,10 +226,7 @@ class EChartsHandle implements RendererHandle {
 
   private syncHeatmapFocusZoom(force = false): void {
     const envelope = this.envelope
-    const usesHeatmapZoom = envelope?.spec.kind === 'cartesian'
-      && envelope.spec.mark === 'heatmap'
-      && envelope.spec.presentation.dataZoom
-    if (!usesHeatmapZoom) {
+    if (!heatmapFocusZoomEnabled(envelope, this.dataZoomInitialized)) {
       this.focusedHeatmapFullData = false
       this.compactHeatmapZoom = undefined
       return
@@ -248,6 +249,16 @@ class EChartsHandle implements RendererHandle {
     this.focusedHeatmapFullData = focused
   }
 
+}
+
+function isHeatmapWithDataZoom(envelope: VisualizationEnvelope | undefined): boolean {
+  return envelope?.spec.kind === 'cartesian'
+    && envelope.spec.mark === 'heatmap'
+    && envelope.spec.presentation.dataZoom === true
+}
+
+export function heatmapFocusZoomEnabled(envelope: VisualizationEnvelope | undefined, dataZoomInitialized: boolean): boolean {
+  return dataZoomInitialized && isHeatmapWithDataZoom(envelope)
 }
 
 type HeatmapZoomRange = Readonly<{ start?: number; end?: number }>
@@ -308,7 +319,7 @@ export type EChartsUpdatePlan = Readonly<{
   settings: { notMerge: boolean; lazyUpdate: boolean; replaceMerge?: string[] }
 }>
 
-export function echartsUpdatePlan(change: Change, option: EChartsOption, initializeDataZoom = false): EChartsUpdatePlan {
+export function echartsUpdatePlan(change: Change, option: EChartsOption, initializeDataZoom = false, refreshHeatmapDataZoom = false): EChartsUpdatePlan {
   if ((change & Change.Spec) !== 0) {
     return { option: option as Record<string, any>, settings: { notMerge: true, lazyUpdate: false } }
   }
@@ -322,7 +333,8 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption, initial
     patch.visualMap = source.visualMap ?? []
     patch.graphic = source.graphic ?? []
     const resetDataZoom = hasEmptyEChartsDataZoom(option)
-    if (initializeDataZoom) {
+    const replaceDataZoom = initializeDataZoom || refreshHeatmapDataZoom
+    if (replaceDataZoom) {
       if (source.dataZoom !== undefined) patch.dataZoom = source.dataZoom
       if (source.grid !== undefined) patch.grid = source.grid
     }
@@ -335,7 +347,8 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption, initial
       if (source[key] !== undefined) patch[key] = source[key]
     }
     replaceMerge.push('dataset', 'series', 'legend', 'visualMap', 'graphic')
-    if (initializeDataZoom && source.dataZoom !== undefined) replaceMerge.push('dataZoom')
+    if (replaceDataZoom && source.dataZoom !== undefined) replaceMerge.push('dataZoom')
+    if (refreshHeatmapDataZoom && source.grid !== undefined) replaceMerge.push('grid')
     if (resetDataZoom) {
       replaceMerge.push('dataZoom')
       if (source.grid !== undefined) replaceMerge.push('grid')

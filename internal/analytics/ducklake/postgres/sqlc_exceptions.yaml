@@ -1,0 +1,3 @@
+# ADR-0020 exception inventory. Dynamic DDL call sites carry adjacent
+# sqlc-exception:schema-ddl markers; no unmarked exceptions remain.
+entries: []

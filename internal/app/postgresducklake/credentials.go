@@ -1,6 +1,5 @@
-// Package postgresducklake supplies ephemeral PostgreSQL credentials to one
-// DuckDB connector without placing secret values in DuckLake config or SQL
-// diagnostics.
+// Package postgresducklake owns the application adapter that supplies
+// ephemeral PostgreSQL and object-store credentials to one DuckDB connector.
 package postgresducklake
 
 import (
@@ -8,6 +7,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -25,23 +25,39 @@ const (
 )
 
 type CredentialConfig struct {
-	PostgresURL        string
-	Contract           *ducklake.PoolContract
-	ExtensionAdmission extension.Admission
-	S3                 gcadapter.S3Config
+	PostgresURL string
+	// AllowPlaintextLoopback is an explicit development-only policy. TLS may
+	// be disabled for the worktree-scoped loopback PostgreSQL helper, but
+	// callers must opt in; a loopback URL alone never weakens production
+	// transport requirements.
+	AllowPlaintextLoopback bool
+	Contract               *ducklake.PoolContract
+	ExtensionAdmission     extension.Admission
+	S3                     gcadapter.S3Config
 }
 
+// NewCredentialBootstrap validates one explicit PostgreSQL credential and
+// returns a per-connector bootstrap. It works for either the ordinary runtime
+// credential or the separately authenticated catalog migrator; callers choose
+// the URL and never expose it through the returned DuckLake configuration.
 func NewCredentialBootstrap(config CredentialConfig) (ducklake.CredentialBootstrap, error) {
 	if config.ExtensionAdmission == nil {
 		return nil, errors.New("PostgreSQL DuckLake credential bootstrap requires extension admission")
 	}
 	parsed, err := url.Parse(strings.TrimSpace(config.PostgresURL))
-	if err != nil || parsed == nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.Hostname() == "" || parsed.Fragment != "" {
+	if err != nil || parsed == nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.Hostname() == "" {
 		return nil, errors.New("PostgreSQL DuckLake URL is invalid")
 	}
-	for key, values := range parsed.Query() {
-		if key != "sslmode" || len(values) != 1 {
-			return nil, fmt.Errorf("PostgreSQL DuckLake URL option %q is unsupported or repeated", key)
+	if parsed.Fragment != "" {
+		return nil, errors.New("PostgreSQL DuckLake URL contains an invalid fragment")
+	}
+	query := parsed.Query()
+	for key, values := range query {
+		if key != "sslmode" && key != "sslrootcert" {
+			return nil, fmt.Errorf("PostgreSQL DuckLake URL query option %q is unsupported", key)
+		}
+		if len(values) != 1 {
+			return nil, fmt.Errorf("PostgreSQL DuckLake URL query option %q must be specified once", key)
 		}
 	}
 	user, password := "", ""
@@ -69,12 +85,24 @@ func NewCredentialBootstrap(config CredentialConfig) (ducklake.CredentialBootstr
 		return nil, errors.New("PostgreSQL DuckLake URL database path is invalid")
 	}
 	database = strings.TrimPrefix(database, "/")
-	sslMode := strings.TrimSpace(parsed.Query().Get("sslmode"))
-	if sslMode == "" {
-		sslMode = "require"
+	if strings.ContainsAny(database, "\x00\r\n") {
+		return nil, errors.New("PostgreSQL DuckLake database identity is invalid")
 	}
-	if sslMode != "require" && sslMode != "verify-ca" && sslMode != "verify-full" {
+	sslMode := "require"
+	if configured := strings.TrimSpace(query.Get("sslmode")); configured != "" {
+		sslMode = configured
+	}
+	if sslMode != "require" && sslMode != "verify-ca" && sslMode != "verify-full" && !(sslMode == "disable" && config.AllowPlaintextLoopback && postgresLoopbackHost(parsed.Hostname())) {
 		return nil, errors.New("PostgreSQL DuckLake credential bootstrap requires TLS")
+	}
+	sslRootCert := strings.TrimSpace(query.Get("sslrootcert"))
+	if sslRootCert != "" {
+		if !filepath.IsAbs(sslRootCert) || filepath.Clean(sslRootCert) != sslRootCert || strings.ContainsAny(sslRootCert, "\x00\r\n") {
+			return nil, errors.New("PostgreSQL DuckLake URL sslrootcert must be a canonical absolute path")
+		}
+		if sslMode != "verify-ca" && sslMode != "verify-full" {
+			return nil, errors.New("PostgreSQL DuckLake URL sslrootcert requires certificate verification")
+		}
 	}
 
 	var objectBootstrap ducklake.CredentialBootstrap
@@ -102,11 +130,13 @@ func NewCredentialBootstrap(config CredentialConfig) (ducklake.CredentialBootstr
 		if _, err := execer.ExecContext(ctx, "LOAD '"+sqlLiteral(admitted.Path)+"'", nil); err != nil {
 			return fmt.Errorf("load PostgreSQL DuckDB scanner: %w", err)
 		}
-		statement := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET %s (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE '%s')", PostgresSecret, sqlLiteral(parsed.Hostname()), port, sqlLiteral(database), sqlLiteral(user), sqlLiteral(password), sqlLiteral(sslMode))
+		rootCertOption := ""
+		if sslRootCert != "" {
+			rootCertOption = ", SSLROOTCERT '" + sqlLiteral(sslRootCert) + "'"
+		}
+		statement := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET %s (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE '%s'%s)", PostgresSecret, sqlLiteral(parsed.Hostname()), port, sqlLiteral(database), sqlLiteral(user), sqlLiteral(password), sqlLiteral(sslMode), rootCertOption)
 		if _, err := execer.ExecContext(ctx, statement, nil); err != nil {
-			// The submitted statement contains the database password. Do not
-			// propagate driver diagnostics because an executor may echo its SQL.
-			return errors.New("create temporary PostgreSQL DuckDB secret")
+			return fmt.Errorf("create temporary PostgreSQL DuckDB secret: %w", err)
 		}
 		if objectBootstrap != nil {
 			return objectBootstrap(ctx, execer)
@@ -116,3 +146,12 @@ func NewCredentialBootstrap(config CredentialConfig) (ducklake.CredentialBootstr
 }
 
 func sqlLiteral(value string) string { return strings.ReplaceAll(value, "'", "''") }
+
+func postgresLoopbackHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}

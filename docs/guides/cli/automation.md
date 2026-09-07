@@ -20,7 +20,7 @@ export LEAPVIEW_WORKLOAD_PROJECT=analytics
 Compile the complete project first and retain structured diagnostics as a job artifact:
 
 ```sh
-leapview validate --project dashboards/leapview.yaml --json
+leapview validate --source-root dashboards --json
 ```
 
 Stop the pipeline on any non-zero exit status. Do not allow a later deployment job to replace or edit the project after validation.
@@ -31,7 +31,7 @@ Create a durable plan from the exact source snapshot, then build only that
 plan:
 
 ```sh
-PLAN_JSON=$(leapview plan dashboards/leapview.yaml --target "$LEAPVIEW_TARGET" --format json)
+PLAN_JSON=$(leapview plan --source-root dashboards --target "$LEAPVIEW_TARGET" --format json)
 PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -r .planId)
 BUILD_JSON=$(leapview build "$PLAN_ID" --format json)
 CANDIDATE_ID=$(printf '%s' "$BUILD_JSON" | jq -r .candidateId)
@@ -41,11 +41,26 @@ The target retains the portable bytes and source-attestation digest before
 physical work. `build` resolves target policy, leases, and credentials, and
 returns a candidate only after its catalog is sealed. `dev` remains an optional
 private watch/preview loop; it is not a second CI deployment path. For a local
-candidate preview, use `leapview dev --once --project dashboards/leapview.yaml`.
+candidate preview, use `leapview dev --once --source-root dashboards`.
+
+The compiler's source bundle stays unbound. Planning binds its exact digest to
+the target's existing Project UID and environment, target identity, current
+active generation and revision, and resolved target inputs. Bootstrap must
+already have claimed the target; an ordinary plan or build cannot create or
+replace that claim. A different Project or target is a conflict, not a context
+switch. A new build requires the plan's target revision and active generation
+to remain current at candidate admission; if either changes, create a new plan.
+
+For promotion, plan the same portable bundle independently on each development,
+staging, and production target. Bootstrap those targets with the same
+issuer-owned Project UID, but keep their environments and credentials separate.
+Do not transfer another target's plan, approval, resource UIDs, revision, or
+active pointer. Branch and commit values are provenance, not environment or
+active-generation selectors.
 
 ## Publish an immutable deployment request
 
-Run publication from a protected job using the same project path and target used by `dev`:
+Run publication from a protected job using the same source root and target used by `dev`:
 
 ```sh
 leapview publish "$CANDIDATE_ID"
@@ -69,19 +84,11 @@ Map source-control events onto the candidate lifecycle rather than inventing a C
 | Retry or missed webhook | Repeat the same operation and idempotency key |
 | Superseded commit | Synchronize the new revision; never publish the older checkpoint |
 | Merge to a protected branch | Build the reviewed plan, then run `publish CANDIDATE_ID` |
-| Close or abandon | Cancel the active candidate by its stable key |
+| Close or abandon | Let the target expire the private candidate; reconcile its status before retrying |
 
-Cancellation uses the same generated Deployment API:
+There is no candidate-cancellation operation in the canonical Delivery API.
 
-```sh
-leapview api call cancelProjectCandidateByKey \
-  --target "$LEAPVIEW_TARGET" \
-  --path project="$LEAPVIEW_WORKLOAD_PROJECT" \
-  --path candidateKey="$CHANGE_KEY" \
-  --idempotency-key "candidate-close:$CHANGE_KEY"
-```
-
-Candidates also expire on the target, so a missed close event does not leave an active runtime indefinitely. Scheduled reconciliation may safely repeat close calls and ignore a not-found result for an already expired or cancelled key.
+Candidates expire on the target, so a missed close event does not leave an active runtime indefinitely. Scheduled reconciliation should inspect the candidate or publication status and must never publish a superseded candidate.
 
 ## Preserve evidence and verify
 
@@ -92,6 +99,6 @@ evidence after the runner disappears.
 
 After activation, verify readiness and exercise a representative project query or dashboard with a separate verifier identity. A transport retry must reuse the same durable plan or candidate ID and its plan/seal digests; never rebuild from a moving branch between attempts.
 
-The maintained GitHub Actions reference is [`/.github/examples/leapview-authoring.yml`](https://github.com/flidai/leapview/blob/main/.github/examples/leapview-authoring.yml). It keeps fork validation credential-free, gates trusted candidate creation, uses protected publication, and reconciles closed pull requests. Adapt only the source-control event syntax; keep the LeapView commands and target policy unchanged.
+The maintained GitHub Actions reference is [`/.github/examples/leapview-authoring.yml`](https://github.com/flidai/leapview/blob/main/.github/examples/leapview-authoring.yml). It keeps fork validation credential-free, gates trusted candidate creation, uses protected publication, and relies on target expiry for abandoned candidates. Adapt only the source-control event syntax; keep the LeapView commands and target policy unchanged.
 
 See [Targets and environments](/docs/cli/targets) for environment safeguards and the generated [`validate`](/docs/cli/validate), [`dev`](/docs/cli/dev), and [`publish`](/docs/cli/publish) references for all flags.

@@ -58,7 +58,7 @@ type ConnectionAdministrationConfig struct {
 	Audit               ConnectionRotationAuditRecorder
 	AdministrationAudit ConnectionAdministrationAuditRecorder
 	// AuditIntentRecorder is required for command-facing transactional
-	// administration and is consumed by the SQLite binding repository.
+	// administration when the capability is not itself transaction-aware.
 	AuditIntentRecorder access.AuditIntentRecorder
 	RequireAuditIntent  bool
 }

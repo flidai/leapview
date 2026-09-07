@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,15 +103,70 @@ func TestConfigValidateRequiresURLAndRole(t *testing.T) {
 	}
 }
 
+func TestOpenControlPlaneRequiresMaintenanceBeforeOpeningPools(t *testing.T) {
+	_, err := OpenServingControlPlane(context.Background(), ControlPlaneConfig{})
+	if err == nil || !strings.Contains(err.Error(), "maintenance URL is required") {
+		t.Fatalf("missing maintenance pool error = %v", err)
+	}
+}
+
+func TestOpenControlPlaneRequiresReadWriteSingleConnectionMaintenance(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{
+			name: "read-only intent",
+			cfg:  Config{URL: "postgres://maintenance@localhost/control", Intent: IntentReadOnly},
+			want: "must be read-write",
+		},
+		{
+			name: "multiple connections",
+			cfg:  Config{URL: "postgres://maintenance@localhost/control", MinConns: 1, MaxConns: 2},
+			want: "exactly one connection",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := OpenServingControlPlane(context.Background(), ControlPlaneConfig{Maintenance: test.cfg})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("maintenance policy error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestConfigValidateTLSIntent(t *testing.T) {
 	cfg := testConfig()
 	cfg.RequireTLS = true
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("plaintext PostgreSQL URL accepted when TLS is required")
+	for _, sslmode := range []string{"", "disable", "require", "verify-ca"} {
+		candidate := cfg
+		candidate.URL = "postgres://runtime:secret@db/control"
+		if sslmode != "" {
+			candidate.URL += "?sslmode=" + sslmode
+		}
+		if err := candidate.Validate(); err == nil {
+			t.Fatalf("PostgreSQL URL with sslmode=%q accepted when certificate and hostname verification is required", sslmode)
+		}
 	}
 	cfg.URL += "?sslmode=verify-full"
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("TLS PostgreSQL URL rejected: %v", err)
+		t.Fatalf("certificate- and hostname-verified PostgreSQL URL rejected: %v", err)
+	}
+}
+
+func TestConfigValidateDoesNotExposeMalformedURLCredentials(t *testing.T) {
+	const secret = "super-secret"
+	cfg := testConfig()
+	cfg.RequireTLS = true
+	cfg.URL = "postgres://runtime:" + secret + "%gh@db/control?sslmode=require"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("malformed PostgreSQL URL unexpectedly validated")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), cfg.URL) {
+		t.Fatalf("validation exposed PostgreSQL credentials: %v", err)
 	}
 }
 
@@ -159,5 +216,32 @@ func TestConfigurePoolReadOnlyIntentEnablesReadOnlySession(t *testing.T) {
 	}
 	if got := parsed.ConnConfig.RuntimeParams["default_transaction_read_only"]; got != "on" {
 		t.Fatalf("default_transaction_read_only = %q, want on", got)
+	}
+}
+
+func TestIsTransactionRetryableClassifiesWrappedPostgreSQLErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		code string
+		want bool
+	}{
+		{name: "serialization failure", code: SQLStateSerializationFailure, want: true},
+		{name: "deadlock detected", code: SQLStateDeadlockDetected, want: true},
+		{name: "unique violation", code: "23505", want: false},
+		{name: "lock timeout", code: "55P03", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := fmt.Errorf("transaction failed: %w", &pgconn.PgError{Code: test.code})
+			if got := IsTransactionRetryable(err); got != test.want {
+				t.Fatalf("IsTransactionRetryable(%q) = %t, want %t", test.code, got, test.want)
+			}
+		})
+	}
+	if IsTransactionRetryable(nil) {
+		t.Fatal("IsTransactionRetryable(nil) = true, want false")
+	}
+	if IsTransactionRetryable(errors.New("40001 serialization failure")) {
+		t.Fatal("message-only SQLSTATE text was classified as retryable")
 	}
 }

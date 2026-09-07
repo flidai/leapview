@@ -36,7 +36,6 @@ func (s testSubjects) AuthorizationSubjects(_ context.Context, principalID strin
 func catalogFixture(t *testing.T, grants []accesssnapshot.Grant) (*Service, projectgraph.ProjectGraph, access.SubjectRef, access.SubjectRef) {
 	t.Helper()
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders", Metadata: projectgraph.Metadata{DisplayName: "Orders", Domain: "commerce"}},
 		{ID: "dashboard_sales", Kind: projectgraph.KindDashboard, Name: "sales", Metadata: projectgraph.Metadata{DisplayName: "Sales dashboard", Domain: "commerce"}},
 		{ID: "source_finance", Kind: projectgraph.KindSource, Name: "finance", Metadata: projectgraph.Metadata{Domain: "finance"}},
@@ -44,7 +43,7 @@ func catalogFixture(t *testing.T, grants []accesssnapshot.Grant) (*Service, proj
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := projectgraph.NewServingIdentity(project.ProjectID(), "development", "generation_1")
+	identity, err := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +84,7 @@ func TestDevelopmentBypassReturnsExactActiveGraphWithEmptyGrants(t *testing.T) {
 		t.Fatalf("development search = %#v, %v", search, err)
 	}
 	listed, err := service.List(ctx, ListRequest{PrincipalID: "dev", DevAuthBypass: true, Limit: 20})
-	if err != nil || len(listed.Items) != 4 {
+	if err != nil || len(listed.Items) != 3 {
 		t.Fatalf("development list = %#v, %v", listed, err)
 	}
 	resolved, err := service.Resolve(ctx, "dev", Ref{ID: "model_orders", Kind: projectgraph.KindModel}, access.CapabilityResourceRead, true)
@@ -97,7 +96,6 @@ func TestDevelopmentBypassReturnsExactActiveGraphWithEmptyGrants(t *testing.T) {
 func TestSearchUsesDirectAndGroupGrantsAndDoesNotEnumerateDeniedResources(t *testing.T) {
 	// Build the graph first so grants can be bound to its exact IDs.
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
 		{ID: "model_secret", Kind: projectgraph.KindModel, Name: "secret"},
 	}, nil)
@@ -106,7 +104,7 @@ func TestSearchUsesDirectAndGroupGrantsAndDoesNotEnumerateDeniedResources(t *tes
 	}
 	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
 	group, _ := access.NewSubjectRef(access.SubjectKindGroup, "group_analytics")
-	identity, _ := projectgraph.NewServingIdentity(project.ProjectID(), "development", "generation_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{grant(t, project, "grant_group", group, "model_orders", projectgraph.KindModel)}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -126,14 +124,13 @@ func TestSearchUsesDirectAndGroupGrantsAndDoesNotEnumerateDeniedResources(t *tes
 
 func TestResolveRejectsUnknownAndWrongKindIDs(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
-	identity, _ := projectgraph.NewServingIdentity(project.ProjectID(), "development", "generation_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{grant(t, project, "grant_direct", principal, "model_orders", projectgraph.KindModel)}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -147,14 +144,12 @@ func TestResolveRejectsUnknownAndWrongKindIDs(t *testing.T) {
 }
 
 func TestResolveProjectRequiresProjectAdminCapability(t *testing.T) {
-	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
-	}, nil)
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
-	ref, err := access.NewResourceRef(project.ProjectID(), projectgraph.KindProject)
+	ref, err := access.NewResourceRef("project_demo", projectgraph.KindProjectNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,30 +157,29 @@ func TestResolveProjectRequiresProjectAdminCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, _ := projectgraph.NewServingIdentity(project.ProjectID(), "development", "generation_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{{ID: "grant_admin", Canonical: canonical}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	service, _ := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
-	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityProjectAdmin, false); err != nil {
+	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: "project_demo", Kind: projectgraph.KindProjectNamespace}, access.CapabilityProjectAdmin, false); err != nil {
 		t.Fatalf("project admin resolve = %v", err)
 	}
-	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityResourceRead, false); !errors.Is(err, ErrNotFound) {
+	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: "project_demo", Kind: projectgraph.KindProjectNamespace}, access.CapabilityResourceRead, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("project read resolve = %v, want not found", err)
 	}
 }
 
 func TestDomainFilterDoesNotChangeResourceID(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders", Metadata: projectgraph.Metadata{Domain: "commerce"}},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
-	identity, _ := projectgraph.NewServingIdentity(project.ProjectID(), "development", "generation_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{grant(t, project, "grant_direct", principal, "model_orders", projectgraph.KindModel)}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -206,14 +200,13 @@ func TestDomainFilterDoesNotChangeResourceID(t *testing.T) {
 
 func TestSearchMatchesStableResourceID(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "unrelated"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
-	identity, _ := projectgraph.NewServingIdentity(project.ProjectID(), "development", "generation_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{grant(t, project, "grant_direct", principal, "model_orders", projectgraph.KindModel)}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +223,6 @@ func TestSearchMatchesStableResourceID(t *testing.T) {
 
 func TestRootListScansDisconnectedResourcesWithoutProjectEdges(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
 		{ID: "source_warehouse", Kind: projectgraph.KindSource, Name: "warehouse"},
 	}, nil)
@@ -238,7 +230,7 @@ func TestRootListScansDisconnectedResourcesWithoutProjectEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
-	identity, _ := projectgraph.NewServingIdentity(project.ProjectID(), "development", "generation_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{
 		grant(t, project, "grant_model", principal, "model_orders", projectgraph.KindModel),
 		grant(t, project, "grant_source", principal, "source_warehouse", projectgraph.KindSource),
@@ -258,7 +250,6 @@ func TestRootListScansDisconnectedResourcesWithoutProjectEdges(t *testing.T) {
 
 func TestListCursorIsBoundToParent(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "model_a", Kind: projectgraph.KindModel, Name: "a"},
 		{ID: "model_b", Kind: projectgraph.KindModel, Name: "b"},
 		{ID: "source_a", Kind: projectgraph.KindSource, Name: "source_a"},
@@ -270,7 +261,7 @@ func TestListCursorIsBoundToParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
-	identity, _ := projectgraph.NewServingIdentity(project.ProjectID(), "development", "generation_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{
 		grant(t, project, "grant_model_a", principal, "model_a", projectgraph.KindModel),
 		grant(t, project, "grant_model_b", principal, "model_b", projectgraph.KindModel),

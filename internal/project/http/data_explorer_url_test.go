@@ -58,8 +58,7 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 			{ID: "model:orders", ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
 			{ID: modelID, ProjectID: projectID, ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{}`},
 		}}},
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
-			ID:             projectID,
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
 			Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"]},
 			SemanticModels: map[string]*semanticmodel.Model{modelID: model},
 			NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
@@ -502,7 +501,7 @@ func TestValidateRestoredDataExploreStateAcceptsSafeRebase(t *testing.T) {
 		Relationships: []semanticmodel.Relationship{{ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"}},
 		Datasets:      map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
 	}
-	project := projectmanifest.Project{
+	project := projectmanifest.ResourceManifest{
 		Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"], "model:customers": model.Tables["customers"]},
 		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},

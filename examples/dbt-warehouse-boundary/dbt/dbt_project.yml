@@ -1,0 +1,17 @@
+name: leapview_warehouse_boundary
+version: 1.0.0
+config-version: 2
+profile: leapview_warehouse_boundary
+
+model-paths: [models]
+seed-paths: [seeds]
+target-path: target
+clean-targets: [target, dbt_packages]
+
+models:
+  leapview_warehouse_boundary:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: external
+      +format: parquet

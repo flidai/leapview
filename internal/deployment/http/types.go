@@ -3,7 +3,6 @@ package http
 
 import (
 	"context"
-	"log/slog"
 	stdhttp "net/http"
 
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
@@ -17,15 +16,12 @@ type Coordinator interface {
 	Create(context.Context, apiadapter.CreateRequest) (apiadapter.Deployment, error)
 	Get(context.Context, apiadapter.Scope) (apiadapter.Deployment, error)
 	Activate(context.Context, apiadapter.ActivateRequest) (apiadapter.Deployment, error)
-	Cancel(context.Context, apiadapter.Scope) (apiadapter.Deployment, error)
+	CancelRequest(context.Context, apiadapter.CancelRequest) (apiadapter.Deployment, error)
 }
 
 type Options struct {
-	Coordinator         Coordinator
 	CurrentPrincipal    func(*stdhttp.Request) (Principal, bool)
-	MaxJSONBodyBytes    int64
 	InstanceEnvironment string
-	Logger              *slog.Logger
 }
 
 type Handler struct {
@@ -33,12 +29,6 @@ type Handler struct {
 }
 
 func NewHandler(options Options) *Handler {
-	if options.MaxJSONBodyBytes <= 0 {
-		options.MaxJSONBodyBytes = 1 << 20
-	}
-	if options.Logger == nil {
-		options.Logger = slog.Default()
-	}
 	return &Handler{options: options}
 }
 

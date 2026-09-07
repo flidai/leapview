@@ -2,28 +2,52 @@
 
 ## Summary
 
-One LeapView deployment owns one control-plane SQLite database and one process-owned DuckDB `DatabaseInstance`. That DuckDB instance is the sole client of one DuckDB-backed DuckLake catalog and executes bounded serving reads and refresh transactions over DuckLake-managed Parquet files.
+Production and development serving use one PostgreSQL control plane and one
+process-owned DuckDB `DatabaseInstance`. That DuckDB instance is the sole
+client of one PostgreSQL-backed DuckLake catalog and executes bounded serving
+reads and refresh transactions over DuckLake-managed Parquet files. Isolated
+development/evaluation fixtures may use embedded SQLite and a local DuckLake
+catalog; those adapters are test-only and are never selected by application
+composition or production serving.
 
-Runtime generations do not own DuckDB engines or catalog attachments. They own immutable compiled plans, an exact DuckLake snapshot id, a cache scope, and snapshot protection.
+Runtime generations do not own DuckDB engines or catalog attachments. They own
+immutable compiled plans, an exact DuckLake snapshot id, a process-memory L1
+cache scope, and snapshot protection. No L2 or L3 cache is admitted; a future
+L2 tier requires independent identity, security, recovery, multi-node,
+retention, and rebuildability evidence.
 
 ## Storage ownership
 
+Production control-plane and DuckLake metadata live in PostgreSQL. Local and
+evaluation fixtures use the node-local layout below:
+
 ```text
 .leapview/
-  leapview.db               # node-local control-plane state
-  ducklake/catalog.duckdb   # DuckDB-backed DuckLake metadata catalog
-  ducklake/catalog.sqlite   # retained legacy migration backup, when present
+  leapview.db               # local/evaluation SQLite control-plane fixture
+  ducklake/catalog.duckdb   # local DuckDB-backed DuckLake metadata catalog
   data/                     # DuckLake-managed Parquet files
   artifacts/                # immutable project bundles
   runtime/                  # ephemeral extracted artifacts
   tmp/duckdb/               # bounded DuckDB temporary storage
 ```
 
-SQLite owns projects, releases, deployments, active serving pointers, authorization, durable jobs, idempotency, leases, and audit records.
+PostgreSQL owns projects, releases, deployments, active serving pointers,
+authorization, durable jobs, idempotency, leases, and audit records in
+production. SQLite remains an explicit adapter for local/evaluation fixtures;
+the documentation site's immutable search index is separate from the control
+plane and generated from the embedded documentation catalog.
 
-DuckLake owns analytical schemas, snapshots, changesets, statistics, schema evolution, and physical-file manifests. Parquet owns materialized analytical data. Disposable query caches are never authoritative.
+DuckLake owns analytical schemas, snapshots, changesets, statistics, schema
+evolution, and physical-file manifests. Production metadata is PostgreSQL-
+backed; local/evaluation fixtures may use the local DuckLake catalog file.
+Parquet owns materialized analytical data. Disposable query caches are never
+authoritative.
 
-The catalog file is process-private writable state. Independent DuckDB instances, LeapView nodes, or hosts never open or mount it concurrently. A future shared catalog requires a separate product decision and protocol; it is not part of this architecture.
+Local fixture catalog files are process-private writable state. Independent
+DuckDB instances, LeapView nodes, or hosts never open or mount them
+concurrently. Production catalog access is target-owned and PostgreSQL-backed;
+any future shared catalog variant requires a separate product decision and
+protocol.
 
 ## Process-owned execution
 
@@ -57,7 +81,13 @@ A refresh:
 5. Activates the candidate's exact snapshot id in the control-plane transaction.
 6. Publishes the prepared runtime atomically after durable activation.
 
-DuckLake commit and SQLite activation are deliberately not one cross-store transaction. If activation fails after the DuckLake commit, the candidate is an orphan: it is never implicitly active and is safe to retry or reclaim. Restart reconciliation classifies candidates from durable ownership, fencing, and active-pointer state rather than catalog recency.
+DuckLake commit and control-plane activation are deliberately not one
+cross-store transaction. Production activation is PostgreSQL-backed; local
+and evaluation fixtures use their explicit SQLite adapter. If activation fails
+after the DuckLake commit, the candidate is an orphan: it is never implicitly
+active and is safe to retry or reclaim. Restart reconciliation classifies
+candidates from durable ownership, fencing, and active-pointer state rather
+than catalog recency.
 
 A failed refresh leaves the previous active snapshot unchanged.
 
@@ -71,7 +101,11 @@ Maintained DuckDB connectors acquire declared external sources only inside admit
 
 Retention protects every snapshot referenced by an active or leased runtime generation. Only unprotected snapshots may expire; physical cleanup follows DuckLake metadata and remains distinct from snapshot expiration.
 
-Backup and restore cover SQLite, the DuckDB-backed DuckLake catalog, Parquet data, artifacts, and required configuration together. Recovery validates every active pointer against an existing protected snapshot before the node becomes ready.
+Backup and restore cover the PostgreSQL control plane and PostgreSQL-backed
+DuckLake catalog in production. Local/evaluation backups cover their explicit
+SQLite and DuckDB fixture equivalents, together with Parquet data, artifacts,
+and required configuration. Recovery validates every active pointer against an
+existing protected snapshot before the node becomes ready.
 
 ## Acceptance criteria
 

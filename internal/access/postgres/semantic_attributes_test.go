@@ -15,7 +15,7 @@ func TestSemanticAttributeRegistryDigestIsProfileQualifiedAndDeterministic(t *te
 		t.Fatal(err)
 	}
 	const wantEmpty = "sha256:9362dbdb62923a10f67bc1da04b02e2bbad74dce5b5442aaa3fb5e0cc5851b9d"
-	if empty != wantEmpty || !strings.Contains(AttributeRegistryMigrationSQL(), wantEmpty) {
+	if empty != wantEmpty || !strings.Contains(SchemaSQL(), wantEmpty) {
 		t.Fatalf("empty registry digest = %q, want migration seed %q", empty, wantEmpty)
 	}
 	definitions := []access.SemanticAttributeDefinition{{
@@ -101,9 +101,6 @@ func TestSemanticAttributeMetadataAndCompatibilityValidation(t *testing.T) {
 
 func TestSemanticAttributeRegistryPostgreSQL18DefinitionLifecycle(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
-	if _, err := db.admin.Exec(t.Context(), AttributeRegistryMigrationSQL()); err != nil {
-		t.Fatalf("apply attribute registry migration: %v", err)
-	}
 	if _, err := db.admin.Exec(t.Context(), `
 		INSERT INTO access.principal (id, principal_type, status)
 		VALUES ($1::uuid, 'user', 'active')`, auditActorID); err != nil {

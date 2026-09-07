@@ -233,6 +233,170 @@ func TestScalarObjectUnionRuntime(t *testing.T) {
 	require.NoError(t, err, string(output))
 }
 
+func TestEmit_GeneratedObjectUnionUsesRequiredStringLiterals(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "Filter"},
+		Schemas: map[string]ir.Schema{
+			"Filter": {Type: "union", ExactNumbers: true, OneOf: []ir.SchemaRef{{Ref: "EqualsFilter"}, {Ref: "NotEqualsFilter"}}},
+			"EqualsFilter": {Type: "object", Properties: map[string]ir.SchemaProperty{
+				"operator": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"eq"}}},
+				"value":    {Schema: ir.SchemaRef{}},
+			}, Required: []string{"operator", "value"}},
+			"NotEqualsFilter": {Type: "object", Properties: map[string]ir.SchemaProperty{
+				"operator": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"neq"}}},
+				"value":    {Schema: ir.SchemaRef{}},
+			}, Required: []string{"operator", "value"}},
+		},
+		Contracts: []ir.Contract{{Name: "filter", Schema: ir.SchemaRef{Ref: "Filter"}}},
+	}
+
+	generated, err := Emit(doc, Options{PackageName: "generated"})
+	require.NoError(t, err)
+	require.Contains(t, string(generated), `value, ok := actual.(string); !ok || value != "eq"`)
+	require.Contains(t, string(generated), `value, ok := actual.(string); !ok || value != "neq"`)
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/generated\n\ngo 1.24\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models.gen.go"), generated, 0o600))
+	testSource := `package generated
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestObjectUnionRequiredStringLiterals(t *testing.T) {
+	var equals Filter
+	if err := json.Unmarshal([]byte("{\"operator\":\"eq\",\"value\":\"one\"}"), &equals); err != nil { t.Fatal(err) }
+	if _, ok := equals.Value.(*EqualsFilter); !ok { t.Fatalf("decoded equals filter has type %T", equals.Value) }
+
+	var notEquals Filter
+	if err := json.Unmarshal([]byte("{\"operator\":\"neq\",\"value\":\"one\"}"), &notEquals); err != nil { t.Fatal(err) }
+	if _, ok := notEquals.Value.(*NotEqualsFilter); !ok { t.Fatalf("decoded not-equals filter has type %T", notEquals.Value) }
+
+	var exact Filter
+	if err := json.Unmarshal([]byte("{\"operator\":\"eq\",\"value\":9007199254740993}"), &exact); err != nil { t.Fatal(err) }
+	number, ok := exact.Value.(*EqualsFilter).Value.(json.Number)
+	if !ok || number.String() != "9007199254740993" { t.Fatalf("numeric value = %#v (%T)", exact.Value.(*EqualsFilter).Value, exact.Value.(*EqualsFilter).Value) }
+
+	for _, input := range []string{
+		"{\"operator\":\"other\",\"value\":\"one\"}",
+		"{\"operator\":null,\"value\":\"one\"}",
+	} {
+		var rejected Filter
+		if err := json.Unmarshal([]byte(input), &rejected); err == nil { t.Errorf("invalid operator accepted: %s", input) }
+	}
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models_test.go"), []byte(testSource), 0o600))
+	command := exec.Command("go", "test", "./...")
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+func TestEmit_ArrayUnionUsesSliceWireType(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "Values"},
+		Schemas: map[string]ir.Schema{
+			"AllowedValues": {Type: "union", OneOf: []ir.SchemaRef{
+				{Type: "array", Items: &ir.SchemaRef{Type: "string"}},
+				{Type: "array", Items: &ir.SchemaRef{Type: "boolean"}},
+			}},
+			"Payload": {Type: "object", Properties: map[string]ir.SchemaProperty{
+				"values": {Schema: ir.SchemaRef{Ref: "AllowedValues"}},
+			}, Required: []string{"values"}},
+		},
+		Contracts: []ir.Contract{{Name: "payload", Schema: ir.SchemaRef{Ref: "Payload"}}},
+	}
+
+	generated, err := Emit(doc, Options{PackageName: "generated"})
+	require.NoError(t, err)
+	require.Contains(t, string(generated), "type AllowedValues []any")
+}
+
+func TestEmit_ExactArrayUnionPreservesNumbersAndRejectsMixedValues(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "Values"},
+		Schemas: map[string]ir.Schema{
+			"AllowedValues": {Type: "union", ExactNumbers: true, OneOf: []ir.SchemaRef{
+				{Type: "array", Items: &ir.SchemaRef{Type: "string"}},
+				{Type: "array", Items: &ir.SchemaRef{Type: "number"}},
+				{Type: "array", Items: &ir.SchemaRef{Type: "boolean"}},
+			}},
+		},
+		Contracts: []ir.Contract{{Name: "allowedValues", Schema: ir.SchemaRef{Ref: "AllowedValues"}}},
+	}
+
+	generated, err := Emit(doc, Options{PackageName: "generated"})
+	require.NoError(t, err)
+	require.Contains(t, string(generated), "decoder.UseNumber()")
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/generated\n\ngo 1.24\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models.gen.go"), generated, 0o600))
+	testSource := `package generated
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestExactArrayUnionRuntime(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{input: "[7]", want: "7"},
+		{input: "[9007199254740993]", want: "9007199254740993"},
+		{input: "[1.25]", want: "1.25"},
+	} {
+		var value AllowedValues
+		if err := json.Unmarshal([]byte(test.input), &value); err != nil { t.Fatalf("decode %s: %v", test.input, err) }
+		number, ok := value[0].(json.Number)
+		if !ok || number.String() != test.want { t.Fatalf("decoded %s = %#v (%T), want json.Number(%s)", test.input, value[0], value[0], test.want) }
+		encoded, err := json.Marshal(value)
+		if err != nil || string(encoded) != test.input { t.Fatalf("canonical %s = %s, %v", test.input, encoded, err) }
+	}
+	for _, input := range []string{"[\"one\", 2]", "[true, false, 1]", "[]", "[[1]]", "[{\"value\":1}]", "null"} {
+		var value AllowedValues
+		if err := json.Unmarshal([]byte(input), &value); err == nil { t.Errorf("invalid exact array %s accepted", input) }
+	}
+	for _, input := range []string{"[\"one\"]", "[true, false]"} {
+		var value AllowedValues
+		if err := json.Unmarshal([]byte(input), &value); err != nil { t.Errorf("valid exact array %s rejected: %v", input, err) }
+	}
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models_test.go"), []byte(testSource), 0o600))
+	command := exec.Command("go", "test", "./...")
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+func TestEmit_ExactArrayUnionRejectsInvalidBranches(t *testing.T) {
+	tests := []struct {
+		name  string
+		oneOf []ir.SchemaRef
+		want  string
+	}{
+		{name: "object items", oneOf: []ir.SchemaRef{{Type: "array", Items: &ir.SchemaRef{Type: "object"}}, {Type: "array", Items: &ir.SchemaRef{Type: "string"}}}, want: "unsupported item type"},
+		{name: "duplicate branch", oneOf: []ir.SchemaRef{{Type: "array", Items: &ir.SchemaRef{Type: "number"}}, {Type: "array", Items: &ir.SchemaRef{Type: "integer"}}}, want: "duplicate number"},
+		{name: "not array", oneOf: []ir.SchemaRef{{Type: "string"}, {Type: "boolean"}}, want: "must be an array union"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			doc := ir.Document{Info: ir.Info{Namespace: "Values"}, Schemas: map[string]ir.Schema{
+				"Values": {Type: "union", ExactNumbers: true, OneOf: test.oneOf},
+			}, Contracts: []ir.Contract{{Name: "values", Schema: ir.SchemaRef{Ref: "Values"}}}}
+			_, err := Emit(doc, Options{})
+			require.Error(t, err)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
 func TestEmit_ReferencesImportedContractNamespaceWithoutRegeneratingIt(t *testing.T) {
 	doc := ir.Document{
 		Info: ir.Info{Namespace: "LeapViewSignals"},

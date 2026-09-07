@@ -6,6 +6,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/api"
+	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -20,6 +21,20 @@ func (h Handler) QuerySemanticModel(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 	modelID := chi.URLParam(r, "model")
+	ctx, err := semanticConsumerForRequest(r.Context(), metrics, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
+	allowed, err := h.authorizeSemanticModelResource(r, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
+	if !allowed {
+		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
+		return
+	}
 	if semanticModelForID(metrics, modelID) == nil {
 		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
 		return
@@ -40,12 +55,16 @@ func (h Handler) QuerySemanticModel(w nethttp.ResponseWriter, r *nethttp.Request
 		writeJSONError(w, err, statusForCursorError(err))
 		return
 	}
-	plan, err := semanticExplainAggregate(metrics, modelID, request)
+	if err := authorizeSemanticRequest(ctx, metrics, modelID, reportdef.SemanticAggregateRequest(request)); err != nil {
+		writeJSONError(w, err, semanticRequestAuthorizationStatus(metrics, modelID, err))
+		return
+	}
+	plan, err := semanticExplainAggregate(ctx, metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
 	}
-	ctx := dataquery.WithMetadata(r.Context(), h.requestQueryMetadata(r, dataquery.SurfaceAPI, dataquery.OperationAPIQuery, "semantic_model", modelID))
+	ctx = dataquery.WithMetadata(ctx, h.requestQueryMetadata(r, dataquery.SurfaceAPI, dataquery.OperationAPIQuery, "semantic_model", modelID))
 	if acceptsMediaType(r.Header.Get("Accept"), arrowStreamMediaType) {
 		writeSemanticArrowResponse(w, r.WithContext(ctx), metrics, aggregateDataQuery(modelID, request), limit, request.Offset, queryID, snapshot, scope)
 		return
@@ -71,6 +90,20 @@ func (h Handler) ExplainSemanticModelQuery(w nethttp.ResponseWriter, r *nethttp.
 		return
 	}
 	modelID := chi.URLParam(r, "model")
+	ctx, err := semanticConsumerForRequest(r.Context(), metrics, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
+	allowed, err := h.authorizeSemanticModelResource(r, modelID)
+	if err != nil {
+		writeJSONError(w, err, nethttp.StatusServiceUnavailable)
+		return
+	}
+	if !allowed {
+		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
+		return
+	}
 	if semanticModelForID(metrics, modelID) == nil {
 		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
 		return
@@ -85,7 +118,11 @@ func (h Handler) ExplainSemanticModelQuery(w nethttp.ResponseWriter, r *nethttp.
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return
 	}
-	plan, err := semanticExplainAggregate(metrics, modelID, request)
+	if err := authorizeSemanticRequest(ctx, metrics, modelID, reportdef.SemanticAggregateRequest(request)); err != nil {
+		writeJSONError(w, err, semanticRequestAuthorizationStatus(metrics, modelID, err))
+		return
+	}
+	plan, err := semanticExplainAggregate(ctx, metrics, modelID, request)
 	if err != nil {
 		writeJSONError(w, err, nethttp.StatusBadRequest)
 		return

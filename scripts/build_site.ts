@@ -1,4 +1,5 @@
 import { datastarRuntimeURL } from '../web/components/shared/datastar-runtime'
+import { buildMapLibreWorker } from './build_maplibre_worker'
 import { createHash } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 
@@ -65,6 +66,7 @@ for (const log of result.logs) {
 if (!result.success) {
   throw new Error('failed to build LeapView site assets')
 }
+await buildMapLibreWorker('site/static')
 
 const entry = Bun.file('site/static/site-page.js')
 if (entry.size >= 250_000) {

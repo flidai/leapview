@@ -105,22 +105,36 @@ async function runWorkload(path) {
     }
     metricSamples.push(await metricSnapshot())
 
+    const table = page.locator('lv-report-table')
     const filterValues = ['SP', 'RJ', 'MG', 'PR']
-    const filter = page.getByRole('combobox', { name: 'State' })
+    const filter = page.getByRole('button', { name: /^State:/ })
     for (let index = 0; index < policy.assumptions.samples.filterInteractions; index += 1) {
       const value = filterValues[index % filterValues.length]
+      if (index > 0) {
+        const resetGeneration = await dashboardGeneration(page)
+        await filter.click()
+        const resetOptions = page.getByRole('dialog', { name: 'State filter options', exact: true })
+        await resetOptions.getByRole('checkbox', { name: 'All State', exact: true }).check()
+        await waitForDashboardGeneration(page, resetGeneration, 30_000)
+        await page.keyboard.press('Escape')
+        await resetOptions.waitFor({ state: 'hidden', timeout: 30_000 })
+      }
       const generation = await dashboardGeneration(page)
       const startedAt = performance.now()
-      await filter.selectOption({ label: value })
+      await filter.click()
+      const options = page.getByRole('dialog', { name: 'State filter options', exact: true })
+      await options.getByRole('checkbox', { name: value, exact: true }).check()
       await waitForDashboardGeneration(page, generation, 30_000)
-      await page.getByRole('cell', { name: `State: ${value}`, exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
+      await page.keyboard.press('Escape')
+      await options.waitFor({ state: 'hidden', timeout: 30_000 })
+      await table.locator('.row:not(.skeleton-row) button.cell-action').first().waitFor({ state: 'visible', timeout: 30_000 })
+      await table.locator(`button.cell-action[aria-label="state: ${value}"]`).first().waitFor({ state: 'visible', timeout: 30_000 })
       filterToSettleMs.push(round(performance.now() - startedAt))
       controlled.requests += 1
     }
     metricSamples.push(await metricSnapshot())
 
-    const table = page.locator('lv-report-table')
-    const orderSort = table.getByRole('button', { name: /^Order(?: [↑↓])?$/ })
+    const orderSort = table.locator('button.header-button[data-column-key="order_id"]')
     for (let index = 0; index < policy.assumptions.samples.tableInteractions; index += 1) {
       const previous = await tableSort(table)
       const startedAt = performance.now()

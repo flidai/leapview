@@ -22,8 +22,12 @@ import (
 )
 
 type RuntimeConfig struct {
-	ModelID string
-	Model   *semanticmodel.Model
+	// ServingStateID is the authoritative serving generation bound to this
+	// runtime. Protected semantic consumers must match it at execution time;
+	// it is not inferred from cache generations or request metadata.
+	ServingStateID string
+	ModelID        string
+	Model          *semanticmodel.Model
 	// ResultPartition is the stable production or candidate namespace for
 	// dependency-keyed query result reuse.
 	ResultPartition resultidentity.Partition
@@ -69,6 +73,7 @@ type ModelTableQuery struct {
 }
 
 type Runtime struct {
+	servingStateID     string
 	modelID            string
 	model              *semanticmodel.Model
 	planner            *semanticquery.Planner
@@ -91,14 +96,38 @@ type Runtime struct {
 // the serving-generation result-cache scope to byte-oriented consumers such
 // as vector tiles without leaking cache implementation details.
 func (r *Runtime) LookupImmutableBytes(key string) ([]byte, bool, error) {
+	state, err := r.requireSemanticProtectionState()
+	if err != nil {
+		return nil, false, err
+	}
+	if state.protected {
+		return nil, false, fmt.Errorf("protected semantic byte reuse requires lifecycle qualification")
+	}
+	if r.queryCache == nil {
+		return nil, false, fmt.Errorf("immutable byte cache is unavailable")
+	}
 	return r.queryCache.lookupBytes(key)
 }
 
 func (r *Runtime) StoreImmutableBytes(key string, value []byte) bool {
+	state, err := r.requireSemanticProtectionState()
+	if err != nil || state.protected || r.queryCache == nil {
+		return false
+	}
 	return r.queryCache.storeBytes(key, value) == resultcache.StoreStored
 }
 
 func (r *Runtime) CoalesceImmutableBytes(ctx context.Context, key string, execute func(context.Context) error) (bool, error) {
+	state, err := r.requireSemanticProtectionState()
+	if err != nil {
+		return false, err
+	}
+	if state.protected {
+		return false, fmt.Errorf("protected semantic byte reuse requires lifecycle qualification")
+	}
+	if r.queryCache == nil {
+		return false, fmt.Errorf("immutable byte cache is unavailable")
+	}
 	return r.queryCache.coalesceBytes(ctx, key, execute)
 }
 
@@ -210,7 +239,8 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 		return nil, err
 	}
 	runtime = &Runtime{
-		modelID: config.ModelID, model: config.Model, planner: planner, db: config.Database,
+		servingStateID: config.ServingStateID,
+		modelID:        config.ModelID, model: config.Model, planner: planner, db: config.Database,
 		sources: config.Sources, requiredExtensions: normalizedExtensions(config.RequiredExtensions),
 		queryCache: cache, resultPartition: config.ResultPartition,
 		resultLimits: limits, dependencyEvidence: config.DependencyEvidence,
@@ -366,6 +396,12 @@ func (r *Runtime) SourceObservations() []SourceObservation {
 	for i, item := range r.sourceObservations {
 		result[i] = item
 		result[i].Schema = append([]semanticmodel.ColumnSchema(nil), item.Schema...)
+		for column := range result[i].Schema {
+			if result[i].Schema[column].Nullable != nil {
+				nullable := *result[i].Schema[column].Nullable
+				result[i].Schema[column].Nullable = &nullable
+			}
+		}
 	}
 	return result
 }
@@ -507,6 +543,13 @@ func (r *Runtime) ExecuteDataQuery(ctx context.Context, request dataquery.Query)
 	if err := request.Validate(); err != nil {
 		return dataquery.Result{}, err
 	}
+	ctx, err := r.bindSemanticConsumerContext(ctx, request)
+	if err != nil {
+		return dataquery.Result{}, err
+	}
+	if _, _, err := r.semanticPlannerForRequest(ctx, request); err != nil {
+		return dataquery.Result{}, err
+	}
 	if _, ok := r.db.(arrowDatabase); !ok {
 		return dataquery.Result{}, fmt.Errorf("analytical database does not support native Arrow execution")
 	}
@@ -547,10 +590,18 @@ func (r *Runtime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Q
 	if err := request.Validate(); err != nil {
 		return dataquery.Result{}, err
 	}
+	ctx, err := r.bindSemanticConsumerContext(ctx, request)
+	if err != nil {
+		return dataquery.Result{}, err
+	}
+	_, semanticConsumer, err := r.semanticPlannerForRequest(ctx, request)
+	if err != nil {
+		return dataquery.Result{}, err
+	}
 
 	executePhysical := func(execCtx context.Context) (dataquery.Result, error) {
 		planningStarted := time.Now()
-		plan, err := r.planArrowQuery(request)
+		plan, err := r.planArrowQueryContext(execCtx, request)
 		planningMS := elapsedStageMS(planningStarted)
 		if err != nil {
 			return dataquery.Result{PlanningMS: planningMS}, err
@@ -568,8 +619,20 @@ func (r *Runtime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Q
 		}
 		execCtx, connectionWait := dataquery.WithConnectionWaitCounter(execCtx)
 		databaseStarted := time.Now()
+		if err := r.validateSemanticPlan(execCtx, request, plan); err != nil {
+			return dataquery.Result{PlanningMS: planningMS}, err
+		}
 		markPhysicalStatement(execCtx)
-		err = db.QueryArrow(execCtx, plan, sink)
+		querySink := sink
+		if semanticConsumer != nil {
+			guard := semanticConsumerSink{consumer: semanticConsumer, plan: plan, sink: sink}
+			if stats, ok := sink.(arrowquery.SinkStats); ok {
+				querySink = semanticConsumerStatsSink{semanticConsumerSink: guard, stats: stats}
+			} else {
+				querySink = guard
+			}
+		}
+		err = db.QueryArrow(execCtx, plan, querySink)
 		databaseMS := elapsedStageMS(databaseStarted)
 		rows, bytes := 0, int64(0)
 		if budget, found := dataquery.ResultBudgetFromContext(execCtx); found {
@@ -609,7 +672,11 @@ func (r *Runtime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Q
 }
 
 func (r *Runtime) planArrowQuery(request dataquery.Query) (semanticquery.Plan, error) {
-	planner, err := r.queryPlanner()
+	return r.planArrowQueryContext(context.Background(), request)
+}
+
+func (r *Runtime) planArrowQueryContext(ctx context.Context, request dataquery.Query) (semanticquery.Plan, error) {
+	planner, _, err := r.semanticPlannerForRequest(ctx, request)
 	if err != nil {
 		return semanticquery.Plan{}, err
 	}
@@ -795,7 +862,13 @@ func observeQueryCacheAdmission(ctx context.Context, decision dataquery.CacheAdm
 // preview, and unclassified calls must not populate the dashboard result cache
 // even if they happen to use an equivalent physical query shape.
 func dashboardQueryResultCacheable(request dataquery.Query) bool {
-	if request.Surface != dataquery.SurfaceDashboard {
+	if request.Surface != dataquery.SurfaceDashboard && request.Surface != dataquery.SurfacePublicDashboard {
+		return false
+	}
+	// Model rows are lowered through an opaque SQL plan without PlanIR
+	// equivalence evidence. Keep them out of the result cache until that
+	// planner-owned identity exists.
+	if request.Kind == dataquery.KindModelRows {
 		return false
 	}
 	switch request.Operation {
@@ -812,6 +885,46 @@ func dashboardQueryResultCacheable(request dataquery.Query) bool {
 	default:
 		return false
 	}
+}
+
+// planCacheDeterministic is the query-specific cache admission guard. A
+// planner-produced deterministic PlanIR is necessary but not sufficient when
+// one of its participating Models is backed by authored SQL: the
+// resulting relation revision is not currently represented in the shared
+// query-result identity. Resolve every participating dataset through the
+// validated semantic model and fail closed when that mapping is incomplete.
+func planCacheDeterministic(model *semanticmodel.Model, plan semanticquery.Plan) bool {
+	if model == nil || !plan.Deterministic {
+		return false
+	}
+	projection, err := plan.ResultDependencies()
+	if err != nil {
+		return false
+	}
+	return dependencyProjectionCacheDeterministic(model, projection)
+}
+
+func dependencyProjectionCacheDeterministic(model *semanticmodel.Model, projection semanticquery.DependencyProjection) bool {
+	if model == nil || len(projection.Datasets) == 0 {
+		return false
+	}
+	for _, dataset := range projection.Datasets {
+		spec, ok := model.Datasets[dataset]
+		if !ok || strings.TrimSpace(spec.Model) == "" {
+			return false
+		}
+		table, ok := model.Tables[dataset]
+		if !ok {
+			return false
+		}
+		if table.ModelName != "" && table.ModelName != spec.Model {
+			return false
+		}
+		if strings.TrimSpace(table.Execution.SQL) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Runtime) ClearQueryCache() {
@@ -1232,11 +1345,4 @@ func (r *Runtime) LastRefresh() time.Time {
 		return time.Time{}
 	}
 	return r.lastRefresh
-}
-
-func (r *Runtime) DBPath() string {
-	if r == nil {
-		return ""
-	}
-	return r.db.Path()
 }

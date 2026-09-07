@@ -3,5 +3,4 @@ set -eu
 
 : "${LEAPVIEWCTL_ROOT:=/opt/leapview}"
 export LEAPVIEWCTL_ROOT
-export LEAPVIEWCTL_BACKUP_HOOK=/usr/local/sbin/leapview-backup-hook
 exec "$LEAPVIEWCTL_ROOT/leapviewctl" "$@"

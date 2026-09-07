@@ -30,6 +30,7 @@ func (client *devCommandClient) Resolve(
 		Target:          "http://localhost:8080",
 		Token:           "ephemeral",
 		CanonicalOrigin: "https://prod.example.com",
+		ProjectID:       "project:leapview-showcase",
 	}
 	return client.resolved, nil
 }
@@ -84,7 +85,7 @@ func (devCommandRemote) Synchronize(
 }
 
 func TestDevCommandOwnsOneAuthenticatedRemoteWorkflow(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
 	checkpoints := NewCandidateCheckpointStore(
 		filepath.Join(t.TempDir(), "authoring.json"),
 	)
@@ -106,7 +107,7 @@ func TestDevCommandOwnsOneAuthenticatedRemoteWorkflow(t *testing.T) {
 	command.SetErr(io.Discard)
 	command.SetArgs([]string{
 		"--once",
-		"--project", projectPath,
+		"--source-root", projectPath,
 		"--target", "prod",
 		"--upload-concurrency", "3",
 		"--candidate-key", "github:pull/42",
@@ -154,7 +155,8 @@ func TestDevCommandOwnsOneAuthenticatedRemoteWorkflow(t *testing.T) {
 		t.Fatalf("opened preview URLs = %#v", opened)
 	}
 	for _, flag := range []string{
-		"project",
+		"source-root",
+		"project-id",
 		"target",
 		"token",
 		"upload-concurrency",
@@ -186,7 +188,7 @@ func (recorder *devPlanRecorder) Create(context.Context, DeliveryPlanOptions) (D
 }
 
 func TestDevCommandBootstrapSkipsDeliveryPlanResolution(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
 	checkpoints := NewCandidateCheckpointStore(filepath.Join(t.TempDir(), "authoring.json"))
 	plan := &devPlanRecorder{}
 	command := DevCommand(
@@ -201,7 +203,7 @@ func TestDevCommandBootstrapSkipsDeliveryPlanResolution(t *testing.T) {
 	command.SetErr(io.Discard)
 	command.SetArgs([]string{
 		"--once", "--no-browser", "--bootstrap",
-		"--project", projectPath, "--target", "prod",
+		"--source-root", projectPath, "--target", "prod",
 	})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
@@ -212,7 +214,7 @@ func TestDevCommandBootstrapSkipsDeliveryPlanResolution(t *testing.T) {
 }
 
 func TestDevCommandCanRemainHeadlessAndTreatsBrowserFailureAsRecoverable(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
 	tests := []struct {
 		name        string
 		args        []string
@@ -258,7 +260,7 @@ func TestDevCommandCanRemainHeadlessAndTreatsBrowserFailureAsRecoverable(t *test
 			command.SetErr(&errOutput)
 			command.SetArgs(append([]string{
 				"--once",
-				"--project", projectPath,
+				"--source-root", projectPath,
 				"--target", "prod",
 			}, test.args...))
 			if err := command.Execute(); err != nil {
@@ -278,7 +280,7 @@ func TestDevCommandCanRemainHeadlessAndTreatsBrowserFailureAsRecoverable(t *test
 }
 
 func TestDevCommandEmitsVersionedJSONResult(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
 	command := DevCommand(
 		t.Context(),
 		&devCommandClient{},
@@ -291,7 +293,7 @@ func TestDevCommandEmitsVersionedJSONResult(t *testing.T) {
 	command.SetErr(io.Discard)
 	command.SetArgs([]string{
 		"--once", "--no-browser", "--format", "json",
-		"--project", projectPath, "--target", "prod",
+		"--source-root", projectPath, "--target", "prod",
 	})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)

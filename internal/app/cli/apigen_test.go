@@ -7,11 +7,11 @@ import (
 )
 
 func TestAPIGenOperationURLUsesGeneratedContracts(t *testing.T) {
-	u, err := apiOperationURL("https://leapview.example/", "rollbackDeployment", map[string]string{"project": "sales project", "deployment": "deploy 1"}, nil)
+	u, err := apiOperationURL("https://leapview.example/", "rollbackDeliveryGeneration", map[string]string{"project": "sales project", "generation": "generation 1"}, nil)
 	if err != nil {
 		t.Fatalf("operation URL: %v", err)
 	}
-	if u != "https://leapview.example/api/v1/projects/sales%20project/deployments/deploy%201/rollback" {
+	if u != "https://leapview.example/api/v1/projects/sales%20project/delivery/generations/generation%201/rollback" {
 		t.Fatalf("url = %q", u)
 	}
 

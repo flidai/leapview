@@ -15,12 +15,16 @@ import (
 // it resolves an authenticated author's owned candidate. Candidate policy data
 // is deliberately restrictions-only: it may narrow the author's current
 // access, but it cannot introduce grants or replace active data policies.
+// BootstrapAuthorized is minted only by the fresh-target route guard after it
+// proves durable platform administration; it authorizes preview reads until a
+// canonical serving-generation snapshot exists.
 type CandidateQueryCapability struct {
-	CandidateID      string
-	OwnerPrincipalID string
-	ProjectID        projectgraph.ResourceID
-	PolicyDigest     string
-	Restrictions     []accesssnapshot.DataPolicy
+	CandidateID         string
+	OwnerPrincipalID    string
+	ProjectID           projectgraph.ResourceID
+	PolicyDigest        string
+	Restrictions        []accesssnapshot.DataPolicy
+	BootstrapAuthorized bool
 }
 
 type candidateQueryCapabilityKey struct{}

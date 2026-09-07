@@ -35,11 +35,7 @@ type DBTX interface {
 
 // Tx is the strict caller-owned PostgreSQL transaction surface. A pool can
 // satisfy DBTX for standalone work, but cannot be passed as an atomic Tx.
-type Tx interface {
-	DBTX
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
+type Tx = pgx.Tx
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -59,9 +55,6 @@ func SchemaSQL() string { return schemaSQL }
 func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return errors.New("physical-pool PostgreSQL transaction is nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	// sqlc-exception: schema-ddl. schema.sql is the capability-owned DDL,
 	// triggers, and grants executed by migration runners.

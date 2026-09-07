@@ -37,6 +37,12 @@ leapview admin initialize --acknowledge-credentials
 
 The one-shot offline initializer atomically binds the instance environment and creates a platform administrator with a forced-change temporary password plus a privilege-restricted publisher token that expires after 24 hours. It does not start an HTTP server or create an unrestricted bootstrap token. Until acknowledgement, rerunning the initializer returns the same credential bundle so an output-delivery failure is recoverable. After acknowledgement, a second initialization attempt fails.
 
+The initial publisher token includes `PROJECT_ADMIN` so the administrator can
+run `bootstrap-project` before the first deployment. Treat this initial token as
+an administrative credential, not a publishing-only automation token. Its
+capability does not grant platform administration to a non-administrator
+principal. Use separately scoped credentials for ongoing publication.
+
 The generic Compose controller and Hetzner provider recipe wrap this command and expose the result once through `leapviewctl first-login`, which deletes the credential file after printing it.
 
 ## Create local users

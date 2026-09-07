@@ -1,7 +1,7 @@
 package module
 
 import (
-	"database/sql"
+	"errors"
 	"net/http"
 
 	"github.com/flidai/leapview/internal/admin/product"
@@ -35,8 +35,29 @@ const (
 
 var ErrProductLogoNotFound = product.ErrNotFound
 
-func NewProductService(database *sql.DB, blobs ProductBlobStore) (*ProductService, error) {
-	return product.New(database, blobs)
+// postgresProductStorage is the native product authority seam. Product's
+// storage contract stays neutral for isolated fixtures, while this module
+// constructor is reserved for native process composition and therefore
+// requires both the PostgreSQL marker and a configured handle.
+type postgresProductStorage interface {
+	product.Storage
+	PostgreSQLAuthority()
+	Configured() bool
+}
+
+// NewProductServiceWithStorage wires the module to a product-owned storage
+// abstraction. Production composition requires the native PostgreSQL
+// repository so another persistence implementation cannot be selected by
+// accident.
+func NewProductServiceWithStorage(storage product.Storage, blobs ProductBlobStore) (*ProductService, error) {
+	authority, ok := storage.(postgresProductStorage)
+	if !ok {
+		return nil, errors.New("product module requires native PostgreSQL storage")
+	}
+	if !authority.Configured() {
+		return nil, errors.New("product module requires configured native PostgreSQL storage")
+	}
+	return product.NewWithStorage(storage, blobs)
 }
 
 func (m *Module) GetProductSettings(w http.ResponseWriter, r *http.Request) {

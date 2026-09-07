@@ -108,7 +108,17 @@ type SpatialMetadata struct {
 type Field struct {
 	Field string
 	Alias string
+	// Kind preserves the semantic member kind when a field is carried outside
+	// its original dimensions/metrics collection (for example, into a
+	// count-only authorization projection). An empty kind is retained for
+	// legacy callers and is resolved only when the name is unambiguous.
+	Kind string `json:"Kind,omitempty"`
 }
+
+const (
+	FieldKindDimension = "dimension"
+	FieldKindMetric    = "metric"
+)
 
 type Time struct {
 	Field string

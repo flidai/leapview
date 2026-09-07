@@ -17,7 +17,7 @@ func TestPublicationAuditIntentIsStableAndSecretSafe(t *testing.T) {
 	input := publicationCommandAuditInput{
 		operationID: dashboardgen.GenOperationSuspendDashboardPublication, projectID: projectgraph.ResourceID("project_1"),
 		principalID: "principal-a", targetID: "executive", requestID: "request-a", correlationID: "correlation-a",
-		surface: "cli", idempotencyKey: "retry-key", aggregateKey: "dashboard_publication:project_1:executive",
+		surface: "cli", idempotencyKey: "018f4f2e-0000-7000-8000-000000000001", aggregateKey: "dashboard_publication:project_1:executive",
 	}
 	first, err := buildPublicationAuditIntent(input)
 	if err != nil {
@@ -30,11 +30,14 @@ func TestPublicationAuditIntentIsStableAndSecretSafe(t *testing.T) {
 	if first.EventID == "" || first.EventID != second.EventID || first.AggregateKey != second.AggregateKey {
 		t.Fatalf("intent identity is not stable: first=%#v second=%#v", first, second)
 	}
-	if strings.Contains(first.MetadataJSON, "retry-key") || strings.Contains(first.MetadataJSON, "principal-a") {
+	if strings.Contains(first.MetadataJSON, "018f4f2e-0000-7000-8000-000000000001") || strings.Contains(first.MetadataJSON, "principal-a") {
 		t.Fatalf("audit metadata leaked request identity: %s", first.MetadataJSON)
 	}
 	if first.MetadataJSON == "" || first.MetadataJSON == "{}" {
 		t.Fatalf("generated audit metadata is empty: %s", first.MetadataJSON)
+	}
+	if first.RequestID != input.idempotencyKey || first.CorrelationID != input.idempotencyKey {
+		t.Fatalf("publication identity must derive from idempotency key: %#v", first)
 	}
 	canonical, err := first.Canonicalize()
 	if err != nil {
@@ -42,6 +45,31 @@ func TestPublicationAuditIntentIsStableAndSecretSafe(t *testing.T) {
 	}
 	if canonical.MetadataJSON != first.MetadataJSON {
 		t.Fatalf("metadata was not canonical: %q != %q", canonical.MetadataJSON, first.MetadataJSON)
+	}
+}
+
+func TestPublicationAuditIntentKeepsIdentityAcrossTransportRetries(t *testing.T) {
+	input := publicationCommandAuditInput{
+		operationID: dashboardgen.GenOperationSuspendDashboardPublication, projectID: projectgraph.ResourceID("project_1"),
+		principalID: "principal-a", targetID: "executive", requestID: "request-a", correlationID: "correlation-a",
+		surface: "api", idempotencyKey: "018f4f2e-0000-7000-8000-000000000003", aggregateKey: "dashboard_publication:project_1:executive",
+	}
+	retry := input
+	retry.requestID = "request-b"
+	retry.correlationID = "correlation-b"
+	first, err := buildPublicationAuditIntent(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := buildPublicationAuditIntent(retry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.EventID != second.EventID || first.RequestID != second.RequestID || first.CorrelationID != second.CorrelationID {
+		t.Fatalf("transport retry changed publication audit identity: first=%#v second=%#v", first, second)
+	}
+	if first.EventID != input.idempotencyKey || first.RequestID != input.idempotencyKey || first.CorrelationID != input.idempotencyKey {
+		t.Fatalf("publication identity did not use idempotency key: first=%#v", first)
 	}
 }
 
@@ -83,7 +111,7 @@ func TestPublicationAuditIntentFieldsUseAccessContract(t *testing.T) {
 	intent, err := buildPublicationAuditIntent(publicationCommandAuditInput{
 		operationID: dashboardgen.GenOperationRotateDashboardPublication, projectID: projectgraph.ResourceID("project_1"),
 		principalID: "principal-a", targetID: "executive", requestID: "request-a", correlationID: "request-a",
-		surface: "api", idempotencyKey: "rotate-1",
+		surface: "api", idempotencyKey: "018f4f2e-0000-7000-8000-000000000002",
 	})
 	if err != nil {
 		t.Fatal(err)

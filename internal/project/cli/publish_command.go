@@ -11,7 +11,6 @@ import (
 )
 
 type PublishOptions struct {
-	ProjectPath string
 	ProjectID   string
 	Credentials cliapi.Credentials
 	Checkpoint  CandidateCheckpoint
@@ -116,7 +115,7 @@ func RunPublish(
 	if err != nil {
 		return err
 	}
-	checkpoint := CandidateCheckpoint{ProjectPath: options.ProjectPath, TargetOrigin: credentials.Target, TargetSelector: identity.TargetSelector, TargetID: identity.TargetID, Environment: identity.Environment, ProjectID: options.ProjectID, CandidateID: options.CandidateID}
+	checkpoint := CandidateCheckpoint{TargetOrigin: credentials.Target, TargetSelector: identity.TargetSelector, TargetID: identity.TargetID, Environment: identity.Environment, ProjectID: options.ProjectID, CandidateID: options.CandidateID}
 	if options.CandidateID != "" {
 		checkpoint.CandidateID = options.CandidateID
 	}

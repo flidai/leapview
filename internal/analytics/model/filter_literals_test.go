@@ -18,6 +18,16 @@ func TestDecimalFilterLiteralUsesPrecisionSafeRepresentation(t *testing.T) {
 	}
 }
 
+func TestFloatFilterLiteralAcceptsPreservedJSONNumber(t *testing.T) {
+	value, err := CoerceSemanticLiteral(json.Number("2.5"), MetricDimension{Datatype: DataTypeFloat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != 2.5 {
+		t.Fatalf("Float filter value = %#v", value)
+	}
+}
+
 func TestDecimalFilterLiteralUsesCanonicalFixedPointLexicalForm(t *testing.T) {
 	for _, token := range []string{"", "not-a-number", "NaN", "Infinity"} {
 		t.Run("reject/"+token, func(t *testing.T) {

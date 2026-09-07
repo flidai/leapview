@@ -6,12 +6,8 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,32 +25,6 @@ const semanticAttributeControlProfile = semanticvalue.Profile
 type semanticAttributeControlStateRow struct {
 	Profile, Digest, UpdatedAt string
 	Revision                   int64
-}
-
-type semanticAttributeAssignmentDigestWire struct {
-	ID, DefinitionID, SubjectKind, SubjectID string
-	DefinitionVersion                        int64
-	Type                                     semanticvalue.Type
-	Shape                                    access.SemanticAttributeShape
-	Values                                   []string
-	ValueDigest                              string
-	Version                                  int64
-	TombstonedAtMicros                       int64
-}
-
-type trustedClaimMappingDigestWire struct {
-	ID, SourceKind, Provider, Issuer, Audience, Claim, DefinitionID string
-	DefinitionVersion                                               int64
-	Type                                                            semanticvalue.Type
-	Shape                                                           access.SemanticAttributeShape
-	Version                                                         int64
-	TombstonedAtMicros                                              int64
-}
-
-type semanticAttributeControlDigestWire struct {
-	Profile     string                                  `json:"profile"`
-	Assignments []semanticAttributeAssignmentDigestWire `json:"assignments"`
-	Mappings    []trustedClaimMappingDigestWire         `json:"mappings"`
 }
 
 func assignmentFromRow(row accessdb.ListSemanticAttributeAssignmentsRow) access.SemanticAttributeAssignment {
@@ -151,54 +121,8 @@ func timestampAPIValue(value interface{}) string {
 	return time.UnixMicro(micros).UTC().Format(time.RFC3339Nano)
 }
 
-func timestampMicroseconds(value string) (int64, error) {
-	if value == "" {
-		return 0, nil
-	}
-	if micros, err := strconv.ParseInt(value, 10, 64); err == nil {
-		return micros, nil
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return 0, fmt.Errorf("invalid timestamp %q: %w", value, err)
-	}
-	return parsed.UTC().UnixMicro(), nil
-}
-
 func semanticAttributeControlDigest(assignments []access.SemanticAttributeAssignment, mappings []access.TrustedClaimMapping) (string, error) {
-	assignments = append([]access.SemanticAttributeAssignment(nil), assignments...)
-	mappings = append([]access.TrustedClaimMapping(nil), mappings...)
-	sort.Slice(assignments, func(i, j int) bool { return assignments[i].ID < assignments[j].ID })
-	sort.Slice(mappings, func(i, j int) bool { return mappings[i].ID < mappings[j].ID })
-	wire := semanticAttributeControlDigestWire{Profile: semanticAttributeControlProfile,
-		Assignments: make([]semanticAttributeAssignmentDigestWire, len(assignments)),
-		Mappings:    make([]trustedClaimMappingDigestWire, len(mappings))}
-	for i, row := range assignments {
-		tombstonedAt, err := timestampMicroseconds(row.TombstonedAt)
-		if err != nil {
-			return "", fmt.Errorf("assignment %s tombstoned timestamp: %w", row.ID, err)
-		}
-		wire.Assignments[i] = semanticAttributeAssignmentDigestWire{ID: row.ID, DefinitionID: row.DefinitionID,
-			SubjectKind: string(row.Subject.Kind), SubjectID: row.Subject.ID, DefinitionVersion: row.DefinitionVersion,
-			Type: row.Type, Shape: row.Shape, Values: append([]string(nil), row.CanonicalValues...), ValueDigest: row.ValueDigest,
-			Version: row.AssignmentVersion, TombstonedAtMicros: tombstonedAt}
-	}
-	for i, row := range mappings {
-		tombstonedAt, err := timestampMicroseconds(row.TombstonedAt)
-		if err != nil {
-			return "", fmt.Errorf("mapping %s tombstoned timestamp: %w", row.ID, err)
-		}
-		wire.Mappings[i] = trustedClaimMappingDigestWire{ID: row.ID, SourceKind: string(row.SourceKind),
-			Provider: row.Provider, Issuer: row.Issuer, Audience: row.Audience, Claim: row.Claim,
-			DefinitionID: row.DefinitionID, DefinitionVersion: row.DefinitionVersion, Type: row.Type,
-			Shape: row.Shape, Version: row.MappingVersion, TombstonedAtMicros: tombstonedAt}
-	}
-	encoded, err := json.Marshal(wire)
-	if err != nil {
-		return "", fmt.Errorf("encode semantic attribute control digest: %w", err)
-	}
-	sum := sha256.Sum256(encoded)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return access.SemanticAttributeControlDigest(assignments, mappings)
 }
 
 func lockSemanticAttributeControlState(ctx context.Context, db DBTX) (semanticAttributeControlStateRow, error) {
@@ -293,7 +217,7 @@ func (r *Repository) SemanticAttributeControl(ctx context.Context) (access.Seman
 		if err != nil {
 			return access.SemanticAttributeControlSnapshot{}, err
 		}
-		if before.Revision != after.Revision || before.Digest != after.Digest {
+		if before.Revision != after.Revision || before.Digest != after.Digest || before.Profile != after.Profile {
 			continue
 		}
 		digest, err := semanticAttributeControlDigest(assignments, mappings)
@@ -303,7 +227,11 @@ func (r *Repository) SemanticAttributeControl(ctx context.Context) (access.Seman
 		if before.Profile != semanticAttributeControlProfile || before.Digest != digest {
 			return access.SemanticAttributeControlSnapshot{}, fmt.Errorf("%w: stored digest %q, computed %q", access.ErrSemanticAttributeControlCorrupt, before.Digest, digest)
 		}
-		return access.SemanticAttributeControlSnapshot{State: access.SemanticAttributeControlState{Profile: before.Profile, Revision: before.Revision, Digest: before.Digest, UpdatedAt: before.UpdatedAt}, Assignments: assignments, Mappings: mappings}, nil
+		snapshot := access.SemanticAttributeControlSnapshot{State: access.SemanticAttributeControlState{Profile: before.Profile, Revision: before.Revision, Digest: before.Digest, UpdatedAt: before.UpdatedAt}, Assignments: assignments, Mappings: mappings}
+		if err := access.ValidateSemanticAttributeControlSnapshot(snapshot); err != nil {
+			return access.SemanticAttributeControlSnapshot{}, err
+		}
+		return snapshot, nil
 	}
 	return access.SemanticAttributeControlSnapshot{}, fmt.Errorf("%w: control state changed during read", access.ErrSemanticAttributeControlCorrupt)
 }

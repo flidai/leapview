@@ -1,5 +1,5 @@
 import type { FeatureCollection } from 'geojson'
-import { addProtocol, type StyleSpecification } from 'maplibre-gl'
+import { addProtocol, getVersion, setWorkerUrl, type StyleSpecification } from 'maplibre-gl'
 import { Protocol } from 'pmtiles'
 import type { VisualizationGeometryAsset, VisualizationMapStyleAsset } from '../../../../../generated/visualization'
 
@@ -9,6 +9,9 @@ let pmtilesRegistered = false
 
 export function registerPMTilesProtocol(): void {
   if (pmtilesRegistered) return
+  // The separately bundled worker must change URL with MapLibre's version:
+  // production serves chunks with immutable cache headers.
+  setWorkerUrl(new URL(`maplibre-gl-worker-${getVersion()}.mjs`, import.meta.url).href)
   const protocol = new Protocol()
   addProtocol('pmtiles', protocol.tile)
   pmtilesRegistered = true

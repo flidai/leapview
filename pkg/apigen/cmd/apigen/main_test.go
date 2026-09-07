@@ -1875,15 +1875,6 @@ func mustAbs(t *testing.T, path string) string {
 	return abs
 }
 
-func setupManagedTypeSpecCache(t *testing.T) {
-	t.Helper()
-
-	t.Setenv(typeSpecPackageDirEnv, "")
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CACHE_HOME", managedTypeSpecCacheRoot)
-}
-
 func writeCanonicalOpenAPI(t *testing.T, dir string, doc ir.Document) string {
 	t.Helper()
 

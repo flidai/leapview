@@ -34,6 +34,7 @@ type Catalog = dashboard.Catalog
 type dashboardRefreshRuntimeKey struct{}
 
 type dashboardRefreshRuntime struct {
+	metrics        runtimeMetrics
 	projectID      projectgraph.ResourceID
 	identity       projectgraph.ServingIdentity
 	runtime        runtimehost.Runtime
@@ -516,6 +517,7 @@ func (m runtimeMetrics) WithDashboardRefreshLease(ctx context.Context, run func(
 	}
 	defer release()
 	ctx = context.WithValue(ctx, dashboardRefreshRuntimeKey{}, dashboardRefreshRuntime{
+		metrics:   m,
 		projectID: identity.ProjectID, identity: identity, runtime: runtime, servingStateID: identity.GenerationID,
 		resolutions: &dashboardRefreshResolutionCache{values: map[string]dashboardresolver.Resolved{}, errors: map[string]error{}},
 	})

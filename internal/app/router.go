@@ -42,7 +42,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	mux.With(policy.rateLimits.Auth()).Handle("/metrics", platform.telemetry.MetricsHandler(policy.metricsBearerToken, accessmodule.BearerToken))
 	mux.With(apihttpmiddleware.PrivateResponse, csrf).Group(routes.accessModule.MountLoginPage)
 	mountAuthenticatedRoutes(mux, authenticatedRouteDependencies{
-		access: routes.accessModule, projectBrowser: routes.projectBrowser, agent: routes.agentModule,
+		access: routes.accessModule, apiProtocol: platform.apiProtocol, projectBrowser: routes.projectBrowser, agent: routes.agentModule,
 		admin: routes.adminModule, dashboard: routes.dashboardModule, runtimeHost: runtime.runtimeHostModule,
 		pageStreams: runtime.pageStreams, rateLimits: policy.rateLimits, candidates: candidates,
 	}, csrf)

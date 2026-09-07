@@ -27,9 +27,6 @@ func CompileAuthorizationSnapshot(identity graph.ServingIdentity, project graph.
 	if err := project.Validate(); err != nil {
 		return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("authorization policy graph: %w", err)
 	}
-	if identity.ProjectID != project.ProjectID() {
-		return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("authorization policy project %q does not match graph %q", identity.ProjectID, project.ProjectID())
-	}
 	roleNames := sortedPolicyKeys(policy.RoleBindings)
 	roleBindings := make([]accesssnapshot.RoleBinding, 0, len(roleNames))
 	for _, name := range roleNames {

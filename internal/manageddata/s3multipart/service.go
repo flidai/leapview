@@ -1,7 +1,6 @@
 package s3multipart
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,11 +16,11 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/control"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/strictjson"
 )
 
 const (
 	integrityTerminalError = "completed object failed integrity verification"
-	sqliteTimestampLayout  = "2006-01-02 15:04:05.000000000"
 	multipartClaimLease    = 5 * time.Minute
 	multipartClaimRenewal  = time.Minute
 )
@@ -582,18 +581,16 @@ func (s *Service) scopedUpload(ctx context.Context, project, connection, session
 }
 
 func strictManifest(value string) (manageddata.Manifest, error) {
-	decoder := json.NewDecoder(strings.NewReader(value))
-	decoder.DisallowUnknownFields()
 	var manifest manageddata.Manifest
-	if err := decoder.Decode(&manifest); err != nil {
+	// PostgreSQL jsonb may rewrite object-key order and insignificant
+	// whitespace. Decode the stored value strictly, then validate and
+	// canonicalize its semantic manifest rather than requiring the raw bytes to
+	// already be canonical. strictjson still rejects unknown fields, duplicate
+	// keys, trailing values, and malformed JSON.
+	if err := strictjson.Decode([]byte(value), &manifest); err != nil {
 		return manageddata.Manifest{}, control.ErrIntegrity
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err == nil {
-		return manageddata.Manifest{}, control.ErrIntegrity
-	}
-	canonical, err := manifest.CanonicalJSON()
-	if err != nil || !bytes.Equal(canonical, []byte(value)) {
+	if _, err := manifest.CanonicalJSON(); err != nil {
 		return manageddata.Manifest{}, control.ErrIntegrity
 	}
 	return manifest, nil
@@ -620,7 +617,7 @@ func requireOpenSession(session manageddata.UploadSession, now time.Time) error 
 	if session.Status != manageddata.UploadStatusOpen {
 		return fmt.Errorf("%w: upload session is %s", control.ErrConflict, session.Status)
 	}
-	expiresAt, err := time.Parse(sqliteTimestampLayout, session.ExpiresAt)
+	expiresAt, err := time.Parse(time.RFC3339Nano, session.ExpiresAt)
 	if err != nil {
 		return control.ErrIntegrity
 	}

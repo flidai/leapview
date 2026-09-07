@@ -42,8 +42,8 @@ type ActivationEvidenceSource interface {
 func dependencyEvidenceForRuntime(
 	ctx context.Context,
 	identity projectgraph.ServingIdentity,
-	compiled projectbundle.CompiledProjectArtifact,
-	artifact projectartifact.Project,
+	compiled projectbundle.CompiledSourceBundleArtifact,
+	artifact projectartifact.SourceBundle,
 	managed runtimehost.ManagedDataResolution,
 	candidate *runtimehost.CandidateRuntimeContext,
 	source ActivationEvidenceSource,
@@ -71,8 +71,8 @@ func dependencyEvidenceForRuntime(
 }
 
 func buildDependencyEvidence(
-	compiled projectbundle.CompiledProjectArtifact,
-	artifact projectartifact.Project,
+	compiled projectbundle.CompiledSourceBundleArtifact,
+	artifact projectartifact.SourceBundle,
 	revisions map[string]string,
 	activation ActivationEvidence,
 ) (map[string]resultidentity.Evidence, error) {

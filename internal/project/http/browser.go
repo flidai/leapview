@@ -11,7 +11,6 @@ import (
 	stdhttp "net/http"
 	"net/url"
 	"path"
-	"sort"
 	"strings"
 	"time"
 
@@ -20,7 +19,6 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
-	"github.com/flidai/leapview/internal/dashboard/publication"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -104,7 +102,7 @@ var productSearchKinds = []projectgraph.Kind{
 // models are retained by that same generation; callers must not compile the
 // manifest models or reacquire a separate serving lease for details.
 type ProjectDefinitionReader interface {
-	ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error)
+	ProjectDefinitionSnapshot(context.Context) (projectmanifest.ResourceManifest, map[string]*semanticquery.CompiledModel, error)
 }
 
 type DashboardAppearanceStore interface {
@@ -667,7 +665,7 @@ func (h *BrowserHandler) ConnectionsSearch(w stdhttp.ResponseWriter, r *stdhttp.
 }
 
 func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindProject, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
+	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindProjectNamespace, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
 		return
 	}
 	patch := map[string]any{"status": projectsignals.DashboardStatus{}, "runtime": projectsignals.RouteRuntimeSignal{Kind: projectsignals.RouteKindData}}
@@ -1063,7 +1061,7 @@ func (h *BrowserHandler) projectAssetReadModels(ctx context.Context, assets []pr
 	return out, nil
 }
 
-func projectAssetReadModelFromDefinition(asset projectview.DevelopAssetView, definition projectmanifest.Project, compiled *semanticquery.CompiledModel) (projectview.DevelopAssetView, error) {
+func projectAssetReadModelFromDefinition(asset projectview.DevelopAssetView, definition projectmanifest.ResourceManifest, compiled *semanticquery.CompiledModel) (projectview.DevelopAssetView, error) {
 	var payload map[string]any
 	switch asset.Type {
 	case string(projectview.AssetTypeConnection):
@@ -1108,7 +1106,6 @@ func projectAssetReadModelFromDefinition(asset projectview.DevelopAssetView, def
 			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
 		}
 		payload = projectview.DashboardAssetPayload(resource)
-		payload["Publications"] = dashboardPublicationPayloads(asset.ID, definition.Publications)
 	case string(projectview.AssetTypeRefreshPipeline):
 		resource, ok := definition.RefreshPipelines[asset.ID]
 		if !ok {
@@ -1124,39 +1121,15 @@ func projectAssetReadModelFromDefinition(asset projectview.DevelopAssetView, def
 	return mergeProjectAssetPayload(asset, payload)
 }
 
-func dashboardPublicationPayloads(dashboardID string, definitions map[string]publication.Definition) []map[string]any {
-	ids := make([]string, 0, len(definitions))
-	for id, value := range definitions {
-		if value.Dashboard == dashboardID {
-			ids = append(ids, id)
-		}
-	}
-	sort.Strings(ids)
-	out := make([]map[string]any, 0, len(ids))
-	for _, id := range ids {
-		value := definitions[id]
-		name := value.Name
-		if strings.TrimSpace(name) == "" {
-			name = id
-		}
-		out = append(out, map[string]any{
-			"Name":                name,
-			"Dashboard":           value.Dashboard,
-			"DefaultPage":         value.DefaultPage,
-			"AllowedOrigins":      append([]string(nil), value.AllowedOrigins...),
-			"ConfigurationDigest": value.ConfigurationDigest,
-		})
-	}
-	return out
-}
-
 func mergeProjectAssetPayload(asset projectview.DevelopAssetView, payload map[string]any) (projectview.DevelopAssetView, error) {
 	if len(payload) == 0 {
 		return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
 	}
 	// Preserve graph identity/metadata keys while replacing the resource's
 	// generic payload fields with the typed detail projection.
-	merged := make(map[string]any, len(asset.Payload)+len(payload))
+	// Avoid adding attacker-influenced collection lengths for a capacity hint:
+	// the sum can overflow even though the map itself would never be that large.
+	merged := make(map[string]any)
 	for key, value := range asset.Payload {
 		merged[key] = value
 	}
@@ -1174,7 +1147,7 @@ func (h *BrowserHandler) ProtectStream(next stdhttp.Handler) stdhttp.Handler {
 		return stdhttp.NotFoundHandler()
 	}
 	protected := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindProject, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
+		if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindProjectNamespace, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -1365,7 +1338,7 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 	if !ok {
 		return projectnavigation.Catalog{}
 	}
-	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindProject, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard})
+	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindProjectNamespace, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard})
 	if err != nil {
 		return projectnavigation.Catalog{}
 	}
@@ -1376,7 +1349,7 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 	out := projectnavigation.Catalog{Project: projectnavigation.Project{ID: projectID.String(), Title: projectID.String()}}
 	for _, item := range page.Items {
 		switch item.Ref.Kind {
-		case projectgraph.KindProject:
+		case projectgraph.KindProjectNamespace:
 			out.Project = projectnavigation.Project{ID: item.Ref.ID.String(), Title: browserFirstNonEmpty(item.DisplayName, item.Name, item.Ref.ID.String()), Description: item.Description}
 		case projectgraph.KindModel:
 			out.Models = append(out.Models, projectnavigation.Model{ID: item.Ref.ID.String(), Title: browserFirstNonEmpty(item.DisplayName, item.Name, item.Ref.ID.String()), Description: item.Description})
@@ -1536,7 +1509,8 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
-	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels)
+	consumers := dataExplorerSemanticConsumers(r.Context(), h.QueryExecutor, definition)
+	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels, consumers)
 	if strictURLState && projectsignals.ValueOrZero(command.Mode) == "explore" {
 		semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.SemanticModelID))
 		if err := validateRestoredDataExploreState(exploreCommand, projection, definition.SemanticModels[semanticModelID], compiledModels); err != nil {

@@ -111,11 +111,11 @@ Define filters against semantic fields and place typed filter components on the 
 
 ## Validate the dashboard
 
-Ensure the project manifest includes dashboard files, then run:
+Place dashboard files beneath the source root's conventional `dashboards/` directory, then run:
 
 ```sh
-leapview validate --project dashboards/leapview.yaml
-leapview plan dashboards/leapview.yaml
+leapview validate --source-root dashboards
+leapview plan --source-root dashboards
 ```
 
 Validation checks contract shape and references. The plan shows target-owned impact and source-attestation evidence. Build the reviewed plan and verify the rendered page with representative data before publishing the sealed candidate.

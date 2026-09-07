@@ -18,7 +18,7 @@ func TestProjectPublishOperationsUseCanonicalDeliveryPublication(t *testing.T) {
 	var output strings.Builder
 	operations := projectPublishOperations{client: fixedTransportClient{transport: transport}}
 	checkpoint := projectcli.CandidateCheckpoint{
-		ProjectPath: "/work/leapview.yaml", TargetOrigin: "https://target.example",
+		SourceRoot: "/work/dashboards", TargetOrigin: "https://target.example",
 		TargetID: "target_1", Environment: "production", ProjectID: "finance",
 		CandidateID:    "cand_1",
 		ArtifactDigest: "sha256:" + strings.Repeat("a", 64),
@@ -26,7 +26,6 @@ func TestProjectPublishOperationsUseCanonicalDeliveryPublication(t *testing.T) {
 	}
 
 	if err := operations.Publish(t.Context(), projectcli.PublishOptions{
-		ProjectPath: checkpoint.ProjectPath,
 		Credentials: cliapi.Credentials{Target: checkpoint.TargetOrigin, Token: "token"},
 		Checkpoint:  checkpoint,
 	}, &output); err != nil {

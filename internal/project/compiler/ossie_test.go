@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-func TestCanonicalProjectOssieSurfaceRoundTripsSemanticModel(t *testing.T) {
-	project, err := LoadProject("../../../dashboards/leapview.yaml")
+func TestCanonicalSourceOssieSurfaceRoundTripsSemanticModel(t *testing.T) {
+	project, err := LoadSourceRoot("../../../dashboards/experiments/movielens")
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire, err := project.ExportOssie("sales")
+	wire, err := project.ExportOssie("genre_ratings")
 	if err != nil {
 		t.Fatalf("ExportOssie: %v", err)
 	}
@@ -21,7 +21,7 @@ func TestCanonicalProjectOssieSurfaceRoundTripsSemanticModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportOssie: %v", err)
 	}
-	if imported.Name != "sales" || len(imported.Datasets) == 0 || len(imported.Metrics) == 0 {
+	if imported.Name != "genre_ratings" || len(imported.Datasets) == 0 || len(imported.Metrics) == 0 {
 		t.Fatalf("round-tripped semantic model = %#v", imported)
 	}
 }

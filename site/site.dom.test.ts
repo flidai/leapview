@@ -1,27 +1,32 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { chromium, type Browser } from '@playwright/test'
+import { startSiteTestServer, type SiteTestServer } from './test_server'
 
 const sitePort = 20000 + (process.pid % 10000)
 const baseURL = `http://127.0.0.1:${sitePort}`
 let browser: Browser
-let siteProcess: ReturnType<typeof Bun.spawn>
+let siteServer: SiteTestServer | undefined
 const siteReadyTimeout = 60_000
 
 beforeAll(async () => {
-  siteProcess = Bun.spawn(['go', 'run', './cmd/leapview-site', '-addr', `127.0.0.1:${sitePort}`], {
-    cwd: process.cwd(),
-    env: process.env,
-    stdout: 'ignore',
-    stderr: 'ignore',
-  })
-  await waitForSite()
-  browser = await chromium.launch()
+  const startupDeadline = Date.now() + siteReadyTimeout
+  try {
+    siteServer = await startSiteTestServer(sitePort, startupDeadline)
+    await waitForSite(siteServer.process, startupDeadline)
+    browser = await chromium.launch()
+  } catch (error) {
+    await siteServer?.stop()
+    siteServer = undefined
+    throw error
+  }
 }, siteReadyTimeout + 10_000)
 
 afterAll(async () => {
-  await browser?.close()
-  siteProcess?.kill()
-  await siteProcess?.exited
+  try {
+    await browser?.close()
+  } finally {
+    await siteServer?.stop()
+  }
 })
 
 test('site explains the product, its workflow, and where it fits in the data stack', async () => {
@@ -840,7 +845,8 @@ test('getting started route directs users through the first learning path', asyn
     const configurationGroup = sidebar.locator('details[data-site-docs-group="reference-configuration"]')
     expect(await configurationGroup.count()).toBe(1)
     expect(await configurationGroup.getAttribute('open')).toBeNull()
-    expect(await configurationGroup.locator('a[href="/docs/config/project"]').count()).toBe(1)
+    expect(await configurationGroup.locator('a[href="/docs/config/connection"]').count()).toBe(1)
+    expect(await configurationGroup.locator('a[href="/docs/config/project"]').count()).toBe(0)
     expect(await docsNavigation.locator('a[href="/docs/enterprise-auth"]').count()).toBe(1)
     expect(await docsNavigation.locator('a[href="/docs/storage-architecture"]').count()).toBe(1)
     expect(await docsNavigation.getByText('Dashboard demo', { exact: true }).count()).toBe(0)
@@ -1630,7 +1636,7 @@ test('documentation articles provide a readable, navigable reference experience'
     expect(await codeBlock.locator('.shiki').getAttribute('class')).toContain('github-light')
     expect(await codeBlock.getByText('Shell', { exact: true }).isVisible()).toBe(true)
     await codeBlock.getByRole('button', { name: 'Copy code' }).click()
-    await page.waitForFunction(() => document.documentElement.dataset.copiedCode === 'leapview validate --project dashboards/leapview.yaml\nleapview plan dashboards/leapview.yaml\n')
+    await page.waitForFunction(() => document.documentElement.dataset.copiedCode === 'leapview validate --source-root dashboards\nleapview plan --source-root dashboards\n')
     expect(await codeBlock.getByRole('button', { name: 'Code copied' }).isVisible()).toBe(true)
 
     const activeGroup = page.locator('.site-docs-nav-group-active > summary').first()
@@ -2761,8 +2767,7 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
   }
 }, 30_000)
 
-async function waitForSite(): Promise<void> {
-  const deadline = Date.now() + siteReadyTimeout
+async function waitForSite(siteProcess: Bun.Subprocess, deadline: number): Promise<void> {
   while (Date.now() < deadline) {
     if (siteProcess.exitCode !== null) {
       throw new Error(`LeapView site exited before becoming ready (code ${siteProcess.exitCode})`)
@@ -2771,7 +2776,7 @@ async function waitForSite(): Promise<void> {
       const response = await fetch(baseURL)
       if (response.ok) return
     } catch {
-      // The Go command is still compiling or binding its listener.
+      // The directly spawned site is still binding its listener.
     }
     await Bun.sleep(100)
   }

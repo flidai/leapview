@@ -6,6 +6,7 @@ import (
 
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/spf13/cobra"
 )
 
@@ -18,11 +19,6 @@ type rootOptions struct {
 	pageID             string
 	schemaFormat       string
 	schemaOut          string
-	backupOut          string
-	restoreFrom        string
-	restoreBefore      string
-	confirmRestore     bool
-	databaseOnly       bool
 	auditDays          int
 	queryDays          int
 	archivedAgentDays  int
@@ -52,7 +48,6 @@ func NewCommand(ctx context.Context) *cobra.Command {
 		},
 	}
 	root.AddCommand(serveCommand(ctx, opts))
-	root.AddCommand(evaluationCommand(ctx, opts))
 	root.AddCommand(versionCommand())
 	root.AddCommand(devCommand(ctx))
 	root.AddCommand(publishCommand(ctx))
@@ -71,8 +66,9 @@ func NewCommand(ctx context.Context) *cobra.Command {
 	root.AddCommand(semanticModelsCommand(ctx, opts))
 	root.AddCommand(semanticModelOssieCommand(ctx))
 	authentication := applicationAuthoringAuthentication{}
-	root.AddCommand(accesscli.LoginCommand(ctx, authentication, applicationTargetDiscovery{}, applicationProjectIdentity{}))
+	root.AddCommand(accesscli.LoginCommand(ctx, authentication, applicationTargetDiscovery{}, applicationProjectIdentity{profiles: cliapi.NewProfileStore(clientConfigPath())}))
 	root.AddCommand(accesscli.LogoutCommand(ctx, authentication))
+	root.AddCommand(bootstrapProjectCommand(ctx, opts))
 	root.AddCommand(adminCommand(ctx, opts))
 	root.AddCommand(healthcheckCommand(ctx, opts))
 	normalizeCommandGroups(root)

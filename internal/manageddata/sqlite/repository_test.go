@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/manageddata"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobssqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
@@ -26,6 +26,44 @@ type failingAuditIntentRecorder struct{ err error }
 
 func (r failingAuditIntentRecorder) RecordAuditIntent(context.Context, transaction.Transaction, access.AuditIntent) error {
 	return r.err
+}
+
+// sqliteAuditIntentRecorder is intentionally test-only. SQLite no longer
+// owns durable audit policy; this sink only gives managed-data tests a
+// transaction-scoped durable handoff for atomicity and replay assertions.
+type sqliteAuditIntentRecorder struct{}
+
+func (sqliteAuditIntentRecorder) RecordAuditIntent(ctx context.Context, tx transaction.Transaction, intent access.AuditIntent) error {
+	if tx == nil {
+		return errors.New("audit intent transaction is required")
+	}
+	canonical, err := intent.Canonicalize()
+	if err != nil {
+		return err
+	}
+	digest, err := canonical.PayloadDigest()
+	if err != nil {
+		return err
+	}
+	var storedDigest string
+	err = tx.QueryRowContext(ctx, `
+INSERT INTO audit_outbox
+ (event_id, source, operation, principal_id, action, resource_kind, resource_id, capability, outcome,
+  request_id, correlation_id, aggregate_key, aggregate_sequence, metadata_json, payload_digest)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(event_id) DO UPDATE SET event_id = excluded.event_id
+RETURNING payload_digest`,
+		canonical.EventID, canonical.Source, canonical.Operation, canonical.PrincipalID, canonical.Action,
+		canonical.ResourceKind, canonical.ResourceID, canonical.Capability.String(), canonical.Outcome,
+		canonical.RequestID, canonical.CorrelationID, canonical.AggregateKey, canonical.AggregateSequence,
+		canonical.MetadataJSON, digest).Scan(&storedDigest)
+	if err != nil {
+		return fmt.Errorf("record audit intent: %w", err)
+	}
+	if storedDigest != digest {
+		return fmt.Errorf("%w: event %s stored %s received %s", access.ErrAuditIntentConflict, canonical.EventID, storedDigest, digest)
+	}
+	return nil
 }
 
 func validManagedDataAuditIntent() *access.AuditIntent {
@@ -196,7 +234,7 @@ func TestBeginUploadFinalizationAuditIntentIsIdempotent(t *testing.T) {
 	intent.EventID = "managed-data-finalize"
 	intent.Operation = "managed_data.upload_session.finalize"
 	intent.AggregateKey = "managed_data_upload_session:" + session.ID.String()
-	repo := NewRepositoryWithAudit(db, accesssqlite.NewRepository(db))
+	repo := NewRepositoryWithAudit(db, sqliteAuditIntentRecorder{})
 	if _, err := repo.BeginUploadFinalizationTransition(ctx, session.ID, manageddata.UploadTransition{AuditIntent: intent}); err != nil {
 		t.Fatalf("first audited finalization: %v", err)
 	}

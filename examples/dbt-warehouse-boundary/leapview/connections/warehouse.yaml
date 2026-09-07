@@ -1,0 +1,12 @@
+apiVersion: leapview.dev/v1
+kind: Connection
+metadata:
+  id: connection:warehouse
+  name: warehouse
+  displayName: dbt-published warehouse boundary
+spec:
+  type: managed
+  defaults:
+    parquet:
+      hivePartitioning: false
+      unionByName: false

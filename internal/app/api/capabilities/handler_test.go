@@ -65,3 +65,17 @@ func TestWriteReportsOnlyRuntimeQueryFormats(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteReportsNativePostgresDeliveryMode(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	Write(recorder, Config{})
+	var response struct {
+		DeliveryMode string `json:"deliveryMode"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.DeliveryMode != "native_postgres" {
+		t.Fatalf("deliveryMode=%q, want native_postgres", response.DeliveryMode)
+	}
+}

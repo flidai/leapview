@@ -42,7 +42,7 @@ func serveCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.addr, "addr", "", "listen address; defaults to the configured address")
 	cmd.Flags().StringVar(&opts.environment, "environment", "", "instance environment; overrides LEAPVIEW_ENVIRONMENT, then defaults to prod in production and dev otherwise")
-	cmd.Flags().BoolVar(&opts.production, "production", false, "serve active serving state from the platform DB")
+	cmd.Flags().BoolVar(&opts.production, "production", false, "serve active state from the native PostgreSQL control plane")
 	return cmd
 }
 
