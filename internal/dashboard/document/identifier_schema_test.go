@@ -78,6 +78,79 @@ func TestDashboardDocumentSchemaRejectsIdentifierViolations(t *testing.T) {
 	}
 }
 
+func TestDashboardDocumentSchemaAllowsPointAndChoroplethLabels(t *testing.T) {
+	compiled := loadDashboardDocumentSchema(t)
+	for _, kind := range []string{"point", "choropleth"} {
+		t.Run(kind, func(t *testing.T) {
+			document := geographicSchemaDocument(t, kind, true)
+			if err := compiled.Validate(document); err != nil {
+				t.Fatalf("schema rejected %s layer label: %v", kind, err)
+			}
+		})
+	}
+}
+
+func TestDashboardDocumentSchemaRejectsUnsupportedGeographicLabelPaths(t *testing.T) {
+	compiled := loadDashboardDocumentSchema(t)
+	for _, test := range []struct {
+		name string
+		kind string
+		path string
+	}{
+		{name: "map presentation", kind: "presentation", path: "/spec/visuals/revenue/presentation/labels"},
+		{name: "heat layer", kind: "heat", path: "/spec/visuals/revenue/presentation/layers/0/label"},
+		{name: "density layer", kind: "density", path: "/spec/visuals/revenue/presentation/layers/0/label"},
+		{name: "path layer", kind: "path", path: "/spec/visuals/revenue/presentation/layers/0/label"},
+		{name: "reference layer", kind: "reference", path: "/spec/visuals/revenue/presentation/layers/0/label"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document := geographicSchemaDocument(t, test.kind, true)
+			if err := compiled.Validate(document); err == nil || !strings.Contains(err.Error(), "at '"+test.path+"'") {
+				t.Fatalf("schema accepted unsupported geographic label path %s: %v", test.name, err)
+			}
+		})
+	}
+}
+
+func TestDashboardDocumentSchemaRejectsRemovedPathCurvature(t *testing.T) {
+	compiled := loadDashboardDocumentSchema(t)
+	document := geographicSchemaDocument(t, "path", false)
+	layer := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)["presentation"].(map[string]any)["layers"].([]any)[0].(map[string]any)
+	layer["line"] = map[string]any{"width": 3, "curvature": 0}
+	if err := compiled.Validate(document); err == nil || !strings.Contains(err.Error(), "curvature") {
+		t.Fatalf("generated dashboard schema accepted removed path curvature: %v", err)
+	}
+}
+
+func geographicSchemaDocument(t *testing.T, kind string, label bool) map[string]any {
+	t.Helper()
+	document := loadDashboardDocumentFixture(t)
+	visual := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)
+	visual["type"] = "map"
+	visual["presentation"] = map[string]any{"type": "geographic"}
+	if kind == "presentation" {
+		visual["presentation"].(map[string]any)["labels"] = map[string]any{"density": "automatic"}
+		return document
+	}
+	layer := map[string]any{"id": "layer", "kind": kind}
+	if label {
+		layer["label"] = "city"
+	}
+	switch kind {
+	case "point", "heat", "density":
+		layer["latitude"], layer["longitude"] = "latitude", "longitude"
+	case "choropleth":
+		layer["geometryAsset"], layer["join"] = "brazil_states", "state"
+	case "reference":
+		layer["geometryAsset"] = "brazil_states"
+	case "path":
+		layer["latitude"], layer["longitude"] = "latitude", "longitude"
+		layer["path"], layer["order"] = "route", "position"
+	}
+	visual["presentation"].(map[string]any)["layers"] = []any{layer}
+	return document
+}
+
 func TestDashboardDocumentSchemaRejectsRemovedKPIThresholds(t *testing.T) {
 	compiled := loadDashboardDocumentSchema(t)
 	document := loadDashboardDocumentFixture(t)

@@ -140,8 +140,12 @@ func TestValidateSpecPointConditionalFormattingTargets(t *testing.T) {
 		t.Fatalf("ValidateSpec() error = %v, want duplicate mark_fill diagnostic", err)
 	}
 
+	removed := pointGradientConditionalFormat("removed-mark-stroke", "revenue", VisualizationConditionalTarget("mark_stroke"))
+	if err := ValidateSpec(pointContractSpec("", nil, removed)); err == nil || !strings.Contains(err.Error(), `unsupported target "mark_stroke"`) {
+		t.Fatalf("ValidateSpec() error = %v, want removed-target diagnostic", err)
+	}
+
 	for _, target := range []VisualizationConditionalTarget{
-		VisualizationConditionalTarget("mark_stroke"),
 		VisualizationConditionalTargetSeriesColor,
 		VisualizationConditionalTargetLabelForeground,
 		VisualizationConditionalTargetVisualBackground,

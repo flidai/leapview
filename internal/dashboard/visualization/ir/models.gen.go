@@ -2538,8 +2538,7 @@ const (
 )
 
 type VisualizationMapLineStyle struct {
-	Width     float64 `json:"width" yaml:"width"`
-	Curvature float64 `json:"curvature" yaml:"curvature"`
+	Width float64 `json:"width" yaml:"width"`
 }
 
 type VisualizationMapSizeScale struct {

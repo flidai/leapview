@@ -1075,7 +1075,6 @@ model VisualizationMapHeatStyle {
 
 model VisualizationMapLineStyle {
   `width`: float64;
-  `curvature`: float64;
 }
 
 model VisualizationSpatialFieldMapping {

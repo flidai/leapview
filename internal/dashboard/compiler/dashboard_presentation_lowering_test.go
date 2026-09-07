@@ -161,7 +161,7 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 			value: document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{Type: "geographic"}},
 			check: func(t *testing.T, value any) {
 				got := value.(visualizationir.GeographicVisualizationPresentation)
-				if !got.Roam || got.Theme != visualizationir.VisualizationMapThemeAuto || got.LabelDensity != visualizationir.VisualizationMapLabelDensityNormal || got.Camera.Mode != visualizationir.VisualizationMapCameraModeFitData || got.Camera.Padding != 32 || got.Camera.MaximumZoom != 14 || !got.Controls.Zoom || !got.Controls.Reset || !got.Controls.Compass {
+				if !got.Roam || got.Theme != visualizationir.VisualizationMapThemeAuto || got.LabelDensity != visualizationir.VisualizationMapLabelDensityNormal || got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityHidden || len(got.LabelPolicy.Priority) != 0 || got.LabelPolicy.MaxCharacters != 24 || got.LabelPolicy.MinimumSpacing != 0 || !got.LabelPolicy.TooltipFallback || got.Camera.Mode != visualizationir.VisualizationMapCameraModeFitData || got.Camera.Padding != 32 || got.Camera.MaximumZoom != 14 || !got.Controls.Zoom || !got.Controls.Reset || !got.Controls.Compass {
 					t.Fatalf("geographic = %#v", got)
 				}
 			},
@@ -228,6 +228,24 @@ func TestLowerCanonicalGeographicPresentationValidatesFixedCamera(t *testing.T) 
 	got := lowered.(visualizationir.GeographicVisualizationPresentation)
 	if got.Camera.Mode != mode || got.Camera.Center == nil || !reflect.DeepEqual(*got.Camera.Center, finiteCenter) || got.Camera.Zoom == nil || *got.Camera.Zoom != finiteZoom {
 		t.Fatalf("lowered fixed camera = %#v", got.Camera)
+	}
+}
+
+func TestLowerCanonicalGeographicPresentationPreservesExplicitLabelDensity(t *testing.T) {
+	density := visualizationir.VisualizationMapLabelDensityDense
+	lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{
+		Type:         "geographic",
+		LabelDensity: &density,
+	}}, document.DashboardVisualTypeMap)
+	if err != nil {
+		t.Fatalf("lower geographic presentation: %v", err)
+	}
+	got, ok := lowered.(visualizationir.GeographicVisualizationPresentation)
+	if !ok {
+		t.Fatalf("lowered type = %T", lowered)
+	}
+	if got.LabelDensity != visualizationir.VisualizationMapLabelDensityDense {
+		t.Fatalf("label density = %q, want dense", got.LabelDensity)
 	}
 }
 

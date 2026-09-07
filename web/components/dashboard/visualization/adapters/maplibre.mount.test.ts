@@ -157,7 +157,9 @@ async function basemapFixture(id: string, labelAnchor: string, attribution: stri
   }
 }
 
-async function labelEnvelope(theme: 'auto' | 'light' | 'dark' = 'auto', specRevision = 'sha256:labels', controls = { zoom: false, reset: false, compass: false }, roam = false, selectable = false, spatial = false, basemap?: VisualizationMapStyleAsset, cameraMode: 'fixed' | 'preserve' = 'fixed'): Promise<VisualizationEnvelope> {
+async function labelEnvelope(theme: 'auto' | 'light' | 'dark' = 'auto', specRevision = 'sha256:labels', controlsOrDensity: { zoom: boolean; reset: boolean; compass: boolean } | 'hidden' | 'normal' | 'dense' = { zoom: false, reset: false, compass: false }, roam = false, selectable = false, spatial = false, basemap?: VisualizationMapStyleAsset, cameraMode: 'fixed' | 'preserve' = 'fixed'): Promise<VisualizationEnvelope> {
+  const labelDensity = typeof controlsOrDensity === 'string' ? controlsOrDensity : 'normal'
+  const controls = typeof controlsOrDensity === 'string' ? { zoom: false, reset: false, compass: false } : controlsOrDensity
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
   const geometryBytes = new TextEncoder().encode(geometryJSON)
   const geometryDigest = await digest(geometryBytes)
@@ -179,7 +181,7 @@ async function labelEnvelope(theme: 'auto' | 'light' | 'dark' = 'auto', specRevi
         { id: 'state', role: 'identity', dataType: 'string', nullable: false, label: 'State' }, { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' }, { id: 'name', role: 'dimension', dataType: 'string', nullable: false, label: 'Name' },
       ] }],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Labels', description: 'Labels' }, interactions: selectable ? [{ id: 'selection', kind: 'select', mode: 'single', requiresStableIdentity: true, targets: [], mappings: [] }] : [], spatialInteractions: spatial ? [{ id: 'area', gestures: ['box'] }] : [], layers: [point, choropleth],
-      presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, basemap, roam, theme, labelDensity: 'normal', camera: { mode: cameraMode, center: [0, 0], zoom: 2, padding: 24, minimumZoom: 0, maximumZoom: 10 }, controls },
+      presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, basemap, roam, theme, labelDensity, camera: { mode: cameraMode, center: [0, 0], zoom: 2, padding: 24, minimumZoom: 0, maximumZoom: 10 }, controls },
     },
     dataState: { kind: 'inline', specRevision, dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision, dataRevision: 1, generation: 1, columns: ['latitude', 'longitude', 'state', 'value', 'name'], rows: [[-23.5, -46.6, 'SP', 10, 'São Paulo']], completeness: 'complete' }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
@@ -195,6 +197,11 @@ function pointerEvent(dom: JSDOM, type: string, pointerId: number): Event {
     clientY: { configurable: true, value: 0 },
   })
   return event
+}
+
+function layerPaint(map: FakeMap, id: string): { text: unknown; halo: unknown } {
+  const layer = map.getLayer(id)
+  return { text: layer?.paint['text-color'], halo: layer?.paint['text-halo-color'] }
 }
 
 function installDomGlobals(dom: JSDOM): () => void {
@@ -292,6 +299,49 @@ test('MapLibre reconciles basemap styles without replacing controls or stale dat
     expect(attribution.hidden).toBe(true)
     expect(map.addedControls[0]).toBe(navigation)
     expect(map.removedControls).toHaveLength(0)
+    handle.dispose()
+  } finally {
+    restoreDomGlobals()
+    dom.window.close()
+  }
+})
+
+test('MapLibre mounted labels resolve theme and repaint in place on context-only updates', async () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
+  const restoreDomGlobals = installDomGlobals(dom)
+  const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
+  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  try {
+    const envelope = await labelEnvelope()
+    const container = dom.window.document.createElement('div')
+    const frame = dom.window.document.createElement('div')
+    const attribution = dom.window.document.createElement('div')
+    const map = new FakeMap()
+    const handle = new MapLibreHandle(container, frame, map as never, attribution, context('dark'))
+    await handle.update(envelope, Change.All, context('dark'))
+    const sourcesBefore = [...map.sources.keys()]
+    const layersBefore = [...map.layers.keys()]
+    expect(layerPaint(map, 'lv-points-data-label')).toEqual({ text: '#f0f6fc', halo: '#0d1821' })
+    expect(layerPaint(map, 'lv-states-data-label')).toEqual({ text: '#f0f6fc', halo: '#0d1821' })
+
+    await handle.update(envelope, Change.Context, context('light'))
+    expect(layerPaint(map, 'lv-points-data-label')).toEqual({ text: '#1f2328', halo: '#ffffff' })
+    expect(layerPaint(map, 'lv-states-data-label')).toEqual({ text: '#1f2328', halo: '#ffffff' })
+    expect([...map.sources.keys()]).toEqual(sourcesBefore)
+    expect([...map.layers.keys()]).toEqual(layersBefore)
+
+    await handle.update(envelope, Change.Context, context('dark'))
+    map.removeLayer('lv-states-data-label')
+    await handle.update(envelope, Change.Context, context('light'))
+    expect(map.getLayer('lv-states-data-label')).toBeUndefined()
+    expect(layerPaint(map, 'lv-points-data-label')).toEqual({ text: '#1f2328', halo: '#ffffff' })
+
+    const explicit = await labelEnvelope('dark', 'sha256:explicit-label-theme')
+    await handle.update(explicit, Change.Spec, context('light'))
+    const darkPaint = layerPaint(map, 'lv-points-data-label')
+    expect(darkPaint).toEqual({ text: '#f0f6fc', halo: '#0d1821' })
+    await handle.update(explicit, Change.Context, context('dark'))
+    expect(layerPaint(map, 'lv-points-data-label')).toEqual(darkPaint)
     handle.dispose()
   } finally {
     restoreDomGlobals()
@@ -499,6 +549,32 @@ test('MapLibre rechecks cluster camera policy after asynchronous expansion', asy
     await Promise.resolve()
     expect(map.getZoom()).toBe(2)
     expect(map.getCenter()).toEqual({ lng: 0, lat: 0 })
+    handle.dispose()
+  } finally {
+    restoreDomGlobals()
+    dom.window.close()
+  }
+})
+
+test('MapLibre changes basemap label density in place without rebuilding geographic data', async () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
+  const restoreDomGlobals = installDomGlobals(dom)
+  const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
+  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  try {
+    const normal = await labelEnvelope('auto', 'sha256:labels-normal', 'normal')
+    const dense = await labelEnvelope('auto', 'sha256:labels-dense', 'dense')
+    const container = dom.window.document.createElement('div')
+    const frame = dom.window.document.createElement('div')
+    const attribution = dom.window.document.createElement('div')
+    const map = new FakeMap()
+    const handle = new MapLibreHandle(container, frame, map as never, attribution, context('light'))
+    await handle.update(normal, Change.All, context('light'))
+    const sourcesBefore = [...map.sources.keys()]
+    const layersBefore = [...map.layers.keys()]
+    await handle.update(dense, Change.Spec, context('light'))
+    expect([...map.sources.keys()]).toEqual(sourcesBefore)
+    expect([...map.layers.keys()]).toEqual(layersBefore)
     handle.dispose()
   } finally {
     restoreDomGlobals()

@@ -7,6 +7,20 @@ directly into the renderer-independent map Visual IR.
 Every preview on this page is generated from the YAML shown below against the
 fixed documentation dataset.
 
+## Basemap label density
+
+Use `presentation.labelDensity` to control the amount of basemap labeling
+without changing geographic data layers. `hidden` suppresses governed labels,
+`normal` keeps the primary labels while reducing secondary detail, and `dense`
+enables the full governed basemap label set. Labels authored on geographic
+data layers are unaffected.
+
+```yaml
+presentation:
+  type: geographic
+  labelDensity: normal
+```
+
 ## Choropleth
 
 Join a result dimension to a pinned geometry asset and color regions by a
@@ -74,9 +88,6 @@ visuals:
         mode: fit_data
         padding: 32
         maximumZoom: 9
-      labels:
-        density: automatic
-        tooltipFallback: true
       layers:
       - kind: point
         id: orders
@@ -241,6 +252,5 @@ visuals:
           opacity: 0.9
         line:
           width: 3
-          curvature: 0
         opacity: 0.9
 ```

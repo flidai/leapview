@@ -982,6 +982,19 @@ func specSupportsConditionalFormatting(spec VisualizationSpec) bool {
 }
 
 func validateConditionalFormattingTarget(kind string, format VisualizationConditionalFormat) error {
+	switch format.Target {
+	case VisualizationConditionalTargetMarkFill,
+		VisualizationConditionalTargetSeriesColor,
+		VisualizationConditionalTargetLabelForeground,
+		VisualizationConditionalTargetVisualBackground,
+		VisualizationConditionalTargetCellForeground,
+		VisualizationConditionalTargetCellBackground,
+		VisualizationConditionalTargetKpiValue,
+		VisualizationConditionalTargetIcon:
+	default:
+		return fmt.Errorf("unsupported target %q", format.Target)
+	}
+
 	// Keep target validation aligned with the renderer-owned channels. These
 	// families intentionally do not inherit every target that happens to be
 	// present in the shared conditional-format enum.

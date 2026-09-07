@@ -133,6 +133,7 @@ type DashboardChoroplethGeographicLayer struct {
 	Join          string                  `json:"join" yaml:"join"`
 	Value         *string                 `json:"value,omitempty" yaml:"value,omitempty"`
 	Category      *string                 `json:"category,omitempty" yaml:"category,omitempty"`
+	Label         *string                 `json:"label,omitempty" yaml:"label,omitempty"`
 	Color         *DashboardMapColorScale `json:"color,omitempty" yaml:"color,omitempty"`
 	Stroke        *DashboardMapStroke     `json:"stroke,omitempty" yaml:"stroke,omitempty"`
 	Opacity       *float64                `json:"opacity,omitempty" yaml:"opacity,omitempty"`
@@ -1953,7 +1954,6 @@ type DashboardGeographicLayerBase struct {
 
 type DashboardGeographicLayerOptions struct {
 	ID          string                                         `json:"id" yaml:"id"`
-	Label       *string                                        `json:"label,omitempty" yaml:"label,omitempty"`
 	Tooltip     *[]string                                      `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
 	Position    *visualizationir.VisualizationMapLayerPosition `json:"position,omitempty" yaml:"position,omitempty"`
 	MinimumZoom *float64                                       `json:"minimumZoom,omitempty" yaml:"minimumZoom,omitempty"`
@@ -2299,8 +2299,7 @@ type DashboardMapHeatStyle struct {
 }
 
 type DashboardMapLineStyle struct {
-	Width     *float64 `json:"width,omitempty" yaml:"width,omitempty"`
-	Curvature *float64 `json:"curvature,omitempty" yaml:"curvature,omitempty"`
+	Width *float64 `json:"width,omitempty" yaml:"width,omitempty"`
 }
 
 type DashboardMapSizeScale struct {
@@ -2672,6 +2671,7 @@ type DashboardPointGeographicLayer struct {
 	Longitude string                  `json:"longitude" yaml:"longitude"`
 	Value     *string                 `json:"value,omitempty" yaml:"value,omitempty"`
 	Category  *string                 `json:"category,omitempty" yaml:"category,omitempty"`
+	Label     *string                 `json:"label,omitempty" yaml:"label,omitempty"`
 	Size      *DashboardMapSizeScale  `json:"size,omitempty" yaml:"size,omitempty"`
 	Color     *DashboardMapColorScale `json:"color,omitempty" yaml:"color,omitempty"`
 	Stroke    *DashboardMapStroke     `json:"stroke,omitempty" yaml:"stroke,omitempty"`
@@ -3851,7 +3851,6 @@ type FilterDashboardPageComponent struct {
 type GeographicDashboardPresentation struct {
 	DashboardPresentationBase
 	Type         string                                        `json:"type" yaml:"type"`
-	Labels       *DashboardLabelPolicy                         `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Theme        *visualizationir.VisualizationMapTheme        `json:"theme,omitempty" yaml:"theme,omitempty"`
 	Basemap      *string                                       `json:"basemap,omitempty" yaml:"basemap,omitempty"`
 	LabelDensity *visualizationir.VisualizationMapLabelDensity `json:"labelDensity,omitempty" yaml:"labelDensity,omitempty"`

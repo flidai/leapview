@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
-import { aggregateExpansionCamera, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setMapStyleAndWait, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
+import { aggregateExpansionCamera, applyBasemapTheme, applyDataLabelTheme, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapDataLabelColors, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setMapStyleAndWait, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
 test('MapLibre owns usable shadow-DOM styles for map navigation controls', () => {
@@ -695,7 +695,7 @@ test('MapLibre exposes a bounded formatted tabular equivalent without unrelated 
 test('MapLibre paths group and deterministically order valid coordinates', () => {
   const envelope = selectableEnvelope()
   const path = {
-    id: 'route', kind: 'path', latitude: { dataset: 'primary', field: 'lat' }, longitude: { dataset: 'primary', field: 'lon' }, path: { dataset: 'primary', field: 'state' }, order: { dataset: 'primary', field: 'value' }, value: { dataset: 'primary', field: 'value' }, tooltip: [], position: 'below_labels', visibility: { minimumZoom: 0, maximumZoom: 24 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#ccc' }, stroke: { color: '#0969da', width: 3, opacity: 1 }, line: { width: 3, curvature: 0 }, opacity: .8,
+    id: 'route', kind: 'path', latitude: { dataset: 'primary', field: 'lat' }, longitude: { dataset: 'primary', field: 'lon' }, path: { dataset: 'primary', field: 'state' }, order: { dataset: 'primary', field: 'value' }, value: { dataset: 'primary', field: 'value' }, tooltip: [], position: 'below_labels', visibility: { minimumZoom: 0, maximumZoom: 24 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#ccc' }, stroke: { color: '#0969da', width: 3, opacity: 1 }, line: { width: 3 }, opacity: .8,
   } as VisualizationGeographicLayer
   const withCoordinates = { ...envelope, dataState: { ...envelope.dataState, datasets: [{ ...(envelope.dataState as any).datasets[0], columns: ['state', 'value', 'lat', 'lon'], rows: [['SP', 2, -20, -40], ['SP', 1, -21, -41], ['RJ', 1, null, -42]] }] } } as VisualizationEnvelope
   const result = pathGeometry(withCoordinates, path as Extract<VisualizationGeographicLayer, { kind: 'path' }>)
@@ -823,6 +823,57 @@ test('MapLibre auto basemaps follow the resolved application color scheme', () =
   expect(mapThemeColors('auto', 'dark')).toEqual(mapThemeColors('dark', 'light'))
   expect(mapThemeColors('auto', 'light')).toEqual(mapThemeColors('light', 'dark'))
   expect(mapThemeColors('auto', 'dark')).not.toEqual(mapThemeColors('auto', 'light'))
+})
+
+test('MapLibre applies governed basemap label density without hiding primary or custom labels', () => {
+  const ids = ['address_label', 'pois', 'places_subplace', 'roads_labels_minor', 'places_country', 'custom_label']
+  const layers = ids.map((id) => ({ id, type: 'symbol', metadata: { 'leapview:role': 'label' }, layout: {}, paint: {} }))
+  const visibility = new Map<string, string>()
+  const map = {
+    getStyle: () => ({ layers }),
+    getLayer: (id: string) => layers.find((layer) => layer.id === id),
+    setLayoutProperty: (id: string, property: string, value: string) => { if (property === 'visibility') visibility.set(id, value) },
+    setPaintProperty: () => {},
+  }
+  const colors = mapThemeColors('light', 'light')
+  applyBasemapTheme(map as never, colors, '#fff', 'hidden')
+  expect([...visibility.values()].every((value) => value === 'none')).toBe(true)
+  applyBasemapTheme(map as never, colors, '#fff', 'dense')
+  expect([...visibility.values()].every((value) => value === 'visible')).toBe(true)
+  applyBasemapTheme(map as never, colors, '#fff', 'normal')
+  expect(ids.filter((id) => /^(address_label|pois|places_subplace|roads_labels_minor)$/.test(id)).every((id) => visibility.get(id) === 'none')).toBe(true)
+  expect(visibility.get('places_country')).toBe('visible')
+  expect(visibility.get('custom_label')).toBe('visible')
+})
+
+test('MapLibre data labels resolve auto light and dark themes while explicit themes stay stable', () => {
+  expect(mapDataLabelColors('auto', 'light')).toEqual(mapDataLabelColors('light', 'dark'))
+  expect(mapDataLabelColors('auto', 'dark')).toEqual(mapDataLabelColors('dark', 'light'))
+  expect(mapDataLabelColors('dark', 'light')).toEqual(mapDataLabelColors('dark', 'dark'))
+  expect(mapDataLabelColors('light', 'light')).toEqual(mapDataLabelColors('light', 'dark'))
+  expect(mapDataLabelColors('auto', 'light')).not.toEqual(mapDataLabelColors('auto', 'dark'))
+})
+
+test('MapLibre repaints existing point and choropleth data-label layers for context-only theme changes', () => {
+  const paint = new Map<string, string>()
+  const labelLayers = new Set(['lv-points-data-label', 'lv-states-data-label'])
+  const map = {
+    getLayer: (id: string) => labelLayers.has(id) ? { id } : undefined,
+    setPaintProperty: (id: string, property: string, value: string) => paint.set(`${id}:${property}`, value),
+  }
+  applyDataLabelTheme(map as never, ['lv-points-data-label', 'lv-states-data-label', 'lv-missing-data-label'], mapDataLabelColors('auto', 'dark'))
+  expect(paint).toEqual(new Map([
+    ['lv-points-data-label:text-color', '#f0f6fc'],
+    ['lv-points-data-label:text-halo-color', '#0d1821'],
+    ['lv-states-data-label:text-color', '#f0f6fc'],
+    ['lv-states-data-label:text-halo-color', '#0d1821'],
+  ]))
+
+  applyDataLabelTheme(map as never, ['lv-points-data-label', 'lv-states-data-label'], mapDataLabelColors('auto', 'light'))
+  expect(paint.get('lv-points-data-label:text-color')).toBe('#1f2328')
+  expect(paint.get('lv-points-data-label:text-halo-color')).toBe('#ffffff')
+  expect(paint.get('lv-states-data-label:text-color')).toBe('#1f2328')
+  expect(paint.get('lv-states-data-label:text-halo-color')).toBe('#ffffff')
 })
 
 test('MapLibre coalesces unchanged themes and serializes WebGL style mutations by frame', async () => {

@@ -316,17 +316,11 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.GeographicDashboardPresentation:
-		base, err := lowerBasePresentation(nil, variant.Labels, nil)
+		base, err := lowerBasePresentation(nil, nil, nil)
 		if err != nil {
 			return nil, err
 		}
 		base.LabelPolicy = visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityHidden, Priority: []visualizationir.VisualizationLabelPriority{}, MaxCharacters: 24, MinimumSpacing: 0, TooltipFallback: true}
-		if variant.Labels != nil {
-			base.LabelPolicy, err = lowerLabelPolicy(*variant.Labels)
-			if err != nil {
-				return nil, err
-			}
-		}
 		out := visualizationir.GeographicVisualizationPresentation{
 			VisualizationPresentation: base,
 			Roam:                      true, Theme: visualizationir.VisualizationMapThemeAuto,
