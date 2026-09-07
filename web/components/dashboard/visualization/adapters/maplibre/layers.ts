@@ -116,7 +116,7 @@ export function tiledAggregateCountLayer(id: string, sourceID: string, layer: Ex
 }
 
 function tiledValueField(layer: Extract<VisualizationGeographicLayer, { kind: 'point' | 'heat' | 'density' }>): string {
-	return layer.value?.field ?? '__lv_coordinate_count'
+	return layer.value?.field ?? '__lv_count'
 }
 
 type TiledScaleDomain = { minimum?: number; maximum?: number; total?: number }
@@ -127,12 +127,12 @@ function tiledWeightExpression(layer: Extract<VisualizationGeographicLayer, { ki
 	const raw = state.rawDomains.find((domain) => domain.field === field)
 	const aggregate = state.aggregateDomains.find((domain) => domain.field === field)
 	if (!layer.value) {
-		// Both precision families expose governed coordinate counts: one for raw
-		// members and the contained count for aggregates.
+		// Raw tiles represent one observation while aggregate tiles carry the
+		// contained row count. Coordinate counts are reserved for cluster labels.
 		const countDomain = aggregate ?? countFallbackDomain(state)
 		const rawDomain = resolveTiledDomain(raw, authored, { minimum: 1, maximum: 1 })
 		const aggregateDomain = resolveTiledDomain(countDomain, authored, countFallbackDomain(state))
-		return ['case', ['boolean', ['get', '__lv_aggregate'], false], normalizeTiledValue('__lv_coordinate_count', aggregateDomain, 1), authoredDomainSpecified(authored) ? normalizeTiledValue('__lv_coordinate_count', rawDomain, 1) : 1]
+		return ['case', ['boolean', ['get', '__lv_aggregate'], false], normalizeTiledValue('__lv_count', aggregateDomain, 1), authoredDomainSpecified(authored) ? normalizeTiledValue('__lv_count', rawDomain, 1) : 1]
 	}
 	const rawDomain = resolveTiledDomain(raw, authored)
 	const aggregateDomain = resolveTiledDomain(aggregate, authored)

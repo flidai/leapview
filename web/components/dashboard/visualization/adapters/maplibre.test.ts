@@ -372,7 +372,7 @@ test('MapLibre tiled no-value layers weight raw observations and aggregate count
 	const pointStyle = mapLayer('lv-orders', pointWithoutValue, envelope.dataState, 'lv-map-tiles')
 	const pointWeight = (((pointStyle.paint['circle-radius'][3] as unknown[])[3] as unknown[])[2] as unknown[])[1] as unknown[]
 	expect(pointWeight[3]).toBe(1)
-	expect(JSON.stringify(pointWeight)).toContain('__lv_coordinate_count')
+	expect(JSON.stringify(pointWeight)).toContain('__lv_count')
 	expect(JSON.stringify(pointWeight)).toContain('14999')
 	const density = {
 		id: 'customers', kind: 'density',
@@ -386,13 +386,13 @@ test('MapLibre tiled no-value layers weight raw observations and aggregate count
 	const aggregate = tiledAggregateHeatLayer('lv-customers-aggregate', 'lv-map-tiles', density, envelope.dataState)
 	const rawWeight = (raw.paint['heatmap-weight'] as unknown[])[1] as unknown[]
 	expect(rawWeight[3]).toBe(1)
-	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('__lv_coordinate_count')
+	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('__lv_count')
 	expect(JSON.stringify(aggregate.paint['heatmap-weight'])).toContain('14999')
 	const heat = { ...density, kind: 'heat' } as VisualizationGeographicLayer
 	const heatRaw = mapLayer('lv-heat', heat, envelope.dataState, 'lv-map-tiles')
 	const heatAggregate = tiledAggregateHeatLayer('lv-heat-aggregate', 'lv-map-tiles', heat as Extract<VisualizationGeographicLayer, { kind: 'heat' }>, envelope.dataState)
 	expect(((heatRaw.paint['heatmap-weight'] as unknown[])[1] as unknown[])[3]).toBe(1)
-	expect(JSON.stringify(heatAggregate.paint['heatmap-weight'])).toContain('__lv_coordinate_count')
+	expect(JSON.stringify(heatAggregate.paint['heatmap-weight'])).toContain('__lv_count')
 })
 
 test('MapLibre tiled scales merge partial and full authored domains with server domains', () => {

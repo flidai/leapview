@@ -297,7 +297,7 @@ func TestSpatialTileClusterMinimumPointsPreservesLowBucketsAndAggregatesBoundary
 	for _, statement := range []string{
 		"INSTALL spatial FROM core", "LOAD spatial", "CREATE SCHEMA model",
 		"CREATE TABLE model.orders(order_id VARCHAR, latitude DOUBLE, longitude DOUBLE, revenue DOUBLE)",
-		"INSERT INTO model.orders VALUES ('low-1', -1, -1, 10), ('low-2', -1, -0.5, 20), ('high-1', 40, 40, 30), ('high-2', 40, 40.5, 40), ('high-3', 40, 41, 50)",
+		"INSERT INTO model.orders VALUES ('low-1', -1, -1, 10), ('low-2', -1, -0.5, 20), ('high-1', 40, 40, 30), ('high-2', 40, 40.5, 40), ('high-3', 40, 41, 50), ('high-4', 40, 40, 60)",
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			if strings.HasPrefix(statement, "INSTALL") || strings.HasPrefix(statement, "LOAD") {
@@ -319,7 +319,7 @@ func TestSpatialTileClusterMinimumPointsPreservesLowBucketsAndAggregatesBoundary
 	if cut < 0 {
 		t.Fatalf("clustered tile SQL has no tile feature result: %s", plan.SQL)
 	}
-	rows, err := db.Query(plan.SQL[:cut]+"\nSELECT \"__lv_id\", \"__lv_aggregate\", \"__lv_clustered\", \"__lv_coordinate_count\", \"order_id\" FROM tile_features ORDER BY \"__lv_id\"", plan.Args...)
+	rows, err := db.Query(plan.SQL[:cut]+"\nSELECT \"__lv_id\", \"__lv_aggregate\", \"__lv_clustered\", \"__lv_count\", \"__lv_coordinate_count\", \"order_id\" FROM tile_features ORDER BY \"__lv_id\"", plan.Args...)
 	if err != nil {
 		t.Fatalf("inspect clustered tile features: %v\n%s", err, plan.SQL)
 	}
@@ -329,20 +329,20 @@ func TestSpatialTileClusterMinimumPointsPreservesLowBucketsAndAggregatesBoundary
 	for rows.Next() {
 		var id string
 		var aggregate, clustered bool
-		var coordinateCount int
+		var rowCount, coordinateCount int
 		var orderID sql.NullString
-		if err := rows.Scan(&id, &aggregate, &clustered, &coordinateCount, &orderID); err != nil {
+		if err := rows.Scan(&id, &aggregate, &clustered, &rowCount, &coordinateCount, &orderID); err != nil {
 			t.Fatal(err)
 		}
 		if aggregate {
 			aggregateCount++
-			if !clustered || coordinateCount != 3 || orderID.Valid {
-				t.Fatalf("boundary aggregate = id %q clustered %t coordinate_count %d order_id %v", id, clustered, coordinateCount, orderID)
+			if !clustered || rowCount != 4 || coordinateCount != 3 || orderID.Valid {
+				t.Fatalf("boundary aggregate = id %q clustered %t row_count %d coordinate_count %d order_id %v", id, clustered, rowCount, coordinateCount, orderID)
 			}
 		} else {
 			memberCount++
-			if clustered || coordinateCount != 1 || !orderID.Valid {
-				t.Fatalf("below-threshold member = id %q clustered %t coordinate_count %d order_id %v", id, clustered, coordinateCount, orderID)
+			if clustered || rowCount != 1 || coordinateCount != 1 || !orderID.Valid {
+				t.Fatalf("below-threshold member = id %q clustered %t row_count %d coordinate_count %d order_id %v", id, clustered, rowCount, coordinateCount, orderID)
 			}
 			memberIDs = append(memberIDs, orderID.String)
 		}
