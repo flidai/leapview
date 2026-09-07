@@ -383,12 +383,13 @@ func ReconcileRolePolicy(ctx context.Context, db *sql.DB, rolePolicySQL string) 
 	// Goose creates its standard version table as the migrator login before it
 	// executes the first migration. Reconcile its read boundary while still
 	// using that owning login, then assume LeapView's durable owner role for
-	// the product-owned objects below.
+	// the product-owned objects below. Maintenance needs read-only verification
+	// before recovery operations; it must not acquire migration/write authority.
 	if _, err := tx.ExecContext(ctx, `
 REVOKE ALL ON TABLE public.goose_db_version FROM PUBLIC,
-    leapview_control_runtime, leapview_control_readonly, leapview_control_backup;
+    leapview_control_runtime, leapview_control_readonly, leapview_control_backup, leapview_control_maintenance;
 GRANT SELECT ON TABLE public.goose_db_version TO
-    leapview_control_runtime, leapview_control_readonly, leapview_control_backup;
+    leapview_control_runtime, leapview_control_readonly, leapview_control_backup, leapview_control_maintenance;
 DO $river_policy$
 DECLARE relation_name text;
 BEGIN
@@ -424,7 +425,7 @@ $river_policy$;
 	}
 	if _, err := tx.ExecContext(ctx, `
 GRANT USAGE ON SCHEMA public TO
-    leapview_control_runtime, leapview_control_readonly, leapview_control_backup;
+    leapview_control_runtime, leapview_control_readonly, leapview_control_backup, leapview_control_maintenance;
 `); err != nil {
 		return fmt.Errorf("reconcile PostgreSQL public-schema policy: %w", err)
 	}
