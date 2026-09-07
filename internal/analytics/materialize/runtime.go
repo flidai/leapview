@@ -862,7 +862,7 @@ func observeQueryCacheAdmission(ctx context.Context, decision dataquery.CacheAdm
 // preview, and unclassified calls must not populate the dashboard result cache
 // even if they happen to use an equivalent physical query shape.
 func dashboardQueryResultCacheable(request dataquery.Query) bool {
-	if request.Surface != dataquery.SurfaceDashboard {
+	if request.Surface != dataquery.SurfaceDashboard && request.Surface != dataquery.SurfacePublicDashboard {
 		return false
 	}
 	// Model rows are lowered through an opaque SQL plan without PlanIR

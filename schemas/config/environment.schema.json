@@ -2263,6 +2263,44 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_DASHBOARD_PREWARM_CONCURRENCY": {
+      "default": "1",
+      "description": "Warm refresh concurrency; the initial implementation accepts only 1.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_DASHBOARD_PREWARM_DEADLINE": {
+      "default": "10s",
+      "description": "Deadline for a local public dashboard warm refresh.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_DASHBOARD_PREWARM_MAX_PUBLICATIONS": {
+      "default": "4",
+      "description": "Maximum explicitly selected publications to prewarm.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_DASHBOARD_PREWARM_MAX_TARGETS": {
+      "default": "16",
+      "description": "Maximum default-page targets per warm refresh; larger pages are skipped.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_DASHBOARD_PREWARM_PUBLICATION_IDS": {
+      "description": "Comma-separated durable public publication row IDs to prewarm locally; empty disables prewarming.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST": {
       "description": "Exact immutable compatibility tuple digest required for the configured delivery pool admission.",
       "type": "string",

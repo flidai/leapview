@@ -49,6 +49,21 @@ func (m admittedMetrics) readContext(ctx context.Context) context.Context {
 	return workload.WithAdmitter(ctx, m.admitter)
 }
 
+// WithDashboardRefreshLease preserves runtime pinning through admission while
+// retaining the admitter for physical work inside the callback.
+func (m admittedMetrics) WithDashboardRefreshLease(ctx context.Context, run func(context.Context) error) error {
+	if run == nil {
+		return fmt.Errorf("dashboard refresh lease callback is required")
+	}
+	ctx = m.readContext(ctx)
+	if capability, ok := m.Metrics.(interface {
+		WithDashboardRefreshLease(context.Context, func(context.Context) error) error
+	}); ok {
+		return capability.WithDashboardRefreshLease(ctx, run)
+	}
+	return run(ctx)
+}
+
 func (m admittedMetrics) MetricsForProject(projectID projectgraph.ResourceID) (Metrics, bool) {
 	provider, ok := m.Metrics.(ProjectMetrics)
 	if ok {

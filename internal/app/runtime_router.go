@@ -329,6 +329,7 @@ type workflowAssemblyInputs struct {
 }
 
 type runtimeAssemblyInputs struct {
+	Prewarm     dashboardmodule.PrewarmConfig
 	RuntimeHost *runtimehostmodule.Module
 	// Production selects the fail-closed native module admission path. It is
 	// intentionally separate from SealedServing, which is also used by local
@@ -1203,6 +1204,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
+			Prewarm:                  runtimeConfig.Prewarm,
 			NativePersistence:        persistence.dashboardPersistence,
 			RequireNativePersistence: persistence.requireNativeDashboard,
 			RequireAuthoring:         persistence.requireNativeDashboard,
