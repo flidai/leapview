@@ -17,13 +17,14 @@ test('ECharts normalizes stacks and preserves series order and color identity ac
   ]
 
   const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.series.map((series: any) => series.name)).toEqual(['delivered', 'processing'])
-  expect(option.series.map((series: any) => series.itemStyle.color)).toEqual([
+  const renderedSeries = option.series.filter((series: any) => !series.silent)
+  expect(renderedSeries.map((series: any) => series.name)).toEqual(['delivered', 'processing'])
+  expect(renderedSeries.map((series: any) => series.itemStyle.color)).toEqual([
     defaultRendererContext.colors.success,
     defaultRendererContext.colors.data[2],
   ])
-  expect(option.series.map((series: any) => series.stack)).toEqual(['percent', 'percent'])
-  expect(option.series.map((series: any) => series.encode.y)).toEqual(['__lv_percent_value', '__lv_percent_value'])
+  expect(renderedSeries.map((series: any) => series.stack)).toEqual(['percent', 'percent'])
+  expect(renderedSeries.map((series: any) => series.encode.y)).toEqual(['__lv_percent_value', '__lv_percent_value'])
   expect(option.dataset[1].source).toEqual([
     ['label', 'series', 'value', '__lv_percent_value'],
     ['Jan', 'delivered', 10, 25],
@@ -42,12 +43,12 @@ test('ECharts normalizes stacks and preserves series order and color identity ac
     colors: { ...defaultRendererContext.colors, success: '#2ea043', data: ['#1f6feb', '#a371f7', '#d29922'] },
   } as any
   const darkOption = echartsOption(envelope, darkContext) as any
-  expect(darkOption.series.map((series: any) => series.itemStyle.color)).toEqual(['#2ea043', '#d29922'])
+  expect(darkOption.series.filter((series: any) => !series.silent).map((series: any) => series.itemStyle.color)).toEqual(['#2ea043', '#d29922'])
 
   const filtered = structuredClone(envelope) as any
   filtered.dataState.datasets[0].rows = filtered.dataState.datasets[0].rows.filter((row: unknown[]) => row[1] === 'processing')
   const filteredOption = echartsOption(filtered, defaultRendererContext) as any
-  expect(filteredOption.series.map((series: any) => [series.name, series.itemStyle.color])).toEqual([
+  expect(filteredOption.series.filter((series: any) => !series.silent).map((series: any) => [series.name, series.itemStyle.color])).toEqual([
     ['processing', defaultRendererContext.colors.data[2]],
   ])
   expect(filteredOption.dataset[1].source.map((row: unknown[]) => row.at(-1))).toEqual(['__lv_percent_value', 100, 100])
@@ -58,26 +59,45 @@ test('ECharts normalizes stacks and preserves series order and color identity ac
   const automaticProcessing = automatic.series.find((series: any) => series.name === 'processing').itemStyle.color
   delete filtered.spec.presentation.seriesIntent
   const automaticFiltered = echartsOption(filtered, defaultRendererContext, categoryColors) as any
-  expect(automaticFiltered.series[0].itemStyle.color).toBe(automaticProcessing)
+  expect(automaticFiltered.series.filter((series: any) => !series.silent)[0].itemStyle.color).toBe(automaticProcessing)
 })
 
 test('ECharts split series keep the generated source category domain in both orientations', () => {
   const source = (visualDocumentation as any).documents['visuals/line'].find((candidate: any) => candidate.visualID === 'revenue_line_status')
   if (!source) throw new Error('generated revenue_line_status fixture is missing')
   const expected = Array.from({ length: 12 }, (_, index) => `2025-${String(index + 1).padStart(2, '0')}`)
+  const highlighted = structuredClone(source) as any
+  highlighted.highlights = [{ sourceVisualID: 'source', interactionID: 'select', label: 'January', entries: [{ label: 'January', mappings: [{ targetFieldID: 'purchase_month', value: '2025-01' }] }] }]
+  const highlightedSeed = (echartsOption(highlighted, defaultRendererContext) as any).series.find((series: any) => series.silent === true)
+  expect(highlightedSeed.itemStyle).toBeUndefined()
+  expect(highlightedSeed.lineStyle.opacity).toBe(0)
 
   for (const horizontal of [false, true]) {
     const envelope = structuredClone(source) as any
     if (horizontal) envelope.spec.presentation.orientation = 'horizontal'
     const option = echartsOption(envelope, defaultRendererContext) as any
+    const baseline = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 800, height: 400 })
+    let baselineExtent: unknown
+    try {
+      baseline.setOption({ ...option, series: option.series.filter((series: any) => !series.silent) })
+      baseline.renderToSVGString()
+      baselineExtent = baseline.getModel().getComponent(horizontal ? 'xAxis' : 'yAxis').axis.scale.getExtent()
+    } finally {
+      baseline.dispose()
+    }
     const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 800, height: 400 })
     try {
       chart.setOption(option)
       chart.renderToSVGString()
       const model = chart.getModel()
+      const categorySeed = option.series.find((series: any) => series.silent === true)
+      expect(categorySeed).toMatchObject({ silent: true, __lv_source_row_indices: [], tooltip: { show: false } })
+      expect(option.legend.data).not.toContain(categorySeed.id)
       const categoryAxis = model.getComponent(horizontal ? 'yAxis' : 'xAxis').axis
       expect(categoryAxis.scale.getOrdinalMeta().categories, horizontal ? 'horizontal category domain' : 'vertical category domain').toEqual(expected)
+      expect(model.getComponent(horizontal ? 'xAxis' : 'yAxis').axis.scale.getExtent(), horizontal ? 'horizontal value extent' : 'vertical value extent').toEqual(baselineExtent)
       for (let index = 0; index < model.getSeriesCount(); index++) {
+        if (model.getSeriesByIndex(index).option.silent) continue
         const data = model.getSeriesByIndex(index).getData() as any
         const points = Array.from(data._layout?.points ?? []) as number[]
         const positions = points.filter((_, pointIndex) => pointIndex % 2 === (horizontal ? 1 : 0))
@@ -97,7 +117,7 @@ test('ECharts split category domains preserve authored row order and typed/null 
   ]
   envelope.spec.presentation.seriesIntent = [{ value: '1', order: 0 }, { value: '(null)', order: 1 }]
   const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.xAxis.data).toEqual([{ value: 'B' }, { value: 'A' }, { value: 'C' }])
+  expect(option.xAxis.data).toBeUndefined()
   expect(option.series.filter((series: any) => series.datasetId).map((series: any) => series.name)).toEqual(['1 [string:1]', '(null)', '1 [number:1]'])
 
   const nullCategory = structuredClone(envelope) as any
@@ -109,12 +129,18 @@ test('ECharts split category domains preserve authored row order and typed/null 
   numeric.spec.datasets[0].fields[0].dataType = 'integer'
   numeric.spec.presentation.seriesIntent = undefined
   const numericOption = echartsOption(numeric, defaultRendererContext) as any
-  expect(numericOption.xAxis.data).toEqual([{ value: 1 }, { value: '1' }, { value: 2 }])
   const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
   try {
     chart.setOption(numericOption)
     chart.renderToSVGString()
-    expect(chart.getModel().getComponent('xAxis').axis.scale.getOrdinalMeta().categories).toEqual([1, '1', 2])
+    const model = chart.getModel()
+    expect(model.getComponent('xAxis').axis.scale.getOrdinalMeta().categories).toEqual([1, '1', 2])
+    const actualSeries = Array.from({ length: model.getSeriesCount() }, (_, index) => model.getSeriesByIndex(index)).filter((series: any) => !series.option.silent)
+    const xPositions = actualSeries.flatMap((series: any) => {
+      const points = Array.from(series.getData()._layout?.points ?? []) as number[]
+      return points.filter((_, pointIndex) => pointIndex % 2 === 0)
+    })
+    expect(new Set(xPositions).size).toBe(3)
   } finally {
     chart.dispose()
   }
@@ -136,14 +162,14 @@ test('ECharts uses governed static colors for category series and their legends'
   }]
 
   const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.series.map((series: any) => [series.name, series.itemStyle.color])).toEqual([
+  expect(option.series.filter((series: any) => !series.silent).map((series: any) => [series.name, series.itemStyle.color])).toEqual([
     ['delivered', defaultRendererContext.colors.data[0]],
     ['processing', defaultRendererContext.colors.data[5]],
   ])
 
   envelope.dataState.datasets[0].rows = envelope.dataState.datasets[0].rows.filter((row: unknown[]) => row[1] === 'processing')
   const filtered = echartsOption(envelope, defaultRendererContext) as any
-  expect(filtered.series[0].itemStyle.color).toBe(defaultRendererContext.colors.data[5])
+  expect(filtered.series.filter((series: any) => !series.silent)[0].itemStyle.color).toBe(defaultRendererContext.colors.data[5])
 })
 
 test('ECharts keeps typed category-series identities distinct through ordering and filters', () => {
@@ -279,12 +305,12 @@ test('ECharts condenses crowded category-series charts without overlapping label
   expect(option.legend).toMatchObject({ type: 'scroll', orient: 'horizontal', left: 8, right: 8, height: 24, bottom: 0 })
   expect(option.grid).toMatchObject({ left: 12, right: 16, top: 16, bottom: 44, containLabel: true })
   expect(option.yAxis).toMatchObject({ splitNumber: 4, axisLabel: { hideOverlap: true } })
-  expect(option.series).toHaveLength(8)
-  expect(option.series.every((series: any) => series.label.show === false)).toBe(true)
+  expect(option.series.filter((series: any) => !series.silent)).toHaveLength(8)
+  expect(option.series.filter((series: any) => !series.silent).every((series: any) => series.label.show === false)).toBe(true)
 
   const compact = echartsOption(cartesianSeriesFixture(), defaultRendererContext) as any
   expect(compact.legend.type).toBeUndefined()
-  expect(compact.series.every((series: any) => series.label.show === true)).toBe(true)
+  expect(compact.series.filter((series: any) => !series.silent).every((series: any) => series.label.show === true)).toBe(true)
 })
 
 test('ECharts keeps category-series conditional icon cues visible through crowding and percent labels', () => {
@@ -306,9 +332,10 @@ test('ECharts keeps category-series conditional icon cues visible through crowdi
   )
 
   const crowded = echartsOption(envelope, defaultRendererContext) as any
-  expect(crowded.series.every((series: any) => series.label.show === true)).toBe(true)
-  expect(crowded.series.every((series: any) => series.labelLayout.hideOverlap === false)).toBe(true)
-  expect(crowded.series[0].label.formatter({ value: ['MG', 'approved', 1] })).toBe('↑ 1')
+  const crowdedSeries = crowded.series.filter((series: any) => !series.silent)
+  expect(crowdedSeries.every((series: any) => series.label.show === true)).toBe(true)
+  expect(crowdedSeries.every((series: any) => series.labelLayout.hideOverlap === false)).toBe(true)
+  expect(crowdedSeries[0].label.formatter({ value: ['MG', 'approved', 1] })).toBe('↑ 1')
 
   envelope.spec.presentation.stacking = 'percent'
   envelope.spec.presentation.labelPolicy.density = 'hidden'

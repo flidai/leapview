@@ -142,6 +142,7 @@ function applyCrossHighlight(option: Record<string, any>, envelope: Visualizatio
   const projection = projectVisualizationHighlights(envelope, dataset.id, dataset.columns, dataset.rows)
   const series = Array.isArray(option.series) ? option.series : option.series ? [option.series] : []
   for (const item of series) {
+    if (item.silent === true) continue
     const rowIndices = seriesRowIndices(envelope, dataset.columns, dataset.rows, item)
     const opacity = (params: { dataIndex?: number }) => {
       if (projection.matchedRows.size === 0) return 0.45

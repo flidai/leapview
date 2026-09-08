@@ -75,11 +75,12 @@ test('ECharts propagates symbolSize to every split Cartesian series', () => {
   ]
 
   const option = echartsOption(envelope, defaultRendererContext) as any
+  const renderedSeries = option.series.filter((series: any) => !series.silent)
 
-  expect(option.series.map((series: any) => series.name)).toEqual(['approved', 'pending'])
-  expect(option.series.map((series: any) => series.symbolSize)).toEqual([22, 22])
-  expect(option.series.map((series: any) => series.symbol)).toEqual(['none', 'none'])
-  expect(option.series.map((series: any) => series.stack)).toEqual(['normal', 'normal'])
+  expect(renderedSeries.map((series: any) => series.name)).toEqual(['approved', 'pending'])
+  expect(renderedSeries.map((series: any) => series.symbolSize)).toEqual([22, 22])
+  expect(renderedSeries.map((series: any) => series.symbol)).toEqual(['none', 'none'])
+  expect(renderedSeries.map((series: any) => series.stack)).toEqual(['normal', 'normal'])
 })
 
 test('ECharts preserves common labels, display units, and axes for heatmap', () => {

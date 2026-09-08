@@ -292,14 +292,15 @@ test('ECharts translation preserves combo series marks and axes', () => {
   } as VisualizationEnvelope
 
   const option = echartsOption(base) as any
+  const renderedSeries = option.series.filter((series: any) => !series.silent)
   expect(option.dataset).toHaveLength(3)
-  expect(option.series.map((series: any) => [series.name, series.type, series.yAxisIndex])).toEqual([
+  expect(renderedSeries.map((series: any) => [series.name, series.type, series.yAxisIndex])).toEqual([
     ['Revenue', 'line', 0], ['Orders', 'bar', 1],
   ])
   expect(option.yAxis).toHaveLength(2)
-  expect(option.series[0].markLine.data[0].id).toBe('reference-line:primary-target')
-  expect(option.series[1].markLine.data[0].id).toBe('reference-line:secondary-target')
-  expect(option.series[1].markArea.data[0][0].id).toBe('reference-band:secondary-range')
+  expect(renderedSeries[0].markLine.data[0].id).toBe('reference-line:primary-target')
+  expect(renderedSeries[1].markLine.data[0].id).toBe('reference-line:secondary-target')
+  expect(renderedSeries[1].markArea.data[0][0].id).toBe('reference-band:secondary-range')
   const temporal = structuredClone(base) as any
   temporal.spec.datasets[0].fields[2].dataType = 'temporal'
   temporal.spec.axes = [{
@@ -313,12 +314,13 @@ test('ECharts translation preserves combo series marks and axes', () => {
   horizontal.spec.presentation.orientation = 'horizontal'
   const horizontalOption = echartsOption(horizontal) as any
   expect(horizontalOption.xAxis).toHaveLength(2)
-  expect(horizontalOption.series.map((series: any) => series.xAxisIndex)).toEqual([0, 1])
-  expect(horizontalOption.series[1].markLine.data[0]).toMatchObject({ id: 'reference-line:secondary-target', xAxis: 2 })
+  const horizontalSeries = horizontalOption.series.filter((series: any) => !series.silent)
+  expect(horizontalSeries.map((series: any) => series.xAxisIndex)).toEqual([0, 1])
+  expect(horizontalSeries[1].markLine.data[0]).toMatchObject({ id: 'reference-line:secondary-target', xAxis: 2 })
   const reordered = structuredClone(base) as any
   reordered.dataState.datasets[0].rows.reverse()
   const reorderedOption = echartsOption(reordered) as any
-  expect(new Set(reorderedOption.series.map((series: any) => series.id))).toEqual(new Set(option.series.map((series: any) => series.id)))
+  expect(new Set(reorderedOption.series.filter((series: any) => !series.silent).map((series: any) => series.id))).toEqual(new Set(renderedSeries.map((series: any) => series.id)))
   expect(new Set(reorderedOption.dataset.map((dataset: any) => dataset.id))).toEqual(new Set(option.dataset.map((dataset: any) => dataset.id)))
 })
 
