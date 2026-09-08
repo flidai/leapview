@@ -71,9 +71,15 @@ REVOKE ALL ON FUNCTION delivery.lock_retention_root(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.lock_live_snapshot_retention(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.lock_authoring_dashboard(text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION project.bind_resource_uid_generation(uuid) FROM PUBLIC;
 DO $$
 BEGIN
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+		GRANT USAGE ON SCHEMA project TO leapview_control_runtime;
+		GRANT SELECT ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization TO leapview_control_runtime;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization FROM leapview_control_runtime;
+		GRANT EXECUTE ON FUNCTION project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb) TO leapview_control_runtime;
+		REVOKE EXECUTE ON FUNCTION project.bind_resource_uid_generation(uuid), project.authorize_resource_uid_restore(text,text,text,text,uuid,uuid,text,text,text,text) FROM leapview_control_runtime;
 		GRANT USAGE ON SCHEMA access, admin, dashboard, delivery, event, audit, release, ducklake, jobs, agent, lineage, physical_pool, serving_state, recovery TO leapview_control_runtime;
 		GRANT USAGE ON SCHEMA platform TO leapview_control_runtime;
 		GRANT SELECT, INSERT, UPDATE ON platform.setting TO leapview_control_runtime;
@@ -182,6 +188,10 @@ BEGIN
         REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_maintenance;
     END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
+		GRANT USAGE ON SCHEMA project TO leapview_control_readonly;
+		GRANT SELECT ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization TO leapview_control_readonly;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization FROM leapview_control_readonly;
+		REVOKE EXECUTE ON FUNCTION project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb), project.bind_resource_uid_generation(uuid), project.authorize_resource_uid_restore(text,text,text,text,uuid,uuid,text,text,text,text) FROM leapview_control_readonly;
 		GRANT USAGE ON SCHEMA access, admin, dashboard, delivery, event, audit, release, ducklake, jobs, agent, lineage, physical_pool, serving_state, recovery TO leapview_control_readonly;
 		GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
 		GRANT SELECT ON platform.setting, platform.instance_identity, platform.instance_environment, platform.instance_project_claim TO leapview_control_readonly;
@@ -206,6 +216,10 @@ BEGIN
         REVOKE ALL ON platform.api_cursor_signing_keys FROM leapview_control_readonly;
     END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
+		GRANT USAGE ON SCHEMA project TO leapview_control_backup;
+		GRANT SELECT ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization TO leapview_control_backup;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization FROM leapview_control_backup;
+		REVOKE EXECUTE ON FUNCTION project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb), project.bind_resource_uid_generation(uuid), project.authorize_resource_uid_restore(text,text,text,text,uuid,uuid,text,text,text,text) FROM leapview_control_backup;
 		GRANT USAGE ON SCHEMA project, access, admin, dashboard, delivery, event, audit, release, ducklake, jobs, agent, lineage, physical_pool, serving_state, recovery TO leapview_control_backup;
 		GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
 		GRANT SELECT ON platform.setting, platform.instance_identity, platform.instance_environment, platform.instance_project_claim TO leapview_control_backup;

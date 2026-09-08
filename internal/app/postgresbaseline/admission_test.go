@@ -45,6 +45,9 @@ func TestServingAdmissionsAcceptReviewedPrivileges(t *testing.T) {
 				return VerifyControlRuntimeAdmission(ctx, reader)
 			},
 			allowed: map[string]bool{
+				"schema:project:USAGE": true,
+				"table:project.resource_uid_registry:SELECT": true,
+				"function:project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb):EXECUTE": true,
 				"schema:recovery:USAGE":                true,
 				"schema:public:USAGE":                  true,
 				"table:public.goose_db_version:SELECT": true,
@@ -100,12 +103,18 @@ func TestServingAdmissionsRejectExtensionAndPrivilegeDrift(t *testing.T) {
 	valid := admissionReaderFake{
 		extension: platformpostgres.Extension{Name: "pgcrypto", Schema: "managed_data"},
 		allowed: map[string]bool{
+			"schema:project:USAGE": true,
+			"table:project.resource_uid_registry:SELECT": true,
+			"function:project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb):EXECUTE": true,
 			"schema:recovery:USAGE":                true,
 			"schema:public:USAGE":                  true,
 			"table:public.goose_db_version:SELECT": true,
 			"table:recovery.recovery_set:SELECT":   true,
 			"function:managed_data.publish_binding_set(text,text,text,text,bigint,jsonb):EXECUTE": true,
 		},
+	}
+	if err := VerifyControlRuntimeAdmission(t.Context(), valid); err != nil {
+		t.Fatalf("valid runtime fixture: %v", err)
 	}
 	for _, test := range []struct {
 		name   string
@@ -115,6 +124,11 @@ func TestServingAdmissionsRejectExtensionAndPrivilegeDrift(t *testing.T) {
 		{name: "missing positive privilege", mutate: func(f *admissionReaderFake) { delete(f.allowed, "schema:recovery:USAGE") }},
 		{name: "missing public schema usage", mutate: func(f *admissionReaderFake) { delete(f.allowed, "schema:public:USAGE") }},
 		{name: "forbidden privilege", mutate: func(f *admissionReaderFake) { f.allowed["table:public.goose_db_version:UPDATE"] = true }},
+		{name: "direct resource allocation", mutate: func(f *admissionReaderFake) { f.allowed["table:project.resource_uid_registry:INSERT"] = true }},
+		{name: "direct resource mutation", mutate: func(f *admissionReaderFake) { f.allowed["table:project.resource_uid_registry:UPDATE"] = true }},
+		{name: "unsealed inventory insertion", mutate: func(f *admissionReaderFake) { f.allowed["table:project.resource_uid_inventory:INSERT"] = true }},
+		{name: "standalone allocator", mutate: func(f *admissionReaderFake) { f.allowed["function:project.bind_resource_uid_generation(uuid):EXECUTE"] = true }},
+		{name: "runtime restore authority", mutate: func(f *admissionReaderFake) { f.allowed["function:project.authorize_resource_uid_restore(text,text,text,text,uuid,uuid,text,text,text,text):EXECUTE"] = true }},
 		{name: "runtime recovery-root function grant", mutate: func(f *admissionReaderFake) {
 			f.allowed["function:delivery.create_recovery_retention_root(uuid,text,uuid,uuid,timestamptz,jsonb):EXECUTE"] = true
 		}},

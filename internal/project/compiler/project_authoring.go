@@ -2,6 +2,7 @@ package compiler
 
 import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,7 +24,10 @@ type metadata struct {
 	Tags          []string `yaml:"tags"`
 	Domain        string   `yaml:"domain"`
 	Documentation string   `yaml:"documentation"`
-	Provenance    struct {
+	// Generated per-kind validation owns whether contract metadata is allowed.
+	// Retain that accepted field while reading the common discovery envelope.
+	Contract   *projectcontracts.ContractMetadata `yaml:"contract"`
+	Provenance struct {
 		Origin string `yaml:"origin"`
 		Path   string `yaml:"path"`
 		Source string `yaml:"source"`

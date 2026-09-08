@@ -19,6 +19,7 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
+	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	eventpostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
@@ -26,6 +27,7 @@ import (
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
+	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -59,6 +61,14 @@ func recoveryFinalizeDB(t *testing.T) (*pgxpool.Pool, *deploymentnative.Reposito
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := platformbootstrappostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := projectpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
@@ -76,6 +86,10 @@ func recoveryFinalizeDB(t *testing.T) (*pgxpool.Pool, *deploymentnative.Reposito
 		t.Fatal(err)
 	}
 	if err := servingnative.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), projectpostgres.ResourceUIDSchemaSQL()); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -105,9 +119,10 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	seedGenerationAdmissionBootstrap(t, db, base.Plan.TargetID, base.Plan.ProjectID.String(), string(base.Plan.Environment))
 	portableArtifact, err := projectartifact.NewSourceBundle(graph, projectmanifest.ResourceManifest{
 		Connections: map[string]semanticmodel.Connection{
-			"connection:recovery": {Kind: "managed"},
+			"connection:recovery": {Kind: "postgres"},
 		},
 	})
 	if err != nil {
