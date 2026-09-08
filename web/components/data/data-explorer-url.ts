@@ -38,7 +38,11 @@ export function dataExplorerReturnContextFromSearch(search: string): DataExplore
   if (surface === 'model') {
     const asset = singleReturnParam(params, 'returnAsset')
     const section = singleReturnParam(params, 'returnSection')
-    return asset && section && asset.startsWith('model:') && isValidDataExplorerRouteID(asset) && isDataExplorerModelSection(section)
+    // Model resource IDs are catalog-owned opaque IDs. Depending on the
+    // project bootstrap they may be namespaced (model:orders) or bare
+    // (orders), so do not infer the resource type from a prefix here. The
+    // model surface and route authorization provide that context.
+    return asset && section && isValidDataExplorerRouteID(asset) && isDataExplorerModelSection(section)
       ? { surface, asset, section }
       : undefined
   }
@@ -98,7 +102,7 @@ function appendDataExplorerReturnContext(params: URLSearchParams, context?: Data
   }
   const asset = context.asset.trim()
   const section = context.section.trim()
-  if (!asset.startsWith('model:') || !isValidDataExplorerRouteID(asset) || !isDataExplorerModelSection(section)) return
+  if (!isValidDataExplorerRouteID(asset) || !isDataExplorerModelSection(section)) return
   params.set('returnSurface', 'model')
   params.set('returnAsset', asset)
   params.set('returnSection', section)

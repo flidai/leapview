@@ -8,16 +8,19 @@ import { dataExplorerURL } from '../data/data-explorer-url'
  */
 export function modelExploreHref(asset: ResourceAssetSummarySignal): string | undefined {
   if (asset.type !== 'model') return undefined
-  // Resource ID is the stable explorer selection across catalog projections;
-  // display keys can be a bare model name in one surface and a prefixed key
-  // in another.
-  const objectKey = asset.id?.trim() || asset.key?.trim()
+  const resourceID = asset.id?.trim() ?? ''
+  const displayKey = asset.key?.trim() ?? ''
+  // The resource ID is the authoritative explorer selection. The server
+  // resolves it against both the physical object resource ID and its bound
+  // browser key; the display key is only a defensive fallback for partial
+  // project bootstrap payloads. Keep the return context on that same ID.
+  const objectKey = resourceID || displayKey
   if (!objectKey) return undefined
   const base = dataExplorerURL({ mode: 'browse', objectKey } as DataExplorerCommand)
   const queryStart = base.indexOf('?')
   const params = new URLSearchParams(queryStart >= 0 ? base.slice(queryStart + 1) : '')
   params.set('returnSurface', 'model')
-  params.set('returnAsset', asset.id.trim())
+  params.set('returnAsset', resourceID || objectKey)
   params.set('returnSection', 'data')
   return `/explore?${params.toString()}`
 }

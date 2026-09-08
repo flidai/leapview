@@ -81,10 +81,20 @@ test('return context parser accepts only the three closed route surfaces', () =>
   expect(dataExplorerReturnContextFromSearch('?returnSurface=chat&returnConversation=conversation%3Asales')).toEqual({ surface: 'chat', conversationId: 'conversation:sales' })
   expect(dataExplorerReturnContextFromSearch('?returnSurface=dashboard&returnDashboard=dashboard%3Asales&returnPage=overview')).toEqual({ surface: 'dashboard', dashboardId: 'dashboard:sales', pageId: 'overview' })
   expect(dataExplorerReturnContextFromSearch('?returnSurface=model&returnAsset=model%3Aorders&returnSection=data')).toEqual({ surface: 'model', asset: 'model:orders', section: 'data' })
+  expect(dataExplorerReturnContextFromSearch('?returnSurface=model&returnAsset=orders&returnSection=data')).toEqual({ surface: 'model', asset: 'orders', section: 'data' })
   expect(dataExplorerReturnContextFromSearch('?returnSurface=chat&returnConversation=%2Fadmin')).toBeUndefined()
   expect(dataExplorerReturnContextFromSearch('?returnSurface=chat&returnSurface=model&returnConversation=conversation%3Asales')).toBeUndefined()
   expect(dataExplorerReturnContextFromSearch('?returnSurface=chat&returnConversation=conversation%3Asales&returnConversation=conversation%3Aother')).toBeUndefined()
   expect(dataExplorerReturnContextFromSearch('?returnSurface=redirect&returnURL=https%3A%2F%2Fevil.example')).toBeUndefined()
+})
+
+test('model return context preserves a bare physical resource ID', () => {
+  const command = { mode: 'browse', objectKey: 'model:orders' } as DataExplorerCommand
+  const url = new URL(dataExplorerURL(command, undefined, false, { surface: 'model', asset: 'orders', section: 'data' }), 'https://example.test')
+  expect(url.searchParams.get('object')).toBe('model:orders')
+  expect(url.searchParams.get('returnSurface')).toBe('model')
+  expect(url.searchParams.get('returnAsset')).toBe('orders')
+  expect(url.searchParams.get('returnSection')).toBe('data')
 })
 
 test('export URL reuses canonical current query state and format', () => {
@@ -297,6 +307,7 @@ test('history updates preserve validated dashboard and model return contexts', (
   const cases = [
     ['?returnSurface=dashboard&returnDashboard=dashboard%3Asales&returnPage=overview', { returnSurface: 'dashboard', returnDashboard: 'dashboard:sales', returnPage: 'overview' }],
     ['?returnSurface=model&returnAsset=model%3Aorders&returnSection=data', { returnSurface: 'model', returnAsset: 'model:orders', returnSection: 'data' }],
+    ['?returnSurface=model&returnAsset=orders&returnSection=data', { returnSurface: 'model', returnAsset: 'orders', returnSection: 'data' }],
   ] as const
   const original = globalThis.window
   try {

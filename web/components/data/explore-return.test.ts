@@ -26,3 +26,9 @@ test('explorer return context produces a same-origin model data path', () => {
   })
   expect(exploreReturnLink('?returnSurface=model&returnAsset=model%3Aorders&returnSection=javascript')).toBeUndefined()
 })
+
+test('explorer return context accepts a bare model resource ID', () => {
+  expect(exploreReturnLink('?returnSurface=model&returnAsset=orders&returnSection=data')).toEqual({
+    href: '/models/orders/data', label: 'Back to model',
+  })
+})

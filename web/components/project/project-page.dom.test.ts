@@ -201,7 +201,7 @@ test('model detail renders the canonical explorer entry with a closed return con
       return { href: node?.getAttribute('href'), label: node?.getAttribute('aria-label'), text: node?.textContent?.trim() }
     })
     expect(link).toEqual({
-      href: '/explore?object=model%3Aorders&returnSurface=model&returnAsset=model%3Aorders&returnSection=data',
+      href: '/explore?object=orders&returnSurface=model&returnAsset=orders&returnSection=data',
       label: 'Explore this model in Data Explorer',
       text: 'Explore data',
     })
