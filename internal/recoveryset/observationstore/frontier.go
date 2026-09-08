@@ -38,9 +38,9 @@ func (s *Store) ReadFrontier(ctx context.Context, ref FrontierRef, horizons ...t
 	if err != nil {
 		return recoveryset.RecoverySet{}, err
 	}
-	if required.IsZero() {
-		required = loaded.Descriptor.RequiredRetainUntil
-	}
+	// The descriptor's recorded horizon is authoritative; an optional
+	// shorter horizon must not weaken reads of either frontier object.
+	required = loaded.Descriptor.RequiredRetainUntil
 	a, _, err := s.getEvidence(ctx, ref.Frontier, now, required)
 	if err != nil {
 		return recoveryset.RecoverySet{}, err
@@ -58,6 +58,9 @@ func (s *Store) ReadFrontier(ctx context.Context, ref FrontierRef, horizons ...t
 	}
 	if set.ManagedEvidence == nil || set.ManagedEvidence.ManifestDigest != "sha256:"+ref.Evidence.Manifest.SHA256 || set.ManagedEvidence.BoundaryDigest != "sha256:"+ref.Evidence.Boundary.SHA256 || set.ManagedEvidence.DescriptorDigest != "sha256:"+ref.Evidence.Descriptor.SHA256 || !set.ManagedEvidence.Boundary.Matches(loaded.Boundary) {
 		return recoveryset.RecoverySet{}, fmt.Errorf("%w: frontier managed evidence does not match evidence reference", ErrIntegrity)
+	}
+	if !loaded.Descriptor.RequiredRetainUntil.After(s.now()) {
+		return recoveryset.RecoverySet{}, fmt.Errorf("%w: retention horizon elapsed during frontier read", ErrRetention)
 	}
 	return set, nil
 }

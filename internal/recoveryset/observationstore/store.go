@@ -404,6 +404,9 @@ func (s *Store) Reload(ctx context.Context, ref Ref, horizons ...time.Time) (Evi
 	if descriptor.RequiredRetainUntil.Before(required) {
 		return Evidence{}, fmt.Errorf("%w: descriptor horizon is shorter than requested horizon", ErrRetention)
 	}
+	// The descriptor is authoritative. An optional horizon may raise the
+	// requirement, but it can never weaken the recorded retention horizon.
+	required = descriptor.RequiredRetainUntil
 	if !descriptor.Manifest.equal(ref.Manifest) || !descriptor.Boundary.equal(ref.Boundary) {
 		return Evidence{}, fmt.Errorf("%w: descriptor does not bind supplied manifest and boundary refs", ErrIntegrity)
 	}
@@ -438,6 +441,9 @@ func (s *Store) Reload(ctx context.Context, ref Ref, horizons ...time.Time) (Evi
 		if _, err := s.verifySourceAt(ctx, protection.Object, protection.RetainUntil, now, required); err != nil {
 			return Evidence{}, err
 		}
+	}
+	if !descriptor.RequiredRetainUntil.After(s.now()) {
+		return Evidence{}, fmt.Errorf("%w: retention horizon elapsed during reload", ErrRetention)
 	}
 	return Evidence{Manifest: manifest, Boundary: boundary, Descriptor: descriptor, Ref: ref}, nil
 }
@@ -475,6 +481,9 @@ func (s *Store) PersistFrontier(ctx context.Context, set recoveryset.RecoverySet
 	loaded, err := s.Reload(ctx, evidence, until)
 	if err != nil {
 		return FrontierRef{}, err
+	}
+	if until.Before(loaded.Descriptor.RequiredRetainUntil) {
+		return FrontierRef{}, fmt.Errorf("%w: frontier horizon is shorter than descriptor horizon", ErrRetention)
 	}
 	binding := set.ManagedEvidence
 	if binding.ManifestDigest != loaded.Descriptor.ManifestDigest || binding.BoundaryDigest != loaded.Descriptor.BoundaryDigest || binding.DescriptorDigest != "sha256:"+evidence.Descriptor.SHA256 || !binding.Boundary.Matches(loaded.Boundary) {
