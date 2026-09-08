@@ -283,6 +283,23 @@ test('ECharts keeps generated compact horizontal bar ticks and automatic labels 
       chart.renderToSVGString()
       const textElements = chart.getZr().storage.getDisplayList()
         .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string')
+      const barsWithLabels = chart.getZr().storage.getDisplayList()
+        .filter((item: any) => item.type === 'rect' && typeof item.getTextContent?.()?.style?.text === 'string')
+      expect(barsWithLabels.length, `${context.theme} should retain rendered bar labels`).toBeGreaterThan(10)
+      for (const bar of barsWithLabels) {
+        const label = bar.getTextContent()
+        const barBounds = globalTextBounds(bar)
+        const labelBounds = globalTextBounds(label)
+        const padding = Array.isArray(label.style.padding) ? Math.max(...label.style.padding.map(Number)) : Number(label.style.padding ?? 0)
+        const tolerance = padding + Number(label.style.lineWidth ?? 0)
+        expect(labelBounds.x, `${context.theme} ${label.style.text} label left bound`).toBeGreaterThanOrEqual(barBounds.x - tolerance)
+        expect(labelBounds.y, `${context.theme} ${label.style.text} label top bound`).toBeGreaterThanOrEqual(barBounds.y - tolerance)
+        expect(labelBounds.x + labelBounds.width, `${context.theme} ${label.style.text} label right bound`).toBeLessThanOrEqual(barBounds.x + barBounds.width + tolerance)
+        expect(labelBounds.y + labelBounds.height, `${context.theme} ${label.style.text} label bottom bound`).toBeLessThanOrEqual(barBounds.y + barBounds.height + tolerance)
+      }
+      const narrowBars = barsWithLabels.filter((bar: any) => ['$128', '$58'].includes(bar.getTextContent().style.text))
+      expect(narrowBars.length, `${context.theme} should retain both narrow first-stack labels`).toBe(2)
+      expect(textElements.some((item: any) => String(item.style.text).includes('…')), `${context.theme} should truncate at least one narrow bar label`).toBe(true)
       for (const item of textElements) {
         const bounds = globalTextBounds(item)
         expect(bounds.x, `${context.theme} ${item.style.text} left bound`).toBeGreaterThanOrEqual(0)
