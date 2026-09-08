@@ -1503,8 +1503,8 @@ test('dashboard agent drawer carries page context and explicit visual references
       askBackground: 'rgba(0, 0, 0, 0)',
       askBoxShadow: 'none',
       askActionRow: 'visual-actions',
-      kpiAskActionRow: 'headerless-actions',
-      tableAskActionRow: 'headerless-actions',
+      kpiAskActionRow: 'visual-actions',
+      tableAskActionRow: 'visual-actions',
       askPressed: 'false',
       askUsesAgentIcon: true,
       chartAction: 'Expand chart',
@@ -3539,7 +3539,8 @@ test('dashboard agent restores its open state and active conversation after relo
       request: { conversationId: 'agentconv_saved' },
     })
 
-    await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-dashboard-page') as any
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agent: {
         activeConversationId: 'agentconv_saved',
@@ -3548,7 +3549,9 @@ test('dashboard agent restores its open state and active conversation after relo
       await element.updateComplete
       const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
       await drawer.updateComplete
-      drawer.shadowRoot.querySelector('[aria-label="Close agent"]').click()
+    })
+    await page.locator('lv-chat-drawer').locator('[aria-label="Close agent"]').click()
+    await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
     })
 
