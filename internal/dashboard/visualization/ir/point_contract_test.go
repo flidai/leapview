@@ -130,7 +130,7 @@ func TestValidateSpecRejectsNonFinitePointPresentationValues(t *testing.T) {
 func TestValidateSpecPointConditionalFormattingTargets(t *testing.T) {
 	t.Parallel()
 
-	valid := pointGradientConditionalFormat("mark-fill", "revenue", VisualizationConditionalTargetMarkFill)
+	valid := pointGradientConditionalFormat("mark-fill", "y", VisualizationConditionalTargetMarkFill)
 	if err := ValidateSpec(pointContractSpec("", nil, valid)); err != nil {
 		t.Fatalf("ValidateSpec() rejected one point mark_fill rule: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestValidateSpecPointConditionalFormattingTargets(t *testing.T) {
 		t.Fatalf("ValidateSpec() error = %v, want duplicate mark_fill diagnostic", err)
 	}
 
-	removed := pointGradientConditionalFormat("removed-mark-stroke", "revenue", VisualizationConditionalTarget("mark_stroke"))
+	removed := pointGradientConditionalFormat("removed-mark-stroke", "y", VisualizationConditionalTarget("mark_stroke"))
 	if err := ValidateSpec(pointContractSpec("", nil, removed)); err == nil || !strings.Contains(err.Error(), `unsupported target "mark_stroke"`) {
 		t.Fatalf("ValidateSpec() error = %v, want removed-target diagnostic", err)
 	}
@@ -155,12 +155,38 @@ func TestValidateSpecPointConditionalFormattingTargets(t *testing.T) {
 		VisualizationConditionalTargetIcon,
 	} {
 		t.Run(string(target), func(t *testing.T) {
-			format := pointGradientConditionalFormat("invalid-"+string(target), "revenue", target)
+			format := pointGradientConditionalFormat("invalid-"+string(target), "y", target)
 			err := ValidateSpec(pointContractSpec("", nil, format))
 			if err == nil || !strings.Contains(err.Error(), "incompatible with point visualizations") {
 				t.Fatalf("ValidateSpec() error = %v, want point target diagnostic", err)
 			}
 		})
+	}
+}
+
+func TestValidateSpecPointConditionalFormattingRequiresRenderedChannel(t *testing.T) {
+	t.Parallel()
+
+	color := VisualizationColorIntentDanger
+	icon := VisualizationIconIntentWarning
+	format := VisualizationConditionalFormat{
+		ID: "identity-rule", Target: VisualizationConditionalTargetMarkFill,
+		Field: VisualizationFieldRef{Dataset: "primary", Field: "order_id"},
+		Rule: VisualizationConditionalRule{Value: &FieldVisualizationConditionalRule{
+			VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "field"}, Kind: "field",
+			Source:    VisualizationFieldRef{Dataset: "primary", Field: "state"},
+			Values:    map[string]VisualizationConditionalStyle{"late": {Color: &color, Icon: &icon}},
+			NullStyle: VisualizationConditionalStyle{Color: &color, Icon: &icon}, DefaultStyle: VisualizationConditionalStyle{Color: &color, Icon: &icon},
+		}},
+	}
+	err := ValidateSpec(pointContractSpec("state", &PointVisualizationColorScale{Kind: VisualizationPointColorScaleKindCategorical}, format))
+	if err == nil || !strings.Contains(err.Error(), "not rendered by point channels") {
+		t.Fatalf("ValidateSpec() error = %v, want point rendered-channel diagnostic", err)
+	}
+
+	format.Field.Field = "state"
+	if err := ValidateSpec(pointContractSpec("state", &PointVisualizationColorScale{Kind: VisualizationPointColorScaleKindCategorical}, format)); err != nil {
+		t.Fatalf("ValidateSpec() rejected point color channel: %v", err)
 	}
 }
 
@@ -195,7 +221,7 @@ func TestValidateSpecPointMarkFillRequiresColorForEveryOutcome(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			format := VisualizationConditionalFormat{
 				ID: "fill", Target: VisualizationConditionalTargetMarkFill,
-				Field: VisualizationFieldRef{Dataset: "primary", Field: "revenue"}, Rule: test.rule,
+				Field: VisualizationFieldRef{Dataset: "primary", Field: "y"}, Rule: test.rule,
 			}
 			err := ValidateSpec(pointContractSpec("", nil, format))
 			if err == nil || !strings.Contains(err.Error(), test.want) {

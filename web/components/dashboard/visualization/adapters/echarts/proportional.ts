@@ -1,9 +1,11 @@
-import type { VisualizationEnvelope } from '../../../../../generated/visualization'
+import type { VisualizationConditionalFormat, VisualizationEnvelope, VisualizationFieldRef } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
 import { formatDisplayField, formatField, inlineDataset, legendDecoration, type EChartsTranslation } from './common'
+import { conditionalIconGlyph, resolveConditionalFormat } from '../../conditional-format'
 import { conditionalItemColor } from './conditional-color'
 import { echartsLabelPolicy } from './label-policy'
 import type { CategoryColorRegistry } from './category-colors'
+import { conditionalColorWithFallback } from './series-intent'
 
 const CENTER_GRAPHIC_ID = 'graphic:proportional:center'
 
@@ -19,17 +21,38 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   const categoryIndex = dataset?.columns.indexOf(spec.category.field) ?? -1
   const valueIndex = dataset?.columns.indexOf(spec.value.field) ?? -1
   const outside = presentation.labelPosition !== 'inside'
+  const conditionalCue = proportionalConditionalCueFormat(envelope, spec.value)
   const labels = echartsLabelPolicy(envelope, spec.value.dataset, presentation.labelPolicy, ({ value }) => {
     const row = Array.isArray(value) ? value : []
+    const cue = conditionalCue && dataset ? resolveConditionalFormat(conditionalCue, dataset.columns, row).style.icon : undefined
     const amount = formatDisplayField(envelope, spec.value, valueIndex >= 0 ? row[valueIndex] : undefined, context)
-    if (!outside) return amount
+    if (!outside) return [cue ? conditionalIconGlyph(cue) : '', amount].filter(Boolean).join(' ')
     const category = formatField(envelope, spec.category, categoryIndex >= 0 ? row[categoryIndex] : undefined, context)
-    return `${category}: ${amount}`
+    return [cue ? conditionalIconGlyph(cue) : '', `${category}: ${amount}`].filter(Boolean).join(' ')
   }, context)
+  // Proportional sectors have no independent icon channel. If an authored
+  // conditional outcome carries a cue, retain a truthful visible label even
+  // when density, overlap, or sector-angle policies would otherwise suppress it.
+  if (conditionalCue) {
+    labels.label.show = true
+    labels.labelLayout = { hideOverlap: false }
+  }
   const categoryValues = categoryIndex < 0 ? [] : (dataset?.rows ?? []).map((row) => row[categoryIndex])
   categoryColors.register(envelope, spec.category, categoryValues)
-  const governedColor = conditionalItemColor(envelope, spec.value, 'mark_fill', context)
-    ?? conditionalItemColor(envelope, spec.value, 'series_color', context)
+  const markFill = conditionalItemColor(envelope, spec.value, 'mark_fill', context)
+  const seriesFill = conditionalItemColor(envelope, spec.value, 'series_color', context)
+  const categoryColor = (params: { value?: unknown }) => categoryColors.color(
+    envelope,
+    spec.category,
+    Array.isArray(params.value) ? params.value[categoryIndex] : undefined,
+    context,
+  )
+  // Icon-only conditional outcomes intentionally have no fill color. Keep
+  // the normal, category-stable color for those rows instead of suppressing
+  // the sector color with an undefined itemStyle callback result.
+  const itemColor = markFill || seriesFill
+    ? conditionalColorWithFallback(markFill, conditionalColorWithFallback(seriesFill, categoryColor))
+    : categoryColor
   const series: EChartsTranslation = {
     id: `series:primary:${spec.mark}`, type: spec.mark === 'funnel' ? 'funnel' : 'pie',
     encode: { itemName: spec.category.field, value: spec.value.field },
@@ -41,7 +64,7 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     },
     ...(isPie ? {
       avoidLabelOverlap: true,
-      minShowLabelAngle: minimumLabelAngle(presentation.labelPolicy.density),
+      minShowLabelAngle: conditionalCue ? 0 : minimumLabelAngle(presentation.labelPolicy.density),
       labelLine: {
         show: outside,
         length: 10,
@@ -51,7 +74,7 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     } : {}),
     ...(isPie ? { roseType: presentation.rose ? 'radius' : false } : {}),
     itemStyle: {
-      color: governedColor ?? ((params: { value?: unknown[] }) => categoryColors.color(envelope, spec.category, Array.isArray(params.value) ? params.value[categoryIndex] : undefined, context)),
+      color: itemColor,
     },
   }
   if (radius !== undefined) series.radius = radius
@@ -111,6 +134,32 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     series: [series],
     aria: { decal: { show: repeatsColors } },
   }
+}
+
+function proportionalConditionalCueFormat(
+  envelope: VisualizationEnvelope,
+  value: VisualizationFieldRef,
+): VisualizationConditionalFormat | undefined {
+  const formats = envelope.spec.conditionalFormatting ?? []
+  return formats.find((format) =>
+    format.target === 'mark_fill'
+    && format.field.dataset === value.dataset
+    && format.field.field === value.field
+    && conditionalRuleHasIcon(format))
+    ?? formats.find((format) =>
+      format.target === 'series_color'
+      && format.field.dataset === value.dataset
+      && format.field.field === value.field
+      && conditionalRuleHasIcon(format))
+}
+
+function conditionalRuleHasIcon(format: VisualizationConditionalFormat): boolean {
+  const rule = format.rule
+  if (rule.nullStyle.icon) return true
+  if (rule.kind === 'gradient') return Boolean(rule.low.icon || rule.high.icon)
+  if (rule.defaultStyle.icon) return true
+  if (rule.kind === 'rules') return rule.rules.some((candidate) => Boolean(candidate.style.icon))
+  return Object.values(rule.values).some((style) => Boolean(style.icon))
 }
 
 export function proportionalCenterText(envelope: VisualizationEnvelope, context: RendererContext, activeRow?: readonly unknown[]): string | undefined {

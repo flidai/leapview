@@ -226,6 +226,37 @@ test('ECharts condenses crowded category-series charts without overlapping label
   expect(compact.series.every((series: any) => series.label.show === true)).toBe(true)
 })
 
+test('ECharts keeps category-series conditional icon cues visible through crowding and percent labels', () => {
+  const envelope = cartesianSeriesFixture() as any
+  envelope.spec.mark = 'column'
+  envelope.spec.presentation.stacked = false
+  envelope.spec.presentation.stacking = 'none'
+  envelope.spec.conditionalFormatting = [{
+    id: 'value-icon', target: 'icon', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'arrow_up' } }],
+      nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'arrow_down' },
+    },
+  }]
+  const states = ['MG', 'CE', 'GO', 'MT', 'PE', 'RJ', 'RS', 'AP']
+  const statuses = ['approved', 'canceled', 'created', 'delivered', 'invoiced', 'processing', 'shipped', 'unavailable']
+  envelope.dataState.datasets[0].rows = states.flatMap((state: string, stateIndex: number) =>
+    statuses.map((status: string, statusIndex: number) => [state, status, (stateIndex + 1) * (statusIndex + 1)]),
+  )
+
+  const crowded = echartsOption(envelope, defaultRendererContext) as any
+  expect(crowded.series.every((series: any) => series.label.show === true)).toBe(true)
+  expect(crowded.series.every((series: any) => series.labelLayout.hideOverlap === false)).toBe(true)
+  expect(crowded.series[0].label.formatter({ value: ['MG', 'approved', 1] })).toBe('↑ 1')
+
+  envelope.spec.presentation.stacking = 'percent'
+  envelope.spec.presentation.labelPolicy.density = 'hidden'
+  const percent = echartsOption(envelope, defaultRendererContext) as any
+  const delivered = percent.series.find((series: any) => series.name === 'approved')
+  expect(delivered).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
+  expect(delivered.label.formatter({ value: ['MG', 'approved', 1, 2.7777777777777777] })).toBe('↑ 2.8%')
+})
+
 test('ECharts normalizes multi-metric percent stacks without changing raw tooltip values', () => {
   const envelope = cartesianFixture('area', ['label', 'revenue', 'cost']) as any
   envelope.spec.presentation.stacked = false
@@ -255,6 +286,39 @@ test('ECharts normalizes multi-metric percent stacks without changing raw toolti
     ['Jan', 10, 30, 75, 25],
     ['Feb', 30, 10, 25, 75],
   ])
+})
+
+test('ECharts preserves conditional icon and label color on percent-stack labels', () => {
+  const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, attention: '#d29922' } }
+  const format = {
+    id: 'cost-status', target: 'label_foreground', field: { dataset: 'primary', field: 'cost' },
+    rule: {
+      kind: 'rules',
+      rules: [{ operator: 'greater_or_equal', value: 0, style: { color: 'warning', icon: 'arrow_up' } }],
+      nullStyle: { color: 'neutral', icon: 'warning' }, defaultStyle: { color: 'danger', icon: 'arrow_down' },
+    },
+  }
+
+  const multiMetric = cartesianFixture('area', ['label', 'revenue', 'cost']) as any
+  multiMetric.spec.presentation.stacked = false
+  multiMetric.spec.presentation.stacking = 'percent'
+  multiMetric.spec.presentation.labelPolicy.density = 'always'
+  multiMetric.spec.presentation.seriesIntent = [{ value: 'cost', order: 0 }, { value: 'revenue', order: 1 }]
+  multiMetric.dataState.datasets[0].rows = [['Jan', 10, 30]]
+  multiMetric.spec.conditionalFormatting = [format]
+  const multiOption = echartsOption(multiMetric, dark) as any
+  const multiLabel = multiOption.series[0].label
+  expect(multiLabel.formatter({ value: ['Jan', 10, 30, 75, 25] })).toBe('↑ 75%')
+  expect(multiLabel.color({ value: ['Jan', 10, 30, 75, 25] })).toBe(dark.colors.attention)
+
+  const categorySeries = cartesianSeriesFixture() as any
+  categorySeries.spec.presentation.stacking = 'percent'
+  categorySeries.spec.presentation.labelPolicy.density = 'always'
+  categorySeries.spec.conditionalFormatting = [{ ...format, id: 'value-status', field: { dataset: 'primary', field: 'value' } }]
+  const categoryOption = echartsOption(categorySeries, dark) as any
+  const categoryLabel = categoryOption.series.find((series: any) => series.name === 'delivered').label
+  expect(categoryLabel.formatter({ value: ['Jan', 'delivered', 10, 25] })).toBe('↑ 25%')
+  expect(categoryLabel.color({ value: ['Jan', 'delivered', 10, 25] })).toBe(dark.colors.attention)
 })
 
 test('ECharts translation emits one multi-value financial series', () => {

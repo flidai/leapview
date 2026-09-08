@@ -1102,7 +1102,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 	ids := make(map[string]struct{}, len(*base.ConditionalFormatting))
 	targets := make(map[string]struct{}, len(*base.ConditionalFormatting))
 	pointMarkFill := false
-	for _, format := range *base.ConditionalFormatting {
+	for formatIndex, format := range *base.ConditionalFormatting {
 		if strings.TrimSpace(format.ID) == "" {
 			return fmt.Errorf("conditional formatting ID is required")
 		}
@@ -1129,6 +1129,9 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 		}
 		if err := validateConditionalFormattingApplicability(spec, format); err != nil {
 			return fmt.Errorf("conditional formatting %q field: %w", format.ID, err)
+		}
+		if err := validateConditionalFormattingRowDataset(spec, formatIndex, "field", format.Field); err != nil {
+			return err
 		}
 		field, _ := visualizationField(format.Field, schemas)
 		switch rule := format.Rule.Value.(type) {
@@ -1184,6 +1187,9 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 			if err := validateFieldRef(rule.Source, schemas); err != nil {
 				return fmt.Errorf("conditional formatting %q source: %w", format.ID, err)
 			}
+			if err := validateConditionalFormattingRowDataset(spec, formatIndex, "rule.source", rule.Source); err != nil {
+				return err
+			}
 			if err := validateConditionalFormattingSource(spec, format); err != nil {
 				return fmt.Errorf("conditional formatting %q source: %w", format.ID, err)
 			}
@@ -1226,6 +1232,38 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 	return nil
 }
 
+// validateConditionalFormattingRowDataset keeps row-backed conditional
+// formatting on the dataset that backs rendered datum rows. Renderers have no
+// join available for conditional fields or field-rule sources from an
+// unrelated result frame.
+func validateConditionalFormattingRowDataset(spec VisualizationSpec, formatIndex int, path string, ref VisualizationFieldRef) error {
+	rowDataset, ok := conditionalFormattingRowDataset(spec)
+	if !ok || ref.Dataset == rowDataset {
+		return nil
+	}
+	return fmt.Errorf("spec.conditionalFormatting[%d].%s.dataset %q does not match row dataset %q", formatIndex, path, ref.Dataset, rowDataset)
+}
+
+func conditionalFormattingRowDataset(spec VisualizationSpec) (string, bool) {
+	switch value := spec.Value.(type) {
+	case *PointVisualizationSpec:
+		return value.X.Dataset, true
+	case *CartesianVisualizationSpec:
+		// Category-series charts are split from the series dataset; all other
+		// Cartesian translations consume the x dataset as their row frame.
+		if value.Series != nil && len(value.Y) == 1 {
+			return value.Series.Dataset, true
+		}
+		return value.X.Dataset, true
+	case *ProportionalVisualizationSpec:
+		return value.Category.Dataset, true
+	case *KPIVisualizationSpec:
+		return value.Value.Dataset, true
+	default:
+		return "", false
+	}
+}
+
 // validateConditionalFormattingApplicability keeps authored target bindings
 // honest about the channels a renderer actually emits. Schema membership alone
 // is insufficient: ECharts and the table adapter intentionally omit source
@@ -1241,6 +1279,28 @@ func validateConditionalFormattingApplicability(spec VisualizationSpec, format V
 	}
 	field := format.Field
 	switch value := spec.Value.(type) {
+	case *PointVisualizationSpec:
+		visible := make([]VisualizationFieldRef, 0, 6)
+		visible = append(visible, value.X, value.Y)
+		if value.Size != nil {
+			visible = append(visible, *value.Size)
+		}
+		if value.Color != nil {
+			visible = append(visible, *value.Color)
+		}
+		if value.Label != nil {
+			visible = append(visible, *value.Label)
+		}
+		if value.Tooltip != nil {
+			visible = append(visible, (*value.Tooltip)...)
+		}
+		if !contains(visible, field) {
+			return fmt.Errorf("field %q is not rendered by point channels (x, y, size, color, label, or tooltip)", field.Field)
+		}
+	case *KPIVisualizationSpec:
+		if field.Dataset != value.Value.Dataset || field.Field != value.Value.Field {
+			return fmt.Errorf("field %q is not the rendered KPI value field %q", field.Field, value.Value.Field)
+		}
 	case *CartesianVisualizationSpec:
 		visible := value.Y
 		channel := "y"
