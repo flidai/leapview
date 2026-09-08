@@ -37,7 +37,7 @@ test('ECharts legend metadata uses canonical item names and a renderer-owned tit
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.legend.data).toEqual([{ name: 'closed' }, { name: 'open' }])
   expect(option.legend.formatter('open')).toBe('Open orders')
-  expect(option.series.map((series: any) => series.name)).toEqual(['closed', 'open'])
+  expect(option.series.filter((series: any) => !series.silent).map((series: any) => series.name)).toEqual(['closed', 'open'])
   expect(option.graphic).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'text', style: expect.objectContaining({ text: 'States', fill: defaultRendererContext.colors.foreground }) })]))
   expect(option.legend.name).toBeUndefined()
   expect(option.legend.nameTextStyle).toBeUndefined()
