@@ -1700,7 +1700,7 @@ func updateInteractionTargetList(current *[]string, target string, keep bool) *[
 		values = append([]string(nil), (*current)...)
 	}
 	found := false
-	result := make([]string, 0, len(values)+1)
+	result := make([]string, 0, len(values))
 	for _, candidate := range values {
 		if candidate == target {
 			if keep && !found {
