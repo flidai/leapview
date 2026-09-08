@@ -929,9 +929,9 @@ func TestValidateRestoredDataExploreStateConstrainsFilterDatasetParticipation(t 
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Type: "string"}}},
-			"customers": {ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{"region": {Type: "string"}}},
-			"other":     {ModelName: "other", Dimensions: map[string]semanticmodel.MetricDimension{"name": {Type: "string"}}},
+			"orders":    {ModelName: "orders", GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"status"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"status": {Type: "string", Datatype: semanticmodel.DataTypeString}}},
+			"customers": {ModelName: "customers", GrainEntity: "customer", Entities: map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"region"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"region": {Type: "string", Datatype: semanticmodel.DataTypeString}}},
+			"other":     {ModelName: "other", GrainEntity: "other", Entities: map[string]semanticmodel.EntityDefinition{"other": {Type: "primary", Fields: []string{"name"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"name": {Type: "string", Datatype: semanticmodel.DataTypeString}}},
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
 			"orders": {Model: "orders"}, "customers": {Model: "customers"}, "other": {Model: "other"},
@@ -942,7 +942,7 @@ func TestValidateRestoredDataExploreStateConstrainsFilterDatasetParticipation(t 
 			"combined":       {Type: "ratio", Numerator: "order_count", Denominator: "customer_count"},
 		},
 	}
-	compiled, err := semanticquery.CompileDatasetBindings(model)
+	compiled, err := semanticquery.CompileModel(model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1086,8 +1086,8 @@ func TestValidateRestoredDataExploreStateAcceptsSafeRebase(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Field: "orders.customer_id"}, "status": {Field: "orders.status"}}},
-			"customers": {ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Field: "customers.customer_id"}, "region": {Field: "customers.region"}}},
+			"orders":    {ModelName: "orders", GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"customer_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Field: "orders.customer_id", Type: "string", Datatype: semanticmodel.DataTypeString}, "status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString}}},
+			"customers": {ModelName: "customers", GrainEntity: "customer", Entities: map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Field: "customers.customer_id", Type: "string", Datatype: semanticmodel.DataTypeString}, "region": {Field: "customers.region", Type: "string", Datatype: semanticmodel.DataTypeString}}},
 		},
 		Relationships: []semanticmodel.Relationship{{ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"}},
 		Datasets:      map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
@@ -1102,7 +1102,7 @@ func TestValidateRestoredDataExploreStateAcceptsSafeRebase(t *testing.T) {
 		{ID: "model:customers", Type: string(projectview.AssetTypeModel), Key: "customers", Title: "Customers"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}
-	compiled, err := semanticquery.CompileDatasetBindings(model)
+	compiled, err := semanticquery.CompileModel(model)
 	if err != nil {
 		t.Fatal(err)
 	}
