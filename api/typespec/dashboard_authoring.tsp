@@ -175,6 +175,25 @@ model DashboardAuthoringMetadataIntent {
   appearance?: LeapViewDashboard.DashboardAppearance;
 }
 
+/** Narrow browser-builder metadata edits; broader metadata remains API-only. */
+model DashboardAuthoringUpdateDashboardMetadataIntent {
+  title?: string;
+  description?: string;
+}
+
+model DashboardAuthoringUpdatePageMetadataIntent {
+  pageId: string;
+  title?: string;
+  description?: string;
+}
+
+model DashboardAuthoringUpdateHeaderMetadataIntent {
+  pageId: string;
+  headerId: string;
+  title?: string;
+  description?: string;
+}
+
 model DashboardAuthoringUpsertVisualIntent {
   visualId: string;
   visual: LeapViewDashboard.DashboardVisual;
@@ -214,6 +233,19 @@ model DashboardAuthoringSetVisualTypeIntent {
   pageId: string;
   visualId: string;
   type: LeapViewDashboard.DashboardVisualType;
+}
+
+model DashboardAuthoringSetVisualQueryOptionsIntent {
+  pageId: string;
+  visualId: string;
+  fieldId?: string;
+  fieldRole?: "metric" | "dimension" | "detail";
+  `alias`?: LeapViewDashboard.DashboardResultField;
+  grain?: LeapViewDashboard.DashboardTimeGrain;
+  clearGrain?: boolean;
+  sort?: LeapViewDashboard.DashboardSort[];
+  limit?: int32;
+  clearLimit?: boolean;
 }
 
 model DashboardAuthoringRenameVisualIntent {
@@ -278,6 +310,21 @@ model DashboardAuthoringMetadataCommand extends DashboardAuthoringCommandRequest
   metadata: DashboardAuthoringMetadataIntent;
 }
 
+model DashboardAuthoringUpdateDashboardMetadataCommand extends DashboardAuthoringCommandRequest {
+  kind: "updateDashboardMetadata";
+  updateDashboardMetadata: DashboardAuthoringUpdateDashboardMetadataIntent;
+}
+
+model DashboardAuthoringUpdatePageMetadataCommand extends DashboardAuthoringCommandRequest {
+  kind: "updatePageMetadata";
+  updatePageMetadata: DashboardAuthoringUpdatePageMetadataIntent;
+}
+
+model DashboardAuthoringUpdateHeaderMetadataCommand extends DashboardAuthoringCommandRequest {
+  kind: "updateHeaderMetadata";
+  updateHeaderMetadata: DashboardAuthoringUpdateHeaderMetadataIntent;
+}
+
 model DashboardAuthoringSetVisibilityCommand extends DashboardAuthoringCommandRequest {
   kind: "setVisibility";
   setVisibility: DashboardAuthoringSetVisibilityIntent;
@@ -301,6 +348,11 @@ model DashboardAuthoringAssignFieldCommand extends DashboardAuthoringCommandRequ
 model DashboardAuthoringSetVisualTypeCommand extends DashboardAuthoringCommandRequest {
   kind: "setVisualType";
   setVisualType: DashboardAuthoringSetVisualTypeIntent;
+}
+
+model DashboardAuthoringSetVisualQueryOptionsCommand extends DashboardAuthoringCommandRequest {
+  kind: "setVisualQueryOptions";
+  setVisualQueryOptions: DashboardAuthoringSetVisualQueryOptionsIntent;
 }
 
 model DashboardAuthoringRenameVisualCommand extends DashboardAuthoringCommandRequest {

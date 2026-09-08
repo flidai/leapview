@@ -251,7 +251,7 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 	}
 	signal := uisignals.DashboardBuilderSignal{
 		DashboardID: lifecycle.ID.String(), DraftID: draftID,
-		Revision: revisionValue, Title: lifecycle.Title, Appearance: projectAppearance(revision.Document), Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
+		Revision: revisionValue, Title: lifecycle.Title, Description: projectDescription(revision.Document.Metadata.Description), Appearance: projectAppearance(revision.Document), Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
 		HasUnpublishedChanges: dirty, Origin: originSignal(revision.Provenance), SourceEvidence: sourceEvidence,
 		SemanticModel: semantic, VisualCatalog: projectVisualCatalog(), Filters: projectFilters(revision.Document), Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
 		Preview: uisignals.DashboardBuilderPreviewStateSignal{Active: false, Mode: "draft", Loading: false},
@@ -368,8 +368,21 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 		})
 		visuals := make([]uisignals.DashboardBuilderVisualSignal, 0, len(components))
 		filterComponents := make([]uisignals.DashboardBuilderFilterComponentSignal, 0)
+		headers := make([]uisignals.DashboardBuilderHeaderSignal, 0)
+		placeholders := make([]uisignals.DashboardBuilderPlaceholderSignal, 0)
 		seenVisualIDs := make(map[string]struct{}, len(components))
 		for _, component := range components {
+			if headerComponent, ok := component.Value.(*dashboarddocument.HeaderDashboardPageComponent); ok {
+				base, err := component.Base()
+				if err != nil {
+					return nil, nil, "", "", err
+				}
+				title := display(derefString(headerComponent.Title), base.ID)
+				header := uisignals.DashboardBuilderHeaderSignal{ID: base.ID, Title: title, Placement: uisignals.DashboardPagePlacementFromDashboard(dashboard.PagePlacement{Col: int(base.Placement.Column), Row: int(base.Placement.Row), ColSpan: int(base.Placement.ColumnSpan), RowSpan: int(base.Placement.RowSpan)})}
+				header.Description = projectDescription(headerComponent.Description)
+				headers = append(headers, header)
+				continue
+			}
 			if filterComponent, ok := component.Value.(*dashboarddocument.FilterDashboardPageComponent); ok {
 				filterComponentTotal++
 				if filterComponentTotal > maxFilterComponents {
@@ -382,6 +395,7 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 				definition, exists := filterDefinitions[filterComponent.Filter]
 				if !exists {
 					diagnostics = append(diagnostics, diagnostic("error", "FILTER_MISSING", fmt.Sprintf("Filter %q is missing from the authored document.", filterComponent.Filter), filterComponent.Filter))
+					placeholders = append(placeholders, lockedPlaceholder(base.ID, "filter", filterComponent.Filter, base.Placement, fmt.Sprintf("Filter %q is unavailable.", filterComponent.Filter)))
 					continue
 				}
 				controlType, err := definition.Control.Type()
@@ -413,6 +427,7 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 			authoredVisual, ok := authored.Spec.Visuals[visualComponent.Visual]
 			if !ok {
 				diagnostics = append(diagnostics, diagnostic("error", "VISUAL_MISSING", fmt.Sprintf("Visual %q is missing from the authored document.", visualComponent.Visual), visualComponent.Visual))
+				placeholders = append(placeholders, lockedPlaceholder(base.ID, "visual", visualComponent.Visual, base.Placement, fmt.Sprintf("Visual %q is unavailable.", visualComponent.Visual)))
 				continue
 			}
 			visual, err := projectCanonicalVisual(base, visualComponent, authoredVisual)
@@ -443,11 +458,36 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 			seenVisualIDs[visual.ID] = struct{}{}
 			visuals = append(visuals, visual)
 		}
-		result = append(result, uisignals.DashboardBuilderPageSignal{ID: page.ID, Title: display(page.Title, page.ID), Grid: projectCanonicalPageGrid(authored.Spec, page), Visuals: visuals, FilterComponents: filterComponents})
+		result = append(result, uisignals.DashboardBuilderPageSignal{ID: page.ID, Title: display(page.Title, page.ID), Description: projectDescription(page.Description), Grid: projectCanonicalPageGrid(authored.Spec, page), Visuals: visuals, FilterComponents: filterComponents, Headers: headers, Placeholders: placeholders})
 	}
 	selectedPageID := choosePage(result, strings.TrimSpace(requestedPageID))
 	selectedVisualID := chooseVisual(result, selectedPageID, strings.TrimSpace(requestedVisualID))
 	return result, diagnostics, selectedPageID, selectedVisualID, nil
+}
+
+func lockedPlaceholder(id, kind, referenceID string, placement dashboarddocument.DashboardPlacement, message string) uisignals.DashboardBuilderPlaceholderSignal {
+	return uisignals.DashboardBuilderPlaceholderSignal{
+		ID: id, Kind: kind, ReferenceID: referenceID, Title: display(referenceID, id), Message: message, Locked: true,
+		Placement: uisignals.DashboardPagePlacementFromDashboard(dashboard.PagePlacement{Col: int(placement.Column), Row: int(placement.Row), ColSpan: int(placement.ColumnSpan), RowSpan: int(placement.RowSpan)}),
+	}
+}
+
+func projectDescription(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func projectCanonicalPageGrid(spec dashboarddocument.DashboardSpec, page dashboarddocument.DashboardPage) uisignals.DashboardPageGrid {
@@ -505,7 +545,11 @@ func projectCanonicalVisual(base *dashboarddocument.DashboardPageComponentBase, 
 			datasetID = &resolved
 		}
 	}
-	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), TitleVisible: titleVisible, Type: authored.Type, DatasetID: datasetID, LegendVisible: legendVisible, AxisVisible: axisVisible, DataLabelsVisible: labelsVisible, FormatOptions: projectVisualFormatOptions(formatOptions), Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}, Interaction: interaction}, nil
+	queryOptions, err := canonicalQueryOptions(authored.Query)
+	if err != nil {
+		return uisignals.DashboardBuilderVisualSignal{}, fmt.Errorf("project visual query options: %w", err)
+	}
+	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), TitleVisible: titleVisible, Type: authored.Type, DatasetID: datasetID, LegendVisible: legendVisible, AxisVisible: axisVisible, DataLabelsVisible: labelsVisible, FormatOptions: projectVisualFormatOptions(formatOptions), Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, QueryOptions: queryOptions, Filters: []string{}, Interaction: interaction}, nil
 }
 
 // projectCanonicalInteraction exposes only the small, closed subset needed by
@@ -743,38 +787,118 @@ func canonicalSlots(query dashboarddocument.DashboardQuery) ([]uisignals.Dashboa
 	case *dashboarddocument.AggregateDashboardQuery:
 		for index, field := range value.Dimensions {
 			id, label := canonicalDimension(field)
-			slots = append(slots, slot(fmt.Sprintf("dimension-%d", index), label, "dimension", id, true))
+			projected := slot(fmt.Sprintf("dimension-%d", index), label, "dimension", id, true)
+			projectSlotOptions(&projected, field.Reference)
+			slots = append(slots, projected)
 		}
 		for index, field := range value.Metrics {
 			id, label := canonicalMetric(field)
 			slots = append(slots, slot(fmt.Sprintf("metric-%d", index), label, "metric", id, true))
+			projectSlotOptions(&slots[len(slots)-1], field.Reference)
 		}
 	case *dashboarddocument.RecordsDashboardQuery:
 		for index, field := range value.Fields {
 			id, label := canonicalRecordField(field)
 			slots = append(slots, slot(fmt.Sprintf("field-%d", index), label, "detail", id, false))
+			projectSlotOptions(&slots[len(slots)-1], field.Reference)
 		}
 	case *dashboarddocument.PivotDashboardQuery:
 		for index, field := range value.Rows {
 			id, label := canonicalDimension(field)
-			slots = append(slots, slot(fmt.Sprintf("row-%d", index), label, "dimension", id, true))
+			projected := slot(fmt.Sprintf("row-%d", index), label, "dimension", id, true)
+			projectSlotOptions(&projected, field.Reference)
+			slots = append(slots, projected)
 		}
 		for index, field := range value.Columns {
 			id, label := canonicalDimension(field)
-			slots = append(slots, slot(fmt.Sprintf("column-%d", index), label, "dimension", id, true))
+			projected := slot(fmt.Sprintf("column-%d", index), label, "dimension", id, true)
+			projectSlotOptions(&projected, field.Reference)
+			slots = append(slots, projected)
 		}
 		for index, field := range value.Metrics {
 			id, label := canonicalMetric(field)
 			slots = append(slots, slot(fmt.Sprintf("metric-%d", index), label, "metric", id, true))
+			projectSlotOptions(&slots[len(slots)-1], field.Reference)
 		}
 	case *dashboarddocument.HistogramDashboardQuery:
 		id, label := canonicalMetric(value.Field)
 		slots = append(slots, slot("metric-0", label, "metric", id, true))
+		projectSlotOptions(&slots[len(slots)-1], value.Field.Reference)
 	case *dashboarddocument.DistributionDashboardQuery:
 		id, label := canonicalMetric(value.Field)
 		slots = append(slots, slot("metric-0", label, "metric", id, true))
+		projectSlotOptions(&slots[len(slots)-1], value.Field.Reference)
+		if value.Group != nil {
+			id, label := canonicalDimension(*value.Group)
+			projected := slot("dimension-0", label, "dimension", id, false)
+			projectSlotOptions(&projected, value.Group.Reference)
+			slots = append(slots, projected)
+		}
 	}
 	return boundSlots(slots)
+}
+
+func projectSlotOptions(slot *uisignals.DashboardBuilderVisualSlotSignal, reference any) {
+	if slot == nil {
+		return
+	}
+	switch value := reference.(type) {
+	case *dashboarddocument.DashboardDimensionReference:
+		if value != nil {
+			if value.Alias != nil && strings.TrimSpace(*value.Alias) != "" {
+				alias := strings.TrimSpace(*value.Alias)
+				slot.Alias = &alias
+			}
+			if value.Grain != nil {
+				grain := *value.Grain
+				slot.Grain = &grain
+			}
+		}
+	case *dashboarddocument.DashboardMetricReference:
+		if value != nil && value.Alias != nil && strings.TrimSpace(*value.Alias) != "" {
+			alias := strings.TrimSpace(*value.Alias)
+			slot.Alias = &alias
+		}
+	case *dashboarddocument.DashboardRecordFieldReference:
+		if value != nil && value.Alias != nil && strings.TrimSpace(*value.Alias) != "" {
+			alias := strings.TrimSpace(*value.Alias)
+			slot.Alias = &alias
+		}
+	}
+}
+
+func canonicalQueryOptions(query dashboarddocument.DashboardQuery) (uisignals.DashboardBuilderQueryOptionsSignal, error) {
+	result := uisignals.DashboardBuilderQueryOptionsSignal{Sort: []uisignals.DashboardBuilderSortSignal{}}
+	var sorts *[]dashboarddocument.DashboardSort
+	var limit *int32
+	switch value := query.Value.(type) {
+	case *dashboarddocument.AggregateDashboardQuery:
+		result.SupportsSort, result.SupportsLimit = true, true
+		sorts, limit = value.Sort, value.Limit
+	case *dashboarddocument.RecordsDashboardQuery:
+		result.SupportsSort, result.SupportsLimit = true, true
+		sorts, limit = value.Sort, value.Limit
+	case *dashboarddocument.PivotDashboardQuery:
+		result.SupportsSort, result.SupportsLimit = true, true
+		sorts = value.Sort
+		if value.Window != nil {
+			pivotLimit := value.Window.Limit
+			limit = &pivotLimit
+		}
+	}
+	if sorts != nil {
+		if len(*sorts) > 64 {
+			return uisignals.DashboardBuilderQueryOptionsSignal{}, fmt.Errorf("query sorts exceed bounded projection")
+		}
+		result.Sort = make([]uisignals.DashboardBuilderSortSignal, 0, len(*sorts))
+		for _, sortValue := range *sorts {
+			result.Sort = append(result.Sort, uisignals.DashboardBuilderSortSignal{Field: sortValue.Field, Direction: string(sortValue.Direction)})
+		}
+	}
+	if limit != nil && *limit > 0 {
+		result.Limit = limit
+	}
+	return result, nil
 }
 
 func canonicalDimension(value dashboarddocument.DashboardDimensionSelection) (string, string) {

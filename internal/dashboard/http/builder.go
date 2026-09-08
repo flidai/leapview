@@ -749,11 +749,18 @@ type dashboardBuilderCommandSignal struct {
 	TargetRevisionNumber      json.RawMessage                   `json:"targetRevisionNumber"`
 	TargetRevisionContentHash string                            `json:"targetRevisionContentHash"`
 	PageID                    string                            `json:"pageId"`
+	HeaderID                  string                            `json:"headerId"`
 	NewPageID                 string                            `json:"newPageId"`
 	VisualID                  string                            `json:"visualId"`
 	TargetVisualID            string                            `json:"targetVisualId"`
 	ComponentID               string                            `json:"componentId"`
 	FieldID                   string                            `json:"fieldId"`
+	Alias                     *string                           `json:"alias,omitempty"`
+	Grain                     *string                           `json:"grain,omitempty"`
+	ClearGrain                bool                              `json:"clearGrain,omitempty"`
+	Sort                      *[]document.DashboardSort         `json:"sort,omitempty"`
+	Limit                     *int32                            `json:"limit,omitempty"`
+	ClearLimit                bool                              `json:"clearLimit,omitempty"`
 	FilterID                  string                            `json:"filterId"`
 	Scope                     string                            `json:"scope"`
 	Targets                   []string                          `json:"targets"`
@@ -870,6 +877,12 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.AddPage = &authoring.AddPagePayload{PageID: strings.TrimSpace(s.PageID), Title: strings.TrimSpace(s.Title)}
 	case "rename_page":
 		command.RenamePage = &authoring.RenamePagePayload{PageID: strings.TrimSpace(s.PageID), Title: strings.TrimSpace(s.Title)}
+	case "update_dashboard_metadata":
+		command.UpdateDashboardMetadata = &authoring.UpdateDashboardMetadataPayload{Title: optionalTrimmedString(s.Title), Description: optionalRawString(s.Description)}
+	case "update_page_metadata":
+		command.UpdatePageMetadata = &authoring.UpdatePageMetadataPayload{PageID: strings.TrimSpace(s.PageID), Title: optionalTrimmedString(s.Title), Description: optionalRawString(s.Description)}
+	case "update_header_metadata":
+		command.UpdateHeaderMetadata = &authoring.UpdateHeaderMetadataPayload{PageID: strings.TrimSpace(s.PageID), HeaderID: strings.TrimSpace(s.HeaderID), Title: optionalTrimmedString(s.Title), Description: optionalRawString(s.Description)}
 	case "duplicate_page":
 		command.DuplicatePage = &authoring.DuplicatePagePayload{PageID: strings.TrimSpace(s.PageID), NewPageID: strings.TrimSpace(s.NewPageID), Title: strings.TrimSpace(s.Title)}
 	case "move_page":
@@ -917,6 +930,16 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.AssignField = &authoring.AssignFieldPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role))}
 	case "set_visual_type":
 		command.SetVisualType = &authoring.SetVisualTypePayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), Type: document.DashboardVisualType(strings.TrimSpace(s.Type))}
+	case "set_visual_query_options":
+		var grain *document.DashboardTimeGrain
+		if s.Grain != nil && strings.TrimSpace(*s.Grain) != "" {
+			parsed := document.DashboardTimeGrain(strings.TrimSpace(*s.Grain))
+			grain = &parsed
+		}
+		command.SetVisualQueryOptions = &authoring.SetVisualQueryOptionsPayload{
+			PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role)),
+			Alias: s.Alias, Grain: grain, ClearGrain: s.ClearGrain, Sort: s.Sort, Limit: s.Limit, ClearLimit: s.ClearLimit,
+		}
 	case "rename_visual":
 		command.RenameVisual = &authoring.RenameVisualPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), Title: strings.TrimSpace(s.Title)}
 	case "duplicate_visual":
@@ -948,6 +971,10 @@ func optionalTrimmedString(value string) *string {
 	if value == "" {
 		return nil
 	}
+	return &value
+}
+
+func optionalRawString(value string) *string {
 	return &value
 }
 

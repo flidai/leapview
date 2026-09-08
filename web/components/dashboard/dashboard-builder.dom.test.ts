@@ -1623,6 +1623,44 @@ test('dashboard builder shows build and format controls in one inspector panel',
   }
 })
 
+test('dashboard builder only exposes query controls supported by the projected query family', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const pages = structuredClone(element.builder.pages)
+      pages[0].visuals[0].queryOptions = { supportsSort: true, supportsLimit: true, sort: [] }
+      mergePatch({ builder: { pages } })
+      await element.updateComplete
+      const aggregate = {
+        grain: Boolean(root.querySelector('[data-query-control="grain"]')),
+        sort: Boolean(root.querySelector('[data-query-control="sort-field"]')),
+        limit: Boolean(root.querySelector('[data-query-control="limit"]')),
+      }
+      pages[0].visuals[0].queryOptions = { supportsSort: false, supportsLimit: false, sort: [] }
+      mergePatch({ builder: { pages } })
+      await element.updateComplete
+      return {
+        aggregate,
+        unsupported: {
+          sort: Boolean(root.querySelector('[data-query-control="sort-field"]')),
+          limit: Boolean(root.querySelector('[data-query-control="limit"]')),
+        },
+      }
+    })
+    expect(state).toEqual({
+      aggregate: { grain: false, sort: true, limit: true },
+      unsupported: { sort: false, limit: false },
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder filters fields and drops a metric into its well', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -2050,6 +2088,96 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
     expect(state.moreLabel).toBe('More')
     expect(state.moreAriaLabel).toBe('More dashboard actions')
     expect(state.visibilityCommand).toMatchObject({ action: 'set_visibility', visibility: 'organization' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder renders authored headers, locked placeholders, and metadata controls', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const sourcePage = element.builder.pages[0]
+      mergePatch({ builder: {
+        title: 'Revenue draft',
+        description: 'Revenue dashboard for the sales team',
+        pages: [
+          {
+            ...sourcePage,
+            headers: [{ id: 'page-header', title: 'Revenue overview', description: 'Orders by status', placement: { col: 1, row: 1, colSpan: 12, rowSpan: 2 } }],
+            placeholders: [{ id: 'missing-filter', kind: 'filter', referenceId: 'missing-status', title: 'Status filter', message: 'Filter definition unavailable', locked: true, placement: { col: 1, row: 7, colSpan: 4, rowSpan: 2 } }],
+          },
+          element.builder.pages[1],
+        ],
+        selectedPageId: 'overview',
+        selectedVisualId: 'sales-chart',
+      } })
+      await element.updateComplete
+      await element.updateComplete
+      const root = element.shadowRoot
+      const header = root.querySelector('.header-component') as HTMLElement
+      const placeholder = root.querySelector('.builder-placeholder') as HTMLElement
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
+      const rendered = {
+        headerLabel: header.getAttribute('aria-label'),
+        headerTitle: header.querySelector('.header-copy strong')?.textContent?.trim(),
+        headerDescription: header.querySelector('.header-copy span')?.textContent?.trim(),
+        placeholderRole: placeholder.getAttribute('role'),
+        placeholderLocked: placeholder.dataset.locked,
+        placeholderLabel: placeholder.getAttribute('aria-label'),
+        placeholderCopy: Array.from(placeholder.querySelectorAll('strong, span')).map((node) => node.textContent?.trim()),
+      }
+      header.click()
+      await element.updateComplete
+      const headerControls = {
+        panel: root.querySelector('.inspector-panel')?.getAttribute('aria-label'),
+        badge: root.querySelector('.visual-type-badge')?.textContent?.trim(),
+        title: (root.querySelector('[data-header-control="title"]') as HTMLInputElement)?.value,
+        description: (root.querySelector('[data-header-control="description"]') as HTMLTextAreaElement)?.value,
+      }
+      const headerTitle = root.querySelector('[data-header-control="title"]') as HTMLInputElement
+      headerTitle.value = 'Revenue summary'
+      headerTitle.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      const metadata = root.querySelector('.dashboard-metadata') as HTMLDetailsElement
+      metadata.open = true
+      await element.updateComplete
+      const dashboardTitle = root.querySelector('input[aria-label="Dashboard title"]') as HTMLInputElement
+      const dashboardDescription = root.querySelector('textarea[aria-label="Dashboard description"]') as HTMLTextAreaElement
+      dashboardTitle.value = 'Revenue report'
+      dashboardTitle.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return {
+        rendered,
+        headerControls,
+        metadata: {
+          summary: metadata.querySelector('summary')?.textContent?.trim(),
+          title: dashboardTitle.value,
+          description: dashboardDescription.value,
+        },
+        commands,
+      }
+    })
+    expect(state.rendered).toEqual({
+      headerLabel: 'Revenue overview, dashboard header',
+      headerTitle: 'Revenue overview',
+      headerDescription: 'Orders by status',
+      placeholderRole: 'note',
+      placeholderLocked: 'true',
+      placeholderLabel: 'Status filter, locked filter placeholder',
+      placeholderCopy: ['Status filter', 'Filter definition unavailable', 'Locked until the filter definition is restored.'],
+    })
+    expect(state.headerControls).toEqual({ panel: 'Header settings', badge: 'Header', title: 'Revenue overview', description: 'Orders by status' })
+    expect(state.metadata).toEqual({ summary: 'Dashboard settings', title: 'Revenue report', description: 'Revenue dashboard for the sales team' })
+    expect(state.commands[0]).toMatchObject({ action: 'update_header_metadata', pageId: 'overview', headerId: 'page-header', title: 'Revenue summary', description: 'Orders by status' })
+    expect(state.commands[1]).toMatchObject({ action: 'update_dashboard_metadata', title: 'Revenue report', description: 'Revenue dashboard for the sales team' })
   } finally {
     await page.close()
   }
@@ -2762,6 +2890,81 @@ test('dashboard builder authors report filters from governed fields through focu
   }
 })
 
+test('dashboard builder resets only the selected page or all governed filter bindings', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const reportKey = 'dashboard:revenue/report/report_status'
+      const pageKey = 'dashboard:revenue/page/overview/page_status'
+      const otherPageKey = 'dashboard:revenue/page/details/page_status'
+      const set = (value: string) => ({ kind: 'set', operator: 'in', values: [{ kind: 'string', value }] })
+      const applied = (value: string) => ({ expression: set(value), resolvedExpression: set(value) })
+      const contract = {
+        applicationMode: 'immediate',
+        definitions: {},
+        bindings: {
+          [reportKey]: { key: reportKey, id: 'report_status', filter: 'report_status', scope: 'report', default: set('report-default'), selectionMode: 'single', maxSelectedValues: 1, required: false, readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [] },
+          [pageKey]: { key: pageKey, id: 'page_status', filter: 'page_status', scope: 'page', pageID: 'overview', default: { kind: 'unfiltered' }, selectionMode: 'single', maxSelectedValues: 1, required: false, readerEditable: true, paneVisible: true, paneOrder: 1, targets: [], optionDependencies: [] },
+          [otherPageKey]: { key: otherPageKey, id: 'page_status', filter: 'page_status', scope: 'page', pageID: 'details', default: set('other-page-default'), selectionMode: 'single', maxSelectedValues: 1, required: false, readerEditable: true, paneVisible: true, paneOrder: 2, targets: [], optionDependencies: [] },
+        },
+      }
+      const state = { revision: 1, appliedControls: { [reportKey]: applied('report-selected'), [pageKey]: applied('page-selected'), [otherPageKey]: applied('other-page-selected') }, draftControls: {}, dirtyBindings: [], defaultsRevision: 'defaults-1' }
+      mergePatch({ builderFilterContract: contract, builderFilterState: state })
+      await element.updateComplete
+      const root = element.shadowRoot
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-filter-command', (event: CustomEvent) => commands.push(event.detail))
+      const pageReset = root.querySelector<HTMLButtonElement>('[data-reset-scope="page"]')!
+      const allReset = root.querySelector<HTMLButtonElement>('[data-reset-scope="dashboard"]')!
+      const before = {
+        labels: [pageReset.textContent?.trim(), allReset.textContent?.trim()],
+        pageDisabled: pageReset.disabled,
+        allDisabled: allReset.disabled,
+      }
+      pageReset.click()
+      await element.updateComplete
+      const afterPageReset = {
+        command: commands[0],
+        report: element.builderFilterController.projected.appliedControls[reportKey]?.expression,
+        page: element.builderFilterController.projected.appliedControls[pageKey]?.expression,
+        otherPage: element.builderFilterController.projected.appliedControls[otherPageKey]?.expression,
+        allDisabledWhilePending: allReset.disabled,
+      }
+      mergePatch({ builderFilterState: { revision: 2, appliedControls: { [reportKey]: applied('report-selected'), [pageKey]: { expression: { kind: 'unfiltered' }, resolvedExpression: { kind: 'unfiltered' } }, [otherPageKey]: applied('other-page-selected') }, draftControls: {}, dirtyBindings: [], defaultsRevision: 'defaults-1' } })
+      await element.updateComplete
+      await element.updateComplete
+      allReset.click()
+      await element.updateComplete
+      return {
+        before,
+        afterPageReset,
+        afterAllReset: {
+          command: commands[1],
+          report: element.builderFilterController.projected.appliedControls[reportKey]?.expression,
+          page: element.builderFilterController.projected.appliedControls[pageKey]?.expression,
+          otherPage: element.builderFilterController.projected.appliedControls[otherPageKey]?.expression,
+        },
+      }
+    })
+    expect(state.before).toEqual({ labels: ['Reset page', 'Reset all'], pageDisabled: false, allDisabled: false })
+    expect(state.afterPageReset.command).toMatchObject({ kind: 'reset', resetScope: 'page', bindingKeys: ['dashboard:revenue/page/overview/page_status'], baseRevision: 1 })
+    expect(state.afterPageReset.report).toEqual({ kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'report-selected' }] })
+    expect(state.afterPageReset.page).toEqual({ kind: 'unfiltered' })
+    expect(state.afterPageReset.otherPage).toEqual({ kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'other-page-selected' }] })
+    expect(state.afterPageReset.allDisabledWhilePending).toBe(true)
+    expect(state.afterAllReset.command).toMatchObject({ kind: 'reset', resetScope: 'dashboard', bindingKeys: ['dashboard:revenue/page/details/page_status', 'dashboard:revenue/page/overview/page_status', 'dashboard:revenue/report/report_status'], baseRevision: 2 })
+    expect(state.afterAllReset.report).toEqual({ kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'report-default' }] })
+    expect(state.afterAllReset.page).toEqual({ kind: 'unfiltered' })
+    expect(state.afterAllReset.otherPage).toEqual({ kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'other-page-default' }] })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder places, moves, and removes canonical filter slicers on the shared grid', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
@@ -3065,7 +3268,7 @@ function testDocument(): string {
           { key: 'legend', label: 'Legend', section: 'Display', control: 'select', value: 'right', choices: [{ value: 'none', label: 'None' }, { value: 'top', label: 'Top' }, { value: 'right', label: 'Right' }, { value: 'bottom', label: 'Bottom' }, { value: 'left', label: 'Left' }] },
           { key: 'labels.density', label: 'Data labels', section: 'Display', control: 'select', value: 'hidden', choices: [{ value: 'hidden', label: 'Hidden' }, { value: 'automatic', label: 'Automatic' }, { value: 'dense', label: 'Dense' }, { value: 'always', label: 'Always' }] },
           { key: 'stacking', label: 'Stacking', section: 'Chart', control: 'select', value: 'none', choices: [{ value: 'none', label: 'None' }, { value: 'normal', label: 'Normal' }, { value: 'percent', label: 'Percent' }] },
-        ], placement: { col: 1, row: 1, colSpan: 6, rowSpan: 5 }, slots: [{ id: 'category', label: 'Category', kind: 'dimension', fieldId: 'orders.status', required: true }], filters: [] }], filterComponents: [] },
+        ], placement: { col: 1, row: 1, colSpan: 6, rowSpan: 5 }, slots: [{ id: 'category', label: 'Category', kind: 'dimension', fieldId: 'orders.status', required: true }], queryOptions: { supportsSort: true, supportsLimit: true, sort: [] }, filters: [] }], filterComponents: [] },
         { id: 'details', title: 'Details', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [], filterComponents: [] },
       ],
       selectedPageId: 'overview', selectedVisualId: 'sales-chart',

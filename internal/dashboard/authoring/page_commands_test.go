@@ -81,6 +81,48 @@ func TestCanonicalPageCommandsRenameDuplicateMoveAndLayout(t *testing.T) {
 	}
 }
 
+func TestCanonicalBuilderMetadataCommandsUpdateDashboardPageAndHeader(t *testing.T) {
+	lifecycle, current := canonicalReducerFixture(t)
+	headerTitle := "Summary"
+	headerDescription := "Key context"
+	base := document.DashboardPageComponentBase{ID: "summary-header", Type: "header", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 12, RowSpan: 2}}
+	current.Document.Spec.Pages[0].Components = append(current.Document.Spec.Pages[0].Components, document.DashboardPageComponent{Value: &document.HeaderDashboardPageComponent{DashboardPageComponentBase: base, Type: "header", Title: &headerTitle, Description: &headerDescription}})
+	// Rebuild the starting revision after adding the valid header so the test
+	// exercises the same immutable revision boundary as the service.
+	provenance := canonicalReducerProvenance()
+	revision, err := NewRevision(current.ID, current.DashboardID, current.Number, current.CreatedAt, current.Document, provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current = revision
+	lifecycle.Draft.Revision = current.Token()
+	apply := func(payload authoringPayload) error {
+		command := canonicalReducerCommandWithPayload(Command{ID: CommandID("metadata-command-" + strconv.FormatUint(current.Number, 10)), DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID, ExpectedRevision: current.Token(), Provenance: provenance}, payload)
+		nextLifecycle, nextRevision, applyErr := ApplyEdit(lifecycle, current, command, RevisionID("metadata-revision-"+strconv.FormatUint(current.Number+1, 10)), current.Number+1, current.CreatedAt.Add(time.Hour))
+		if applyErr == nil {
+			lifecycle, current = nextLifecycle, nextRevision
+		}
+		return applyErr
+	}
+	dashboardTitle, dashboardDescription := "Executive Sales", "Sales overview"
+	if err := apply(&UpdateDashboardMetadataPayload{Title: &dashboardTitle, Description: &dashboardDescription}); err != nil {
+		t.Fatal(err)
+	}
+	pageTitle, pageDescription := "Overview", "Orders by status"
+	if err := apply(&UpdatePageMetadataPayload{PageID: "overview", Title: &pageTitle, Description: &pageDescription}); err != nil {
+		t.Fatal(err)
+	}
+	updatedHeaderTitle, updatedHeaderDescription := "Highlights", "Current period"
+	if err := apply(&UpdateHeaderMetadataPayload{PageID: "overview", HeaderID: "summary-header", Title: &updatedHeaderTitle, Description: &updatedHeaderDescription}); err != nil {
+		t.Fatal(err)
+	}
+	page := current.Document.Spec.Pages[0]
+	updatedHeader, ok := page.Components[1].Value.(*document.HeaderDashboardPageComponent)
+	if lifecycle.Title != dashboardTitle || current.Document.Metadata.Description == nil || *current.Document.Metadata.Description != dashboardDescription || page.Title != pageTitle || page.Description == nil || *page.Description != pageDescription || !ok || updatedHeader.Title == nil || *updatedHeader.Title != updatedHeaderTitle || updatedHeader.Description == nil || *updatedHeader.Description != updatedHeaderDescription {
+		t.Fatalf("metadata result = lifecycle=%#v document=%#v page=%#v header=%#v", lifecycle, current.Document.Metadata, page, updatedHeader)
+	}
+}
+
 func TestCanonicalPageCommandsValidateMoveAndLayoutInputs(t *testing.T) {
 	lifecycle, current := canonicalReducerFixture(t)
 	for name, payload := range map[string]authoringPayload{

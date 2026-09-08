@@ -63515,11 +63515,15 @@ components:
     DashboardAuthoringCommandRequest:
       oneOf:
         - $ref: '#/components/schemas/DashboardAuthoringMetadataCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringUpdateDashboardMetadataCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringUpdatePageMetadataCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringUpdateHeaderMetadataCommand'
         - $ref: '#/components/schemas/DashboardAuthoringSetVisibilityCommand'
         - $ref: '#/components/schemas/DashboardAuthoringAddPageCommand'
         - $ref: '#/components/schemas/DashboardAuthoringAddVisualCommand'
         - $ref: '#/components/schemas/DashboardAuthoringAssignFieldCommand'
         - $ref: '#/components/schemas/DashboardAuthoringSetVisualTypeCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringSetVisualQueryOptionsCommand'
         - $ref: '#/components/schemas/DashboardAuthoringRenameVisualCommand'
         - $ref: '#/components/schemas/DashboardAuthoringDuplicateVisualCommand'
         - $ref: '#/components/schemas/DashboardAuthoringRestoreRevisionCommand'
@@ -63557,7 +63561,11 @@ components:
           setInteractionTarget: '#/components/schemas/DashboardAuthoringSetInteractionTargetCommand'
           setLayout: '#/components/schemas/DashboardAuthoringSetLayoutCommand'
           setVisibility: '#/components/schemas/DashboardAuthoringSetVisibilityCommand'
+          setVisualQueryOptions: '#/components/schemas/DashboardAuthoringSetVisualQueryOptionsCommand'
           setVisualType: '#/components/schemas/DashboardAuthoringSetVisualTypeCommand'
+          updateDashboardMetadata: '#/components/schemas/DashboardAuthoringUpdateDashboardMetadataCommand'
+          updateHeaderMetadata: '#/components/schemas/DashboardAuthoringUpdateHeaderMetadataCommand'
+          updatePageMetadata: '#/components/schemas/DashboardAuthoringUpdatePageMetadataCommand'
           updateVisualFormat: '#/components/schemas/DashboardAuthoringUpdateVisualFormatCommand'
           upsertPage: '#/components/schemas/DashboardAuthoringUpsertPageCommand'
           upsertVisual: '#/components/schemas/DashboardAuthoringUpsertVisualCommand'
@@ -67074,6 +67082,95 @@ components:
           example: example
       example:
         visibility: example
+    DashboardAuthoringSetVisualQueryOptionsCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - setVisualQueryOptions
+      properties:
+        kind:
+          type: string
+          enum:
+            - setVisualQueryOptions
+          example: example
+        setVisualQueryOptions:
+          $ref: '#/components/schemas/DashboardAuthoringSetVisualQueryOptionsIntent'
+      example:
+        kind: example
+        setVisualQueryOptions:
+          alias: example
+          clearGrain: true
+          clearLimit: true
+          fieldId: example
+          fieldRole: example
+          grain: second
+          limit: 1
+          pageId: example
+          sort:
+            - direction: asc
+              field: example
+          visualId: example
+    DashboardAuthoringSetVisualQueryOptionsIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        fieldId:
+          type: string
+          example: example
+        fieldRole:
+          type: string
+          enum:
+            - metric
+            - dimension
+            - detail
+          example: example
+        alias:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        grain:
+          $ref: '#/components/schemas/DashboardTimeGrain'
+        clearGrain:
+          type: boolean
+          example: true
+        sort:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardSort'
+          example:
+            - direction: asc
+              field: example
+        limit:
+          type: integer
+          format: int32
+          example: 1
+        clearLimit:
+          type: boolean
+          example: true
+      example:
+        alias: example
+        clearGrain: true
+        clearLimit: true
+        fieldId: example
+        fieldRole: example
+        grain: second
+        limit: 1
+        pageId: example
+        sort:
+          - direction: asc
+            field: example
+        visualId: example
     DashboardAuthoringSetVisualTypeCommand:
       type: object
       allOf:
@@ -67284,6 +67381,123 @@ components:
           - example
         title: example
         visibility: example
+    DashboardAuthoringUpdateDashboardMetadataCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - updateDashboardMetadata
+      properties:
+        kind:
+          type: string
+          enum:
+            - updateDashboardMetadata
+          example: example
+        updateDashboardMetadata:
+          $ref: '#/components/schemas/DashboardAuthoringUpdateDashboardMetadataIntent'
+      example:
+        kind: example
+        updateDashboardMetadata:
+          description: example
+          title: example
+    DashboardAuthoringUpdateDashboardMetadataIntent:
+      type: object
+      properties:
+        title:
+          type: string
+          example: example
+        description:
+          type: string
+          example: example
+      description: Narrow browser-builder metadata edits; broader metadata remains API-only.
+      example:
+        description: example
+        title: example
+    DashboardAuthoringUpdateHeaderMetadataCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - updateHeaderMetadata
+      properties:
+        kind:
+          type: string
+          enum:
+            - updateHeaderMetadata
+          example: example
+        updateHeaderMetadata:
+          $ref: '#/components/schemas/DashboardAuthoringUpdateHeaderMetadataIntent'
+      example:
+        kind: example
+        updateHeaderMetadata:
+          description: example
+          headerId: example
+          pageId: example
+          title: example
+    DashboardAuthoringUpdateHeaderMetadataIntent:
+      type: object
+      required:
+        - pageId
+        - headerId
+      properties:
+        pageId:
+          type: string
+          example: example
+        headerId:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+        description:
+          type: string
+          example: example
+      example:
+        description: example
+        headerId: example
+        pageId: example
+        title: example
+    DashboardAuthoringUpdatePageMetadataCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - updatePageMetadata
+      properties:
+        kind:
+          type: string
+          enum:
+            - updatePageMetadata
+          example: example
+        updatePageMetadata:
+          $ref: '#/components/schemas/DashboardAuthoringUpdatePageMetadataIntent'
+      example:
+        kind: example
+        updatePageMetadata:
+          description: example
+          pageId: example
+          title: example
+    DashboardAuthoringUpdatePageMetadataIntent:
+      type: object
+      required:
+        - pageId
+      properties:
+        pageId:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+        description:
+          type: string
+          example: example
+      example:
+        description: example
+        pageId: example
+        title: example
     DashboardAuthoringUpdateVisualFormatCommand:
       type: object
       allOf:

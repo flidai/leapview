@@ -692,6 +692,27 @@ func metadataPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringMe
 	}, nil
 }
 
+func updateDashboardMetadataPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringUpdateDashboardMetadataIntent) *authoring.UpdateDashboardMetadataPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.UpdateDashboardMetadataPayload{Title: value.Title, Description: value.Description}
+}
+
+func updatePageMetadataPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringUpdatePageMetadataIntent) *authoring.UpdatePageMetadataPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.UpdatePageMetadataPayload{PageID: value.PageId, Title: value.Title, Description: value.Description}
+}
+
+func updateHeaderMetadataPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringUpdateHeaderMetadataIntent) *authoring.UpdateHeaderMetadataPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.UpdateHeaderMetadataPayload{PageID: value.PageId, HeaderID: value.HeaderId, Title: value.Title, Description: value.Description}
+}
+
 func upsertPagePayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardPage) *authoring.UpsertPagePayload {
 	if value == nil {
 		return nil
@@ -729,6 +750,29 @@ func setVisualTypePayloadFromAPIGen(value *dashboardgen.DashboardAuthoringSetVis
 		return nil
 	}
 	return &authoring.SetVisualTypePayload{PageID: value.PageId, VisualID: value.VisualId, Type: value.Type}
+}
+
+func setVisualQueryOptionsPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringSetVisualQueryOptionsIntent) *authoring.SetVisualQueryOptionsPayload {
+	if value == nil {
+		return nil
+	}
+	payload := &authoring.SetVisualQueryOptionsPayload{
+		PageID: value.PageId, VisualID: value.VisualId, Alias: value.Alias,
+		Grain: value.Grain, Sort: value.Sort, Limit: value.Limit,
+	}
+	if value.FieldId != nil {
+		payload.FieldID = *value.FieldId
+	}
+	if value.FieldRole != nil {
+		payload.Role = authoring.FieldRole(*value.FieldRole)
+	}
+	if value.ClearGrain != nil {
+		payload.ClearGrain = *value.ClearGrain
+	}
+	if value.ClearLimit != nil {
+		payload.ClearLimit = *value.ClearLimit
+	}
+	return payload
 }
 
 func renameVisualPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringRenameVisualIntent) *authoring.RenameVisualPayload {
@@ -877,6 +921,15 @@ func commandFromAPIGen(input dashboardgen.GenSchemaDashboardAuthoringCommandRequ
 	case *dashboardgen.DashboardAuthoringMetadataCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.Metadata, payloadErr = metadataPayloadFromAPIGen(&value.Metadata)
+	case *dashboardgen.DashboardAuthoringUpdateDashboardMetadataCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.UpdateDashboardMetadata = updateDashboardMetadataPayloadFromAPIGen(&value.UpdateDashboardMetadata)
+	case *dashboardgen.DashboardAuthoringUpdatePageMetadataCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.UpdatePageMetadata = updatePageMetadataPayloadFromAPIGen(&value.UpdatePageMetadata)
+	case *dashboardgen.DashboardAuthoringUpdateHeaderMetadataCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.UpdateHeaderMetadata = updateHeaderMetadataPayloadFromAPIGen(&value.UpdateHeaderMetadata)
 	case *dashboardgen.DashboardAuthoringSetVisibilityCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.SetVisibility, payloadErr = setVisibilityPayloadFromAPIGen(&value.SetVisibility)
@@ -892,6 +945,9 @@ func commandFromAPIGen(input dashboardgen.GenSchemaDashboardAuthoringCommandRequ
 	case *dashboardgen.DashboardAuthoringSetVisualTypeCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.SetVisualType = setVisualTypePayloadFromAPIGen(&value.SetVisualType)
+	case *dashboardgen.DashboardAuthoringSetVisualQueryOptionsCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.SetVisualQueryOptions = setVisualQueryOptionsPayloadFromAPIGen(&value.SetVisualQueryOptions)
 	case *dashboardgen.DashboardAuthoringRenameVisualCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.RenameVisual = renameVisualPayloadFromAPIGen(&value.RenameVisual)

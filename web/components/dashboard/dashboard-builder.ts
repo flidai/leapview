@@ -10,7 +10,9 @@ import type {
   DashboardBuilderFilterSignal,
   DashboardBuilderFormatOptionSignal,
   DashboardBuilderInteractionSignal,
+  DashboardBuilderHeaderSignal,
   DashboardBuilderPageSignal,
+  DashboardBuilderPlaceholderSignal,
   DashboardBuilderSignal,
   DashboardBuilderDatasetSignal,
   DashboardBuilderVisualSignal,
@@ -147,6 +149,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private fieldFilter: BuilderFieldFilter = 'all'
   @state() private selectedFilterID = ''
   @state() private selectedFilterComponentID = ''
+  @state() private selectedHeaderID = ''
   @state() private addingSlicer = false
   @state() private gridInteractionMessage = ''
   @state() private visualActionMessage = ''
@@ -303,8 +306,39 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .title-wrap {
+      position: relative;
       min-width: 0;
       margin-right: auto;
+    }
+
+    .dashboard-metadata {
+      position: absolute;
+      z-index: 5;
+      top: calc(100% + var(--base-size-8));
+      left: 0;
+    }
+
+    .dashboard-metadata summary {
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .dashboard-metadata summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .dashboard-metadata-form {
+      display: grid;
+      width: min(22rem, calc(100vw - var(--base-size-16)));
+      gap: var(--base-size-8);
+      margin-top: var(--base-size-6);
+      padding: var(--base-size-12);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+      box-shadow: var(--lv-shadow-floating-sm);
     }
 
     .appearance-control {
@@ -622,6 +656,28 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       color: var(--lv-fg-default);
       background: var(--lv-bg-input, var(--lv-bg-panel));
       font: var(--lv-type-body-compact);
+    }
+
+    .filter-reset-actions {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      justify-content: flex-end;
+      gap: var(--base-size-4);
+    }
+
+    .filter-reset-button {
+      min-height: var(--control-small-size);
+      border-color: transparent;
+      padding: 0 var(--base-size-6);
+      color: var(--lv-fg-muted);
+      background: transparent;
+      font: var(--lv-type-caption);
+    }
+
+    .filter-reset-button:hover:not(:disabled) {
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-control-hover);
     }
 
     .filter-list {
@@ -1603,7 +1659,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .visual > .grid-stack-item-content,
-    .filter-component > .grid-stack-item-content {
+    .filter-component > .grid-stack-item-content,
+    .header-component > .grid-stack-item-content,
+    .builder-placeholder > .grid-stack-item-content {
       grid-template-rows: auto minmax(0, 1fr) auto;
       box-sizing: border-box;
       border: var(--lv-border-default);
@@ -1632,6 +1690,39 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .filter-component[data-selected='true'] > .grid-stack-item-content {
       border-color: var(--lv-data-2);
       box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-data-2-muted);
+    }
+
+    .header-component > .grid-stack-item-content,
+    .builder-placeholder > .grid-stack-item-content {
+      grid-template-rows: auto minmax(0, 1fr);
+      background: var(--lv-bg-panel);
+    }
+
+    .header-component[data-selected='true'] > .grid-stack-item-content {
+      border-color: var(--lv-data-4);
+      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-data-4-muted);
+    }
+
+    .header-copy {
+      display: grid;
+      align-content: center;
+      gap: var(--base-size-4);
+      min-width: 0;
+      padding: var(--base-size-8);
+    }
+
+    .header-copy span,
+    .builder-placeholder span {
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+    }
+
+    .builder-placeholder > .grid-stack-item-content {
+      align-content: center;
+      gap: var(--base-size-4);
+      border-style: dashed;
+      color: var(--lv-fg-muted);
+      text-align: center;
     }
 
     .component-drag-handle {
@@ -2127,6 +2218,28 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       padding-top: var(--base-size-12);
     }
 
+    .visual-query-controls {
+      margin-top: var(--base-size-4);
+      border-top: var(--lv-border-muted);
+      padding-top: var(--base-size-12);
+    }
+
+    .query-control-list {
+      display: grid;
+      gap: var(--base-size-8);
+    }
+
+    .query-sort-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: var(--base-size-6);
+      align-items: center;
+    }
+
+    .query-sort-row button {
+      min-width: 1.8rem;
+    }
+
     .format-controls-heading {
       margin: 0;
       color: var(--lv-fg-default);
@@ -2218,7 +2331,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .visual,
-    .filter-component {
+    .filter-component,
+    .header-component,
+    .builder-placeholder {
       position: absolute;
       display: block;
       min-width: 4rem;
@@ -2234,7 +2349,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .visual:focus-visible,
-    .filter-component:focus-visible {
+    .filter-component:focus-visible,
+    .header-component:focus-visible {
       outline: 2px solid var(--lv-fg-accent);
       outline-offset: 2px;
     }
@@ -2600,7 +2716,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       }
 
       .canvas .visual,
-      .canvas .filter-component {
+      .canvas .filter-component,
+      .canvas .header-component,
+      .canvas .builder-placeholder {
         position: relative;
         top: auto !important;
         right: auto !important;
@@ -2623,8 +2741,16 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         min-height: 8rem;
       }
 
+      .canvas .header-component,
+      .canvas .builder-placeholder {
+        height: 8rem !important;
+        min-height: 8rem;
+      }
+
       .canvas .visual > .grid-stack-item-content,
-      .canvas .filter-component > .grid-stack-item-content {
+      .canvas .filter-component > .grid-stack-item-content,
+      .canvas .header-component > .grid-stack-item-content,
+      .canvas .builder-placeholder > .grid-stack-item-content {
         position: relative;
         inset: auto !important;
         width: 100%;
@@ -2683,7 +2809,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private syncGridStack(builder: DashboardBuilderSignal | null, page: DashboardBuilderPageSignal | undefined): void {
     const canvas = this.shadowRoot?.querySelector('.canvas.grid-stack') as HTMLElement | null
     const mobile = this.isMobileViewport()
-    const componentIDs = page ? [...page.visuals, ...(page.filterComponents ?? [])].map((component) => component.id) : []
+    const componentIDs = page ? this.pagePlacedComponents(page).map((component) => component.id) : []
     const layoutKey = builder && page
       ? `${this.revisionKey(builder)}:${page.id}:${componentIDs.join(',')}`
       : ''
@@ -2809,7 +2935,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         return Math.max(maximum, (node?.y ?? 0) + (node?.h ?? 1))
       }, 0)
     }
-    return [...page.visuals, ...(page.filterComponents ?? [])].reduce((maximum, component) => (
+    return this.pagePlacedComponents(page).reduce((maximum, component) => (
       Math.max(maximum, Math.max(1, component.placement.row) - 1 + Math.max(1, component.placement.rowSpan))
     ), 0)
   }
@@ -2834,7 +2960,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = builder ? this.selectedPage(builder) : undefined
     if (!builder || !page || !this.gridStack || this.isMobileViewport() || this.commandPending || !builder.capabilities.canEdit) return
     const nodes = new Map(this.gridStack.getGridItems().map((item) => [item.gridstackNode?.id || item.getAttribute('gs-id') || '', item.gridstackNode]))
-    const components = [...page.visuals, ...(page.filterComponents ?? [])]
+    const components = this.pageEditableComponents(page)
     const placements: GridPlacement[] = components.map((component) => {
       const node = nodes.get(component.id)
       return {
@@ -2854,6 +2980,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private placementEqual(left: GridPlacement, right: DashboardBuilderVisualSignal['placement']): boolean {
     return left.placement.column === right.col && left.placement.row === right.row && left.placement.columnSpan === right.colSpan && left.placement.rowSpan === right.rowSpan
+  }
+
+  private pagePlacedComponents(page: DashboardBuilderPageSignal): Array<DashboardBuilderVisualSignal | DashboardBuilderFilterComponentSignal | DashboardBuilderHeaderSignal | DashboardBuilderPlaceholderSignal> {
+    return [...page.visuals, ...(page.filterComponents ?? []), ...(page.headers ?? []), ...(page.placeholders ?? [])]
+  }
+
+  private pageEditableComponents(page: DashboardBuilderPageSignal): Array<DashboardBuilderVisualSignal | DashboardBuilderFilterComponentSignal | DashboardBuilderHeaderSignal> {
+    return [...page.visuals, ...(page.filterComponents ?? []), ...(page.headers ?? [])]
   }
 
   get builder(): DashboardBuilderSignal | null {
@@ -3026,6 +3160,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     const page = this.selectedPage(builder)
     const visual = page ? this.selectedVisual(page, builder) : undefined
+    const header = page ? this.selectedHeader(page) : undefined
     return html`
       <section class="builder" aria-label="Dashboard builder">
         ${this.renderTerminalFailure()}
@@ -3035,7 +3170,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ${this.renderPageBar(builder, page)}
           <div class="right-dock" style=${this.rightDockStyle()}>
             ${this.renderFiltersPane(builder)}
-            ${this.renderInspector(builder, page, visual)}
+            ${this.renderInspector(builder, page, visual, header)}
             ${this.renderDataPane(builder, visual)}
             ${this.renderAgentPane()}
           </div>
@@ -3081,6 +3216,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         </div>
         <div class="title-wrap">
           <h1 class="title">${builder.title}</h1>
+          <details class="dashboard-metadata">
+            <summary>Dashboard settings</summary>
+            <div class="dashboard-metadata-form">
+              <label class="format-text-field"><span>Dashboard title</span><input type="text" maxlength="128" aria-label="Dashboard title" .value=${builder.title} ?disabled=${!builder.capabilities.canEdit || this.commandPending} @change=${this.updateDashboardTitle} /></label>
+              <label class="format-text-field"><span>Dashboard description</span><textarea maxlength="512" aria-label="Dashboard description" ?disabled=${!builder.capabilities.canEdit || this.commandPending} @change=${this.updateDashboardDescription}>${builder.description ?? ''}</textarea></label>
+            </div>
+          </details>
           <div class="meta" data-state=${builder.hasUnpublishedChanges || saveState === 'dirty' ? 'dirty' : saveState} aria-label="Dashboard draft status" aria-live="polite" title=${`${builder.origin.label} · Revision ${builder.revision.number} · ${builder.revision.id}`}>
             <span>${this.titleCase(builder.visibility)} ${this.titleCase(builder.lifecycle)} · Revision ${builder.revision.number} · ${publishing ? 'Publishing…' : this.commandPending ? 'Saving…' : this.saveLabel(builder)}</span>
           </div>
@@ -3222,7 +3364,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = builder ? this.selectedPage(builder) : undefined
     this.destroyGridStack()
     if (!page) return
-    for (const component of [...page.visuals, ...(page.filterComponents ?? [])]) {
+    for (const component of this.pagePlacedComponents(page)) {
       const tile = this.shadowRoot?.querySelector<HTMLElement>(`[gs-id="${CSS.escape(component.id)}"]`)
       if (!tile) continue
       tile.setAttribute('gs-x', String(Math.max(0, component.placement.col - 1)))
@@ -3424,6 +3566,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
               ${dimensions.map((item) => html`<option value=${item.field.id} ?disabled=${filters.some((candidate) => candidate.dimension === item.field.id)}>${item.field.label}</option>`)}
             </select>
           </label>
+          ${this.renderBuilderFilterResetControls(page)}
           ${filters.length === 0 ? html`<p class="filter-pane-empty">No filters yet</p>` : nothing}
           ${grouped.visual.length > 0 ? this.renderFilterScopeGroup('This visual', grouped.visual, filter) : nothing}
           ${grouped.page.length > 0 ? this.renderFilterScopeGroup('This page', grouped.page, filter) : nothing}
@@ -3432,6 +3575,33 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ${filter ? this.renderFilterEditor(builder, filter) : nothing}
         </div>
       </aside>
+    `
+  }
+
+  private renderBuilderFilterResetControls(page: DashboardBuilderPageSignal | undefined) {
+    const pageBindingKeys = this.builderFilterResetBindingKeys('page', page?.id)
+    const dashboardBindingKeys = this.builderFilterResetBindingKeys('dashboard')
+    if (pageBindingKeys.length === 0 && dashboardBindingKeys.length === 0) return nothing
+    const pending = this.builderFilterController.pending || this.status.loading
+    return html`
+      <div class="filter-reset-actions" role="group" aria-label="Reset dashboard filters">
+        <button
+          type="button"
+          class="filter-reset-button"
+          data-reset-scope="page"
+          title="Reset filters on this page"
+          ?disabled=${pageBindingKeys.length === 0 || pending}
+          @click=${() => this.resetBuilderFilters('page', pageBindingKeys)}
+        >Reset page</button>
+        <button
+          type="button"
+          class="filter-reset-button"
+          data-reset-scope="dashboard"
+          title="Reset filters on all pages"
+          ?disabled=${dashboardBindingKeys.length === 0 || pending}
+          @click=${() => this.resetBuilderFilters('dashboard', dashboardBindingKeys)}
+        >Reset all</button>
+      </div>
     `
   }
 
@@ -3636,9 +3806,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           <div class="canvas-fit">
             <div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} data-grid-guides=${this.draggedFieldID || pageFormatting ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
               ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}
-              ${page.visuals.length === 0 && (page.filterComponents?.length ?? 0) === 0
+              ${page.visuals.length === 0 && (page.filterComponents?.length ?? 0) === 0 && (page.headers?.length ?? 0) === 0 && (page.placeholders?.length ?? 0) === 0
                 ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Choose a visual or place a report-filter slicer to begin.</span></div></div>`
-                : html`${repeat(page.visuals, (visual) => visual.id, (visual) => this.renderVisual(visual, page, previews))}${repeat(page.filterComponents ?? [], (component) => component.id, (component) => this.renderFilterComponent(component, page))}`}
+                : html`${repeat(page.visuals, (visual) => visual.id, (visual) => this.renderVisual(visual, page, previews))}${repeat(page.filterComponents ?? [], (component) => component.id, (component) => this.renderFilterComponent(component, page))}${repeat(page.headers ?? [], (header) => header.id, (header) => this.renderHeader(header, page))}${repeat(page.placeholders ?? [], (placeholder) => placeholder.id, (placeholder) => this.renderPlaceholder(placeholder, page))}`}
             </div>
           </div>
           <div class="sr-only" aria-live="polite">${this.gridInteractionMessage}</div>
@@ -3721,6 +3891,36 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`<div class="filter-control-preview" aria-label=${`${this.filterControlLabel(component.controlType)} preview`}><div class="filter-preview-input"><span>${preview}</span><span aria-hidden="true">${component.controlType === 'text' ? '⌕' : '⌄'}</span></div></div>`
   }
 
+  private renderHeader(header: DashboardBuilderHeaderSignal, page: DashboardBuilderPageSignal) {
+    const selected = header.id === this.selectedHeaderID
+    const columns = Math.max(1, page.grid.columns || 12)
+    const left = `${Math.max(0, header.placement.col - 1) * (100 / columns)}%`
+    const top = `${Math.max(0, header.placement.row - 1) * (page.grid.rowHeight || 40)}px`
+    const width = `${Math.max(1, header.placement.colSpan) * (100 / columns)}%`
+    const height = `${Math.max(1, header.placement.rowSpan) * (page.grid.rowHeight || 40)}px`
+    return html`
+      <div class="header-component grid-stack-item" data-selected=${selected} gs-id=${header.id} gs-x=${Math.max(0, header.placement.col - 1)} gs-y=${Math.max(0, header.placement.row - 1)} gs-w=${Math.max(1, header.placement.colSpan)} gs-h=${Math.max(1, header.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${header.title}, selected dashboard header` : `${header.title}, dashboard header`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectHeader(header) }} @keydown=${(event: KeyboardEvent) => this.selectHeaderOnKey(event, header)}>
+        <div class="grid-stack-item-content">
+          <span class="component-drag-grip component-drag-handle" role="button" aria-label=${`Drag to move ${header.title}`} title=${`Drag to move ${header.title}`} @pointerdown=${() => this.selectHeader(header)}>${lucideIcon(GripHorizontal, { size: 16, strokeWidth: 2 })}</span>
+          <div class="header-copy"><strong>${header.title}</strong>${header.description ? html`<span>${header.description}</span>` : nothing}</div>
+        </div>
+      </div>
+    `
+  }
+
+  private renderPlaceholder(placeholder: DashboardBuilderPlaceholderSignal, page: DashboardBuilderPageSignal) {
+    const columns = Math.max(1, page.grid.columns || 12)
+    const left = `${Math.max(0, placeholder.placement.col - 1) * (100 / columns)}%`
+    const top = `${Math.max(0, placeholder.placement.row - 1) * (page.grid.rowHeight || 40)}px`
+    const width = `${Math.max(1, placeholder.placement.colSpan) * (100 / columns)}%`
+    const height = `${Math.max(1, placeholder.placement.rowSpan) * (page.grid.rowHeight || 40)}px`
+    return html`
+      <div class="builder-placeholder grid-stack-item" data-locked=${placeholder.locked} gs-id=${placeholder.id} gs-x=${Math.max(0, placeholder.placement.col - 1)} gs-y=${Math.max(0, placeholder.placement.row - 1)} gs-w=${Math.max(1, placeholder.placement.colSpan)} gs-h=${Math.max(1, placeholder.placement.rowSpan)} role="note" aria-label=${`${placeholder.title}, locked ${placeholder.kind} placeholder`} style=${`left:${left};top:${top};width:${width};height:${height}`}>
+        <div class="grid-stack-item-content"><strong>${placeholder.title}</strong><span>${placeholder.message}</span><span>Locked until the ${placeholder.kind} definition is restored.</span></div>
+      </div>
+    `
+  }
+
   private renderComponentDragGrip(label: string, select: () => void) {
     return html`<span class="component-drag-grip component-drag-handle" role="button" aria-label=${`Drag to move ${label}`} title=${`Drag to move ${label}`} @pointerdown=${select}>${lucideIcon(GripHorizontal, { size: 16, strokeWidth: 2 })}</span>`
   }
@@ -3750,22 +3950,24 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       : 'Fix draft validation before publishing'
   }
 
-  private renderInspector(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined) {
+  private renderInspector(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined, header?: DashboardBuilderHeaderSignal) {
     const collapsed = this.collapsedPanes.visuals
     const slicer = page?.filterComponents?.find((component) => component.id === this.selectedFilterComponentID)
     const slicerFilter = slicer ? (builder.filters ?? []).find((filter) => filter.id === slicer.filterId) : undefined
     const slicerActive = Boolean(this.addingSlicer || slicer)
-    const formattingPage = Boolean(page && !visual && !slicerActive && this.editingPage)
+    const formattingPage = Boolean(page && !visual && !header && !slicerActive && this.editingPage)
+    const metadataHeader = Boolean(page && header && !slicerActive)
     return html`
-      <aside class="pane properties visual-builder" data-collapsed=${collapsed} aria-label=${formattingPage ? 'Page properties' : 'Visual builder'}>
+      <aside class="pane properties visual-builder" data-collapsed=${collapsed} aria-label=${formattingPage ? 'Page properties' : metadataHeader ? 'Header properties' : 'Visual builder'}>
         <div class="pane-header">
           <div class="inspector-heading">
             <div class="inspector-title">
               <span class="pane-title-icon">${lucideIcon(slicerActive ? ListFilter : ChartColumn, { size: 16, strokeWidth: 2 })}</span>
-              <h2 class="pane-title">${collapsed ? 'Visuals' : this.addingSlicer ? 'Add a slicer' : slicer ? slicer.label : visual ? visual.title : formattingPage ? page?.title : page ? 'Add a visual' : 'Visual builder'}</h2>
+              <h2 class="pane-title">${collapsed ? 'Visuals' : this.addingSlicer ? 'Add a slicer' : slicer ? slicer.label : visual ? visual.title : header ? header.title : formattingPage ? page?.title : page ? 'Add a visual' : 'Visual builder'}</h2>
               ${visual && !collapsed ? html`<span class="visual-type-badge">${this.titleCase(this.visualTypeForRender(visual))}</span>` : nothing}
               ${slicer && !collapsed ? html`<span class="visual-type-badge">Slicer</span>` : nothing}
               ${formattingPage && !collapsed ? html`<span class="visual-type-badge">Page</span>` : nothing}
+              ${metadataHeader && !collapsed ? html`<span class="visual-type-badge">Header</span>` : nothing}
             </div>
             ${this.renderPaneToggle('visuals', 'Visuals pane', 'builder-visuals-content')}
           </div>
@@ -3774,12 +3976,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div id="builder-visuals-content" class="pane-content" ?hidden=${collapsed}>
           ${formattingPage
             ? html`<section class="inspector-panel" aria-label="Page settings">${this.renderPageProperties(page)}</section>`
+            : metadataHeader
+              ? html`<section class="inspector-panel" aria-label="Header settings">${this.renderHeaderProperties(page, header)}</section>`
             : html`<section class="inspector-panel" aria-label=${slicerActive ? 'Build slicer' : visual ? 'Visual configuration' : 'Add visual'}>
                 ${this.renderVisualPicker(builder, page, visual)}
                 ${slicerActive
                   ? this.renderSlicerFieldWell(slicerFilter)
                   : visual
-                    ? html`${this.renderFieldWells(visual)}${this.renderVisualFormatControls(visual)}${this.renderInteractionEditor(builder, page, visual)}`
+                    ? html`${this.renderFieldWells(visual)}${this.renderVisualQueryControls(visual)}${this.renderVisualFormatControls(visual)}${this.renderInteractionEditor(builder, page, visual)}`
                     : page ? html`<div class="inline-page-properties">${this.renderPageProperties(page)}</div>` : nothing}
               </section>`}
           ${this.renderInspectorDetails(builder)}
@@ -3860,6 +4064,110 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div class="field-wells">${roles.map((role) => this.renderFieldWell(visual, role))}</div>
       </section>
     `
+  }
+
+  private renderVisualQueryControls(visual: DashboardBuilderVisualSignal) {
+    const editable = Boolean(this.builder?.capabilities.canEdit && !this.commandPending)
+    const slots = (visual.slots ?? []).filter((slot) => Boolean(slot.fieldId))
+    const sort = visual.queryOptions?.sort ?? []
+    const resultFields = slots.map((slot) => ({
+      field: slot.alias?.trim() || slot.fieldId || '',
+      label: this.fieldLabel(slot.fieldId ?? '', slot.label),
+    })).filter((field) => field.field)
+    return html`
+      <details class="visual-query-controls" aria-label="Query controls" open>
+        <summary>Query</summary>
+        <div class="builder-disclosure-content query-control-list">
+          ${slots.map((slot) => html`
+            <label class="format-text-field">
+              <span>${this.fieldLabel(slot.fieldId ?? '', slot.label)} alias</span>
+              <input type="text" maxlength="128" data-query-control="alias" data-field-id=${slot.fieldId ?? ''} aria-label=${`${this.fieldLabel(slot.fieldId ?? '', slot.label)} alias`} .value=${slot.alias ?? ''} ?disabled=${!editable} @change=${(event: Event) => this.updateVisualQueryAlias(visual, slot, event)} />
+            </label>
+            ${this.slotRole(slot) === 'dimension' && this.fieldIsTemporal(slot.fieldId ?? '') ? html`
+              <label class="format-text-field">
+                <span>${this.fieldLabel(slot.fieldId ?? '', slot.label)} grain</span>
+                <select data-query-control="grain" data-field-id=${slot.fieldId ?? ''} aria-label=${`${this.fieldLabel(slot.fieldId ?? '', slot.label)} grain`} ?disabled=${!editable} @change=${(event: Event) => this.updateVisualQueryGrain(visual, slot, event)}>
+                  <option value="" ?selected=${!slot.grain}>Default</option>
+                  ${(['second', 'minute', 'hour', 'day', 'week', 'month', 'quarter', 'year'] as const).map((grain) => html`<option value=${grain} ?selected=${slot.grain === grain}>${this.titleCase(grain)}</option>`)}
+                </select>
+              </label>
+            ` : nothing}
+          `)}
+          ${visual.queryOptions?.supportsSort && resultFields.length > 0 ? html`
+            <label class="format-text-field">
+              <span>Sort field</span>
+              <select data-query-control="sort-field" aria-label="Sort field" ?disabled=${!editable} @change=${(event: Event) => this.updateVisualQuerySortField(visual, event)}>
+                <option value="">No sort</option>
+                ${resultFields.map((field) => html`<option value=${field.field} ?selected=${sort[0]?.field === field.field}>${field.label}</option>`)}
+              </select>
+            </label>
+            <label class="format-text-field">
+              <span>Sort direction</span>
+              <select data-query-control="sort-direction" aria-label="Sort direction" ?disabled=${!editable || sort.length === 0} @change=${(event: Event) => this.updateVisualQuerySortDirection(visual, event)}>
+                <option value="asc" ?selected=${sort[0]?.direction !== 'desc'}>Ascending</option>
+                <option value="desc" ?selected=${sort[0]?.direction === 'desc'}>Descending</option>
+              </select>
+            </label>
+          ` : nothing}
+          ${visual.queryOptions?.supportsLimit ? html`
+            <label class="format-text-field">
+              <span>Limit / Top N</span>
+              <input type="number" min="1" max="1000" step="1" data-query-control="limit" aria-label="Limit or Top N" .value=${visual.queryOptions?.limit == null ? '' : String(visual.queryOptions.limit)} ?disabled=${!editable} @change=${(event: Event) => this.updateVisualQueryLimit(visual, event)} />
+            </label>
+          ` : nothing}
+        </div>
+      </details>
+    `
+  }
+
+  private updateVisualQueryAlias(visual: DashboardBuilderVisualSignal, slot: DashboardBuilderVisualSlotSignal, event: Event): void {
+    const page = this.builder ? this.selectedPage(this.builder) : undefined
+    const fieldID = slot.fieldId ?? ''
+    if (!this.builder?.capabilities.canEdit || !page || !fieldID || this.commandPending) return
+    this.visualActionMessage = `Saving ${this.fieldLabel(fieldID, slot.label)} alias.`
+    this.emitCommand('set_visual_query_options', { pageId: page.id, visualId: visual.id, fieldId: fieldID, role: this.slotRole(slot), alias: (event.currentTarget as HTMLInputElement).value })
+  }
+
+  private updateVisualQueryGrain(visual: DashboardBuilderVisualSignal, slot: DashboardBuilderVisualSlotSignal, event: Event): void {
+    const page = this.builder ? this.selectedPage(this.builder) : undefined
+    const fieldID = slot.fieldId ?? ''
+    if (!this.builder?.capabilities.canEdit || !page || !fieldID || this.commandPending) return
+    const grain = (event.currentTarget as HTMLSelectElement).value
+    this.visualActionMessage = `Saving ${this.fieldLabel(fieldID, slot.label)} time grain.`
+    this.emitCommand('set_visual_query_options', { pageId: page.id, visualId: visual.id, fieldId: fieldID, role: 'dimension', ...(grain ? { grain } : { clearGrain: true }) })
+  }
+
+  private updateVisualQuerySortField(visual: DashboardBuilderVisualSignal, event: Event): void {
+    const page = this.builder ? this.selectedPage(this.builder) : undefined
+    if (!this.builder?.capabilities.canEdit || !page || this.commandPending) return
+    const field = (event.currentTarget as HTMLSelectElement).value
+    const direction = visual.queryOptions?.sort[0]?.direction ?? 'asc'
+    this.visualActionMessage = field ? 'Saving visual sort.' : 'Clearing visual sort.'
+    this.emitCommand('set_visual_query_options', { pageId: page.id, visualId: visual.id, sort: field ? [{ field, direction }] : [] })
+  }
+
+  private updateVisualQuerySortDirection(visual: DashboardBuilderVisualSignal, event: Event): void {
+    const page = this.builder ? this.selectedPage(this.builder) : undefined
+    const current = visual.queryOptions?.sort[0]
+    if (!this.builder?.capabilities.canEdit || !page || !current || this.commandPending) return
+    const direction = (event.currentTarget as HTMLSelectElement).value as 'asc' | 'desc'
+    this.visualActionMessage = 'Saving visual sort direction.'
+    this.emitCommand('set_visual_query_options', { pageId: page.id, visualId: visual.id, sort: [{ field: current.field, direction }] })
+  }
+
+  private updateVisualQueryLimit(visual: DashboardBuilderVisualSignal, event: Event): void {
+    const page = this.builder ? this.selectedPage(this.builder) : undefined
+    if (!this.builder?.capabilities.canEdit || !page || this.commandPending) return
+    const raw = (event.currentTarget as HTMLInputElement).value.trim()
+    if (!raw) {
+      this.visualActionMessage = 'Clearing visual limit.'
+      this.emitCommand('set_visual_query_options', { pageId: page.id, visualId: visual.id, clearLimit: true })
+      return
+    }
+    const limit = Math.max(1, Math.min(1000, Number.parseInt(raw, 10)))
+    if (!Number.isFinite(limit)) return
+    this.visualActionMessage = 'Saving visual limit.'
+    this.emitCommand('set_visual_query_options', { pageId: page.id, visualId: visual.id, limit })
   }
 
   private renderInteractionEditor(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal) {
@@ -4074,6 +4382,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return label ? label.charAt(0).toLocaleUpperCase() + label.slice(1) : 'Field'
   }
 
+  private fieldIsTemporal(fieldID: string): boolean {
+    const field = this.builder?.semanticModel.datasets.flatMap((dataset) => dataset.fields).find((candidate) => candidate.id === fieldID)
+    return Boolean(field && this.fieldCatalogGroup(field) === 'time')
+  }
+
   private alternateFieldRole(_visual: DashboardBuilderVisualSignal, _role: BuilderFieldRole): BuilderFieldRole | undefined {
     // The V1 chart wells are semantic: dimensions cannot be reclassified as
     // measures, and record details cannot be moved into aggregate axes. Keep
@@ -4146,6 +4459,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <span>Page name</span>
             <input type="text" maxlength="128" data-page-control="title" aria-label="Page name" .value=${page.title} ?disabled=${!editable} @change=${(event: Event) => this.updatePageTitle(page, event)} />
           </label>
+          <label class="format-text-field">
+            <span>Page description</span>
+            <textarea maxlength="512" aria-label="Page description" ?disabled=${!editable} @change=${(event: Event) => this.updatePageDescription(page, event)}>${page.description ?? ''}</textarea>
+          </label>
           ${page.canvas.width > 0 && page.canvas.height > 0 ? html`<p class="page-format-summary"><span>Current canvas</span><span>${page.canvas.width} × ${page.canvas.height}</span></p>` : nothing}
         </div>
         <div class="format-section">
@@ -4157,6 +4474,26 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <label class="format-text-field"><span>Padding</span><input type="number" min="0" step="1" data-page-control="padding" aria-label="Grid padding" .value=${String(page.grid.padding)} ?disabled=${!editable} @change=${(event: Event) => this.updatePageLayout(page, 'padding', event, 0)} /></label>
           </div>
           <p class="pane-hint">The grid is stored on this page in dashboard code. Columns cannot clip an existing visual.</p>
+        </div>
+      </section>
+    `
+  }
+
+  private renderHeaderProperties(page: DashboardBuilderPageSignal | undefined, header: DashboardBuilderHeaderSignal | undefined) {
+    if (!page || !header) return html`<span class="pane-hint">Select a header to edit its properties.</span>`
+    const editable = Boolean(this.builder?.capabilities.canEdit && !this.commandPending)
+    return html`
+      <section class="format-controls" aria-label="Header formatting">
+        <div class="format-section">
+          <h3>Header</h3>
+          <label class="format-text-field">
+            <span>Header title</span>
+            <input type="text" maxlength="128" data-header-control="title" aria-label="Header title" .value=${header.title} ?disabled=${!editable} @change=${(event: Event) => this.updateHeaderTitle(page, header, event)} />
+          </label>
+          <label class="format-text-field">
+            <span>Header description</span>
+            <textarea maxlength="512" data-header-control="description" aria-label="Header description" ?disabled=${!editable} @change=${(event: Event) => this.updateHeaderDescription(page, header, event)}>${header.description ?? ''}</textarea>
+          </label>
         </div>
       </section>
     `
@@ -4442,6 +4779,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return page.visuals.find((visual) => visual.id === id)
   }
 
+  private selectedHeader(page: DashboardBuilderPageSignal): DashboardBuilderHeaderSignal | undefined {
+    return page.headers?.find((header) => header.id === this.selectedHeaderID)
+  }
+
   private effectiveVisualID(builder: DashboardBuilderSignal | null, page: DashboardBuilderPageSignal): string {
     if (this.localVisualID !== null) {
       if (this.localVisualID && page.visuals.some((visual) => visual.id === this.localVisualID)) return this.localVisualID
@@ -4466,6 +4807,27 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (icon === builder.appearance.icon && color === builder.appearance.color) return
     this.visualActionMessage = 'Saving dashboard icon and color.'
     this.emitCommand('update_appearance', { icon, color })
+  }
+
+  private updateDashboardTitle = (event: Event): void => {
+    const builder = this.builder
+    const title = (event.currentTarget as HTMLInputElement).value.trim()
+    if (!builder || !title) {
+      if (builder) (event.currentTarget as HTMLInputElement).value = builder.title
+      this.visualActionMessage = 'Dashboard title cannot be empty.'
+      return
+    }
+    if (title === builder.title || !builder.capabilities.canEdit || this.commandPending) return
+    this.visualActionMessage = 'Saving dashboard title.'
+    this.emitCommand('update_dashboard_metadata', { title, description: builder.description ?? '' })
+  }
+
+  private updateDashboardDescription = (event: Event): void => {
+    const builder = this.builder
+    const description = (event.currentTarget as HTMLTextAreaElement).value.trim()
+    if (!builder || description === (builder.description ?? '') || !builder.capabilities.canEdit || this.commandPending) return
+    this.visualActionMessage = 'Saving dashboard description.'
+    this.emitCommand('update_dashboard_metadata', { title: builder.title, description })
   }
 
   private publish = (): void => {
@@ -4500,6 +4862,32 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (title === page.title || !this.builder?.capabilities.canEdit || this.commandPending) return
     this.visualActionMessage = `Renaming ${page.title}.`
     this.emitCommand('rename_page', { pageId: page.id, title })
+  }
+
+  private updatePageDescription(page: DashboardBuilderPageSignal, event: Event): void {
+    const description = (event.currentTarget as HTMLTextAreaElement).value.trim()
+    if (description === (page.description ?? '') || !this.builder?.capabilities.canEdit || this.commandPending) return
+    this.visualActionMessage = `Saving ${page.title} description.`
+    this.emitCommand('update_page_metadata', { pageId: page.id, title: page.title, description })
+  }
+
+  private updateHeaderTitle(page: DashboardBuilderPageSignal, header: DashboardBuilderHeaderSignal, event: Event): void {
+    const title = (event.currentTarget as HTMLInputElement).value.trim()
+    if (!title) {
+      (event.currentTarget as HTMLInputElement).value = header.title
+      this.visualActionMessage = 'Header title cannot be empty.'
+      return
+    }
+    if (title === header.title || !this.builder?.capabilities.canEdit || this.commandPending) return
+    this.visualActionMessage = `Saving ${header.title}.`
+    this.emitCommand('update_header_metadata', { pageId: page.id, headerId: header.id, title, description: header.description ?? '' })
+  }
+
+  private updateHeaderDescription(page: DashboardBuilderPageSignal, header: DashboardBuilderHeaderSignal, event: Event): void {
+    const description = (event.currentTarget as HTMLTextAreaElement).value.trim()
+    if (description === (header.description ?? '') || !this.builder?.capabilities.canEdit || this.commandPending) return
+    this.visualActionMessage = `Saving ${header.title} description.`
+    this.emitCommand('update_header_metadata', { pageId: page.id, headerId: header.id, title: header.title, description })
   }
 
   private updatePageLayout(page: DashboardBuilderPageSignal, key: keyof DashboardBuilderPageSignal['grid'], event: Event, minimum: number): void {
@@ -4910,6 +5298,22 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return JSON.stringify({ pageID, dependencies })
   }
 
+  private builderFilterResetBindingKeys(scope: 'page' | 'dashboard', pageID?: string): string[] {
+    return Object.values(this.builderFilterContract.bindings)
+      .filter((binding) => binding.readerEditable && (
+        scope === 'dashboard'
+        || (binding.scope === 'page' && binding.pageID === pageID)
+      ))
+      .map((binding) => binding.key)
+      .sort()
+  }
+
+  private resetBuilderFilters(scope: 'page' | 'dashboard', bindingKeys: string[]): void {
+    if (bindingKeys.length === 0 || this.builderFilterController.pending || this.status.loading) return
+    this.builderFilterController.reset(scope, bindingKeys)
+    this.requestUpdate()
+  }
+
   private handleBuilderFilterMutation = (event: CustomEvent<FilterMutationDetail>): void => {
     const detail = event.detail
     if (!detail?.bindingKey || !detail.expression) return
@@ -5233,6 +5637,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     this.localPageID = pageID
     this.localVisualID = ''
+    this.selectedHeaderID = ''
     this.addingSlicer = false
     this.editingPage = false
     this.selectedFilterID = ''
@@ -5249,6 +5654,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const selectedVisual = builder ? this.effectiveVisualID(builder, page) : ''
     this.localPageID = page.id
     this.localVisualID = ''
+    this.selectedHeaderID = ''
     this.addingSlicer = false
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
@@ -5270,6 +5676,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.addingSlicer = false
     this.editingPage = false
     this.localVisualID = visualID
+    this.selectedHeaderID = ''
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
     const builder = this.builder
@@ -5289,18 +5696,19 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private readonly deselectVisualFromCanvas = (event: MouseEvent): void => {
     const target = event.target
-    if (target instanceof Element && target.closest('.visual, .filter-component')) return
+    if (target instanceof Element && target.closest('.visual, .filter-component, .header-component, .builder-placeholder')) return
     this.clearCanvasSelection()
   }
 
   private clearCanvasSelection(): boolean {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
-    if (!page || (!this.effectiveVisualID(builder, page) && !this.selectedFilterComponentID && !this.selectedFilterID && !this.addingSlicer)) return false
+    if (!page || (!this.effectiveVisualID(builder, page) && !this.selectedHeaderID && !this.selectedFilterComponentID && !this.selectedFilterID && !this.addingSlicer)) return false
     this.localVisualID = ''
     this.addingSlicer = false
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
+    this.selectedHeaderID = ''
     this.editingPage = false
     this.visualActionMessage = 'Visual selection cleared.'
     this.emit('lv-builder-visual-select', { ...this.commandDetail(), visualId: '' })
@@ -5337,6 +5745,28 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.selectedFilterComponentID = component.id
     this.selectedFilterID = component.filterId
     this.localVisualID = ''
+    this.selectedHeaderID = ''
+  }
+
+  private selectHeader(header: DashboardBuilderHeaderSignal): void {
+    this.addingSlicer = false
+    this.editingPage = false
+    this.selectedHeaderID = header.id
+    this.selectedFilterComponentID = ''
+    this.selectedFilterID = ''
+    this.localVisualID = ''
+  }
+
+  private selectHeaderOnKey(event: KeyboardEvent, header: DashboardBuilderHeaderSignal): void {
+    if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault()
+      const page = this.builder ? this.selectedPage(this.builder) : undefined
+      if (page) this.adjustGridComponentWithKeyboard(header.id, header.placement, header.title, event.key, event.shiftKey, page)
+      return
+    }
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    this.selectHeader(header)
   }
 
   private selectFilterComponentOnKey(event: KeyboardEvent, component: DashboardBuilderFilterComponentSignal): void {

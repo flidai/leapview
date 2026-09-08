@@ -82,6 +82,33 @@ func TestCanonicalVisualTypeSwitchConfiguresScatterFromResolvedBindings(t *testi
 	}
 }
 
+func TestCanonicalVisualQueryAliasRewriteKeepsExistingSortValid(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	oldAlias, newAlias := "status_label", "state_label"
+	visual := revision.Document.Spec.Visuals["base"]
+	visual.Query.Value = &document.AggregateDashboardQuery{
+		DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"}, Type: "aggregate",
+		Dimensions: []document.DashboardDimensionSelection{{Reference: &document.DashboardDimensionReference{Dimension: "status", Alias: &oldAlias}}},
+		Metrics:    []document.DashboardMetricSelection{{String: stringPtr("revenue")}},
+		Sort:       &[]document.DashboardSort{{Field: oldAlias, Direction: document.DashboardSortDirectionAsc}},
+	}
+	revision.Document.Spec.Visuals["base"] = visual
+	if err := setCanonicalVisualQueryOptions(&revision.Document, SetVisualQueryOptionsPayload{
+		PageID: "overview", VisualID: "base-component", FieldID: "status", Role: FieldRoleDimension, Alias: &newAlias,
+	}); err != nil {
+		t.Fatalf("rename sorted field: %v", err)
+	}
+	query := revision.Document.Spec.Visuals["base"].Query.Value.(*document.AggregateDashboardQuery)
+	if got := (*query.Sort)[0].Field; got != newAlias {
+		t.Fatalf("sort field = %q, want %q", got, newAlias)
+	}
+	if _, alias := canonicalDimensionSelection(query.Dimensions[0]); alias != newAlias {
+		t.Fatalf("dimension alias = %q, want %q", alias, newAlias)
+	}
+}
+
+func stringPtr(value string) *string { return &value }
+
 func TestCanonicalDonutWithLegacyRecordsQueryRepairsToEditableAggregateQuery(t *testing.T) {
 	_, revision := canonicalReducerFixture(t)
 	revenue, orderID, customerID := "revenue", "order_id", "customer_id"
@@ -846,6 +873,12 @@ func canonicalReducerCommandWithPayload(command Command, payload authoringPayloa
 	switch value := payload.(type) {
 	case *MetadataPatch:
 		command.Metadata = value
+	case *UpdateDashboardMetadataPayload:
+		command.UpdateDashboardMetadata = value
+	case *UpdatePageMetadataPayload:
+		command.UpdatePageMetadata = value
+	case *UpdateHeaderMetadataPayload:
+		command.UpdateHeaderMetadata = value
 	case *AddPagePayload:
 		command.AddPage = value
 	case *RenamePagePayload:

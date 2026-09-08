@@ -64,6 +64,7 @@ model DashboardBuilderSignal {
   `draftId`: string;
   `revision`: DashboardBuilderRevisionSignal;
   `title`: string;
+  `description`?: string;
   `appearance`: DashboardBuilderAppearanceSignal;
   `lifecycle`: "draft" | "published" | "archived";
   `visibility`: "private" | "restricted" | "organization";
@@ -159,10 +160,31 @@ model DashboardBuilderFilterBindingSignal {
 model DashboardBuilderPageSignal {
   `id`: string;
   `title`: string;
+  `description`?: string;
   `canvas`: DashboardPageCanvas;
   `grid`: DashboardPageGrid;
   `visuals`: DashboardBuilderVisualSignal[];
   `filterComponents`: DashboardBuilderFilterComponentSignal[];
+  `headers`: DashboardBuilderHeaderSignal[];
+  `placeholders`: DashboardBuilderPlaceholderSignal[];
+}
+
+model DashboardBuilderHeaderSignal {
+  `id`: string;
+  `title`: string;
+  `description`?: string;
+  `placement`: DashboardPagePlacement;
+}
+
+/** Locked projection for a component whose authored definition is unavailable. */
+model DashboardBuilderPlaceholderSignal {
+  `id`: string;
+  `kind`: "visual" | "filter";
+  `referenceId`: string;
+  `title`: string;
+  `message`: string;
+  `locked`: boolean;
+  `placement`: DashboardPagePlacement;
 }
 
 model DashboardBuilderFilterComponentSignal {
@@ -225,6 +247,7 @@ model DashboardBuilderVisualSignal {
   `formatOptions`: DashboardBuilderFormatOptionSignal[];
   `placement`: DashboardPagePlacement;
   `slots`: DashboardBuilderVisualSlotSignal[];
+  `queryOptions`: DashboardBuilderQueryOptionsSignal;
   /** Strict draft-compile failure attributed to this visual definition. */
   `previewError`?: string;
   `filters`: string[];
@@ -235,6 +258,19 @@ model DashboardBuilderVisualSignal {
    * without exposing the authored union to the browser.
    */
   `interaction`?: DashboardBuilderInteractionSignal;
+}
+
+model DashboardBuilderQueryOptionsSignal {
+  `supportsSort`: boolean;
+  `supportsLimit`: boolean;
+  @maxItems(64)
+  `sort`: DashboardBuilderSortSignal[];
+  `limit`?: int32;
+}
+
+model DashboardBuilderSortSignal {
+  `field`: string;
+  `direction`: "asc" | "desc";
 }
 
 /**
@@ -271,6 +307,8 @@ model DashboardBuilderVisualSlotSignal {
   `label`: string;
   `kind`: "dimension" | "metric" | "category" | "value" | "detail";
   `fieldId`?: string;
+  `alias`?: string;
+  `grain`?: LeapViewDashboard.DashboardTimeGrain;
   `required`: boolean;
 }
 

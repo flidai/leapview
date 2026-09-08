@@ -104,6 +104,9 @@ func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testin
 	if len(signal.Pages) != 1 || len(signal.Pages[0].Visuals) != 1 || len(signal.Pages[0].Visuals[0].FormatOptions) == 0 {
 		t.Fatalf("projected format options = %#v", signal.Pages)
 	}
+	if options := signal.Pages[0].Visuals[0].QueryOptions; !options.SupportsSort || !options.SupportsLimit {
+		t.Fatalf("aggregate query options = %#v, want sort and limit support", options)
+	}
 	if len(signal.Filters) != 1 || signal.Filters[0].ID != "status" || signal.Filters[0].ControlType != "multiSelect" || !signal.Filters[0].ReaderEditable || len(signal.Filters[0].Bindings) != 1 || signal.Filters[0].Bindings[0].Scope != "report" {
 		t.Fatalf("projected filters = %#v", signal.Filters)
 	}
@@ -141,6 +144,42 @@ func TestBuildProjectsAuthoredDashboardAppearance(t *testing.T) {
 	}
 	if signal.Appearance.Icon != icon || signal.Appearance.Color != "orange" {
 		t.Fatalf("appearance = %#v", signal.Appearance)
+	}
+}
+
+func TestProjectPagesProjectsMetadataHeadersAndLockedPlaceholders(t *testing.T) {
+	dashboardDescription := "Sales dashboard"
+	pageDescription := "Overview of orders"
+	headerTitle := "Executive summary"
+	headerDescription := "Key context"
+	doc := document.DashboardDocument{
+		Metadata: document.DashboardMetadata{Description: &dashboardDescription},
+		Spec: document.DashboardSpec{
+			Pages: []document.DashboardPage{{
+				ID: "overview", Title: "Overview", Description: &pageDescription,
+				Components: []document.DashboardPageComponent{
+					{Value: &document.HeaderDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "summary-header", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 12, RowSpan: 2}}, Type: "header", Title: &headerTitle, Description: &headerDescription}},
+					{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "missing-visual-component", Placement: document.DashboardPlacement{Column: 1, Row: 4, ColumnSpan: 6, RowSpan: 4}}, Type: "visual", Visual: "missing-visual"}},
+					{Value: &document.FilterDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "missing-filter-component", Placement: document.DashboardPlacement{Column: 7, Row: 4, ColumnSpan: 6, RowSpan: 2}}, Type: "filter", Filter: "missing-filter"}},
+				},
+			}},
+		},
+	}
+	pages, diagnostics, _, _, err := projectPages(doc, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 1 || pages[0].Description == nil || *pages[0].Description != pageDescription {
+		t.Fatalf("page metadata = %#v", pages)
+	}
+	if len(pages[0].Headers) != 1 || pages[0].Headers[0].ID != "summary-header" || pages[0].Headers[0].Title != headerTitle || pages[0].Headers[0].Description == nil || *pages[0].Headers[0].Description != headerDescription {
+		t.Fatalf("headers = %#v", pages[0].Headers)
+	}
+	if len(pages[0].Placeholders) != 2 || !pages[0].Placeholders[0].Locked || pages[0].Placeholders[0].Placement.Col == 0 {
+		t.Fatalf("placeholders = %#v", pages[0].Placeholders)
+	}
+	if len(diagnostics) != 2 || diagnostics[0].Code != "FILTER_MISSING" || diagnostics[1].Code != "VISUAL_MISSING" {
+		t.Fatalf("diagnostics = %#v", diagnostics)
 	}
 }
 

@@ -160,6 +160,69 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 			value.Spec.Appearance = patch.Appearance
 		}
 		return nil
+	case *UpdateDashboardMetadataPayload:
+		if patch.Title != nil {
+			title := strings.TrimSpace(*patch.Title)
+			if title == "" {
+				return fmt.Errorf("%w: dashboard title cannot be empty", ErrInvalidPayload)
+			}
+			value.Metadata.DisplayName = &title
+		}
+		if patch.Description != nil {
+			value.Metadata.Description = canonicalDescription(patch.Description)
+		}
+		return nil
+	case *UpdatePageMetadataPayload:
+		for index := range value.Spec.Pages {
+			if value.Spec.Pages[index].ID != patch.PageID {
+				continue
+			}
+			if patch.Title != nil {
+				title := strings.TrimSpace(*patch.Title)
+				if title == "" {
+					return fmt.Errorf("%w: page title cannot be empty", ErrInvalidPayload)
+				}
+				value.Spec.Pages[index].Title = title
+			}
+			if patch.Description != nil {
+				value.Spec.Pages[index].Description = canonicalDescription(patch.Description)
+			}
+			return nil
+		}
+		return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
+	case *UpdateHeaderMetadataPayload:
+		for pageIndex := range value.Spec.Pages {
+			if value.Spec.Pages[pageIndex].ID != patch.PageID {
+				continue
+			}
+			for componentIndex := range value.Spec.Pages[pageIndex].Components {
+				component := &value.Spec.Pages[pageIndex].Components[componentIndex]
+				base, err := component.Base()
+				if err != nil {
+					return err
+				}
+				if base.ID != patch.HeaderID {
+					continue
+				}
+				header, ok := component.Value.(*document.HeaderDashboardPageComponent)
+				if !ok {
+					return fmt.Errorf("%w: header %q on page %q", ErrNotFound, patch.HeaderID, patch.PageID)
+				}
+				if patch.Title != nil {
+					title := strings.TrimSpace(*patch.Title)
+					if title == "" {
+						return fmt.Errorf("%w: header title cannot be empty", ErrInvalidPayload)
+					}
+					header.Title = &title
+				}
+				if patch.Description != nil {
+					header.Description = canonicalDescription(patch.Description)
+				}
+				return nil
+			}
+			return fmt.Errorf("%w: header %q on page %q", ErrNotFound, patch.HeaderID, patch.PageID)
+		}
+		return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
 	case *SetVisibilityPayload:
 		return nil
 	case *ReplaceDocumentPayload:
@@ -244,6 +307,8 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		return assignCanonicalField(value, *patch)
 	case *SetVisualTypePayload:
 		return setCanonicalVisualType(value, *patch)
+	case *SetVisualQueryOptionsPayload:
+		return setCanonicalVisualQueryOptions(value, *patch)
 	case *RenameVisualPayload:
 		return renameCanonicalVisual(value, *patch)
 	case *DuplicateVisualPayload:
@@ -322,6 +387,446 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 	default:
 		return fmt.Errorf("%w: unsupported payload %T", ErrInvalidPayload, payload)
 	}
+}
+
+func setCanonicalVisualQueryOptions(value *document.DashboardDocument, patch SetVisualQueryOptionsPayload) error {
+	visualID, err := resolveCanonicalPageVisual(*value, patch.PageID, patch.VisualID)
+	if err != nil {
+		return err
+	}
+	visual := value.Spec.Visuals[visualID]
+	previousAlias := ""
+	if patch.FieldID != "" && patch.Alias != nil {
+		previousAlias = canonicalVisualQueryFieldAlias(&visual.Query, patch.Role, patch.FieldID)
+	}
+	if patch.FieldID != "" {
+		if err := setCanonicalVisualQueryFieldOptions(&visual.Query, patch); err != nil {
+			return err
+		}
+		if patch.Alias != nil {
+			currentAlias := canonicalVisualQueryFieldAlias(&visual.Query, patch.Role, patch.FieldID)
+			if previousAlias != "" && currentAlias != "" && previousAlias != currentAlias {
+				rewriteCanonicalVisualQuerySort(&visual.Query, previousAlias, currentAlias)
+			}
+		}
+	}
+	if patch.Sort != nil {
+		sortValues := append([]document.DashboardSort(nil), (*patch.Sort)...)
+		if err := setCanonicalVisualQuerySort(&visual.Query, sortValues); err != nil {
+			return err
+		}
+	}
+	if patch.Limit != nil || patch.ClearLimit {
+		limit := int32(0)
+		if patch.Limit != nil {
+			limit = *patch.Limit
+		}
+		if err := setCanonicalVisualQueryLimit(&visual.Query, limit); err != nil {
+			return err
+		}
+	}
+	if err := validateCanonicalVisualQuerySort(&visual.Query); err != nil {
+		return err
+	}
+	value.Spec.Visuals[visualID] = visual
+	return nil
+}
+
+func canonicalVisualQueryFieldAlias(query *document.DashboardQuery, role FieldRole, fieldID string) string {
+	if query == nil || query.Value == nil {
+		return ""
+	}
+	checkDimension := func(value document.DashboardDimensionSelection) string {
+		id, alias := canonicalDimensionSelection(value)
+		if id == fieldID {
+			return alias
+		}
+		return ""
+	}
+	checkMetric := func(value document.DashboardMetricSelection) string {
+		id, alias := canonicalMetricSelection(value)
+		if id == fieldID {
+			return alias
+		}
+		return ""
+	}
+	checkRecord := func(value document.DashboardRecordFieldSelection) string {
+		id, alias := canonicalRecordSelection(value)
+		if id == fieldID {
+			return alias
+		}
+		return ""
+	}
+	switch current := query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		if role == FieldRoleDimension {
+			for _, value := range current.Dimensions {
+				if alias := checkDimension(value); alias != "" {
+					return alias
+				}
+			}
+		}
+		if role == FieldRoleMetric {
+			for _, value := range current.Metrics {
+				if alias := checkMetric(value); alias != "" {
+					return alias
+				}
+			}
+		}
+	case *document.RecordsDashboardQuery:
+		if role == FieldRoleDetail {
+			for _, value := range current.Fields {
+				if alias := checkRecord(value); alias != "" {
+					return alias
+				}
+			}
+		}
+	case *document.PivotDashboardQuery:
+		if role == FieldRoleDimension {
+			for _, value := range append(append([]document.DashboardDimensionSelection{}, current.Rows...), current.Columns...) {
+				if alias := checkDimension(value); alias != "" {
+					return alias
+				}
+			}
+		}
+		if role == FieldRoleMetric {
+			for _, value := range current.Metrics {
+				if alias := checkMetric(value); alias != "" {
+					return alias
+				}
+			}
+		}
+	case *document.HistogramDashboardQuery:
+		if role == FieldRoleMetric {
+			return checkMetric(current.Field)
+		}
+	case *document.DistributionDashboardQuery:
+		if role == FieldRoleMetric {
+			if alias := checkMetric(current.Field); alias != "" {
+				return alias
+			}
+		}
+		if role == FieldRoleDimension && current.Group != nil {
+			return checkDimension(*current.Group)
+		}
+	}
+	return ""
+}
+
+func rewriteCanonicalVisualQuerySort(query *document.DashboardQuery, previousAlias, currentAlias string) {
+	if query == nil || previousAlias == "" || currentAlias == "" {
+		return
+	}
+	var sorts *[]document.DashboardSort
+	switch value := query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		sorts = value.Sort
+	case *document.RecordsDashboardQuery:
+		sorts = value.Sort
+	case *document.PivotDashboardQuery:
+		sorts = value.Sort
+	}
+	if sorts == nil {
+		return
+	}
+	for index := range *sorts {
+		if (*sorts)[index].Field == previousAlias {
+			(*sorts)[index].Field = currentAlias
+		}
+	}
+}
+
+func setCanonicalVisualQueryFieldOptions(query *document.DashboardQuery, patch SetVisualQueryOptionsPayload) error {
+	if query == nil || query.Value == nil {
+		return fmt.Errorf("%w: visual query is required", ErrInvalidPayload)
+	}
+	setDimension := func(selection *document.DashboardDimensionSelection) error {
+		if patch.Role != FieldRoleDimension {
+			return fmt.Errorf("%w: grain and dimension aliases require a dimension field", ErrInvalidPayload)
+		}
+		id, _ := canonicalDimensionSelection(*selection)
+		if id != patch.FieldID {
+			return fmt.Errorf("%w: field %q in role %q", ErrNotFound, patch.FieldID, patch.Role)
+		}
+		ref := selection.Reference
+		if ref == nil {
+			ref = &document.DashboardDimensionReference{Dimension: id}
+		}
+		if patch.Alias != nil {
+			alias := strings.TrimSpace(*patch.Alias)
+			if alias == "" {
+				ref.Alias = nil
+			} else {
+				ref.Alias = &alias
+			}
+		}
+		if patch.ClearGrain {
+			ref.Grain = nil
+		}
+		if patch.Grain != nil {
+			grain := *patch.Grain
+			ref.Grain = &grain
+		}
+		if ref.Alias == nil && ref.Grain == nil {
+			selection.String = &id
+			selection.Reference = nil
+		} else {
+			selection.String = nil
+			selection.Reference = ref
+		}
+		return nil
+	}
+	setMetric := func(selection *document.DashboardMetricSelection) error {
+		if patch.Role != FieldRoleMetric {
+			return fmt.Errorf("%w: metric aliases require a metric field", ErrInvalidPayload)
+		}
+		id, _ := canonicalMetricSelection(*selection)
+		if id != patch.FieldID {
+			return fmt.Errorf("%w: field %q in role %q", ErrNotFound, patch.FieldID, patch.Role)
+		}
+		if patch.Grain != nil || patch.ClearGrain {
+			return fmt.Errorf("%w: metric fields do not support temporal grain", ErrInvalidPayload)
+		}
+		if patch.Alias == nil {
+			return nil
+		}
+		alias := strings.TrimSpace(*patch.Alias)
+		if selection.Reference == nil {
+			selection.Reference = &document.DashboardMetricReference{Metric: id}
+			selection.String = nil
+		}
+		if alias == "" {
+			selection.Reference.Alias = nil
+		} else {
+			selection.Reference.Alias = &alias
+		}
+		if selection.Reference.Alias == nil {
+			selection.String = &id
+			selection.Reference = nil
+		}
+		return nil
+	}
+	setRecord := func(selection *document.DashboardRecordFieldSelection) error {
+		if patch.Role != FieldRoleDetail {
+			return fmt.Errorf("%w: records aliases require a detail field", ErrInvalidPayload)
+		}
+		id, _ := canonicalRecordSelection(*selection)
+		if id != patch.FieldID {
+			return fmt.Errorf("%w: field %q in role %q", ErrNotFound, patch.FieldID, patch.Role)
+		}
+		if patch.Grain != nil || patch.ClearGrain {
+			return fmt.Errorf("%w: records fields do not support temporal grain", ErrInvalidPayload)
+		}
+		if patch.Alias == nil {
+			return nil
+		}
+		alias := strings.TrimSpace(*patch.Alias)
+		if selection.Reference == nil {
+			selection.Reference = &document.DashboardRecordFieldReference{Field: id}
+			selection.String = nil
+		}
+		if alias == "" {
+			selection.Reference.Alias = nil
+		} else {
+			selection.Reference.Alias = &alias
+		}
+		if selection.Reference.Alias == nil {
+			selection.String = &id
+			selection.Reference = nil
+		}
+		return nil
+	}
+	forEach := func(fn func(any) error) error {
+		switch current := query.Value.(type) {
+		case *document.AggregateDashboardQuery:
+			if patch.Role == FieldRoleDimension {
+				for index := range current.Dimensions {
+					if id, _ := canonicalDimensionSelection(current.Dimensions[index]); id == patch.FieldID {
+						return fn(&current.Dimensions[index])
+					}
+				}
+			} else if patch.Role == FieldRoleMetric {
+				for index := range current.Metrics {
+					if id, _ := canonicalMetricSelection(current.Metrics[index]); id == patch.FieldID {
+						return fn(&current.Metrics[index])
+					}
+				}
+			}
+		case *document.RecordsDashboardQuery:
+			for index := range current.Fields {
+				if id, _ := canonicalRecordSelection(current.Fields[index]); id == patch.FieldID {
+					return fn(&current.Fields[index])
+				}
+			}
+		case *document.PivotDashboardQuery:
+			if patch.Role == FieldRoleDimension {
+				for index := range current.Rows {
+					if id, _ := canonicalDimensionSelection(current.Rows[index]); id == patch.FieldID {
+						return fn(&current.Rows[index])
+					}
+				}
+				for index := range current.Columns {
+					if id, _ := canonicalDimensionSelection(current.Columns[index]); id == patch.FieldID {
+						return fn(&current.Columns[index])
+					}
+				}
+			} else if patch.Role == FieldRoleMetric {
+				for index := range current.Metrics {
+					if id, _ := canonicalMetricSelection(current.Metrics[index]); id == patch.FieldID {
+						return fn(&current.Metrics[index])
+					}
+				}
+			}
+		case *document.HistogramDashboardQuery:
+			return fn(&current.Field)
+		case *document.DistributionDashboardQuery:
+			if patch.Role == FieldRoleMetric {
+				return fn(&current.Field)
+			}
+			if patch.Role == FieldRoleDimension && current.Group != nil {
+				return fn(current.Group)
+			}
+		}
+		return fmt.Errorf("%w: field %q in role %q", ErrNotFound, patch.FieldID, patch.Role)
+	}
+	return forEach(func(value any) error {
+		switch selection := value.(type) {
+		case *document.DashboardDimensionSelection:
+			return setDimension(selection)
+		case *document.DashboardMetricSelection:
+			return setMetric(selection)
+		case *document.DashboardRecordFieldSelection:
+			return setRecord(selection)
+		default:
+			return fmt.Errorf("%w: unsupported query field selection", ErrInvalidPayload)
+		}
+	})
+}
+
+func setCanonicalVisualQuerySort(query *document.DashboardQuery, values []document.DashboardSort) error {
+	switch current := query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		current.Sort = &values
+	case *document.RecordsDashboardQuery:
+		current.Sort = &values
+	case *document.PivotDashboardQuery:
+		current.Sort = &values
+	default:
+		return fmt.Errorf("%w: visual query does not support sorting", ErrInvalidPayload)
+	}
+	return nil
+}
+
+func setCanonicalVisualQueryLimit(query *document.DashboardQuery, limit int32) error {
+	if limit < 0 {
+		return fmt.Errorf("%w: query limit cannot be negative", ErrInvalidPayload)
+	}
+	if limit == 0 {
+		switch current := query.Value.(type) {
+		case *document.AggregateDashboardQuery:
+			current.Limit = nil
+		case *document.RecordsDashboardQuery:
+			current.Limit = nil
+		case *document.PivotDashboardQuery:
+			if current.Window != nil {
+				if current.Window.Offset != nil {
+					return fmt.Errorf("%w: cannot clear pivot limit while preserving window offset", ErrInvalidPayload)
+				}
+				current.Window = nil
+			}
+		default:
+			return fmt.Errorf("%w: visual query does not support a limit", ErrInvalidPayload)
+		}
+		return nil
+	}
+	value := limit
+	switch current := query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		current.Limit = &value
+	case *document.RecordsDashboardQuery:
+		current.Limit = &value
+	case *document.PivotDashboardQuery:
+		if current.Window == nil {
+			current.Window = &document.DashboardPivotWindow{}
+		}
+		current.Window.Limit = value
+	default:
+		return fmt.Errorf("%w: visual query does not support a limit", ErrInvalidPayload)
+	}
+	return nil
+}
+
+func validateCanonicalVisualQuerySort(query *document.DashboardQuery) error {
+	var values *[]document.DashboardSort
+	switch current := query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		values = current.Sort
+	case *document.RecordsDashboardQuery:
+		values = current.Sort
+	case *document.PivotDashboardQuery:
+		values = current.Sort
+	default:
+		return nil
+	}
+	if values == nil {
+		return nil
+	}
+	allowed := make(map[string]struct{})
+	switch current := query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		for _, field := range current.Dimensions {
+			_, alias := canonicalDimensionSelection(field)
+			allowed[alias] = struct{}{}
+		}
+		for _, field := range current.Metrics {
+			_, alias := canonicalMetricSelection(field)
+			allowed[alias] = struct{}{}
+		}
+	case *document.RecordsDashboardQuery:
+		for _, field := range current.Fields {
+			_, alias := canonicalRecordSelection(field)
+			allowed[alias] = struct{}{}
+		}
+	case *document.PivotDashboardQuery:
+		for _, field := range current.Rows {
+			_, alias := canonicalDimensionSelection(field)
+			allowed[alias] = struct{}{}
+		}
+		for _, field := range current.Columns {
+			_, alias := canonicalDimensionSelection(field)
+			allowed[alias] = struct{}{}
+		}
+		for _, field := range current.Metrics {
+			_, alias := canonicalMetricSelection(field)
+			allowed[alias] = struct{}{}
+		}
+	}
+	seen := make(map[string]struct{}, len(*values))
+	for index, value := range *values {
+		field := strings.TrimSpace(value.Field)
+		if _, ok := allowed[field]; !ok {
+			return fmt.Errorf("%w: query sort %d references result alias %q", ErrInvalidPayload, index, field)
+		}
+		if _, ok := seen[field]; ok {
+			return fmt.Errorf("%w: query sort %d duplicates result alias %q", ErrInvalidPayload, index, field)
+		}
+		seen[field] = struct{}{}
+		if value.Direction != document.DashboardSortDirectionAsc && value.Direction != document.DashboardSortDirectionDesc {
+			return fmt.Errorf("%w: query sort %d has unsupported direction %q", ErrInvalidPayload, index, value.Direction)
+		}
+	}
+	return nil
+}
+
+func canonicalDescription(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func renameCanonicalPage(value *document.DashboardDocument, patch RenamePagePayload) error {
@@ -1611,6 +2116,7 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 		bindings = &fallback
 	}
 	newDefault.Query = canonicalVisualSwitchQuery(newDefault.Query, patch.Type, bindings)
+	preserveCanonicalVisualQueryOptions(&newDefault.Query, &visual.Query)
 	configureTargetPresentationBindings(&newDefault)
 	if oldPresentationType == visualPresentationType(newDefault.Presentation) {
 		if oldCartesian, oldOK := visual.Presentation.Value.(*document.CartesianDashboardPresentation); oldOK {
@@ -1644,6 +2150,247 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 	newDefault.Interactions = visual.Interactions
 	value.Spec.Visuals[visualID] = newDefault
 	return nil
+}
+
+func preserveCanonicalVisualQueryOptions(target, source *document.DashboardQuery) {
+	if target == nil || source == nil || target.Value == nil || source.Value == nil {
+		return
+	}
+	// Preserve aliases and temporal grains by governed field identity whenever
+	// the target query family still contains that selection. This keeps a type
+	// switch reversible for the options the target renderer can represent.
+	aliases := make(map[string]string)
+	grains := make(map[string]document.DashboardTimeGrain)
+	collectDimension := func(value document.DashboardDimensionSelection) {
+		id, alias := canonicalDimensionSelection(value)
+		if value.Reference != nil {
+			if value.Reference.Alias != nil {
+				alias = *value.Reference.Alias
+			}
+			if value.Reference.Grain != nil {
+				grains[id] = *value.Reference.Grain
+			}
+		}
+		if id != "" && alias != id {
+			aliases[id] = alias
+		}
+	}
+	collectMetric := func(value document.DashboardMetricSelection) {
+		id, alias := canonicalMetricSelection(value)
+		if value.Reference != nil && value.Reference.Alias != nil {
+			alias = *value.Reference.Alias
+		}
+		if id != "" && alias != id {
+			aliases[id] = alias
+		}
+	}
+	collectRecord := func(value document.DashboardRecordFieldSelection) {
+		id, alias := canonicalRecordSelection(value)
+		if value.Reference != nil && value.Reference.Alias != nil {
+			alias = *value.Reference.Alias
+		}
+		if id != "" && alias != id {
+			aliases[id] = alias
+		}
+	}
+	var sourceSort *[]document.DashboardSort
+	var sourceLimit *int32
+	switch value := source.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		for _, selection := range value.Dimensions {
+			collectDimension(selection)
+		}
+		for _, selection := range value.Metrics {
+			collectMetric(selection)
+		}
+		sourceSort, sourceLimit = value.Sort, value.Limit
+	case *document.RecordsDashboardQuery:
+		for _, selection := range value.Fields {
+			collectRecord(selection)
+		}
+		sourceSort, sourceLimit = value.Sort, value.Limit
+	case *document.PivotDashboardQuery:
+		for _, selection := range value.Rows {
+			collectDimension(selection)
+		}
+		for _, selection := range value.Columns {
+			collectDimension(selection)
+		}
+		for _, selection := range value.Metrics {
+			collectMetric(selection)
+		}
+		sourceSort = value.Sort
+		if value.Window != nil {
+			limit := value.Window.Limit
+			sourceLimit = &limit
+		}
+	case *document.HistogramDashboardQuery:
+		collectMetric(value.Field)
+	case *document.DistributionDashboardQuery:
+		collectMetric(value.Field)
+		if value.Group != nil {
+			collectDimension(*value.Group)
+		}
+	}
+	applyDimension := func(value *document.DashboardDimensionSelection) {
+		id, _ := canonicalDimensionSelection(*value)
+		alias, hasAlias := aliases[id]
+		grain, hasGrain := grains[id]
+		if !hasAlias && !hasGrain {
+			return
+		}
+		ref := value.Reference
+		if ref == nil {
+			ref = &document.DashboardDimensionReference{Dimension: id}
+		}
+		if hasAlias {
+			ref.Alias = &alias
+		}
+		if hasGrain {
+			ref.Grain = &grain
+		}
+		value.String, value.Reference = nil, ref
+	}
+	applyMetric := func(value *document.DashboardMetricSelection) {
+		id, _ := canonicalMetricSelection(*value)
+		alias, ok := aliases[id]
+		if !ok {
+			return
+		}
+		ref := value.Reference
+		if ref == nil {
+			ref = &document.DashboardMetricReference{Metric: id}
+		}
+		ref.Alias = &alias
+		value.String, value.Reference = nil, ref
+	}
+	applyRecord := func(value *document.DashboardRecordFieldSelection) {
+		id, _ := canonicalRecordSelection(*value)
+		alias, ok := aliases[id]
+		if !ok {
+			return
+		}
+		ref := value.Reference
+		if ref == nil {
+			ref = &document.DashboardRecordFieldReference{Field: id}
+		}
+		ref.Alias = &alias
+		value.String, value.Reference = nil, ref
+	}
+	switch value := target.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		for index := range value.Dimensions {
+			applyDimension(&value.Dimensions[index])
+		}
+		for index := range value.Metrics {
+			applyMetric(&value.Metrics[index])
+		}
+	case *document.RecordsDashboardQuery:
+		for index := range value.Fields {
+			applyRecord(&value.Fields[index])
+		}
+	case *document.PivotDashboardQuery:
+		for index := range value.Rows {
+			applyDimension(&value.Rows[index])
+		}
+		for index := range value.Columns {
+			applyDimension(&value.Columns[index])
+		}
+		for index := range value.Metrics {
+			applyMetric(&value.Metrics[index])
+		}
+	case *document.HistogramDashboardQuery:
+		applyMetric(&value.Field)
+	case *document.DistributionDashboardQuery:
+		applyMetric(&value.Field)
+		if value.Group != nil {
+			applyDimension(value.Group)
+		}
+	}
+	if sourceSort != nil {
+		allowed := make(map[string]struct{})
+		for _, alias := range canonicalVisualQueryResultAliases(target) {
+			allowed[alias] = struct{}{}
+		}
+		preserved := make([]document.DashboardSort, 0, len(*sourceSort))
+		for _, sortValue := range *sourceSort {
+			if _, ok := allowed[sortValue.Field]; ok {
+				preserved = append(preserved, sortValue)
+			}
+		}
+		setCanonicalVisualQuerySortPreservingFamily(target, preserved)
+	}
+	if sourceLimit != nil && *sourceLimit > 0 {
+		setCanonicalVisualQueryLimitPreservingFamily(target, *sourceLimit)
+	}
+}
+
+func canonicalVisualQueryResultAliases(query *document.DashboardQuery) []string {
+	if query == nil || query.Value == nil {
+		return nil
+	}
+	result := []string{}
+	addDimension := func(value document.DashboardDimensionSelection) {
+		_, alias := canonicalDimensionSelection(value)
+		result = append(result, alias)
+	}
+	addMetric := func(value document.DashboardMetricSelection) {
+		_, alias := canonicalMetricSelection(value)
+		result = append(result, alias)
+	}
+	addRecord := func(value document.DashboardRecordFieldSelection) {
+		_, alias := canonicalRecordSelection(value)
+		result = append(result, alias)
+	}
+	switch value := query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		for _, field := range value.Dimensions {
+			addDimension(field)
+		}
+		for _, field := range value.Metrics {
+			addMetric(field)
+		}
+	case *document.RecordsDashboardQuery:
+		for _, field := range value.Fields {
+			addRecord(field)
+		}
+	case *document.PivotDashboardQuery:
+		for _, field := range value.Rows {
+			addDimension(field)
+		}
+		for _, field := range value.Columns {
+			addDimension(field)
+		}
+		for _, field := range value.Metrics {
+			addMetric(field)
+		}
+	}
+	return result
+}
+
+func setCanonicalVisualQuerySortPreservingFamily(query *document.DashboardQuery, values []document.DashboardSort) {
+	switch current := query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		current.Sort = &values
+	case *document.RecordsDashboardQuery:
+		current.Sort = &values
+	case *document.PivotDashboardQuery:
+		current.Sort = &values
+	}
+}
+
+func setCanonicalVisualQueryLimitPreservingFamily(query *document.DashboardQuery, limit int32) {
+	switch current := query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		current.Limit = &limit
+	case *document.RecordsDashboardQuery:
+		current.Limit = &limit
+	case *document.PivotDashboardQuery:
+		if current.Window == nil {
+			current.Window = &document.DashboardPivotWindow{}
+		}
+		current.Window.Limit = limit
+	}
 }
 
 func canonicalVisualQueryFamily(query document.DashboardQuery) string {

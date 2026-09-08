@@ -343,6 +343,21 @@ func TestDashboardBuilderCommandTranslatesPageActions(t *testing.T) {
 				t.Fatalf("rename page = %#v", command.RenamePage)
 			}
 		}},
+		{name: "dashboard metadata", fields: map[string]any{"action": "update_dashboard_metadata", "title": "Executive Sales", "description": "Overview"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.UpdateDashboardMetadata == nil || *command.UpdateDashboardMetadata.Title != "Executive Sales" || *command.UpdateDashboardMetadata.Description != "Overview" {
+				t.Fatalf("dashboard metadata = %#v", command.UpdateDashboardMetadata)
+			}
+		}},
+		{name: "page metadata", fields: map[string]any{"action": "update_page_metadata", "pageId": "overview", "title": "Revenue", "description": "By status"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.UpdatePageMetadata == nil || command.UpdatePageMetadata.PageID != "overview" || *command.UpdatePageMetadata.Title != "Revenue" || *command.UpdatePageMetadata.Description != "By status" {
+				t.Fatalf("page metadata = %#v", command.UpdatePageMetadata)
+			}
+		}},
+		{name: "header metadata", fields: map[string]any{"action": "update_header_metadata", "pageId": "overview", "headerId": "summary-header", "title": "Summary", "description": "Key context"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.UpdateHeaderMetadata == nil || command.UpdateHeaderMetadata.PageID != "overview" || command.UpdateHeaderMetadata.HeaderID != "summary-header" || *command.UpdateHeaderMetadata.Title != "Summary" || *command.UpdateHeaderMetadata.Description != "Key context" {
+				t.Fatalf("header metadata = %#v", command.UpdateHeaderMetadata)
+			}
+		}},
 		{name: "duplicate", fields: map[string]any{"action": "duplicate_page", "pageId": "overview", "newPageId": "overview-copy", "title": "Copy"}, assert: func(t *testing.T, command authoring.Command) {
 			if command.DuplicatePage == nil || command.DuplicatePage.PageID != "overview" || command.DuplicatePage.NewPageID != "overview-copy" || command.DuplicatePage.Title != "Copy" {
 				t.Fatalf("duplicate page = %#v", command.DuplicatePage)
@@ -475,6 +490,30 @@ func TestDashboardBuilderCommandTranslatesSmartVisualField(t *testing.T) {
 	}
 	if fake.executed.AddVisual == nil || fake.executed.AddVisual.Type != "kpi" || fake.executed.AddVisual.FieldID != "revenue" || fake.executed.AddVisual.Role != authoring.FieldRoleMetric {
 		t.Fatalf("smart visual command = %#v", fake.executed)
+	}
+}
+
+func TestDashboardBuilderCommandTranslatesVisualQueryOptions(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	alias := "state_label"
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"pageId": "overview", "visualId": "orders", "fieldId": "status", "role": "dimension", "alias": alias, "grain": "month", "sort": []map[string]string{{"field": alias, "direction": "desc"}}, "limit": 25, "action": "set_visual_query_options",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "query-options-1")
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	options := fake.executed.SetVisualQueryOptions
+	if options == nil || options.FieldID != "status" || options.Role != authoring.FieldRoleDimension || options.Alias == nil || *options.Alias != alias || options.Grain == nil || *options.Grain != document.DashboardTimeGrainMonth || options.Limit == nil || *options.Limit != 25 {
+		t.Fatalf("visual query options = %#v", options)
+	}
+	if options.Sort == nil || len(*options.Sort) != 1 || (*options.Sort)[0].Field != alias || (*options.Sort)[0].Direction != document.DashboardSortDirectionDesc {
+		t.Fatalf("visual query sort = %#v", options.Sort)
 	}
 }
 

@@ -33,6 +33,8 @@ const (
 	maxAuthoringPages            = 128
 	maxAuthoringVisualComponents = 1024
 	maxAuthoringFilterComponents = 1024
+	maxVisualQuerySorts          = 64
+	maxVisualQueryLimit          = 1000
 )
 
 func (a AuthorizationAction) Valid() bool {
@@ -97,6 +99,45 @@ type MetadataPatch struct {
 	SemanticModel *string                       `json:"semanticModel,omitempty"`
 	Visibility    *Visibility                   `json:"visibility,omitempty"`
 	Appearance    *document.DashboardAppearance `json:"appearance,omitempty"`
+}
+
+// UpdateDashboardMetadataPayload is the narrow builder-safe subset of
+// dashboard metadata. Slug, visibility, appearance, and semantic-model
+// changes remain on their dedicated authoring paths.
+type UpdateDashboardMetadataPayload struct {
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+func (UpdateDashboardMetadataPayload) authoringPayload() {}
+func (UpdateDashboardMetadataPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// UpdatePageMetadataPayload changes only one page's display metadata.
+type UpdatePageMetadataPayload struct {
+	PageID      string  `json:"pageId"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+func (UpdatePageMetadataPayload) authoringPayload() {}
+func (UpdatePageMetadataPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// UpdateHeaderMetadataPayload changes only one canonical header component's
+// display metadata. It cannot create, remove, or replace components.
+type UpdateHeaderMetadataPayload struct {
+	PageID      string  `json:"pageId"`
+	HeaderID    string  `json:"headerId"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+func (UpdateHeaderMetadataPayload) authoringPayload() {}
+func (UpdateHeaderMetadataPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
 }
 
 // SetVisibilityPayload changes only the dashboard lifecycle visibility. It is
@@ -263,6 +304,30 @@ type SetVisualTypePayload struct {
 	// the reducer can atomically author a query that belongs to the target
 	// visual family. Builder clients cannot supply or retain these bindings.
 	ResolvedBindings *VisualTypeFieldBindings `json:"-"`
+}
+
+// SetVisualQueryOptionsPayload changes the small set of query options exposed
+// by the browser builder. A nil option is omitted and preserves the authored
+// value; an explicitly empty alias clears the alias, an empty sort slice
+// clears sorting, and a zero limit (or ClearLimit) clears the limit.
+// ClearGrain is the explicit clear form because DashboardTimeGrain is an enum
+// and therefore has no valid empty value.
+type SetVisualQueryOptionsPayload struct {
+	PageID     string                       `json:"pageId"`
+	VisualID   string                       `json:"visualId"`
+	FieldID    string                       `json:"fieldId,omitempty"`
+	Role       FieldRole                    `json:"role,omitempty"`
+	Alias      *string                      `json:"alias,omitempty"`
+	Grain      *document.DashboardTimeGrain `json:"grain,omitempty"`
+	ClearGrain bool                         `json:"clearGrain,omitempty"`
+	Sort       *[]document.DashboardSort    `json:"sort,omitempty"`
+	Limit      *int32                       `json:"limit,omitempty"`
+	ClearLimit bool                         `json:"clearLimit,omitempty"`
+}
+
+func (SetVisualQueryOptionsPayload) authoringPayload() {}
+func (SetVisualQueryOptionsPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
 }
 
 // VisualTypeFieldBindings is the application-resolved, transport-invisible
@@ -627,48 +692,61 @@ type Command struct {
 	ContentHash      string        `json:"contentHash,omitempty"`
 	Provenance       Provenance    `json:"provenance"`
 
-	Metadata              *MetadataPatch                `json:"metadata,omitempty"`
-	SetVisibility         *SetVisibilityPayload         `json:"setVisibility,omitempty"`
-	AddPage               *AddPagePayload               `json:"addPage,omitempty"`
-	RenamePage            *RenamePagePayload            `json:"renamePage,omitempty"`
-	DuplicatePage         *DuplicatePagePayload         `json:"duplicatePage,omitempty"`
-	MovePage              *MovePagePayload              `json:"movePage,omitempty"`
-	UpdatePageLayout      *UpdatePageLayoutPayload      `json:"updatePageLayout,omitempty"`
-	AddVisual             *AddVisualPayload             `json:"addVisual,omitempty"`
-	SetPlacements         *SetPlacementsPayload         `json:"setPlacements,omitempty"`
-	AssignField           *AssignFieldPayload           `json:"assignField,omitempty"`
-	SetVisualType         *SetVisualTypePayload         `json:"setVisualType,omitempty"`
-	RenameVisual          *RenameVisualPayload          `json:"renameVisual,omitempty"`
-	DuplicateVisual       *DuplicateVisualPayload       `json:"duplicateVisual,omitempty"`
-	RestoreRevision       *RestoreRevisionPayload       `json:"restoreRevision,omitempty"`
-	UpdateVisualFormat    *UpdateVisualFormatPayload    `json:"updateVisualFormat,omitempty"`
-	RemoveField           *RemoveFieldPayload           `json:"removeField,omitempty"`
-	MoveField             *MoveFieldPayload             `json:"moveField,omitempty"`
-	UpsertPage            *UpsertPagePayload            `json:"upsertPage,omitempty"`
-	RemovePage            *RemovePagePayload            `json:"removePage,omitempty"`
-	UpsertVisual          *UpsertVisualPayload          `json:"upsertVisual,omitempty"`
-	RemoveVisual          *RemoveVisualPayload          `json:"removeVisual,omitempty"`
-	SetLayout             *SetLayoutPayload             `json:"setLayout,omitempty"`
-	SetFilters            *SetFiltersPayload            `json:"setFilters,omitempty"`
-	AddFilter             *AddFilterPayload             `json:"addFilter,omitempty"`
-	AddSlicer             *AddSlicerPayload             `json:"addSlicer,omitempty"`
-	UpdateFilter          *UpdateFilterPayload          `json:"updateFilter,omitempty"`
-	SetFilterTargets      *SetFilterTargetsPayload      `json:"setFilterTargets,omitempty"`
-	SetFilterScope        *SetFilterScopePayload        `json:"setFilterScope,omitempty"`
-	RemoveFilter          *RemoveFilterPayload          `json:"removeFilter,omitempty"`
-	AddFilterComponent    *AddFilterComponentPayload    `json:"addFilterComponent,omitempty"`
-	RemoveFilterComponent *RemoveFilterComponentPayload `json:"removeFilterComponent,omitempty"`
-	SetInteraction        *SetInteractionPayload        `json:"setInteraction,omitempty"`
-	SetInteractionTarget  *SetInteractionTargetPayload  `json:"setInteractionTarget,omitempty"`
-	ReplaceDocument       *ReplaceDocumentPayload       `json:"replaceDocument,omitempty"`
-	Publish               *PublishPayload               `json:"publish,omitempty"`
-	Archive               *ArchivePayload               `json:"archive,omitempty"`
+	Metadata                *MetadataPatch                  `json:"metadata,omitempty"`
+	UpdateDashboardMetadata *UpdateDashboardMetadataPayload `json:"updateDashboardMetadata,omitempty"`
+	UpdatePageMetadata      *UpdatePageMetadataPayload      `json:"updatePageMetadata,omitempty"`
+	UpdateHeaderMetadata    *UpdateHeaderMetadataPayload    `json:"updateHeaderMetadata,omitempty"`
+	SetVisibility           *SetVisibilityPayload           `json:"setVisibility,omitempty"`
+	AddPage                 *AddPagePayload                 `json:"addPage,omitempty"`
+	RenamePage              *RenamePagePayload              `json:"renamePage,omitempty"`
+	DuplicatePage           *DuplicatePagePayload           `json:"duplicatePage,omitempty"`
+	MovePage                *MovePagePayload                `json:"movePage,omitempty"`
+	UpdatePageLayout        *UpdatePageLayoutPayload        `json:"updatePageLayout,omitempty"`
+	AddVisual               *AddVisualPayload               `json:"addVisual,omitempty"`
+	SetPlacements           *SetPlacementsPayload           `json:"setPlacements,omitempty"`
+	AssignField             *AssignFieldPayload             `json:"assignField,omitempty"`
+	SetVisualType           *SetVisualTypePayload           `json:"setVisualType,omitempty"`
+	SetVisualQueryOptions   *SetVisualQueryOptionsPayload   `json:"setVisualQueryOptions,omitempty"`
+	RenameVisual            *RenameVisualPayload            `json:"renameVisual,omitempty"`
+	DuplicateVisual         *DuplicateVisualPayload         `json:"duplicateVisual,omitempty"`
+	RestoreRevision         *RestoreRevisionPayload         `json:"restoreRevision,omitempty"`
+	UpdateVisualFormat      *UpdateVisualFormatPayload      `json:"updateVisualFormat,omitempty"`
+	RemoveField             *RemoveFieldPayload             `json:"removeField,omitempty"`
+	MoveField               *MoveFieldPayload               `json:"moveField,omitempty"`
+	UpsertPage              *UpsertPagePayload              `json:"upsertPage,omitempty"`
+	RemovePage              *RemovePagePayload              `json:"removePage,omitempty"`
+	UpsertVisual            *UpsertVisualPayload            `json:"upsertVisual,omitempty"`
+	RemoveVisual            *RemoveVisualPayload            `json:"removeVisual,omitempty"`
+	SetLayout               *SetLayoutPayload               `json:"setLayout,omitempty"`
+	SetFilters              *SetFiltersPayload              `json:"setFilters,omitempty"`
+	AddFilter               *AddFilterPayload               `json:"addFilter,omitempty"`
+	AddSlicer               *AddSlicerPayload               `json:"addSlicer,omitempty"`
+	UpdateFilter            *UpdateFilterPayload            `json:"updateFilter,omitempty"`
+	SetFilterTargets        *SetFilterTargetsPayload        `json:"setFilterTargets,omitempty"`
+	SetFilterScope          *SetFilterScopePayload          `json:"setFilterScope,omitempty"`
+	RemoveFilter            *RemoveFilterPayload            `json:"removeFilter,omitempty"`
+	AddFilterComponent      *AddFilterComponentPayload      `json:"addFilterComponent,omitempty"`
+	RemoveFilterComponent   *RemoveFilterComponentPayload   `json:"removeFilterComponent,omitempty"`
+	SetInteraction          *SetInteractionPayload          `json:"setInteraction,omitempty"`
+	SetInteractionTarget    *SetInteractionTargetPayload    `json:"setInteractionTarget,omitempty"`
+	ReplaceDocument         *ReplaceDocumentPayload         `json:"replaceDocument,omitempty"`
+	Publish                 *PublishPayload                 `json:"publish,omitempty"`
+	Archive                 *ArchivePayload                 `json:"archive,omitempty"`
 }
 
 func (c Command) payloads() []authoringPayload {
 	var payloads []authoringPayload
 	if c.Metadata != nil {
 		payloads = append(payloads, c.Metadata)
+	}
+	if c.UpdateDashboardMetadata != nil {
+		payloads = append(payloads, c.UpdateDashboardMetadata)
+	}
+	if c.UpdatePageMetadata != nil {
+		payloads = append(payloads, c.UpdatePageMetadata)
+	}
+	if c.UpdateHeaderMetadata != nil {
+		payloads = append(payloads, c.UpdateHeaderMetadata)
 	}
 	if c.SetVisibility != nil {
 		payloads = append(payloads, c.SetVisibility)
@@ -699,6 +777,9 @@ func (c Command) payloads() []authoringPayload {
 	}
 	if c.SetVisualType != nil {
 		payloads = append(payloads, c.SetVisualType)
+	}
+	if c.SetVisualQueryOptions != nil {
+		payloads = append(payloads, c.SetVisualQueryOptions)
 	}
 	if c.RenameVisual != nil {
 		payloads = append(payloads, c.RenameVisual)
@@ -813,9 +894,10 @@ func (c Command) IsBuilderIntent() bool {
 		return false
 	}
 	switch payload.(type) {
-	case *SetVisibilityPayload, *AddPagePayload, *RenamePagePayload, *DuplicatePagePayload, *MovePagePayload,
+	case *UpdateDashboardMetadataPayload, *UpdatePageMetadataPayload, *UpdateHeaderMetadataPayload,
+		*SetVisibilityPayload, *AddPagePayload, *RenamePagePayload, *DuplicatePagePayload, *MovePagePayload,
 		*UpdatePageLayoutPayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload, *RemovePagePayload,
-		*SetVisualTypePayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
+		*SetVisualTypePayload, *SetVisualQueryOptionsPayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
 		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload,
 		*AddFilterPayload, *AddSlicerPayload, *UpdateFilterPayload, *SetFilterTargetsPayload, *SetFilterScopePayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload,
 		*SetInteractionTargetPayload:
@@ -878,10 +960,38 @@ func validatePayload(payload authoringPayload) error {
 		if value.Visibility != nil && !value.Visibility.Valid() {
 			return fmt.Errorf("%w: unsupported visibility %q", ErrInvalidPayload, *value.Visibility)
 		}
-		if value.Appearance != nil {
-			if value.Appearance.Icon != nil && strings.TrimSpace(*value.Appearance.Icon) == "" {
-				return fmt.Errorf("%w: appearance icon cannot be blank", ErrInvalidPayload)
-			}
+		if value.Appearance != nil && value.Appearance.Icon != nil && strings.TrimSpace(*value.Appearance.Icon) == "" {
+			return fmt.Errorf("%w: appearance icon cannot be blank", ErrInvalidPayload)
+		}
+	case *UpdateDashboardMetadataPayload:
+		if value.Title == nil && value.Description == nil {
+			return fmt.Errorf("%w: dashboard metadata has no edits", ErrInvalidPayload)
+		}
+		if value.Title != nil && strings.TrimSpace(*value.Title) == "" {
+			return fmt.Errorf("%w: dashboard title cannot be blank", ErrInvalidPayload)
+		}
+	case *UpdatePageMetadataPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if value.Title == nil && value.Description == nil {
+			return fmt.Errorf("%w: page metadata has no edits", ErrInvalidPayload)
+		}
+		if value.Title != nil && strings.TrimSpace(*value.Title) == "" {
+			return fmt.Errorf("%w: page title cannot be blank", ErrInvalidPayload)
+		}
+	case *UpdateHeaderMetadataPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if err := validateCanonicalObjectID("header id", value.HeaderID); err != nil {
+			return err
+		}
+		if value.Title == nil && value.Description == nil {
+			return fmt.Errorf("%w: header metadata has no edits", ErrInvalidPayload)
+		}
+		if value.Title != nil && strings.TrimSpace(*value.Title) == "" {
+			return fmt.Errorf("%w: header title cannot be blank", ErrInvalidPayload)
 		}
 	case *ReplaceDocumentPayload:
 		if err := ValidateCanonicalDocument(value.Document); err != nil {
@@ -1027,6 +1137,52 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if !canonicalVisualTypeSupported(value.Type) {
 			return fmt.Errorf("%w: unsupported visual type %q", ErrInvalidPayload, value.Type)
+		}
+	case *SetVisualQueryOptionsPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "set visual query options"); err != nil {
+			return err
+		}
+		if value.FieldID == "" && (value.Alias != nil || value.Grain != nil || value.ClearGrain) {
+			return fmt.Errorf("%w: query field options require field id", ErrInvalidPayload)
+		}
+		if value.FieldID != "" {
+			if !ValidGovernedFieldID(value.FieldID) {
+				return fmt.Errorf("%w: invalid query field id %q", ErrInvalidPayload, value.FieldID)
+			}
+			if !value.Role.Valid() {
+				return fmt.Errorf("%w: query field options require a valid role", ErrInvalidPayload)
+			}
+		}
+		if value.Alias != nil && strings.TrimSpace(*value.Alias) != "" && !validQueryResultAlias(strings.TrimSpace(*value.Alias)) {
+			return fmt.Errorf("%w: invalid query result alias %q", ErrInvalidPayload, *value.Alias)
+		}
+		if value.Grain != nil && !validDashboardTimeGrain(*value.Grain) {
+			return fmt.Errorf("%w: unsupported query grain %q", ErrInvalidPayload, *value.Grain)
+		}
+		if value.ClearGrain && value.Grain != nil {
+			return fmt.Errorf("%w: query grain cannot be set and cleared together", ErrInvalidPayload)
+		}
+		if value.Sort == nil && value.Limit == nil && value.Alias == nil && value.Grain == nil && !value.ClearGrain && !value.ClearLimit {
+			return fmt.Errorf("%w: query options have no edits", ErrInvalidPayload)
+		}
+		if value.Sort != nil {
+			if len(*value.Sort) > maxVisualQuerySorts {
+				return fmt.Errorf("%w: query sort exceeds bounded limit", ErrInvalidPayload)
+			}
+			for index, sort := range *value.Sort {
+				if !validQueryResultAlias(strings.TrimSpace(sort.Field)) {
+					return fmt.Errorf("%w: query sort %d has invalid result field %q", ErrInvalidPayload, index, sort.Field)
+				}
+				if sort.Direction != document.DashboardSortDirectionAsc && sort.Direction != document.DashboardSortDirectionDesc {
+					return fmt.Errorf("%w: query sort %d has unsupported direction %q", ErrInvalidPayload, index, sort.Direction)
+				}
+			}
+		}
+		if value.Limit != nil && (*value.Limit < 0 || *value.Limit > maxVisualQueryLimit) {
+			return fmt.Errorf("%w: query limit must be between 1 and %d, or zero to clear", ErrInvalidPayload, maxVisualQueryLimit)
+		}
+		if value.ClearLimit && value.Limit != nil {
+			return fmt.Errorf("%w: query limit cannot be set and cleared together", ErrInvalidPayload)
 		}
 	case *RenameVisualPayload:
 		if err := validateVisualTargetFields(value.PageID, value.VisualID, "rename visual"); err != nil {
@@ -1402,6 +1558,21 @@ func ValidGovernedFieldID(value string) bool {
 func ValidSemanticMemberID(value string) bool {
 	trimmed := strings.TrimSpace(value)
 	return trimmed != "" && value == trimmed && validSemanticPart(trimmed)
+}
+
+func validQueryResultAlias(value string) bool {
+	return value != "" && value == strings.TrimSpace(value) && validSemanticPart(value)
+}
+
+func validDashboardTimeGrain(value document.DashboardTimeGrain) bool {
+	switch value {
+	case document.DashboardTimeGrainSecond, document.DashboardTimeGrainMinute, document.DashboardTimeGrainHour,
+		document.DashboardTimeGrainDay, document.DashboardTimeGrainWeek, document.DashboardTimeGrainMonth,
+		document.DashboardTimeGrainQuarter, document.DashboardTimeGrainYear:
+		return true
+	default:
+		return false
+	}
 }
 
 func validSemanticPart(value string) bool {
