@@ -1,5 +1,6 @@
 import { Database, Eye, Server, Table2, type IconNode } from 'lucide'
 
+/** Returns the canonical icon for a governed explorer data layer. */
 export function iconForLayer(layer: string): IconNode {
   switch (layer) {
     case 'source':
@@ -13,6 +14,7 @@ export function iconForLayer(layer: string): IconNode {
   }
 }
 
+/** Returns the user-facing label for a governed explorer data layer. */
 export function layerLabel(layer: string): string {
   switch (layer) {
     case 'source':
@@ -26,6 +28,7 @@ export function layerLabel(layer: string): string {
   }
 }
 
+/** Stringifies optional metadata without exposing undefined in the UI. */
 export function label(value: unknown): string {
   if (value == null || value === '') return '-'
   return String(value)

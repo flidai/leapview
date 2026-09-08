@@ -658,6 +658,9 @@ model ChatArtifactSignal {
   `id`: string;
   `type`: string;
   `summary`?: string;
+  // Authored query_visual state for the destination Data Explorer. The
+  // destination reauthorizes this canonical spec for the active viewer.
+  `exploration`?: LeapViewExploration.ExplorationSpec;
 }
 
 model AgentReferenceKeySignal {
@@ -1621,6 +1624,8 @@ model DataExplorerPageEnvelope {
   `chrome`: ChromeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "dataExplorer" })
   `dataExplorer`: DataExplorerSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "dataExplorerDashboard" })
+  `dataExplorerDashboard`: DataExplorerDashboardSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
   `page`: DataExplorerPageSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
@@ -1629,6 +1634,73 @@ model DataExplorerPageEnvelope {
   `savedExplorations`: SavedExplorationStateSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
   `status`: DashboardStatus;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
+model DataExplorerDashboardPageSignal {
+  `id`: string;
+  `title`: string;
+  `placement`: DashboardPagePlacement;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
+model DataExplorerDashboardTargetSignal {
+  `id`: string;
+  `title`: string;
+  `semanticModelId`: string;
+  /** Present only after the user selects this target. */
+  `draftId`?: string;
+  /** Opaque CAS evidence; never populated by the lightweight target list. */
+  `revisionToken`?: string;
+  /** Present only after the user selects this target. */
+  `pages`?: DataExplorerDashboardPageSignal[];
+}
+
+/** A read-authorized project/YAML dashboard that requires an explicit fork before appending. */
+@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
+model DataExplorerDashboardForkTargetSignal {
+  `id`: string;
+  `title`: string;
+  `forkHref`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
+model DataExplorerDashboardSignal {
+  `enabled`: boolean;
+  `targets`: DataExplorerDashboardTargetSignal[];
+  /** Project/YAML targets are never appendable until the user explicitly forks one. */
+  `forkTargets`?: DataExplorerDashboardForkTargetSignal[];
+  `state`?: string;
+  `message`?: string;
+}
+
+/** Read-only target selection asks the server for the exact draft/page projection. */
+@apigen.contract(#{ kind: "ui-command", tags: #["data", "dashboard", "command"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data_dashboard" })
+model DataExplorerDashboardSelectTargetCommandSignal {
+  `dashboardId`: string;
+}
+
+/** Atomic append command. Draft identity and CAS evidence remain opaque. */
+@apigen.contract(#{ kind: "ui-command", tags: #["data", "dashboard", "command"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data_dashboard" })
+model DataExplorerDashboardAppendCommandSignal {
+  `dashboardId`: string;
+  `pageId`: string;
+  `revisionToken`: string;
+  `placementChoice`: "half" | "full";
+  `spec`: LeapViewExploration.ExplorationSpec;
+}
+
+@apigen.contract(#{ kind: "ui-envelope", tags: #["data", "dashboard", "envelope"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "data_dashboard" })
+model DataExplorerDashboardAppendEnvelope {
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "addExplorationToDashboard" })
+  `addExplorationToDashboard`: DataExplorerDashboardAppendCommandSignal;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })

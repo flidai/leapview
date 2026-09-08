@@ -18,4 +18,6 @@ test('object labels distinguish empty values from zero and false', () => {
   for (const value of [null, undefined, '']) expect(label(value)).toBe('-')
   expect(label(0)).toBe('0')
   expect(label(false)).toBe('false')
+  expect(label('orders')).toBe('orders')
+  expect(label(42)).toBe('42')
 })

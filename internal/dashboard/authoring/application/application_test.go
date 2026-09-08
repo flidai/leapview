@@ -78,9 +78,12 @@ func newApplicationService(t *testing.T, repo *applicationRepository, auth *appl
 	return svc
 }
 
-type applicationAuthorizer struct{}
+type applicationAuthorizer struct{ err error }
 
-func (*applicationAuthorizer) Authorize(context.Context, service.AuthorizationRequest) error {
+func (a *applicationAuthorizer) Authorize(context.Context, service.AuthorizationRequest) error {
+	if a.err != nil {
+		return a.err
+	}
 	return nil
 }
 

@@ -79,7 +79,7 @@ func chatTranscriptItem(item agent.ChatTranscriptItem) ChatTranscriptItemSignal 
 		out.References = &references
 	}
 	if item.Artifact != nil {
-		out.Artifact = &ChatArtifactSignal{Type: item.Artifact.Type, ID: item.Artifact.ID, Summary: Optional(item.Artifact.Summary)}
+		out.Artifact = &ChatArtifactSignal{Type: item.Artifact.Type, ID: item.Artifact.ID, Summary: Optional(item.Artifact.Summary), Exploration: item.Artifact.Exploration}
 	}
 	return out
 }

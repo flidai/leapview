@@ -190,6 +190,26 @@ test('asset data section embeds the shared explorer without a duplicate route he
   }
 })
 
+test('model detail renders the canonical explorer entry with a closed return context', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=detail`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const link = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const node = element.shadowRoot?.querySelector('.model-explore-link') as HTMLAnchorElement | null
+      return { href: node?.getAttribute('href'), label: node?.getAttribute('aria-label'), text: node?.textContent?.trim() }
+    })
+    expect(link).toEqual({
+      href: '/explore?object=model%3Aorders&returnSurface=model&returnAsset=model%3Aorders&returnSection=data',
+      label: 'Explore this model in Data Explorer',
+      text: 'Explore data',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('connections list and asset detail render without workspace terminology', async () => {
   const page = await browser.newPage()
   try {

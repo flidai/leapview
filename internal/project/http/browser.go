@@ -163,9 +163,14 @@ type BrowserHandler struct {
 	SavedExplorations              SavedExplorationService
 	ExplorationExportAuditRecorder queryaudit.Recorder
 	SavedExplorationCommands       SavedExplorationCommandBindings
-	PipelineRunCommand             uicommand.Binding
-	PipelineCancelCommand          uicommand.Binding
-	RunPipeline                    func(context.Context, string, string, string) error
+	DashboardAuthoring             DashboardAuthoringApplication
+	// DashboardAuthoringCommand is supplied by application composition from
+	// the dashboard module. Project HTTP must not reach into dashboard's
+	// generated API adapter just to claim this browser operation.
+	DashboardAuthoringCommand uicommand.Binding
+	PipelineRunCommand        uicommand.Binding
+	PipelineCancelCommand     uicommand.Binding
+	RunPipeline               func(context.Context, string, string, string) error
 	// CancelPipeline receives both the pipeline and run identifiers from the
 	// command. Implementations must verify that the run belongs to that
 	// pipeline before mutating it; keeping the pipeline ID in this callback
@@ -228,7 +233,10 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/search", wrap(h.ProductSearch))
 	r.Get("/explore", wrap(h.Explore))
 	r.Get("/explore/export", wrap(h.ExplorationExport))
+	r.Get("/explore/dashboard-targets", wrap(h.DataExplorerDashboardTargets))
+	r.Get("/explore/dashboard-target/{dashboard}", wrap(h.DataExplorerDashboardTarget))
 	r.Post("/explore/command", wrap(h.DataExplorerCommand))
+	r.Post("/explore/add-to-dashboard", wrapMutation(h.DataExplorerAddToDashboard))
 	r.Get("/explore/saved/{exploration}", wrap(h.SavedExplorationReopen))
 	r.Post("/explore/saved/command", wrapMutation(h.SavedExplorationCommand))
 	r.Get("/sources", wrap(h.Sources))
@@ -247,6 +255,11 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/dashboards/{asset}/versions", wrap(h.DashboardAsset))
 	r.Get("/dashboards/{asset}/lineage", wrap(h.DashboardAsset))
 	r.Post("/dashboards/{asset}/appearance", wrapMutation(h.DashboardAppearanceCommand))
+	// Dashboard component handoffs use the published source adapter and the
+	// viewer's current active model lease before redirecting to /explore. The
+	// component, rather than only its authored visual ID, is the target because
+	// one visual may be placed more than once with different filter bindings.
+	r.Get("/dashboards/{dashboard}/pages/{page}/components/{component}/explore", wrap(h.ExploreFromDashboardRoute))
 	r.Get("/pipelines", wrap(h.Pipelines))
 	r.Get("/pipelines/{asset}/{section}", wrap(h.PipelineAsset))
 	r.Post("/pipelines/command", wrapMutation(h.PipelineCommand))

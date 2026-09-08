@@ -15,14 +15,18 @@ import (
 type AuthorizationAction string
 
 const (
-	AuthorizationActionView    AuthorizationAction = "view"
-	AuthorizationActionEdit    AuthorizationAction = "edit"
+	AuthorizationActionView AuthorizationAction = "view"
+	AuthorizationActionEdit AuthorizationAction = "edit"
+	// AuthorizationActionUse is a read-side admission check for executing
+	// against a semantic model. Editing an authored dashboard does not imply
+	// permission to use its model in a new governed query.
+	AuthorizationActionUse     AuthorizationAction = "use"
 	AuthorizationActionPublish AuthorizationAction = "publish"
 	AuthorizationActionArchive AuthorizationAction = "archive"
 )
 
 func (a AuthorizationAction) Valid() bool {
-	return a == AuthorizationActionView || a == AuthorizationActionEdit || a == AuthorizationActionPublish || a == AuthorizationActionArchive
+	return a == AuthorizationActionView || a == AuthorizationActionEdit || a == AuthorizationActionUse || a == AuthorizationActionPublish || a == AuthorizationActionArchive
 }
 
 func (a AuthorizationAction) Validate() error {
@@ -125,6 +129,26 @@ type AddVisualPayload struct {
 
 func (AddVisualPayload) authoringPayload() {}
 func (AddVisualPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// AppendExplorationVisualPayload appends one already-converted exploration
+// visual, its exact page component, and its visual-scoped filters in one
+// reducer transaction. The payload deliberately carries canonical DTOs only;
+// exploration conversion and active semantic-model admission belong at the
+// application boundary.
+type AppendExplorationVisualPayload struct {
+	PageID        string                      `json:"pageId"`
+	VisualID      string                      `json:"visualId"`
+	ComponentID   string                      `json:"componentId"`
+	Placement     document.DashboardPlacement `json:"placement"`
+	SemanticModel string                      `json:"semanticModel"`
+	Visual        document.DashboardVisual    `json:"visual"`
+	Filters       []document.DashboardFilter  `json:"filters,omitempty"`
+}
+
+func (AppendExplorationVisualPayload) authoringPayload() {}
+func (AppendExplorationVisualPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
@@ -260,20 +284,21 @@ type Command struct {
 	ContentHash      string        `json:"contentHash,omitempty"`
 	Provenance       Provenance    `json:"provenance"`
 
-	Metadata       *MetadataPatch         `json:"metadata,omitempty"`
-	SetVisibility  *SetVisibilityPayload  `json:"setVisibility,omitempty"`
-	AddPage        *AddPagePayload        `json:"addPage,omitempty"`
-	AddVisual      *AddVisualPayload      `json:"addVisual,omitempty"`
-	AssignField    *AssignFieldPayload    `json:"assignField,omitempty"`
-	UpsertPage     *UpsertPagePayload     `json:"upsertPage,omitempty"`
-	RemovePage     *RemovePagePayload     `json:"removePage,omitempty"`
-	UpsertVisual   *UpsertVisualPayload   `json:"upsertVisual,omitempty"`
-	RemoveVisual   *RemoveVisualPayload   `json:"removeVisual,omitempty"`
-	SetLayout      *SetLayoutPayload      `json:"setLayout,omitempty"`
-	SetFilters     *SetFiltersPayload     `json:"setFilters,omitempty"`
-	SetInteraction *SetInteractionPayload `json:"setInteraction,omitempty"`
-	Publish        *PublishPayload        `json:"publish,omitempty"`
-	Archive        *ArchivePayload        `json:"archive,omitempty"`
+	Metadata                *MetadataPatch                  `json:"metadata,omitempty"`
+	SetVisibility           *SetVisibilityPayload           `json:"setVisibility,omitempty"`
+	AddPage                 *AddPagePayload                 `json:"addPage,omitempty"`
+	AddVisual               *AddVisualPayload               `json:"addVisual,omitempty"`
+	AppendExplorationVisual *AppendExplorationVisualPayload `json:"appendExplorationVisual,omitempty"`
+	AssignField             *AssignFieldPayload             `json:"assignField,omitempty"`
+	UpsertPage              *UpsertPagePayload              `json:"upsertPage,omitempty"`
+	RemovePage              *RemovePagePayload              `json:"removePage,omitempty"`
+	UpsertVisual            *UpsertVisualPayload            `json:"upsertVisual,omitempty"`
+	RemoveVisual            *RemoveVisualPayload            `json:"removeVisual,omitempty"`
+	SetLayout               *SetLayoutPayload               `json:"setLayout,omitempty"`
+	SetFilters              *SetFiltersPayload              `json:"setFilters,omitempty"`
+	SetInteraction          *SetInteractionPayload          `json:"setInteraction,omitempty"`
+	Publish                 *PublishPayload                 `json:"publish,omitempty"`
+	Archive                 *ArchivePayload                 `json:"archive,omitempty"`
 }
 
 func (c Command) payloads() []authoringPayload {
@@ -289,6 +314,9 @@ func (c Command) payloads() []authoringPayload {
 	}
 	if c.AddVisual != nil {
 		payloads = append(payloads, c.AddVisual)
+	}
+	if c.AppendExplorationVisual != nil {
+		payloads = append(payloads, c.AppendExplorationVisual)
 	}
 	if c.AssignField != nil {
 		payloads = append(payloads, c.AssignField)
@@ -358,7 +386,7 @@ func (c Command) IsBuilderIntent() bool {
 		return false
 	}
 	switch payload.(type) {
-	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *AssignFieldPayload:
+	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *AppendExplorationVisualPayload, *AssignFieldPayload:
 		return true
 	default:
 		return false
@@ -455,6 +483,10 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if !canonicalVisualTypeSupported(document.DashboardVisualType(strings.TrimSpace(value.Type))) {
 			return fmt.Errorf("%w: unsupported visual type %q", ErrInvalidPayload, value.Type)
+		}
+	case *AppendExplorationVisualPayload:
+		if err := validateAppendExplorationVisualPayload(*value); err != nil {
+			return err
 		}
 	case *AssignFieldPayload:
 		for kind, id := range map[string]string{"page id": value.PageID, "visual id": value.VisualID, "field id": value.FieldID} {

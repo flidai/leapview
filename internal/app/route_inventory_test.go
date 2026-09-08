@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "3a9db047a40157cde8d9be72407e3b7e8163f60c5c93a3d4aa534254501457be"
+	const expectedRouteContractDigest = "931ff5b8edb8f9f8c123b4eaf5559ae897642348ced51edf5d3331cf0b396991"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -155,6 +155,12 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.HasPrefix(path, "/candidates/{candidate}/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "PROJECT_ADMIN"
+	case path == "/explore/dashboard-targets" || path == "/explore/dashboard-target/{dashboard}" || path == "/explore/add-to-dashboard":
+		authenticated.owner = "project"
+		authenticated.privilege = "RESOURCE_EDIT"
+	case path == "/dashboards/{dashboard}/pages/{page}/components/{component}/explore":
+		authenticated.owner = "project"
+		authenticated.privilege = "RESOURCE_USE"
 	case path == "/dashboards/{dashboard}/edit" || path == "/dashboards/{dashboard}/draft/command":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_EDIT"
@@ -298,12 +304,16 @@ GET /dashboards/{dashboard}/edit
 GET /dashboards/{dashboard}/fork
 GET /dashboards/{dashboard}/export.yaml
 GET /dashboards/{dashboard}/pages/{page}
+GET /dashboards/{dashboard}/pages/{page}/components/{component}/explore
 GET /dashboards/{dashboard}/preview
 GET /dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /embed/dashboards/{publicId}
 GET /embed/dashboards/{publicId}/pages/{page}
 GET /explore
 GET /explore/export
+GET /explore/dashboard-targets
+GET /explore/dashboard-target/{dashboard}
+POST /explore/add-to-dashboard
 GET /explore/saved/{exploration}
 GET /favicon.ico
 GET /healthz

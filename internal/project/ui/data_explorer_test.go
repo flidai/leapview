@@ -7,9 +7,48 @@ import (
 	"testing"
 
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	catalog "github.com/flidai/leapview/internal/project/navigation"
 	uisignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
+
+func TestDataExplorerDashboardBootstrapCarriesTypedTargetAndCommandBridge(t *testing.T) {
+	page := uisignals.DataExplorerPageSignal{Title: "Data Explorer"}
+	explorer := uisignals.DataExplorerSignal{Command: uisignals.DataExplorerCommand{}}
+	bootstrap := DataExplorerDashboardBootstrap{
+		Enabled: true, Targets: []uisignals.DataExplorerDashboardTargetSignal{{ID: "dashboard:sales", Title: "Sales", SemanticModelID: "semantic:sales", DraftID: uisignals.Pointer("draft:sales"), RevisionToken: uisignals.Pointer("opaque-token"), Pages: uisignals.Pointer([]uisignals.DataExplorerDashboardPageSignal{{ID: "overview", Title: "Overview", Placement: uisignals.DashboardPagePlacement{Col: 1, ColSpan: 6, Row: 1, RowSpan: 4}}})}},
+		Command: dashboardgen.GenUIActionExecuteDashboardAuthoringCommand(), Path: "/explore/add-to-dashboard",
+	}
+	signals := DataExplorerBootstrapSignalsWithSavedExplorationsAndDashboard(catalogFixture(), page, explorer, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(true)}, bootstrap)
+	value, ok := signals["dataExplorerDashboard"].(uisignals.DataExplorerDashboardSignal)
+	if !ok || !value.Enabled {
+		t.Fatalf("dashboard bootstrap = %#v", signals["dataExplorerDashboard"])
+	}
+	if len(value.Targets) != 1 || value.Targets[0].ID != "dashboard:sales" || value.Targets[0].RevisionToken == nil || *value.Targets[0].RevisionToken != "opaque-token" {
+		t.Fatalf("dashboard targets = %#v", value.Targets)
+	}
+	var rendered bytes.Buffer
+	if err := DataExplorerPageWithSavedExplorationsAndDashboard(catalogFixture(), page, explorer, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(true)}, bootstrap, "", testLayoutProvider()).Render(&rendered); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"lv-data-explorer-add-to-dashboard", "/explore/add-to-dashboard", bootstrap.Command.OperationID()} {
+		if !strings.Contains(rendered.String(), want) {
+			t.Fatalf("rendered dashboard action missing %q: %s", want, rendered.String())
+		}
+	}
+	if !strings.Contains(rendered.String(), `data-lv-dashboard-action="append"`) || !strings.Contains(rendered.String(), `data-on:lv-data-explorer-add-to-dashboard__document`) {
+		t.Fatalf("dashboard mutation did not get an isolated document action owner: %s", rendered.String())
+	}
+	if !strings.Contains(rendered.String(), "$addExplorationToDashboard = evt.detail") || !strings.Contains(rendered.String(), "filterSignals: {include: /^(?:addExplorationToDashboard)") {
+		t.Fatalf("dashboard mutation did not use the generated envelope key: %s", rendered.String())
+	}
+	if strings.Contains(rendered.String(), "dataExplorerAddToDashboard") {
+		t.Fatalf("dashboard mutation used an unrecognized signal key: %s", rendered.String())
+	}
+	if strings.Contains(rendered.String(), `data-on:lv-data-explorer-add-to-dashboard="`) {
+		t.Fatalf("dashboard mutation remained attached to the query host: %s", rendered.String())
+	}
+}
 
 func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 	explorer := uisignals.DataExplorerSignal{Explore: uisignals.DataExploreSignal{Command: uisignals.DataExploreCommand{Spec: exploration.ExplorationSpec{

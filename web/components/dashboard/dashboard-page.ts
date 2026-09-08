@@ -38,6 +38,7 @@ import './visual-modal'
 import type { VisualActionDetail } from './visual-modal'
 import './visualization/host'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
+import { dashboardExploreHref } from './explore-from-dashboard'
 import {
   applyOptimisticInteraction,
   validateInteractionCommand,
@@ -1456,7 +1457,11 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       case 'visual': {
         const visual = this.visualFor(component)
         if (!visual) return this.missingPayload('visual')
-        return html`<lv-visualization-host .envelope=${visual} .openVisualFocus=${this.openVisualFocus}>${this.renderAskAction(askReference, referenced)}</lv-visualization-host>`
+        const page = this.renderSnapshot?.page ?? this.page
+        const exploreHref = this.presentation === 'app' && page
+          ? dashboardExploreHref(page, component, this.renderSnapshot?.filterContract ?? this.filterContract, this.renderSnapshot?.filterState ?? this.canonicalFilterState)
+          : undefined
+        return html`<lv-visualization-host .envelope=${visual} .openVisualFocus=${this.openVisualFocus}>${this.renderAskAction(askReference, referenced)}${exploreHref ? html`<a slot="agent-action" class="explore-visual" href=${exploreHref} aria-label="Explore this visual in Data Explorer" title="Explore this visual in Data Explorer">Explore</a>` : nothing}</lv-visualization-host>`
       }
       default:
         return html`<div class="unsupported">Unsupported dashboard component: ${component.kind}</div>`

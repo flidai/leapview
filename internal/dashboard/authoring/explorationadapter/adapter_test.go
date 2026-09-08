@@ -31,7 +31,7 @@ func TestConvertCartesianPreservesSelectionsAndScopesFilters(t *testing.T) {
 			Range: &exploration.ExplorationTimeRange{Value: &exploration.AbsoluteExplorationTimeRange{Kind: "absolute", Lower: &exploration.ExplorationTimeBound{Value: exploration.ExplorationTemporalValue{Value: &exploration.DateExplorationTemporalValue{Kind: "date", Value: lower}}, Inclusive: true}}}},
 		Sort:          []exploration.ExplorationSort{{Field: "revenue", Direction: exploration.ExplorationSortDirectionDesc}},
 		Limit:         250,
-		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{ExplorationVisualizationConfigBase: exploration.ExplorationVisualizationConfigBase{Title: stringPointer("Monthly revenue")}, Kind: "cartesian", Mark: exploration.VisualizationCartesianMarkLine}},
+		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{ExplorationVisualizationConfigBase: exploration.ExplorationVisualizationConfigBase{Title: stringPointer("Monthly revenue")}, Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkLine}},
 	}
 	result, err := Convert(spec, Options{VisualID: "component_1"})
 	if err != nil {
@@ -125,11 +125,11 @@ func TestConvertRejectsUnboundPhysicalFieldsAndUnrepresentableFormats(t *testing
 	if err != nil || result.Visual.Query.Value == nil {
 		t.Fatalf("bound physical field conversion = %#v (%v)", result, err)
 	}
-	format := exploration.VisualizationFormat{Value: &exploration.NumberVisualizationFormat{Kind: "number"}}
+	format := exploration.ExplorationVisualizationFormat{Value: &exploration.ExplorationNumberVisualizationFormat{Kind: "number"}}
 	ref := exploration.ExplorationVisualizationFieldRef{Field: "region", Format: &format}
 	spec.DatasetID = nil
 	spec.Dimensions = []exploration.ExplorationDimensionRef{{Field: "region"}}
-	spec.Visualization = &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.VisualizationCartesianMarkBar, X: &ref}}
+	spec.Visualization = &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkBar, X: &ref}}
 	if _, err := Convert(spec, Options{}); err == nil || !strings.Contains(err.Error(), "format cannot be represented") {
 		t.Fatalf("format error = %v", err)
 	}
@@ -232,7 +232,7 @@ func TestConvertCartesianUsesFirstMetricForXWithoutDimensions(t *testing.T) {
 		SchemaVersion: 1, ModelID: "semantic:sales", Limit: 20,
 		Metrics: []exploration.ExplorationMetricRef{{Field: "revenue"}},
 		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{
-			Kind: "cartesian", Mark: exploration.VisualizationCartesianMarkLine,
+			Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkLine,
 			X: &exploration.ExplorationVisualizationFieldRef{Field: "revenue"},
 		}},
 	}
@@ -303,7 +303,7 @@ func TestConvertMonthlyVisualCompilesAgainstSemanticModel(t *testing.T) {
 		},
 		Sort:          []exploration.ExplorationSort{{Field: "purchase_month", Direction: exploration.ExplorationSortDirectionAsc}},
 		Limit:         250,
-		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.VisualizationCartesianMarkLine, Series: &exploration.ExplorationVisualizationFieldRef{Field: "customers.state"}}},
+		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkLine, Series: &exploration.ExplorationVisualizationFieldRef{Field: "customers.state"}}},
 	}
 	result, err := Convert(spec, Options{VisualID: "sales_visual", Bindings: map[string]string{"customers.state": "customerState", "orders.ordered_at": "purchaseDate", "revenue": "revenue"}, MetricRoots: map[string]string{"revenue": "orders"}})
 	if err != nil {
@@ -360,7 +360,7 @@ func TestConvertRejectsChannelOrderAndConflictingDatasetQualifier(t *testing.T) 
 		Dimensions: []exploration.ExplorationDimensionRef{{Field: "region"}, {Field: "status"}},
 		Metrics:    []exploration.ExplorationMetricRef{{Field: "revenue"}},
 		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{
-			Kind: "cartesian", Mark: exploration.VisualizationCartesianMarkLine,
+			Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkLine,
 			X: &exploration.ExplorationVisualizationFieldRef{Field: "status"},
 		}},
 	}
@@ -390,7 +390,7 @@ func TestConvertScopesFilterIDsByComponentAndDetachesPointers(t *testing.T) {
 		Dimensions:    []exploration.ExplorationDimensionRef{{Field: "state", Alias: &alias}},
 		Metrics:       []exploration.ExplorationMetricRef{{Field: "revenue"}},
 		Filters:       []exploration.ExplorationFilter{{Field: "state", Expression: exploration.ExplorationFilterExpression{Value: &exploration.UnfilteredExplorationFilterExpression{Kind: "unfiltered"}}}},
-		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.VisualizationCartesianMarkLine, Smooth: &smooth}},
+		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkLine, Smooth: &smooth}},
 	}
 	first, err := Convert(spec, Options{VisualID: "tile_a"})
 	if err != nil {

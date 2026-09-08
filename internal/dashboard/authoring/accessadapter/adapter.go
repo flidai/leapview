@@ -95,6 +95,18 @@ func (a *Adapter) Authorize(ctx context.Context, request service.AuthorizationRe
 			}
 			allowed, err = a.authorizeProject(ctx, actorID, request.ProjectID, access.CapabilityProjectAdmin)
 		}
+	case service.AuthorizationTargetSemanticModel:
+		if request.Action != authoring.AuthorizationActionUse && request.Action != authoring.AuthorizationActionView {
+			return fmt.Errorf("%w: semantic-model authorization requires use or view action", ErrInvalid)
+		}
+		if err := request.SemanticModel.Validate(); err != nil {
+			return fmt.Errorf("%w: semantic model: %v", ErrInvalid, err)
+		}
+		resource, resourceErr := access.NewResourceRef(request.SemanticModel, graph.KindSemanticModel)
+		if resourceErr != nil {
+			return fmt.Errorf("%w: semantic model resource: %v", ErrInvalid, resourceErr)
+		}
+		allowed, err = a.authorizeResource(ctx, actorID, request.ProjectID, resource, capability)
 	default:
 		return fmt.Errorf("%w: unsupported authorization target %q", ErrInvalid, request.Target)
 	}
@@ -113,6 +125,8 @@ func capabilityForAction(action authoring.AuthorizationAction) (access.Capabilit
 		return access.CapabilityResourceRead, nil
 	case authoring.AuthorizationActionEdit:
 		return access.CapabilityResourceEdit, nil
+	case authoring.AuthorizationActionUse:
+		return access.CapabilityResourceUse, nil
 	case authoring.AuthorizationActionPublish:
 		return access.CapabilityResourcePublish, nil
 	case authoring.AuthorizationActionArchive:

@@ -747,7 +747,8 @@ func buildApplicationSurfaces(
 	routes.projectCatalog = capabilities.ProjectCatalog
 	var projectDefinitionReader projecthttp.ProjectDefinitionReader
 	if runtimeConfig.RuntimeHost != nil {
-		projectDefinitionReader = projectmodule.NewActiveProjectDefinitionReader(runtimeConfig.RuntimeHost.Provider())
+		runtimeProvider := runtimeConfig.RuntimeHost.Provider()
+		projectDefinitionReader = projectmodule.NewAuthorizedProjectDefinitionReader(runtimeProvider, routes.explorationAuthorizationSubjects)
 	}
 	var projectPhysicalCatalog projecthttp.PhysicalCatalogReader
 	if runtimeConfig.RuntimeHost != nil {
@@ -761,6 +762,7 @@ func buildApplicationSurfaces(
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
+		DashboardAuthoring:   routes.dashboardAuthoring,
 		DashboardAppearances: dashboardmodule.NewAppearanceStore(data.Database),
 		ResolveProjectID:     runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID,
 		Layout: func(r *http.Request) webpage.Provider {
@@ -1282,6 +1284,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return fmt.Errorf("build dashboard module: %w", err)
 		}
 	}
+	if routes.projectBrowser != nil && routes.dashboardModule != nil {
+		routes.projectBrowser.DashboardAuthoringCommand = dashboardmodule.DashboardAuthoringCommandBinding()
+	}
 	if database != nil && routes.dashboardModule != nil {
 		if activated, err := startupDashboardPublicationActivation(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, runtimeConfig.DeliveryTargetReader, runtimeConfig.SealedServing, runtimeConfig.InstanceID); err == nil {
 			if err := reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated); err != nil {
@@ -1295,6 +1300,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		documentation, err := buildAgentDocumentation()
 		if err != nil {
 			return err
+		}
+		var explorationModel agentmodule.VisualExplorationModelFunc
+		if runtime.runtimeHostModule != nil {
+			runtimeProvider := runtime.runtimeHostModule.Provider()
+			explorationModel = explorationModelProvider(runtimeProvider, routes.explorationAuthorizationSubjects)
 		}
 		agentConfig := agentmodule.Config{
 			Database: database, Model: moduleWorkflow.agentConfig,
@@ -1324,9 +1334,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return runtime.metrics, true
 			},
-			RecordAudit:   accessAuditRecorder(routes.accessModule),
-			Documentation: documentation,
-			Catalog:       agentmodule.BuildCatalog(agentmodule.CatalogConfig{ProjectCatalog: routes.projectCatalog}),
+			ExplorationModel: explorationModel,
+			RecordAudit:      accessAuditRecorder(routes.accessModule),
+			Documentation:    documentation,
+			Catalog:          agentmodule.BuildCatalog(agentmodule.CatalogConfig{ProjectCatalog: routes.projectCatalog}),
 			QueryMetadata: func(ctx context.Context, projectID, modelID string) agentmodule.VisualQueryMetadata {
 				if runtime.runtimeHostModule == nil {
 					return agentmodule.VisualQueryMetadata{}

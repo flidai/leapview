@@ -94,25 +94,25 @@ func (c converter) presentation() (string, document.DashboardPresentation, error
 		}
 		p := &document.KPIDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "kpi"}, Type: "kpi"}
 		if value.Presentation != nil {
-			p.Mode = cloneMapped(value.Presentation.Mode, func(value exploration.VisualizationKPIMode) visualizationir.VisualizationKPIMode {
+			p.Mode = cloneMapped(value.Presentation.Mode, func(value exploration.ExplorationVisualizationKPIMode) visualizationir.VisualizationKPIMode {
 				return visualizationir.VisualizationKPIMode(value)
 			})
-			p.Delta = cloneMapped(value.Presentation.Delta, func(value exploration.VisualizationKPIDeltaMode) visualizationir.VisualizationKPIDeltaMode {
+			p.Delta = cloneMapped(value.Presentation.Delta, func(value exploration.ExplorationVisualizationKPIDeltaMode) visualizationir.VisualizationKPIDeltaMode {
 				return visualizationir.VisualizationKPIDeltaMode(value)
 			})
-			p.FavorableDirection = cloneMapped(value.Presentation.FavorableDirection, func(value exploration.VisualizationKPIDirection) visualizationir.VisualizationKPIDirection {
+			p.FavorableDirection = cloneMapped(value.Presentation.FavorableDirection, func(value exploration.ExplorationVisualizationKPIDirection) visualizationir.VisualizationKPIDirection {
 				return visualizationir.VisualizationKPIDirection(value)
 			})
-			p.MissingComparison = cloneMapped(value.Presentation.MissingComparison, func(value exploration.VisualizationKPIMissingComparison) visualizationir.VisualizationKPIMissingComparison {
+			p.MissingComparison = cloneMapped(value.Presentation.MissingComparison, func(value exploration.ExplorationVisualizationKPIMissingComparison) visualizationir.VisualizationKPIMissingComparison {
 				return visualizationir.VisualizationKPIMissingComparison(value)
 			})
 			p.Ranges = cloneKPIRanges(value.Presentation.Ranges)
 			p.Thresholds = cloneThresholds(value.Presentation.Thresholds)
-			p.DisplayUnits = cloneMapped(value.Presentation.DisplayUnits, func(value exploration.VisualizationDisplayUnits) visualizationir.VisualizationDisplayUnits {
+			p.DisplayUnits = cloneMapped(value.Presentation.DisplayUnits, func(value exploration.ExplorationVisualizationDisplayUnits) visualizationir.VisualizationDisplayUnits {
 				return visualizationir.VisualizationDisplayUnits(value)
 			})
 			p.Note = cloneString(value.Presentation.Note)
-			p.Tone = cloneMapped(value.Presentation.Tone, func(value exploration.VisualizationTone) visualizationir.VisualizationTone {
+			p.Tone = cloneMapped(value.Presentation.Tone, func(value exploration.ExplorationVisualizationTone) visualizationir.VisualizationTone {
 				return visualizationir.VisualizationTone(value)
 			})
 		}
@@ -356,7 +356,7 @@ func (c converter) validateBase(kind string, allowLegend, allowDisplayUnits, all
 		}
 	}
 	if base.Orientation != nil {
-		if *base.Orientation != exploration.VisualizationOrientationHorizontal && *base.Orientation != exploration.VisualizationOrientationVertical {
+		if *base.Orientation != exploration.ExplorationVisualizationOrientationHorizontal && *base.Orientation != exploration.ExplorationVisualizationOrientationVertical {
 			return fmt.Errorf("%s has unsupported orientation %q", kind, *base.Orientation)
 		}
 		if !allowOrientation {

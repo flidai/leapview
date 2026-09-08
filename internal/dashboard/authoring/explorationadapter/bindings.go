@@ -10,7 +10,7 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
-func dashboardLegend(value *exploration.VisualizationLegendPosition) *document.DashboardLegendPosition {
+func dashboardLegend(value *exploration.ExplorationVisualizationLegendPosition) *document.DashboardLegendPosition {
 	if value == nil {
 		return nil
 	}
@@ -21,7 +21,7 @@ func dashboardLegend(value *exploration.VisualizationLegendPosition) *document.D
 	return &converted
 }
 
-func dashboardDisplayUnits(value *exploration.VisualizationDisplayUnits) *visualizationir.VisualizationDisplayUnits {
+func dashboardDisplayUnits(value *exploration.ExplorationVisualizationDisplayUnits) *visualizationir.VisualizationDisplayUnits {
 	if value == nil {
 		return nil
 	}
@@ -184,7 +184,7 @@ func cloneInt32(value *int32) *int32 {
 	copy := *value
 	return &copy
 }
-func cloneKPIRanges(value *[]exploration.VisualizationKPIQualitativeRange) *[]visualizationir.VisualizationKPIQualitativeRange {
+func cloneKPIRanges(value *[]exploration.ExplorationVisualizationKPIQualitativeRange) *[]visualizationir.VisualizationKPIQualitativeRange {
 	if value == nil {
 		return nil
 	}
@@ -195,7 +195,7 @@ func cloneKPIRanges(value *[]exploration.VisualizationKPIQualitativeRange) *[]vi
 	return &result
 }
 
-func cloneThresholds(value *[]exploration.VisualizationThreshold) *[]visualizationir.VisualizationThreshold {
+func cloneThresholds(value *[]exploration.ExplorationVisualizationThreshold) *[]visualizationir.VisualizationThreshold {
 	if value == nil {
 		return nil
 	}
@@ -218,16 +218,16 @@ func validateKPIPresentation(value *exploration.ExplorationKPIPresentation) erro
 	if value == nil {
 		return nil
 	}
-	if value.Mode != nil && *value.Mode != exploration.VisualizationKPIModeCompact && *value.Mode != exploration.VisualizationKPIModeBullet && *value.Mode != exploration.VisualizationKPIModeProgress {
+	if value.Mode != nil && *value.Mode != exploration.ExplorationVisualizationKPIModeCompact && *value.Mode != exploration.ExplorationVisualizationKPIModeBullet && *value.Mode != exploration.ExplorationVisualizationKPIModeProgress {
 		return fmt.Errorf("unsupported KPI mode %q", *value.Mode)
 	}
-	if value.Delta != nil && *value.Delta != exploration.VisualizationKPIDeltaModeAbsolute && *value.Delta != exploration.VisualizationKPIDeltaModeRelative {
+	if value.Delta != nil && *value.Delta != exploration.ExplorationVisualizationKPIDeltaModeAbsolute && *value.Delta != exploration.ExplorationVisualizationKPIDeltaModeRelative {
 		return fmt.Errorf("unsupported KPI delta mode %q", *value.Delta)
 	}
-	if value.FavorableDirection != nil && *value.FavorableDirection != exploration.VisualizationKPIDirectionIncrease && *value.FavorableDirection != exploration.VisualizationKPIDirectionDecrease && *value.FavorableDirection != exploration.VisualizationKPIDirectionNeutral {
+	if value.FavorableDirection != nil && *value.FavorableDirection != exploration.ExplorationVisualizationKPIDirectionIncrease && *value.FavorableDirection != exploration.ExplorationVisualizationKPIDirectionDecrease && *value.FavorableDirection != exploration.ExplorationVisualizationKPIDirectionNeutral {
 		return fmt.Errorf("unsupported KPI favorable direction %q", *value.FavorableDirection)
 	}
-	if value.MissingComparison != nil && *value.MissingComparison != exploration.VisualizationKPIMissingComparisonShowUnavailable && *value.MissingComparison != exploration.VisualizationKPIMissingComparisonHide {
+	if value.MissingComparison != nil && *value.MissingComparison != exploration.ExplorationVisualizationKPIMissingComparisonShowUnavailable && *value.MissingComparison != exploration.ExplorationVisualizationKPIMissingComparisonHide {
 		return fmt.Errorf("unsupported KPI missing-comparison mode %q", *value.MissingComparison)
 	}
 	if value.DisplayUnits != nil && !validDisplayUnits(*value.DisplayUnits) {
@@ -253,76 +253,76 @@ func validateKPIPresentation(value *exploration.ExplorationKPIPresentation) erro
 	return nil
 }
 
-func validExplorationLegend(value exploration.VisualizationLegendPosition) bool {
+func validExplorationLegend(value exploration.ExplorationVisualizationLegendPosition) bool {
 	switch value {
-	case exploration.VisualizationLegendPositionHidden, exploration.VisualizationLegendPositionTop, exploration.VisualizationLegendPositionRight, exploration.VisualizationLegendPositionBottom, exploration.VisualizationLegendPositionLeft:
+	case exploration.ExplorationVisualizationLegendPositionHidden, exploration.ExplorationVisualizationLegendPositionTop, exploration.ExplorationVisualizationLegendPositionRight, exploration.ExplorationVisualizationLegendPositionBottom, exploration.ExplorationVisualizationLegendPositionLeft:
 		return true
 	default:
 		return false
 	}
 }
 
-func validDisplayUnits(value exploration.VisualizationDisplayUnits) bool {
+func validDisplayUnits(value exploration.ExplorationVisualizationDisplayUnits) bool {
 	switch value {
-	case exploration.VisualizationDisplayUnitsAuto, exploration.VisualizationDisplayUnitsNone, exploration.VisualizationDisplayUnitsThousands, exploration.VisualizationDisplayUnitsMillions, exploration.VisualizationDisplayUnitsBillions, exploration.VisualizationDisplayUnitsTrillions:
+	case exploration.ExplorationVisualizationDisplayUnitsAuto, exploration.ExplorationVisualizationDisplayUnitsNone, exploration.ExplorationVisualizationDisplayUnitsThousands, exploration.ExplorationVisualizationDisplayUnitsMillions, exploration.ExplorationVisualizationDisplayUnitsBillions, exploration.ExplorationVisualizationDisplayUnitsTrillions:
 		return true
 	default:
 		return false
 	}
 }
 
-func validStacking(value exploration.VisualizationStackingMode) bool {
+func validStacking(value exploration.ExplorationVisualizationStackingMode) bool {
 	switch value {
-	case exploration.VisualizationStackingModeNone, exploration.VisualizationStackingModeNormal, exploration.VisualizationStackingModePercent:
+	case exploration.ExplorationVisualizationStackingModeNone, exploration.ExplorationVisualizationStackingModeNormal, exploration.ExplorationVisualizationStackingModePercent:
 		return true
 	default:
 		return false
 	}
 }
 
-func validTone(value exploration.VisualizationTone) bool {
+func validTone(value exploration.ExplorationVisualizationTone) bool {
 	switch value {
-	case exploration.VisualizationToneNeutral, exploration.VisualizationToneInk, exploration.VisualizationToneSuccess, exploration.VisualizationToneWarning, exploration.VisualizationToneDanger:
+	case exploration.ExplorationVisualizationToneNeutral, exploration.ExplorationVisualizationToneInk, exploration.ExplorationVisualizationToneSuccess, exploration.ExplorationVisualizationToneWarning, exploration.ExplorationVisualizationToneDanger:
 		return true
 	default:
 		return false
 	}
 }
 
-func validCartesianMark(value exploration.VisualizationCartesianMark) bool {
+func validCartesianMark(value exploration.ExplorationVisualizationCartesianMark) bool {
 	switch value {
-	case exploration.VisualizationCartesianMarkLine, exploration.VisualizationCartesianMarkArea, exploration.VisualizationCartesianMarkBar, exploration.VisualizationCartesianMarkColumn, exploration.VisualizationCartesianMarkHistogram, exploration.VisualizationCartesianMarkCombo, exploration.VisualizationCartesianMarkWaterfall, exploration.VisualizationCartesianMarkCandlestick, exploration.VisualizationCartesianMarkBoxplot, exploration.VisualizationCartesianMarkHeatmap:
+	case exploration.ExplorationVisualizationCartesianMarkLine, exploration.ExplorationVisualizationCartesianMarkArea, exploration.ExplorationVisualizationCartesianMarkBar, exploration.ExplorationVisualizationCartesianMarkColumn, exploration.ExplorationVisualizationCartesianMarkHistogram, exploration.ExplorationVisualizationCartesianMarkCombo, exploration.ExplorationVisualizationCartesianMarkWaterfall, exploration.ExplorationVisualizationCartesianMarkCandlestick, exploration.ExplorationVisualizationCartesianMarkBoxplot, exploration.ExplorationVisualizationCartesianMarkHeatmap:
 		return true
 	default:
 		return false
 	}
 }
 
-func validProportionalMark(value exploration.VisualizationProportionalMark) bool {
+func validProportionalMark(value exploration.ExplorationVisualizationProportionalMark) bool {
 	switch value {
-	case exploration.VisualizationProportionalMarkPie, exploration.VisualizationProportionalMarkDonut, exploration.VisualizationProportionalMarkFunnel:
+	case exploration.ExplorationVisualizationProportionalMarkPie, exploration.ExplorationVisualizationProportionalMarkDonut, exploration.ExplorationVisualizationProportionalMarkFunnel:
 		return true
 	default:
 		return false
 	}
 }
 
-func validPolarMark(value exploration.VisualizationPolarMark) bool {
+func validPolarMark(value exploration.ExplorationVisualizationPolarMark) bool {
 	switch value {
-	case exploration.VisualizationPolarMarkRadar, exploration.VisualizationPolarMarkGauge:
+	case exploration.ExplorationVisualizationPolarMarkRadar, exploration.ExplorationVisualizationPolarMarkGauge:
 		return true
 	default:
 		return false
 	}
 }
-func dashboardOrientation(value *exploration.VisualizationOrientation) *document.DashboardOrientation {
+func dashboardOrientation(value *exploration.ExplorationVisualizationOrientation) *document.DashboardOrientation {
 	if value == nil {
 		return nil
 	}
 	converted := document.DashboardOrientation(*value)
 	return &converted
 }
-func dashboardStacking(value *exploration.VisualizationStackingMode) *document.DashboardStackingMode {
+func dashboardStacking(value *exploration.ExplorationVisualizationStackingMode) *document.DashboardStackingMode {
 	if value == nil {
 		return nil
 	}
