@@ -54,13 +54,18 @@ pages default to 50 and cap at 200. These are resource bounds, not latency
 guarantees. Benchmark timings depend on the host and fixture; in-memory
 saved-read measurements do not represent database or full authorization cost.
 
-## Pending release evidence
+## Stable checkpoint validation
 
 The integrated explorer component suite passes, including current-query
 sharing and private Save-as behavior. The mounted monthly workflow now covers
 the authenticated shell/update/save/reopen/export path. Mounted dashboard
 handoff, published-source return navigation and authoring transport recovery
 also pass. Chat visual-artifact handoff, context freshness and return navigation
-have focused regression coverage. Final release still requires stable full CI on the combined
-handoff/release checkpoint. A timeout or browser-worker shutdown is not treated
-as passing evidence.
+have focused regression coverage. Full `task ci` passed on `ce6bc84af`, after
+correcting design-token violations and the model resource-ID return contract.
+The full architecture suite, generated contracts, explicit quality budget,
+three-repeat chat race regressions, and 51 site browser tests also passed.
+A timeout or browser-worker shutdown is not treated as passing evidence.
+
+Remote exact-head PR checks and feature-branch integration remain required.
+This report is not approval to merge into main.
