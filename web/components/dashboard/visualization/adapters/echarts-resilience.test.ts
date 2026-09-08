@@ -1,8 +1,11 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { Change, defaultRendererContext } from '../host-controller'
 import { captureEChartsViewState, echartsNavigationDefaults, echartsOption, EChartsHandle, preservesEChartsViewState, responsiveEChartsPatch } from './echarts'
+import { CategoryColorRegistry } from './echarts/category-colors'
+import { proportionalFixture } from './echarts-test-fixtures'
 
 function cartesian(dataZoom = true): VisualizationEnvelope {
   return {
@@ -112,6 +115,81 @@ test('ECharts handle reapplies compact layout after updates and restores desktop
 
   handle.resize(640, 360)
   expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
+})
+
+function legendHandle() {
+  const listeners = new Map<string, (params: unknown) => void>()
+  const actions: Record<string, unknown>[] = []
+  const events: CustomEvent[] = []
+  const chart = {
+    on(event: string, callback: (params: unknown) => void) { listeners.set(event, callback) },
+    off() {},
+    resize() {},
+    dispose() {},
+    getWidth: () => 640,
+    getHeight: () => 360,
+    setOption() { listeners.get('rendered')?.({}) },
+    dispatchAction(action: Record<string, unknown>) { actions.push(action) },
+  }
+  const container = { dispatchEvent(event: CustomEvent) { events.push(event); return true } }
+  return { actions, events, listeners, handle: new EChartsHandle(container as any, {} as any, chart as any, new CategoryColorRegistry()) }
+}
+
+test('ECharts proportional legends retain native toggles without a governed command', () => {
+  const { actions, events, listeners, handle } = legendHandle()
+  handle.mount(proportionalFixture('donut'), defaultRendererContext)
+  listeners.get('legendselectchanged')?.({ name: 'A' })
+  expect(actions).toEqual([])
+  expect(events).toEqual([])
+  handle.dispose()
+})
+
+test('ECharts governed proportional legends reset native hiding before dispatching selection', () => {
+  const envelope = proportionalFixture('donut') as any
+  envelope.spec.datasets[0].fields[0].role = 'identity'
+  envelope.spec.interactions = [{
+    id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{
+      source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetDatasetID: 'orders',
+    }],
+  }]
+  const { actions, events, listeners, handle } = legendHandle()
+  handle.mount(envelope, defaultRendererContext)
+  listeners.get('legendselectchanged')?.({ name: 'A' })
+  expect(actions).toEqual([{ type: 'legendSelect', name: 'A' }])
+  expect(events).toHaveLength(1)
+  expect(events[0]?.detail).toMatchObject({ sourceId: 'donut', action: 'set', toggle: true, mappings: [{ value: 'A' }] })
+  handle.dispose()
+})
+
+// The adapter's browser mount requires canvas; SSR-SVG exercises the same
+// ECharts action/event semantics without broadening the test harness.
+test('ECharts SSR legend actions distinguish native visibility from governed selection', () => {
+  const renderLegend = (envelope: VisualizationEnvelope) => {
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+    const events: CustomEvent[] = []
+    const container = { dispatchEvent(event: CustomEvent) { events.push(event); return true } }
+    const handle = new EChartsHandle(container as any, {} as any, chart, new CategoryColorRegistry())
+    handle.mount(envelope, defaultRendererContext)
+    chart.dispatchAction({ type: 'legendToggleSelect', name: 'A' })
+    const selected = (chart.getOption() as any).legend?.[0]?.selected?.A
+    handle.dispose()
+    return { selected, events }
+  }
+
+  const ordinary = renderLegend(proportionalFixture('donut'))
+  expect(ordinary.selected).toBe(false)
+  expect(ordinary.events).toHaveLength(0)
+
+  const governed = proportionalFixture('donut') as any
+  governed.spec.datasets[0].fields[0].role = 'identity'
+  governed.spec.interactions = [{
+    id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{
+      source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetDatasetID: 'orders',
+    }],
+  }]
+  const selected = renderLegend(governed)
+  expect(selected.selected).toBe(true)
+  expect(selected.events).toHaveLength(1)
 })
 
 test('ECharts responsive and view-state helpers fail closed on malformed renderer options', () => {

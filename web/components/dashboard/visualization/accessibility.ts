@@ -13,6 +13,11 @@ export type AccessibleVisualizationData = Readonly<{
   truncated: boolean
 }>
 
+type AccessibleDataset = Readonly<{
+  dataset: Extract<VisualizationEnvelope['dataState'], { kind: 'inline' }>['datasets'][number]
+  schema: VisualizationEnvelope['spec']['datasets'][number]
+}>
+
 /** Host data actions are truthful only when the renderer's inline frame is available. */
 export function supportsHostDataActions(envelope: VisualizationEnvelope): boolean {
   return envelope.dataState.kind === 'inline'
@@ -29,9 +34,22 @@ export function accessibleVisualizationData(
   if (limit < 1 || !Number.isFinite(limit)) return { columns: [], rows: [], totalRows: 0, truncated: false }
   if (envelope.dataState.kind !== 'inline') return { columns: [], rows: [], totalRows: 0, truncated: false }
   const datasets = envelope.dataState.datasets
-  const dataset = datasets.find((candidate) => envelope.spec.datasets.some((schema) => schema.id === candidate.id)) ?? datasets[0]
-  const schema = dataset ? envelope.spec.datasets.find((candidate) => candidate.id === dataset.id) : undefined
-  if (!dataset || !schema) return { columns: [], rows: [], totalRows: 0, truncated: false }
+  const accessibleDatasets = envelope.spec.datasets.flatMap((schema): AccessibleDataset[] => {
+    const dataset = datasets.find((candidate) => candidate.id === schema.id)
+    return dataset ? [{ dataset, schema }] : []
+  })
+  if (accessibleDatasets.length === 0) return { columns: [], rows: [], totalRows: 0, truncated: false }
+  if (accessibleDatasets.length > 1) return accessibleMultiDatasetData(envelope, accessibleDatasets, context, limit)
+  return accessibleSingleDatasetData(envelope, accessibleDatasets[0]!, context, limit)
+}
+
+function accessibleSingleDatasetData(
+  envelope: VisualizationEnvelope,
+  entry: AccessibleDataset,
+  context: RendererContext,
+  limit: number,
+): AccessibleVisualizationData {
+  const { dataset, schema } = entry
   const fields = schema.fields.filter((field) => dataset.columns.includes(field.id))
   const columns = fields.map((field) => ({
     key: field.id,
@@ -48,6 +66,51 @@ export function accessibleVisualizationData(
     totalRows: dataset.rows.length,
     truncated: dataset.rows.length > rows.length || dataset.completeness === 'truncated' || dataset.completeness === 'partial',
   }
+}
+
+function accessibleMultiDatasetData(
+  envelope: VisualizationEnvelope,
+  entries: readonly AccessibleDataset[],
+  context: RendererContext,
+  limit: number,
+): AccessibleVisualizationData {
+  const columns: AccessibleVisualizationColumn[] = [{ key: '__dataset', label: 'Dataset' }]
+  const fieldsByDataset = entries.map(({ dataset, schema }) => {
+    const fields = schema.fields.filter((field) => dataset.columns.includes(field.id))
+    for (const field of fields) {
+      columns.push({
+        key: accessibleFieldKey(dataset.id, field.id),
+        label: `${dataset.id}: ${field.label || field.id}`,
+        ...(field.role === 'metric' ? { align: 'right' as const } : {}),
+      })
+    }
+    return { dataset, fields }
+  })
+  const totalRows = fieldsByDataset.reduce((total, { dataset }) => total + dataset.rows.length, 0)
+  const rows: Record<string, string>[] = []
+  const rowLimit = Math.floor(limit)
+  for (const { dataset, fields } of fieldsByDataset) {
+    for (const row of dataset.rows) {
+      if (rows.length >= rowLimit) break
+      const values: Record<string, string> = { __dataset: dataset.id }
+      for (const field of fields) {
+        const value = row[dataset.columns.indexOf(field.id)]
+        values[accessibleFieldKey(dataset.id, field.id)] = safeFormatField(envelope, { dataset: dataset.id, field: field.id }, value, context)
+      }
+      rows.push(values)
+    }
+    if (rows.length >= rowLimit) break
+  }
+  return {
+    columns,
+    rows,
+    totalRows,
+    truncated: totalRows > rows.length || entries.some(({ dataset }) => dataset.completeness === 'truncated' || dataset.completeness === 'partial'),
+  }
+}
+
+function accessibleFieldKey(datasetID: string, fieldID: string): string {
+  return JSON.stringify([datasetID, fieldID])
 }
 
 function safeFormatField(envelope: VisualizationEnvelope, ref: { dataset: string; field: string }, value: unknown, context: RendererContext): string {

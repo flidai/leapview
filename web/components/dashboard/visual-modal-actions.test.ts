@@ -56,3 +56,13 @@ value ""quoted""",`)
     rows: [{ value: '\r+formula\nnext' }],
   }, '\t')).toBe("' =Header\n' +formula next")
 })
+
+test('delimited visual data preserves explicit multi-dataset columns', () => {
+  expect(visualDataToDelimited({
+    columns: [
+      { key: '__dataset', label: 'Dataset' },
+      { key: 'comparison.value', label: 'comparison: Prior' },
+    ],
+    rows: [{ __dataset: 'comparison', 'comparison.value': '10' }],
+  }, ',')).toBe('Dataset,comparison: Prior\ncomparison,10')
+})

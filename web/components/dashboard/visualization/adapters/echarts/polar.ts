@@ -47,6 +47,9 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
       id: 'series:polar:gauge', type: 'gauge', min: minimum, max: maximum,
       data: [{ value, __lv_dataset: dataset?.id ?? 'primary', __lv_row_index: 0 }], pointer: { show: spec.presentation.showPointer },
       progress: { show: true, width: spec.presentation.progressWidth }, axisLine: { lineStyle: { color: colors } },
+      axisTick: { lineStyle: { color: context.colors.muted } },
+      splitLine: { lineStyle: { color: context.colors.grid } },
+      axisLabel: { color: context.colors.muted, fontFamily: context.fontFamily },
       detail: {
         show: showDetail,
         formatter: (raw: unknown) => truncateVisualizationLabel(

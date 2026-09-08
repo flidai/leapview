@@ -325,9 +325,13 @@ export class EChartsHandle implements RendererHandle {
     const envelope = this.envelope
     const event = params as { name?: unknown }
     if (!envelope || envelope.spec.kind !== 'proportional' || typeof event.name !== 'string') return
-    this.chart.dispatchAction({ type: 'legendSelect', name: event.name })
     const command = legendSelectionCommand(envelope, event.name, this.context ?? defaultRendererContext)
     if (!command) return
+    // Governed proportional legends are selection controls, not visibility
+    // filters. Keep the sector visible while the host applies the selection
+    // command; ordinary legends without a valid command keep ECharts' native
+    // toggle behavior.
+    this.chart.dispatchAction({ type: 'legendSelect', name: event.name })
     this.container.dispatchEvent(new CustomEvent('lv-interaction-select', { bubbles: true, composed: true, detail: command }))
   }
 

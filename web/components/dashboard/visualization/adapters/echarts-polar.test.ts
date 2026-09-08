@@ -61,6 +61,31 @@ test('ECharts translation builds radar indicators and aligned series from typed 
   expect(empty.series[0].data).toEqual([])
 })
 
+test('ECharts gauge axis labels and guides use theme contrast tokens', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'gauge', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    spec: {
+      kind: 'polar', title: 'Gauge', mark: 'gauge',
+      datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Rate' }] }],
+      dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Gauge', description: 'Gauge' }, interactions: [],
+      value: { dataset: 'primary', field: 'value' },
+      presentation: { legend: 'hidden', labelPolicy: { density: 'automatic', priority: [], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, minimum: 0, maximum: 100, showPointer: true, progressWidth: 12 },
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['value'], rows: [[75]], completeness: 'complete' }] },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+  const contexts = [
+    defaultRendererContext,
+    { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, muted: '#8b949e', grid: '#30363d' } },
+  ]
+  for (const context of contexts) {
+    const series = (echartsOption(envelope, context) as any).series[0]
+    expect(series.axisLabel).toMatchObject({ color: context.colors.muted, fontFamily: context.fontFamily })
+    expect(series.axisTick).toEqual({ lineStyle: { color: context.colors.muted } })
+    expect(series.splitLine).toEqual({ lineStyle: { color: context.colors.grid } })
+  }
+})
+
 test('ECharts radar keeps null, display-colliding, and typed series identities distinct', () => {
   const envelope = {
     schemaVersion: 9, visualID: 'quality-identities', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
