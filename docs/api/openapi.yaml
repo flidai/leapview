@@ -62481,6 +62481,14 @@ components:
             - color: accent
               order: 1
               value: example
+        gainColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick gain color; omitted values use the active theme
+            success color.
+        lossColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick loss color; omitted values use the active theme
+            danger color.
         axes:
           type: array
           items:
@@ -62559,6 +62567,7 @@ components:
             id: example
             label: example
             tone: neutral
+        gainColor: accent
         labelPosition: automatic
         labels:
           density: hidden
@@ -62572,6 +62581,7 @@ components:
           - label: example
             value: example
         legendTitle: example
+        lossColor: accent
         orientation: horizontal
         referenceBands:
           - axis: x
@@ -62658,6 +62668,14 @@ components:
             - color: accent
               order: 1
               value: example
+        gainColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick gain intent; omitted values use the theme success
+            color.
+        lossColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick loss intent; omitted values use the theme danger
+            color.
       example:
         area: true
         comboSeries:
@@ -62665,8 +62683,10 @@ components:
             mark: line
             seriesValue: example
         dataZoom: true
+        gainColor: accent
         histogramBins: 1
         labelPosition: automatic
+        lossColor: accent
         orientation: horizontal
         seriesIntent:
           - color: accent
@@ -62796,8 +62816,10 @@ components:
               mark: line
               seriesValue: example
           dataZoom: true
+          gainColor: accent
           histogramBins: 1
           labelPosition: automatic
+          lossColor: accent
           orientation: horizontal
           seriesIntent:
             - color: accent

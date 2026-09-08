@@ -1733,6 +1733,25 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 	if err := validateCartesianSeriesPresentation(*value); err != nil {
 		return err
 	}
+	if value.Presentation.GainColor != nil || value.Presentation.LossColor != nil {
+		if value.Mark != VisualizationCartesianMarkCandlestick {
+			if value.Presentation.GainColor != nil {
+				return fmt.Errorf("spec.presentation.gainColor is unsupported for cartesian mark %q", value.Mark)
+			}
+			return fmt.Errorf("spec.presentation.lossColor is unsupported for cartesian mark %q", value.Mark)
+		}
+		for _, color := range []struct {
+			name   string
+			intent *VisualizationColorIntent
+		}{
+			{name: "gainColor", intent: value.Presentation.GainColor},
+			{name: "lossColor", intent: value.Presentation.LossColor},
+		} {
+			if color.intent != nil && !validVisualizationColorIntent(*color.intent) {
+				return fmt.Errorf("spec.presentation.%s %q is unsupported", color.name, *color.intent)
+			}
+		}
+	}
 	axes := map[VisualizationCartesianAxis]struct{}{}
 	if value.Axes != nil {
 		for _, axis := range *value.Axes {

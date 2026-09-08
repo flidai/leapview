@@ -22,6 +22,8 @@ type CartesianVisualizationPresentation struct {
 	ComboSeries   *[]VisualizationComboSeries  `json:"comboSeries,omitempty" yaml:"comboSeries,omitempty"`
 	Stacking      *VisualizationStackingMode   `json:"stacking,omitempty" yaml:"stacking,omitempty"`
 	SeriesIntent  *[]VisualizationSeriesIntent `json:"seriesIntent,omitempty" yaml:"seriesIntent,omitempty"`
+	GainColor     *VisualizationColorIntent    `json:"gainColor,omitempty" yaml:"gainColor,omitempty"`
+	LossColor     *VisualizationColorIntent    `json:"lossColor,omitempty" yaml:"lossColor,omitempty"`
 }
 
 type CartesianVisualizationSpec struct {

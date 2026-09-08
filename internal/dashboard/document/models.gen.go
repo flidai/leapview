@@ -41,6 +41,8 @@ type CartesianDashboardPresentation struct {
 	DisplayUnits     *visualizationir.VisualizationDisplayUnits `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
 	Series           *[]DashboardComboSeries                    `json:"series,omitempty" yaml:"series,omitempty"`
 	SeriesIntent     *[]DashboardSeriesIntent                   `json:"seriesIntent,omitempty" yaml:"seriesIntent,omitempty"`
+	GainColor        *visualizationir.VisualizationColorIntent  `json:"gainColor,omitempty" yaml:"gainColor,omitempty"`
+	LossColor        *visualizationir.VisualizationColorIntent  `json:"lossColor,omitempty" yaml:"lossColor,omitempty"`
 	Axes             *[]DashboardAxisConfiguration              `json:"axes,omitempty" yaml:"axes,omitempty"`
 	ReferenceLines   *[]DashboardReferenceLine                  `json:"referenceLines,omitempty" yaml:"referenceLines,omitempty"`
 	ReferenceBands   *[]DashboardReferenceBand                  `json:"referenceBands,omitempty" yaml:"referenceBands,omitempty"`

@@ -95,6 +95,20 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 			}
 			out.SeriesIntent = &seriesIntent
 		}
+		if variant.GainColor != nil {
+			if !validCanonicalColorIntent(*variant.GainColor) {
+				return nil, fmt.Errorf("presentation.gainColor %q is unsupported", *variant.GainColor)
+			}
+			color := visualizationir.VisualizationColorIntent(*variant.GainColor)
+			out.GainColor = &color
+		}
+		if variant.LossColor != nil {
+			if !validCanonicalColorIntent(*variant.LossColor) {
+				return nil, fmt.Errorf("presentation.lossColor %q is unsupported", *variant.LossColor)
+			}
+			color := visualizationir.VisualizationColorIntent(*variant.LossColor)
+			out.LossColor = &color
+		}
 		return out, nil
 	case *document.PointDashboardPresentation:
 		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, nil)

@@ -93,6 +93,10 @@
           },
           "type": "array"
         },
+        "gainColor": {
+          "$ref": "#/$defs/VisualizationColorIntent",
+          "description": "Candlestick gain color; omitted values use the active theme success color."
+        },
         "labelPosition": {
           "$ref": "#/$defs/DashboardLabelPosition"
         },
@@ -110,6 +114,10 @@
         },
         "legendTitle": {
           "type": "string"
+        },
+        "lossColor": {
+          "$ref": "#/$defs/VisualizationColorIntent",
+          "description": "Candlestick loss color; omitted values use the active theme danger color."
         },
         "orientation": {
           "$ref": "#/$defs/DashboardOrientation"

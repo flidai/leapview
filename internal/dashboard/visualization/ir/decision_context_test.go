@@ -319,6 +319,69 @@ func TestValidateSpecSeriesIntentSupportsSingleMetricAndRejectsNoOpOrWhitespace(
 	}
 }
 
+func TestValidateSpecGainLossColorsAreCandlestickOnly(t *testing.T) {
+	base := VisualizationSpecBase{
+		Kind: "cartesian", Title: "OHLC",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "date", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Date"},
+			{ID: "open", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Open"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 10, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "OHLC", Description: "OHLC"}, Interactions: []VisualizationInteraction{},
+	}
+	color := VisualizationColorIntentSuccess
+	newSpec := func(mark VisualizationCartesianMark, gain, loss *VisualizationColorIntent) VisualizationSpec {
+		return VisualizationSpec{Value: &CartesianVisualizationSpec{
+			VisualizationSpecBase: base, Kind: "cartesian", Mark: mark,
+			X: VisualizationFieldRef{Dataset: "primary", Field: "date"}, Y: []VisualizationFieldRef{{Dataset: "primary", Field: "open"}},
+			Presentation: CartesianVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionHidden), GainColor: gain, LossColor: loss},
+		}}
+	}
+	if err := ValidateSpec(newSpec(VisualizationCartesianMarkCandlestick, &color, nil)); err != nil {
+		t.Fatalf("candlestick gain color rejected: %v", err)
+	}
+	if err := ValidateSpec(newSpec(VisualizationCartesianMarkCandlestick, nil, &color)); err != nil {
+		t.Fatalf("candlestick loss color rejected: %v", err)
+	}
+	for _, mark := range []VisualizationCartesianMark{
+		VisualizationCartesianMarkLine, VisualizationCartesianMarkArea, VisualizationCartesianMarkBar,
+		VisualizationCartesianMarkColumn, VisualizationCartesianMarkCombo, VisualizationCartesianMarkWaterfall,
+		VisualizationCartesianMarkHeatmap, VisualizationCartesianMarkHistogram, VisualizationCartesianMarkBoxplot,
+	} {
+		for _, test := range []struct {
+			name       string
+			gain, loss *VisualizationColorIntent
+		}{
+			{name: "gain", gain: &color},
+			{name: "loss", loss: &color},
+		} {
+			t.Run(string(mark)+"/"+test.name, func(t *testing.T) {
+				err := ValidateSpec(newSpec(mark, test.gain, test.loss))
+				want := "spec.presentation." + test.name + "Color"
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %v, want %q", err, want)
+				}
+			})
+		}
+	}
+	for name, field := range map[string]string{"gain": "gainColor", "loss": "lossColor"} {
+		t.Run("invalid/"+name, func(t *testing.T) {
+			invalid := VisualizationColorIntent("invalid")
+			gain, loss := (*VisualizationColorIntent)(nil), (*VisualizationColorIntent)(nil)
+			if field == "gainColor" {
+				gain = &invalid
+			} else {
+				loss = &invalid
+			}
+			err := ValidateSpec(newSpec(VisualizationCartesianMarkCandlestick, gain, loss))
+			want := "spec.presentation." + field
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
 func TestValidateSpecUsesComboAxisOwnersForContext(t *testing.T) {
 	t.Parallel()
 

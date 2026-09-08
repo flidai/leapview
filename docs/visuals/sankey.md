@@ -2,6 +2,12 @@
 
 Use a Sankey chart to show weighted flow between two categorical stages.
 
+Sankey rows are compiled as a two-sided flow contract: source nodes stay on the
+source side and target nodes stay on the target side. This is intentionally
+fixed for truthful source/target semantics; the closed schema rejects an
+unrecognized `presentation.nodeAlignment` option rather than silently ignoring
+it.
+
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
 ## Basic flow

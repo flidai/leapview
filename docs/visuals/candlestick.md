@@ -8,6 +8,13 @@ visual-title series rather than independently named metric aliases.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
+Candles use the four authored metrics in query order as open, close, low, and
+high. Set `presentation.gainColor` and `presentation.lossColor` to a supported
+color intent when the theme defaults are not appropriate. Omitted colors resolve
+to theme `success` and `danger`; equal open/close values always use the theme's
+neutral/muted color, preserving a truthful flat-candle cue in both light and
+dark themes and exports. Source row identities remain attached to each candle.
+
 ## Market OHLC
 
 Use true open, close, low, and high metrics over an ordered month dimension. Each candle now represents the analytical contract directly rather than repurposing an unrelated distribution.
