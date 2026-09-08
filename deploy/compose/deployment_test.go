@@ -391,12 +391,22 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	worker := read(t, filepath.Join(root, "deploy", "compose", "qualification", "authoring-worker.mjs"))
 	clientImage := read(t, filepath.Join(root, "deploy", "compose", "qualification", "Dockerfile.authoring-client"))
 
-	if strings.Contains(ci, "image:qualify:production") {
+	if strings.Contains(ci, "image:qualify:production") || strings.Contains(ci, "image:qualify:performance") {
 		t.Error("external pull requests must not qualify or publish production images")
 	}
-	for _, required := range []string{"task image:qualify:production IMAGE=\"${immutable_image}\"", "qualify image", "--image {{.IMAGE | quote}}"} {
-		if !strings.Contains(artifacts+read(t, filepath.Join(root, "Taskfile.yml")), required) {
-			t.Errorf("main artifact job must qualify its immutable digest remotely: missing %q", required)
+	if !strings.Contains(artifacts, "task image:qualify:performance IMAGE=\"${immutable_image}\"") {
+		t.Error("main artifact job must send its immutable digest to paired qualification")
+	}
+	if !strings.Contains(read(t, filepath.Join(root, "Taskfile.yml")), "node scripts/qualify_performance_pair.mjs {{.IMAGE | quote}}") {
+		t.Error("performance task must invoke paired qualification with the requested image")
+	}
+	pair := read(t, filepath.Join(root, "scripts", "qualify_performance_pair.mjs"))
+	for _, required := range []string{
+		"['qualify', 'image', '--image', reference.image, '--require-immutable'",
+		"['qualify', 'image', '--image', candidate, '--require-immutable'",
+	} {
+		if !strings.Contains(pair, required) {
+			t.Errorf("paired qualification must require immutable reference and candidate images: missing %q", required)
 		}
 	}
 	if !strings.Contains(installed, "runQualificationAuthoring") {
