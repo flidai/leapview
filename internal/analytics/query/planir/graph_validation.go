@@ -772,7 +772,10 @@ func validateSpatialClusterPolicy(policy *SpatialClusterPolicy, maximumZoom int)
 	if policy == nil {
 		return nil
 	}
-	if policy.Radius <= 0 || policy.MaximumZoom < 0 || int(policy.MaximumZoom) > maximumZoom || policy.MinimumPoints < 2 {
+	if policy.Radius < 1 || policy.Radius > 512 {
+		return fmt.Errorf("spatial envelope cluster radius must be between 1 and 512 CSS pixels")
+	}
+	if policy.MaximumZoom < 0 || int(policy.MaximumZoom) > maximumZoom || policy.MinimumPoints < 2 {
 		return fmt.Errorf("spatial envelope cluster policy is invalid")
 	}
 	return nil

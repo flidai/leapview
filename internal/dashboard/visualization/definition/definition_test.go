@@ -254,6 +254,14 @@ func TestSpatialTileBindingRejectsClusterPolicyOutsideTileZoom(t *testing.T) {
 	if err := binding.Validate(); err == nil {
 		t.Fatal("enabled cluster policy at tiled terminal zoom passed validation")
 	}
+	binding.Spatial.Tiles.Cluster.MaximumZoom = 14
+	for _, radius := range []int32{0, 1, 512, 513} {
+		binding.Spatial.Tiles.Cluster.Radius = radius
+		err := binding.Validate()
+		if valid := radius >= 1 && radius <= 512; (err == nil) != valid {
+			t.Errorf("cluster radius %d: error = %v, want valid = %t", radius, err, valid)
+		}
+	}
 }
 
 func tableSpec() ir.VisualizationSpec {

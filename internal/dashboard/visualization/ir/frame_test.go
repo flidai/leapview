@@ -137,6 +137,14 @@ func TestValidateSpecEnforcesGeographicLayerRequirements(t *testing.T) {
 	if err := ValidateSpec(point); err != nil {
 		t.Fatalf("point layer: %v", err)
 	}
+	for _, radius := range []int32{0, 1, 512, 513} {
+		point.Value.(*GeographicVisualizationSpec).Layers[0].Value.(*VisualizationPointLayer).Cluster.Radius = radius
+		err := ValidateSpec(point)
+		if valid := radius >= 1 && radius <= 512; (err == nil) != valid {
+			t.Errorf("cluster radius %d: error = %v, want valid = %t", radius, err, valid)
+		}
+	}
+	point.Value.(*GeographicVisualizationSpec).Layers[0].Value.(*VisualizationPointLayer).Cluster.Radius = 50
 	point.Value.(*GeographicVisualizationSpec).Layers[0].Value.(*VisualizationPointLayer).Longitude = VisualizationFieldRef{}
 	if err := ValidateSpec(point); err == nil {
 		t.Fatal("point layer without longitude was accepted")

@@ -2314,7 +2314,10 @@ func validateGeographicSpecification(spec VisualizationSpec) error {
 			if typed.Size.MinimumRadius < 0 || typed.Size.MaximumRadius < typed.Size.MinimumRadius {
 				return fmt.Errorf("point layer %q has invalid size scale", base.ID)
 			}
-			if typed.Cluster.Radius <= 0 || typed.Cluster.MinimumPoints < 2 {
+			if typed.Cluster.Radius < 1 || typed.Cluster.Radius > 512 {
+				return fmt.Errorf("point layer %q cluster.radius must be between 1 and 512 CSS pixels", base.ID)
+			}
+			if typed.Cluster.MinimumPoints < 2 {
 				return fmt.Errorf("point layer %q has invalid cluster configuration", base.ID)
 			}
 		case *VisualizationHeatLayer, *VisualizationDensityLayer, *VisualizationPathLayer:

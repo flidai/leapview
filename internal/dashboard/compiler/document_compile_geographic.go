@@ -400,7 +400,10 @@ func canonicalMapCluster(value *document.DashboardMapCluster) (visualizationir.V
 	if value.ShowCount != nil {
 		out.ShowCount = *value.ShowCount
 	}
-	if out.Radius <= 0 || out.MaximumZoom < 0 || out.MinimumPoints < 2 {
+	if out.Radius < 1 || out.Radius > 512 {
+		return visualizationir.VisualizationMapCluster{}, fmt.Errorf("radius must be between 1 and 512 CSS pixels")
+	}
+	if out.MaximumZoom < 0 || out.MinimumPoints < 2 {
 		return visualizationir.VisualizationMapCluster{}, fmt.Errorf("cluster configuration is invalid")
 	}
 	return out, nil

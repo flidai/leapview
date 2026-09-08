@@ -1631,6 +1631,8 @@
         },
         "radius": {
           "format": "int32",
+          "maximum": 512,
+          "minimum": 1,
           "type": "integer"
         },
         "showCount": {

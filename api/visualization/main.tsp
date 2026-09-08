@@ -1136,6 +1136,8 @@ model VisualizationMapStroke {
 
 model VisualizationMapCluster {
   `enabled`: boolean;
+  @minValue(1)
+  @maxValue(512)
   `radius`: int32;
   `maximumZoom`: int32;
   `minimumPoints`: int32;

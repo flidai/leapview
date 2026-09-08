@@ -72,7 +72,7 @@ Bind latitude and longitude dimensions to semantic fields. The compiler owns
 the geographic renderer, tile policy, and point styling.
 
 Tiled point layers keep the authored `cluster` policy as renderer-neutral
-contract data. `radius` is the clustering radius in CSS pixels,
+contract data. `radius` is the clustering radius in CSS pixels (1–512),
 `maximumZoom` is the last zoom at which clusters may be served,
 `minimumPoints` controls the cluster threshold, and `showCount` labels a
 cluster with its contained coordinate count. These settings are shared by

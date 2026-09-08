@@ -52,6 +52,24 @@ func TestCanonicalSpatialBindingRejectsClusterAtTiledTerminalZoom(t *testing.T) 
 	}
 }
 
+func TestCanonicalSpatialBindingValidatesClusterRadiusBounds(t *testing.T) {
+	for _, radius := range []int32{0, 1, 512, 513} {
+		binding, err := canonicalSpatialBinding(tiledAggregateBinding(), tiledPointPresentation(&document.DashboardMapCluster{Radius: &radius}), document.DashboardQuery{})
+		if radius < 1 || radius > 512 {
+			if err == nil || !strings.Contains(err.Error(), "presentation.layers[0].cluster") || !strings.Contains(err.Error(), "radius must be between 1 and 512") {
+				t.Errorf("radius %d: error = %v, want actionable cluster radius path", radius, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("radius %d: %v", radius, err)
+		}
+		if err := binding.Validate(); err != nil {
+			t.Errorf("radius %d: compiled binding invalid: %v", radius, err)
+		}
+	}
+}
+
 func TestCanonicalSpatialBindingRejectsClusteredPointWithHeatSharingTiledSource(t *testing.T) {
 	layers := []document.DashboardGeographicLayer{{Value: tiledPoint(nil)}, {Value: tiledHeat()}}
 	_, err := canonicalSpatialBinding(tiledAggregateBinding(), &document.GeographicDashboardPresentation{Layers: &layers}, document.DashboardQuery{})

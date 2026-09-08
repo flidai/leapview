@@ -240,7 +240,10 @@ func (query QueryBinding) Validate() error {
 			return fmt.Errorf("spatial tile cell radius must be between 32 and 64 CSS pixels")
 		}
 		if tiles.Cluster != nil {
-			if tiles.Cluster.Radius <= 0 || tiles.Cluster.MaximumZoom < 0 || tiles.Cluster.MaximumZoom > tiles.MaximumZoom || (tiles.Cluster.Enabled && tiles.Cluster.MaximumZoom >= tiles.MaximumZoom) || tiles.Cluster.MinimumPoints < 2 {
+			if tiles.Cluster.Radius < 1 || tiles.Cluster.Radius > 512 {
+				return fmt.Errorf("spatial tile cluster radius must be between 1 and 512 CSS pixels")
+			}
+			if tiles.Cluster.MaximumZoom < 0 || tiles.Cluster.MaximumZoom > tiles.MaximumZoom || (tiles.Cluster.Enabled && tiles.Cluster.MaximumZoom >= tiles.MaximumZoom) || tiles.Cluster.MinimumPoints < 2 {
 				return fmt.Errorf("spatial tile cluster policy is invalid")
 			}
 		}

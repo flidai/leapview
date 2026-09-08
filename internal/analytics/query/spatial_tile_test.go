@@ -203,6 +203,25 @@ func TestSpatialTileRejectsEnabledClusterAtTerminalZoom(t *testing.T) {
 	}
 }
 
+func TestSpatialTileClusterRadiusBounds(t *testing.T) {
+	planner := mustNewCompiledPlanner(t, testModel())
+	for _, radius := range []int32{0, 1, 512, 513} {
+		_, err := planner.PlanSpatialTileAggregate(SpatialTileRequest{
+			Dataset: "orders", Metrics: []Field{{Field: "revenue", Alias: "revenue"}},
+			Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
+			Zoom: 4, TargetZoom: 6, MetatileX: 4, MetatileY: 8, MetatileSize: 4, CellPixels: 48, Buffer: 768,
+			Cluster: &SpatialClusterPolicy{Enabled: true, Radius: radius, MaximumZoom: 14, MinimumPoints: 2},
+		})
+		if radius < 1 || radius > 512 {
+			if err == nil || !strings.Contains(err.Error(), "cluster radius must be between 1 and 512") {
+				t.Errorf("radius %d: error = %v, want cluster radius diagnostic", radius, err)
+			}
+		} else if err != nil {
+			t.Errorf("radius %d: %v", radius, err)
+		}
+	}
+}
+
 func TestSpatialTilePlansCrossDatasetCoordinatesWithoutTableScope(t *testing.T) {
 	model := testModel()
 	customers := model.Tables["customers"]
