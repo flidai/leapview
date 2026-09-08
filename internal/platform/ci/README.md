@@ -173,7 +173,7 @@ The audit mapping used for reconnection is:
 | `go_analysis`, `go_vuln`, `node_audit` | No equivalent PR CI job | Existing merge/nightly/security workflows retain ownership |
 | `production_image`, `deployment_contracts` | Backend qualification where relevant | Image publication and exhaustive deployment proof remain unchanged |
 
-Version-2 plans retain historical classification fields and add a typed `pr`
+Current version-3 plans retain historical classification fields and the typed `pr`
 projection, with nominal/effective current jobs, exact diff base, tested candidate,
 run ID, attempt and explicit stack deferral. This is an adapter to the existing
 classifier, not an additional workflow path-filter system. Unknown paths, empty
@@ -182,7 +182,7 @@ the complete PR tier. `ci:full` and the deterministic one-in-five PR audit remai
 Label changes trigger replanning.
 
 The core uses a neutral warehouse validation lane. The command-side `ciadapter`
-package owns the explicit legacy workflow binding and version-2 artifact field.
+package owns the explicit legacy workflow binding and its compatible artifact field.
 Both `ciplan` and `cireport` translate at that boundary, preserving existing
 workflow outputs, artifact provenance, gate results and reporting identifiers.
 The adapter does not make selection decisions. Architecture tests keep CI tooling
@@ -192,6 +192,33 @@ PR flow: `prepare` (planner only) -> selected validation jobs -> always-present
 `CI gate`. Security gate continues independently without changes. No merge or
 nightly workflow is modified. Selected jobs still use full preparation and all
 of their existing validation commands.
+
+Cross-language quality is a separate PR-only lane for changes that select
+frontend or documentation work without selecting Go package validation. It
+runs the maintainability budget, exception, and trend checks followed by the
+complete `internal/platform/architecture` test package. The hosted job performs
+the normal generated and embedded asset preparation first, because the
+architecture tests inspect the generated dependency graph. Backend changes and
+full plans continue to run the existing quality checks in the Go package lane;
+the split only avoids repeating that package lane for frontend/docs-only plans.
+Documentation changes still select the docs validation lane and its site shard;
+the quality lane adds the cross-language contract checks for that same PR.
+
+| Existing Go package lane checks | Scope | Selective ownership |
+|---|---|---|
+| Architecture tests | Go boundaries, browser source, generated contracts, and authored docs | Go package lane or standalone quality lane |
+| Quality budgets | Go and browser source size and suppression budgets | Go package lane or standalone quality lane |
+| Exception checks and trend report | Repository policy and source history | Go package lane or standalone quality lane |
+| SQL checks, critical-package coverage, package tests | Backend/package validation | Existing Go package lane |
+
+The architecture package remains intact: splitting its individual tests by
+language would duplicate dependency knowledge. Docs changes retain these checks
+because terminology and documentation consistency guards inspect public prose.
+
+Version-3 PR plan artifacts add the quality selection field. Version-2 artifacts
+remain readable by the reporting command for historical runs, but the current
+gate rejects them as stale planning evidence. New artifacts use the version-3
+field while preserving the existing workflow output and report identifiers.
 
 Standalone PRs compare the event base commit with `GITHUB_SHA`, the candidate
 actually checked out and tested. Stack PRs use the merge base of that candidate

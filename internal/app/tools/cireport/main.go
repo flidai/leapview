@@ -218,7 +218,7 @@ func (c *client) testedCandidate(ctx context.Context, repo string, run githubRun
 	if plan.PR == nil || run.Event != "pull_request" || plan.PR.Head == run.HeadSHA {
 		return run.HeadSHA
 	}
-	if run.HeadSHA == "" || len(run.PullRequests) == 0 || platformci.ValidatePRPlan(plan) != nil || plan.PR.RunID != fmt.Sprint(run.ID) || plan.PR.Attempt != fmt.Sprint(run.Attempt) {
+	if run.HeadSHA == "" || len(run.PullRequests) == 0 || validateHealthPRPlan(plan) != nil || plan.PR.RunID != fmt.Sprint(run.ID) || plan.PR.Attempt != fmt.Sprint(run.Attempt) {
 		return run.HeadSHA
 	}
 	var commit struct {
@@ -283,7 +283,7 @@ func observedRun(run githubRun, jobs []githubJob, plan platformci.Plan) platform
 		planIssue = "plan provenance does not match run/attempt/candidate"
 	}
 	deferred := run.Event == "pull_request" && deferredStackRun(jobs)
-	if plan.PR != nil && platformci.ValidatePRPlan(plan) == nil && planIssue == "" {
+	if plan.PR != nil && validateHealthPRPlan(plan) == nil && planIssue == "" {
 		deferred = run.Event == "pull_request" && plan.PR.Deferred
 	}
 	return platformci.HealthRun{
@@ -302,7 +302,18 @@ func deferredStackRun(jobs []githubJob) bool {
 	if results["legacy-pr-validation"] == "skipped" && len(results) == 2 {
 		return true
 	}
-	expected := platformci.ExpectedHealthJobs("ci.yml")
+	for _, expected := range [][]string{
+		platformci.ExpectedHealthJobs("ci.yml"),
+		platformci.HistoricalExpectedHealthJobs("ci.yml"),
+	} {
+		if completeSkippedInventory(results, expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func completeSkippedInventory(results map[string]string, expected []string) bool {
 	if _, ok := results["prepare"]; !ok {
 		var legacy []string
 		for _, job := range expected {
@@ -321,6 +332,17 @@ func deferredStackRun(jobs []githubJob) bool {
 		}
 	}
 	return true
+}
+
+func validateHealthPRPlan(plan platformci.Plan) error {
+	switch plan.Version {
+	case platformci.PRPlanVersion:
+		return platformci.ValidatePRPlan(plan)
+	case platformci.HistoricalPRPlanVersion:
+		return platformci.ValidateHistoricalPRPlan(plan)
+	default:
+		return fmt.Errorf("unsupported PR plan schema %d", plan.Version)
+	}
 }
 
 func (c *client) jobs(ctx context.Context, repo string, runID int64, attempt int) ([]githubJob, error) {

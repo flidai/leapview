@@ -165,6 +165,33 @@ func TestHistoricalHealthJSONRemainsReadableWithoutTrustingMissingMetadata(t *te
 	}
 }
 
+func TestHistoricalV2HealthProjectionRemainsReadOnly(t *testing.T) {
+	plan := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "M", Paths: []string{"README.md"}}})
+	plan.Version = HistoricalPRPlanVersion
+	plan.PR.Nominal.Quality = false
+	plan.PR.Effective.Quality = false
+	run := HealthRun{
+		Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", DurationSeconds: 10, QueueSeconds: 1,
+		Plan: plan,
+		Results: map[string]string{
+			"prepare": "success", "docs-validation": "success", "frontend-validation/site": "success",
+		},
+	}
+	report := AnalyzeHealth([]HealthRun{run})
+	if report.Selective.Count != 1 || report.Runs[0].SelectionConfidence != "verified" {
+		t.Fatalf("historical v2 plan was not trusted read-only: %+v", report.Runs[0])
+	}
+	if _, present := report.Selection["quality-validation"]; present {
+		t.Fatalf("historical v2 report fabricated quality selection: %+v", report)
+	}
+
+	plan.PR.Effective.Quality = true
+	report = AnalyzeHealth([]HealthRun{{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", Plan: plan, Results: run.Results}})
+	if report.Selective.Count != 0 || report.UnknownSelection != 1 {
+		t.Fatalf("historical v2 quality tamper was trusted: %+v", report)
+	}
+}
+
 func TestMatrixSkipIsNotProofOfCompleteSelection(t *testing.T) {
 	jobs := Jobs{Frontend: []string{"core", "site"}}
 	report := AnalyzeHealth([]HealthRun{{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", Plan: Plan{Version: PlanVersion, Nominal: jobs, Effective: jobs}, Results: map[string]string{"frontend-tests/core": "success", "frontend-tests/site": "skipped"}}})

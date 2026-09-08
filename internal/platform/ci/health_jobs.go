@@ -15,6 +15,7 @@ var healthLanes = []healthLane{
 	{"frontend-validation", []string{"Frontend tests (PR, not-selected)", "Frontend tests (PR, ${{ matrix.shard }})"}, nil},
 	{"prepare", []string{"Plan PR validation"}, []string{"ci.yml"}},
 	{"docs-validation", []string{"Documentation and public site (PR)"}, []string{"ci.yml"}},
+	{"quality-validation", []string{"Cross-language quality (PR)", "Cross-language quality"}, []string{"ci.yml"}},
 	{"apigen-validation", []string{"APIGen tests"}, []string{"ci.yml", "merge-validation.yml", "nightly.yml"}},
 	{"go-packages-validation", []string{"Go package tests"}, []string{"ci.yml", "merge-validation.yml", "nightly.yml"}},
 	{"go-application-validation", []string{"Go application tests"}, []string{"ci.yml", "merge-validation.yml", "nightly.yml"}},
@@ -70,8 +71,22 @@ func HealthJobName(name string) string {
 }
 
 func ExpectedHealthJobs(workflow string) []string {
+	return expectedHealthJobs(workflow, true)
+}
+
+// HistoricalExpectedHealthJobs returns the v2 workflow inventory. It is used
+// only to recognize older deferred runs whose CI workflow predates the
+// standalone quality lane.
+func HistoricalExpectedHealthJobs(workflow string) []string {
+	return expectedHealthJobs(workflow, false)
+}
+
+func expectedHealthJobs(workflow string, quality bool) []string {
 	var result []string
 	for _, lane := range healthLanes {
+		if lane.id == "quality-validation" && !quality {
+			continue
+		}
 		for _, owner := range lane.workflows {
 			if owner == workflow {
 				result = append(result, lane.id)

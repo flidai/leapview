@@ -11,7 +11,8 @@ import (
 )
 
 const PlanVersion = 1 // Historical artifact schema.
-const PRPlanVersion = 2
+const HistoricalPRPlanVersion = 2
+const PRPlanVersion = 3
 
 type Change struct {
 	Status string   `json:"status"`

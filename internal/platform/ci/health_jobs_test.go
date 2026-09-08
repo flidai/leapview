@@ -13,3 +13,15 @@ func TestExpectedMergeJobsCannotBeOverriddenByPartialPlan(t *testing.T) {
 		t.Fatalf("partial plan overrode merge contract: %+v", run)
 	}
 }
+
+func TestQualityHealthLaneRegistryAndHistoricalInventory(t *testing.T) {
+	if got := HealthJobName("Cross-language quality (PR)"); got != "quality-validation" {
+		t.Fatalf("quality display name = %q, want quality-validation", got)
+	}
+	if !slices.Contains(ExpectedHealthJobs("ci.yml"), "quality-validation") {
+		t.Fatal("current CI inventory omits quality lane")
+	}
+	if slices.Contains(HistoricalExpectedHealthJobs("ci.yml"), "quality-validation") {
+		t.Fatal("historical CI inventory fabricated quality lane")
+	}
+}

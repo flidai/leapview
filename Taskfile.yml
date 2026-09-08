@@ -1393,6 +1393,14 @@ tasks:
       - task: quality:critical:coverage
       - task: test:go:packages
 
+  ci:lane:quality:
+    desc: Run cross-language quality and architecture contracts
+    cmds:
+      - task: quality:budget:check
+      - task: quality:exceptions:check
+      - task: quality:trends:report
+      - go test ./internal/platform/architecture -count=1
+
   ci:lane:go:apigen:
     desc: Run the vendored APIGen Go module and TypeSpec tests
     cmds:

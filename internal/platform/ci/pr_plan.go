@@ -24,6 +24,7 @@ type PRPlan struct {
 type PRJobs struct {
 	APIGen        bool     `json:"apigen"`
 	GoPackages    bool     `json:"go_packages"`
+	Quality       bool     `json:"quality,omitempty"`
 	GoApplication bool     `json:"go_application"`
 	Frontend      []string `json:"frontend"`
 	Postgres      bool     `json:"postgres"`
@@ -35,6 +36,7 @@ type PRJobs struct {
 func (j PRJobs) Selected() map[string]bool {
 	return map[string]bool{
 		"apigen-validation": j.APIGen, "go-packages-validation": j.GoPackages,
+		"quality-validation":        j.Quality,
 		"go-application-validation": j.GoApplication, "frontend-validation": len(j.Frontend) > 0,
 		"postgres-isolation-validation": j.Postgres, "warehouse-validation": j.Warehouse,
 		"spatial-tile-benchmarks": j.Spatial, "docs-validation": j.Docs,
@@ -58,6 +60,10 @@ func currentPRJobs(j Jobs) PRJobs {
 	if result.Docs {
 		result.Frontend = orderedStrings(unionStrings(result.Frontend, []string{"site"}), frontendShards)
 	}
+	// Package validation owns the cross-language architecture and quality
+	// contracts for backend/full selections. Frontend and docs/site-only plans
+	// need the standalone quality lane to retain that coverage.
+	result.Quality = !result.GoPackages && (len(result.Frontend) > 0 || result.Docs)
 	return result
 }
 
@@ -84,8 +90,22 @@ func (j PRJobs) ExpectedJobs() []string {
 }
 
 func ValidatePRPlan(plan Plan) error {
-	if plan.Version != PRPlanVersion || plan.PR == nil {
+	return validatePRPlan(plan, PRPlanVersion)
+}
+
+// ValidateHistoricalPRPlan validates the v2 projection used by health reports
+// for runs created before the standalone quality lane was introduced. It is
+// intentionally read-only compatibility; current gates require v3.
+func ValidateHistoricalPRPlan(plan Plan) error {
+	return validatePRPlan(plan, HistoricalPRPlanVersion)
+}
+
+func validatePRPlan(plan Plan, version int) error {
+	if plan.Version != version || plan.PR == nil {
 		return fmt.Errorf("unsupported PR plan schema %d", plan.Version)
+	}
+	if version == HistoricalPRPlanVersion && (plan.PR.Nominal.Quality || plan.PR.Effective.Quality) {
+		return fmt.Errorf("historical PR plan selects unsupported quality lane")
 	}
 	for _, jobs := range []PRJobs{plan.PR.Nominal, plan.PR.Effective} {
 		seen := map[string]bool{}
@@ -101,7 +121,12 @@ func ValidatePRPlan(plan Plan) error {
 			return fmt.Errorf("deferred plan selects work")
 		}
 	} else {
-		if !reflect.DeepEqual(plan.PR.Nominal, currentPRJobs(plan.Nominal)) || !reflect.DeepEqual(plan.PR.Effective, currentPRJobs(plan.Effective)) {
+		nominal, effective := currentPRJobs(plan.Nominal), currentPRJobs(plan.Effective)
+		if version == HistoricalPRPlanVersion {
+			nominal.Quality = false
+			effective.Quality = false
+		}
+		if !reflect.DeepEqual(plan.PR.Nominal, nominal) || !reflect.DeepEqual(plan.PR.Effective, effective) {
 			return fmt.Errorf("PR projection differs from dependency plan")
 		}
 		if len(plan.PR.Effective.ExpectedJobs()) == 0 {
@@ -109,6 +134,17 @@ func ValidatePRPlan(plan Plan) error {
 		}
 	}
 	return nil
+}
+
+func validateHealthPRPlan(plan Plan) error {
+	switch plan.Version {
+	case PRPlanVersion:
+		return ValidatePRPlan(plan)
+	case HistoricalPRPlanVersion:
+		return ValidateHistoricalPRPlan(plan)
+	default:
+		return fmt.Errorf("unsupported PR plan schema %d", plan.Version)
+	}
 }
 
 func evaluatePRGate(plan Plan, results map[string]string) GateReport {

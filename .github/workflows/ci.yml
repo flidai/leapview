@@ -29,6 +29,7 @@ jobs:
       spatial_tile_benchmarks: ${{ steps.plan.outputs.spatial_tile_benchmarks }}
       dbt_warehouse_boundary_validation: ${{ steps.plan.outputs.dbt_warehouse_boundary_validation }}
       docs_validation: ${{ steps.plan.outputs.docs_validation }}
+      quality_validation: ${{ steps.plan.outputs.quality_validation }}
       frontend_matrix: ${{ steps.plan.outputs.frontend_matrix }}
 
     steps:
@@ -334,10 +335,33 @@ jobs:
       - name: Verify generated artifacts
         run: task generated:check
 
+  quality-validation:
+    name: Cross-language quality (PR)
+    needs: [prepare]
+    if: needs.prepare.outputs.quality_validation == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+      - name: Prepare generated and embedded assets
+        run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare
+      - name: Run cross-language quality validation
+        run: task ci:lane:quality
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation]
+    needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -367,6 +391,7 @@ jobs:
           SPATIAL_BENCHMARK_RESULT: ${{ needs.spatial-tile-benchmarks.result }}
           DBT_WAREHOUSE_RESULT: ${{ needs.dbt-warehouse-boundary-validation.result }}
           DOCS_RESULT: ${{ needs.docs-validation.result }}
+          QUALITY_RESULT: ${{ needs.quality-validation.result }}
           FRONTEND_MATRIX: ${{ needs.prepare.outputs.frontend_matrix }}
         run: |
           jq -n '{
@@ -378,7 +403,8 @@ jobs:
             "postgres-isolation-validation": env.POSTGRES_ISOLATION_RESULT,
             "spatial-tile-benchmarks": env.SPATIAL_BENCHMARK_RESULT,
             "dbt-warehouse-boundary-validation": env.DBT_WAREHOUSE_RESULT,
-            "docs-validation": env.DOCS_RESULT
+            "docs-validation": env.DOCS_RESULT,
+            "quality-validation": env.QUALITY_RESULT
           }' > ci-results.json
           go run ./internal/app/tools/ciplan gate --plan ci-plan.json --results ci-results.json \
             --expected-head "$GITHUB_SHA" --expected-run-id "$GITHUB_RUN_ID" \

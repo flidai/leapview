@@ -91,6 +91,7 @@ func TestModernLaneNames(t *testing.T) {
 	for name, want := range map[string]string{
 		"APIGen tests (PR)": "apigen-validation", "Go package tests (merge queue)": "go-packages-validation",
 		"Go application tests (nightly)": "go-application-validation", "Frontend tests (PR, site)": "frontend-validation/site",
+		"Cross-language quality (PR)":        "quality-validation",
 		"PostgreSQL topology isolation (PR)": "postgres-isolation-validation", "Spatial tile benchmarks (PR)": "spatial-tile-benchmarks",
 		"dbt physical contract (PR)": "warehouse-validation", "Full merge validation": "full-validation",
 		"Nightly dependency security": "security-validation", "JavaScript dependency evidence refresh": "dependency-evidence-refresh",
@@ -320,7 +321,7 @@ func TestCurrentPRPlanProvenanceAndMatrixReporting(t *testing.T) {
 		t.Fatalf("valid current attempt rejected: %s", observed.PlanIssue)
 	}
 	observed.DurationSeconds = 10
-	observed.Results = map[string]string{"prepare": "success", "docs-validation": "success", "frontend-validation/site": "success"}
+	observed.Results = map[string]string{"prepare": "success", "docs-validation": "success", "frontend-validation/site": "success", "quality-validation": "success"}
 	report := platformci.AnalyzeHealth([]platformci.HealthRun{observed})
 	if report.Selective.Count != 1 || report.Runs[0].SelectionConfidence != "verified" || report.Jobs["frontend-validation/site"].Expected != 1 {
 		t.Fatalf("current plan not reported correctly: %+v", report)
@@ -338,10 +339,11 @@ func TestHostedTestedMergeCandidateProvenance(t *testing.T) {
 	for _, tc := range []struct {
 		name, event, runHead, planHead, planBase, planRun, planAttempt string
 		parents                                                        []string
-		missingPR, unavailable, wrongCommit                            bool
+		missingPR, unavailable, wrongCommit, historical                bool
 		wantTrusted                                                    bool
 	}{
 		{name: "PR merge commit", event: "pull_request", parents: []string{base, head}, wantTrusted: true},
+		{name: "historical v2 PR merge commit", event: "pull_request", historical: true, parents: []string{base, head}, wantTrusted: true},
 		{name: "stack cumulative diff base differs from merge parent", event: "pull_request", planBase: "stack-ancestor", parents: []string{base, head}, wantTrusted: true},
 		{name: "wrong PR head", event: "pull_request", parents: []string{base, base}},
 		{name: "wrong target base", event: "pull_request", parents: []string{merge, head}},
@@ -358,6 +360,11 @@ func TestHostedTestedMergeCandidateProvenance(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			plan := platformci.PlanChanges(platformci.Input{Event: "pull_request", PullRequestNumber: 1}, []platformci.Change{{Status: "M", Paths: []string{"README.md"}}})
+			if tc.historical {
+				plan.Version = platformci.HistoricalPRPlanVersion
+				plan.PR.Nominal.Quality = false
+				plan.PR.Effective.Quality = false
+			}
 			plan.PR.Head, plan.PR.Base, plan.PR.RunID, plan.PR.Attempt = merge, base, "123", "1"
 			for target, value := range map[*string]string{&plan.PR.Head: tc.planHead, &plan.PR.Base: tc.planBase, &plan.PR.RunID: tc.planRun, &plan.PR.Attempt: tc.planAttempt} {
 				if value != "" {

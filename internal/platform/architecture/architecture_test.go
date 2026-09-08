@@ -2958,7 +2958,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
-		"needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation]",
+		"needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation]",
 		"APIGEN_RESULT: ${{ needs.apigen-validation.result }}",
 		"GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}",
 		"GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}",
@@ -3515,7 +3515,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 		prepareCount    int
 		frontendTimeout string
 	}{
-		"ci.yml":               {prepareCount: 4, frontendTimeout: "timeout-minutes: 30"},
+		"ci.yml":               {prepareCount: 5, frontendTimeout: "timeout-minutes: 30"},
 		"merge-validation.yml": {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
 		"nightly.yml":          {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
 	} {

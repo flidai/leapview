@@ -93,7 +93,7 @@ func knownConclusion(result string) bool {
 }
 
 func expectedPlanJobs(plan Plan) []string {
-	if plan.Version == PRPlanVersion && plan.PR != nil {
+	if isPRPlanVersion(plan.Version) && plan.PR != nil {
 		return append([]string{"prepare"}, plan.PR.Effective.ExpectedJobs()...)
 	}
 	var result []string
@@ -118,6 +118,33 @@ func expectedPlanJobs(plan Plan) []string {
 	return result
 }
 
+func isPRPlanVersion(version int) bool {
+	return version == HistoricalPRPlanVersion || version == PRPlanVersion
+}
+
+func validHealthPlan(plan Plan) bool {
+	if plan.Version == PlanVersion && plan.PR == nil {
+		return true
+	}
+	if isPRPlanVersion(plan.Version) && plan.PR != nil {
+		return validateHealthPRPlan(plan) == nil
+	}
+	return false
+}
+
+func healthSelection(plan Plan) map[string]bool {
+	selection := plan.Effective.Selected()
+	if plan.PR == nil {
+		return selection
+	}
+	selection = plan.PR.Effective.Selected()
+	if plan.Version == HistoricalPRPlanVersion {
+		delete(selection, "quality-validation")
+	}
+	selection["prepare"] = true
+	return selection
+}
+
 func classifyHealthRun(run HealthRun) HealthRun {
 	run.Category = "unknown"
 	run.SelectionConfidence = "unknown"
@@ -128,7 +155,7 @@ func classifyHealthRun(run HealthRun) HealthRun {
 	run.SkippedJobs = nil
 	run.UnknownJobs = nil
 	run.Problems = nil
-	supported := ((run.Plan.Version == PlanVersion && run.Plan.PR == nil) || (run.Plan.Version == PRPlanVersion && ValidatePRPlan(run.Plan) == nil)) && run.PlanIssue == "" && len(expectedPlanJobs(run.Plan)) > 0
+	supported := validHealthPlan(run.Plan) && run.PlanIssue == "" && len(expectedPlanJobs(run.Plan)) > 0
 	if run.Workflow == "merge-validation.yml" && run.Event == "merge_group" {
 		run.Category = "merge"
 	}
@@ -238,11 +265,7 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 		}
 		if len(run.PlannedJobs) > 0 {
 			report.PlannedRuns++
-			selection := run.Plan.Effective.Selected()
-			if run.Plan.PR != nil {
-				selection = run.Plan.PR.Effective.Selected()
-				selection["prepare"] = true
-			}
+			selection := healthSelection(run.Plan)
 			for job, selected := range selection {
 				metric := report.Selection[job]
 				if selected {
@@ -255,7 +278,7 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 				nominal := map[string]bool{}
 				nominalPlan := Plan{Effective: run.Plan.Nominal}
 				if run.Plan.PR != nil {
-					nominalPlan.Version = PRPlanVersion
+					nominalPlan.Version = run.Plan.Version
 					nominalPlan.PR = &PRPlan{Effective: run.Plan.PR.Nominal}
 				}
 				for _, job := range expectedPlanJobs(nominalPlan) {

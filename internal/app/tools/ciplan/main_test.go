@@ -165,7 +165,7 @@ func TestCurrentOutputsMatchSelectedFrontendMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"frontend_validation=true", `frontend_matrix={"shard":["core","chat"]}`, "go_application_validation=false", "docs_validation=false"} {
+	for _, want := range []string{"frontend_validation=true", `frontend_matrix={"shard":["core","chat"]}`, "go_application_validation=false", "docs_validation=false", "quality_validation=true"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("missing output %s", want)
 		}
@@ -190,7 +190,7 @@ func TestWarehouseBoundaryUsesHistoricalWorkflowOutputID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "dbt_warehouse_boundary_validation=true") {
+	if !strings.Contains(string(data), "dbt_warehouse_boundary_validation=true") || !strings.Contains(string(data), "quality_validation=false") {
 		t.Fatalf("legacy workflow output missing:\n%s", data)
 	}
 

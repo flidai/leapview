@@ -390,6 +390,46 @@ func TestCurrentPRSelection(t *testing.T) {
 	}
 }
 
+func TestQualitySelectionKeepsCrossLanguageCoverageForNonBackendPlans(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		changes  []Change
+		quality  bool
+		packages bool
+	}{
+		{name: "frontend", changes: []Change{{Status: "M", Paths: []string{"web/components/chat/chat-page.ts"}}}, quality: true},
+		{name: "site", changes: []Change{{Status: "M", Paths: []string{"site/content/index.md"}}}, quality: true},
+		{name: "docs", changes: []Change{{Status: "M", Paths: []string{"README.md"}}}, quality: true},
+		{name: "backend", changes: []Change{{Status: "M", Paths: []string{"internal/access/sqlite/session.go"}}}, packages: true},
+		{name: "generated contract", changes: []Change{{Status: "M", Paths: []string{"api/signals/main.tsp"}}}, packages: true},
+		{name: "shared", changes: []Change{{Status: "M", Paths: []string{"web/components/shared/datastar-lit.ts"}}}, quality: true},
+		{name: "unknown", changes: []Change{{Status: "M", Paths: []string{"mystery/new-format"}}}, packages: true},
+		{name: "rename and delete", changes: []Change{{Status: "R100", Paths: []string{"docs/old.md", "web/components/chat/new.ts"}}, {Status: "D", Paths: []string{"site/removed.md"}}}, quality: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			plan := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, tt.changes)
+			if plan.PR == nil {
+				t.Fatal("missing PR projection")
+			}
+			if plan.PR.Effective.Quality != tt.quality || plan.PR.Effective.GoPackages != tt.packages {
+				t.Fatalf("quality/packages = %v/%v, want %v/%v: %#v", plan.PR.Effective.Quality, plan.PR.Effective.GoPackages, tt.quality, tt.packages, plan.PR.Effective)
+			}
+			if plan.Version != PRPlanVersion {
+				t.Fatalf("plan version = %d, want current v%d", plan.Version, PRPlanVersion)
+			}
+		})
+	}
+
+	full := PlanChanges(Input{Event: "workflow_dispatch"}, nil)
+	if full.PR.Effective.Quality || !full.PR.Effective.GoPackages {
+		t.Fatalf("full plan duplicated package quality coverage: %#v", full.PR.Effective)
+	}
+}
+
 func TestPRRenameDeleteAndSharedBrowserConsumers(t *testing.T) {
 	p := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "R100", Paths: []string{"internal/access/sqlite/deleted_test.go", "docs/articles/moved.md"}}, {Status: "D", Paths: []string{"web/components/shared/datastar-runtime.ts"}}})
 	if !p.PR.Effective.GoApplication || !p.PR.Effective.Warehouse || !p.PR.Effective.Docs || !reflect.DeepEqual(p.PR.Effective.Frontend, FullPRJobs().Frontend) {
@@ -444,17 +484,20 @@ func TestWarehouseSelectionCoversBoundaryGeneratedAndUnknownInputs(t *testing.T)
 	}
 }
 
-func TestPlanJSONRoundTripsNeutralWarehouseSelection(t *testing.T) {
+func TestPlanJSONRoundTripsNeutralWarehouseAndQualitySelection(t *testing.T) {
 	plan := Plan{
 		Version: PRPlanVersion,
 		PR: &PRPlan{
-			Nominal:   PRJobs{Warehouse: true},
-			Effective: PRJobs{Warehouse: true},
+			Nominal:   PRJobs{Warehouse: true, Quality: true},
+			Effective: PRJobs{Warehouse: true, Quality: true},
 		},
 	}
 	data, err := plan.JSON()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"quality": true`) {
+		t.Fatalf("neutral JSON omitted quality selection: %s", data)
 	}
 	if !strings.Contains(string(data), `"warehouse": true`) {
 		t.Fatalf("neutral JSON omitted warehouse selection: %s", data)
