@@ -69281,6 +69281,13 @@ components:
         radius:
           type: integer
           format: int32
+          minimum: 1
+          maximum: 512
+          description: |-
+            Approximate CSS-pixel clustering target for tiled maps. The server uses a
+            globally aligned grid with max(1, floor(256 / radius)) cells per tile;
+            radii 129–512 therefore share one cell per tile. This does not promise
+            pixel-identical cluster membership between inline and tiled data.
           example: 1
         maximumZoom:
           type: integer
@@ -85173,6 +85180,8 @@ components:
         radius:
           type: integer
           format: int32
+          minimum: 1
+          maximum: 512
           example: 1
         maximumZoom:
           type: integer
