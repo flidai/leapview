@@ -42,6 +42,7 @@ func Write(w http.ResponseWriter, config Config) {
 		BuildDirty: identity.Dirty, BuildDevelopment: identity.Development,
 		Authentication:  []apigenapi.AuthenticationMode{apigenapi.AuthenticationModeBearer},
 		Environment:     config.Environment,
+		DeliveryMode:    apigenapi.DeliveryModeNativePostgres,
 		QueryFormats:    queryFormats,
 		UploadProtocols: uploadProtocols,
 		Visualization: apigenapi.VisualizationCapabilities{

@@ -60,6 +60,25 @@ never guessed from chart values. Conversation return links also use the normal
 authenticated chat route. Explorer chat context follows the latest accepted
 query state, including when a saved exploration is reopened.
 
+## Persistence and upgrades
+
+Saved exploration identities, immutable revisions, and retry records live in
+the PostgreSQL control plane. A save and its canonical Access audit event share
+one transaction: an audit failure rolls back the save. Stored definitions do
+not contain cached result rows, and reopening or exporting still applies the
+current viewer's authorization.
+
+The saved-exploration schema is installed by the forward control-plane
+migration, not by HTTP requests or serving startup. Apply the release's
+documented PostgreSQL migration procedure before starting the upgraded server;
+do not edit an already-applied migration or grant schema-owner privileges to
+the runtime role. See [PostgreSQL operations](/docs/guides/operate/postgresql-operations)
+and [Backup and restore](/docs/guides/operate/backup-restore).
+
+This schema upgrade does not import an older SQLite saved-exploration catalog.
+If such a catalog contains data you need to retain, preserve its backup and
+plan a separately validated data transfer before replacing that installation.
+
 ## Troubleshooting rejected exports
 
 - A stale `If-Match` revision returns a precondition failure. Reload the saved exploration and use the returned complete `ETag` value as `If-Match`; never substitute a revision number alone.

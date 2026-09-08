@@ -14,71 +14,16 @@ func (p *Planner) Plan(request Request) (Plan, error) {
 }
 
 func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
-	view, err := p.rowView(request)
+	return p.planRows(request, true)
+}
+
+func (p *Planner) planRows(request RowRequest, secure bool) (Plan, error) {
+	if _, err := columnMaskMap(request.ColumnMasks); err != nil {
+		return Plan{}, err
+	}
+	view, metricFilters, err := p.prepareRowPopulation(request)
 	if err != nil {
 		return Plan{}, err
-	}
-	_, err = columnMaskMap(request.ColumnMasks)
-	if err != nil {
-		return Plan{}, err
-	}
-	for _, dimension := range request.Dimensions {
-		_, _, _, err := view.ResolveDimensionRefPath(dimension.Field)
-		if err != nil {
-			return Plan{}, err
-		}
-	}
-	var population []CompiledNamedFilter
-	populationSignature := ""
-	populationSet := false
-	for _, metric := range request.Metrics {
-		field, resolved, err := view.ResolveMetricRef(metric.Field)
-		if err != nil {
-			return Plan{}, err
-		}
-		if resolved.Dataset != view.Dataset {
-			return Plan{}, fmt.Errorf("metric %q is not owned by dataset %q", field, view.Dataset)
-		}
-		signature, err := flatPlanFilterSignature(resolved.NamedFilters)
-		if err != nil {
-			return Plan{}, fmt.Errorf("metric %q population signature: %w", field, err)
-		}
-		if !populationSet {
-			population = canonicalCompiledNamedFilters(resolved.NamedFilters)
-			populationSignature = signature
-			populationSet = true
-		} else if signature != populationSignature {
-			return Plan{}, fmt.Errorf("row query selects metrics with divergent populations")
-		}
-		for _, field := range aggregateMetricPhysicalFields(resolved) {
-			physical, err := p.resolveDimension(field)
-			if err != nil {
-				return Plan{}, err
-			}
-			path, err := p.relationshipPath(view.Dataset, physical.Table)
-			if err != nil {
-				return Plan{}, err
-			}
-			_ = path // relationship validation is retained; lowering is PlanIR-owned
-		}
-	}
-	metricFilters := namedFlatPlanFilters(population, view.Dataset)
-	if len(metricFilters) > 0 {
-		compiledFilters := make([]Filter, 0, len(metricFilters))
-		for _, spec := range metricFilters {
-			compiledFilters = append(compiledFilters, spec.Filter)
-		}
-		if err := p.exposeViewFilters(view, compiledFilters); err != nil {
-			return Plan{}, err
-		}
-	}
-	if _, err := filterFieldBindings(view, request.Filters); err != nil {
-		return Plan{}, err
-	}
-	for _, spec := range metricFilters {
-		if _, err := filterFieldBindings(view, []Filter{spec.Filter}); err != nil {
-			return Plan{}, err
-		}
 	}
 	if len(request.Dimensions) == 0 && len(request.Metrics) == 0 {
 		return Plan{}, fmt.Errorf("row query requires at least one selected field")
@@ -105,6 +50,11 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 		irGraph.Nodes[irGraph.Output] = sortNode
 		irGraph.NodeMeta = sortNode.NodeMeta
 	}
+	if secure {
+		if _, err := p.securePlanGraph(irGraph, requestRowMemberRefs(p, request)...); err != nil {
+			return Plan{}, err
+		}
+	}
 	rendered, irErr := planir.RenderDuckDB(irGraph)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("render row plan IR: %w", irErr)
@@ -113,10 +63,107 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 	for _, column := range rendered.Columns {
 		columnSet[column] = true
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
+}
+
+// planRowsCount lowers the effective population of a row request into a
+// count-only PlanIR graph. It deliberately shares prepareRowPopulation with
+// planRows so metric named filters, request filters, and divergent-population
+// rejection cannot drift between visible rows and their total.
+func (p *Planner) planRowsCount(request RowRequest) (Plan, error) {
+	view, metricFilters, err := p.prepareRowPopulation(request)
+	if err != nil {
+		return Plan{}, err
+	}
+	filterSpecs := append(requestFlatPlanFilters(request.Filters), metricFilters...)
+	irGraph, irErr := p.buildFlatPopulationIR(view.Dataset, request.Dimensions, request.Metrics, filterSpecs, view.Paths, nil, 0, 0, true)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("build row population count plan IR: %w", irErr)
+	}
+	if _, err := p.securePlanGraph(irGraph, requestRowMemberRefs(p, request)...); err != nil {
+		return Plan{}, err
+	}
+	rendered, irErr := planir.RenderDuckDB(irGraph)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("render row population count plan IR: %w", irErr)
+	}
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, IR: irGraph}, nil
+}
+
+// prepareRowPopulation resolves all row-request fields and lowers the common
+// metric population boundary used by both row and count plans. The returned
+// filters retain named-filter provenance for PlanIR admission and rendering.
+func (p *Planner) prepareRowPopulation(request RowRequest) (*queryView, []flatPlanFilter, error) {
+	view, err := p.rowView(request)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, dimension := range request.Dimensions {
+		_, _, _, err := view.ResolveDimensionRefPath(dimension.Field)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	var population []CompiledNamedFilter
+	populationSignature := ""
+	populationSet := false
+	for _, metric := range request.Metrics {
+		field, resolved, err := view.ResolveMetricRef(metric.Field)
+		if err != nil {
+			return nil, nil, err
+		}
+		if resolved.Dataset != view.Dataset {
+			return nil, nil, fmt.Errorf("metric %q is not owned by dataset %q", field, view.Dataset)
+		}
+		signature, err := flatPlanFilterSignature(resolved.NamedFilters)
+		if err != nil {
+			return nil, nil, fmt.Errorf("metric %q population signature: %w", field, err)
+		}
+		if !populationSet {
+			population = canonicalCompiledNamedFilters(resolved.NamedFilters)
+			populationSignature = signature
+			populationSet = true
+		} else if signature != populationSignature {
+			return nil, nil, fmt.Errorf("row query selects metrics with divergent populations")
+		}
+		for _, field := range aggregateMetricPhysicalFields(resolved) {
+			physical, err := p.resolveDimension(field)
+			if err != nil {
+				return nil, nil, err
+			}
+			path, err := p.relationshipPath(view.Dataset, physical.Table)
+			if err != nil {
+				return nil, nil, err
+			}
+			_ = path // relationship validation is retained; lowering is PlanIR-owned
+		}
+	}
+	metricFilters := namedFlatPlanFilters(population, view.Dataset)
+	if len(metricFilters) > 0 {
+		compiledFilters := make([]Filter, 0, len(metricFilters))
+		for _, spec := range metricFilters {
+			compiledFilters = append(compiledFilters, spec.Filter)
+		}
+		if err := p.exposeViewFilters(view, compiledFilters); err != nil {
+			return nil, nil, err
+		}
+	}
+	if _, err := filterFieldBindings(view, request.Filters); err != nil {
+		return nil, nil, err
+	}
+	for _, spec := range metricFilters {
+		if _, err := filterFieldBindings(view, []Filter{spec.Filter}); err != nil {
+			return nil, nil, err
+		}
+	}
+	return view, metricFilters, nil
 }
 
 func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
+	return p.planRawValues(request, true)
+}
+
+func (p *Planner) planRawValues(request RawValueRequest, secure bool) (Plan, error) {
 	view, err := p.rawValueView(request)
 	if err != nil {
 		return Plan{}, err
@@ -200,6 +247,11 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 		irGraph.Nodes[irGraph.Output] = sortNode
 		irGraph.NodeMeta = sortNode.NodeMeta
 	}
+	if secure {
+		if _, err := p.securePlanGraph(irGraph, requestRawValueMemberRefs(p, request)...); err != nil {
+			return Plan{}, err
+		}
+	}
 	rendered, irErr := planir.RenderDuckDB(irGraph)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("render raw-value plan IR: %w", irErr)
@@ -208,10 +260,14 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	for _, column := range rendered.Columns {
 		columnSet[column] = true
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
 }
 
 func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
+	return p.planCount(request, true)
+}
+
+func (p *Planner) planCount(request CountRequest, secure bool) (Plan, error) {
 	view, err := p.countView(request)
 	if err != nil {
 		return Plan{}, err
@@ -223,11 +279,16 @@ func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("build count plan IR: %w", irErr)
 	}
+	if secure {
+		if _, err := p.securePlanGraph(irGraph, requestCountMemberRefs(p, request)...); err != nil {
+			return Plan{}, err
+		}
+	}
 	rendered, irErr := planir.RenderDuckDB(irGraph)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("render count plan IR: %w", irErr)
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, IR: irGraph}, nil
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, IR: irGraph}, nil
 }
 
 type columnMaskSet map[string]masking.Kind

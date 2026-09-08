@@ -171,6 +171,7 @@ type Model struct {
 	Dimensions              map[string]SemanticDimension   `yaml:"-"`
 	Filters                 map[string]SemanticFilterSpec  `yaml:"-"`
 	Metrics                 map[string]Metric              `yaml:"-"`
+	AccessPolicy            SemanticAccessPolicy           `yaml:"-" json:"accessPolicy,omitempty"`
 }
 
 type Connection struct {
@@ -331,14 +332,17 @@ type Table struct {
 // ModelCheck is the compiler-owned normalized form of the closed authored
 // Model check union. It is evidence input, not an authoring DTO.
 type ModelCheck struct {
-	Type     string
-	Field    string
-	Fields   []string
-	Values   []string
-	To       string
-	Minimum  *int64
-	Maximum  *int64
-	Severity string
+	ID          string
+	Type        string
+	Field       string
+	Fields      []string
+	Values      []string
+	To          string
+	Minimum     *int64
+	Maximum     *int64
+	Severity    string
+	Description string
+	Tags        []string
 }
 
 // FreshnessDurationSpec is intentionally scalar and portable. The generated

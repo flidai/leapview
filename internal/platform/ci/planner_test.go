@@ -1,7 +1,9 @@
 package ci
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -198,11 +200,11 @@ func TestPlanChanges(t *testing.T) {
 			reason: "production deployment",
 		},
 		{
-			name:  "runtime project",
+			name:  "runtime analytics source",
 			input: Input{Event: "pull_request", PullRequestNumber: 1},
 			changes: []Change{{
 				Status: "M",
-				Paths:  []string{"dashboards/leapview.yaml"},
+				Paths:  []string{"dashboards/models/orders.yaml"},
 			}},
 			want: Jobs{
 				Prepare:         true,
@@ -210,7 +212,7 @@ func TestPlanChanges(t *testing.T) {
 				UIRouteQA:       true,
 				ProductionImage: true,
 			},
-			reason: "runtime project",
+			reason: "runtime analytics source",
 		},
 		{
 			name:  "mixed union",
@@ -352,5 +354,159 @@ func TestParseNameStatusZRejectsMalformedInput(t *testing.T) {
 
 	if _, err := ParseNameStatusZ([]byte("R100\x00only-old\x00")); err == nil {
 		t.Fatal("expected malformed rename to fail")
+	}
+}
+
+func TestCurrentPRSelection(t *testing.T) {
+	for _, tt := range []struct {
+		path              string
+		required, skipped []string
+	}{
+		{"internal/access/sqlite/session.go", []string{"go-packages-validation", "go-application-validation", "postgres-isolation-validation", "warehouse-validation", "spatial-tile-benchmarks"}, []string{"apigen-validation", "frontend-validation"}},
+		{"web/components/chat/chat-page.ts", []string{"frontend-validation"}, []string{"go-application-validation", "postgres-isolation-validation"}},
+		{"docs/articles/start/installation.md", []string{"docs-validation", "frontend-validation"}, []string{"go-application-validation", "spatial-tile-benchmarks"}},
+		{"api/signals/main.tsp", []string{"apigen-validation", "go-packages-validation", "go-application-validation", "frontend-validation", "docs-validation"}, nil},
+		{"pkg/apigen/typespec/src/index.ts", []string{"apigen-validation", "go-application-validation", "frontend-validation"}, nil},
+		{"internal/runtimehost/manager.go", []string{"go-application-validation", "frontend-validation"}, nil},
+		{"mystery/new-format", []string{"apigen-validation", "go-application-validation", "frontend-validation", "docs-validation"}, nil},
+	} {
+		t.Run(tt.path, func(t *testing.T) {
+			p := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "M", Paths: []string{tt.path}}})
+			if p.PR == nil {
+				t.Fatal("missing current PR schema")
+			}
+			selected := p.PR.Effective.Selected()
+			for _, name := range tt.required {
+				if !selected[name] {
+					t.Errorf("missing %s", name)
+				}
+			}
+			for _, name := range tt.skipped {
+				if selected[name] {
+					t.Errorf("unrelated %s", name)
+				}
+			}
+		})
+	}
+}
+
+func TestQualitySelectionKeepsCrossLanguageCoverageForNonBackendPlans(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		changes  []Change
+		quality  bool
+		packages bool
+	}{
+		{name: "frontend", changes: []Change{{Status: "M", Paths: []string{"web/components/chat/chat-page.ts"}}}, quality: true},
+		{name: "site", changes: []Change{{Status: "M", Paths: []string{"site/content/index.md"}}}, quality: true},
+		{name: "docs", changes: []Change{{Status: "M", Paths: []string{"README.md"}}}, quality: true},
+		{name: "backend", changes: []Change{{Status: "M", Paths: []string{"internal/access/sqlite/session.go"}}}, packages: true},
+		{name: "generated contract", changes: []Change{{Status: "M", Paths: []string{"api/signals/main.tsp"}}}, packages: true},
+		{name: "shared", changes: []Change{{Status: "M", Paths: []string{"web/components/shared/datastar-lit.ts"}}}, quality: true},
+		{name: "unknown", changes: []Change{{Status: "M", Paths: []string{"mystery/new-format"}}}, packages: true},
+		{name: "rename and delete", changes: []Change{{Status: "R100", Paths: []string{"docs/old.md", "web/components/chat/new.ts"}}, {Status: "D", Paths: []string{"site/removed.md"}}}, quality: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			plan := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, tt.changes)
+			if plan.PR == nil {
+				t.Fatal("missing PR projection")
+			}
+			if plan.PR.Effective.Quality != tt.quality || plan.PR.Effective.GoPackages != tt.packages {
+				t.Fatalf("quality/packages = %v/%v, want %v/%v: %#v", plan.PR.Effective.Quality, plan.PR.Effective.GoPackages, tt.quality, tt.packages, plan.PR.Effective)
+			}
+			if plan.Version != PRPlanVersion {
+				t.Fatalf("plan version = %d, want current v%d", plan.Version, PRPlanVersion)
+			}
+		})
+	}
+
+	full := PlanChanges(Input{Event: "workflow_dispatch"}, nil)
+	if full.PR.Effective.Quality || !full.PR.Effective.GoPackages {
+		t.Fatalf("full plan duplicated package quality coverage: %#v", full.PR.Effective)
+	}
+}
+
+func TestPRRenameDeleteAndSharedBrowserConsumers(t *testing.T) {
+	p := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "R100", Paths: []string{"internal/access/sqlite/deleted_test.go", "docs/articles/moved.md"}}, {Status: "D", Paths: []string{"web/components/shared/datastar-runtime.ts"}}})
+	if !p.PR.Effective.GoApplication || !p.PR.Effective.Warehouse || !p.PR.Effective.Docs || !reflect.DeepEqual(p.PR.Effective.Frontend, FullPRJobs().Frontend) {
+		t.Fatalf("lost dependency union: %+v", p.PR)
+	}
+}
+
+func TestWarehouseSelectionCoversBoundaryGeneratedAndUnknownInputs(t *testing.T) {
+	tests := []struct {
+		name    string
+		changes []Change
+	}{
+		{
+			name:    "boundary example",
+			changes: []Change{{Status: "M", Paths: []string{"examples/dbt-warehouse-boundary/dbt/dbt_project.yml"}}},
+		},
+		{
+			name:    "boundary script",
+			changes: []Change{{Status: "M", Paths: []string{"scripts/dbt-warehouse-boundary.sh"}}},
+		},
+		{
+			name: "boundary rename",
+			changes: []Change{{Status: "R100", Paths: []string{
+				"examples/dbt-warehouse-boundary/dbt/models/marts/fct_orders.sql",
+				"examples/dbt-warehouse-boundary/dbt/models/marts/fct_orders_renamed.sql",
+			}}},
+		},
+		{
+			name:    "boundary delete",
+			changes: []Change{{Status: "D", Paths: []string{"examples/dbt-warehouse-boundary/dbt/models/marts/fct_orders.sql"}}},
+		},
+		{
+			name:    "generated contract",
+			changes: []Change{{Status: "M", Paths: []string{"api/signals/main.tsp"}}},
+		},
+		{
+			name:    "shared runtime",
+			changes: []Change{{Status: "M", Paths: []string{"internal/runtimehost/manager.go"}}},
+		},
+		{
+			name:    "unknown input",
+			changes: []Change{{Status: "M", Paths: []string{"unknown/new-format"}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, tt.changes)
+			if plan.PR == nil || !plan.PR.Effective.Warehouse {
+				t.Fatalf("warehouse lane was not selected: %+v", plan.PR)
+			}
+		})
+	}
+}
+
+func TestPlanJSONRoundTripsNeutralWarehouseAndQualitySelection(t *testing.T) {
+	plan := Plan{
+		Version: PRPlanVersion,
+		PR: &PRPlan{
+			Nominal:   PRJobs{Warehouse: true, Quality: true},
+			Effective: PRJobs{Warehouse: true, Quality: true},
+		},
+	}
+	data, err := plan.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"quality": true`) {
+		t.Fatalf("neutral JSON omitted quality selection: %s", data)
+	}
+	if !strings.Contains(string(data), `"warehouse": true`) {
+		t.Fatalf("neutral JSON omitted warehouse selection: %s", data)
+	}
+	var got Plan
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, plan) {
+		t.Fatalf("JSON round trip = %#v, want %#v", got, plan)
 	}
 }

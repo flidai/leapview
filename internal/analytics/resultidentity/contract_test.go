@@ -11,8 +11,8 @@ import (
 )
 
 func TestDependencyCanonicalSerializationAndDigest(t *testing.T) {
-	if DependencyVersion != 1 || PartitionVersion != 1 || CacheKeyFormatVersion != 1 {
-		t.Fatalf("contract versions = dependency %d, partition %d, cache key %d; want all 1", DependencyVersion, PartitionVersion, CacheKeyFormatVersion)
+	if DependencyVersion != 1 || PartitionVersion != 2 || CacheKeyFormatVersion != 2 {
+		t.Fatalf("contract versions = dependency %d, partition %d, cache key %d; want dependency 1, partition/cache key 2", DependencyVersion, PartitionVersion, CacheKeyFormatVersion)
 	}
 	if DependencyDigestDomain != "flid.resultidentity.dependency.v1" {
 		t.Fatalf("DependencyDigestDomain = %q", DependencyDigestDomain)
@@ -128,34 +128,34 @@ func TestDependencyDigestRotatesForEveryResultAffectingInput(t *testing.T) {
 
 func TestPartitionCanonicalSerializationAndIsolation(t *testing.T) {
 	production, err := NewPartition(PartitionInput{
-		Kind: PartitionProduction, ProjectID: "project_sales", Environment: "prod",
+		Kind: PartitionProduction, TargetID: "target_prod", ProjectID: "project_sales", Environment: "prod",
 	})
 	if err != nil {
 		t.Fatalf("NewPartition(production) error = %v", err)
 	}
 	candidate, err := NewPartition(PartitionInput{
-		Kind: PartitionCandidate, ProjectID: "project_sales", Environment: "prod", CandidateID: "candidate_1",
+		Kind: PartitionCandidate, TargetID: "target_prod", ProjectID: "project_sales", Environment: "prod", CandidateID: "candidate_1",
 	})
 	if err != nil {
 		t.Fatalf("NewPartition(candidate) error = %v", err)
 	}
 	otherCandidate, err := NewPartition(PartitionInput{
-		Kind: PartitionCandidate, ProjectID: "project_sales", Environment: "prod", CandidateID: "candidate_2",
+		Kind: PartitionCandidate, TargetID: "target_prod", ProjectID: "project_sales", Environment: "prod", CandidateID: "candidate_2",
 	})
 	if err != nil {
 		t.Fatalf("NewPartition(other candidate) error = %v", err)
 	}
 
-	if got, want := string(production.Canonical()), `{"version":1,"kind":"production","projectId":"project_sales","environment":"prod"}`; got != want {
+	if got, want := string(production.Canonical()), `{"version":2,"kind":"production","targetId":"target_prod","projectId":"project_sales","environment":"prod"}`; got != want {
 		t.Fatalf("production Canonical() = %s, want %s", got, want)
 	}
-	if got, want := string(candidate.Canonical()), `{"version":1,"kind":"candidate","projectId":"project_sales","environment":"prod","candidateId":"candidate_1"}`; got != want {
+	if got, want := string(candidate.Canonical()), `{"version":2,"kind":"candidate","targetId":"target_prod","projectId":"project_sales","environment":"prod","candidateId":"candidate_1"}`; got != want {
 		t.Fatalf("candidate Canonical() = %s, want %s", got, want)
 	}
 	if string(production.Canonical()) == string(candidate.Canonical()) || string(candidate.Canonical()) == string(otherCandidate.Canonical()) {
 		t.Fatal("production and candidate partitions are not isolated")
 	}
-	if candidate.Kind() != PartitionCandidate || candidate.ProjectID() != "project_sales" || candidate.Environment() != "prod" || candidate.CandidateID() != "candidate_1" {
+	if candidate.Kind() != PartitionCandidate || candidate.TargetID() != "target_prod" || candidate.ProjectID() != "project_sales" || candidate.Environment() != "prod" || candidate.CandidateID() != "candidate_1" {
 		t.Fatalf("candidate accessors returned unexpected values")
 	}
 	if production.Version() != PartitionVersion || candidate.Version() != PartitionVersion {
@@ -166,6 +166,23 @@ func TestPartitionCanonicalSerializationAndIsolation(t *testing.T) {
 	returned[0] = 'x'
 	if got := string(candidate.Canonical()); got[0] != '{' {
 		t.Fatalf("Canonical() exposes mutable storage: %s", got)
+	}
+}
+
+func TestPartitionTargetIsPartOfIdentity(t *testing.T) {
+	first, err := NewPartition(PartitionInput{Kind: PartitionProduction, TargetID: "target_one", ProjectID: "project_sales", Environment: "prod"})
+	if err != nil {
+		t.Fatalf("NewPartition(first) error = %v", err)
+	}
+	second, err := NewPartition(PartitionInput{Kind: PartitionProduction, TargetID: "target_two", ProjectID: "project_sales", Environment: "prod"})
+	if err != nil {
+		t.Fatalf("NewPartition(second) error = %v", err)
+	}
+	if string(first.Canonical()) == string(second.Canonical()) {
+		t.Fatal("partitions with different targets share canonical identity")
+	}
+	if first.TargetID() != "target_one" || second.TargetID() != "target_two" {
+		t.Fatalf("target accessors = %q, %q", first.TargetID(), second.TargetID())
 	}
 }
 
@@ -206,9 +223,11 @@ func TestContractsRejectInvalidInputs(t *testing.T) {
 			{Kind: "preview", ProjectID: "project_sales", Environment: "prod"},
 			{Kind: PartitionProduction, ProjectID: "project sales", Environment: "prod"},
 			{Kind: PartitionProduction, ProjectID: "project_sales", Environment: " prod"},
-			{Kind: PartitionProduction, ProjectID: "project_sales", Environment: "prod", CandidateID: "candidate_1"},
-			{Kind: PartitionCandidate, ProjectID: "project_sales", Environment: "prod"},
-			{Kind: PartitionCandidate, ProjectID: "project_sales", Environment: "prod", CandidateID: " candidate_1"},
+			{Kind: PartitionProduction, ProjectID: "project_sales", Environment: "prod"},
+			{Kind: PartitionProduction, TargetID: " target_prod", ProjectID: "project_sales", Environment: "prod"},
+			{Kind: PartitionProduction, TargetID: "target_prod", ProjectID: "project_sales", Environment: "prod", CandidateID: "candidate_1"},
+			{Kind: PartitionCandidate, TargetID: "target_prod", ProjectID: "project_sales", Environment: "prod"},
+			{Kind: PartitionCandidate, TargetID: "target_prod", ProjectID: "project_sales", Environment: "prod", CandidateID: " candidate_1"},
 		}
 		for _, input := range tests {
 			if _, err := NewPartition(input); err == nil {

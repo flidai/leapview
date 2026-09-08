@@ -50,6 +50,7 @@ import {
   getContracts,
   getMetadata,
   getMinProperties,
+  getUniqueItems,
   getNamedFailures,
   getPropertyNames,
   getResponseShape,
@@ -58,6 +59,7 @@ import {
   getTransportErrors,
   getUI,
   getUnauditedReason,
+  hasExactNumbers,
   isTarget,
   isManual,
   isQuery,
@@ -67,13 +69,13 @@ import { discoverHttpServices } from "./phase-discovery.js";
 import { emitDocumentFile } from "./phase-emission.js";
 import { normalizeDocument } from "./phase-normalization.js";
 import { qualifiedNamespaceName, readPackageMetadata } from "./phase-naming.js";
+import { withSchemaConstraints } from "./schema-constraints.js";
 import {
   hasErrorDiagnostics,
   validateOutputFile,
   validateServiceCount,
   validateServicePresence,
 } from "./phase-validation.js";
-import { withSchemaConstraints } from "./schema-constraints.js";
 
 interface Document {
   schema_version: "v4";
@@ -272,6 +274,7 @@ interface Schema {
   one_of?: SchemaRef[];
   discriminator?: { property_name: string; mapping: Record<string, string> };
   enum?: string[];
+  exact_numbers?: boolean;
   extensions?: Record<string, unknown>;
 }
 
@@ -293,6 +296,7 @@ interface SchemaRef {
   max_length?: number;
   min_items?: number;
   max_items?: number;
+  unique_items?: boolean;
   min_properties?: number;
   pattern?: string;
   items?: SchemaRef;
@@ -320,7 +324,10 @@ class IRBuilder {
   schemaRef(type: Type, context: string): SchemaRef {
     if (type.kind === "Model") {
       if (isArrayModelType(type)) {
-        return { type: "array", items: this.schemaRef(type.indexer.value, `${context} items`) };
+        return withSchemaConstraints(this.program, type, {
+          type: "array",
+          items: this.schemaRef(type.indexer.value, `${context} items`),
+        });
       }
       if (isRecordModelType(type)) {
         return {
@@ -539,13 +546,19 @@ class IRBuilder {
   }
 
   private unionSchema(type: Union): Schema {
+    const withUnionMetadata = (schema: Schema): Schema => {
+      if (hasExactNumbers({ program: this.program }, type)) {
+        schema.exact_numbers = true;
+      }
+      return schema;
+    };
     const scalarVariants = [...type.variants.values()];
     if (scalarVariants.length > 0 && scalarVariants.every((variant) => isJSONScalarType(variant.type))) {
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-      };
+      });
     }
     // A compact authored reference may intentionally be either a JSON scalar
     // (for example an unaliased metric name) or a closed object carrying the
@@ -556,11 +569,11 @@ class IRBuilder {
     // a strict scalar/object wrapper; contextual visual/query compatibility
     // remains compiler-owned.
     if (scalarVariants.some((variant) => isJSONScalarType(variant.type))) {
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-      };
+      });
     }
     const [union, diagnostics] = getDiscriminatedUnion(this.program, type);
     if (union) {
@@ -600,7 +613,7 @@ class IRBuilder {
         oneOf.push({ ref: name });
         mapping[value] = name;
       }
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: oneOf,
@@ -608,7 +621,7 @@ class IRBuilder {
           property_name: union.options.discriminatorPropertyName,
           mapping,
         },
-      };
+      });
     }
 
     // A structural object union is useful when the authored object remains
@@ -618,11 +631,11 @@ class IRBuilder {
     // all-or-none shape and language emitters can dispatch by strict field
     // decoding. Discriminators remain reserved for explicitly tagged unions.
     if (scalarVariants.every((variant) => variant.type.kind === "Model")) {
-      return {
+      return withUnionMetadata({
         type: "union",
         namespace: namespaceName(type.namespace),
         one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-      };
+      });
     }
 
     if (!type.name) {
@@ -659,6 +672,9 @@ class IRBuilder {
     const minProperties = getMinProperties({ program: this.program }, property);
     if (minProperties !== undefined) {
       schema.min_properties = minProperties;
+    }
+    if (getUniqueItems({ program: this.program }, property)) {
+      schema.unique_items = true;
     }
     const schemaProperty: SchemaProperty = {
       schema,

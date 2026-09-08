@@ -27,6 +27,7 @@ import (
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/google/uuid"
 )
 
 // TestCredentialedBrowserAndPipelineJourney keeps one deterministic,
@@ -321,20 +322,28 @@ func credentialedJourneyCatalogResult(kind projectgraph.Kind) (projectcatalog.Re
 
 type credentialedJourneyDefinitionReader struct{}
 
-func (credentialedJourneyDefinitionReader) ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error) {
-	return projectmanifest.Project{ID: "project:test", Connections: map[string]model.Connection{"connection:credentialed": {Kind: "postgres"}}, RefreshPipelines: map[string]refreshschedule.Definition{"pipeline:visuals-refresh": {}}}, nil, nil
+func (credentialedJourneyDefinitionReader) ProjectDefinitionSnapshot(context.Context) (projectmanifest.ResourceManifest, map[string]*semanticquery.CompiledModel, error) {
+	return projectmanifest.ResourceManifest{Connections: map[string]model.Connection{"connection:credentialed": {Kind: "postgres"}}, RefreshPipelines: map[string]refreshschedule.Definition{"pipeline:visuals-refresh": {}}}, nil, nil
 }
 
 func pipelineOrConnectionRequest(t *testing.T, client *http.Client, endpoint, body, operation, requestID, csrf string) *http.Response {
 	t.Helper()
+	requestUUID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("generate browser request id for %s: %v", requestID, err)
+	}
+	idempotencyUUID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("generate browser idempotency key for %s: %v", requestID, err)
+	}
 	request, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(uicommand.HeaderOperationID, operation)
-	request.Header.Set("X-Request-ID", requestID)
-	request.Header.Set("Idempotency-Key", "ui:"+requestID)
+	request.Header.Set("X-Request-ID", requestUUID.String())
+	request.Header.Set("Idempotency-Key", idempotencyUUID.String())
 	request.Header.Set("X-CSRF-Token", csrf)
 	response, err := client.Do(request)
 	if err != nil {

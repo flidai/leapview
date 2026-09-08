@@ -47,9 +47,11 @@ func TestRuntimeCacheCutoverQualification(t *testing.T) {
 	require.NoError(t, err)
 	dependency, reusable := generationB.dependencyForPlan(planned.plan)
 	require.True(t, reusable)
-	key, _, err := generationB.queryCache.cacheKey(request, generationB.resultPartition, dependency)
+	queryDigest, err := planned.plan.ResultEquivalenceDigest()
 	require.NoError(t, err)
-	consumer, _, hit, err := generationB.queryCache.scope.LookupArrow(key)
+	address, err := generationB.queryCache.cacheAddressWithDigest(request, generationB.resultPartition, dependency, queryDigest)
+	require.NoError(t, err)
+	consumer, _, hit, err := generationB.queryCache.scope.LookupArrow(address.key)
 	require.NoError(t, err)
 	require.True(t, hit)
 

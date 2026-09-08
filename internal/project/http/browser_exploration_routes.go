@@ -113,7 +113,7 @@ func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *s
 // Updates is the shared browser bootstrap router. The explore branch carries
 // saved-exploration state so navigation and signal updates use one projection.
 func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindProject, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
+	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindProjectNamespace, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
 		return
 	}
 	patch := map[string]any{"status": projectsignals.DashboardStatus{}, "runtime": projectsignals.RouteRuntimeSignal{Kind: projectsignals.RouteKindData}}

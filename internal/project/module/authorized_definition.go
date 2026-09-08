@@ -44,7 +44,7 @@ func NewAuthorizedProjectDefinitionReader(provider projectruntime.Provider, subj
 	return authorizedProjectDefinitionReader{provider: provider, subjects: subjects}
 }
 
-func (r authorizedProjectDefinitionReader) ProjectDefinitionSnapshot(ctx context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error) {
+func (r authorizedProjectDefinitionReader) ProjectDefinitionSnapshot(ctx context.Context) (projectmanifest.ResourceManifest, map[string]*semanticquery.CompiledModel, error) {
 	return activeProjectDefinitionReader{provider: r.provider}.ProjectDefinitionSnapshot(ctx)
 }
 
@@ -88,7 +88,7 @@ func (r authorizedProjectDefinitionReader) AuthorizedExploreModel(ctx context.Co
 		return nil, nil, projectgraph.ServingIdentity{}, errors.New("active model lease has no authorization snapshot")
 	}
 	snapshot := authorizedLease.AuthorizationSnapshot()
-	if err := snapshot.ValidateBound(); err != nil || snapshot.Identity() != identity || snapshot.Project().ProjectID() != projectID {
+	if err := snapshot.ValidateBound(); err != nil || snapshot.Identity() != identity {
 		return nil, nil, projectgraph.ServingIdentity{}, errors.New("active model authorization snapshot is unavailable")
 	}
 	resource, err := access.NewResourceRef(modelResourceID, projectgraph.KindSemanticModel)

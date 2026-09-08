@@ -52,10 +52,11 @@ func TestSavedExplorationMountedMonthlyWorkflow(t *testing.T) {
 	}
 	store := testStore(t)
 	ownerToken, viewerToken := seedMountedMonthlyPrincipals(t, store)
-	audit := analyticsmodule.BuildQueryAuditSurface(store.SQLDB())
+	audit := analyticsmodule.BuildQueryAuditSurface(newTestQueryAuditRepository())
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	analytics := analyticsmodule.NewSurface(nil, nil)
 	server, err := assembleRuntimeChecked(t.Context(), fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		Auth: auth, AnalyticsModule: analyticsmodule.NewSurface(nil, nil),
+		Auth: auth, AnalyticsModule: analytics,
 	}))
 	if err != nil {
 		t.Fatalf("assemble production browser runtime: %v", err)
@@ -72,6 +73,24 @@ func TestSavedExplorationMountedMonthlyWorkflow(t *testing.T) {
 	server.routes.projectBrowser.ResolveProjectID = func(context.Context) (projectgraph.ResourceID, error) { return savedAdapterProject, nil }
 	server.routes.projectBrowser.Environment = "production"
 	server.routes.projectBrowser.SavedExplorations = fixture.service
+	bindings := analytics.SavedExplorationUICommandBindings()
+	server.routes.projectBrowser.SavedExplorationCommands = projecthttp.SavedExplorationCommandBindings{
+		Create: bindings.Create, Update: bindings.Update, Duplicate: bindings.Duplicate, Archive: bindings.Archive,
+	}
+	server.routes.projectBrowser.BeginSavedExplorationCommand = func(ctx context.Context, invocation projecthttp.SavedExplorationCommandInvocation) (context.Context, error) {
+		return analytics.BeginSavedExplorationUICommand(ctx, analyticsmodule.SavedExplorationUICommandInvocation{
+			Action: invocation.Action, Project: invocation.Project, Resource: invocation.Resource,
+			IdempotencyKey: invocation.IdempotencyKey, RequestID: invocation.RequestID,
+			CorrelationID: invocation.CorrelationID, Revision: invocation.Revision, ConcurrencyRevision: invocation.ConcurrencyRevision,
+		})
+	}
+	server.routes.projectBrowser.ExecuteSavedExplorationCommand = func(ctx context.Context, invocation projecthttp.SavedExplorationCommandInvocation, transaction func(context.Context) error) error {
+		return analytics.ExecuteSavedExplorationUICommand(ctx, analyticsmodule.SavedExplorationUICommandInvocation{
+			Action: invocation.Action, Project: invocation.Project, Resource: invocation.Resource,
+			IdempotencyKey: invocation.IdempotencyKey, RequestID: invocation.RequestID,
+			CorrelationID: invocation.CorrelationID, Revision: invocation.Revision, ConcurrencyRevision: invocation.ConcurrencyRevision,
+		}, transaction)
+	}
 	server.routes.projectBrowser.QueryExecutor = queries
 	server.routes.projectBrowser.ExplorationExportAuditRecorder = queryAuditRecorder
 	handler := server.Routes()
@@ -401,8 +420,8 @@ type mountedMonthlyDefinitions struct {
 	compiled *semanticquery.CompiledModel
 }
 
-func (d mountedMonthlyDefinitions) ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error) {
-	return projectmanifest.Project{ID: savedAdapterProject.String(), Name: "saved", Title: "Saved Monthly", Models: map[string]semanticmodel.Table{"model:orders": d.model.Tables["orders"], "model:customers": d.model.Tables["customers"]}, SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": d.model}, NameIndex: projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}, SemanticModels: map[string]string{"sales": "semantic:sales"}}}, map[string]*semanticquery.CompiledModel{"semantic:sales": d.compiled}, nil
+func (d mountedMonthlyDefinitions) ProjectDefinitionSnapshot(context.Context) (projectmanifest.ResourceManifest, map[string]*semanticquery.CompiledModel, error) {
+	return projectmanifest.ResourceManifest{Title: "Saved Monthly", Models: map[string]semanticmodel.Table{"model:orders": d.model.Tables["orders"], "model:customers": d.model.Tables["customers"]}, SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": d.model}, NameIndex: projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}, SemanticModels: map[string]string{"sales": "semantic:sales"}}}, map[string]*semanticquery.CompiledModel{"semantic:sales": d.compiled}, nil
 }
 
 type mountedMonthlyCatalog struct{}
@@ -433,7 +452,7 @@ func (mountedMonthlyCatalog) Resolve(_ context.Context, principalID string, ref 
 
 func mountedMonthlyCatalogItem(kind projectgraph.Kind) (projectcatalog.Result, bool) {
 	switch kind {
-	case projectgraph.KindProject:
+	case projectgraph.KindProjectNamespace:
 		return projectcatalog.Result{Ref: projectcatalog.Ref{ID: savedAdapterProject, Kind: kind}, Name: "saved", DisplayName: "Saved Monthly", Description: "Monthly revenue fixture"}, true
 	case projectgraph.KindModel:
 		return projectcatalog.Result{Ref: projectcatalog.Ref{ID: "model:orders", Kind: kind}, Name: "orders", DisplayName: "Orders"}, true
@@ -464,7 +483,7 @@ func mountedMonthlySave(t *testing.T, handler http.Handler, token string, spec c
 		t.Fatalf("decode saved state: %v", err)
 	}
 	if state.Save.State != "saved" || state.Current == nil {
-		t.Fatalf("save state = %#v, want saved current state", state)
+		t.Fatalf("save state = %#v, message=%q, want saved current state", state, projectsignals.ValueOrZero(state.Save.Message))
 	}
 	if state.Current.Spec == nil || !reflect.DeepEqual(*state.Current.Spec, spec) {
 		t.Fatalf("saved canonical spec = %#v, want %#v", state.Current.Spec, spec)
@@ -478,8 +497,8 @@ func mountedMonthlyRequest(t *testing.T, handler http.Handler, method, path, tok
 	request.Header.Set("Authorization", "Bearer "+token)
 	if method == http.MethodPost {
 		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("X-Request-ID", "monthly-save-1")
-		request.Header.Set("Idempotency-Key", "ui:monthly-save-1")
+		request.Header.Set("X-Request-ID", "01900000-0000-7000-8000-000000000201")
+		request.Header.Set("Idempotency-Key", "01900000-0000-7000-8000-000000000202")
 		request.Header.Set(uicommand.HeaderOperationID, analyticsgen.GenUIActionCreateSavedExploration().OperationID())
 	}
 	response := httptest.NewRecorder()

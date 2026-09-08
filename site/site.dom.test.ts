@@ -1,27 +1,32 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { chromium, type Browser } from '@playwright/test'
+import { startSiteTestServer, type SiteTestServer } from './test_server'
 
 const sitePort = 20000 + (process.pid % 10000)
 const baseURL = `http://127.0.0.1:${sitePort}`
 let browser: Browser
-let siteProcess: ReturnType<typeof Bun.spawn>
+let siteServer: SiteTestServer | undefined
 const siteReadyTimeout = 60_000
 
 beforeAll(async () => {
-  siteProcess = Bun.spawn(['go', 'run', './cmd/leapview-site', '-addr', `127.0.0.1:${sitePort}`], {
-    cwd: process.cwd(),
-    env: process.env,
-    stdout: 'ignore',
-    stderr: 'ignore',
-  })
-  await waitForSite()
-  browser = await chromium.launch()
+  const startupDeadline = Date.now() + siteReadyTimeout
+  try {
+    siteServer = await startSiteTestServer(sitePort, startupDeadline)
+    await waitForSite(siteServer.process, startupDeadline)
+    browser = await chromium.launch()
+  } catch (error) {
+    await siteServer?.stop()
+    siteServer = undefined
+    throw error
+  }
 }, siteReadyTimeout + 10_000)
 
 afterAll(async () => {
-  await browser?.close()
-  siteProcess?.kill()
-  await siteProcess?.exited
+  try {
+    await browser?.close()
+  } finally {
+    await siteServer?.stop()
+  }
 })
 
 test('site explains the product, its workflow, and where it fits in the data stack', async () => {
@@ -840,7 +845,8 @@ test('getting started route directs users through the first learning path', asyn
     const configurationGroup = sidebar.locator('details[data-site-docs-group="reference-configuration"]')
     expect(await configurationGroup.count()).toBe(1)
     expect(await configurationGroup.getAttribute('open')).toBeNull()
-    expect(await configurationGroup.locator('a[href="/docs/config/project"]').count()).toBe(1)
+    expect(await configurationGroup.locator('a[href="/docs/config/connection"]').count()).toBe(1)
+    expect(await configurationGroup.locator('a[href="/docs/config/project"]').count()).toBe(0)
     expect(await docsNavigation.locator('a[href="/docs/enterprise-auth"]').count()).toBe(1)
     expect(await docsNavigation.locator('a[href="/docs/storage-architecture"]').count()).toBe(1)
     expect(await docsNavigation.getByText('Dashboard demo', { exact: true }).count()).toBe(0)
@@ -1208,7 +1214,7 @@ test('governed label policies remain renderable across visual families, locales,
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
   const cases = [
-    { path: 'heatmap', id: 'category_status_heatmap_labels', density: 'automatic' },
+    { path: 'heatmap', id: 'category_status_heatmap_labels', density: 'dense' },
     { path: 'pie', id: 'category_pie_inside', density: 'automatic' },
     { path: 'scatter', id: 'delivery_scatter_labeled', density: 'automatic' },
     { path: 'tree', id: 'category_state_status_tree', density: 'automatic' },
@@ -1630,7 +1636,7 @@ test('documentation articles provide a readable, navigable reference experience'
     expect(await codeBlock.locator('.shiki').getAttribute('class')).toContain('github-light')
     expect(await codeBlock.getByText('Shell', { exact: true }).isVisible()).toBe(true)
     await codeBlock.getByRole('button', { name: 'Copy code' }).click()
-    await page.waitForFunction(() => document.documentElement.dataset.copiedCode === 'leapview validate --project dashboards/leapview.yaml\nleapview plan dashboards/leapview.yaml\n')
+    await page.waitForFunction(() => document.documentElement.dataset.copiedCode === 'leapview validate --source-root dashboards\nleapview plan --source-root dashboards\n')
     expect(await codeBlock.getByRole('button', { name: 'Code copied' }).isVisible()).toBe(true)
 
     const activeGroup = page.locator('.site-docs-nav-group-active > summary').first()
@@ -2482,7 +2488,10 @@ test('visual showcase renders every supported visual type', async () => {
       }),
     )
     expect(chartLabelPolicies.length).toBeGreaterThan(0)
-    expect(chartLabelPolicies.filter(({ density }) => density !== 'automatic' && density !== 'hidden')).toEqual([])
+    expect(chartLabelPolicies.filter(({ density }) => density !== 'automatic' && density !== 'hidden' && density !== 'dense')).toEqual([])
+    expect(chartLabelPolicies.filter(({ density }) => density === 'dense').map(({ visualID }) => visualID).sort()).toEqual([
+      'state_status_heatmap',
+    ])
     expect(chartLabelPolicies.filter(({ density }) => density === 'hidden').map(({ visualID }) => visualID).sort()).toEqual([
       'revenue',
       'revenue_line',
@@ -2497,12 +2506,16 @@ test('visual showcase renders every supported visual type', async () => {
       const sunburst = hosts.find((host) => host.envelope?.visualID === 'category_status_sunburst')
       return sunburst?.envelope?.spec?.presentation?.labelPolicy
     })).toMatchObject({ density: 'automatic', maxCharacters: 12, minimumSpacing: 6, tooltipFallback: true })
+    expect(await page.locator('lv-site-visual-showcase').evaluate((element) => {
+      const hosts = Array.from(element.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as Array<HTMLElement & { envelope?: any }>
+      return hosts.find((host) => host.envelope?.visualID === 'state_status_heatmap')?.envelope?.spec?.presentation?.displayUnits
+    })).toBe('none')
   } finally {
     await page.close()
   }
 }, 20_000)
 
-test('heatmap scale is a fixed legend that keeps every cell visible', async () => {
+test('heatmap scale is a calculable range that hides only out-of-range visible cells', async () => {
   const page = await browser.newPage({ viewport: { width: 966, height: 749 } })
   try {
     await page.goto(`${baseURL}/visuals`)
@@ -2512,7 +2525,7 @@ test('heatmap scale is a fixed legend that keeps every cell visible', async () =
       return Boolean(host?.shadowRoot?.querySelector('[_echarts_instance_]'))
     })
 
-    const state = await page.locator('lv-site-visual-showcase').evaluate(async (element) => {
+    const states = await page.locator('lv-site-visual-showcase').evaluate(async (element) => {
       const host = Array.from(element.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []).find((candidate: any) => candidate.envelope?.visualID === 'state_status_heatmap') as HTMLElement
       const frame = host.shadowRoot?.querySelector<HTMLElement>('[_echarts_instance_]')
       if (!frame) throw new Error('heatmap ECharts frame is missing')
@@ -2529,30 +2542,47 @@ test('heatmap scale is a fixed legend that keeps every cell visible', async () =
       }
       if (!chart) throw new Error('heatmap ECharts instance is missing')
 
-      const visualMap = chart.getOption().visualMap[0]
-      const data = chart.getModel().getSeriesByIndex(0).getData()
-      let hiddenRows = 0
-      for (let index = 0; index < data.count(); index++) {
-        if (data.getItemVisual(index, 'style')?.opacity === 0) hiddenRows++
+      const inspect = () => {
+        const visualMap = chart.getOption().visualMap[0]
+        const data = chart.getModel().getSeriesByIndex(0).getData()
+        let hiddenRows = 0
+        let visibleRows = 0
+        for (let index = 0; index < data.count(); index++) {
+          if (data.getItemVisual(index, 'style')?.opacity === 0) hiddenRows++
+          else visibleRows++
+        }
+        return {
+          calculable: visualMap.calculable as boolean,
+          hiddenRows,
+          maximum: visualMap.max as number,
+          minimum: visualMap.min as number,
+          rowCount: data.count(),
+          text: visualMap.text as string[],
+          visibleRows,
+        }
       }
-      return {
-        calculable: visualMap.calculable as boolean,
-        hiddenRows,
-        maximum: visualMap.max as number,
-        minimum: visualMap.min as number,
-        rowCount: data.count(),
-        text: visualMap.text as string[],
+
+      const select = async (selected: [number, number]) => {
+        chart.dispatchAction({ type: 'selectDataRange', selected })
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+        return inspect()
       }
+
+      return { initial: inspect(), narrowed: await select([2, 3]) }
     })
 
-    expect(state).toEqual({
-      calculable: false,
+    expect(states.initial).toEqual({
+      calculable: true,
       hiddenRows: 0,
       maximum: 3,
-      minimum: 1,
-      rowCount: 29,
-      text: ['3', '1'],
+      minimum: 0,
+      rowCount: 8,
+      text: undefined,
+      visibleRows: 8,
     })
+    expect(states.narrowed.hiddenRows).toBeGreaterThan(0)
+    expect(states.narrowed.visibleRows).toBeGreaterThan(0)
+    expect(states.narrowed.hiddenRows + states.narrowed.visibleRows).toBe(states.initial.rowCount)
   } finally {
     await page.close()
   }
@@ -2737,8 +2767,7 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
   }
 }, 30_000)
 
-async function waitForSite(): Promise<void> {
-  const deadline = Date.now() + siteReadyTimeout
+async function waitForSite(siteProcess: Bun.Subprocess, deadline: number): Promise<void> {
   while (Date.now() < deadline) {
     if (siteProcess.exitCode !== null) {
       throw new Error(`LeapView site exited before becoming ready (code ${siteProcess.exitCode})`)
@@ -2747,7 +2776,7 @@ async function waitForSite(): Promise<void> {
       const response = await fetch(baseURL)
       if (response.ok) return
     } catch {
-      // The Go command is still compiling or binding its listener.
+      // The directly spawned site is still binding its listener.
     }
     await Bun.sleep(100)
   }

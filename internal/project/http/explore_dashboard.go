@@ -287,9 +287,17 @@ func (h *BrowserHandler) DataExplorerAddToDashboard(w stdhttp.ResponseWriter, r 
 		return
 	}
 	input := signals.AddExplorationToDashboard
-	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
-	if requestID == "" || httpmiddleware.RequestIDWasGenerated(r) {
-		requestID = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	// Idempotency-Key is the durable append identity. X-Request-ID remains a
+	// legacy fallback for older callers, while the request middleware's
+	// generated UUID is only a correlation identity unless no durable key was
+	// supplied.
+	requestID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if requestID == "" {
+		if httpmiddleware.RequestIDWasGenerated(r) {
+			stdhttp.Error(w, "Idempotency-Key is required", stdhttp.StatusBadRequest)
+			return
+		}
+		requestID = strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	}
 	if requestID == "" {
 		stdhttp.Error(w, "X-Request-ID is required", stdhttp.StatusBadRequest)

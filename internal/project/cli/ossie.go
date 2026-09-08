@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -15,7 +14,7 @@ import (
 )
 
 type ossieOptions struct {
-	project       string
+	sourceRoot    string
 	input         string
 	output        string
 	semanticModel string
@@ -26,7 +25,7 @@ type ossieOptions struct {
 // local project compiler used by validate, plan, and deploy. Import emits a
 // native SemanticModel resource to stdout; export emits Ossie JSON or YAML.
 func OssieCommand(ctx context.Context) *cobra.Command {
-	opts := &ossieOptions{project: filepath.Join("dashboards", "leapview.yaml"), format: "json"}
+	opts := &ossieOptions{sourceRoot: "dashboards", format: "json"}
 	root := &cobra.Command{Use: "semantic-model", Short: "Compile and interchange semantic models"}
 	ossie := &cobra.Command{Use: "ossie", Short: "Import or export pinned Apache Ossie documents"}
 
@@ -46,7 +45,7 @@ func OssieCommand(ctx context.Context) *cobra.Command {
 			return runOssieImport(ctx, opts, cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	}
-	importCommand.Flags().StringVar(&opts.project, "project", opts.project, "project path")
+	importCommand.Flags().StringVar(&opts.sourceRoot, "source-root", opts.sourceRoot, "analytics source root")
 	importCommand.Flags().StringVar(&opts.input, "in", "", "Ossie document path (or - for stdin)")
 
 	exportCommand := &cobra.Command{
@@ -65,7 +64,7 @@ func OssieCommand(ctx context.Context) *cobra.Command {
 			return runOssieExport(ctx, opts, cmd.OutOrStdout())
 		},
 	}
-	exportCommand.Flags().StringVar(&opts.project, "project", opts.project, "project path")
+	exportCommand.Flags().StringVar(&opts.sourceRoot, "source-root", opts.sourceRoot, "analytics source root")
 	exportCommand.Flags().StringVar(&opts.semanticModel, "semantic-model", "", "semantic-model name or stable resource ID")
 	exportCommand.Flags().StringVar(&opts.format, "format", opts.format, "output format: json or yaml")
 	exportCommand.Flags().StringVar(&opts.output, "out", "", "write output to a file instead of stdout")
@@ -83,7 +82,7 @@ func runOssieImport(ctx context.Context, opts *ossieOptions, input io.Reader, ou
 	if err != nil {
 		return err
 	}
-	model, err := projectcompiler.ImportOssie(opts.project, data)
+	model, err := projectcompiler.ImportOssie(opts.sourceRoot, data)
 	if err != nil {
 		return err
 	}
@@ -123,9 +122,9 @@ func runOssieExport(ctx context.Context, opts *ossieOptions, output io.Writer) e
 	)
 	switch strings.ToLower(strings.TrimSpace(opts.format)) {
 	case "json":
-		data, err = projectcompiler.ExportOssie(opts.project, opts.semanticModel)
+		data, err = projectcompiler.ExportOssie(opts.sourceRoot, opts.semanticModel)
 	case "yaml", "yml":
-		data, err = projectcompiler.ExportOssieYAML(opts.project, opts.semanticModel)
+		data, err = projectcompiler.ExportOssieYAML(opts.sourceRoot, opts.semanticModel)
 	default:
 		return fmt.Errorf("unsupported Ossie output format %q", opts.format)
 	}

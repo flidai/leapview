@@ -1,7 +1,5 @@
 package deployment
 
-import "time"
-
 // DeliveryPlanEvidenceView is the deliberately redacted projection exposed by
 // the delivery API. The canonical evidence document may contain authored
 // paths, intervals, and connector observations; those values stay in the
@@ -94,97 +92,4 @@ func RedactedDeliveryPlanEvidence(plan DeliveryPlan) DeliveryPlanEvidenceView {
 		PlannedInputs: plannedInputs, QualificationPolicy: e.Qualification.Policy, QualificationSteps: qualificationSteps,
 		StalePolicy: DeliveryStalePolicyView{Mode: e.StalePolicy.Mode, AllowRetainedBase: e.StalePolicy.AllowRetainedBase, Description: e.StalePolicy.Description}, ReuseDecisions: reuseDecisions,
 	}
-}
-
-// DeliveryOperatorSnapshot is a read-only, non-secret control-plane view.
-// Object keys, storage locations, credential references, raw evidence, and
-// object-store authority are deliberately absent from this type.
-type DeliveryOperatorSnapshot struct {
-	ProjectID        string
-	Environment      string
-	TargetID         string
-	TargetRevision   int64
-	ActiveGeneration string
-	Degraded         bool
-	DegradedReasons  []string
-	PhysicalPools    []DeliveryPhysicalPoolAdmissionView
-	Roots            []DeliveryRootView
-	QueryLeases      []DeliveryQueryLeaseView
-	WriterLeases     []DeliveryWriterLeaseView
-	GCCycles         []DeliveryGCCycleView
-	GCDeleteIntents  []DeliveryGCDeleteIntentView
-}
-
-type DeliveryPhysicalPoolAdmissionView struct {
-	PoolID                string    `json:"poolId"`
-	IdentityDigest        string    `json:"identityDigest"`
-	CompatibilityDigest   string    `json:"compatibilityDigest"`
-	EvidenceDigest        string    `json:"evidenceDigest"`
-	ConformanceVersion    string    `json:"conformanceVersion"`
-	DuckDBRuntime         string    `json:"duckdbRuntime"`
-	DuckLakeExtension     string    `json:"ducklakeExtension"`
-	CatalogFormat         string    `json:"catalogFormat"`
-	StorageImplementation string    `json:"storageImplementation"`
-	ObjectNamingContract  string    `json:"objectNamingContract"`
-	AdmittedAt            time.Time `json:"admittedAt"`
-}
-
-type DeliveryRootView struct {
-	PoolID        string    `json:"poolId"`
-	Kind          string    `json:"kind"`
-	SourceID      string    `json:"sourceId"`
-	CandidateID   string    `json:"candidateId,omitempty"`
-	GenerationID  string    `json:"generationId,omitempty"`
-	LeaseID       string    `json:"leaseId,omitempty"`
-	CatalogDigest string    `json:"catalogDigest"`
-	Status        string    `json:"status"`
-	CreatedAt     time.Time `json:"createdAt"`
-	ExpiresAt     time.Time `json:"expiresAt,omitempty"`
-}
-
-type DeliveryQueryLeaseView struct {
-	ID            string    `json:"id"`
-	HolderID      string    `json:"holderId"`
-	CandidateID   string    `json:"candidateId,omitempty"`
-	GenerationID  string    `json:"generationId,omitempty"`
-	PoolID        string    `json:"poolId"`
-	CatalogDigest string    `json:"catalogDigest"`
-	Status        string    `json:"status"`
-	CreatedAt     time.Time `json:"createdAt"`
-	ExpiresAt     time.Time `json:"expiresAt"`
-}
-
-type DeliveryWriterLeaseView struct {
-	ID         string    `json:"id"`
-	AttemptID  string    `json:"attemptId"`
-	PoolID     string    `json:"poolId"`
-	OwnerID    string    `json:"ownerId"`
-	Epoch      int64     `json:"epoch"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"createdAt"`
-	ExpiresAt  time.Time `json:"expiresAt"`
-	ReleasedAt time.Time `json:"releasedAt,omitempty"`
-}
-
-type DeliveryGCCycleView struct {
-	ID           string    `json:"id"`
-	PoolID       string    `json:"poolId"`
-	Epoch        int64     `json:"epoch"`
-	RootRevision int64     `json:"rootRevision"`
-	MarkDigest   string    `json:"markDigest,omitempty"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"createdAt"`
-	CompletedAt  time.Time `json:"completedAt,omitempty"`
-	AbortReason  string    `json:"abortReason,omitempty"`
-}
-
-type DeliveryGCDeleteIntentView struct {
-	ID            string    `json:"id"`
-	CycleID       string    `json:"cycleId"`
-	PoolID        string    `json:"poolId"`
-	ObjectDigest  string    `json:"objectDigest"`
-	ObjectVersion string    `json:"objectVersion,omitempty"`
-	Status        string    `json:"status"`
-	CreatedAt     time.Time `json:"createdAt"`
-	CompletedAt   time.Time `json:"completedAt,omitempty"`
 }

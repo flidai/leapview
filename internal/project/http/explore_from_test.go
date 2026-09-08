@@ -67,7 +67,7 @@ func (s *exploreFromSourceStub) LoadPublishedDashboardSource(_ context.Context, 
 
 type exploreFromDefinitionStub struct {
 	calls      int
-	definition projectmanifest.Project
+	definition projectmanifest.ResourceManifest
 	compiled   map[string]*semanticquery.CompiledModel
 	err        error
 }
@@ -84,10 +84,10 @@ func (s *exploreFromDefinitionStub) AuthorizedExploreModel(_ context.Context, pr
 	return value, compiled, projectgraph.ServingIdentity{ProjectID: projectID, Environment: "production", GenerationID: "generation:test"}, nil
 }
 
-func (s *exploreFromDefinitionStub) ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error) {
+func (s *exploreFromDefinitionStub) ProjectDefinitionSnapshot(context.Context) (projectmanifest.ResourceManifest, map[string]*semanticquery.CompiledModel, error) {
 	s.calls++
 	if s.err != nil {
-		return projectmanifest.Project{}, nil, s.err
+		return projectmanifest.ResourceManifest{}, nil, s.err
 	}
 	return s.definition, s.compiled, nil
 }
@@ -123,7 +123,7 @@ func TestExploreFromDashboardUsesActiveAuthoredSourceAndCanonicalURL(t *testing.
 		Pages: []document.DashboardPage{{ID: "overview", Components: []document.DashboardPageComponent{{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "sales_card"}, Type: "visual", Visual: "sales"}}}}},
 	}}
 	source := &exploreFromSourceStub{source: sourceadapter.Source{Ref: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project:sales", DashboardID: "dashboard:sales"}, Document: doc, Provenance: sourceadapter.Provenance{Kind: sourceadapter.SourceProject, Project: &sourceadapter.ProjectProvenance{ProjectID: "project:sales", DashboardID: "dashboard:sales", Identity: projectgraph.ServingIdentity{ProjectID: "project:sales", Environment: "production", GenerationID: "generation:test"}}}}}
-	definition := &exploreFromDefinitionStub{definition: projectmanifest.Project{ID: "project:sales", SemanticModels: map[string]*model.Model{"semantic:sales": modelValue}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}}
+	definition := &exploreFromDefinitionStub{definition: projectmanifest.ResourceManifest{SemanticModels: map[string]*model.Model{"semantic:sales": modelValue}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}}
 	result, err := ExploreFromDashboard(t.Context(), ExploreFromDashboardOptions{Sources: source, Definition: definition}, ExploreFromDashboardRequest{
 		ProjectID: "project:sales", DashboardID: "dashboard:sales", PageID: "overview", VisualID: "sales", ActorID: "principal:alice", Return: ExploreReturnContext{Surface: ExploreReturnDashboard, DashboardID: "dashboard:sales"},
 	})
@@ -209,7 +209,7 @@ func TestExploreFromDashboardCarriesTypedStateOnlyForSelectedVisual(t *testing.T
 		}},
 	}}
 	source := &exploreFromSourceStub{source: sourceadapter.Source{Ref: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project:sales", DashboardID: "dashboard:sales"}, Document: doc, Provenance: sourceadapter.Provenance{Kind: sourceadapter.SourceProject, Project: &sourceadapter.ProjectProvenance{ProjectID: "project:sales", DashboardID: "dashboard:sales", Identity: projectgraph.ServingIdentity{ProjectID: "project:sales", Environment: "production", GenerationID: "generation:test"}}}}}
-	definition := &exploreFromDefinitionStub{definition: projectmanifest.Project{ID: "project:sales", SemanticModels: map[string]*model.Model{"semantic:sales": modelValue}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}}
+	definition := &exploreFromDefinitionStub{definition: projectmanifest.ResourceManifest{SemanticModels: map[string]*model.Model{"semantic:sales": modelValue}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}}
 	filter := exploration.ExplorationFilter{Field: "orders.status", DatasetID: stringPointerForTest("orders"), Expression: exploration.ExplorationFilterExpression{Value: &exploration.ComparisonExplorationFilterExpression{Kind: "comparison", Operator: "equals", Value: exploration.ExplorationFilterValue{Value: &exploration.StringExplorationFilterValue{Kind: "string", Value: "paid"}}}}}
 	result, err := ExploreFromDashboard(t.Context(), ExploreFromDashboardOptions{Sources: source, Definition: definition}, ExploreFromDashboardRequest{ProjectID: "project:sales", DashboardID: "dashboard:sales", PageID: "overview", ComponentID: "sales_card", VisualID: "sales", ActorID: "principal:alice", Return: ExploreReturnContext{Surface: ExploreReturnDashboard, DashboardID: "dashboard:sales", PageID: "overview"}, State: &DashboardExploreState{ModelID: "semantic:sales", DatasetID: stringPointerForTest("orders"), Filters: []exploration.ExplorationFilter{filter}, FilterBindingIDs: []string{"editable_region"}}})
 	if err != nil {
@@ -295,7 +295,7 @@ func TestExploreFromDashboardSupportsPublishedInstanceSource(t *testing.T) {
 	doc := document.DashboardDocument{Spec: document.DashboardSpec{SemanticModel: "semantic:sales", Visuals: map[string]document.DashboardVisual{"sales": {Type: document.DashboardVisualTypeTable, Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"}, Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{Reference: &document.DashboardDimensionReference{Dimension: "status"}}}, Metrics: []document.DashboardMetricSelection{{Reference: &document.DashboardMetricReference{Metric: "revenue"}}}}}, Presentation: document.DashboardPresentation{Value: &document.TableDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "table"}, Type: "table", RowHeight: 24, ShowHeader: true}}}}}}
 	token := dashboardauthoring.RevisionToken{RevisionID: "revision:published", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)}
 	source := &exploreFromSourceStub{published: sourceadapter.Source{Ref: sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project:sales", DashboardID: "dashboard:sales"}, Document: doc, Provenance: sourceadapter.Provenance{Kind: sourceadapter.SourceInstance, Instance: &sourceadapter.InstanceProvenance{ProjectID: "project:sales", DashboardID: "dashboard:sales", PublishedRevision: token}}}}
-	definition := &exploreFromDefinitionStub{definition: projectmanifest.Project{ID: "project:sales", SemanticModels: map[string]*model.Model{"semantic:sales": modelValue}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}}
+	definition := &exploreFromDefinitionStub{definition: projectmanifest.ResourceManifest{SemanticModels: map[string]*model.Model{"semantic:sales": modelValue}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}}
 	result, err := ExploreFromDashboard(t.Context(), ExploreFromDashboardOptions{Sources: source, Definition: definition}, ExploreFromDashboardRequest{ProjectID: "project:sales", DashboardID: "dashboard:sales", VisualID: "sales", ActorID: "principal:alice", SourceKind: sourceadapter.SourceInstance, Return: ExploreReturnContext{Surface: ExploreReturnExplorer}})
 	if err != nil || result.Spec.ModelID != "semantic:sales" {
 		t.Fatalf("published instance handoff = %#v, %v", result, err)
@@ -354,7 +354,7 @@ func TestExploreFromDashboardRouteReturnsCanonicalLocationAndSafePage(t *testing
 	}}
 	identity := projectgraph.ServingIdentity{ProjectID: "project:sales", Environment: "production", GenerationID: "generation:test"}
 	app := &exploreFromRouteAppStub{source: sourceadapter.Source{Ref: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project:sales", DashboardID: "dashboard:sales"}, Document: doc, Provenance: sourceadapter.Provenance{Kind: sourceadapter.SourceProject, Project: &sourceadapter.ProjectProvenance{ProjectID: "project:sales", DashboardID: "dashboard:sales", Identity: identity}}}}
-	definition := &exploreFromDefinitionStub{definition: projectmanifest.Project{ID: "project:sales", SemanticModels: map[string]*model.Model{"semantic:sales": modelValue}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}}
+	definition := &exploreFromDefinitionStub{definition: projectmanifest.ResourceManifest{SemanticModels: map[string]*model.Model{"semantic:sales": modelValue}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}}
 	h := &BrowserHandler{DashboardAuthoring: app, ProjectDefinitionReader: definition, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:sales", nil }, CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "principal:alice"}, true }}
 	router := chi.NewRouter()
 	h.MountAuthenticated(router)
@@ -420,7 +420,7 @@ func TestExploreFromDashboardRouteSupportsPublishedInstanceComponent(t *testing.
 	token := dashboardauthoring.RevisionToken{RevisionID: "revision:published", Number: 1, ContentHash: "sha256:" + strings.Repeat("b", 64)}
 	source := sourceadapter.Source{Ref: sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project:sales", DashboardID: "dashboard:sales"}, Document: doc, Provenance: sourceadapter.Provenance{Kind: sourceadapter.SourceInstance, Instance: &sourceadapter.InstanceProvenance{ProjectID: "project:sales", DashboardID: "dashboard:sales", PublishedRevision: token}}}
 	app := &exploreFromRouteAppStub{source: source, published: source, sourceKind: sourceadapter.SourceInstance}
-	definition := &exploreFromDefinitionStub{definition: projectmanifest.Project{ID: "project:sales", SemanticModels: map[string]*model.Model{"semantic:sales": modelValue}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}}
+	definition := &exploreFromDefinitionStub{definition: projectmanifest.ResourceManifest{SemanticModels: map[string]*model.Model{"semantic:sales": modelValue}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}}
 	h := &BrowserHandler{DashboardAuthoring: app, ProjectDefinitionReader: definition, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:sales", nil }, CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "principal:alice"}, true }}
 	router := chi.NewRouter()
 	h.MountAuthenticated(router)

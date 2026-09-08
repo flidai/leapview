@@ -14,11 +14,21 @@ tests:
         values: '0+5x20'
       - series: 'leapview_duckdb_fatal_health{job="leapview",instance="app:8080",pod="leapview-healthy"}'
         values: '0x20'
-      - series: 'leapview_recovery_qualification_scrape_error{job="leapview",instance="app:8080"}'
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '10x20'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '2x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '8x20'
+      - series: 'leapview_postgres_pool_constructing_connections{job="leapview",instance="app:8080",pool="control_runtime"}'
         values: '0x20'
-      - series: 'leapview_recovery_qualification_overdue{job="leapview",instance="app:8080"}'
+      - series: 'leapview_postgres_pool_acquire_count_total{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '0+10x20'
+      - series: 'leapview_postgres_pool_acquire_duration_seconds_total{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '0+10x20'
+      - series: 'leapview_postgres_pool_empty_acquire_count_total{job="leapview",instance="app:8080",pool="control_runtime"}'
         values: '0x20'
-      - series: 'leapview_recovery_qualification_evidence{job="leapview",instance="app:8080",state="failed"}'
+      - series: 'leapview_postgres_pool_canceled_acquire_count_total{job="leapview",instance="app:8080",pool="control_runtime"}'
         values: '0x20'
     alert_rule_test:
       - eval_time: 15m
@@ -31,19 +41,28 @@ tests:
         alertname: LeapViewDuckDBFatalHealth
         exp_alerts: []
       - eval_time: 15m
-        alertname: LeapViewRecoveryQualificationLedgerScrapeFailure
-        exp_alerts: []
-      - eval_time: 15m
-        alertname: LeapViewRecoveryQualificationOverdue
-        exp_alerts: []
-      - eval_time: 15m
-        alertname: LeapViewRecoveryQualificationEvidencePublicationFailure
-        exp_alerts: []
-      - eval_time: 15m
         alertname: LeapViewDashboardRefreshFastBurn
         exp_alerts: []
       - eval_time: 15m
         alertname: LeapViewDashboardRefreshSlowBurn
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolSaturation
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolCriticalSaturation
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolNoHeadroom
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolCanceledAcquire
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolAcquireLatency
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolConnectionChurn
         exp_alerts: []
 
   - name: unavailable target fires after two minutes
@@ -122,96 +141,6 @@ tests:
               runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#duckdb-fatal-health-alert-fires"
       - eval_time: 5m
         alertname: LeapViewDuckDBFatalHealth
-        exp_alerts: []
-
-  - name: recovery ledger scrape failure fires and recovers
-    interval: 1m
-    input_series:
-      - series: 'leapview_recovery_qualification_scrape_error{job="leapview",instance="app:8080",operation="restore",state="failed",occurrence="occurrence-forbidden",schedule="schedule-forbidden",artifact="artifact-forbidden",target="target-forbidden",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
-        values: '1x7 0x4'
-    alert_rule_test:
-      - eval_time: 6m
-        alertname: LeapViewRecoveryQualificationLedgerScrapeFailure
-        exp_alerts:
-          - exp_labels:
-              instance: app:8080
-              job: leapview
-              service: leapview
-              severity: warning
-            exp_annotations:
-              summary: "LeapView recovery qualification ledger on app:8080 is unavailable"
-              description: "LeapView has been unable to collect recovery qualification ledger status on app:8080 for more than 5 minutes."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
-      - eval_time: 9m
-        alertname: LeapViewRecoveryQualificationLedgerScrapeFailure
-        exp_alerts: []
-
-  - name: policy overdue qualification fires and recovers
-    interval: 1m
-    input_series:
-      - series: 'leapview_recovery_qualification_overdue{job="leapview",instance="app:8080",operation="backup",state="overdue",occurrence="occurrence-forbidden",schedule="schedule-forbidden",artifact="artifact-forbidden",target="target-forbidden",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
-        values: '1x12 0x4'
-    alert_rule_test:
-      - eval_time: 11m
-        alertname: LeapViewRecoveryQualificationOverdue
-        exp_alerts:
-          - exp_labels:
-              instance: app:8080
-              job: leapview
-              service: leapview
-              severity: critical
-            exp_annotations:
-              summary: "LeapView recovery qualification on app:8080 is overdue"
-              description: "At least one recovery qualification on app:8080 has remained past its policy-defined stale deadline for more than 10 minutes."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
-      - eval_time: 14m
-        alertname: LeapViewRecoveryQualificationOverdue
-        exp_alerts: []
-
-  - name: delayed reconciliation remains healthy before the policy deadline
-    interval: 1m
-    input_series:
-      - series: 'leapview_recovery_qualification_missing{job="leapview",instance="app:8080",schedule="schedule-forbidden"}'
-        values: '1x20'
-      - series: 'leapview_recovery_qualification_due{job="leapview",instance="app:8080",occurrence="occurrence-forbidden"}'
-        values: '1x20'
-      - series: 'leapview_recovery_qualification_overdue{job="leapview",instance="app:8080"}'
-        values: '0x20'
-      - series: 'leapview_recovery_qualification_scrape_error{job="leapview",instance="app:8080"}'
-        values: '0x20'
-      - series: 'leapview_recovery_qualification_evidence{job="leapview",instance="app:8080",state="failed"}'
-        values: '0x20'
-    alert_rule_test:
-      - eval_time: 15m
-        alertname: LeapViewRecoveryQualificationLedgerScrapeFailure
-        exp_alerts: []
-      - eval_time: 15m
-        alertname: LeapViewRecoveryQualificationOverdue
-        exp_alerts: []
-      - eval_time: 15m
-        alertname: LeapViewRecoveryQualificationEvidencePublicationFailure
-        exp_alerts: []
-
-  - name: evidence publication failure fires and recovers
-    interval: 1m
-    input_series:
-      - series: 'leapview_recovery_qualification_evidence{job="leapview",instance="app:8080",state="failed",operation="restore",occurrence="occurrence-forbidden",schedule="schedule-forbidden",artifact="artifact-forbidden",target="target-forbidden",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
-        values: '1x17 0x4'
-    alert_rule_test:
-      - eval_time: 16m
-        alertname: LeapViewRecoveryQualificationEvidencePublicationFailure
-        exp_alerts:
-          - exp_labels:
-              instance: app:8080
-              job: leapview
-              service: leapview
-              severity: warning
-            exp_annotations:
-              summary: "LeapView recovery evidence publication on app:8080 is failing"
-              description: "At least one recovery qualification on app:8080 has remained in failed evidence publication state for more than 15 minutes."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
-      - eval_time: 19m
-        alertname: LeapViewRecoveryQualificationEvidencePublicationFailure
         exp_alerts: []
 
   - name: dashboard refresh single-window spike does not fire
@@ -1085,205 +1014,208 @@ tests:
               description: "Slow completed dashboard refreshes on app:8080 meet or exceed the 6x burn-rate threshold over both 30 minutes and 6 hours, with at least 60 completed refreshes in the 6-hour window."
               runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-latency-slow-burn-alert-fires"
 
-  - name: healthy audit outbox and historical totals do not alert
+  - name: PostgreSQL pool warning saturation preserves bounded labels
     interval: 1m
     input_series:
-      - series: 'up{job="leapview",instance="app:8080"}'
-        values: '1x20'
-      - series: 'leapview_audit_outbox_scrape_error{job="leapview",instance="app:8080"}'
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="control_runtime",pod="leapview-1"}'
+        values: '100x20'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="control_runtime",pod="leapview-1"}'
+        values: '90x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="control_runtime",pod="leapview-1"}'
+        values: '10x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: LeapViewPostgresPoolSaturation
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolSaturation
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              pool: control_runtime
+              service: leapview
+              severity: warning
+            exp_annotations:
+              summary: "LeapView PostgreSQL pool control_runtime on app:8080 is saturated"
+              description: "The control_runtime PostgreSQL pool on app:8080 has remained at or above 90% acquired capacity for more than 10 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-saturation-alert-fires"
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolCriticalSaturation
+        exp_alerts: []
+
+  - name: PostgreSQL pool critical saturation fires at threshold
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="ducklake_runtime"}'
+        values: '100x20'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="ducklake_runtime"}'
+        values: '98x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="ducklake_runtime"}'
+        values: '2x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: LeapViewPostgresPoolCriticalSaturation
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: LeapViewPostgresPoolCriticalSaturation
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              pool: ducklake_runtime
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView PostgreSQL pool ducklake_runtime on app:8080 has critical saturation"
+              description: "The ducklake_runtime PostgreSQL pool on app:8080 has remained at or above 98% acquired capacity for more than 5 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-critical-saturation-alert-fires"
+
+  - name: PostgreSQL pool saturation ignores disabled zero-capacity pools
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="control_readonly"}'
         values: '0x20'
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="pending"}'
-        values: '12x20'
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="retry"}'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="control_readonly"}'
+        values: '0x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="control_readonly"}'
+        values: '0x20'
+      - series: 'leapview_postgres_pool_empty_acquire_count_total{job="leapview",instance="app:8080",pool="control_readonly"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolSaturation
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolCriticalSaturation
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolNoHeadroom
+        exp_alerts: []
+
+  - name: PostgreSQL pool no headroom fires for high utilization without idle capacity
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="control_maintenance"}'
+        values: '20x20'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="control_maintenance"}'
+        values: '19x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="control_maintenance"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: LeapViewPostgresPoolNoHeadroom
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: LeapViewPostgresPoolNoHeadroom
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              pool: control_maintenance
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView PostgreSQL pool control_maintenance on app:8080 has no headroom"
+              description: "The control_maintenance PostgreSQL pool on app:8080 has had no idle capacity at high utilization or has waited for an empty pool for more than 5 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-no-headroom-alert-fires"
+
+  - name: PostgreSQL pool no headroom fires for successful waits
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_max_connections{job="leapview",instance="app:8080",pool="ducklake_maintenance"}'
+        values: '4x20'
+      - series: 'leapview_postgres_pool_acquired_connections{job="leapview",instance="app:8080",pool="ducklake_maintenance"}'
+        values: '1x20'
+      - series: 'leapview_postgres_pool_idle_connections{job="leapview",instance="app:8080",pool="ducklake_maintenance"}'
         values: '3x20'
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="leased"}'
-        values: '1x20'
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="poison"}'
-        values: '0x20'
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="quarantined"}'
-        values: '0x20'
-      - series: 'leapview_audit_outbox_oldest_undelivered_age_seconds{job="leapview",instance="app:8080"}'
-        values: '300x20'
-      - series: 'leapview_audit_outbox_capacity{job="leapview",instance="app:8080"}'
-        values: '100000x20'
-      - series: 'leapview_audit_outbox_capacity_remaining{job="leapview",instance="app:8080"}'
-        values: '99984x20'
-      - series: 'leapview_audit_outbox_attempts{job="leapview",instance="app:8080"}'
-        values: '999999x20'
-      - series: 'leapview_audit_outbox_materialized{job="leapview",instance="app:8080"}'
-        values: '999999x20'
+      - series: 'leapview_postgres_pool_empty_acquire_count_total{job="leapview",instance="app:8080",pool="ducklake_maintenance"}'
+        values: '0+1x20'
     alert_rule_test:
-      - eval_time: 15m
-        alertname: LeapViewAuditOutboxMetricsCollectionFailure
+      - eval_time: 4m
+        alertname: LeapViewPostgresPoolNoHeadroom
         exp_alerts: []
-      - eval_time: 15m
-        alertname: LeapViewAuditOutboxTerminalIntents
-        exp_alerts: []
-      - eval_time: 15m
-        alertname: LeapViewAuditOutboxExcessiveBacklog
-        exp_alerts: []
-      - eval_time: 15m
-        alertname: LeapViewAuditOutboxCapacityExhausted
-        exp_alerts: []
-
-  - name: audit outbox metrics collection failure fires with bounded labels and recovers
-    interval: 1m
-    input_series:
-      - series: 'up{job="leapview",instance="app:8080"}'
-        values: '1x12'
-      - series: 'leapview_audit_outbox_scrape_error{job="leapview",instance="app:8080",state="failed",request_id="req-forbidden",trace_id="trace-forbidden",project_id="project-forbidden",resource_id="resource-forbidden",payload_id="payload-forbidden"}'
-        values: '1x7 0x5'
-    alert_rule_test:
-      - eval_time: 6m
-        alertname: LeapViewAuditOutboxMetricsCollectionFailure
+      - eval_time: 10m
+        alertname: LeapViewPostgresPoolNoHeadroom
         exp_alerts:
           - exp_labels:
               instance: app:8080
               job: leapview
+              pool: ducklake_maintenance
               service: leapview
               severity: critical
             exp_annotations:
-              summary: "LeapView audit-outbox telemetry on app:8080 is unavailable"
-              description: "Audit-outbox aggregate metrics on app:8080 have failed collection or remained absent from an otherwise scrapeable target for more than 5 minutes."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-metrics-collection-failure-alert-fires"
+              summary: "LeapView PostgreSQL pool ducklake_maintenance on app:8080 has no headroom"
+              description: "The ducklake_maintenance PostgreSQL pool on app:8080 has had no idle capacity at high utilization or has waited for an empty pool for more than 5 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-no-headroom-alert-fires"
+
+  - name: PostgreSQL pool canceled acquisitions fire a warning
+    interval: 1m
+    input_series:
+      - series: 'leapview_postgres_pool_canceled_acquire_count_total{job="leapview",instance="app:8080",pool="control_runtime",request_id="restricted"}'
+        values: '0+1x20'
+    alert_rule_test:
       - eval_time: 9m
-        alertname: LeapViewAuditOutboxMetricsCollectionFailure
+        alertname: LeapViewPostgresPoolCanceledAcquire
         exp_alerts: []
-
-  - name: missing audit outbox telemetry on a scrapeable target is not healthy
-    interval: 1m
-    input_series:
-      - series: 'up{job="leapview",instance="app:8080",pod="leapview-a"}'
-        values: '1x8'
-    alert_rule_test:
-      - eval_time: 6m
-        alertname: LeapViewAuditOutboxMetricsCollectionFailure
-        exp_alerts:
-          - exp_labels:
-              instance: app:8080
-              job: leapview
-              service: leapview
-              severity: critical
-            exp_annotations:
-              summary: "LeapView audit-outbox telemetry on app:8080 is unavailable"
-              description: "Audit-outbox aggregate metrics on app:8080 have failed collection or remained absent from an otherwise scrapeable target for more than 5 minutes."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-metrics-collection-failure-alert-fires"
-      - eval_time: 6m
-        alertname: LeapViewAuditOutboxTerminalIntents
-        exp_alerts: []
-      - eval_time: 6m
-        alertname: LeapViewAuditOutboxExcessiveBacklog
-        exp_alerts: []
-      - eval_time: 6m
-        alertname: LeapViewAuditOutboxCapacityExhausted
-        exp_alerts: []
-
-  - name: poison and quarantined audit intents aggregate to one alert and recover
-    interval: 1m
-    input_series:
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="poison",request_id="req-forbidden",trace_id="trace-forbidden",project_id="project-forbidden",resource_id="resource-forbidden",payload_id="payload-forbidden"}'
-        values: '1x7 0x5'
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="quarantined",request_id="req-other",trace_id="trace-other"}'
-        values: '2x7 0x5'
-    alert_rule_test:
-      - eval_time: 6m
-        alertname: LeapViewAuditOutboxTerminalIntents
-        exp_alerts:
-          - exp_labels:
-              instance: app:8080
-              job: leapview
-              service: leapview
-              severity: critical
-            exp_annotations:
-              summary: "LeapView audit outbox on app:8080 contains terminal intents"
-              description: "At least one poison or quarantined audit intent has remained on app:8080 for more than 5 minutes."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-terminal-intents-alert-fires"
-      - eval_time: 9m
-        alertname: LeapViewAuditOutboxTerminalIntents
-        exp_alerts: []
-
-  - name: exact audit backlog boundaries remain healthy
-    interval: 1m
-    input_series:
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="pending"}'
-        values: '6000x20'
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="retry"}'
-        values: '3999x20'
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="leased"}'
-        values: '1x20'
-      - series: 'leapview_audit_outbox_oldest_undelivered_age_seconds{job="leapview",instance="app:8080"}'
-        values: '3600x20'
-    alert_rule_test:
       - eval_time: 15m
-        alertname: LeapViewAuditOutboxExcessiveBacklog
-        exp_alerts: []
-
-  - name: audit backlog count aggregates dimensions and recovers
-    interval: 1m
-    input_series:
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="pending",request_id="req-forbidden",trace_id="trace-forbidden",project_id="project-forbidden"}'
-        values: '6000x12 0x4'
-      - series: 'leapview_audit_outbox_intents{job="leapview",instance="app:8080",state="retry",resource_id="resource-forbidden",payload_id="payload-forbidden"}'
-        values: '4001x12 0x4'
-    alert_rule_test:
-      - eval_time: 11m
-        alertname: LeapViewAuditOutboxExcessiveBacklog
+        alertname: LeapViewPostgresPoolCanceledAcquire
         exp_alerts:
           - exp_labels:
               instance: app:8080
               job: leapview
+              pool: control_runtime
               service: leapview
               severity: warning
             exp_annotations:
-              summary: "LeapView audit outbox on app:8080 has an excessive undelivered backlog"
-              description: "The audit-outbox backlog on app:8080 has remained beyond a code-owned readiness boundary (more than 10,000 undelivered intents or an oldest age greater than 1 hour) for more than 10 minutes."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-excessive-backlog-alert-fires"
-      - eval_time: 14m
-        alertname: LeapViewAuditOutboxExcessiveBacklog
-        exp_alerts: []
+              summary: "LeapView PostgreSQL pool control_runtime on app:8080 has canceled acquires"
+              description: "The control_runtime PostgreSQL pool on app:8080 has recorded canceled connection acquisitions for more than 10 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-canceled-acquire-alert-fires"
 
-  - name: audit backlog age beyond one hour fires and recovers
+  - name: PostgreSQL pool acquire latency fires above two seconds
     interval: 1m
     input_series:
-      - series: 'leapview_audit_outbox_oldest_undelivered_age_seconds{job="leapview",instance="app:8080",request_id="req-forbidden",trace_id="trace-forbidden"}'
-        values: '3601x12 0x4'
+      - series: 'leapview_postgres_pool_acquire_count_total{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '0+1x20'
+      - series: 'leapview_postgres_pool_acquire_duration_seconds_total{job="leapview",instance="app:8080",pool="control_runtime"}'
+        values: '0+3x20'
     alert_rule_test:
-      - eval_time: 11m
-        alertname: LeapViewAuditOutboxExcessiveBacklog
+      - eval_time: 9m
+        alertname: LeapViewPostgresPoolAcquireLatency
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolAcquireLatency
         exp_alerts:
           - exp_labels:
               instance: app:8080
               job: leapview
+              pool: control_runtime
               service: leapview
               severity: warning
             exp_annotations:
-              summary: "LeapView audit outbox on app:8080 has an excessive undelivered backlog"
-              description: "The audit-outbox backlog on app:8080 has remained beyond a code-owned readiness boundary (more than 10,000 undelivered intents or an oldest age greater than 1 hour) for more than 10 minutes."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-excessive-backlog-alert-fires"
-      - eval_time: 14m
-        alertname: LeapViewAuditOutboxExcessiveBacklog
-        exp_alerts: []
+              summary: "LeapView PostgreSQL pool control_runtime on app:8080 has high acquire latency"
+              description: "The ten-minute average connection-acquire wait for the control_runtime PostgreSQL pool on app:8080 has remained above 2 seconds for more than 10 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-acquire-latency-alert-fires"
 
-  - name: configured audit outbox capacity exhaustion fires with bounded labels and recovers
+  - name: PostgreSQL pool connection churn fires while constructing
     interval: 1m
     input_series:
-      - series: 'leapview_audit_outbox_capacity{job="leapview",instance="app:8080",state="forbidden",request_id="req-forbidden",trace_id="trace-forbidden"}'
-        values: '100x12'
-      - series: 'leapview_audit_outbox_capacity_remaining{job="leapview",instance="app:8080",project_id="project-forbidden",resource_id="resource-forbidden",payload_id="payload-forbidden"}'
-        values: '0x7 1x5'
+      - series: 'leapview_postgres_pool_constructing_connections{job="leapview",instance="app:8080",pool="ducklake_runtime",pod="leapview-1"}'
+        values: '1x20'
     alert_rule_test:
-      - eval_time: 6m
-        alertname: LeapViewAuditOutboxCapacityExhausted
+      - eval_time: 9m
+        alertname: LeapViewPostgresPoolConnectionChurn
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewPostgresPoolConnectionChurn
         exp_alerts:
           - exp_labels:
               instance: app:8080
               job: leapview
+              pool: ducklake_runtime
               service: leapview
-              severity: critical
+              severity: warning
             exp_annotations:
-              summary: "LeapView audit outbox on app:8080 has exhausted undelivered capacity"
-              description: "Configured audit-outbox undelivered capacity on app:8080 has remained exhausted for more than 5 minutes."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-capacity-exhausted-alert-fires"
-      - eval_time: 9m
-        alertname: LeapViewAuditOutboxCapacityExhausted
-        exp_alerts: []
+              summary: "LeapView PostgreSQL pool ducklake_runtime on app:8080 is constructing connections"
+              description: "The ducklake_runtime PostgreSQL pool on app:8080 has continuously had connections under construction for more than 10 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#postgresql-pool-connection-churn-alert-fires"

@@ -78,7 +78,7 @@ func (p *Planner) PlanSpatialTileAggregate(request SpatialTileRequest) (Plan, er
 
 	meta := spatialEnvelopeMeta(irGraph, []string{"__tile_x", "__tile_y", "feature_count", "mvt"}, "spatial_mvt_aggregate")
 	envelope := planir.SpatialEnvelope{NodeMeta: meta, Operation: planir.SpatialEnvelopeTileAggregate, Input: irGraph.Output, Latitude: latitude, Longitude: longitude, Metrics: metricColumns, MetricProperties: metricProperties, Zoom: request.Zoom, TargetZoom: targetZoom, CellPixels: request.CellPixels, Buffer: request.Buffer}
-	return renderSpatialEnvelopePlan(irGraph, envelope, "spatial_mvt_aggregated")
+	return p.renderSpatialEnvelopePlan(irGraph, envelope, "spatial_mvt_aggregated", spatialTileMemberRefs(p, request))
 }
 
 // PlanSpatialTileRaw emits coordinate-grain MVT features for child tiles that
@@ -106,7 +106,7 @@ func (p *Planner) PlanSpatialTileRaw(request SpatialTileRawRequest) (Plan, error
 	}
 	meta := spatialEnvelopeMeta(raw.plan.IR, []string{"__tile_x", "__tile_y", "feature_count", "mvt"}, "spatial_mvt_raw")
 	envelope := planir.SpatialEnvelope{NodeMeta: meta, Operation: planir.SpatialEnvelopeTileRaw, Input: raw.plan.IR.Output, Latitude: raw.latitude, Longitude: raw.longitude, Properties: raw.properties, Identity: raw.identity, Zoom: request.Zoom, Buffer: request.Buffer, FeatureCap: request.FeatureCap}
-	return renderSpatialEnvelopePlan(raw.plan.IR, envelope, "spatial_mvt_raw")
+	return p.renderSpatialEnvelopePlan(raw.plan.IR, envelope, "spatial_mvt_raw", spatialRawMemberRefs(p, request))
 }
 
 // PlanSpatialTileBudget returns the exact revision-wide maximum raw feature
@@ -133,7 +133,7 @@ func (p *Planner) PlanSpatialTileBudget(request SpatialTileBudgetRequest) (Plan,
 	}
 	meta := spatialEnvelopeMeta(raw.plan.IR, []string{SpatialTileMaximumFeaturesColumn, SpatialTileMaximumBytesColumn}, "spatial_mvt_budget")
 	envelope := planir.SpatialEnvelope{NodeMeta: meta, Operation: planir.SpatialEnvelopeTileBudget, Input: raw.plan.IR.Output, Latitude: raw.latitude, Longitude: raw.longitude, Properties: raw.properties, Identity: raw.identity, Zoom: request.Zoom, Buffer: request.Buffer, FeatureCap: request.FeatureCap, MaximumBytes: request.MaximumBytes}
-	return renderSpatialEnvelopePlan(raw.plan.IR, envelope, "spatial_mvt_budget")
+	return p.renderSpatialEnvelopePlan(raw.plan.IR, envelope, "spatial_mvt_budget", spatialBudgetMemberRefs(p, request))
 }
 
 type spatialRawSourceRequest struct {
@@ -157,7 +157,7 @@ type spatialRawSource struct {
 }
 
 func (p *Planner) planSpatialRawSource(request spatialRawSourceRequest) (spatialRawSource, error) {
-	governed, err := p.Plan(Request{Dataset: request.Dataset, Dimensions: request.Dimensions, Metrics: request.Metrics, Time: request.Time, Filters: request.Filters, ColumnMasks: request.ColumnMasks})
+	governed, err := p.planAggregateInternal(Request{Dataset: request.Dataset, Dimensions: request.Dimensions, Metrics: request.Metrics, Time: request.Time, Filters: request.Filters, ColumnMasks: request.ColumnMasks}, false)
 	if err != nil {
 		return spatialRawSource{}, err
 	}

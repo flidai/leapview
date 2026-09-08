@@ -12,7 +12,7 @@ It is a release candidate for controlled testing, not GA. Its immutable image
 is:
 
 ```text
-ghcr.io/yacobolo/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9
+ghcr.io/flidai/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9
 ```
 
 Download the version-matched operations bundle and checksum for the machine
@@ -27,136 +27,26 @@ that will run `leapviewctl`:
 
 ## Before you begin
 
-Install Docker Engine. The five-minute path below needs no source checkout,
-registry login, Go, Bun, Task, manual YAML, or external dataset. A public
-production instance additionally needs Docker Compose, a DNS name, HTTPS,
-durable secret storage, and off-host backups.
+Install Docker Engine and Docker Compose. A public instance also needs a DNS
+name, HTTPS, durable secret storage, PostgreSQL, and provider-native recovery
+storage.
 
-## Run the five-minute evaluation
+## Choose an installation
 
-Pull the public image and start its self-contained evaluator:
-
-```sh
-IMAGE='ghcr.io/yacobolo/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9'
-docker pull "$IMAGE"
-docker run --detach --name leapview-evaluate --init \
-  --publish 127.0.0.1:8080:8080 \
-  --volume leapview-evaluate:/var/lib/leapview \
-  "$IMAGE" evaluate
-```
-
-The evaluator generates private runtime secrets, creates a forced-change local
-administrator, stages the small synthetic dataset shipped in the image,
-creates a private candidate, and publishes those exact bytes into one
-disposable project. It prints no secret to the container log. Wait for the
-health check, then consume the credentials once:
-
-```sh
-docker exec leapview-evaluate leapview healthcheck
-docker exec leapview-evaluate leapview evaluate first-login
-```
-
-Open <http://localhost:8080>, sign in, and change the temporary password. Choose
-**Five-minute Sales Evaluation**, select a State, and confirm that the Orders
-KPI, revenue chart, and governed order table update together. This exercises
-authentication, immutable serving-state deployment, managed data, semantic
-query planning, DuckDB execution, filters, and table rendering.
-
-The `127.0.0.1` publish address is part of the security boundary. Evaluation
-mode intentionally uses local HTTP and generated local secrets; do not expose
-it on a LAN or the internet and do not treat the synthetic project as
-production seeding.
-
-### Persistence, diagnostics, and cleanup
-
-The named volume preserves the initialized instance, changed password, managed
-data, and active deployment:
-
-```sh
-docker restart leapview-evaluate
-docker exec leapview-evaluate leapview healthcheck
-```
-
-If initialization does not become healthy, inspect the deterministic bootstrap
-log and container state:
-
-```sh
-docker logs leapview-evaluate
-docker inspect --format '{{.State.Health.Status}}' leapview-evaluate
-```
-
-`first-login` is deliberately one-time. If its output was lost, reset the
-disposable evaluator. Removing the container does not remove its volume:
-
-```sh
-docker rm --force leapview-evaluate
-```
-
-Delete the persisted evaluation instance only when a full reset is intended:
-
-```sh
-docker volume rm leapview-evaluate
-```
-
-The evaluator is pinned to the supported candidate digest so that the
-instructions, runtime, and retained evidence cannot drift independently.
-
-To run another evaluator concurrently, give it a separate volume, container
-name, host port, and target port:
-
-```sh
-docker run --detach --name leapview-evaluate-2 --init \
-  --publish 127.0.0.1:8081:8081 \
-  --volume leapview-evaluate-2:/var/lib/leapview \
-  "$IMAGE" evaluate --port 8081
-```
-
-Each evaluator then has its own instance identity and ordinary target origin
-(`http://localhost:8080` or `http://localhost:8081`). Reusing either the state
-volume or listen port is rejected instead of merging instances.
-
-### Move beyond the sample
-
-The bundled synthetic project exists only to qualify the product journey.
-From a source checkout, the evaluator is also an ordinary authoring target:
-
-```sh
-leapview login http://localhost:8080 \
-  --project evaluation/project/leapview.yaml
-PLAN_JSON=$(leapview plan evaluation/project/leapview.yaml \
-  --target http://localhost:8080 --format json)
-PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -r .planId)
-BUILD_JSON=$(leapview build "$PLAN_ID" --format json)
-CANDIDATE_ID=$(printf '%s' "$BUILD_JSON" | jq -r .candidateId)
-leapview publish "$CANDIDATE_ID"
-```
-
-Complete the browser sign-in prompted by `login`. Local evaluation policy
-activates the exact candidate without a separate enterprise approver; durable
-production targets retain protected approval and activation. To connect real
-data, start with [Connect a data source](/docs/guides/build/connect-data). For
-a durable or externally reachable instance, use the versioned Compose release
-below; it adds immutable image pinning, HTTPS, backups, and state-aware
-upgrades.
-
-For an isolated one-shot private preview of the evaluator project, you may use
-the optional `dev` loop against the same loopback target:
-
-```sh
-leapview dev --once \
-  --project evaluation/project/leapview.yaml \
-  --target http://localhost:8080 --no-browser
-```
-
-This preview is a convenience for checking an authoring change; reviewed
-publication still follows the `plan`, `build`, and `publish` commands above.
+The supported installation is the PostgreSQL-backed Compose deployment below.
+It uses the same native control, delivery, and recovery architecture in local,
+staging, and production environments; there is no embedded control-plane mode.
 
 ## Run a durable production instance
 
 The released Compose package is the recommended operations layer around the
 same public image. It is not a separate LeapView distribution. It supplies
-hardened container settings, generated production secrets, optional Caddy
-HTTPS, validated backup and restore, and paired image-and-state rollback.
+hardened container settings, generated production secrets, and optional Caddy
+HTTPS. Production PostgreSQL/DuckLake backup and restore remain provider-native
+operations covered by the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore); Compose does not provide
+image-and-state upgrade or rollback.
 
 1. Select, download, verify, and extract the current platform archive:
 
@@ -194,14 +84,22 @@ fi
 image reference, the base Compose stack, an optional Caddy HTTPS overlay, and
 the native Go `leapviewctl` operations binary.
 
-3. Copy the deployment template and initialize the instance:
+3. Copy the deployment and application templates. Before initialization,
+   provision or select the external PostgreSQL provider, then fill in the
+   control/DuckLake URLs, distinct roles, and target delivery-pool identities
+in `leapview.env`:
 
 ```sh
 cp deployment.env.example deployment.env
+cp leapview.env.example leapview.env
+# Run pool bootstrap without --apply and copy its deterministic pool_id and
+# compatibility_digest into leapview.env before init.
 ./leapviewctl init \
   --admin-email admin@example.com \
   --domain dash.example.com \
   --environment prod
+# Now inject the operation-only DuckLake migrator credential and repeat the
+# exact pool bootstrap command with --apply before starting the service.
 ```
 
 4. Start the instance and consume the one-time credentials:
@@ -215,38 +113,78 @@ Before adoption, run `./leapviewctl qualify installed-candidate` from the
 extracted archive.
 `QUALIFICATION.md` maps every automated assertion to the corresponding human
 check, including anonymous distribution, the five-minute sample, audited
-authorization denial, restart persistence, and an isolated restore using the
-separately managed secret configuration.
+authorization denial, restart persistence, and recovery-readiness checks using
+the separately managed secret configuration.
 
 Initialization treats `--domain` as the canonical public hostname and derives `LEAPVIEW_PUBLIC_URL=https://<domain>`, the allowed host, and the Caddy domain from it. It also generates production secrets, creates the persistent volume, validates the resulting production configuration, and atomically creates a forced-change local administrator plus a restricted publisher token. `first-login` prints and deletes that one-time credential file.
 
-`leapviewctl` is an optional production operations controller, not a prerequisite for pulling or running LeapView. It invokes the installed Docker Compose CLI and does not require Bash or direct access to the Docker socket API. You may manage the image with your existing container platform if it preserves the same single-process, persistent-home, initialization, backup, and environment contracts.
+The Compose bundle does not include PostgreSQL. Initialization preserves the
+operator-supplied PostgreSQL and delivery-pool settings and fails with the
+missing variable name when the clean-slate production contract is incomplete.
+The pool-bootstrap dry run precedes initialization only to derive identities;
+the applying run follows initialization because it verifies the newly applied
+control baseline. Do not store the operation-only DuckLake migrator credential
+in the serving `leapview.env`.
+
+`leapviewctl` is an optional production operations controller, not a prerequisite for pulling or running LeapView. It invokes the installed Docker Compose CLI and does not require Bash or direct access to the Docker socket API. You may manage the image with your existing container platform if it preserves the same single-process, persistent-home, initialization, provider-native recovery, and environment contracts.
 
 Operators integrating the image directly must set the documented production
-environment first, run `leapview admin initialize --format json`, store its
-one-time output securely, acknowledge that output, and then start `leapview
-serve --production`. The Compose controller performs those steps atomically.
+environment first. The initialization command authenticates the dedicated
+control migrator, applies or verifies the exact control baseline, closes that
+owner-capable pool, and creates the first administrator through the ordinary
+control runtime role:
+
+```sh
+leapview admin initialize --format json > initial-credentials.json
+# Store the mode-0600 file in the target secret manager before acknowledging it.
+leapview admin initialize --acknowledge-credentials
+
+leapview admin delivery pool bootstrap \
+  --pool pool-identity.json \
+  --evidence shared-pool-evidence.json
+leapview admin delivery pool bootstrap \
+  --pool pool-identity.json \
+  --evidence shared-pool-evidence.json \
+  --apply
+```
+
+Set `LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID` and
+`LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST` to the exact values
+printed by the bootstrap command, then start `leapview serve --production`.
+Both initialization and pool bootstrap are exact-replay operations. After
+credential acknowledgement, initialization reports that the instance already
+exists and never returns the credential material again. The Compose controller
+performs the initialization and one-time credential handoff atomically; target
+provisioning must still supply the reviewed pool identity and evidence.
 
 The Caddy overlay is enabled by default. Pass `--no-https` only when an existing trusted HTTPS proxy fronts the localhost-bound application port. This changes where TLS terminates, not the external scheme: the generated public URL remains HTTPS, secure cookies remain enabled, and forwarded host and scheme headers must come only from that trusted proxy.
 
 ## Understand the instance boundary
 
-All application-owned local state is under `/var/lib/leapview` in one named volume. External customer sources such as S3 remain external and are not included in instance backups. Local managed uploads are included; S3-backed managed uploads require bucket-native backup and versioning.
+Production authority is the PostgreSQL control plane and PostgreSQL-backed
+DuckLake catalog, with Parquet and managed objects protected in their configured
+object stores. The local volume contains runtime state and caches; it is not a
+PostgreSQL recovery artifact. Use provider-native PostgreSQL backup/PITR and
+DuckLake/object-store versioning or replication, coordinated to one recovery
+point.
 
 Use separate Compose project directories and names for development, staging, and production. Never scale one project to multiple application containers or point two processes at the same volume.
 
-Common operations are:
+The controller exposes only basic lifecycle operations:
 
 ```sh
 ./leapviewctl status
 ./leapviewctl logs
-./leapviewctl backup
-./leapviewctl restore backups/leapview-<timestamp>.tar.gz
-./leapviewctl upgrade --transition-policy release-transition-policy.json ghcr.io/flidai/leapview@sha256:<digest>
-./leapviewctl rollback --transition-policy release-transition-policy.json --confirm
+./leapviewctl start
 ```
 
-The candidate archive's `release-transition-policy.json` is generated only after image admission and is bound to the exact digest in `image-reference.txt`; both upgrade and rollback require that same document. Upgrades create a state checkpoint. A failed health check restores both the previous image and state; manual rollback requires confirmation because it discards state created after the checkpoint.
+Use the container platform's immutable image rollout and change-management
+workflow for upgrades or host rollback. The target-level `leapview rollback`
+command remains available for a retained serving generation, but it does not
+restore PostgreSQL, DuckLake, object-store, or Compose state. Those recovery
+operations are external; use the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore).
 
 ## Contributor installation
 
@@ -258,8 +196,11 @@ task generate
 task dev
 ```
 
-`task dev` starts one worktree-local target and opens the private authoring
-watcher. For a durable rollout, use the canonical `plan`, `build`, and
+`task dev` provisions a loopback-only PostgreSQL 18 service scoped to the
+worktree, runs the local physical-pool qualification/bootstrap once, and
+starts one native PostgreSQL target with the private authoring watcher. The
+generated credentials remain in `.tmp/postgres-dev.env` (mode 0600); do not
+reuse them outside this worktree. For a durable rollout, use the canonical `plan`, `build`, and
 `publish CANDIDATE_ID` commands shown above. Use `task dev:status`,
 `task dev:logs`, and `task dev:stop` for lifecycle operations. Run `task ci`
 before handing off substantial changes.
@@ -303,7 +244,7 @@ identity.
 
 ## Verify
 
-Open the configured HTTPS URL, sign in with the temporary administrator credentials, and change the password when prompted. Then create a backup with `./leapviewctl backup` and confirm that both the archive and its checksum exist in `backups/`.
+Open the configured HTTPS URL, sign in with the temporary administrator credentials, and change the password when prompted. Verify the instance identity and readiness through the authenticated capabilities endpoint; follow the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore) for PostgreSQL/DuckLake protection.
 
 ## Troubleshooting
 

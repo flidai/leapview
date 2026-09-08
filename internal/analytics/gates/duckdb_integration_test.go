@@ -32,6 +32,9 @@ func TestEvaluateExecutesAllChecksAgainstDuckDBCandidateRelations(t *testing.T) 
 		}
 	}
 	query := func(ctx context.Context, plan semanticquery.Plan) (semanticquery.Rows, error) {
+		if len(plan.Columns) != 1 {
+			t.Fatalf("gate plan columns = %v, want one declared result column", plan.Columns)
+		}
 		rows, err := db.QueryContext(ctx, plan.SQL, plan.Args...)
 		if err != nil {
 			return nil, err
@@ -40,6 +43,9 @@ func TestEvaluateExecutesAllChecksAgainstDuckDBCandidateRelations(t *testing.T) 
 		columns, err := rows.Columns()
 		if err != nil {
 			return nil, err
+		}
+		if len(columns) != 1 || columns[0] != plan.Columns[0] {
+			t.Fatalf("gate query columns = %v, plan columns = %v", columns, plan.Columns)
 		}
 		result := semanticquery.Rows{}
 		for rows.Next() {

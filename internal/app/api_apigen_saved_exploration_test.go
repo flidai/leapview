@@ -11,8 +11,6 @@ import (
 	apigenapi "github.com/flidai/leapview/internal/app/api/gen"
 )
 
-const expectedAPIGenAggregateOperationCount = 221
-
 var savedExplorationOperationIDs = map[string]struct{}{
 	"archiveSavedExploration":   {},
 	"createSavedExploration":    {},

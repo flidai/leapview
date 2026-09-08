@@ -388,5 +388,5 @@ func (r *Repository) IsPlatformAdmin(ctx context.Context, principalID string) (b
 		return false, nil
 	}
 	value, err := r.q.IsPlatformAdmin(ctx, principalID)
-	return value != 0, err
+	return value, err
 }

@@ -475,9 +475,6 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 	if _, err := projectgraph.NewArtifactEnvelope(identity, validation.Graph); err != nil {
 		return servingstate.State{}, err
 	}
-	if validation.Graph.ProjectID() != projectID {
-		return servingstate.State{}, fmt.Errorf("validated graph project = %q, want %q", validation.Graph.ProjectID(), projectID)
-	}
 	if artifact.Digest != validation.Digest {
 		return servingstate.State{}, fmt.Errorf("artifact digest = %q, want %q", artifact.Digest, validation.Digest)
 	}

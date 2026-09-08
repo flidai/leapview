@@ -27,6 +27,13 @@ func (g *Graph) Canonical() ([]byte, error) {
 	if err := g.Validate(); err != nil {
 		return nil, err
 	}
+	return g.canonicalValidated()
+}
+
+// canonicalValidated serializes a graph whose caller has already validated
+// it. Keeping validation outside this helper lets one request derive several
+// identity projections without walking the same immutable graph repeatedly.
+func (g *Graph) canonicalValidated() ([]byte, error) {
 	ids := make([]string, 0, len(g.Nodes))
 	for id := range g.Nodes {
 		ids = append(ids, id)
@@ -48,7 +55,14 @@ func (g *Graph) Canonical() ([]byte, error) {
 // dependency identity. Execution targets are deliberately removed: their
 // revisions are represented separately by relation evidence.
 func (g *Graph) DependencyCanonical() ([]byte, error) {
-	canonical, err := g.Canonical()
+	if err := g.Validate(); err != nil {
+		return nil, err
+	}
+	return g.dependencyCanonicalValidated()
+}
+
+func (g *Graph) dependencyCanonicalValidated() ([]byte, error) {
+	canonical, err := g.canonicalValidated()
 	if err != nil {
 		return nil, err
 	}
@@ -82,6 +96,11 @@ func canonicalData(node Node) (json.RawMessage, error) {
 	var value any
 	switch n := node.(type) {
 	case *ScanDataset:
+		if n == nil {
+			return nil, fmt.Errorf("node is nil")
+		}
+		return canonicalData(*n)
+	case *SecurityBarrier:
 		if n == nil {
 			return nil, fmt.Errorf("node is nil")
 		}
@@ -143,14 +162,24 @@ func canonicalData(node Node) (json.RawMessage, error) {
 		return canonicalData(*n)
 	case ScanDataset:
 		value = struct {
-			Dataset  string `json:"dataset"`
-			Relation string `json:"relation,omitempty"`
-		}{n.Dataset, n.Relation}
+			Dataset                 string `json:"dataset"`
+			Relation                string `json:"relation,omitempty"`
+			RequiresSecurityBarrier bool   `json:"requires_security_barrier,omitempty"`
+		}{n.Dataset, n.Relation, n.RequiresSecurityBarrier}
+	case SecurityBarrier:
+		value = struct {
+			Input          string     `json:"input"`
+			Dataset        string     `json:"dataset"`
+			PolicyDigest   string     `json:"policy_digest"`
+			DecisionDigest string     `json:"decision_digest"`
+			Predicate      *Predicate `json:"predicate,omitempty"`
+		}{n.Input, n.Dataset, n.PolicyDigest, n.DecisionDigest, cloneSecurityPredicate(n.Predicate)}
 	case TraverseRelationship:
 		value = struct {
-			Input string           `json:"input"`
-			Path  RelationshipPath `json:"path"`
-		}{n.Input, canonicalPath(n.Path)}
+			Input       string           `json:"input"`
+			TargetInput string           `json:"target_input,omitempty"`
+			Path        RelationshipPath `json:"path"`
+		}{n.Input, n.TargetInput, canonicalPath(n.Path)}
 	case FilterRows:
 		predicate := canonicalPredicate(n.Predicate)
 		fieldRoutes := canonicalFieldRoutes(n.FieldRoutes)

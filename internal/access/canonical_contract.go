@@ -94,6 +94,15 @@ func (r ResourceRef) ValidateAgainst(project graph.ProjectGraph) error {
 	if err := r.Validate(); err != nil {
 		return err
 	}
+	if err := project.Validate(); err != nil {
+		return fmt.Errorf("%w: project graph: %w", ErrInvalidResourceRef, err)
+	}
+	// The project namespace is a control-plane identity supplied by the
+	// serving scope, not a node in the portable graph. Its ID is checked by
+	// the snapshot/audit boundary against the explicit ServingIdentity.
+	if r.kind == graph.KindProjectNamespace {
+		return nil
+	}
 	resource, ok := project.Resource(r.id)
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrResourceNotFound, r.id)
@@ -294,13 +303,13 @@ func CanonicalCapabilities() []Capability {
 // canonicalCapabilityMatrix is immutable package state. CapabilitiesForKind
 // always returns defensive copies.
 var canonicalCapabilityMatrix = map[graph.Kind][]Capability{
-	graph.KindProject:       {CapabilityProjectAdmin},
-	graph.KindConnection:    {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
-	graph.KindSource:        {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
-	graph.KindModel:         {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
-	graph.KindSemanticModel: {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
-	graph.KindPipeline:      {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
-	graph.KindDashboard:     {CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish},
+	graph.KindProjectNamespace: {CapabilityProjectAdmin},
+	graph.KindConnection:       {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
+	graph.KindSource:           {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
+	graph.KindModel:            {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
+	graph.KindSemanticModel:    {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
+	graph.KindPipeline:         {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
+	graph.KindDashboard:        {CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish},
 }
 
 // CapabilitiesForKind returns the capabilities allowed for kind in stable
@@ -454,10 +463,10 @@ func (subject SubjectRef) Validate() error {
 // There is no domain, path, display, or parent field: authorization is always
 // evaluated against this resource and this capability directly.
 type CanonicalGrant struct {
-	subject    SubjectRef
-	resource   ResourceRef
-	capability Capability
-	projectID  graph.ResourceID
+	subject     SubjectRef
+	resource    ResourceRef
+	capability  Capability
+	graphDigest string
 }
 
 // Subject returns the explicit principal or group by value.
@@ -488,13 +497,13 @@ func NewCanonicalGrant(project graph.ProjectGraph, subject SubjectRef, resource 
 	if err := resource.ValidateAgainst(project); err != nil {
 		return CanonicalGrant{}, fmt.Errorf("%w: resource: %w", ErrInvalidCanonicalGrant, err)
 	}
-	return CanonicalGrant{subject: subject, resource: resource, capability: capability, projectID: project.ProjectID()}, nil
+	return CanonicalGrant{subject: subject, resource: resource, capability: capability, graphDigest: project.Digest()}, nil
 }
 
 // Validate checks that the grant was constructed against an authoritative
 // project graph and that its canonical fields remain valid.
 func (grant CanonicalGrant) Validate() error {
-	if grant.projectID == "" {
+	if grant.graphDigest == "" {
 		return fmt.Errorf("%w: %w", ErrInvalidCanonicalGrant, ErrUnboundCanonicalGrant)
 	}
 	if err := grant.subject.Validate(); err != nil {
@@ -516,11 +525,20 @@ func (grant CanonicalGrant) ValidateAgainst(project graph.ProjectGraph) error {
 	if err := grant.Validate(); err != nil {
 		return err
 	}
-	if project.ProjectID() != grant.projectID {
-		return fmt.Errorf("%w: project identity %q does not match bound project %q", ErrInvalidCanonicalGrant, project.ProjectID(), grant.projectID)
+	if project.Digest() != grant.graphDigest {
+		return fmt.Errorf("%w: graph digest %q does not match bound graph %q", ErrInvalidCanonicalGrant, project.Digest(), grant.graphDigest)
 	}
 	if err := grant.resource.ValidateAgainst(project); err != nil {
 		return fmt.Errorf("%w: resource: %w", ErrInvalidCanonicalGrant, err)
+	}
+	return nil
+}
+
+// ValidateProjectNamespace checks the external project namespace reference
+// against the serving identity that owns the portable graph.
+func ValidateProjectNamespace(resource ResourceRef, identity graph.ServingIdentity) error {
+	if resource.Kind() == graph.KindProjectNamespace && resource.ID() != identity.ProjectID {
+		return fmt.Errorf("%w: project namespace %q does not match serving identity %q", ErrInvalidCanonicalGrant, resource.ID(), identity.ProjectID)
 	}
 	return nil
 }

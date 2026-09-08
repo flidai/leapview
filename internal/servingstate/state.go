@@ -84,11 +84,26 @@ type Artifact struct {
 	ServingStateID ID
 	Digest         string
 	Format         string
-	Path           string
-	ManifestJSON   string
-	SizeBytes      int64
-	CreatedAt      string
+	// Path is the embedded filesystem adapter's location. Native PostgreSQL
+	// bundles leave it empty and use Locator instead.
+	Path                  string
+	Locator               string
+	StorageSecurityDomain string
+	ContentType           string
+	MetadataDigest        string
+	ManifestJSON          string
+	SizeBytes             int64
+	CreatedAt             string
 }
+
+const (
+	// ArtifactBundleFormat and ArtifactBundleContentType define the native,
+	// immutable serving artifact representation shared by packaging and
+	// serving-state persistence.
+	ArtifactBundleFormat      = "tar.gz"
+	ArtifactBundleContentType = "application/gzip"
+	MaxArtifactBundleBytes    = int64(64 << 20)
+)
 
 type SnapshotLeaseInput struct {
 	ServingStateID     ID

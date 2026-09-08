@@ -3,7 +3,6 @@
 package apiadapter
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,9 +10,7 @@ import (
 	"strings"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
-	"github.com/flidai/leapview/internal/deployment"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
-	graph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
@@ -72,6 +69,16 @@ type ActivateRequest struct {
 	IdempotencyKey string
 }
 
+// CancelRequest carries the complete immutable cancellation operation
+// identity. Cancellation is a state transition, never a row deletion, and
+// therefore uses the same actor/idempotency contract as create and activate.
+type CancelRequest struct {
+	Scope
+	Actor          string
+	IdempotencyKey string
+	Workflow       func(string) (jobs.WorkflowIntent, error)
+}
+
 type Deployment struct {
 	ID                  string
 	Project             string
@@ -89,115 +96,6 @@ type Deployment struct {
 	VerifiedAt          string
 	Error               string
 }
-
-type Service interface {
-	Create(context.Context, deployment.CreateInput) (deployment.Deployment, error)
-	Get(context.Context, deployment.Scope) (deployment.Deployment, error)
-	Activate(context.Context, deployment.ActivationRequest) (deployment.Deployment, error)
-	Cancel(context.Context, deployment.Scope) (deployment.Deployment, error)
-}
-
-type Adapter struct{ service Service }
-
-func New(service Service) (*Adapter, error) {
-	if service == nil {
-		return nil, fmt.Errorf("deployment service is required")
-	}
-	return &Adapter{service: service}, nil
-}
-
-func (a *Adapter) Cancel(ctx context.Context, scope Scope) (Deployment, error) {
-	if err := validateScope(scope); err != nil {
-		return Deployment{}, err
-	}
-	row, err := a.service.Cancel(ctx, deployment.Scope{ProjectID: graph.ResourceID(scope.Project), DeploymentID: scope.DeploymentID})
-	if err != nil {
-		return Deployment{}, err
-	}
-	return mapDeployment(row), nil
-}
-
-func (a *Adapter) Create(ctx context.Context, request CreateRequest) (Deployment, error) {
-	if request.Project != strings.TrimSpace(request.Project) || request.Environment != strings.TrimSpace(request.Environment) || request.GenerationID != strings.TrimSpace(request.GenerationID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) || request.PriorGenerationID != strings.TrimSpace(request.PriorGenerationID) || request.Actor != strings.TrimSpace(request.Actor) || request.IdempotencyKey != strings.TrimSpace(request.IdempotencyKey) || request.ReleaseID != strings.TrimSpace(request.ReleaseID) || request.RollbackOf != strings.TrimSpace(request.RollbackOf) {
-		return Deployment{}, fmt.Errorf("%w: identity fields must be canonical", ErrInvalid)
-	}
-	if request.Project == "" || request.Environment == "" || request.GenerationID == "" || request.ArtifactDigest == "" || request.Actor == "" || request.IdempotencyKey == "" {
-		return Deployment{}, fmt.Errorf("%w: project, environment, generation, artifact, actor, and idempotency key are required", ErrInvalid)
-	}
-	if platformdigest.ValidateSHA256Identity(request.ArtifactDigest) != nil {
-		return Deployment{}, fmt.Errorf("%w: artifact digest is invalid", ErrInvalid)
-	}
-	identity, err := graph.NewServingIdentity(graph.ResourceID(request.Project), request.Environment, request.GenerationID)
-	if err != nil {
-		return Deployment{}, fmt.Errorf("%w: %v", ErrInvalid, err)
-	}
-	if request.ReleaseID != "" {
-		if err := normalizePublishEvidence(&request.Evidence); err != nil {
-			return Deployment{}, err
-		}
-	}
-	digest, err := requestDigest(request)
-	if err != nil {
-		return Deployment{}, err
-	}
-	input := deployment.CreateInput{ID: stableID(request.Project, request.Actor, request.IdempotencyKey), ServingIdentity: identity, ArtifactDigest: request.ArtifactDigest, PriorGenerationID: request.PriorGenerationID, RequestDigest: digest, CreatedBy: request.Actor, ReleaseID: request.ReleaseID, RollbackOf: request.RollbackOf}
-	if request.Workflow != nil {
-		input.Workflow, err = request.Workflow(input.ID)
-		if err != nil {
-			return Deployment{}, err
-		}
-	}
-	row, err := a.service.Create(ctx, input)
-	if err != nil {
-		return Deployment{}, err
-	}
-	return mapDeployment(row), nil
-}
-
-func (a *Adapter) Get(ctx context.Context, scope Scope) (Deployment, error) {
-	if err := validateScope(scope); err != nil {
-		return Deployment{}, err
-	}
-	row, err := a.service.Get(ctx, deployment.Scope{ProjectID: graph.ResourceID(scope.Project), DeploymentID: scope.DeploymentID})
-	if err != nil {
-		return Deployment{}, err
-	}
-	return mapDeployment(row), nil
-}
-
-func (a *Adapter) Activate(ctx context.Context, request ActivateRequest) (Deployment, error) {
-	if request.Actor == "" || request.IdempotencyKey == "" || request.Actor != strings.TrimSpace(request.Actor) || request.IdempotencyKey != strings.TrimSpace(request.IdempotencyKey) {
-		return Deployment{}, fmt.Errorf("%w: actor and idempotency key are required", ErrInvalid)
-	}
-	if err := validateScope(Scope{Project: request.Project, DeploymentID: request.DeploymentID}); err != nil {
-		return Deployment{}, err
-	}
-	row, err := a.service.Activate(ctx, deployment.ActivationRequest{Scope: deployment.Scope{ProjectID: graph.ResourceID(request.Project), DeploymentID: request.DeploymentID}, ActorID: request.Actor})
-	if err != nil {
-		return Deployment{}, err
-	}
-	return mapDeployment(row), nil
-}
-
-func validateScope(scope Scope) error {
-	if scope.Project == "" || scope.DeploymentID == "" || scope.Project != strings.TrimSpace(scope.Project) || scope.DeploymentID != strings.TrimSpace(scope.DeploymentID) || graph.ResourceID(scope.Project).Validate() != nil {
-		return fmt.Errorf("%w: scope identity must be canonical", ErrInvalid)
-	}
-	return nil
-}
-
-func mapDeployment(row deployment.Deployment) Deployment {
-	return Deployment{ID: row.ID, Project: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment, GenerationID: row.ServingIdentity.GenerationID, ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest, Status: Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt, Error: row.Error, ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt}
-}
-
-func stableID(project, actor, key string) string {
-	sum := sha256.Sum256([]byte(project + "\x00" + actor + "\x00" + key))
-	return "deployment_" + hex.EncodeToString(sum[:16])
-}
-
-// DeploymentID exposes the canonical idempotency identity to deployment
-// policy binders. It is the same stable identity used by Create.
-func DeploymentID(project, actor, key string) string { return stableID(project, actor, key) }
 
 // RequestDigest computes the immutable request binding before persistence so a
 // bootstrap policy can be armed before its worker payload is committed.

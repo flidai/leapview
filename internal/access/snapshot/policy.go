@@ -79,6 +79,9 @@ func (s AuthorizationSnapshot) Allows(subject access.SubjectRef, resource access
 	if err := resource.ValidateAgainst(s.project); err != nil {
 		return false, err
 	}
+	if err := access.ValidateProjectNamespace(resource, s.identity); err != nil {
+		return false, err
+	}
 	if err := access.ValidateCapabilityForKind(resource.Kind(), capability); err != nil {
 		return false, err
 	}
@@ -131,7 +134,10 @@ func (s AuthorizationSnapshot) EffectiveCapabilities(subjects []access.SubjectRe
 	// role bindings are project-wide, so a captured capability is effective if
 	// at least one graph resource supports it; direct grants are already
 	// validated against their concrete resource by the snapshot constructor.
+	// PROJECT_ADMIN is the serving-identity's external project-namespace
+	// capability, which is intentionally absent from portable FAI-666 graphs.
 	supported := make(map[access.Capability]struct{})
+	supported[access.CapabilityProjectAdmin] = struct{}{}
 	for _, graphResource := range s.project.Resources() {
 		for _, capability := range access.CapabilitiesForKind(graphResource.Kind) {
 			supported[capability] = struct{}{}
@@ -210,9 +216,6 @@ func NewAuthorizationSnapshotWithRoleBindings(identity graph.ServingIdentity, pr
 	if err := identity.Validate(); err != nil {
 		return AuthorizationSnapshot{}, fmt.Errorf("authorization snapshot identity: %w", err)
 	}
-	if identity.ProjectID != project.ProjectID() {
-		return AuthorizationSnapshot{}, fmt.Errorf("authorization snapshot project %q does not match graph %q", identity.ProjectID, project.ProjectID())
-	}
 	normalizedBindings := cloneRoleBindings(roleBindings)
 	sort.Slice(normalizedBindings, func(i, j int) bool { return normalizedBindings[i].ID < normalizedBindings[j].ID })
 	seenBindingIDs := make(map[string]struct{}, len(normalizedBindings))
@@ -251,6 +254,9 @@ func NewAuthorizationSnapshotWithRoleBindings(identity graph.ServingIdentity, pr
 		if err := grants.Canonical.ValidateAgainst(project); err != nil {
 			return AuthorizationSnapshot{}, fmt.Errorf("grant %q: %w", grants.ID, err)
 		}
+		if err := access.ValidateProjectNamespace(grants.Canonical.Resource(), identity); err != nil {
+			return AuthorizationSnapshot{}, fmt.Errorf("grant %q: %w", grants.ID, err)
+		}
 		key := string(grants.Canonical.Subject().Kind) + "\x00" + grants.Canonical.Subject().ID + "\x00" + grants.Canonical.Resource().ID().String() + "\x00" + string(grants.Canonical.Resource().Kind()) + "\x00" + grants.Canonical.Capability().String()
 		if _, ok := seenGrantKeys[key]; ok {
 			return AuthorizationSnapshot{}, fmt.Errorf("duplicate grant subject/resource/capability for %q", grants.ID)
@@ -270,6 +276,9 @@ func NewAuthorizationSnapshotWithRoleBindings(identity graph.ServingIdentity, pr
 		}
 		seenPolicyIDs[policy.ID] = struct{}{}
 		if err := policy.Resource.ValidateAgainst(project); err != nil {
+			return AuthorizationSnapshot{}, fmt.Errorf("data policy %q resource: %w", policy.ID, err)
+		}
+		if err := access.ValidateProjectNamespace(policy.Resource, identity); err != nil {
 			return AuthorizationSnapshot{}, fmt.Errorf("data policy %q resource: %w", policy.ID, err)
 		}
 		if policy.Subject != nil {
@@ -392,9 +401,6 @@ func (s AuthorizationSnapshot) MarshalJSON() ([]byte, error) {
 	if err := s.project.Validate(); err != nil {
 		return nil, fmt.Errorf("authorization snapshot project graph: %w", err)
 	}
-	if s.identity.ProjectID != s.project.ProjectID() {
-		return nil, fmt.Errorf("authorization snapshot project %q does not match graph %q", s.identity.ProjectID, s.project.ProjectID())
-	}
 	roleBindings := make([]roleBindingWire, 0, len(s.roleBindings))
 	for _, item := range s.roleBindings {
 		if err := validateRoleBinding(&item); err != nil {
@@ -407,6 +413,9 @@ func (s AuthorizationSnapshot) MarshalJSON() ([]byte, error) {
 		if err := item.Canonical.ValidateAgainst(s.project); err != nil {
 			return nil, err
 		}
+		if err := access.ValidateProjectNamespace(item.Canonical.Resource(), s.identity); err != nil {
+			return nil, err
+		}
 		grants = append(grants, grantWire{ID: item.ID, Name: item.Name, Subject: item.Canonical.Subject(), Resource: item.Canonical.Resource(), Capability: item.Canonical.Capability()})
 	}
 	policies := make([]dataPolicyWire, 0, len(s.dataPolicies))
@@ -415,6 +424,9 @@ func (s AuthorizationSnapshot) MarshalJSON() ([]byte, error) {
 			return nil, fmt.Errorf("data policy %q is incomplete", item.ID)
 		}
 		if err := item.Resource.ValidateAgainst(s.project); err != nil {
+			return nil, err
+		}
+		if err := access.ValidateProjectNamespace(item.Resource, s.identity); err != nil {
 			return nil, err
 		}
 		if item.Subject != nil {

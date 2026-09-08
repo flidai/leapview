@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/http"
 
@@ -29,11 +28,10 @@ type savedExplorationWiringInputs struct {
 	admitter                workloadmodule.Admitter
 	analyticsModule         *analyticsmodule.Module
 	savedExplorationService analyticsmodule.SavedExplorationService
+	repository              analyticsmodule.SavedExplorationRepository
+	auditRecorder           access.CanonicalAuditRecorder
 	projectBrowser          *projecthttp.BrowserHandler
 	ctx                     context.Context
-	database                *sql.DB
-	auditIntentRecorder     access.AuditIntentRecorder
-	accessRepo              access.Repository
 }
 
 type savedExplorationWiringResult struct {
@@ -50,8 +48,8 @@ func configureSavedExploration(inputs savedExplorationWiringInputs) (savedExplor
 	if accessModule == nil {
 		var err error
 		accessModule, err = accessmodule.Build(ctx, accessmodule.Config{
-			Database: inputs.database, ExistingAuth: inputs.auth,
-			InstanceID: inputs.instanceID, PublicURL: inputs.publicURL,
+			ExistingAuth: inputs.auth,
+			InstanceID:   inputs.instanceID, PublicURL: inputs.publicURL,
 			CurrentProjectID: inputs.resolveProjectID,
 			Presentation:     webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath}, Assets: inputs.assets,
 		})
@@ -60,13 +58,12 @@ func configureSavedExploration(inputs savedExplorationWiringInputs) (savedExplor
 		}
 	}
 	savedService := inputs.savedExplorationService
-	if inputs.database != nil {
-		canonicalAuditRecorder, _ := inputs.accessRepo.(access.CanonicalAuditRecorder)
+	if savedService == nil && inputs.repository != nil {
 		var err error
 		savedService, err = NewSavedExplorationService(SavedExplorationServiceOptions{
-			Database: inputs.database, AuditIntentRecorder: inputs.auditIntentRecorder,
+			Repository:   inputs.repository,
 			AccessModule: accessModule, Runtime: inputs.runtime,
-			Admitter: inputs.admitter, AuditRecorder: canonicalAuditRecorder,
+			Admitter: inputs.admitter, AuditRecorder: inputs.auditRecorder,
 		})
 		if err != nil {
 			return savedExplorationWiringResult{}, fmt.Errorf("build saved exploration service: %w", err)

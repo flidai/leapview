@@ -2,18 +2,16 @@ package module
 
 import (
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"reflect"
 	"time"
 
-	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	saved "github.com/flidai/leapview/internal/analytics/exploration/saved"
 	savedapplication "github.com/flidai/leapview/internal/analytics/exploration/saved/application"
-	savedsqlite "github.com/flidai/leapview/internal/analytics/exploration/saved/sqlite"
+	savedpostgres "github.com/flidai/leapview/internal/analytics/exploration/saved/postgres"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
@@ -52,6 +50,9 @@ type SavedExplorationAuthorizer = savedapplication.Authorizer
 type SavedExplorationLeaseBoundExecutor = savedapplication.LeaseBoundExecutor
 type SavedExplorationRuntimeProvider = projectruntime.Provider
 type SavedExplorationRepository = saved.Repository
+type PostgresSavedExplorationRepository = savedpostgres.Repository
+type SavedExplorationPostgresDBTX = savedpostgres.DBTX
+type SavedExplorationPostgresAuditRepository = savedpostgres.AuditRepository
 type SavedExplorationQuery = dataquery.Query
 type SavedExplorationResult = dataquery.Result
 
@@ -69,11 +70,10 @@ const (
 // process composition root; repository construction, clock, and revision-ID
 // allocation remain analytics-owned.
 type SavedExplorationServiceOptions struct {
-	Database            *sql.DB
-	AuditIntentRecorder access.AuditIntentRecorder
-	Authorizer          SavedExplorationAuthorizer
-	Runtime             SavedExplorationRuntimeProvider
-	Executor            SavedExplorationLeaseBoundExecutor
+	Repository SavedExplorationRepository
+	Authorizer SavedExplorationAuthorizer
+	Runtime    SavedExplorationRuntimeProvider
+	Executor   SavedExplorationLeaseBoundExecutor
 	// Now and NewRevisionID are optional seams for deterministic module tests.
 	// Production callers leave them unset and receive the module defaults.
 	Now           func() time.Time
@@ -81,15 +81,12 @@ type SavedExplorationServiceOptions struct {
 }
 
 // BuildSavedExplorationService constructs the durable saved-exploration
-// service behind the analytics module façade. It owns the SQLite repository,
-// UTC clock, and opaque revision identity generation so process composition
-// does not reach into analytics persistence or application packages.
+// service behind the analytics module façade. Persistence is an explicit
+// repository port supplied by process composition; this package never selects
+// a SQL dialect or constructs a database handle.
 func BuildSavedExplorationService(options SavedExplorationServiceOptions) (SavedExplorationService, error) {
-	if options.Database == nil {
-		return nil, fmt.Errorf("saved exploration database is required")
-	}
-	if savedExplorationModuleNil(options.AuditIntentRecorder) {
-		return nil, fmt.Errorf("saved exploration audit intent recorder is required")
+	if savedExplorationModuleNil(options.Repository) {
+		return nil, fmt.Errorf("saved exploration repository is required")
 	}
 	if savedExplorationModuleNil(options.Authorizer) {
 		return nil, fmt.Errorf("saved exploration authorizer is required")
@@ -110,9 +107,8 @@ func BuildSavedExplorationService(options SavedExplorationServiceOptions) (Saved
 			return newSavedExplorationRevisionID(rand.Reader)
 		}
 	}
-	repository := savedsqlite.NewRepositoryWithAudit(options.Database, options.AuditIntentRecorder)
 	service, err := savedapplication.NewService(savedapplication.Options{
-		Repository:    repository,
+		Repository:    options.Repository,
 		Authorizer:    options.Authorizer,
 		Runtime:       options.Runtime,
 		Executor:      options.Executor,
@@ -129,6 +125,14 @@ func BuildSavedExplorationService(options SavedExplorationServiceOptions) (Saved
 // New-style module constructors.
 func NewSavedExplorationService(options SavedExplorationServiceOptions) (SavedExplorationService, error) {
 	return BuildSavedExplorationService(options)
+}
+
+// NewSavedExplorationPostgresRepository exposes the native saved-exploration
+// persistence constructor through the analytics module façade. Application
+// composition supplies the same runtime pool and canonical Access audit
+// adapter; it does not import the capability's storage implementation.
+func NewSavedExplorationPostgresRepository(db SavedExplorationPostgresDBTX, audit SavedExplorationPostgresAuditRepository) *PostgresSavedExplorationRepository {
+	return savedpostgres.New(db, audit)
 }
 
 // newSavedExplorationRevisionID allocates an opaque immutable revision

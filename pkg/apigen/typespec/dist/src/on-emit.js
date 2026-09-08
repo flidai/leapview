@@ -1,14 +1,14 @@
 import { getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getOverloadedOperation, getOverloads, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
 import { getServers, isOverloadSameEndpoint, isSharedRoute, resolveAuthentication, } from "@typespec/http";
 import { getExtensions, getOperationId, getTagsMetadata, resolveInfo } from "@typespec/openapi";
-import { getAuthz, getAsyncExecution, getAuthoredCommand, getAuditPayload, getAuditSchema, getCLI, getCommand, getCommandDefaults, getContracts, getMetadata, getMinProperties, getNamedFailures, getPropertyNames, getResponseShape, getSensitivity, getTool, getTransportErrors, getUI, getUnauditedReason, isTarget, isManual, isQuery, } from "./decorators.js";
+import { getAuthz, getAsyncExecution, getAuthoredCommand, getAuditPayload, getAuditSchema, getCLI, getCommand, getCommandDefaults, getContracts, getMetadata, getMinProperties, getUniqueItems, getNamedFailures, getPropertyNames, getResponseShape, getSensitivity, getTool, getTransportErrors, getUI, getUnauditedReason, hasExactNumbers, isTarget, isManual, isQuery, } from "./decorators.js";
 import { reportDiagnostic } from "./lib.js";
 import { discoverHttpServices } from "./phase-discovery.js";
 import { emitDocumentFile } from "./phase-emission.js";
 import { normalizeDocument } from "./phase-normalization.js";
 import { qualifiedNamespaceName, readPackageMetadata } from "./phase-naming.js";
-import { hasErrorDiagnostics, validateOutputFile, validateServiceCount, validateServicePresence, } from "./phase-validation.js";
 import { withSchemaConstraints } from "./schema-constraints.js";
+import { hasErrorDiagnostics, validateOutputFile, validateServiceCount, validateServicePresence, } from "./phase-validation.js";
 class IRBuilder {
     program;
     requireExplicitOperationKind;
@@ -31,7 +31,10 @@ class IRBuilder {
     schemaRef(type, context) {
         if (type.kind === "Model") {
             if (isArrayModelType(type)) {
-                return { type: "array", items: this.schemaRef(type.indexer.value, `${context} items`) };
+                return withSchemaConstraints(this.program, type, {
+                    type: "array",
+                    items: this.schemaRef(type.indexer.value, `${context} items`),
+                });
             }
             if (isRecordModelType(type)) {
                 return {
@@ -222,13 +225,19 @@ class IRBuilder {
         return schema;
     }
     unionSchema(type) {
+        const withUnionMetadata = (schema) => {
+            if (hasExactNumbers({ program: this.program }, type)) {
+                schema.exact_numbers = true;
+            }
+            return schema;
+        };
         const scalarVariants = [...type.variants.values()];
         if (scalarVariants.length > 0 && scalarVariants.every((variant) => isJSONScalarType(variant.type))) {
-            return {
+            return withUnionMetadata({
                 type: "union",
                 namespace: namespaceName(type.namespace),
                 one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-            };
+            });
         }
         // A compact authored reference may intentionally be either a JSON scalar
         // (for example an unaliased metric name) or a closed object carrying the
@@ -239,11 +248,11 @@ class IRBuilder {
         // a strict scalar/object wrapper; contextual visual/query compatibility
         // remains compiler-owned.
         if (scalarVariants.some((variant) => isJSONScalarType(variant.type))) {
-            return {
+            return withUnionMetadata({
                 type: "union",
                 namespace: namespaceName(type.namespace),
                 one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-            };
+            });
         }
         const [union, diagnostics] = getDiscriminatedUnion(this.program, type);
         if (union) {
@@ -282,7 +291,7 @@ class IRBuilder {
                 oneOf.push({ ref: name });
                 mapping[value] = name;
             }
-            return {
+            return withUnionMetadata({
                 type: "union",
                 namespace: namespaceName(type.namespace),
                 one_of: oneOf,
@@ -290,7 +299,7 @@ class IRBuilder {
                     property_name: union.options.discriminatorPropertyName,
                     mapping,
                 },
-            };
+            });
         }
         // A structural object union is useful when the authored object remains
         // tag-free but its required fields encode a conditional contract (for
@@ -299,11 +308,11 @@ class IRBuilder {
         // all-or-none shape and language emitters can dispatch by strict field
         // decoding. Discriminators remain reserved for explicitly tagged unions.
         if (scalarVariants.every((variant) => variant.type.kind === "Model")) {
-            return {
+            return withUnionMetadata({
                 type: "union",
                 namespace: namespaceName(type.namespace),
                 one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
-            };
+            });
         }
         if (!type.name) {
             this.unsupported(type, `union ${type.name ?? "(anonymous)"}`);
@@ -337,6 +346,9 @@ class IRBuilder {
         const minProperties = getMinProperties({ program: this.program }, property);
         if (minProperties !== undefined) {
             schema.min_properties = minProperties;
+        }
+        if (getUniqueItems({ program: this.program }, property)) {
+            schema.unique_items = true;
         }
         const schemaProperty = {
             schema,

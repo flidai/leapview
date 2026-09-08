@@ -11,8 +11,8 @@ import (
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 )
 
-// projectRefreshService binds refresh execution to the active project
-// serving-state repository. It deliberately has no container read-model
+// projectRefreshService binds canonical refresh execution to the active
+// project serving-state reader. It deliberately has no container read-model
 // adapter: refresh/run owns project graph identity and generation validation.
 func projectRefreshService(persistence persistenceInputs, workflow workflowInputs, dashboards func() *dashboardmodule.Module) (refreshrun.Service, error) {
 	repo, err := resolveServingStateRepository(persistence)
@@ -22,13 +22,8 @@ func projectRefreshService(persistence persistenceInputs, workflow workflowInput
 	if repo == nil {
 		return refreshrun.Service{}, fmt.Errorf("serving state repository is required")
 	}
-	hooks := []refreshrun.CandidateValidationHook{}
-	if workflow.managedDataValidation != nil {
-		hooks = append(hooks, workflow.managedDataValidation)
-	}
 	return refreshrun.Service{
 		ServingStates: repo,
-		Runtime:       workflow.reloader,
 		Publisher: refreshmodule.Publisher{
 			SemanticModelVersion: func(ctx context.Context, identity projectgraph.ServingIdentity, modelID projectgraph.ResourceID) {
 				if module := dashboards(); module != nil {
@@ -36,6 +31,5 @@ func projectRefreshService(persistence persistenceInputs, workflow workflowInput
 				}
 			},
 		},
-		CandidateValidationHooks: hooks,
 	}, nil
 }

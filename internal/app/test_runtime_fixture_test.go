@@ -10,15 +10,17 @@ import (
 	"sync"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
-	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
 
 // Test application routes are project-scoped, so their fixtures need the same
@@ -42,7 +44,15 @@ func closeTestRuntimeHost(database *sql.DB) {
 // explicit test-only project roles (platform admins get project-admin and all
 // other principals get project-viewer) while token capability allowlists still
 // apply.
-func ensureTestRuntimeHost(ctx context.Context, store *platform.Store, states *servingstatemodule.Module, projectID projectgraph.ResourceID, environment servingstate.Environment) (*runtimehostmodule.Module, error) {
+type testServingStateRepository interface {
+	servingStateRepository
+	Create(context.Context, servingstate.CreateInput) (servingstate.State, error)
+	SaveValidated(context.Context, servingstate.ID, servingstate.Validation, servingstate.Artifact) (servingstate.State, error)
+	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
+	Activate(context.Context, projectgraph.ResourceID, servingstate.Environment, servingstate.ID, servingstate.ID) (servingstate.State, error)
+}
+
+func ensureTestRuntimeHost(ctx context.Context, store *platform.Store, states testServingStateRepository, projectID projectgraph.ResourceID, environment servingstate.Environment) (*runtimehostmodule.Module, error) {
 	if store == nil || states == nil {
 		return nil, errors.New("test runtime fixture requires store and serving states")
 	}
@@ -60,7 +70,7 @@ func ensureTestRuntimeHost(ctx context.Context, store *platform.Store, states *s
 		return nil, fmt.Errorf("test runtime host already bound to %s/%s", host.ProjectID(), host.Environment())
 	}
 
-	graph, err := testRuntimeGraph(projectID)
+	graph, err := testRuntimeGraph()
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +114,7 @@ func ensureTestRuntimeHost(ctx context.Context, store *platform.Store, states *s
 		subjects = append(subjects, testRuntimeSubject{subject: subject, role: role})
 		return nil
 	}
-	if err := addSubject("dev", access.ProjectRoleAdmin); err != nil {
+	if err := addSubject(accessmodule.DevelopmentPrincipalID, access.ProjectRoleAdmin); err != nil {
 		return nil, err
 	}
 	for _, principal := range principals {
@@ -167,9 +177,8 @@ func ensureTestRuntimeHost(ctx context.Context, store *platform.Store, states *s
 	return host, nil
 }
 
-func testRuntimeGraph(projectID projectgraph.ResourceID) (projectgraph.ProjectGraph, error) {
+func testRuntimeGraph() (projectgraph.ProjectGraph, error) {
 	resources := []projectgraph.Resource{
-		{ID: projectID, Kind: projectgraph.KindProject, Name: "project"},
 		{ID: projectgraph.ResourceID("test"), Kind: projectgraph.KindSemanticModel, Name: "test"},
 		{ID: projectgraph.ResourceID("executive-sales"), Kind: projectgraph.KindDashboard, Name: "executive_sales"},
 		{ID: projectgraph.ResourceID("model.orders"), Kind: projectgraph.KindModel, Name: "orders"},
@@ -195,6 +204,11 @@ func (f testRuntimeFactory) Prepare(_ context.Context, input runtimehost.Runtime
 	if err != nil {
 		return nil, err
 	}
+	model := testSemanticModel()
+	planner, err := semanticquery.NewCompiledPlanner(model)
+	if err != nil {
+		return nil, fmt.Errorf("compile test semantic model: %w", err)
+	}
 	bindings := make([]accesssnapshot.RoleBinding, 0, len(f.subjects))
 	for _, subject := range f.subjects {
 		sum := sha256.Sum256([]byte(subject.subject.ID + "\x00" + string(subject.role)))
@@ -207,13 +221,18 @@ func (f testRuntimeFactory) Prepare(_ context.Context, input runtimehost.Runtime
 	if err != nil {
 		return nil, err
 	}
-	return testPreparedRuntime{authorization: authorization, identity: identity, snapshotID: input.State.DuckLakeSnapshotID}, nil
+	return testPreparedRuntime{
+		authorization: authorization, identity: identity, snapshotID: input.State.DuckLakeSnapshotID,
+		semanticModel: model, compiledModel: planner.CompiledModel(),
+	}, nil
 }
 
 type testPreparedRuntime struct {
 	authorization accesssnapshot.AuthorizationSnapshot
 	identity      projectgraph.ServingIdentity
 	snapshotID    int64
+	semanticModel *semanticmodel.Model
+	compiledModel *semanticquery.CompiledModel
 }
 
 func (r testPreparedRuntime) Close() error { return nil }
@@ -232,6 +251,26 @@ func (r testPreparedRuntime) SemanticModelProjection(modelID projectgraph.Resour
 		return nil, false
 	}
 	return testSemanticModel(), true
+}
+
+// ProjectManifest and CompiledSemanticModel make the app fixture expose the
+// same activation-owned semantic metadata that the public catalog consumes in
+// production. Keeping both facts on one prepared runtime prevents tests from
+// accidentally making catalog visibility public without a compiled source.
+func (r testPreparedRuntime) ProjectManifest() projectmanifest.ResourceManifest {
+	if r.semanticModel == nil {
+		return projectmanifest.ResourceManifest{}
+	}
+	return projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{
+		"test": r.semanticModel.ExecutionSnapshot(),
+	}}
+}
+
+func (r testPreparedRuntime) CompiledSemanticModel(modelID string) (*semanticquery.CompiledModel, bool) {
+	if modelID != "test" || r.compiledModel == nil {
+		return nil, false
+	}
+	return r.compiledModel, true
 }
 
 type testRuntimeAuthorizationInstaller struct{}

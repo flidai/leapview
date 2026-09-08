@@ -55,9 +55,8 @@ spec:
   pages: []
 `,
 	}
-	projectYAML := strings.Replace(flatProjectFixtureYAML(), "dashboards: {include: []}", "dashboards: {include: [dashboards/*.yaml]}", 1)
-	projectPath := writeFlatProjectFixtureWithProject(t, projectYAML, files)
-	root := filepath.Dir(projectPath)
+	projectPath := writeSourceFixture(t, files)
+	root := projectPath
 
 	expanded, err := ExportDashboardSource(filepath.Join(root, "dashboards/sales.yaml"), root, DashboardExportExpanded)
 	if err != nil {
@@ -92,7 +91,7 @@ spec:
 	if _, err := ExportDashboardSource(filepath.Join(root, "dashboards/sales.yaml"), root, DashboardExportFragmented); err == nil || !strings.Contains(err.Error(), "validate canonical dashboard") {
 		t.Fatalf("fragmented export accepted invalid expanded document: %v", err)
 	}
-	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "dashboards/fragments/visuals.yaml") || !strings.Contains(err.Error(), "validate canonical dashboard") {
+	if _, err := LoadSourceRoot(projectPath); err == nil || !strings.Contains(err.Error(), "dashboards/fragments/visuals.yaml") || !strings.Contains(err.Error(), "validate canonical dashboard") {
 		t.Fatalf("project compilation accepted invalid expanded fragment: %v", err)
 	}
 	if err := os.WriteFile(badFragment, []byte(visualSource), 0o644); err != nil {
@@ -103,19 +102,19 @@ spec:
 	// The artifact digest includes graph, manifest, normalized Dashboard DTO,
 	// and relative source provenance, so equality is the semantic equivalence
 	// contract rather than a layout/text comparison.
-	originalArtifact, err := CompileProject(projectPath)
+	originalArtifact, err := Compile(projectPath)
 	if err != nil {
 		t.Fatalf("compile original fragmented project: %v", err)
 	}
 	expandedRoot := copyProjectWithoutDashboard(t, root, files)
 	writeExportFiles(t, expandedRoot, expanded.Files)
-	expandedArtifact, err := CompileProject(filepath.Join(expandedRoot, "leapview.yaml"))
+	expandedArtifact, err := Compile(expandedRoot)
 	if err != nil {
 		t.Fatalf("compile expanded export: %v", err)
 	}
 	fragmentedRoot := copyProjectWithoutDashboard(t, root, files)
 	writeExportFiles(t, fragmentedRoot, fragmented.Files)
-	fragmentedArtifact, err := CompileProject(filepath.Join(fragmentedRoot, "leapview.yaml"))
+	fragmentedArtifact, err := Compile(fragmentedRoot)
 	if err != nil {
 		t.Fatalf("compile fragmented export: %v", err)
 	}

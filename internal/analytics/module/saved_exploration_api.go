@@ -790,7 +790,7 @@ func classifySavedExplorationFailure(err error) error {
 		return apigenfailure.Wrap("conflict", err)
 	case errors.Is(err, saved.ErrInvalid), errors.Is(err, saved.ErrInvalidIdentifier), errors.Is(err, saved.ErrInvalidPayload), errors.Is(err, saved.ErrPayloadTooLarge), errors.Is(err, saved.ErrUnsupportedVersion):
 		return apigenfailure.Wrap("invalid", err)
-	case errors.Is(err, saved.ErrUnavailable), errors.Is(err, access.ErrAuditOutboxCapacity), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+	case errors.Is(err, saved.ErrUnavailable), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return apigenfailure.Wrap("unavailable", err)
 	default:
 		return err

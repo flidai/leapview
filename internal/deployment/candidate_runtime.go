@@ -77,6 +77,13 @@ type CandidateConnectionLeaser interface {
 	Acquire(context.Context, CandidateConnectionRequest) (CandidateConnectionLeases, error)
 }
 
+// CandidateConnectionEvidenceResolver validates a project-generation
+// connection request and returns durable, non-secret binding evidence without
+// acquiring a runtime pool or registering a candidate lifetime.
+type CandidateConnectionEvidenceResolver interface {
+	Resolve(context.Context, CandidateConnectionRequest) ([]CandidateConnectionEvidence, error)
+}
+
 type CandidateRuntimeHost interface {
 	PrepareAndRegisterCandidateSet(context.Context, []runtimehost.CandidatePreparation) error
 }

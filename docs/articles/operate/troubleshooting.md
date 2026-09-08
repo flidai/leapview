@@ -10,7 +10,7 @@ Run production validation in the same environment as the service:
 leapview config validate --production
 ```
 
-Confirm `LEAPVIEW_HOME`, DuckLake catalog, analytical data, and managed-data directories exist and are writable by the service identity. Check remote catalog and object-store connectivity, free space, file descriptor limits, and port binding.
+Confirm `LEAPVIEW_HOME`, analytical data, and managed-data runtime directories exist and are writable by the service identity. Check PostgreSQL DuckLake catalog and object-store connectivity, free space, file descriptor limits, and port binding; production does not use a writable local DuckLake catalog directory.
 
 Verify required secrets are present by name without printing their values. An incomplete OIDC, Azure, S3, or credential pair is intentionally rejected.
 
@@ -44,37 +44,102 @@ Preserve the alert onset, image and deployment digests, active serving state and
 
 Stop admitting affected analytical work through the normal traffic-management path and follow the approved service or release recovery procedure. Fatal health is sticky for the affected DuckDB environment, so do not attempt to clear it by editing catalogs, deleting analytical files, forcing lease cleanup, or repeatedly restarting without diagnosis. Recovery requires replacement with a validated environment, `leapview_duckdb_fatal_health` to report zero, readiness to pass, one bounded representative analytical request to succeed, and the alert to resolve without another fatal transition.
 
-## Audit-outbox metrics collection failure alert fires
+## PostgreSQL pool saturation alert fires
 
-`LeapViewAuditOutboxMetricsCollectionFailure` means `leapview_audit_outbox_scrape_error` has reported failure, or that metric has been absent from an otherwise scrapeable LeapView target, for more than five minutes. Confirm the affected target still has `up{job="leapview"} == 1`, inspect the protected metrics response without exposing its bearer token, and compare readiness with the bounded `leapview admin audit-outbox` inspection from the approved maintenance environment. If the entire target is unavailable, follow the target-unavailable procedure instead.
+`LeapViewPostgresPoolSaturation` means the named PostgreSQL pool has remained at
+or above 90% acquired capacity for more than 10 minutes. Confirm the affected
+`job`, `instance`, and bounded `pool` labels, then compare
+`leapview_postgres_pool_acquired_connections` with
+`leapview_postgres_pool_max_connections`. Inspect idle connections, empty and
+canceled acquire rates, provider connection limits, CPU, and lock or long-
+transaction evidence before changing pool sizing. The alert excludes a pool
+whose maximum is zero and never carries request, principal, project, or
+resource labels.
 
-Preserve the alert timing, `job` and `instance`, image and deployment digests, readiness result, metric-family presence, collection timeout or aggregate-store error, storage health, and credential-scrubbed application logs. Do not copy audit payloads, metadata, actor, request, project, resource, or event identifiers into alert annotations or unrestricted incident records. Likely boundaries are the local audit store, its aggregate query, storage availability, query timeout, metrics registration, or a deployment mismatch that removed the collector.
+Drain or reduce the affected workload through its normal owner workflow when
+the provider is also constrained. Do not increase `max_connections` blindly or
+terminate unknown sessions. Recovery requires acquired/max to remain below
+0.90, the alert to resolve after the next evaluation, and representative
+requests or maintenance work to succeed.
 
-Restore access to the existing audit store or deploy the validated collector through the normal service lifecycle. Do not disable the collector, synthesize a zero metric, or treat absent telemetry as healthy. Recovery requires `leapview_audit_outbox_scrape_error` to be present and equal to zero on consecutive successful scrapes, readiness to be assessed independently, aggregate outbox state to be inspectable, and the alert to resolve after its hold and evaluation interval.
+## PostgreSQL pool critical saturation alert fires
 
-## Audit-outbox terminal intents alert fires
+`LeapViewPostgresPoolCriticalSaturation` means the named PostgreSQL pool has
+remained at or above 98% acquired capacity for more than five minutes. Preserve
+the alert's `job`, `instance`, and `pool` labels, then inspect idle and
+acquired-capacity gauges together with empty-acquire rate, provider connection
+limits, CPU, lock waits, and long transactions. Check the warning saturation
+alert and the no-headroom alert for the same pool; they are related bounded
+signals, not proof of a single root cause.
 
-`LeapViewAuditOutboxTerminalIntents` means at least one `poison` or `quarantined` audit intent has remained unresolved for more than five minutes. Confirm the aggregate `leapview_audit_outbox_intents{state=~"poison|quarantined"}` count, then use `leapview admin audit-outbox` from the controlled offline maintenance environment to inspect its bounded terminal index. Preserve each printed event ID, terminal state, attempt count, bounded failure code, immutable payload digest, creation time, alert timing, and a consistent backup checksum in restricted incident evidence.
+Protect interactive traffic and maintenance ownership with the approved drain
+or capacity workflow. Do not disable the alert, edit metadata, or raise pool or
+provider limits without a reviewed capacity decision. Recovery requires
+acquired/max to remain below 0.98, the alert to resolve after the next
+evaluation, and a representative bounded operation to succeed.
 
-Poison usually marks exhausted delivery attempts; quarantine marks an integrity or payload conflict. Investigate the audit sink, local storage, dispatcher lifecycle, aggregate ordering, and source operation before recovery. Never delete an intent, edit its payload or metadata, bypass its digest/state guards, increase attempts by hand, or requeue an identity that was not obtained from the bounded inspection.
+## PostgreSQL pool no-headroom alert fires
 
-Stop the running instance so the offline lock can be acquired, then follow the exact guarded requeue procedure in [Audit events](/docs/security/audit#monitor-durable-delivery) for one reviewed terminal intent. A stale or conflicting result is a stop condition requiring another inspection. Recovery requires poison and quarantined aggregate counts to return to zero, the reviewed event to reach `delivered`, readiness to pass, exactly one `audit.outbox.requeued` recovery event to exist, one representative audited mutation to materialize, and the alert to resolve.
+`LeapViewPostgresPoolNoHeadroom` means the named pool has had no idle capacity
+at at least 95% acquired utilization, or successful acquisitions have waited
+for an empty pool, for more than five minutes. Confirm
+`leapview_postgres_pool_idle_connections`, acquired/max, and
+`rate(leapview_postgres_pool_empty_acquire_count_total[5m])` for the same
+`job`, `instance`, and `pool`. Correlate with canceled acquires, acquire
+latency, request errors, provider connection limits, lock waits, and long
+transactions. A zero maximum is treated as disabled and does not fire this
+alert.
 
-## Audit-outbox excessive backlog alert fires
+Drain the affected workload or resolve the provider-side constraint through
+the normal change workflow. Do not treat a larger application pool as a fix for
+database CPU, connection, or lock pressure. Recovery requires idle headroom or
+zero empty-acquire rate, successful representative work, and alert resolution
+after the next evaluation.
 
-`LeapViewAuditOutboxExcessiveBacklog` means the current undelivered audit population has remained above 10,000 intents or its oldest intent has remained older than one hour for more than ten minutes. The expression sums only current `pending`, `retry`, `leased`, `poison`, and `quarantined` states and aggregates `state` away. Exactly 10,000 intents and exactly one hour do not cross the code-owned readiness boundary. Confirm both the aggregate state sum and `leapview_audit_outbox_oldest_undelivered_age_seconds`; historical attempt and materialization totals are not health signals.
+## PostgreSQL pool canceled-acquire alert fires
 
-Preserve alert and readiness timing, all aggregate state counts, oldest age, capacity and remaining capacity, dispatcher and lease status, storage health, sink availability, recent deployment changes, and credential-scrubbed retry errors. Growing pending or retry state points toward dispatcher or sink throughput; persistent leased work points toward worker or lease lifecycle; terminal state requires the terminal-intent procedure. Do not export payloads or unrestricted identity metadata while investigating aggregate pressure.
+`LeapViewPostgresPoolCanceledAcquire` means the named pool has recorded a
+positive five-minute rate of context-canceled acquisitions continuously for
+more than 10 minutes. Confirm
+`rate(leapview_postgres_pool_canceled_acquire_count_total[5m])` after grouping
+by `job`, `instance`, and `pool`, then correlate with empty-acquire rate,
+acquire latency, upstream deadlines, request timeouts, and provider health.
+Canceled acquisitions commonly indicate upstream cancellation or a bounded
+queue timeout; this metric does not identify a user, request, or root cause.
 
-Restore the dispatcher, audit sink, storage, or capacity dependency through its normal owner workflow and allow the durable retry and ordering policy to drain the queue. Do not discard evidence, edit timestamps, bypass aggregate ordering, or raise the threshold to clear readiness. Recovery requires the undelivered count to be at most 10,000, oldest age to be at most one hour, counts to keep declining under representative audited traffic, readiness to pass, and the alert to resolve without immediate recurrence.
+Correct the first constrained boundary through its normal owner workflow and
+preserve the restricted request evidence needed for correlation. Do not retry
+unboundedly or suppress cancellation metrics. Recovery requires the five-minute
+canceled-acquire rate to return to zero, representative work to complete, and
+the alert to resolve after the next evaluation.
 
-## Audit-outbox capacity exhausted alert fires
+## PostgreSQL pool acquire-latency alert fires
 
-`LeapViewAuditOutboxCapacityExhausted` means a positive configured `leapview_audit_outbox_capacity` has had `leapview_audit_outbox_capacity_remaining <= 0` for more than five minutes. New audited mutations fail closed at this boundary, so confirm both capacity gauges, readiness, aggregate state counts, oldest age, and whether representative security-sensitive commands are being rejected. A missing capacity series is telemetry uncertainty, not proof of available capacity.
+`LeapViewPostgresPoolAcquireLatency` means the ten-minute average successful
+acquisition wait, derived from
+`rate(leapview_postgres_pool_acquire_duration_seconds_total[10m]) / rate(leapview_postgres_pool_acquire_count_total[10m])`, has remained above two seconds for more than 10 minutes. Confirm both counters and their positive acquisition rate after grouping by `job`, `instance`, and `pool`. This is a pool-wait signal, not SQL execution latency; inspect empty acquires, saturation, lock waits, provider CPU, and long transactions separately.
 
-Preserve the alert onset, capacity and remaining capacity, aggregate states, oldest age, terminal index when applicable, image and configuration revision without secrets, storage and sink evidence, and the first bounded failure code. Likely boundaries include a stopped or failing dispatcher, unavailable audit sink, storage failure, aggregate-order blockage, or unresolved terminal evidence. Capacity is a local evidence-safety limit; external archive availability does not prove the local handoff is healthy.
+Reduce or drain the affected workload when the evidence shows queue pressure,
+or follow the provider operation when database capacity is constrained. Do not
+change the threshold or infer query latency from this alert. Recovery requires
+the ten-minute average to return to two seconds or below, representative work
+to succeed, and alert resolution after the next evaluation.
 
-Stop admitting nonessential audited mutations through normal traffic controls while preserving recovery access. Repair the underlying delivery boundary and use only the reviewed guarded terminal recovery procedure where applicable; do not increase capacity as an incident shortcut, delete rows, or edit payloads. Recovery requires positive remaining capacity, a draining undelivered population, terminal counts of zero or separately controlled recovery, readiness to pass, a representative audited mutation to materialize, and the alert to resolve.
+## PostgreSQL pool connection-churn alert fires
+
+`LeapViewPostgresPoolConnectionChurn` means the named pool has continuously had
+connections under construction for more than 10 minutes. Confirm
+`leapview_postgres_pool_constructing_connections` for the bounded `job`,
+`instance`, and `pool`, then inspect total/idle connections, provider
+reachability, TLS and credentials, connection limits, and recent deployment or
+failover activity. Construction is a pool lifecycle signal; it does not prove
+that a particular query or customer caused the condition.
+
+Resolve the provider, network, credential, or capacity boundary through the
+normal deployment or database-owner workflow. Do not repeatedly restart or
+raise pool limits without preserving evidence. Recovery requires constructing
+connections to remain zero, successful representative acquisition, and alert
+resolution after the next evaluation.
 
 ## Authentication fails
 
@@ -115,13 +180,12 @@ Do not increase concurrency until CPU, memory, disk, and catalog write capacity 
 
 ## Disk usage grows
 
-Identify whether growth is backups, managed upload staging, managed objects, DuckLake catalog, analytical Parquet, logs, or runtime cache. Run storage cleanup without `--apply` first:
-
-```sh
-leapview admin storage cleanup
-```
-
-Review protected serving states and query leases, then use `--apply` only under the approved maintenance procedure. Do not delete catalog rows or Parquet objects manually.
+Identify whether growth is managed-upload staging, managed objects, DuckLake
+catalog data, analytical Parquet, logs, or runtime cache. The removed offline
+storage-cleanup command is not available; do not delete catalog rows or
+Parquet/object-store data manually. Use provider-native retention and garbage
+collection procedures only after confirming active serving snapshots and query
+leases, and record the procedure in the operations runbook.
 
 ## Dashboard refresh fast-burn alert fires
 
@@ -159,27 +223,32 @@ Inspect the bounded refresh outcome metric and application logs for sustained `p
 
 Mitigate the underlying refresh failure through the normal deployment, data, or runtime recovery path. Do not change the 99% objective, reclassify outcomes, or exclude eligible traffic merely to silence the warning. Confirm recovery when the 30-minute burn rate falls below `6` and the alert resolves after the next rule evaluation. Continue to inspect the rolling 30-day error-budget recordings because recovery stops new excessive consumption but does not restore budget already spent.
 
-## Recovery qualification freshness alerts fire
+## Provider recovery or catalog drift
 
-Inspect the bounded ledger projection with the service stopped or from the same controlled maintenance environment used for other offline Admin commands:
+LeapView does not schedule or execute production backup, restore, image
+upgrade, host rollback, or recovery-qualification drills. If PostgreSQL,
+DuckLake, or object-store state is unavailable or inconsistent, stop writes and
+preserve readiness, metrics, deployment identifiers, and credential-scrubbed
+logs. Use the provider's native backup/PITR, catalog snapshot, versioning,
+replication, or restore procedure; follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore) for the complete workflow. Do not edit control-plane rows, catalog metadata, or
+Parquet/object-store objects by hand.
 
-```sh
-leapview admin recovery status
-```
-
-For a ledger scrape failure, check the application logs for ledger read errors or the two-second collection timeout and confirm the protected metrics endpoint still scrapes successfully. For an overdue qualification, distinguish a schedule occurrence that was not materialized from pending work or an expired execution lease; the configured staleness policy has already elapsed. For failed evidence publication, check the private evidence destination, service-account access, capacity, and retry worker without printing credentials, signed URLs, evidence content, or failure payloads.
-
-Correct the underlying scheduler, worker, ledger, or publication dependency and let normal reconciliation or persisted publication backoff recover the current state. Do not delete ledger rows or rerun a destructive recovery scenario merely to clear an alert. Preserve occurrence and evidence identities in the restricted incident record, then confirm `leapview_recovery_qualification_scrape_error`, `leapview_recovery_qualification_overdue`, or `leapview_recovery_qualification_evidence{state="failed"}` returns to zero and the alert resolves on the next rule evaluation.
+After provider recovery, verify instance identity, active deployment pointers,
+authorization, managed-data revisions, and representative governed queries
+before reopening traffic. Keep the failed state and provider evidence until
+the incident is closed.
 
 ## Correlated incident investigation workflow
 
-Use this workflow with the specific response for [target unavailability](#target-unavailable-alert-fires), [sustained HTTP 5xx responses](#sustained-http-5xx-alert-fires), [DuckDB fatal health](#duckdb-fatal-health-alert-fires), [audit-outbox metric collection](#audit-outbox-metrics-collection-failure-alert-fires), [terminal audit intents](#audit-outbox-terminal-intents-alert-fires), [audit backlog](#audit-outbox-excessive-backlog-alert-fires), [audit capacity exhaustion](#audit-outbox-capacity-exhausted-alert-fires), [dashboard refresh outcome fast burn](#dashboard-refresh-fast-burn-alert-fires), [dashboard refresh latency fast burn](#dashboard-refresh-latency-fast-burn-alert-fires), [dashboard refresh latency slow burn](#dashboard-refresh-latency-slow-burn-alert-fires), [dashboard refresh slow burn](#dashboard-refresh-slow-burn-alert-fires), or [recovery qualification freshness](#recovery-qualification-freshness-alerts-fire). It defines evidence pivots and recovery records; it does not authorize remediation.
+Use this workflow with the specific response for [target unavailability](#target-unavailable-alert-fires), [sustained HTTP 5xx responses](#sustained-http-5xx-alert-fires), [DuckDB fatal health](#duckdb-fatal-health-alert-fires), [PostgreSQL pool saturation](#postgresql-pool-saturation-alert-fires), [critical PostgreSQL pool saturation](#postgresql-pool-critical-saturation-alert-fires), [PostgreSQL pool no headroom](#postgresql-pool-no-headroom-alert-fires), [canceled PostgreSQL pool acquires](#postgresql-pool-canceled-acquire-alert-fires), [PostgreSQL pool acquire latency](#postgresql-pool-acquire-latency-alert-fires), [PostgreSQL pool connection churn](#postgresql-pool-connection-churn-alert-fires), [dashboard refresh outcome fast burn](#dashboard-refresh-fast-burn-alert-fires), [dashboard refresh latency fast burn](#dashboard-refresh-latency-fast-burn-alert-fires), [dashboard refresh latency slow burn](#dashboard-refresh-latency-slow-burn-alert-fires), [dashboard refresh slow burn](#dashboard-refresh-slow-burn-alert-fires), or [provider recovery or catalog drift](#provider-recovery-or-catalog-drift). It defines evidence pivots and recovery records; it does not authorize remediation.
 
 ### 1. Record alert intake
 
 Preserve the alert name, first observed firing time, current evaluation time, `job`, `instance`, severity, summary, and affected component before changing the service or monitoring configuration. The alert firing time follows any configured hold duration and Prometheus evaluation interval, so record the earliest independently observed symptom separately rather than treating the firing time as the incident start. Keep the original labels and annotations with the incident record and confirm which deployed rule revision produced them.
 
-Use the alert-specific procedure to identify the first reported boundary: scrape path for target unavailability, application HTTP handling for sustained 5xx responses, the process-owned analytical runtime for fatal DuckDB health, dashboard refresh reliability for burn alerts, or recovery scheduling, execution, ledger collection, and evidence publication for recovery alerts. `job` and `instance` identify the bounded alert target; they do not identify a user, project, request, or root cause.
+Use the alert-specific procedure to identify the first reported boundary: scrape path for target unavailability, application HTTP handling for sustained 5xx responses, the process-owned analytical runtime for fatal DuckDB health, dashboard refresh reliability for burn alerts, or the provider's recovery boundary for catalog or object-store drift. `job` and `instance` identify the bounded alert target; they do not identify a user, project, request, or root cause.
 
 ### 2. Inspect metrics and reliability context
 
@@ -209,6 +278,6 @@ Request and correlation IDs are not currently propagated through every refresh o
 
 Record impact, UTC timestamps and time-zone source, alert details, last known good deployment, image and revision, Prometheus expressions and values, observed symptoms, relevant request, correlation, upstream trace, refresh, generation, and serving-state identifiers, evidence locations, actions taken, and whether active state changed. Separate observed facts from inferences. Redact secrets and sensitive payloads, retain only the minimum principal, project, or resource metadata required, and store restricted evidence according to its sensitivity and retention policy.
 
-Use the objective recovery criteria in the alert-specific procedure. Record the time source metrics returned to their expected state, the alert resolved, and representative liveness, readiness, request, analytical, or qualification checks succeeded as applicable. Alert resolution alone does not prove user-visible recovery, and repeated restarts, manual pointer edits, deleted active state, relaxed thresholds, or reclassified outcomes are not recovery evidence.
+Use the objective recovery criteria in the alert-specific procedure. Record the time source metrics returned to their expected state, the alert resolved, and representative liveness, readiness, request, or analytical checks succeeded as applicable. Alert resolution alone does not prove user-visible recovery, and repeated restarts, manual pointer edits, deleted active state, relaxed thresholds, or reclassified outcomes are not recovery evidence.
 
 Use the generated [environment variable reference](/docs/configuration), [`config` CLI reference](/docs/cli/config), [`admin` CLI reference](/docs/cli/admin), and [API reference](/docs/api) when confirming exact names, flags, and operations during diagnosis.

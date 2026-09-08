@@ -89,6 +89,12 @@ func (p *Planner) buildFlatPlanIR(dataset string, dimensions, metrics []Field, f
 }
 
 func (p *Planner) buildFlatPlanIRWithFilters(dataset string, dimensions, metrics []Field, filterSpecs []flatPlanFilter, pathOverrides map[string][]semanticmodel.Relationship, sorts []Sort, limit, offset int) (*planir.Graph, error) {
+	return p.buildFlatPopulationIR(dataset, dimensions, metrics, filterSpecs, pathOverrides, sorts, limit, offset, false)
+}
+
+// buildFlatPopulationIR retains selection-driven relationship routes even when
+// only a count is projected. Count mode changes the output, not its input rows.
+func (p *Planner) buildFlatPopulationIR(dataset string, dimensions, metrics []Field, filterSpecs []flatPlanFilter, pathOverrides map[string][]semanticmodel.Relationship, sorts []Sort, limit, offset int, countOnly bool) (*planir.Graph, error) {
 	if dataset == "" {
 		return nil, fmt.Errorf("plan IR dataset is required")
 	}
@@ -252,6 +258,9 @@ func (p *Planner) buildFlatPlanIRWithFilters(dataset string, dimensions, metrics
 		input = m.NodeID
 	}
 	projection := []planir.Projection{}
+	if countOnly {
+		dimensions, metrics = nil, nil
+	}
 	for _, field := range dimensions {
 		alias, err := outputAlias(field)
 		if err != nil {

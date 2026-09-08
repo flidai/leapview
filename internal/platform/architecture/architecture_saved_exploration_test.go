@@ -5,16 +5,19 @@ import (
 	"testing"
 )
 
-func TestSavedExplorationSQLiteIsOnlyTheNarrowPersistenceAdapter(t *testing.T) {
-	const sqlitePath = "internal/analytics/exploration/saved/sqlite"
-	for _, path := range []string{sqlitePath, sqlitePath + "/repository"} {
+func TestSavedExplorationPostgresIsOnlyTheNarrowPersistenceAdapter(t *testing.T) {
+	const postgresPath = "internal/analytics/exploration/saved/postgres"
+	for _, path := range []string{postgresPath, postgresPath + "/repository"} {
 		rule, ok := ClassifyPackage(path)
 		if !ok {
 			t.Fatalf("%s is not classified", path)
 		}
-		if rule.Prefix != sqlitePath || rule.Capability != "analytics" || rule.Layer != LayerAdapter {
+		if rule.Prefix != postgresPath || rule.Capability != "analytics" || rule.Layer != LayerAdapter {
 			t.Fatalf("%s classification = %#v, want exact analytics adapter rule", path, rule)
 		}
+	}
+	if IsSQLiteFixturePackage("internal/analytics/exploration/saved/sqlite") {
+		t.Fatal("saved exploration must not gain a legacy SQLite production exception")
 	}
 
 	for _, path := range []string{

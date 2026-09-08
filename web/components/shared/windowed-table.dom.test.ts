@@ -169,16 +169,42 @@ test('windowed table loads requested blocks and rejects stale payloads', async (
         },
       })
       const requests: any[] = []
-      element.addEventListener('lv-windowed-table-request', (event: CustomEvent) => requests.push(event.detail))
+      const firstRequestPromise = new Promise<any>((resolve) => {
+        const handleRequest = (event: Event) => {
+          const request = (event as CustomEvent).detail
+          requests.push(request)
+          if (request.start < 100) return
+          element.removeEventListener('lv-windowed-table-request', handleRequest)
+          resolve(request)
+        }
+        element.addEventListener('lv-windowed-table-request', handleRequest)
+      })
       document.body.append(element)
       await element.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 
       const root = element.shadowRoot!
       const scrollport = root.querySelector('.scrollport') as HTMLDivElement
-      scrollport.scrollTop = 5200
-      scrollport.dispatchEvent(new Event('scroll'))
-      await new Promise((resolve) => setTimeout(resolve, 120))
-      const firstRequest = requests.find((request) => request.start >= 100)
+      const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window)
+      let heldFrame: FrameRequestCallback | undefined
+      window.requestAnimationFrame = (callback: FrameRequestCallback) => {
+        if (heldFrame) throw new Error('multiple delayed windowed-table frames')
+        heldFrame = callback
+        return 1
+      }
+      let requestBeforeFrameRelease: Record<string, unknown> | undefined
+      let delayedFrame: FrameRequestCallback | undefined
+      try {
+        scrollport.scrollTop = 5200
+        scrollport.dispatchEvent(new Event('scroll'))
+        requestBeforeFrameRelease = requests.find((request) => request.start >= 100)
+        delayedFrame = heldFrame
+        if (!delayedFrame) throw new Error('windowed-table scroll frame was not scheduled')
+        delayedFrame(performance.now())
+      } finally {
+        window.requestAnimationFrame = nativeRequestAnimationFrame
+      }
+      const firstRequest = await firstRequestPromise
       const blockStarts = firstRequest.block === 'all'
         ? [Math.max(0, firstRequest.start - 50), firstRequest.start, firstRequest.start + 50]
         : [0, 50, 100]
@@ -214,6 +240,8 @@ test('windowed table loads requested blocks and rejects stale payloads', async (
       }))
       return {
         firstRequest,
+        delayedFrameHeld: Boolean(delayedFrame),
+        requestBeforeFrameRelease: Boolean(requestBeforeFrameRelease),
         staleAccepted: staleText.includes('stale'),
         loadedRows: rows.filter((row) => row.text?.includes('loaded')).length,
         skeletonRows: rows.filter((row) => row.busy === 'true').length,
@@ -222,6 +250,8 @@ test('windowed table loads requested blocks and rejects stale payloads', async (
 
     expect(state.firstRequest.block).toBeTruthy()
     expect(state.firstRequest.count).toBe(50)
+    expect(state.delayedFrameHeld).toBe(true)
+    expect(state.requestBeforeFrameRelease).toBe(false)
     expect(state.staleAccepted).toBe(false)
     expect(state.loadedRows).toBeGreaterThan(0)
     expect(state.skeletonRows).toBeLessThan(10)

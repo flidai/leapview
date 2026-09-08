@@ -21,6 +21,7 @@ type Kind string
 
 const (
 	KindScanDataset          Kind = "ScanDataset"
+	KindSecurityBarrier      Kind = "SecurityBarrier"
 	KindTraverseRelationship Kind = "TraverseRelationship"
 	KindFilterRows           Kind = "FilterRows"
 	KindAggregateMetrics     Kind = "AggregateMetrics"
@@ -625,8 +626,9 @@ type Node interface {
 
 type ScanDataset struct {
 	NodeMeta
-	Dataset  string `json:"dataset"`
-	Relation string `json:"relation,omitempty"`
+	Dataset                 string `json:"dataset"`
+	Relation                string `json:"relation,omitempty"`
+	RequiresSecurityBarrier bool   `json:"requires_security_barrier,omitempty"`
 }
 
 func (ScanDataset) Kind() Kind       { return KindScanDataset }
@@ -636,14 +638,20 @@ func (ScanDataset) nodeMarker()      {}
 
 type TraverseRelationship struct {
 	NodeMeta
-	Input string           `json:"input"`
-	Path  RelationshipPath `json:"path"`
+	Input       string           `json:"input"`
+	TargetInput string           `json:"target_input,omitempty"`
+	Path        RelationshipPath `json:"path"`
 }
 
-func (TraverseRelationship) Kind() Kind         { return KindTraverseRelationship }
-func (n TraverseRelationship) Meta() NodeMeta   { return n.NodeMeta }
-func (n TraverseRelationship) Inputs() []string { return []string{n.Input} }
-func (TraverseRelationship) nodeMarker()        {}
+func (TraverseRelationship) Kind() Kind       { return KindTraverseRelationship }
+func (n TraverseRelationship) Meta() NodeMeta { return n.NodeMeta }
+func (n TraverseRelationship) Inputs() []string {
+	if n.TargetInput == "" {
+		return []string{n.Input}
+	}
+	return []string{n.Input, n.TargetInput}
+}
+func (TraverseRelationship) nodeMarker() {}
 
 type FilterRows struct {
 	NodeMeta
@@ -917,6 +925,14 @@ type Graph struct {
 	Nodes  map[string]Node `json:"nodes"`
 	Roots  []string        `json:"roots,omitempty"`
 	Output string          `json:"output"`
+
+	// securityBaseline is intentionally private: once authorization barriers
+	// are applied, every validation/render pass re-checks this immutable
+	// baseline so a downstream rewrite cannot silently weaken or move one.
+	securityBaseline       []securitySeal
+	securitySealed         bool
+	securityPolicyDatasets []string
+	securitySourceBaseline []string
 }
 
 func sortedStrings(values []string) []string {

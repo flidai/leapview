@@ -14,11 +14,11 @@ import (
 )
 
 func TestOssieCommandRoutesExportAndImportThroughProjectCompiler(t *testing.T) {
-	projectPath := "../../../dashboards/leapview.yaml"
+	projectPath := "../../../examples/dbt-warehouse-boundary/leapview"
 	var exported bytes.Buffer
 	export := OssieCommand(context.Background())
 	export.SetOut(&exported)
-	export.SetArgs([]string{"ossie", "export", "--project", projectPath, "--semantic-model", "sales"})
+	export.SetArgs([]string{"ossie", "export", "--source-root", projectPath, "--semantic-model", "warehouse_sales"})
 	if err := export.Execute(); err != nil {
 		t.Fatalf("export command: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestOssieCommandRoutesExportAndImportThroughProjectCompiler(t *testing.T) {
 	importCommand := OssieCommand(context.Background())
 	importCommand.SetIn(strings.NewReader(exported.String()))
 	importCommand.SetOut(&imported)
-	importCommand.SetArgs([]string{"ossie", "import", "--project", projectPath, "--in", "-"})
+	importCommand.SetArgs([]string{"ossie", "import", "--source-root", projectPath, "--in", "-"})
 	if err := importCommand.Execute(); err != nil {
 		t.Fatalf("import command: %v", err)
 	}
@@ -41,11 +41,11 @@ func TestOssieCommandRoutesExportAndImportThroughProjectCompiler(t *testing.T) {
 		t.Fatalf("import command emitted invalid native schema: %v\n%s", err, imported.String())
 	}
 	projectCopy := t.TempDir()
-	copyTree(t, "../../../dashboards", projectCopy)
+	copyTree(t, "../../../examples/dbt-warehouse-boundary/leapview", projectCopy)
 	if err := os.WriteFile(filepath.Join(projectCopy, "semantic-models", "sales.yaml"), imported.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := projectcompiler.LoadProject(filepath.Join(projectCopy, "leapview.yaml")); err != nil {
+	if _, err := projectcompiler.LoadSourceRoot(projectCopy); err != nil {
 		t.Fatalf("import command output did not compile as native project resource: %v", err)
 	}
 }

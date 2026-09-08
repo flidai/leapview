@@ -1,7 +1,6 @@
 package app
 
 import (
-	"database/sql"
 	"fmt"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
@@ -15,12 +14,11 @@ import (
 // use the same runtime provider and workload admission controller as the rest
 // of the application, while persistence and audit remain platform-owned.
 type SavedExplorationServiceOptions struct {
-	Database            *sql.DB
-	AuditIntentRecorder accessmodule.AuditIntentRecorder
-	AccessModule        SavedExplorationAccessModule
-	Runtime             runtimehostmodule.Provider
-	Admitter            workloadmodule.Admitter
-	AuditRecorder       accessmodule.CanonicalAuditRecorder
+	Repository    analyticsmodule.SavedExplorationRepository
+	AccessModule  SavedExplorationAccessModule
+	Runtime       runtimehostmodule.Provider
+	Admitter      workloadmodule.Admitter
+	AuditRecorder accessmodule.CanonicalAuditRecorder
 }
 
 // NewSavedExplorationService wires the process-owned cross-capability ports
@@ -35,10 +33,9 @@ func NewSavedExplorationService(options SavedExplorationServiceOptions) (analyti
 		return nil, fmt.Errorf("build saved exploration adapters: %w", err)
 	}
 	return analyticsmodule.BuildSavedExplorationService(analyticsmodule.SavedExplorationServiceOptions{
-		Database:            options.Database,
-		AuditIntentRecorder: options.AuditIntentRecorder,
-		Authorizer:          adapters.Authorizer,
-		Runtime:             options.Runtime,
-		Executor:            adapters.Executor,
+		Repository: options.Repository,
+		Authorizer: adapters.Authorizer,
+		Runtime:    options.Runtime,
+		Executor:   adapters.Executor,
 	})
 }

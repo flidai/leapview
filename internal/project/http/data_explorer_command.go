@@ -94,7 +94,8 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
-	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels)
+	consumers := dataExplorerSemanticConsumers(r.Context(), h.QueryExecutor, definition)
+	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels, consumers)
 	if strictURLState && legacyURLState && projectsignals.ValueOrZero(command.Mode) == "explore" {
 		if err := adaptLegacyExplorationFilterValues(&exploreCommand.Spec, projection.Fields); err != nil {
 			stdhttp.Error(w, "invalid legacy exploration URL state: "+err.Error(), stdhttp.StatusBadRequest)
@@ -103,7 +104,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		// Filter literal kinds do not affect field projection, but the adapted
 		// spec must be carried through the command that is subsequently restored
 		// and executed.
-		projection = BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels)
+		projection = BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels, consumers)
 	}
 	if strictURLState && projectsignals.ValueOrZero(command.Mode) == "explore" {
 		modelID := strings.TrimSpace(projection.Command.Spec.ModelID)

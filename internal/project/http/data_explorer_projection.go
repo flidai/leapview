@@ -41,7 +41,11 @@ type explorerModelBinding struct {
 // compiled semantic bindings. Asset visibility is authoritative for every
 // output: manifest entries that do not have a visible serving asset are never
 // exposed to the browser.
-func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project projectmanifest.Project, command projectsignals.DataExploreCommand, compiledModels map[string]*semanticquery.CompiledModel) DataExplorerProjection {
+func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project projectmanifest.ResourceManifest, command projectsignals.DataExploreCommand, compiledModels map[string]*semanticquery.CompiledModel, consumers ...map[string]*semanticquery.SemanticAccessConsumer) DataExplorerProjection {
+	var consumersByModel map[string]*semanticquery.SemanticAccessConsumer
+	if len(consumers) != 0 {
+		consumersByModel = consumers[0]
+	}
 	state := dataExploreStateFromSpec(command.Spec)
 	visible := make(map[string]projectview.DevelopAssetView, len(assets))
 	for _, asset := range assets {
@@ -62,25 +66,38 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	semanticModels := make([]projectsignals.DataExploreSemanticModelSignal, 0, len(semanticIDs))
 	modelByID := make(map[string]*semanticmodel.Model, len(semanticIDs))
 	compiledByID := make(map[string]*semanticquery.CompiledModel, len(semanticIDs))
+	accessByID := make(map[string]*explorerSemanticAccess, len(semanticIDs))
 	bindingUnavailable := false
 	for _, id := range semanticIDs {
-		model := project.SemanticModels[id]
-		if model == nil {
-			continue
-		}
-		modelByID[id] = model
 		asset := visible[id]
 		compiled, ok := compiledModels[id]
 		if !ok || compiled == nil || len(compiled.DatasetNames()) == 0 {
 			bindingUnavailable = true
-			compiled = &semanticquery.CompiledModel{}
+			continue
+		}
+		// The compiled model is the activation-owned projection. Never fall
+		// back to the mutable manifest model for field, metric, or relationship
+		// facts: a retained browser projection must remain coherent with the
+		// planner that will execute it.
+		model := compiled.SourceModel()
+		if model == nil {
+			bindingUnavailable = true
+			continue
+		}
+		modelByID[id] = model
+		if !model.AccessPolicy.Empty() {
+			access, ok := explorerSemanticAccessForModel(model, compiled, consumersByModel[id], id)
+			if !ok {
+				continue
+			}
+			accessByID[id] = access
 		}
 		compiledByID[id] = compiled
 		semanticModels = append(semanticModels, projectsignals.DataExploreSemanticModelSignal{
 			ID:          id,
 			Title:       firstExplorerNonEmpty(model.Title, model.Name, asset.Title, id),
 			Description: projectsignals.Optional(firstExplorerNonEmpty(model.Description, asset.Description)),
-			Datasets:    explorerDatasets(model, compiled),
+			Datasets:    explorerDatasets(model, compiled, accessByID[id]),
 		})
 	}
 
@@ -91,7 +108,13 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	for _, semanticID := range semanticIDs {
 		model := modelByID[semanticID]
 		compiled := compiledByID[semanticID]
+		if access := accessByID[semanticID]; access != nil && len(access.datasets) == 0 {
+			continue
+		}
 		for datasetID, datasetTable := range explorerDatasetTableMap(model, compiled) {
+			if access := accessByID[semanticID]; access != nil && !access.allowsDataset(datasetID) {
+				continue
+			}
 			tableName := datasetTable.ModelName
 			modelID := project.NameIndex.Models[tableName]
 			if modelID == "" {
@@ -146,17 +169,9 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 			}
 			columns := explorerTableColumns(table)
 			bindings := bindingsByModelID[asset.ID]
-			if len(bindings) == 0 {
-				objects = append(objects, explorerModelObject(asset, table, columns, "", ""))
-				continue
-			}
 			// One object per semantic dataset binding keeps field compatibility
-			// scoped to the selected model and dataset. The object key carries
-			// the full binding identity; ResourceID remains the backing logical
-			// Model resource for governed preview execution and detail links.
-			for _, binding := range bindings {
-				objects = append(objects, explorerModelObject(asset, table, columns, binding.SemanticModelID, binding.DatasetID))
-			}
+			// scoped to the selected model and dataset.
+			objects = append(objects, explorerBoundModelObjects(asset, table, columns, bindings, accessByID, compiledByID)...)
 		}
 	}
 	sortExplorerObjects(objects)
@@ -175,11 +190,7 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	if selectedSemanticModelIndex < 0 && selectedSemanticModelID == "" && len(semanticModels) > 0 {
 		selectedSemanticModelIndex = 0
 	}
-	warnings := []string(nil)
-	if bindingUnavailable {
-		warnings = append(warnings, "Compiled semantic dataset bindings are unavailable for the active serving generation.")
-	}
-	result := DataExplorerProjection{Objects: objects, SemanticModels: semanticModels, Command: command, Warnings: warnings}
+	result := DataExplorerProjection{Objects: objects, SemanticModels: semanticModels, Command: command, Warnings: explorerBindingWarnings(bindingUnavailable)}
 	if selectedSemanticModelIndex < 0 {
 		return result
 	}
@@ -212,6 +223,7 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	}
 	model := modelByID[selectedSemanticModel.ID]
 	compiled := compiledByID[selectedSemanticModel.ID]
+	access := accessByID[selectedSemanticModel.ID]
 	if resolvedBase, changed := resolveExplorerBase(model, baseTable, state, compiled); changed {
 		previousBase := baseTable
 		baseTable = resolvedBase
@@ -227,13 +239,16 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	}
 	command.Spec = explorationSpecWithState(command.Spec, state)
 	result.Command = command
-	result.Fields = explorerFields(model, baseTable, state, compiled)
+	result.Fields = explorerFields(model, baseTable, state, compiled, access)
 	return result
 }
-
-func explorerDatasets(model *semanticmodel.Model, compiled *semanticquery.CompiledModel) []projectsignals.DataExploreDatasetSignal {
+func explorerDatasets(model *semanticmodel.Model, compiled *semanticquery.CompiledModel, accesses ...*explorerSemanticAccess) []projectsignals.DataExploreDatasetSignal {
 	if model == nil {
 		return []projectsignals.DataExploreDatasetSignal{}
+	}
+	var access *explorerSemanticAccess
+	if len(accesses) > 0 {
+		access = accesses[0]
 	}
 	tables := explorerDatasetTableMap(model, compiled)
 	names := make([]string, 0, len(tables))
@@ -243,15 +258,26 @@ func explorerDatasets(model *semanticmodel.Model, compiled *semanticquery.Compil
 	sort.Strings(names)
 	out := make([]projectsignals.DataExploreDatasetSignal, 0, len(names))
 	for _, name := range names {
+		if !access.allowsDataset(name) {
+			continue
+		}
 		table := tables[name]
 		entities, grainEntity, grainFields := explorerDatasetEntities(table)
+		if access != nil {
+			entities, grainEntity, grainFields = explorerDatasetEntitiesAuthorized(table, compiled, name, access)
+		}
 		fieldCount := len(table.Dimensions)
+		if access != nil {
+			fieldCount = 0
+			for _, dimension := range compiled.SemanticDimensionNames() {
+				if binding, ok := compiled.DimensionBinding(dimension, name); ok && access.allowsDimension(dimension, name, binding.Physical.Field) {
+					fieldCount++
+				}
+			}
+		}
 		for _, metricName := range compiled.MetricNames() {
 			metric, ok := compiled.Metric(metricName)
-			if !ok {
-				continue
-			}
-			if metric.Hidden {
+			if !ok || metric.Hidden || !access.allowsMetric(metricName) {
 				continue
 			}
 			for _, root := range explorerMetricRootDatasets(compiled, metricName) {
@@ -310,9 +336,13 @@ func explorerDatasetEntities(table semanticmodel.Table) ([]projectsignals.Semant
 	return entities, grainEntity, grainFields
 }
 
-func explorerFields(model *semanticmodel.Model, baseTable string, command dataExploreState, compiled *semanticquery.CompiledModel) []projectsignals.DataExploreFieldSignal {
+func explorerFields(model *semanticmodel.Model, baseTable string, command dataExploreState, compiled *semanticquery.CompiledModel, accesses ...*explorerSemanticAccess) []projectsignals.DataExploreFieldSignal {
 	if model == nil {
 		return []projectsignals.DataExploreFieldSignal{}
+	}
+	var access *explorerSemanticAccess
+	if len(accesses) > 0 {
+		access = accesses[0]
 	}
 	selectedDimensions := explorerStringSet(command.Dimensions)
 	selectedMetrics := explorerStringSet(command.Metrics)
@@ -331,6 +361,9 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command dataEx
 		}
 		sort.Strings(fieldNames)
 		for _, fieldName := range fieldNames {
+			if !access.allowsPhysicalField(compiled, tableName, fieldName) {
+				continue
+			}
 			dimension := table.Dimensions[fieldName]
 			id := tableName + "." + fieldName
 			fieldType := firstExplorerNonEmpty(string(dimension.Datatype), dimension.Type, table.Columns[fieldName].Type)
@@ -362,6 +395,19 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command dataEx
 		if !ok {
 			continue
 		}
+		if access != nil {
+			allowed := false
+			for _, dataset := range compiled.DatasetNames() {
+				binding, bound := compiled.DimensionBinding(name, dataset)
+				if bound && access.allowsDimension(name, dataset, binding.Physical.Field) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				continue
+			}
+		}
 		binding, compatible := compiled.DimensionBinding(name, baseTable)
 		datasetID := ""
 		path := []string(nil)
@@ -386,6 +432,9 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command dataEx
 	for _, name := range compiled.MetricNames() {
 		metric, ok := compiled.Metric(name)
 		if !ok || metric.Hidden {
+			continue
+		}
+		if !access.allowsMetric(name) {
 			continue
 		}
 		roots := explorerMetricRootDatasets(compiled, name)

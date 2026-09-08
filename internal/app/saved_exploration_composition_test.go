@@ -9,12 +9,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	saved "github.com/flidai/leapview/internal/analytics/exploration/saved"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
-	"github.com/flidai/leapview/internal/platform/transaction"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
@@ -25,15 +23,45 @@ func (savedCompositionProvider) Acquire(context.Context) (projectruntime.Lease, 
 	return nil, errors.New("saved composition test provider is not executable")
 }
 
+type savedCompositionRepository struct{}
+
+var _ saved.Repository = (*savedCompositionRepository)(nil)
+
+func (*savedCompositionRepository) Create(context.Context, saved.CreateInput) (saved.MutationResult, error) {
+	return saved.MutationResult{}, saved.ErrUnavailable
+}
+func (*savedCompositionRepository) LookupMutation(context.Context, saved.MutationLookupInput) (saved.MutationReplayMetadata, bool, error) {
+	return saved.MutationReplayMetadata{}, false, saved.ErrUnavailable
+}
+func (*savedCompositionRepository) GetLifecycle(context.Context, saved.ReadInput) (saved.Lifecycle, error) {
+	return saved.Lifecycle{}, saved.ErrUnavailable
+}
+func (*savedCompositionRepository) GetRevision(context.Context, saved.RevisionReadInput) (saved.Revision, error) {
+	return saved.Revision{}, saved.ErrUnavailable
+}
+func (*savedCompositionRepository) ListPage(context.Context, saved.ListInput) (saved.ListPage, error) {
+	return saved.ListPage{}, saved.ErrUnavailable
+}
+func (*savedCompositionRepository) UpdateVersion(context.Context, saved.UpdateVersionInput) (saved.MutationResult, error) {
+	return saved.MutationResult{}, saved.ErrUnavailable
+}
+func (*savedCompositionRepository) Duplicate(context.Context, saved.DuplicateInput) (saved.MutationResult, error) {
+	return saved.MutationResult{}, saved.ErrUnavailable
+}
+func (*savedCompositionRepository) List(context.Context, saved.ListInput) ([]saved.Lifecycle, error) {
+	return nil, saved.ErrUnavailable
+}
+func (*savedCompositionRepository) Archive(context.Context, saved.ArchiveInput) (saved.MutationResult, error) {
+	return saved.MutationResult{}, saved.ErrUnavailable
+}
+
 func TestNewSavedExplorationServiceRequiresCompleteComposition(t *testing.T) {
-	store := testStore(t)
 	base := SavedExplorationServiceOptions{
-		Database:            store.SQLDB(),
-		AuditIntentRecorder: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error { return nil }),
-		AccessModule:        savedAdapterAccessStub{},
-		Runtime:             savedCompositionProvider{},
-		Admitter:            &savedAdapterAdmission{},
-		AuditRecorder:       &savedAdapterAudit{},
+		Repository:    &savedCompositionRepository{},
+		AccessModule:  savedAdapterAccessStub{},
+		Runtime:       savedCompositionProvider{},
+		Admitter:      &savedAdapterAdmission{},
+		AuditRecorder: &savedAdapterAudit{},
 	}
 
 	if service, err := NewSavedExplorationService(base); err != nil || service == nil {
@@ -44,8 +72,7 @@ func TestNewSavedExplorationServiceRequiresCompleteComposition(t *testing.T) {
 		name   string
 		mutate func(*SavedExplorationServiceOptions)
 	}{
-		{name: "database", mutate: func(options *SavedExplorationServiceOptions) { options.Database = nil }},
-		{name: "audit intent recorder", mutate: func(options *SavedExplorationServiceOptions) { options.AuditIntentRecorder = nil }},
+		{name: "repository", mutate: func(options *SavedExplorationServiceOptions) { options.Repository = nil }},
 		{name: "access module", mutate: func(options *SavedExplorationServiceOptions) { options.AccessModule = nil }},
 		{name: "runtime provider", mutate: func(options *SavedExplorationServiceOptions) { options.Runtime = nil }},
 		{name: "workload admitter", mutate: func(options *SavedExplorationServiceOptions) { options.Admitter = nil }},
@@ -64,11 +91,12 @@ func TestNewSavedExplorationServiceRequiresCompleteComposition(t *testing.T) {
 
 func TestSavedExplorationRuntimeCompositionMountsWithPersistence(t *testing.T) {
 	store := testStore(t)
+	db, repository := savedPostgresFixture(t)
 	ctx := t.Context()
 	principal := testPlatformPrincipal(t, ctx, store, "saved-composition@example.com", "Saved Composition")
 	token := testAPIToken(t, ctx, store, principal.ID, "saved-composition")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
-	server, err := assembleRuntimeChecked(ctx, fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, AnalyticsModule: analyticsmodule.NewSurface(nil, nil)}))
+	server, err := assembleRuntimeChecked(ctx, fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, AnalyticsModule: analyticsmodule.NewSurface(nil, nil), SavedExplorationRepository: repository}))
 	if err != nil {
 		t.Fatalf("assemble runtime: %v", err)
 	}
@@ -148,11 +176,11 @@ func TestSavedExplorationRuntimeCompositionMountsWithPersistence(t *testing.T) {
 		storedOwner, storedStatus, storedModel, storedRevisionID, storedContentHash string
 		storedRevisionNumber                                                        int64
 	)
-	if err := store.SQLDB().QueryRowContext(ctx, `
+	if err := db.QueryRow(ctx, `
 		SELECT owner_principal_id, status, semantic_model_id,
 		       current_revision_id, current_revision_number, current_content_hash
-		FROM saved_explorations
-		WHERE project_id = ? AND exploration_id = ?`, "project:test", created.Id).Scan(
+		FROM saved_exploration.saved_explorations
+		WHERE project_id = $1 AND exploration_id = $2`, "project:test", created.Id).Scan(
 		&storedOwner, &storedStatus, &storedModel, &storedRevisionID, &storedRevisionNumber, &storedContentHash); err != nil {
 		t.Fatalf("read persisted lifecycle: %v", err)
 	}
@@ -164,11 +192,11 @@ func TestSavedExplorationRuntimeCompositionMountsWithPersistence(t *testing.T) {
 		operationActor, operationFingerprint, operationRequestID, operationCorrelationID string
 		operationVersion                                                                 int64
 	)
-	if err := store.SQLDB().QueryRowContext(ctx, `
+	if err := db.QueryRow(ctx, `
 		SELECT actor_id, request_fingerprint, evidence_version,
 		       evidence_request_id, evidence_correlation_id
-		FROM saved_exploration_operations
-		WHERE project_id = ? AND operation_kind = 'create' AND idempotency_key = ?`,
+		FROM saved_exploration.saved_exploration_operations
+		WHERE project_id = $1 AND operation_kind = 'create' AND idempotency_key = $2`,
 		"project:test", "composition-create-1").Scan(&operationActor, &operationFingerprint, &operationVersion, &operationRequestID, &operationCorrelationID); err != nil {
 		t.Fatalf("read persisted mutation evidence: %v", err)
 	}
@@ -177,10 +205,10 @@ func TestSavedExplorationRuntimeCompositionMountsWithPersistence(t *testing.T) {
 	}
 
 	var auditMetadata string
-	if err := store.SQLDB().QueryRowContext(ctx, `
-		SELECT metadata_json
-		FROM audit_outbox
-		WHERE aggregate_key = ? AND action = 'saved_exploration.created'`, "saved_exploration:project:test:"+created.Id).Scan(&auditMetadata); err != nil {
+	if err := db.QueryRow(ctx, `
+		SELECT metadata::text
+		FROM audit.audit_event
+		WHERE aggregate_key = $1 AND action = 'saved_exploration.created'`, "saved_exploration:project:test:"+created.Id).Scan(&auditMetadata); err != nil {
 		t.Fatalf("read durable audit evidence: %v", err)
 	}
 	var audit struct {

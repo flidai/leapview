@@ -60,25 +60,7 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 	if leaser == nil {
 		return nil, ErrProviderUnavailable
 	}
-	if request.Actor != strings.TrimSpace(request.Actor) {
-		return nil, fmt.Errorf("%w: actor must be canonical", ErrInvalidBinding)
-	}
-	if _, err := ParseTargetID(request.TargetID.String()); err != nil {
-		return nil, err
-	}
-	if request.Identity.ProjectID.String() != strings.TrimSpace(request.Identity.ProjectID.String()) ||
-		request.Identity.Environment != strings.TrimSpace(request.Identity.Environment) ||
-		request.Identity.GenerationID != strings.TrimSpace(request.Identity.GenerationID) {
-		return nil, fmt.Errorf("%w: serving identity fields must be canonical", ErrInvalidBinding)
-	}
-	if request.Actor == "" || request.TargetID == "" ||
-		request.Identity.Validate() != nil {
-		return nil, fmt.Errorf(
-			"%w: actor, target, and exact serving identity are required",
-			ErrInvalidBinding,
-		)
-	}
-	requirements, err := normalizeRuntimeRequirements(request.Requirements)
+	requirements, err := leaser.validateRequest(request)
 	if err != nil {
 		return nil, err
 	}
@@ -92,33 +74,8 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 		}
 	}()
 	for _, requirement := range requirements {
-		binding, err := leaser.bindings.Binding(
-			ctx,
-			BindingScope{ProjectID: request.Identity.ProjectID, Environment: request.Identity.Environment},
-			request.TargetID,
-			requirement.ConnectionID,
-		)
+		binding, err := leaser.validateRequirement(ctx, request, requirement)
 		if err != nil {
-			return nil, err
-		}
-		if binding.TargetID != request.TargetID || binding.Scope.ProjectID != request.Identity.ProjectID || binding.Scope.Environment != request.Identity.Environment {
-			return nil, ErrBindingNotFound
-		}
-		if err := leaser.authorize(ctx, request.Actor, binding); err != nil {
-			return nil, ErrUnauthorizedBinding
-		}
-		spec, exists := connectors.LookupConnection(requirement.ConnectorKind)
-		if !exists || (requirement.Access != "" && requirement.Access != semanticmodel.ConnectionAccessPublic) {
-			return nil, ErrIncompatibleBinding
-		}
-		if requirement.Access == semanticmodel.ConnectionAccessPublic {
-			if !spec.AllowPublicAccess || binding.AuthenticationMode != AuthenticationNone {
-				return nil, ErrIncompatibleBinding
-			}
-		} else if binding.AuthenticationMode == AuthenticationNone {
-			return nil, ErrIncompatibleBinding
-		}
-		if _, err := binding.CompatibleEvidence(requirement, true); err != nil {
 			return nil, err
 		}
 		lease, err := leaser.pools.AcquireValidated(ctx, binding, request.Actor)
@@ -136,6 +93,102 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 		result.evidence = append(result.evidence, evidence)
 	}
 	return result, nil
+}
+
+// Inspect validates a candidate's exact serving identity and resolves the
+// durable, non-secret binding evidence without acquiring a pool, resolving
+// credentials, or registering a candidate runtime. The returned evidence is
+// suitable for compatibility and binding-fingerprint checks only.
+func (leaser *RuntimeBindingLeaser) Inspect(
+	ctx context.Context,
+	request RuntimeBindingRequest,
+) ([]RuntimeBindingEvidence, error) {
+	if leaser == nil {
+		return nil, ErrProviderUnavailable
+	}
+	requirements, err := leaser.validateRequest(request)
+	if err != nil {
+		return nil, err
+	}
+	evidence := make([]RuntimeBindingEvidence, 0, len(requirements))
+	for _, requirement := range requirements {
+		binding, err := leaser.validateRequirement(ctx, request, requirement)
+		if err != nil {
+			return nil, err
+		}
+		// Inspection is deliberately backed by durable health evidence. A
+		// pending or degraded binding must go through pool acquisition and
+		// health validation before it can be used for runtime compatibility.
+		if binding.Health != HealthHealthy || strings.TrimSpace(binding.ValidatedVersion) == "" || binding.LastValidatedAt.IsZero() {
+			return nil, ErrIncompatibleBinding
+		}
+		persistentEvidence := binding.Evidence()
+		persistentEvidence.Access = requirement.Access
+		runtimeEvidence := RuntimeBindingEvidence{BindingEvidence: persistentEvidence, Identity: request.Identity}
+		if err := validateRuntimeBindingEvidence(binding, requirement, runtimeEvidence); err != nil {
+			return nil, err
+		}
+		evidence = append(evidence, runtimeEvidence)
+	}
+	return evidence, nil
+}
+
+func (leaser *RuntimeBindingLeaser) validateRequest(request RuntimeBindingRequest) ([]Requirement, error) {
+	if request.Actor != strings.TrimSpace(request.Actor) {
+		return nil, fmt.Errorf("%w: actor must be canonical", ErrInvalidBinding)
+	}
+	if _, err := ParseTargetID(request.TargetID.String()); err != nil {
+		return nil, err
+	}
+	if request.Identity.ProjectID.String() != strings.TrimSpace(request.Identity.ProjectID.String()) ||
+		request.Identity.Environment != strings.TrimSpace(request.Identity.Environment) ||
+		request.Identity.GenerationID != strings.TrimSpace(request.Identity.GenerationID) {
+		return nil, fmt.Errorf("%w: serving identity fields must be canonical", ErrInvalidBinding)
+	}
+	if request.Actor == "" || request.TargetID == "" || request.Identity.Validate() != nil {
+		return nil, fmt.Errorf(
+			"%w: actor, target, and exact serving identity are required",
+			ErrInvalidBinding,
+		)
+	}
+	return normalizeRuntimeRequirements(request.Requirements)
+}
+
+func (leaser *RuntimeBindingLeaser) validateRequirement(
+	ctx context.Context,
+	request RuntimeBindingRequest,
+	requirement Requirement,
+) (TargetBinding, error) {
+	binding, err := leaser.bindings.Binding(
+		ctx,
+		BindingScope{ProjectID: request.Identity.ProjectID, Environment: request.Identity.Environment},
+		request.TargetID,
+		requirement.ConnectionID,
+	)
+	if err != nil {
+		return TargetBinding{}, err
+	}
+	if binding.TargetID != request.TargetID || binding.Scope.ProjectID != request.Identity.ProjectID || binding.Scope.Environment != request.Identity.Environment {
+		return TargetBinding{}, ErrBindingNotFound
+	}
+	if err := leaser.authorize(ctx, request.Actor, binding); err != nil {
+		return TargetBinding{}, ErrUnauthorizedBinding
+	}
+	spec, exists := connectors.LookupConnection(requirement.ConnectorKind)
+	if !exists || (requirement.Access != "" && requirement.Access != semanticmodel.ConnectionAccessPublic) {
+		return TargetBinding{}, ErrIncompatibleBinding
+	}
+	if requirement.Access == semanticmodel.ConnectionAccessPublic {
+		if !spec.AllowPublicAccess || binding.AuthenticationMode != AuthenticationNone {
+			return TargetBinding{}, ErrIncompatibleBinding
+		}
+	} else if binding.AuthenticationMode == AuthenticationNone {
+		return TargetBinding{}, ErrIncompatibleBinding
+	}
+	if _, err := binding.CompatibleEvidence(requirement, true); err != nil {
+		return TargetBinding{}, err
+	}
+	return binding, nil
 }
 
 func (leases *RuntimeBindingLeases) Evidence() []RuntimeBindingEvidence {

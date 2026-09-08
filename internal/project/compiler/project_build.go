@@ -1,9 +1,6 @@
 package compiler
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,102 +8,24 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
-	"github.com/flidai/leapview/internal/dashboard/publication"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
-func projectAccessGroup(name string, spec projectGroupSpec) manifest.Group {
-	group := manifest.Group{ID: name, Name: name, Description: spec.Description, Members: make([]manifest.GroupMember, 0, len(spec.Members))}
-	for _, member := range spec.Members {
-		group.Members = append(group.Members, manifest.GroupMember{PrincipalID: strings.TrimSpace(member.PrincipalID), Email: strings.TrimSpace(member.Email), DisplayName: strings.TrimSpace(member.DisplayName)})
-	}
-	sort.SliceStable(group.Members, func(i, j int) bool {
-		return accessMemberSortKey(group.Members[i]) < accessMemberSortKey(group.Members[j])
-	})
-	return group
-}
-
-func projectAccessRoleBinding(name string, spec projectRoleBindingSpec) manifest.RoleBinding {
-	return manifest.RoleBinding{ID: name, Name: name, Role: strings.TrimSpace(spec.Role), Subject: manifest.Subject{Kind: strings.TrimSpace(spec.Subject.Kind), PrincipalID: strings.TrimSpace(spec.Subject.PrincipalID), Email: strings.TrimSpace(spec.Subject.Email), DisplayName: strings.TrimSpace(spec.Subject.DisplayName), Group: strings.TrimSpace(spec.Subject.Group), Publication: strings.TrimSpace(spec.Subject.Publication)}}
-}
-
-func projectAccessGrant(name string, spec projectGrantSpec) manifest.Grant {
-	return manifest.Grant{ID: name, Name: name, Object: manifest.SecurableRef{Kind: strings.TrimSpace(spec.Object.Kind), ID: strings.TrimSpace(spec.Object.ID)}, Subject: manifest.Subject{Kind: strings.TrimSpace(spec.Subject.Kind), PrincipalID: strings.TrimSpace(spec.Subject.PrincipalID), Email: strings.TrimSpace(spec.Subject.Email), DisplayName: strings.TrimSpace(spec.Subject.DisplayName), Group: strings.TrimSpace(spec.Subject.Group), Publication: strings.TrimSpace(spec.Subject.Publication)}, Capability: strings.TrimSpace(spec.Capability)}
-}
-
-func projectAccessDataPolicy(name string, spec projectDataPolicySpec) (manifest.DataPolicy, error) {
-	expressionJSON := "{}"
-	if spec.Expression.Kind != 0 {
-		var expression any
-		if err := spec.Expression.Decode(&expression); err != nil {
-			return manifest.DataPolicy{}, err
-		}
-		expression = normalizeYAMLValue(expression)
-		bytes, err := json.Marshal(expression)
-		if err != nil {
-			return manifest.DataPolicy{}, err
-		}
-		expressionJSON = string(bytes)
-	}
-	return manifest.DataPolicy{ID: name, Name: name, Object: manifest.SecurableRef{Kind: strings.TrimSpace(spec.Object.Kind), ID: strings.TrimSpace(spec.Object.ID)}, Subject: manifest.Subject{Kind: strings.TrimSpace(spec.Subject.Kind), PrincipalID: strings.TrimSpace(spec.Subject.PrincipalID), Email: strings.TrimSpace(spec.Subject.Email), DisplayName: strings.TrimSpace(spec.Subject.DisplayName), Group: strings.TrimSpace(spec.Subject.Group), Publication: strings.TrimSpace(spec.Subject.Publication)}, PolicyType: strings.TrimSpace(spec.PolicyType), ExpressionJSON: expressionJSON}, nil
-}
-
-func normalizeYAMLValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(typed))
-		for key, item := range typed {
-			out[key] = normalizeYAMLValue(item)
-		}
-		return out
-	case map[any]any:
-		out := make(map[string]any, len(typed))
-		for key, item := range typed {
-			out[fmt.Sprint(key)] = normalizeYAMLValue(item)
-		}
-		return out
-	case []any:
-		out := make([]any, len(typed))
-		for i, item := range typed {
-			out[i] = normalizeYAMLValue(item)
-		}
-		return out
-	default:
-		return value
-	}
-}
-
-func sortedUniqueTrimmed(values []string) []string {
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		seen[value] = struct{}{}
-	}
-	out := make([]string, 0, len(seen))
-	for value := range seen {
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// projectManifest projects flat authored values into the portable manifest
+// buildResourceManifest projects flat authored values into the portable manifest
 // consumed by artifact compilation. It performs semantic-model and dashboard
 // normalization once, retaining canonical resource IDs and source provenance.
-func projectManifest(project Project) (manifest.Project, error) {
-	result := manifest.Project{
-		ID: string(project.ID), Name: project.Name, Title: project.Metadata.DisplayName, Description: project.Metadata.Description,
+func buildResourceManifest(project sourceAssembly) (manifest.ResourceManifest, error) {
+	result := manifest.ResourceManifest{
+		// A source bundle carries authored resources only; it never serializes a
+		// root assembly node or derives identity from the source-root path.
 		Connections: map[string]semanticmodel.Connection{}, Sources: map[string]semanticmodel.Source{}, Models: map[string]semanticmodel.Table{}, AuthoredModelDefinitions: map[string]manifest.AuthoredModelDefinition{}, AuthoredModelSources: map[string]string{}, AuthoredResourceSources: map[string]string{}, SemanticModels: map[string]*semanticmodel.Model{},
-		DashboardDefinitions: map[string]dashboarddefinition.Definition{}, DashboardSources: map[string]manifest.DashboardSource{}, Publications: map[string]publication.Definition{}, RefreshPipelines: map[string]refreshschedule.Definition{},
-		NameIndex:     manifest.NameIndex{Connections: map[string]string{}, Sources: map[string]string{}, Models: map[string]string{}, SemanticModels: map[string]string{}, Dashboards: map[string]string{}, Pipelines: map[string]string{}, Publications: map[string]string{}},
+		DashboardDefinitions: map[string]dashboarddefinition.Definition{}, DashboardSources: map[string]manifest.DashboardSource{}, RefreshPipelines: map[string]refreshschedule.Definition{},
+		NameIndex:     manifest.NameIndex{Connections: map[string]string{}, Sources: map[string]string{}, Models: map[string]string{}, SemanticModels: map[string]string{}, Dashboards: map[string]string{}, Pipelines: map[string]string{}},
 		ResourceFiles: map[string]string{},
 	}
-	result.ResourceFiles[string(project.ID)] = projectRelativePath(&project, project.ProjectPath)
 	for id, path := range project.ResourcePaths {
 		result.ResourceFiles[id] = projectRelativePath(&project, path)
 	}
@@ -116,7 +35,7 @@ func projectManifest(project Project) (manifest.Project, error) {
 	for name, value := range project.Connections {
 		id := project.ConnectionIDs[name]
 		if id == "" {
-			return manifest.Project{}, fmt.Errorf("connection %q has no stable id", name)
+			return manifest.ResourceManifest{}, fmt.Errorf("connection %q has no stable id", name)
 		}
 		result.Connections[id] = value
 		result.NameIndex.Connections[name] = id
@@ -124,7 +43,7 @@ func projectManifest(project Project) (manifest.Project, error) {
 	for name, value := range project.Sources {
 		id := project.SourceIDs[name]
 		if id == "" {
-			return manifest.Project{}, fmt.Errorf("source %q has no stable id", name)
+			return manifest.ResourceManifest{}, fmt.Errorf("source %q has no stable id", name)
 		}
 		value.Connection = canonicalRef(project, "connection", value.Connection)
 		result.Sources[id] = value
@@ -133,7 +52,7 @@ func projectManifest(project Project) (manifest.Project, error) {
 	for name, value := range project.Models {
 		id := project.ModelIDs[name]
 		if id == "" {
-			return manifest.Project{}, fmt.Errorf("model %q has no stable id", name)
+			return manifest.ResourceManifest{}, fmt.Errorf("model %q has no stable id", name)
 		}
 		value.Execution.Source = canonicalRef(project, "source", value.Execution.Source)
 		value.SourceDependencies = canonicalRefs(project, "source", value.SourceDependencies)
@@ -148,10 +67,16 @@ func projectManifest(project Project) (manifest.Project, error) {
 		}
 		result.NameIndex.Models[name] = id
 	}
-	for name, spec := range project.SemanticModels {
+	semanticModelNames := make([]string, 0, len(project.SemanticModels))
+	for name := range project.SemanticModels {
+		semanticModelNames = append(semanticModelNames, name)
+	}
+	sort.Strings(semanticModelNames)
+	for _, name := range semanticModelNames {
+		spec := project.SemanticModels[name]
 		id := project.SemanticModelIDs[name]
 		if id == "" {
-			return manifest.Project{}, fmt.Errorf("semantic model %q has no stable id", name)
+			return manifest.ResourceManifest{}, fmt.Errorf("semantic model %q has no stable id", name)
 		}
 		runtimeTables := copyTables(project.Models)
 		for tableName, table := range runtimeTables {
@@ -159,9 +84,9 @@ func projectManifest(project Project) (manifest.Project, error) {
 			table.SourceDependencies = authoredNamesByID(table.SourceDependencies, project.SourceIDs)
 			runtimeTables[tableName] = table
 		}
-		sourceAliases, _, err := sourceAliasesForProject(project)
+		sourceAliases, _, err := sourceAliasesForAssembly(project)
 		if err != nil {
-			return manifest.Project{}, err
+			return manifest.ResourceManifest{}, err
 		}
 		runtimeSources := make(map[string]semanticmodel.Source, len(project.Sources))
 		for sourceName, source := range project.Sources {
@@ -171,13 +96,13 @@ func projectManifest(project Project) (manifest.Project, error) {
 		model := &semanticmodel.Model{Name: name, Title: name, AIContext: project.SemanticModelAIContexts[name], Connections: copyConnections(project.Connections), Sources: runtimeSources, Tables: translatedTablesForRuntime(runtimeTables, sourceAliases)}
 		authoredSpec := spec
 		if err := applySemanticModelSpec(model, authoredSpec); err != nil {
-			return manifest.Project{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
+			return manifest.ResourceManifest{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
 		}
 		if err := deriveModelSQLDependencies(model); err != nil {
-			return manifest.Project{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
+			return manifest.ResourceManifest{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
 		}
 		if err := model.ValidateAuthored(); err != nil {
-			return manifest.Project{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
+			return manifest.ResourceManifest{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
 		}
 		result.SemanticModels[id] = model
 		result.NameIndex.SemanticModels[name] = id
@@ -185,35 +110,23 @@ func projectManifest(project Project) (manifest.Project, error) {
 	for name, dashboard := range project.Dashboards {
 		id := project.DashboardIDs[name]
 		if id == "" {
-			return manifest.Project{}, fmt.Errorf("dashboard %q has no stable id", name)
+			return manifest.ResourceManifest{}, fmt.Errorf("dashboard %q has no stable id", name)
 		}
 		dashboardDocument := *dashboard
 		dashboardDocument.Spec.SemanticModel = canonicalRef(project, "semantic_model", dashboardDocument.Spec.SemanticModel)
 		compiled, err := dashboardcompiler.CompileDocument(dashboardDocument, result.SemanticModels)
 		if err != nil {
-			return manifest.Project{}, resourceError(project.DashboardPaths[name], id, "spec", "loading dashboard %q: %s", name, err)
+			return manifest.ResourceManifest{}, resourceError(project.DashboardPaths[name], id, "spec", "loading dashboard %q: %s", name, err)
 		}
 		result.DashboardDefinitions[id] = compiled.Definition
 		meta := project.DashboardMetadata[name]
 		result.DashboardSources[id] = manifest.DashboardSource{Document: compiled.Normalized, Metadata: manifest.DashboardSourceMetadata{Name: name, Title: valueOrEmpty(dashboardDocument.Metadata.DisplayName), Description: valueOrEmpty(dashboardDocument.Metadata.Description), Owner: meta.Owner, Domain: meta.Domain, Tags: append([]string(nil), meta.Tags...)}, Path: projectRelativePath(&project, project.DashboardPaths[name])}
 		result.NameIndex.Dashboards[name] = id
 	}
-	for name, value := range project.Publications {
-		id := project.ResourceIDs["dashboard_publication:"+name]
-		if id == "" {
-			return manifest.Project{}, fmt.Errorf("publication %q has no stable id", name)
-		}
-		value.Name = id
-		value.Dashboard = canonicalRef(project, "dashboard", value.Dashboard)
-		value.DependencyAssetIDs = projectDependencyClosure(project.Graph, value.Dashboard)
-		value.ConfigurationDigest = publicationConfigurationDigest(value)
-		result.Publications[id] = value
-		result.NameIndex.Publications[name] = id
-	}
 	for name, value := range project.RefreshPipelines {
 		id := project.PipelineIDs[name]
 		if id == "" {
-			return manifest.Project{}, fmt.Errorf("pipeline %q has no stable id", name)
+			return manifest.ResourceManifest{}, fmt.Errorf("pipeline %q has no stable id", name)
 		}
 		value.ID = projectgraph.ResourceID(id)
 		value.Name = name
@@ -221,57 +134,10 @@ func projectManifest(project Project) (manifest.Project, error) {
 		result.RefreshPipelines[id] = value
 		result.NameIndex.Pipelines[name] = id
 	}
-	access, err := canonicalAccessPolicy(project)
-	if err != nil {
-		return manifest.Project{}, err
-	}
-	result.Access = access
 	return result, nil
 }
 
-// projectDependencyClosure returns the canonical resource IDs reachable from
-// a dashboard through the authored graph. The dashboard itself is included so
-// publication authorization can enforce the complete project-wide closure.
-func projectDependencyClosure(graph projectgraph.ProjectGraph, root string) []string {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return nil
-	}
-	seen := map[projectgraph.ResourceID]struct{}{projectgraph.ResourceID(root): {}}
-	queue := []projectgraph.ResourceID{projectgraph.ResourceID(root)}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, edge := range graph.Edges() {
-			if edge.From != current {
-				continue
-			}
-			if _, ok := seen[edge.To]; ok {
-				continue
-			}
-			seen[edge.To] = struct{}{}
-			queue = append(queue, edge.To)
-		}
-	}
-	closure := make([]string, 0, len(seen))
-	for id := range seen {
-		closure = append(closure, string(id))
-	}
-	sort.Strings(closure)
-	return closure
-}
-
-func publicationConfigurationDigest(value publication.Definition) string {
-	value.ConfigurationDigest = ""
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(encoded)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func canonicalRef(project Project, kind, ref string) string {
+func canonicalRef(project sourceAssembly, kind, ref string) string {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return ""
@@ -289,7 +155,7 @@ func canonicalRef(project Project, kind, ref string) string {
 	}
 	return ref
 }
-func canonicalRefs(project Project, kind string, refs []string) []string {
+func canonicalRefs(project sourceAssembly, kind string, refs []string) []string {
 	out := make([]string, len(refs))
 	for i, ref := range refs {
 		out[i] = canonicalRef(project, kind, ref)
@@ -311,61 +177,6 @@ func authoredNamesByID(refs []string, ids map[string]string) []string {
 		out[i] = authoredNameByID(ref, ids)
 	}
 	return out
-}
-
-func canonicalAccessPolicy(project Project) (manifest.AccessPolicy, error) {
-	result := projectAccessPolicy()
-	for name, value := range project.Access.Groups {
-		if id := project.ResourceIDs["group:"+name]; id != "" {
-			value.ID = id
-			result.Groups[id] = value
-		}
-	}
-	for name, value := range project.Access.RoleBindings {
-		if id := project.ResourceIDs["rolebinding:"+name]; id != "" {
-			value.ID = id
-			value.Subject.Group = canonicalRef(project, "group", value.Subject.Group)
-			value.Subject.Publication = canonicalRef(project, "dashboard_publication", value.Subject.Publication)
-			result.RoleBindings[id] = value
-		}
-	}
-	for name, value := range project.Access.Grants {
-		if id := project.ResourceIDs["grant:"+name]; id != "" {
-			value.ID = id
-			value.Object.ID = canonicalRef(project, accessObjectKind(value.Object.Kind), value.Object.ID)
-			value.Subject.Group = canonicalRef(project, "group", value.Subject.Group)
-			value.Subject.Publication = canonicalRef(project, "dashboard_publication", value.Subject.Publication)
-			result.Grants[id] = value
-		}
-	}
-	for name, value := range project.Access.DataPolicies {
-		if id := project.ResourceIDs["datapolicy:"+name]; id != "" {
-			value.ID = id
-			value.Object.ID = canonicalRef(project, accessObjectKind(value.Object.Kind), value.Object.ID)
-			value.Subject.Group = canonicalRef(project, "group", value.Subject.Group)
-			value.Subject.Publication = canonicalRef(project, "dashboard_publication", value.Subject.Publication)
-			result.DataPolicies[id] = value
-		}
-	}
-	return result, nil
-}
-func accessObjectKind(kind string) string {
-	switch strings.TrimSpace(kind) {
-	case "project":
-		return "project"
-	case "model":
-		return "model"
-	case "semantic_model":
-		return "semantic_model"
-	case "dashboard":
-		return "dashboard"
-	case "source":
-		return "source"
-	case "connection":
-		return "connection"
-	default:
-		return strings.TrimSpace(kind)
-	}
 }
 
 func translatedTablesForRuntime(in map[string]semanticmodel.Table, sourceAliases map[string]string) map[string]semanticmodel.Table {
@@ -397,18 +208,22 @@ func localSourceName(sourceID string) string {
 	return manifest.RuntimeSourceAlias(sourceID)
 }
 
-// sourceAliasesForProject builds the runtime source namespace used by model
+// sourceAliasesForAssembly builds the runtime source namespace used by model
 // validation and semantic-model execution. Authored names may contain
 // punctuation that is not valid in a semantic identifier, so localSourceName
 // normalizes them. Two distinct names must never normalize to the same alias:
 // silently overwriting one source would make a valid graph resolve to the
 // wrong physical source. Iterating names in sorted order keeps diagnostics
 // deterministic.
-func sourceAliasesForProject(project Project) (map[string]string, map[string]string, error) {
-	aliases := make(map[string]string, len(project.Sources)*2)
+func sourceAliasesForAssembly(project sourceAssembly) (map[string]string, map[string]string, error) {
+	aliasCapacity, err := checkedCapacitySum(len(project.Sources), len(project.Sources))
+	if err != nil {
+		return nil, nil, fmt.Errorf("runtime source alias capacity: %w", err)
+	}
+	aliases := make(map[string]string, aliasCapacity)
 	reverse := make(map[string]string, len(project.Sources))
 	aliasOwners := make(map[string]string, len(project.Sources))
-	keyOwners := make(map[string]string, len(project.Sources)*2)
+	keyOwners := make(map[string]string, aliasCapacity)
 	names := make([]string, 0, len(project.Sources))
 	for name := range project.Sources {
 		names = append(names, name)
@@ -436,7 +251,7 @@ func sourceAliasesForProject(project Project) (map[string]string, map[string]str
 	return aliases, reverse, nil
 }
 
-func addSourceAlias(aliases map[string]string, keyOwners map[string]string, key, alias string, project Project, sourceName string) error {
+func addSourceAlias(aliases map[string]string, keyOwners map[string]string, key, alias string, project sourceAssembly, sourceName string) error {
 	if previous, ok := aliases[key]; ok && previous != alias {
 		previousName := keyOwners[key]
 		return fmt.Errorf(
@@ -449,13 +264,31 @@ func addSourceAlias(aliases map[string]string, keyOwners map[string]string, key,
 	return nil
 }
 
-func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticModelSpec) error {
-	if len(spec.Datasets) == 0 {
+func applySemanticModelSpec(model *semanticmodel.Model, spec projectcontracts.SemanticModelSpec) error {
+	accessPolicy, err := lowerSemanticAccessPolicy(spec)
+	if err != nil {
+		return err
+	}
+	datasets := lowerSemanticDatasets(spec.Datasets)
+	relationshipsSpec, err := lowerSemanticRelationships(spec.Relationships)
+	if err != nil {
+		return err
+	}
+	dimensionsSpec := lowerSemanticDimensions(spec.Dimensions)
+	filters, err := lowerSemanticFilters(spec.Filters)
+	if err != nil {
+		return err
+	}
+	metricsSpec, err := lowerSemanticMetrics(spec.Metrics)
+	if err != nil {
+		return err
+	}
+	if len(datasets) == 0 {
 		return fmt.Errorf("SemanticModel %q requires datasets", model.Name)
 	}
 	baseTables := model.Tables
 	tables := map[string]semanticmodel.Table{}
-	for datasetName, dataset := range spec.Datasets {
+	for datasetName, dataset := range datasets {
 		table, ok := baseTables[dataset.Model]
 		if !ok {
 			return fmt.Errorf("SemanticModel %q dataset %q references unknown Model %q", model.Name, datasetName, dataset.Model)
@@ -463,25 +296,25 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticMode
 		table.ModelName = dataset.Model
 		tables[datasetName] = table
 	}
-	relationships := make([]semanticmodel.Relationship, 0, len(spec.Relationships))
-	for id, relationship := range spec.Relationships {
-		fromDataset, fromFields, err := semanticRelationshipEndpointTuple(baseTables, spec.Datasets, relationship.From)
+	relationships := make([]semanticmodel.Relationship, 0, len(relationshipsSpec))
+	for id, relationship := range relationshipsSpec {
+		fromDataset, fromFields, err := semanticRelationshipEndpointTuple(baseTables, datasets, relationship.From)
 		if err != nil {
 			return fmt.Errorf("SemanticModel %q relationship %q from: %w", model.Name, id, err)
 		}
-		toDataset, toFields, err := semanticRelationshipEndpointTuple(baseTables, spec.Datasets, relationship.To)
+		toDataset, toFields, err := semanticRelationshipEndpointTuple(baseTables, datasets, relationship.To)
 		if err != nil {
 			return fmt.Errorf("SemanticModel %q relationship %q to: %w", model.Name, id, err)
 		}
 		cardinality := "many_to_one"
-		if semanticRelationshipEndpointUnique(baseTables, spec.Datasets, relationship.From) && semanticRelationshipEndpointUnique(baseTables, spec.Datasets, relationship.To) {
+		if semanticRelationshipEndpointUnique(baseTables, datasets, relationship.From) && semanticRelationshipEndpointUnique(baseTables, datasets, relationship.To) {
 			cardinality = "one_to_one"
 		}
 		relationships = append(relationships, semanticmodel.Relationship{ID: id, FromDataset: fromDataset, FromFields: fromFields, ToDataset: toDataset, ToFields: toFields, Cardinality: cardinality, Description: relationship.Description, AIContext: relationship.AIContext})
 	}
 	sort.SliceStable(relationships, func(i, j int) bool { return relationships[i].ID < relationships[j].ID })
 	dimensions := map[string]semanticmodel.SemanticDimension{}
-	for name, dimension := range spec.Dimensions {
+	for name, dimension := range dimensionsSpec {
 		converted := semanticmodel.SemanticDimension{Label: dimension.Label, Description: dimension.Description, Type: canonicalDimensionTypeName(string(dimension.Datatype)), Datatype: dimension.Datatype, Bindings: dimension.Bindings, AIContext: dimension.AIContext}
 		if dimension.Time != nil {
 			converted.NativeGrain = dimension.Time.NativeGrain
@@ -492,7 +325,7 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticMode
 		dimensions[name] = converted
 	}
 	metrics := map[string]semanticmodel.Metric{}
-	for name, metric := range spec.Metrics {
+	for name, metric := range metricsSpec {
 		common := semanticmodel.Metric{Label: metric.Label, Description: metric.Description, Unit: metric.Unit, Format: metric.Format, Hidden: metric.Hidden, AIContext: metric.AIContext}
 		switch metric.Type {
 		case "aggregate":
@@ -520,12 +353,13 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticMode
 		}
 	}
 	model.Tables = tables
-	model.Datasets = spec.Datasets
-	model.StructuredRelationships = spec.Relationships
+	model.Datasets = datasets
+	model.StructuredRelationships = relationshipsSpec
 	model.Relationships = relationships
 	model.Dimensions = dimensions
 	model.Metrics = metrics
-	model.Filters = spec.Filters
+	model.Filters = filters
+	model.AccessPolicy = accessPolicy
 	return nil
 }
 
@@ -701,14 +535,6 @@ func copyModelColumns(in map[string]semanticmodel.ModelColumn) map[string]semant
 		out[key] = value
 	}
 	return out
-}
-
-func projectAccessPolicy() manifest.AccessPolicy {
-	return manifest.AccessPolicy{Groups: map[string]manifest.Group{}, RoleBindings: map[string]manifest.RoleBinding{}, Grants: map[string]manifest.Grant{}, DataPolicies: map[string]manifest.DataPolicy{}}
-}
-
-func accessMemberSortKey(member manifest.GroupMember) string {
-	return member.Email + "\x00" + member.PrincipalID + "\x00" + member.DisplayName
 }
 
 func firstNonEmpty(values ...string) string {

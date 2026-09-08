@@ -141,6 +141,20 @@ func TestEmitYAML_PreservesNumericConstantsAndArrayBounds(t *testing.T) {
 	require.Equal(t, []any{float64(1)}, parsed.Paths.Value("/versions").Get.Responses.Value("200").Value.Content.Get("application/json").Example)
 }
 
+func TestEmitYAML_PreservesItemBounds(t *testing.T) {
+	minItems, maxItems := 1, 4
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		Info:          ir.Info{Title: "Constrained", Version: "1"},
+		Endpoints:     []ir.Endpoint{{Method: "post", Path: "/values", OperationID: "values", RequestBody: &ir.RequestBody{Contents: []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Type: "string"}, MinItems: &minItems, MaxItems: &maxItems, UniqueItems: true}}}}, Responses: []ir.Response{{StatusCode: 200, Description: "ok"}}}},
+	}
+	b, err := EmitYAML(doc, Options{})
+	require.NoError(t, err)
+	require.Contains(t, string(b), "minItems: 1")
+	require.Contains(t, string(b), "maxItems: 4")
+	require.Contains(t, string(b), "uniqueItems: true")
+}
+
 func TestEmitYAMLIncludesTypedToolMetadata(t *testing.T) {
 	doc := ir.Document{
 		SchemaVersion: ir.CurrentSchemaVersion,

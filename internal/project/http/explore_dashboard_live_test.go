@@ -6,28 +6,38 @@ import (
 	stdhttp "net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	analyticsgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
+	authoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
-	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
 	dashboardcatalog "github.com/flidai/leapview/internal/dashboard/catalog"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
-	"github.com/flidai/leapview/internal/platform"
+	eventpostgres "github.com/flidai/leapview/internal/platform/events/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const liveHandoffOwnerPrincipalID = "018f4f2e-0000-7000-0000-000000000601"
+
+const (
+	liveHandoffAppendRequestID = "01912f14-7b3c-7e32-8a74-6a6e8f9d4c20"
+	liveHandoffTraceRequestID  = "01912f14-7b3c-7e33-8a74-6a6e8f9d4c20"
+	liveHandoffStaleRequestID  = "01912f14-7b3c-7e34-8a74-6a6e8f9d4c20"
 )
 
 // TestExploreFromDashboardMountedWorkflow exercises the mounted browser
@@ -49,8 +59,8 @@ func TestExploreFromDashboardMountedWorkflow(t *testing.T) {
 	serviceValue, err := authoringservice.NewService(authoringservice.Options{
 		Repository: repository, Authorizer: authorizer, Compiler: compiler,
 		Now:            func() time.Time { return time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC) },
-		NewDashboardID: func() (authoring.DashboardID, error) { return "unused-dashboard", nil },
-		NewDraftID:     func() (authoring.DraftID, error) { return "draft:sales", nil },
+		NewDashboardID: func() (authoring.DashboardID, error) { return authoringpostgres.NewDashboardID() },
+		NewDraftID:     func() (authoring.DraftID, error) { return authoringpostgres.NewDraftID() },
 		NewRevisionID:  liveHandoffRevisionIDs(),
 	})
 	if err != nil {
@@ -65,8 +75,8 @@ func TestExploreFromDashboardMountedWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := app.Create(ctx, authoringservice.CreateRequest{
-		ProjectID: "project:sales", ActorID: "principal:alice", OwnerPrincipalID: "principal:alice",
+	created, err := app.Create(liveHandoffAuditContext(ctx, "018f4f2e-0000-7000-8000-000000001101", "dashboard_authoring.draft_created"), authoringservice.CreateRequest{
+		ProjectID: "project:sales", ActorID: "principal:alice", OwnerPrincipalID: liveHandoffOwnerPrincipalID,
 		DashboardID: "dashboard:sales", Title: "Sales", Slug: "sales", SemanticModel: "semantic:sales",
 		Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-live-sales",
 	})
@@ -100,7 +110,10 @@ func TestExploreFromDashboardMountedWorkflow(t *testing.T) {
 	}).MountAuthenticated(router)
 
 	appendResponse := httptest.NewRecorder()
-	router.ServeHTTP(appendResponse, addDashboardRequest(t, command))
+	appendRequest := addDashboardRequest(t, command).WithContext(liveHandoffAuditContext(ctx, "018f4f2e-0000-7000-8000-000000001102", "dashboard_authoring.draft_updated"))
+	appendRequest.Header.Set("X-Request-ID", liveHandoffTraceRequestID)
+	appendRequest.Header.Set("Idempotency-Key", liveHandoffAppendRequestID)
+	router.ServeHTTP(appendResponse, appendRequest)
 	if appendResponse.Code != stdhttp.StatusOK {
 		t.Fatalf("mounted append status=%d body=%q", appendResponse.Code, appendResponse.Body.String())
 	}
@@ -124,16 +137,16 @@ func TestExploreFromDashboardMountedWorkflow(t *testing.T) {
 	// A retry with the same transport request identity must replay the durable
 	// command, while a different request identity carrying the old CAS token
 	// must be rejected without creating another visual.
-	replay, err := app.AppendExploration(ctx, authoringapplication.ExplorationAppendRequest{
+	replay, err := app.AppendExploration(liveHandoffAuditContext(ctx, "018f4f2e-0000-7000-8000-000000001102", "dashboard_authoring.draft_updated"), authoringapplication.ExplorationAppendRequest{
 		ProjectID: "project:sales", ActorID: "principal:alice", DashboardID: "dashboard:sales", PageID: "overview",
-		RevisionToken: target.RevisionToken, RequestID: "add-exploration-test-1", PlacementChoice: "half", Spec: spec,
+		RevisionToken: target.RevisionToken, RequestID: liveHandoffAppendRequestID, PlacementChoice: "half", Spec: spec,
 	})
 	if err != nil || replay.Revision != lifecycle.Draft.Revision {
 		t.Fatalf("append replay = %#v (%v), want revision %#v", replay, err, lifecycle.Draft.Revision)
 	}
 	_, err = app.AppendExploration(ctx, authoringapplication.ExplorationAppendRequest{
 		ProjectID: "project:sales", ActorID: "principal:alice", DashboardID: "dashboard:sales", PageID: "overview",
-		RevisionToken: target.RevisionToken, RequestID: "stale-exploration-request", PlacementChoice: "half", Spec: spec,
+		RevisionToken: target.RevisionToken, RequestID: liveHandoffStaleRequestID, PlacementChoice: "half", Spec: spec,
 	})
 	if !errors.Is(err, authoring.ErrStaleRevision) {
 		t.Fatalf("stale append error=%v, want ErrStaleRevision", err)
@@ -148,12 +161,12 @@ func TestExploreFromDashboardMountedWorkflow(t *testing.T) {
 	}
 
 	publishCommand := authoring.Command{
-		ID: "publish-live-sales", DashboardID: "dashboard:sales", DraftID: unchanged.Draft.ID,
+		ID: "018f4f2e-0000-7000-8000-000000001103", DashboardID: "dashboard:sales", DraftID: unchanged.Draft.ID,
 		ExpectedRevision: unchanged.Draft.Revision,
 		Provenance:       authoring.Provenance{Origin: authoring.OriginUI, ActorID: "principal:alice"},
 		Publish:          &authoring.PublishPayload{},
 	}
-	published, err := app.Execute(ctx, "project:sales", publishCommand)
+	published, err := app.Execute(liveHandoffAuditContext(ctx, "018f4f2e-0000-7000-8000-000000001103", "dashboard_authoring.published"), "project:sales", publishCommand)
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
@@ -168,8 +181,8 @@ func TestExploreFromDashboardMountedWorkflow(t *testing.T) {
 	if err != nil || current.Draft == nil {
 		t.Fatal(err)
 	}
-	if _, err := app.Execute(ctx, "project:sales", authoring.Command{
-		ID: "edit-unpublished-title", DashboardID: current.ID, DraftID: current.Draft.ID,
+	if _, err := app.Execute(liveHandoffAuditContext(ctx, "018f4f2e-0000-7000-8000-000000001104", "dashboard_authoring.draft_updated"), "project:sales", authoring.Command{
+		ID: "018f4f2e-0000-7000-8000-000000001104", DashboardID: current.ID, DraftID: current.Draft.ID,
 		ExpectedRevision: current.Draft.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "principal:alice"},
 		Metadata: &authoring.MetadataPatch{Title: &draftTitle},
 	}); err != nil {
@@ -218,7 +231,7 @@ func TestExploreFromDashboardMountedWorkflow(t *testing.T) {
 		t.Fatalf("canonical metric = %#v want %#v", handoffCommand.Spec.Metrics, spec.Metrics)
 	}
 
-	if len(authorizer.calls) == 0 || authorizer.calls[len(authorizer.calls)-1].Target != authoringservice.AuthorizationTargetAuthoredDashboard || authorizer.calls[len(authorizer.calls)-1].Action != authoring.AuthorizationActionView || authorizer.calls[len(authorizer.calls)-1].OwnerPrincipalID != "principal:alice" || authorizer.calls[len(authorizer.calls)-1].Visibility != authoring.VisibilityPrivate {
+	if len(authorizer.calls) == 0 || authorizer.calls[len(authorizer.calls)-1].Target != authoringservice.AuthorizationTargetAuthoredDashboard || authorizer.calls[len(authorizer.calls)-1].Action != authoring.AuthorizationActionView || authorizer.calls[len(authorizer.calls)-1].OwnerPrincipalID != liveHandoffOwnerPrincipalID || authorizer.calls[len(authorizer.calls)-1].Visibility != authoring.VisibilityPrivate {
 		t.Fatalf("published source authorization calls = %#v", authorizer.calls)
 	}
 	if !authorizer.sawAction(authoringservice.AuthorizationTargetSemanticModel, authoring.AuthorizationActionUse) {
@@ -266,29 +279,93 @@ func graphIdentityForLiveHandoff() (projectgraph.ServingIdentity, error) {
 	return projectgraph.NewServingIdentity("project:sales", "production", "generation:live-handoff")
 }
 
-func liveHandoffRepository(t *testing.T, ctx context.Context) (*authoringsqlite.Repository, func()) {
+func liveHandoffRepository(t *testing.T, ctx context.Context) (*authoringpostgres.Repository, func()) {
 	t.Helper()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	h := postgrestest.Start(t)
+	database := h.NewDatabase(t, "")
+	db, err := pgxpool.New(ctx, database.AdminURL())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO principals (id, email, display_name) VALUES ('principal:alice', 'alice@example.test', 'Alice')`); err != nil {
-		_ = store.Close()
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		db.Close()
 		t.Fatal(err)
 	}
-	return authoringsqlite.NewRepository(store.SQLDB()), func() { _ = store.Close() }
+	if err := accesspostgres.ApplySchema(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, eventpostgres.SchemaSQL()); err != nil {
+		_ = tx.Rollback(ctx)
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := authoringpostgres.ApplySchema(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO access.principal(id,principal_type) VALUES ($1::uuid,'user') ON CONFLICT (id) DO NOTHING`, liveHandoffOwnerPrincipalID); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	repository, err := authoringpostgres.New(db, liveHandoffAuthoringAudit{}, liveHandoffAuthoringEvents{}, liveHandoffAuthoringFence{})
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	return repository, func() { db.Close() }
 }
 
 func liveHandoffRevisionIDs() func() (authoring.RevisionID, error) {
-	ids := []authoring.RevisionID{"revision-1", "revision-2", "revision-3"}
 	return func() (authoring.RevisionID, error) {
-		if len(ids) == 0 {
-			return "", errors.New("revision id generator exhausted")
-		}
-		id := ids[0]
-		ids = ids[1:]
-		return id, nil
+		return authoringpostgres.NewRevisionID()
 	}
+}
+
+func liveHandoffAuditContext(ctx context.Context, eventID, action string) context.Context {
+	metadata := `{"schemaVersion":1,"retention":"standard","payloadSchema":"dashboard.authoring.command.audit.v1","payload":{"operationId":"operation","projectId":"project:sales","dashboardId":"pending-dashboard","draftId":"pending-draft","origin":"ui"}}`
+	return authoring.WithAuditIntent(ctx, access.AuditIntent{
+		EventID: eventID, ActorID: "principal:alice", Source: "dashboard.authoring", Operation: "executeDashboardAuthoringCommand",
+		Action: action, Capability: access.CapabilityResourceEdit, Outcome: "success", RequestID: eventID, CorrelationID: eventID, MetadataJSON: metadata,
+	})
+}
+
+type liveHandoffAuthoringAudit struct{}
+
+func (liveHandoffAuthoringAudit) RecordAuditIntent(ctx context.Context, tx authoringpostgres.Tx, intent access.AuditIntent) error {
+	intent.PrincipalID = ""
+	_, err := accesspostgres.New().RecordAuditEvent(ctx, tx, intent)
+	return err
+}
+
+type liveHandoffAuthoringEvents struct{}
+
+func (liveHandoffAuthoringEvents) AppendEvent(ctx context.Context, tx authoringpostgres.Tx, input authoringpostgres.EventInput) (authoringpostgres.Event, error) {
+	stored, err := eventpostgres.New().AppendEvent(ctx, tx, eventpostgres.EventInput{
+		EventID: input.EventID, ScopeID: input.ProjectID, AggregateType: "dashboard_authoring", AggregateID: input.DashboardID,
+		EventType: input.Type, SchemaVersion: 1, CorrelationID: input.CorrelationID, Payload: input.Payload,
+	})
+	if err != nil {
+		return authoringpostgres.Event{}, err
+	}
+	return authoringpostgres.Event{
+		EventID: stored.EventID, ProjectID: stored.ScopeID, DashboardID: stored.AggregateID, ActorID: input.ActorID,
+		CorrelationID: stored.CorrelationID, Revision: input.Revision, AggregateVersion: stored.AggregateVersion,
+		Type: stored.EventType, Payload: stored.Payload,
+	}, nil
+}
+
+type liveHandoffAuthoringFence struct{}
+
+func (liveHandoffAuthoringFence) ValidateActiveGeneration(context.Context, authoringpostgres.Tx, projectgraph.ServingIdentity) error {
+	return nil
 }
 
 func liveHandoffAppendedVisual(t *testing.T, value document.DashboardDocument) (string, string) {
@@ -374,8 +451,8 @@ type liveHandoffDefinitionReader struct {
 	compiled *semanticquery.CompiledModel
 }
 
-func (r *liveHandoffDefinitionReader) ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error) {
-	return projectmanifest.Project{ID: "project:sales", SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": r.model}}, map[string]*semanticquery.CompiledModel{"semantic:sales": r.compiled}, nil
+func (r *liveHandoffDefinitionReader) ProjectDefinitionSnapshot(context.Context) (projectmanifest.ResourceManifest, map[string]*semanticquery.CompiledModel, error) {
+	return projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": r.model}}, map[string]*semanticquery.CompiledModel{"semantic:sales": r.compiled}, nil
 }
 
 func (r *liveHandoffDefinitionReader) AuthorizedExploreModel(_ context.Context, projectID projectgraph.ResourceID, _ string, modelID string) (*semanticmodel.Model, *semanticquery.CompiledModel, projectgraph.ServingIdentity, error) {

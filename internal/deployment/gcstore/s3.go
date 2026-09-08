@@ -14,7 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
-	"github.com/flidai/leapview/internal/deployment/gc"
 )
 
 type conditionalS3Client interface {
@@ -178,7 +177,7 @@ func NewS3(client S3Client, bucket, prefix string) (*S3Store, error) {
 func (s *S3Store) key(key string) (string, error) {
 	key = strings.Trim(strings.ReplaceAll(key, "\\", "/"), "/")
 	if key == "" || strings.Contains(key, "..") {
-		return "", gc.ErrObjectOutsidePool
+		return "", ErrObjectOutsidePool
 	}
 	if s.prefix == "" {
 		return key, nil
@@ -191,19 +190,19 @@ func (s *S3Store) relative(key string) (string, error) {
 	}
 	prefix := s.prefix + "/"
 	if !strings.HasPrefix(key, prefix) {
-		return "", gc.ErrObjectOutsidePool
+		return "", ErrObjectOutsidePool
 	}
 	return strings.TrimPrefix(key, prefix), nil
 }
 
-func (s *S3Store) Open(ctx context.Context, key string) (gc.CatalogObject, error) {
+func (s *S3Store) Open(ctx context.Context, key string) (ObjectBody, error) {
 	full, err := s.key(key)
 	if err != nil {
-		return gc.CatalogObject{}, err
+		return ObjectBody{}, err
 	}
 	head, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: &s.bucket, Key: &full})
 	if err != nil {
-		return gc.CatalogObject{}, err
+		return ObjectBody{}, err
 	}
 	getInput := &awss3.GetObjectInput{Bucket: &s.bucket, Key: &full}
 	if head.VersionId != nil && *head.VersionId != "" {
@@ -211,11 +210,11 @@ func (s *S3Store) Open(ctx context.Context, key string) (gc.CatalogObject, error
 	} else if head.ETag != nil && *head.ETag != "" {
 		getInput.IfMatch = head.ETag
 	} else {
-		return gc.CatalogObject{}, fmt.Errorf("S3 object has no immutable provider version or ETag")
+		return ObjectBody{}, fmt.Errorf("S3 object has no immutable provider version or ETag")
 	}
 	out, err := s.client.GetObject(ctx, getInput)
 	if err != nil {
-		return gc.CatalogObject{}, err
+		return ObjectBody{}, err
 	}
 	metadata := map[string]string{}
 	for k, v := range head.Metadata {
@@ -228,16 +227,16 @@ func (s *S3Store) Open(ctx context.Context, key string) (gc.CatalogObject, error
 	if head.ContentLength != nil {
 		size = *head.ContentLength
 	}
-	return gc.CatalogObject{Body: out.Body, Size: size, Metadata: metadata}, nil
+	return ObjectBody{Body: out.Body, Size: size, Metadata: metadata}, nil
 }
-func (s *S3Store) Stat(ctx context.Context, _ string, key string) (gc.Object, error) {
+func (s *S3Store) Stat(ctx context.Context, _ string, key string) (Object, error) {
 	full, err := s.key(key)
 	if err != nil {
-		return gc.Object{}, err
+		return Object{}, err
 	}
 	head, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: &s.bucket, Key: &full})
 	if err != nil {
-		return gc.Object{}, err
+		return Object{}, err
 	}
 	relative, _ := s.relative(full)
 	digest := head.Metadata["sha256"]
@@ -252,28 +251,28 @@ func (s *S3Store) Stat(ctx context.Context, _ string, key string) (gc.Object, er
 		} else if head.ETag != nil && *head.ETag != "" {
 			getInput.IfMatch = head.ETag
 		} else {
-			return gc.Object{}, fmt.Errorf("S3 object has no immutable provider version or ETag")
+			return Object{}, fmt.Errorf("S3 object has no immutable provider version or ETag")
 		}
 		out, getErr := s.client.GetObject(ctx, getInput)
 		if getErr != nil {
-			return gc.Object{}, getErr
+			return Object{}, getErr
 		}
 		hash := sha256.New()
 		n, readErr := io.Copy(hash, out.Body)
 		closeErr := out.Body.Close()
 		if readErr != nil {
-			return gc.Object{}, readErr
+			return Object{}, readErr
 		}
 		if closeErr != nil {
-			return gc.Object{}, closeErr
+			return Object{}, closeErr
 		}
 		computed := "sha256:" + hex.EncodeToString(hash.Sum(nil))
 		if digest != "" && digest != computed {
-			return gc.Object{}, fmt.Errorf("S3 object digest metadata mismatch")
+			return Object{}, fmt.Errorf("S3 object digest metadata mismatch")
 		}
 		digest = computed
 		if head.ContentLength != nil && n != *head.ContentLength {
-			return gc.Object{}, fmt.Errorf("S3 object size changed during digest read")
+			return Object{}, fmt.Errorf("S3 object size changed during digest read")
 		}
 	}
 	version := ""
@@ -291,10 +290,10 @@ func (s *S3Store) Stat(ctx context.Context, _ string, key string) (gc.Object, er
 	if head.ContentLength != nil {
 		size = *head.ContentLength
 	}
-	return gc.Object{Key: relative, Digest: digest, Version: version, Size: size, CreatedAt: modified, LastModified: modified, Metadata: head.Metadata}, nil
+	return Object{Key: relative, Digest: digest, Version: version, Size: size, CreatedAt: modified, LastModified: modified, Metadata: head.Metadata}, nil
 }
-func (s *S3Store) ListPoolObjects(ctx context.Context, _ string) ([]gc.Object, error) {
-	var result []gc.Object
+func (s *S3Store) ListPoolObjects(ctx context.Context, _ string) ([]Object, error) {
+	var result []Object
 	var token *string
 	for {
 		out, err := s.client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{Bucket: &s.bucket, Prefix: &s.prefix, ContinuationToken: token})
@@ -328,20 +327,20 @@ func (s *S3Store) ListPoolObjects(ctx context.Context, _ string) ([]gc.Object, e
 	}
 	return result, nil
 }
-func (s *S3Store) DeleteConditional(ctx context.Context, req gc.DeleteRequest) (gc.DeleteResponse, error) {
+func (s *S3Store) DeleteConditional(ctx context.Context, req DeleteRequest) (DeleteResponse, error) {
 	object, err := s.Stat(ctx, req.PhysicalPoolID, req.Key)
 	if err != nil {
-		return gc.DeleteResponse{}, err
+		return DeleteResponse{}, err
 	}
 	if object.Digest != req.Digest || req.Version == "" || object.Version != req.Version {
-		return gc.DeleteResponse{}, fmt.Errorf("S3 conditional identity mismatch")
+		return DeleteResponse{}, fmt.Errorf("S3 conditional identity mismatch")
 	}
 	full, _ := s.key(req.Key)
 	deleteInput := &awss3.DeleteObjectInput{Bucket: &s.bucket, Key: &full}
 	if strings.HasPrefix(req.Version, "etag:") {
 		etag := strings.TrimPrefix(req.Version, "etag:")
 		if etag == "" {
-			return gc.DeleteResponse{}, fmt.Errorf("S3 conditional identity has empty ETag")
+			return DeleteResponse{}, fmt.Errorf("S3 conditional identity has empty ETag")
 		}
 		deleteInput.IfMatch = &etag
 	} else {
@@ -349,7 +348,7 @@ func (s *S3Store) DeleteConditional(ctx context.Context, req gc.DeleteRequest) (
 	}
 	_, err = s.client.DeleteObject(ctx, deleteInput)
 	if err != nil {
-		return gc.DeleteResponse{}, err
+		return DeleteResponse{}, err
 	}
-	return gc.DeleteResponse{Deleted: true}, nil
+	return DeleteResponse{Deleted: true}, nil
 }

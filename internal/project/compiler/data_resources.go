@@ -3,9 +3,11 @@ package compiler
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -134,6 +136,323 @@ func decodeModelResource(path string, content []byte, metadata metadata) (semant
 	return table, aiContext, err
 }
 
+// decodeSemanticModelResource is the sole SemanticModel authoring boundary.
+// The TypeSpec-generated document remains intact in compiler state until the
+// project graph is lowered into analytics runtime types.
+func decodeSemanticModelResource(path string, content []byte) (projectcontracts.SemanticModelSpec, *semanticmodel.AIContext, error) {
+	var authored projectcontracts.SemanticModel
+	if err := configschema.DecodeResource(configschema.KindSemanticModel, path, content, &authored); err != nil {
+		return projectcontracts.SemanticModelSpec{}, nil, err
+	}
+	return authored.Spec, lowerAIContext(authored.AiContext), nil
+}
+
+// lowerSemanticAccessPolicy is the generated-to-runtime boundary for the
+// portable policy contract. Target registry qualification happens later; this
+// step retains exact literals and validates only target-independent structure.
+func lowerSemanticAccessPolicy(spec projectcontracts.SemanticModelSpec) (semanticmodel.SemanticAccessPolicy, error) {
+	policy := semanticmodel.SemanticAccessPolicy{}
+	grantNames := map[string]struct{}{}
+	if spec.AccessGrants != nil {
+		policy.AccessGrants = make(map[string]semanticmodel.SemanticAccessGrantSpec, len(*spec.AccessGrants))
+		for _, name := range sortedMapKeys(*spec.AccessGrants) {
+			grant := (*spec.AccessGrants)[name]
+			if err := access.ValidateSemanticAttributeName(name); err != nil {
+				return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel access grant %q: %w", name, err)
+			}
+			if err := access.ValidateSemanticAttributeName(grant.UserAttribute); err != nil {
+				return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel access grant %q userAttribute: %w", name, err)
+			}
+			if len(grant.AllowedValues) == 0 || len(grant.AllowedValues) > access.MaxSemanticAttributeValues {
+				return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel access grant %q allowedValues requires between 1 and %d values", name, access.MaxSemanticAttributeValues)
+			}
+			values := make([]semanticmodel.SemanticAccessLiteral, len(grant.AllowedValues))
+			seen := make(map[string]struct{}, len(values))
+			for index, raw := range grant.AllowedValues {
+				literal, err := semanticmodel.NewSemanticAccessLiteral(raw)
+				if err != nil {
+					return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel access grant %q allowedValues[%d]: %w", name, index, err)
+				}
+				keyBytes, _ := json.Marshal(literal)
+				if _, exists := seen[string(keyBytes)]; exists {
+					return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel access grant %q allowedValues contains duplicate value", name)
+				}
+				seen[string(keyBytes)] = struct{}{}
+				values[index] = literal
+			}
+			policy.AccessGrants[name] = semanticmodel.SemanticAccessGrantSpec{UserAttribute: grant.UserAttribute, AllowedValues: values}
+			grantNames[name] = struct{}{}
+		}
+	}
+
+	for _, name := range sortedMapKeys(spec.Datasets) {
+		dataset := spec.Datasets[name]
+		required, err := lowerRequiredAccessGrants("dataset", name, dataset.RequiredAccessGrants, grantNames)
+		if err != nil {
+			return semanticmodel.SemanticAccessPolicy{}, err
+		}
+		var filters []semanticmodel.SemanticAccessFilterSpec
+		if dataset.AccessFilters != nil {
+			if len(*dataset.AccessFilters) == 0 {
+				return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel dataset %q accessFilters requires a non-empty list", name)
+			}
+			filters = make([]semanticmodel.SemanticAccessFilterSpec, len(*dataset.AccessFilters))
+			for index, filter := range *dataset.AccessFilters {
+				if err := access.ValidateSemanticAttributeName(filter.Field); err != nil {
+					return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel dataset %q accessFilters[%d] field: %w", name, index, err)
+				}
+				if err := access.ValidateSemanticAttributeName(filter.UserAttribute); err != nil {
+					return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("SemanticModel dataset %q accessFilters[%d] userAttribute: %w", name, index, err)
+				}
+				filters[index] = semanticmodel.SemanticAccessFilterSpec{Field: filter.Field, UserAttribute: filter.UserAttribute}
+			}
+		}
+		if required != nil || filters != nil {
+			if policy.Datasets == nil {
+				policy.Datasets = map[string]semanticmodel.SemanticDatasetAccessSpec{}
+			}
+			policy.Datasets[name] = semanticmodel.SemanticDatasetAccessSpec{RequiredAccessGrants: required, AccessFilters: filters}
+		}
+	}
+	if spec.Dimensions != nil {
+		for _, name := range sortedMapKeys(*spec.Dimensions) {
+			required, err := lowerRequiredAccessGrants("dimension", name, (*spec.Dimensions)[name].RequiredAccessGrants, grantNames)
+			if err != nil {
+				return semanticmodel.SemanticAccessPolicy{}, err
+			}
+			if required != nil {
+				if policy.Dimensions == nil {
+					policy.Dimensions = map[string][]string{}
+				}
+				policy.Dimensions[name] = required
+			}
+		}
+	}
+	for _, name := range sortedMapKeys(spec.Metrics) {
+		var authored *[]string
+		switch variant := spec.Metrics[name].Value.(type) {
+		case *projectcontracts.SemanticMetricAggregateVariant:
+			authored = variant.RequiredAccessGrants
+		case *projectcontracts.SemanticMetricDerivedVariant:
+			authored = variant.RequiredAccessGrants
+		case *projectcontracts.SemanticMetricRatioVariant:
+			authored = variant.RequiredAccessGrants
+		}
+		required, err := lowerRequiredAccessGrants("metric", name, authored, grantNames)
+		if err != nil {
+			return semanticmodel.SemanticAccessPolicy{}, err
+		}
+		if required != nil {
+			if policy.Metrics == nil {
+				policy.Metrics = map[string][]string{}
+			}
+			policy.Metrics[name] = required
+		}
+	}
+	return policy, nil
+}
+
+func lowerRequiredAccessGrants(kind, name string, authored *[]string, available map[string]struct{}) ([]string, error) {
+	if authored == nil {
+		return nil, nil
+	}
+	if len(*authored) == 0 {
+		return nil, fmt.Errorf("SemanticModel %s %q requiredAccessGrants requires a non-empty list", kind, name)
+	}
+	seen := make(map[string]struct{}, len(*authored))
+	result := append([]string(nil), (*authored)...)
+	for _, grant := range result {
+		if err := access.ValidateSemanticAttributeName(grant); err != nil {
+			return nil, fmt.Errorf("SemanticModel %s %q requiredAccessGrants: %w", kind, name, err)
+		}
+		if _, exists := available[grant]; !exists {
+			return nil, fmt.Errorf("SemanticModel %s %q references unknown access grant %q", kind, name, grant)
+		}
+		if _, duplicate := seen[grant]; duplicate {
+			return nil, fmt.Errorf("SemanticModel %s %q requiredAccessGrants contains duplicate %q", kind, name, grant)
+		}
+		seen[grant] = struct{}{}
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func lowerSemanticDatasets(values map[string]projectcontracts.SemanticDataset) map[string]semanticmodel.SemanticDatasetSpec {
+	result := make(map[string]semanticmodel.SemanticDatasetSpec, len(values))
+	for name, value := range values {
+		result[name] = semanticmodel.SemanticDatasetSpec{
+			Model:                value.Model,
+			DefaultTimeDimension: optionalString(value.DefaultTimeDimension),
+			DisplayName:          optionalString(value.DisplayName),
+			Description:          optionalString(value.Description),
+			AIContext:            lowerAIContext(value.AiContext),
+		}
+	}
+	return result
+}
+
+func lowerSemanticRelationships(values *map[string]projectcontracts.SemanticRelationship) (map[string]semanticmodel.RelationshipSpec, error) {
+	if values == nil {
+		return nil, nil
+	}
+	result := make(map[string]semanticmodel.RelationshipSpec, len(*values))
+	for name, value := range *values {
+		from, err := lowerSemanticRelationshipEndpoint(value.From)
+		if err != nil {
+			return nil, fmt.Errorf("relationship %q from: %w", name, err)
+		}
+		to, err := lowerSemanticRelationshipEndpoint(value.To)
+		if err != nil {
+			return nil, fmt.Errorf("relationship %q to: %w", name, err)
+		}
+		result[name] = semanticmodel.RelationshipSpec{From: from, To: to, Description: optionalString(value.Description), AIContext: lowerAIContext(value.AiContext)}
+	}
+	return result, nil
+}
+
+func lowerSemanticRelationshipEndpoint(value projectcontracts.SemanticRelationshipEndpoint) (semanticmodel.RelationshipEndpointSpec, error) {
+	switch variant := value.Value.(type) {
+	case *projectcontracts.NamedSemanticRelationshipEndpoint:
+		return semanticmodel.RelationshipEndpointSpec{Dataset: variant.Dataset, Entity: variant.Entity}, nil
+	case *projectcontracts.FieldsSemanticRelationshipEndpoint:
+		return semanticmodel.RelationshipEndpointSpec{Dataset: variant.Dataset, Fields: append([]string(nil), variant.Fields...)}, nil
+	case nil:
+		return semanticmodel.RelationshipEndpointSpec{}, fmt.Errorf("endpoint variant is required")
+	default:
+		return semanticmodel.RelationshipEndpointSpec{}, fmt.Errorf("unsupported endpoint variant %T", value.Value)
+	}
+}
+
+func lowerSemanticDimensions(values *map[string]projectcontracts.SemanticDimension) map[string]semanticmodel.SemanticDimensionSpec {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]semanticmodel.SemanticDimensionSpec, len(*values))
+	for name, value := range *values {
+		bindings := make(map[string]semanticmodel.DimensionBinding, len(value.Bindings))
+		for dataset, binding := range value.Bindings {
+			bindings[dataset] = semanticmodel.DimensionBinding{Field: binding.Field, Path: optionalStrings(binding.Path)}
+		}
+		dimension := semanticmodel.SemanticDimensionSpec{
+			Label: optionalString(value.Label), Description: optionalString(value.Description), AIContext: lowerAIContext(value.AiContext),
+			Datatype: semanticmodel.LogicalDataType(value.Datatype), Bindings: bindings,
+		}
+		if value.Time != nil {
+			dimension.Time = &semanticmodel.TimeSemanticsSpec{
+				NativeGrain: value.Time.NativeGrain, Grains: append([]string(nil), value.Time.Grains...),
+				Calendar: optionalString(value.Time.Calendar), Timezone: optionalString(value.Time.Timezone),
+			}
+		}
+		result[name] = dimension
+	}
+	return result
+}
+
+func lowerSemanticFilters(values *map[string]projectcontracts.SemanticFilter) (map[string]semanticmodel.SemanticFilterSpec, error) {
+	if values == nil {
+		return nil, nil
+	}
+	result := make(map[string]semanticmodel.SemanticFilterSpec, len(*values))
+	for name, value := range *values {
+		filter, err := lowerSemanticFilter(value)
+		if err != nil {
+			return nil, fmt.Errorf("filter %q: %w", name, err)
+		}
+		result[name] = filter
+	}
+	return result, nil
+}
+
+func lowerSemanticFilter(value projectcontracts.SemanticFilter) (semanticmodel.SemanticFilterSpec, error) {
+	lowerLeaf := func(field, operator string, literal any, path *[]string, aiContext *projectcontracts.AIContext) semanticmodel.SemanticFilterSpec {
+		return semanticmodel.SemanticFilterSpec{Field: field, Operator: operator, Value: literal, Path: optionalStrings(path), AIContext: lowerAIContext(aiContext)}
+	}
+	switch variant := value.Value.(type) {
+	case *projectcontracts.EqualsSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.NotEqualsSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.InSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, append([]any(nil), variant.Value...), variant.Path, variant.AiContext), nil
+	case *projectcontracts.NotInSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, append([]any(nil), variant.Value...), variant.Path, variant.AiContext), nil
+	case *projectcontracts.LessThanSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.LessThanOrEqualSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.GreaterThanSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.GreaterThanOrEqualSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, variant.Value, variant.Path, variant.AiContext), nil
+	case *projectcontracts.IsNullSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, nil, variant.Path, variant.AiContext), nil
+	case *projectcontracts.IsNotNullSemanticFilter:
+		return lowerLeaf(variant.Field, variant.Operator, nil, variant.Path, variant.AiContext), nil
+	case *projectcontracts.AllSemanticFilter:
+		children, err := lowerSemanticFilterList(variant.All)
+		return semanticmodel.SemanticFilterSpec{All: children}, err
+	case *projectcontracts.AnySemanticFilter:
+		children, err := lowerSemanticFilterList(variant.Any)
+		return semanticmodel.SemanticFilterSpec{Any: children}, err
+	case *projectcontracts.NotSemanticFilter:
+		child, err := lowerSemanticFilter(variant.Not)
+		return semanticmodel.SemanticFilterSpec{Not: &child}, err
+	case nil:
+		return semanticmodel.SemanticFilterSpec{}, fmt.Errorf("filter variant is required")
+	default:
+		return semanticmodel.SemanticFilterSpec{}, fmt.Errorf("unsupported filter variant %T", value.Value)
+	}
+}
+
+func lowerSemanticFilterList(values []projectcontracts.SemanticFilter) ([]semanticmodel.SemanticFilterSpec, error) {
+	result := make([]semanticmodel.SemanticFilterSpec, 0, len(values))
+	for index, value := range values {
+		filter, err := lowerSemanticFilter(value)
+		if err != nil {
+			return nil, fmt.Errorf("child %d: %w", index, err)
+		}
+		result = append(result, filter)
+	}
+	return result, nil
+}
+
+func lowerSemanticMetrics(values map[string]projectcontracts.SemanticMetric) (map[string]semanticmodel.SemanticMetricSpec, error) {
+	result := make(map[string]semanticmodel.SemanticMetricSpec, len(values))
+	for name, value := range values {
+		metric := semanticmodel.SemanticMetricSpec{}
+		switch variant := value.Value.(type) {
+		case *projectcontracts.SemanticMetricAggregateVariant:
+			metric.Type, metric.Dataset, metric.Aggregation = variant.Type, variant.Dataset, variant.Aggregation
+			metric.Input = &semanticmodel.MetricInput{Field: variant.Input.Field}
+			metric.Where, metric.Empty, metric.TimeDimension = optionalStrings(variant.Where), optionalString(variant.Empty), optionalString(variant.TimeDimension)
+			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
+		case *projectcontracts.SemanticMetricDerivedVariant:
+			metric.Type, metric.Expression = variant.Type, variant.Expression
+			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
+		case *projectcontracts.SemanticMetricRatioVariant:
+			metric.Type, metric.Numerator, metric.Denominator = variant.Type, variant.Numerator, variant.Denominator
+			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
+		case nil:
+			return nil, fmt.Errorf("metric %q variant is required", name)
+		default:
+			return nil, fmt.Errorf("metric %q has unsupported variant %T", name, value.Value)
+		}
+		result[name] = metric
+	}
+	return result, nil
+}
+
+func lowerSemanticMetricCommon(metric *semanticmodel.SemanticMetricSpec, label, description *string, aiContext *projectcontracts.AIContext, unit, format *string, hidden *bool) {
+	metric.Label = optionalString(label)
+	metric.Description = optionalString(description)
+	metric.AIContext = lowerAIContext(aiContext)
+	metric.Unit = optionalString(unit)
+	metric.Format = optionalString(format)
+	if hidden != nil {
+		metric.Hidden = *hidden
+	}
+}
+
 // decodeModelResourceWithDefinition lowers the executable model contract while
 // retaining the non-secret authored definition union for the project detail
 // read model. Runtime consumers receive only table.Execution; the authored
@@ -247,6 +566,7 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 		return nil, nil
 	}
 	checks := make([]semanticmodel.ModelCheck, 0, len(*value))
+	seenIDs := make(map[string]struct{}, len(*value))
 	for index, check := range *value {
 		lowered := semanticmodel.ModelCheck{}
 		switch variant := check.Value.(type) {
@@ -254,7 +574,7 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 			if strings.TrimSpace(variant.Field) == "" {
 				return nil, fmt.Errorf("checks[%d] non_null requires field", index)
 			}
-			lowered.Type, lowered.Field, lowered.Severity = variant.Type, variant.Field, optionalString(variant.Severity)
+			lowered.ID, lowered.Type, lowered.Field, lowered.Severity, lowered.Description, lowered.Tags = variant.ID, variant.Type, variant.Field, optionalString(variant.Severity), optionalString(variant.Description), optionalStrings(variant.Tags)
 		case *projectcontracts.ModelCheckUniqueVariant:
 			if len(variant.Fields) == 0 {
 				return nil, fmt.Errorf("checks[%d] unique requires fields", index)
@@ -269,7 +589,7 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 				}
 				seenFields[field] = struct{}{}
 			}
-			lowered.Type, lowered.Fields, lowered.Severity = variant.Type, append([]string(nil), variant.Fields...), optionalString(variant.Severity)
+			lowered.ID, lowered.Type, lowered.Fields, lowered.Severity, lowered.Description, lowered.Tags = variant.ID, variant.Type, append([]string(nil), variant.Fields...), optionalString(variant.Severity), optionalString(variant.Description), optionalStrings(variant.Tags)
 		case *projectcontracts.ModelCheckAcceptedValuesVariant:
 			if strings.TrimSpace(variant.Field) == "" || len(variant.Values) == 0 {
 				return nil, fmt.Errorf("checks[%d] accepted_values requires field and values", index)
@@ -281,12 +601,12 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 				}
 				seenValues[accepted] = struct{}{}
 			}
-			lowered.Type, lowered.Field, lowered.Values, lowered.Severity = variant.Type, variant.Field, append([]string(nil), variant.Values...), optionalString(variant.Severity)
+			lowered.ID, lowered.Type, lowered.Field, lowered.Values, lowered.Severity, lowered.Description, lowered.Tags = variant.ID, variant.Type, variant.Field, append([]string(nil), variant.Values...), optionalString(variant.Severity), optionalString(variant.Description), optionalStrings(variant.Tags)
 		case *projectcontracts.ModelCheckRelationshipVariant:
 			if strings.TrimSpace(variant.Field) == "" || strings.TrimSpace(variant.To) == "" {
 				return nil, fmt.Errorf("checks[%d] relationship requires field and to", index)
 			}
-			lowered.Type, lowered.Field, lowered.To, lowered.Severity = variant.Type, variant.Field, variant.To, optionalString(variant.Severity)
+			lowered.ID, lowered.Type, lowered.Field, lowered.To, lowered.Severity, lowered.Description, lowered.Tags = variant.ID, variant.Type, variant.Field, variant.To, optionalString(variant.Severity), optionalString(variant.Description), optionalStrings(variant.Tags)
 		case *projectcontracts.ModelCheckRowCountVariant:
 			if variant.Minimum == nil && variant.Maximum == nil {
 				return nil, fmt.Errorf("checks[%d] row_count requires minimum or maximum", index)
@@ -300,7 +620,7 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 			if variant.Minimum != nil && variant.Maximum != nil && *variant.Minimum > *variant.Maximum {
 				return nil, fmt.Errorf("checks[%d] row_count minimum exceeds maximum", index)
 			}
-			lowered.Type, lowered.Minimum, lowered.Maximum, lowered.Severity = variant.Type, variant.Minimum, variant.Maximum, optionalString(variant.Severity)
+			lowered.ID, lowered.Type, lowered.Minimum, lowered.Maximum, lowered.Severity, lowered.Description, lowered.Tags = variant.ID, variant.Type, variant.Minimum, variant.Maximum, optionalString(variant.Severity), optionalString(variant.Description), optionalStrings(variant.Tags)
 		case nil:
 			return nil, fmt.Errorf("model check variant is required")
 		default:
@@ -309,6 +629,13 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 		if lowered.Severity != "" && !strings.EqualFold(lowered.Severity, "warning") && !strings.EqualFold(lowered.Severity, "error") {
 			return nil, fmt.Errorf("checks[%d] severity must be warning or error", index)
 		}
+		if strings.TrimSpace(lowered.ID) == "" {
+			return nil, fmt.Errorf("checks[%d] id is required", index)
+		}
+		if _, exists := seenIDs[lowered.ID]; exists {
+			return nil, fmt.Errorf("checks[%d] duplicates id %q", index, lowered.ID)
+		}
+		seenIDs[lowered.ID] = struct{}{}
 		checks = append(checks, lowered)
 	}
 	return checks, nil

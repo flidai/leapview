@@ -6,13 +6,11 @@ This page maps the supported product surface. Generated configuration, CLI, API,
 
 LeapView supports these versioned YAML resource families:
 
-- project discovery: Project;
 - project data access: Connection and Source;
-- analytical data: Model and SemanticModel;
+- analytical data and refresh: Model, SemanticModel, and Pipeline;
 - presentation: Dashboard;
-- access: Group, RoleBinding, Grant, and DataPolicy;
 
-All resources use the `apiVersion`, `kind`, `metadata`, and `spec` envelope. JSON Schemas and generated reference pages define required fields and accepted values.
+These six source-root resources use the `apiVersion`, `kind`, `metadata`, and `spec` envelope. JSON Schemas and generated reference pages define required fields and accepted values. Durable Project identity, access policy, and publication state are target-owned.
 
 ## Data access and lifecycle
 
@@ -20,7 +18,7 @@ Connection kinds include managed data and supported object, HTTP, database, and 
 
 Managed data supports local planning, immutable content-addressed revisions, resumable local-backend upload, direct multipart object-storage upload, staged revision inspection, and atomic activation with a project deployment.
 
-Refreshing Models creates model materializations in DuckLake-managed analytical state. Refresh builds isolated replacement state and changes the active serving pointer only after success. Storage cleanup reconciles active snapshots and query leases before deletion.
+Models materialize source transformations into DuckLake-managed analytical state. Refresh builds isolated replacement state and changes the active serving pointer only after success. PostgreSQL and DuckLake retain the authoritative lifecycle evidence needed by native maintenance and recovery tooling. Storage cleanup reconciles active snapshots and query leases before deletion.
 
 ## Semantic and BI surfaces
 
@@ -42,9 +40,9 @@ Authorization includes project-resource roles, explicit grants on securable obje
 
 ## Operations
 
-The CLI and API support project validation, target-aware planning, atomic deployment, refresh runs, backup/restore, bounded history maintenance, storage cleanup dry-run/apply, readiness checks, and managed revision inspection.
+The CLI and API support project validation, target-aware planning, atomic deployment, refresh runs, bounded history maintenance, readiness checks, and managed revision inspection. PostgreSQL backup/PITR and DuckLake/object-store recovery are provider-native operational responsibilities.
 
-The supported Hetzner module provides a single-node production topology with Caddy, restricted SSH, local persistent state, scheduled backups, and health-checked image upgrade/rollback. It is not a high-availability deployment contract.
+The supported Hetzner module provides a single-node production topology with Caddy, restricted SSH, and health-checked image lifecycle operations. It is not a high-availability deployment or backup contract.
 
 ## Integrations
 
@@ -60,4 +58,4 @@ The supported Hetzner module provides a single-node production topology with Cad
 
 LeapView is dashboards-as-code: browser edits are not the durable authoring source. Browser clients do not receive unrestricted SQL or credentials. DuckLake snapshots are internal serving consistency and cleanup boundaries, not a general customer-facing time-travel/version browser. The provided single-node deployment is not horizontal high availability.
 
-Use the generated [Configuration](/docs/config/project), [CLI](/docs/cli/reference), [API](/docs/api), and [visual](/docs/visuals/overview) catalogs to confirm exact support in the current version.
+Use the generated [Configuration](/docs/config), [CLI](/docs/cli/reference), [API](/docs/api), and [visual](/docs/visuals/overview) catalogs to confirm exact support in the current version.

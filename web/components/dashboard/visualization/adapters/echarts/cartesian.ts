@@ -4,10 +4,11 @@ import { conditionalIconGlyph, resolveConditionalFormat } from '../../conditiona
 import { resolveVisualizationMetadata } from '../../metadata'
 import { axis, escapeHTML, field, fieldLabel, formatDisplayField, formatField, inlineDataset, labelFormatter, legend, selectedDatasetSource, toneColor, type EChartsTranslation } from './common'
 import { conditionalCategoryColor, conditionalItemColor, seriesColor } from './conditional-color'
-import { echartsLabelPolicy } from './label-policy'
+import { constrainEChartsLabelToDataRect, echartsLabelPolicy } from './label-policy'
 import type { CategoryColorRegistry } from './category-colors'
 import { parseDecimal } from '../../decimal'
 import { reduceReferenceValue } from './decimal-reference'
+import { applyPercentAxis, categoricalFieldValues, colorWithAlpha, configureSecondaryComboAxis, finiteFieldExtent, heatmapDataZoom, humanizeCategoryLabel, multiMeasureComboAxes, rawCategoricalFieldValue } from './cartesian-presentation'
 
 type CartesianSpec = Extract<VisualizationEnvelope['spec'], { kind: 'cartesian' }>
 type ReferenceValue = NonNullable<CartesianSpec['referenceLines']>[number]['value']
@@ -113,26 +114,57 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const gradient = conditionalGradient(envelope, value, 'mark_fill')
     const extent = finiteFieldExtent(envelope, value)
     const primary = context.colors.data[0] ?? context.colors.accent
+    const labels = chartLabel(envelope, value, spec, context)
+    const heatmapZoom = heatmapDataZoom(envelope, spec)
+    const heatmapXAxis = axis(envelope, spec.x, 'category', context)
+    const heatmapYAxis = axis(envelope, spec.y[0]!, 'category', context)
+    const formatVisualMapValue = (rawValue: unknown): string => formatDisplayField(envelope, value, rawValue, context)
+    heatmapXAxis.data = categoricalFieldValues(envelope, spec.x)
+    heatmapYAxis.data = categoricalFieldValues(envelope, spec.y[0]!)
+    if (heatmapZoom && heatmapZoom.length > 0) {
+      heatmapXAxis.axisLabel = {
+        ...heatmapXAxis.axisLabel,
+        interval: 0,
+        rotate: 24,
+        hideOverlap: true,
+        width: 88,
+        overflow: 'truncate',
+        ellipsis: '…',
+        formatter: (category: unknown) => humanizeCategoryLabel(formatField(
+          envelope,
+          spec.x,
+          rawCategoricalFieldValue(envelope, spec.x, category),
+          context,
+        )),
+      }
+    }
     return {
-      xAxis: axis(envelope, spec.x, 'category', context), yAxis: axis(envelope, spec.y[0]!, 'category', context),
+      grid: { ...cartesianGrid(spec), bottom: heatmapZoom && heatmapZoom.length > 0 ? 96 : 64 },
+      xAxis: heatmapXAxis, yAxis: heatmapYAxis,
+      dataZoom: heatmapZoom,
       visualMap: gradient
         ? {
-            min: gradient.minimum, max: gradient.maximum, calculable: false, orient: 'horizontal', left: 'center', bottom: 0,
+            type: 'continuous', dimension: value.field,
+            min: gradient.minimum, max: gradient.maximum, calculable: true, orient: 'horizontal', left: 'center', bottom: 0,
             inRange: { color: [seriesColor('', gradient.low.color, context), seriesColor('', gradient.high.color, context)] },
-            text: [formatDisplayField(envelope, value, gradient.maximum, context), formatDisplayField(envelope, value, gradient.minimum, context)],
+            outOfRange: { opacity: 0 },
+            formatter: formatVisualMapValue,
             textStyle: { color: context.colors.muted },
           }
         : fill ? undefined : {
-            min: extent.minimum, max: extent.maximum, calculable: false, orient: 'horizontal', left: 'center', bottom: 0,
+            type: 'continuous', dimension: value.field,
+            min: extent.minimum, max: extent.maximum, calculable: true, orient: 'horizontal', left: 'center', bottom: 0,
             inRange: { color: [colorWithAlpha(primary, 0.18), primary] },
-            text: [formatDisplayField(envelope, value, extent.maximum, context), formatDisplayField(envelope, value, extent.minimum, context)],
+            outOfRange: { opacity: 0 },
+            formatter: formatVisualMapValue,
             textStyle: { color: context.colors.muted },
           },
       series: [{
         id: 'series:primary:heatmap', type: 'heatmap',
         encode: { x: spec.x.field, y: spec.y[0]?.field, value: value.field },
         itemStyle: { color: gradient ? undefined : fill, borderColor: stroke, borderWidth: stroke ? 2 : undefined },
-        ...chartLabel(envelope, value, spec, context),
+        ...labels,
+        labelLayout: constrainEChartsLabelToDataRect(labels.labelLayout, spec.presentation.labelPolicy.minimumSpacing),
       }],
     }
   }
@@ -141,6 +173,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const secondary = split.series.some((item) => (horizontal ? item.xAxisIndex : item.yAxisIndex) === 1)
     const primaryAxis = axis(envelope, spec.y[0]!, 'value', context, 'primary_y', spec.y)
     if (stackingMode(spec) === 'percent') applyPercentAxis(primaryAxis, context)
+    if (secondary) primaryAxis.splitNumber = 4
     if (split.scrollLegend) {
       // Crowded category-series cards surrender vertical space to a paged
       // legend. Keep value ticks legible in the remaining plot instead of
@@ -148,10 +181,12 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       primaryAxis.splitNumber = 4
       primaryAxis.axisLabel = { ...primaryAxis.axisLabel, hideOverlap: true }
     }
+    const secondaryAxis = secondary ? axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y) : undefined
+    if (secondaryAxis) configureSecondaryComboAxis(secondaryAxis)
     return {
       dataset: split.datasets, grid: cartesianGrid(spec), legend: legend(spec.presentation.legend, context, split.scrollLegend), xAxis: axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x'),
-      yAxis: horizontal ? axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x') : secondary ? [primaryAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y)] : primaryAxis,
-      ...(horizontal ? { xAxis: secondary ? [primaryAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y)] : primaryAxis } : {}),
+      yAxis: horizontal ? axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x') : secondary ? [primaryAxis, secondaryAxis!] : primaryAxis,
+      ...(horizontal ? { xAxis: secondary ? [primaryAxis, secondaryAxis!] : primaryAxis } : {}),
       dataZoom, series: [...split.series, ...interactionHitSeries(envelope, spec, split.series)],
     }
   }
@@ -164,7 +199,12 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   const comboByField = spec.mark === 'combo'
     ? new Map((spec.presentation.comboSeries ?? []).map((item) => [String(item.seriesValue), item]))
     : new Map<string, NonNullable<CartesianSpec['presentation']['comboSeries']>[number]>()
-  const hasSecondaryComboAxis = spec.mark === 'combo' && values.some((value) => comboByField.get(value.field)?.axis === 'secondary')
+  // Combo series are authored as a stable field list. Use that list for
+  // palette slots so changing a mark or result-frame order does not recolor
+  // an existing measure (for example, revenue remains data slot 1).
+  const comboColorSlots = spec.mark === 'combo'
+    ? new Map((spec.presentation.comboSeries ?? []).map((item, index) => [String(item.seriesValue), index]))
+    : new Map<string, number>()
   const series = values.map((value, seriesIndex) => {
     const normalizedField = normalized?.dimensions.get(value.field)
     const combo = comboByField.get(value.field)
@@ -172,8 +212,9 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const fill = conditionalItemColor(envelope, value, 'mark_fill', context) ?? conditionalItemColor(envelope, value, 'series_color', context)
     const stroke = conditionalItemColor(envelope, value, 'mark_stroke', context)
     const intent = spec.presentation.seriesIntent?.find((candidate) => candidate.value === value.field)?.color
+    const paletteSlot = comboColorSlots.get(value.field) ?? seriesIndex
     const markColor = fill ?? (intent === undefined
-      ? context.colors.data[seriesIndex % context.colors.data.length] ?? context.colors.accent
+      ? context.colors.data[paletteSlot % context.colors.data.length] ?? context.colors.accent
       : seriesColor(value.field, intent, context))
     const translatedLabel = normalizedField
       ? percentLabel(envelope, spec, context, normalized?.columnIndices.get(value.field))
@@ -194,14 +235,13 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       ...translatedLabel,
     }
   })
+  const comboAxes = spec.mark === 'combo'
+    ? multiMeasureComboAxes(envelope, context, spec, horizontal, values, comboByField, stack)
+    : undefined
   return {
     ...axes,
+    ...(comboAxes ? { xAxis: comboAxes.xAxis, yAxis: comboAxes.yAxis } : {}),
     ...(normalized ? { dataset: { id: `dataset:${normalized.datasetID}`, source: normalized.source } } : {}),
-    ...(hasSecondaryComboAxis
-      ? horizontal
-        ? { xAxis: [xAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', values)] }
-        : { yAxis: [yAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', values)] }
-      : {}),
     legend: legend(spec.presentation.legend, context), dataZoom,
     series: [...series, ...interactionHitSeries(envelope, spec, series)],
   }
@@ -216,30 +256,6 @@ function signedWaterfallColor(envelope: VisualizationEnvelope, ref: Visualizatio
     if (value > 0) return context.colors.success
     return context.colors.accent
   }
-}
-
-function colorWithAlpha(color: string, alpha: number): string {
-  const longHex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color)
-  if (longHex) return `rgba(${Number.parseInt(longHex[1]!, 16)}, ${Number.parseInt(longHex[2]!, 16)}, ${Number.parseInt(longHex[3]!, 16)}, ${alpha})`
-  const shortHex = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(color)
-  if (shortHex) return `rgba(${Number.parseInt(shortHex[1]! + shortHex[1]!, 16)}, ${Number.parseInt(shortHex[2]! + shortHex[2]!, 16)}, ${Number.parseInt(shortHex[3]! + shortHex[3]!, 16)}, ${alpha})`
-  return color
-}
-
-function finiteFieldExtent(envelope: VisualizationEnvelope, ref: VisualizationFieldRef): { minimum: number; maximum: number } {
-  const dataset = inlineDataset(envelope, ref.dataset)
-  const index = dataset?.columns.indexOf(ref.field) ?? -1
-  const values = index < 0 ? [] : (dataset?.rows ?? []).flatMap((row) => {
-    const value = row[index]
-    return typeof value === 'number' && Number.isFinite(value) ? [value] : []
-  })
-  if (values.length === 0) return { minimum: 0, maximum: 1 }
-  const minimum = Math.min(...values)
-  const maximum = Math.max(...values)
-  if (minimum !== maximum) return { minimum, maximum }
-  if (maximum > 0) return { minimum: 0, maximum }
-  if (minimum < 0) return { minimum, maximum: 0 }
-  return { minimum: 0, maximum: 1 }
 }
 
 export function applyDecisionContext(envelope: VisualizationEnvelope, context: RendererContext, option: EChartsTranslation): EChartsTranslation {
@@ -391,7 +407,7 @@ function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][n
   const horizontal = spec.presentation.orientation === 'horizontal' || spec.mark === 'bar'
   const automatic = authored === undefined || authored === 'automatic'
   const position = automatic ? horizontal ? 'insideRight' : undefined : authored === 'outside' ? horizontal ? 'right' : 'top' : authored
-  const baseFormatter = labelFormatter(envelope, value, context, axisID, spec.y)
+  const baseFormatter = labelFormatter(envelope, value, context, axisID, value ? [value] : [])
   const cue = value ? conditionalCueFormat(envelope, value) : undefined
   const color = value ? conditionalItemColor(envelope, value, 'label_foreground', context) : undefined
   const formatter = cue
@@ -611,11 +627,6 @@ function uniqueDimension(base: string, reserved: Set<string>): string {
 
 function stackingMode(spec: CartesianSpec): 'none' | 'normal' | 'percent' {
   return spec.presentation.stacking ?? (spec.presentation.stacked ? 'normal' : 'none')
-}
-
-function applyPercentAxis(axisOption: EChartsTranslation, context: RendererContext): void {
-  const formatter = new Intl.NumberFormat(context.locale, { maximumFractionDigits: 1 })
-  axisOption.axisLabel = { ...axisOption.axisLabel, formatter: (value: unknown) => typeof value === 'number' ? `${formatter.format(value)}%` : String(value) }
 }
 
 function percentLabel(envelope: VisualizationEnvelope, spec: CartesianSpec, context: RendererContext, columnIndex = -1) {

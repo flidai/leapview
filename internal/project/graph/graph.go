@@ -21,10 +21,12 @@ import (
 )
 
 const (
-	// GraphVersion is the portable project graph format version.
-	GraphVersion = 1
-	// ArtifactVersion is the serving-scoped envelope format version.
-	ArtifactVersion = 1
+	// GraphVersion is the portable project graph format version. Version 2 is
+	// rootless: portable graphs contain only the six resource kinds below.
+	GraphVersion = 2
+	// ArtifactVersion is the serving-scoped envelope format version. Version 2
+	// binds an external Project UID without requiring a graph project node.
+	ArtifactVersion = 2
 
 	digestPrefix = "sha256:"
 )
@@ -55,12 +57,9 @@ var (
 	ErrDuplicateEdge = errors.New("duplicate edge")
 	// ErrCycle indicates that the dependency graph is cyclic.
 	ErrCycle = errors.New("resource graph contains a cycle")
-	// ErrProjectRoot indicates that the graph does not have exactly one project
-	// root resource.
-	ErrProjectRoot = errors.New("project graph must contain exactly one project root")
-	// ErrProjectIdentityMismatch indicates that an artifact identity does not
-	// match the project root in its graph.
-	ErrProjectIdentityMismatch = errors.New("project identity does not match graph root")
+	// ErrProjectRoot indicates that a control-plane Project namespace was
+	// supplied to a portable graph. Project is not a portable graph resource.
+	ErrProjectRoot = errors.New("project resource is not portable in a graph")
 	// ErrInvalidServingIdentity indicates a malformed serving scope.
 	ErrInvalidServingIdentity = errors.New("invalid serving identity")
 )
@@ -108,24 +107,36 @@ func (id ResourceID) Valid() bool { return resourceIDPattern.MatchString(string(
 type Kind string
 
 const (
-	KindProject       Kind = "project"
-	KindConnection    Kind = "connection"
-	KindSource        Kind = "source"
-	KindModel         Kind = "model"
-	KindSemanticModel Kind = "semantic_model"
-	KindPipeline      Kind = "pipeline"
-	KindDashboard     Kind = "dashboard"
+	// KindProjectNamespace is the control-plane Project kind. It retains the
+	// wire spelling used by access/configuration contracts but is deliberately
+	// excluded from portable graph validation.
+	KindProjectNamespace Kind = "project"
+	KindConnection       Kind = "connection"
+	KindSource           Kind = "source"
+	KindModel            Kind = "model"
+	KindSemanticModel    Kind = "semantic_model"
+	KindPipeline         Kind = "pipeline"
+	KindDashboard        Kind = "dashboard"
 )
 
 var validKinds = map[Kind]struct{}{
-	KindProject: {}, KindConnection: {}, KindSource: {}, KindModel: {},
-	KindSemanticModel: {}, KindPipeline: {}, KindDashboard: {},
+	// ParseKind recognizes the control-plane namespace as well as portable
+	// kinds. NewProjectGraph applies the stricter portable-kind check below.
+	KindProjectNamespace: {}, KindConnection: {}, KindSource: {}, KindModel: {}, KindSemanticModel: {},
+	KindPipeline: {}, KindDashboard: {},
 }
 
-// Valid reports whether kind belongs to the project graph contract.
+// Valid reports whether kind is a recognized graph/control-plane wire kind.
 func (kind Kind) Valid() bool {
 	_, ok := validKinds[kind]
 	return ok
+}
+
+// Portable reports whether kind can occur in a ProjectGraph. Control-plane
+// namespaces remain recognized by ParseKind for access/configuration parsing,
+// but are not portable graph resources.
+func (kind Kind) Portable() bool {
+	return kind != KindProjectNamespace && kind.Valid()
 }
 
 // ParseKind validates a wire kind.
@@ -174,11 +185,11 @@ type Edge struct {
 	Relation string     `json:"relation,omitempty"`
 }
 
-// ProjectGraph is an immutable, validated project resource graph. It contains
-// exactly one project root resource; that root supplies ProjectID. The graph
-// bytes are portable and do not carry serving environment or generation data.
+// ProjectGraph is an immutable, validated portable resource graph. It contains
+// no project namespace/root resource; project identity is supplied separately
+// by the control plane or serving identity. Graph bytes are independent of
+// serving environment and generation data.
 type ProjectGraph struct {
-	projectID ResourceID
 	resources []Resource
 	edges     []Edge
 	canonical []byte
@@ -189,15 +200,14 @@ type ProjectGraph struct {
 // project graph.
 func NewProjectGraph(resources []Resource, edges []Edge) (ProjectGraph, error) {
 	resourcesCopy := cloneResources(resources)
+	if resourcesCopy == nil {
+		resourcesCopy = []Resource{}
+	}
 	edgesCopy := cloneEdges(edges)
 	if edgesCopy == nil {
 		edgesCopy = []Edge{}
 	}
 	if err := validate(resourcesCopy, edgesCopy); err != nil {
-		return ProjectGraph{}, err
-	}
-	projectID, err := projectRootID(resourcesCopy)
-	if err != nil {
 		return ProjectGraph{}, err
 	}
 	sortResources(resourcesCopy)
@@ -210,7 +220,6 @@ func NewProjectGraph(resources []Resource, edges []Edge) (ProjectGraph, error) {
 	}
 	sum := sha256.Sum256(canonical)
 	return ProjectGraph{
-		projectID: projectID,
 		resources: resourcesCopy,
 		edges:     edgesCopy,
 		canonical: canonical,
@@ -222,11 +231,7 @@ func NewProjectGraph(resources []Resource, edges []Edge) (ProjectGraph, error) {
 // graph. It is useful to validate decoded or incrementally assembled inputs.
 func Validate(resources []Resource, edges []Edge) error {
 	resourcesCopy := cloneResources(resources)
-	if err := validate(resourcesCopy, cloneEdges(edges)); err != nil {
-		return err
-	}
-	_, err := projectRootID(resourcesCopy)
-	return err
+	return validate(resourcesCopy, cloneEdges(edges))
 }
 
 // Decode decodes a canonical graph artifact and revalidates its invariants.
@@ -246,9 +251,6 @@ func (g ProjectGraph) Resources() []Resource { return cloneResources(g.resources
 
 // Edges returns a defensive copy sorted by canonical endpoint order.
 func (g ProjectGraph) Edges() []Edge { return cloneEdges(g.edges) }
-
-// ProjectID returns the stable ID of the graph's project root resource.
-func (g ProjectGraph) ProjectID() ResourceID { return g.projectID }
 
 // Resource returns a defensive copy of the resource with id.
 func (g ProjectGraph) Resource(id ResourceID) (Resource, bool) {
@@ -361,8 +363,7 @@ func (g ProjectGraph) Validate() error {
 	if err := validate(g.resources, g.edges); err != nil {
 		return err
 	}
-	_, err := projectRootID(g.resources)
-	return err
+	return nil
 }
 
 // ServingIdentity binds one portable project graph to the immutable serving
@@ -429,8 +430,9 @@ func (scope CandidateScope) BaseIdentity() (*ServingIdentity, error) {
 }
 
 // NewServingIdentity validates the complete immutable serving scope without
-// requiring a graph payload. Artifact binding separately verifies that the
-// identity's project ID matches the graph root.
+// requiring a graph payload. Artifact binding carries this external Project
+// UID alongside a portable graph; it does not derive or compare identity from
+// graph contents.
 func NewServingIdentity(projectID ResourceID, environment, generationID string) (ServingIdentity, error) {
 	return normalizeServingIdentity(ServingIdentity{
 		ProjectID:    projectID,
@@ -479,9 +481,6 @@ func NewArtifactEnvelope(identity ServingIdentity, graph ProjectGraph) (Artifact
 	}
 	if err := graph.Validate(); err != nil {
 		return ArtifactEnvelope{}, err
-	}
-	if identity.ProjectID != graph.ProjectID() {
-		return ArtifactEnvelope{}, fmt.Errorf("%w: identity %q, graph root %q", ErrProjectIdentityMismatch, identity.ProjectID, graph.ProjectID())
 	}
 	wire := artifactWire{Version: ArtifactVersion, Identity: identity, Graph: graph}
 	canonical, err := json.Marshal(wire)
@@ -575,6 +574,9 @@ func validate(resources []Resource, edges []Edge) error {
 			return fmt.Errorf("resource %d: %w", index, err)
 		}
 		resource.ID = id
+		if resource.Kind == KindProjectNamespace {
+			return fmt.Errorf("resource %q: %w: control-plane project namespace is not portable", id, ErrProjectRoot)
+		}
 		kind, err := ParseKind(string(resource.Kind))
 		if err != nil {
 			return fmt.Errorf("resource %q: %w", id, err)
@@ -629,23 +631,6 @@ func validate(resources []Resource, edges []Edge) error {
 		return fmt.Errorf("%w: %s", ErrCycle, strings.Join(cycle, " -> "))
 	}
 	return nil
-}
-
-func projectRootID(resources []Resource) (ResourceID, error) {
-	var root ResourceID
-	for _, resource := range resources {
-		if resource.Kind != KindProject {
-			continue
-		}
-		if root != "" {
-			return "", fmt.Errorf("%w: multiple project resources", ErrProjectRoot)
-		}
-		root = resource.ID
-	}
-	if root == "" {
-		return "", fmt.Errorf("%w: project resource is missing", ErrProjectRoot)
-	}
-	return root, nil
 }
 
 func findCycle(ids map[ResourceID]struct{}, adjacency map[ResourceID][]ResourceID) []string {

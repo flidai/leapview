@@ -1,6 +1,7 @@
 package access
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/project/graph"
@@ -8,7 +9,6 @@ import (
 
 func TestCanonicalAuditEventRequiresExactServingIdentityAndResource(t *testing.T) {
 	project, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_demo", Kind: graph.KindProject, Name: "demo"},
 		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "main"},
 	}, nil)
 	if err != nil {
@@ -26,7 +26,7 @@ func TestCanonicalAuditEventRequiresExactServingIdentityAndResource(t *testing.T
 		t.Fatal(err)
 	}
 	for _, bad := range []CanonicalAuditEvent{
-		func() CanonicalAuditEvent { copy := event; copy.Identity.ProjectID = "other_project"; return copy }(),
+		func() CanonicalAuditEvent { copy := event; copy.Identity.ProjectID = ""; return copy }(),
 		func() CanonicalAuditEvent {
 			copy := event
 			copy.Resource, _ = NewResourceRef("dashboard_main", graph.KindModel)
@@ -37,6 +37,69 @@ func TestCanonicalAuditEventRequiresExactServingIdentityAndResource(t *testing.T
 		if err := bad.ValidateAgainst(project); err == nil {
 			t.Fatalf("accepted invalid canonical audit event %#v", bad)
 		}
+	}
+}
+
+func TestCanonicalAuditEventChecksProjectNamespaceServingIdentity(t *testing.T) {
+	project, err := graph.NewProjectGraph([]graph.Resource{
+		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "main"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := NewResourceRef("project_demo", graph.KindProjectNamespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := CanonicalAuditEvent{
+		Identity:    graph.ServingIdentity{ProjectID: "project_demo", Environment: "production", GenerationID: "generation_7"},
+		PrincipalID: "alice", Action: "project.admin", Resource: resource, Capability: CapabilityProjectAdmin,
+	}
+	if err := event.ValidateAgainst(project); err != nil {
+		t.Fatalf("project namespace audit event rejected for owning identity: %v", err)
+	}
+	event.Identity.ProjectID = "other_project"
+	if err := event.ValidateAgainst(project); err == nil {
+		t.Fatal("project namespace audit event accepted for another serving identity")
+	}
+}
+
+func TestCanonicalAuditEventValidatesRequestIdentities(t *testing.T) {
+	resource, err := NewResourceRef("dashboard_main", graph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := CanonicalAuditEvent{
+		Identity:    graph.ServingIdentity{ProjectID: "project_demo", Environment: "production", GenerationID: "generation_7"},
+		PrincipalID: "alice", Action: "dashboard.read", Resource: resource, Capability: CapabilityResourceRead,
+	}
+	for _, test := range []struct {
+		name          string
+		requestID     string
+		correlationID string
+		wantErr       bool
+	}{
+		{name: "omitted identities"},
+		{name: "text identities", requestID: "req_abc", correlationID: "corr_abc"},
+		{name: "request leading whitespace", requestID: " req_abc", correlationID: "corr_abc", wantErr: true},
+		{name: "correlation trailing whitespace", requestID: "req_abc", correlationID: "corr_abc ", wantErr: true},
+		{name: "request whitespace only", requestID: "   ", correlationID: "corr_abc", wantErr: true},
+		{name: "correlation whitespace only", requestID: "req_abc", correlationID: "   ", wantErr: true},
+		{name: "request at limit", requestID: strings.Repeat("r", maxAuditRequestIdentityBytes), correlationID: "corr_abc"},
+		{name: "request too long", requestID: strings.Repeat("r", maxAuditRequestIdentityBytes+1), correlationID: "corr_abc", wantErr: true},
+		{name: "correlation too long", requestID: "req_abc", correlationID: strings.Repeat("c", maxAuditRequestIdentityBytes+1), wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			event := base
+			event.RequestID, event.CorrelationID = test.requestID, test.correlationID
+			err := event.Validate()
+			if test.wantErr && err == nil {
+				t.Fatal("Validate unexpectedly accepted non-canonical request identity")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("Validate rejected request identity: %v", err)
+			}
+		})
 	}
 }
 

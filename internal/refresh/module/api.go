@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
@@ -14,6 +15,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	"github.com/flidai/leapview/pkg/jobs"
 )
@@ -22,6 +24,15 @@ type EventStore interface {
 	jobs.EventAppender
 	jobhttp.EventReader
 }
+
+// CreateRefreshRunOperationID exposes the generated command identity through
+// the refresh module boundary so application composition does not import a
+// product capability's generated transport package directly.
+const CreateRefreshRunOperationID = string(refreshgen.GenOperationCreateRefreshRun)
+
+// CancelRefreshRunOperationID exposes the generated cancellation identity for
+// production protocol composition.
+const CancelRefreshRunOperationID = string(refreshgen.GenOperationCancelRefreshRun)
 
 func (m *Module) verifyRunCreated(ctx context.Context, run refreshrun.RunRecord) error {
 	logger := m.logger
@@ -114,7 +125,11 @@ func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) 
 		if scopeErr != nil {
 			return
 		}
-		run, err := m.runs.GetRun(ctx, scope, job.RunID)
+		runs, readErr := m.readRuns()
+		if readErr != nil {
+			return
+		}
+		run, err := runs.GetRun(ctx, scope, job.RunID)
 		if err != nil {
 			return
 		}
@@ -129,8 +144,8 @@ func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) 
 	}
 }
 
-func (m *Module) CreateRefreshRun(w http.ResponseWriter, r *http.Request, project string) {
-	m.handler.CreateRun(w, r, project)
+func (m *Module) CreateRefreshRun(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
+	m.handler.CreateRun(w, r, project, idempotencyKey)
 }
 
 func (m *Module) ListRefreshRuns(w http.ResponseWriter, r *http.Request, project string) {
@@ -141,7 +156,7 @@ func (m *Module) GetRefreshRun(w http.ResponseWriter, r *http.Request, project, 
 	m.handler.GetRun(w, r, project, runID)
 }
 
-func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, project, runID string) {
+func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, project, runID, idempotencyKey string) {
 	operationID := refreshgen.GenCommandOperationCancelRefreshRun()
 	if m == nil || m.runs == nil {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("unavailable", "Refresh service is unavailable"))
@@ -161,7 +176,12 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
-	prior, err := m.runs.GetRun(r.Context(), scope, runID)
+	runs, readErr := m.readRuns()
+	if readErr != nil {
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("unavailable", "Refresh service is unavailable"))
+		return
+	}
+	prior, err := runs.GetRun(r.Context(), scope, runID)
 	if err != nil || !scope.Matches(prior.Identity) {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
@@ -189,14 +209,53 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 			principalID = principal.ID
 		}
 	}
-	if intent, intentErr := buildRefreshAuditIntent(cancelCtx, operationID.APIGenOperationID(), principalID, identity.ProjectID.String(), r.Header.Get("Idempotency-Key"), r.Header.Get("X-Correlation-Id")); intentErr == nil && intent != nil {
-		intent.EventID = ""
-		cancelCtx = refreshrun.WithAuditIntent(cancelCtx, *intent)
+	intent, intentErr := buildRefreshAuditIntent(cancelCtx, operationID.APIGenOperationID(), principalID, identity.ProjectID.String(), idempotencyKey, r.Header.Get("X-Correlation-Id"))
+	if intentErr != nil || intent == nil {
+		if intentErr == nil {
+			intentErr = errors.New("refresh cancellation audit intent is unavailable")
+		}
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.Wrap("unavailable", intentErr))
+		return
 	}
-	row, err := m.runs.CancelRunWithAudit(cancelCtx, prior.Identity, runID, nil)
+	intent.EventID = ""
+	cancelCtx = refreshrun.WithAuditIntent(cancelCtx, *intent)
+	cancel, cancelErr := m.readRuns()
+	if cancelErr != nil {
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("unavailable", "Refresh service is unavailable"))
+		return
+	}
+	var row refreshrun.RunRecord
+	replayed := false
+	if strings.TrimSpace(idempotencyKey) != "" {
+		keyed, keyedOK := cancel.(KeyedCancelRunPersistence)
+		if keyedOK {
+			requestDigest, digestErr := refreshrun.CancelRequestDigest(prior.Identity, principalID, runID)
+			if digestErr != nil {
+				writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.Wrap("unavailable", digestErr))
+				return
+			}
+			row, replayed, err = keyed.CancelRunWithAuditKeyed(cancelCtx, prior.Identity, runID, principalID, idempotencyKey, requestDigest, nil)
+		} else {
+			// Repositories without the keyed operation port rely on their
+			// surrounding API idempotency layer for replay handling.
+			row, err = cancel.CancelRunWithAudit(cancelCtx, prior.Identity, runID, nil)
+		}
+	} else {
+		// Direct callers without a generated idempotency key use the
+		// repository's non-keyed cancellation operation.
+		row, err = cancel.CancelRunWithAudit(cancelCtx, prior.Identity, runID, nil)
+	}
 	if err != nil {
 		if errors.Is(err, refreshrun.ErrRunNotCancellable) {
 			writeRefreshCommandFailure(m, w, r, operationID, err)
+			return
+		}
+		if errors.Is(err, refreshpostgres.ErrStaleFence) {
+			writeRefreshCommandFailure(m, w, r, operationID, refreshrun.ErrRunNotCancellable)
+			return
+		}
+		if errors.Is(err, refreshpostgres.ErrConflict) {
+			writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("conflict", "refresh cancellation request conflicts with a prior request"))
 			return
 		}
 		if errors.Is(err, sql.ErrNoRows) {
@@ -211,9 +270,11 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 		writeRefreshCommandFailure(m, w, r, operationID, errors.New("refresh response is invalid"))
 		return
 	}
-	if err := m.verifyRunCancelled(r.Context(), row); err != nil {
-		writeRefreshCommandFailure(m, w, r, operationID, err)
-		return
+	if !replayed {
+		if err := m.verifyRunCancelled(r.Context(), row); err != nil {
+			writeRefreshCommandFailure(m, w, r, operationID, err)
+			return
+		}
 	}
 	w.Header().Set("Location", "/api/v1/projects/"+identity.ProjectID.String()+"/refresh-runs/"+runID)
 	apitransport.WriteJSON(w, http.StatusAccepted, response)
@@ -242,7 +303,12 @@ func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, pr
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
 		return
 	}
-	run, err := m.runs.GetRun(r.Context(), scope, runID)
+	runs, readErr := m.readRuns()
+	if readErr != nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "REFRESH_SERVICE_UNAVAILABLE", "Refresh service is unavailable", nil)
+		return
+	}
+	run, err := runs.GetRun(r.Context(), scope, runID)
 	if err != nil || !scope.Matches(run.Identity) {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
 		return

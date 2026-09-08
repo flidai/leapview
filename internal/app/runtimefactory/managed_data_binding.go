@@ -9,10 +9,10 @@ import (
 )
 
 type projectBindingTarget struct {
-	definition *manifest.Project
+	definition *manifest.ResourceManifest
 }
 
-func bindManagedDataRoots(definition *manifest.Project, roots map[string]string) error {
+func bindManagedDataRoots(definition *manifest.ResourceManifest, roots map[string]string) error {
 	if definition == nil {
 		return fmt.Errorf("project definition is required")
 	}

@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +13,7 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	saved "github.com/flidai/leapview/internal/analytics/exploration/saved"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TestSavedExplorationGeneratedRouterCommands exercises the assembled
@@ -23,11 +23,12 @@ import (
 // same CAS rejects without changing durable state.
 func TestSavedExplorationGeneratedRouterCommands(t *testing.T) {
 	store := testStore(t)
+	db, repository := savedPostgresFixture(t)
 	ctx := context.Background()
 	principal := testPlatformPrincipal(t, ctx, store, "saved-api-integration@example.com", "Saved API Integration")
 	token := testAPIToken(t, ctx, store, principal.ID, "saved-api-integration")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
-	server, err := assembleRuntimeChecked(ctx, fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
+	server, err := assembleRuntimeChecked(ctx, fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, SavedExplorationRepository: repository}))
 	if err != nil {
 		t.Fatalf("assemble runtime: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestSavedExplorationGeneratedRouterCommands(t *testing.T) {
 	if staleUpdate.Code != http.StatusPreconditionFailed {
 		t.Fatalf("stale PATCH status = %d, want %d (%s)", staleUpdate.Code, http.StatusPreconditionFailed, staleUpdate.Body.String())
 	}
-	assertSavedExplorationState(t, store.SQLDB(), created.Id, "Orders Updated", "active")
+	assertSavedExplorationState(t, db, created.Id, "Orders Updated", "active")
 
 	duplicate := savedAPICall(t, server.Routes(), token, http.MethodPost, itemPath+"/duplicate", `{ "title": "Orders Copy" }`, map[string]string{
 		"Idempotency-Key": "duplicate", "If-Match": updatedETag,
@@ -87,14 +88,14 @@ func TestSavedExplorationGeneratedRouterCommands(t *testing.T) {
 	if copied.Id == "" || copied.Id == created.Id {
 		t.Fatalf("duplicate response ID = %q, want a new exploration", copied.Id)
 	}
-	countBeforeStaleDuplicate := countSavedExplorations(t, store.SQLDB())
+	countBeforeStaleDuplicate := countSavedExplorations(t, db)
 	staleDuplicate := savedAPICall(t, server.Routes(), token, http.MethodPost, itemPath+"/duplicate", `{ "title": "Should Not Exist" }`, map[string]string{
 		"Idempotency-Key": "generated-duplicate-stale", "If-Match": initialETag,
 	})
 	if staleDuplicate.Code != http.StatusPreconditionFailed {
 		t.Fatalf("stale duplicate status = %d, want %d (%s)", staleDuplicate.Code, http.StatusPreconditionFailed, staleDuplicate.Body.String())
 	}
-	if got := countSavedExplorations(t, store.SQLDB()); got != countBeforeStaleDuplicate {
+	if got := countSavedExplorations(t, db); got != countBeforeStaleDuplicate {
 		t.Fatalf("stale duplicate changed exploration count from %d to %d", countBeforeStaleDuplicate, got)
 	}
 
@@ -104,25 +105,26 @@ func TestSavedExplorationGeneratedRouterCommands(t *testing.T) {
 	if staleArchive.Code != http.StatusPreconditionFailed {
 		t.Fatalf("stale archive status = %d, want %d (%s)", staleArchive.Code, http.StatusPreconditionFailed, staleArchive.Body.String())
 	}
-	assertSavedExplorationState(t, store.SQLDB(), created.Id, "Orders Updated", "active")
+	assertSavedExplorationState(t, db, created.Id, "Orders Updated", "active")
 	archive := savedAPICall(t, server.Routes(), token, http.MethodPost, itemPath+"/archive", "", map[string]string{
 		"Idempotency-Key": "generated-archive-1", "If-Match": updatedETag,
 	})
 	if archive.Code != http.StatusOK {
 		t.Fatalf("archive status = %d, want %d (%s)", archive.Code, http.StatusOK, archive.Body.String())
 	}
-	assertSavedExplorationState(t, store.SQLDB(), created.Id, "Orders Updated", "archived")
+	assertSavedExplorationState(t, db, created.Id, "Orders Updated", "archived")
 }
 
 func TestSavedExplorationGeneratedRouterQueriesListGetPaginationAndAuthorization(t *testing.T) {
 	store := testStore(t)
+	_, repository := savedPostgresFixture(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "saved-api-query-owner@example.com", "Saved API Query Owner")
 	viewer := testPrincipal(t, ctx, store, "saved-api-query-viewer@example.com", "Saved API Query Viewer")
 	ownerToken := testAPIToken(t, ctx, store, owner.ID, "saved-api-query-owner")
 	viewerToken := testAPIToken(t, ctx, store, viewer.ID, "saved-api-query-viewer")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
-	server, err := assembleRuntimeChecked(ctx, fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
+	server, err := assembleRuntimeChecked(ctx, fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, SavedExplorationRepository: repository}))
 	if err != nil {
 		t.Fatalf("assemble runtime: %v", err)
 	}
@@ -281,10 +283,10 @@ func savedAPICall(t *testing.T, handler http.Handler, token, method, path, body 
 	return rec
 }
 
-func assertSavedExplorationState(t *testing.T, db *sql.DB, explorationID, wantTitle, wantStatus string) {
+func assertSavedExplorationState(t *testing.T, db *pgxpool.Pool, explorationID, wantTitle, wantStatus string) {
 	t.Helper()
 	var title, status string
-	if err := db.QueryRowContext(context.Background(), `SELECT title, status FROM saved_explorations WHERE exploration_id = ?`, explorationID).Scan(&title, &status); err != nil {
+	if err := db.QueryRow(t.Context(), `SELECT title, status FROM saved_exploration.saved_explorations WHERE project_id = 'project:test' AND exploration_id = $1`, explorationID).Scan(&title, &status); err != nil {
 		t.Fatalf("read saved exploration state: %v", err)
 	}
 	if title != wantTitle || status != wantStatus {
@@ -292,10 +294,10 @@ func assertSavedExplorationState(t *testing.T, db *sql.DB, explorationID, wantTi
 	}
 }
 
-func countSavedExplorations(t *testing.T, db *sql.DB) int {
+func countSavedExplorations(t *testing.T, db *pgxpool.Pool) int {
 	t.Helper()
 	var count int
-	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM saved_explorations`).Scan(&count); err != nil {
+	if err := db.QueryRow(t.Context(), `SELECT COUNT(*) FROM saved_exploration.saved_explorations`).Scan(&count); err != nil {
 		t.Fatalf("count saved explorations: %v", err)
 	}
 	return count

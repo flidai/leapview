@@ -11,6 +11,7 @@ import (
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/google/uuid"
 )
 
 // AppendExplorationIntent is the closed, canonical idempotency input for an
@@ -84,8 +85,12 @@ func (s *Service) AppendExploration(ctx context.Context, input AppendExploration
 	if err != nil {
 		return Result{}, err
 	}
+	commandID, err := appendExplorationCommandID(input.RequestID)
+	if err != nil {
+		return Result{}, err
+	}
 	evidence := authoring.CommandEvidence{
-		ID: appendExplorationCommandID(input.RequestID), Fingerprint: fingerprint,
+		ID: commandID, Fingerprint: fingerprint,
 		Action:     authoring.AuthorizationActionEdit,
 		Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: input.ActorID}, OccurredAt: evidenceAt,
 	}
@@ -141,6 +146,9 @@ func (input AppendExplorationIntent) validateEnvelope() error {
 	if strings.TrimSpace(input.RequestID) == "" || input.RequestID != strings.TrimSpace(input.RequestID) || len(input.RequestID) > 256 {
 		return fmt.Errorf("request id is required and must be at most 256 characters")
 	}
+	if _, err := appendExplorationCommandID(input.RequestID); err != nil {
+		return err
+	}
 	switch strings.TrimSpace(input.PlacementChoice) {
 	case "half", "full":
 	default:
@@ -158,9 +166,16 @@ func appendExplorationFingerprint(input AppendExplorationIntent) (string, error)
 	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
-func appendExplorationCommandID(requestID string) authoring.CommandID {
-	digest := sha256.Sum256([]byte(requestID))
-	return authoring.CommandID("explore-" + hex.EncodeToString(digest[:16]))
+func appendExplorationCommandID(requestID string) (authoring.CommandID, error) {
+	parsed, err := uuid.Parse(requestID)
+	if err != nil || parsed.String() != requestID || parsed.Version() != 7 || parsed.Variant() != uuid.RFC4122 {
+		return "", fmt.Errorf("exploration append request id must be a canonical lowercase UUIDv7")
+	}
+	// The browser's Idempotency-Key is already the durable command identity.
+	// Reuse it verbatim so its real UUIDv7 timestamp remains meaningful and a
+	// retry with the same key resolves the same command without a hash-shaped
+	// UUID that only pretends to be time ordered.
+	return authoring.CommandID(requestID), nil
 }
 
 func validatePreparedAppend(input AppendExplorationIntent, lifecycle authoring.DashboardLifecycle, evidence authoring.CommandEvidence, command authoring.Command) error {

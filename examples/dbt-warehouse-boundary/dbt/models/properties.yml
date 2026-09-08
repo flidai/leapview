@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: Typed line-level order input owned by dbt.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - {name: order_id, data_type: varchar, tests: [not_null]}
+      - {name: customer_id, data_type: varchar, tests: [not_null]}
+      - {name: order_date, data_type: date, tests: [not_null]}
+      - name: order_status
+        data_type: varchar
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [shipped, delivered, processing, cancelled]
+      - {name: line_amount, data_type: double, tests: [not_null]}
+
+  - name: stg_customers
+    description: Clean customer attributes owned by dbt.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - {name: customer_id, data_type: varchar, tests: [not_null, unique]}
+      - {name: customer_name, data_type: varchar, tests: [not_null]}
+      - {name: region, data_type: varchar, tests: [not_null]}
+
+  - name: fct_orders
+    description: One tested, externally materialized row per order.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - {name: order_id, data_type: varchar, tests: [not_null, unique]}
+      - name: customer_id
+        data_type: varchar
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - {name: order_date, data_type: date, tests: [not_null]}
+      - {name: order_status, data_type: varchar, tests: [not_null]}
+      - {name: revenue, data_type: double, tests: [not_null]}
+
+  - name: dim_customers
+    description: Customer-grain mart with dbt-owned lifetime aggregation.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - {name: customer_id, data_type: varchar, tests: [not_null, unique]}
+      - {name: customer_name, data_type: varchar, tests: [not_null]}
+      - {name: region, data_type: varchar, tests: [not_null]}
+      - {name: order_count, data_type: bigint, tests: [not_null]}
+      - {name: lifetime_value, data_type: double, tests: [not_null]}

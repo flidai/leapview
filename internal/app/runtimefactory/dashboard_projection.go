@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
@@ -38,13 +39,83 @@ func (r dashboardRuntimeWithGraph) CompiledSemanticModel(modelID string) (*seman
 	return concrete.CompiledModel(), true
 }
 
+// SemanticModel exposes the activation-owned model snapshot used by the
+// planner. The dashboard service retains its authored projection for runtime
+// construction, but schema discovery is an activation fact; consumers must
+// observe the planner's detached source snapshot so metadata prechecks and
+// execution bind to one generation.
+func (r dashboardRuntimeWithGraph) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
+	compiled, ok := r.CompiledSemanticModel(modelID)
+	if !ok || compiled == nil {
+		return nil, false
+	}
+	source := compiled.SourceModel()
+	if source == nil || !compiled.MatchesModel(source) {
+		return nil, false
+	}
+	// The planner is selected by the canonical model resource ID, but retain a
+	// cheap identity check at this boundary so a malformed runtime cannot expose
+	// an unrelated activation snapshot as the requested model.
+	authored, exists := r.projectManifest.SemanticModels[modelID]
+	if !exists || authored == nil || authored.Name != source.Name || !activationModelsCompatible(compiled, authored, source) {
+		return nil, false
+	}
+	runtimeSafe, err := authored.RuntimeSnapshot()
+	if err != nil || runtimeSafe == nil {
+		return nil, false
+	}
+	// Source/connection metadata is descriptive runtime state rather than
+	// planner authority. Preserve it through the same redacted detached
+	// projection used by ProjectManifest while retaining the activation-owned
+	// executable graph and discovered schema above.
+	source.Connections = runtimeSafe.Connections
+	source.Sources = runtimeSafe.Sources
+	source.DefaultConnection = runtimeSafe.DefaultConnection
+	return source, true
+}
+
+// activationModelsCompatible compares the authored execution contract with
+// the activated source snapshot through the model's existing discovery
+// derivation. Physical schemas are activation-owned inputs; resolving them on a
+// detached authored snapshot reconstructs derived dimensions/columns without
+// weakening the full compiled-model fingerprint check.
+func activationModelsCompatible(compiled *semanticquery.CompiledModel, authored, activated *semanticmodel.Model) bool {
+	authoredSnapshot := authored.ExecutionSnapshot()
+	activatedSnapshot := activated.ExecutionSnapshot()
+	if authoredSnapshot == nil || activatedSnapshot == nil {
+		return false
+	}
+	if compiled.MatchesModel(authoredSnapshot) {
+		return true
+	}
+	for name, activatedTable := range activatedSnapshot.Tables {
+		authoredTable, ok := authoredSnapshot.Tables[name]
+		if !ok {
+			return false
+		}
+		authoredTable.Schema.Columns = append([]semanticmodel.ColumnSchema(nil), activatedTable.Schema.Columns...)
+		authoredSnapshot.Tables[name] = authoredTable
+	}
+	if err := authoredSnapshot.ResolveDiscoveredModelFields(); err != nil {
+		return false
+	}
+	return compiled.MatchesModel(authoredSnapshot)
+}
+
+// SemanticModelByID is the resource-ID form of SemanticModel used by runtime
+// resolver consumers. It deliberately shares the same activation projection
+// and fail-closed behavior.
+func (r dashboardRuntimeWithGraph) SemanticModelByID(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	return r.SemanticModel(modelID.String())
+}
+
 type dashboardRuntimeWithGraph struct {
 	*dashboardruntime.Service
 	projectID       projectgraph.ResourceID
 	servingStateID  string
 	authorization   accesssnapshot.AuthorizationSnapshot
 	authoredSources map[string]dashboardauthoring.AuthoredDashboardSource
-	projectManifest projectmanifest.Project
+	projectManifest projectmanifest.ResourceManifest
 }
 
 // AuthorizationSnapshot returns the immutable authorization policy compiled
@@ -59,14 +130,29 @@ func (r dashboardRuntimeWithGraph) AuthorizationSnapshot() accesssnapshot.Author
 // contains only identity, metadata, and topology; browser detail projections
 // must read their typed definitions from the exact active generation instead
 // of interpreting graph metadata as a resource document.
-func (r dashboardRuntimeWithGraph) ProjectManifest() projectmanifest.Project {
+func (r dashboardRuntimeWithGraph) ProjectManifest() projectmanifest.ResourceManifest {
 	encoded, err := json.Marshal(r.projectManifest)
 	if err != nil {
-		return projectmanifest.Project{}
+		return projectmanifest.ResourceManifest{}
 	}
-	var cloned projectmanifest.Project
+	var cloned projectmanifest.ResourceManifest
 	if err := json.Unmarshal(encoded, &cloned); err != nil {
-		return projectmanifest.Project{}
+		return projectmanifest.ResourceManifest{}
+	}
+	for modelID, model := range cloned.SemanticModels {
+		compiled, ok := r.CompiledSemanticModel(modelID)
+		if !ok || compiled == nil {
+			continue
+		}
+		source := compiled.SourceModel()
+		runtimeSafe, err := model.RuntimeSnapshot()
+		if source == nil || err != nil || runtimeSafe == nil {
+			return projectmanifest.ResourceManifest{}
+		}
+		source.Connections = runtimeSafe.Connections
+		source.Sources = runtimeSafe.Sources
+		source.DefaultConnection = runtimeSafe.DefaultConnection
+		cloned.SemanticModels[modelID] = source
 	}
 	return cloned
 }
@@ -87,7 +173,7 @@ func (r dashboardRuntimeWithGraph) AuthoredDashboardSource(dashboardID string) (
 	return source, true
 }
 
-func authoredDashboardSources(manifest projectmanifest.Project, projectID projectgraph.ResourceID) (map[string]dashboardauthoring.AuthoredDashboardSource, error) {
+func authoredDashboardSources(manifest projectmanifest.ResourceManifest, projectID projectgraph.ResourceID) (map[string]dashboardauthoring.AuthoredDashboardSource, error) {
 	sources := make(map[string]dashboardauthoring.AuthoredDashboardSource, len(manifest.DashboardSources))
 	for id, source := range manifest.DashboardSources {
 		dashboardID, err := projectgraph.NewResourceID(id)

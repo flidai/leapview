@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
 
@@ -29,6 +31,39 @@ var dataExplorerBlockIDs = []string{"a", "b", "c"}
 // audit policies as dashboard and semantic API queries.
 type DataQueryExecutor interface {
 	ExecuteDataQuery(context.Context, dataquery.Query) (dataquery.Result, error)
+}
+
+// SemanticAccessConsumerProvider is an optional query-executor capability used
+// only for protected semantic discovery. Public models continue to use the
+// ordinary DataQueryExecutor path. Implementations must return a consumer
+// bound to the request principal and active serving generation.
+type SemanticAccessConsumerProvider interface {
+	SemanticConsumer(context.Context, string) (*semanticquery.SemanticAccessConsumer, error)
+}
+
+func dataExplorerSemanticConsumers(ctx context.Context, executor DataQueryExecutor, definition projectmanifest.ResourceManifest) map[string]*semanticquery.SemanticAccessConsumer {
+	provider, ok := executor.(SemanticAccessConsumerProvider)
+	if !ok || provider == nil {
+		return nil
+	}
+	consumers := make(map[string]*semanticquery.SemanticAccessConsumer)
+	modelIDs := make([]string, 0, len(definition.SemanticModels))
+	for modelID := range definition.SemanticModels {
+		modelIDs = append(modelIDs, modelID)
+	}
+	sort.Strings(modelIDs)
+	for _, modelID := range modelIDs {
+		model := definition.SemanticModels[modelID]
+		if !semanticquery.ModelRequiresSemanticAccess(model) {
+			continue
+		}
+		consumer, err := provider.SemanticConsumer(ctx, modelID)
+		if err != nil || consumer == nil {
+			continue
+		}
+		consumers[modelID] = consumer
+	}
+	return consumers
 }
 
 func normalizeDataExplorerCommand(command projectsignals.DataExplorerCommand) projectsignals.DataExplorerCommand {

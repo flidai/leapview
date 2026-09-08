@@ -89,6 +89,15 @@ type bundleExecution struct {
 	summary dataquery.Result
 }
 
+func branchResultEquivalenceDigest(plan semanticquery.BundlePlan, id string, request dataquery.Query) string {
+	for _, branch := range plan.Branches {
+		if branch.ID == id {
+			return materializeResultEquivalenceDigest(branch.ResultEquivalenceDigest, request)
+		}
+	}
+	return ""
+}
+
 // ExecuteDataQueryBundle authorizes every branch before compiling one
 // single-dataset GROUPING SETS statement. The deliberately short orchestration
 // method gives each stage one failure boundary and typed state, while a bundle
@@ -96,6 +105,13 @@ type bundleExecution struct {
 func (r *Runtime) ExecuteDataQueryBundle(ctx context.Context, requests []dataquery.BundleRequest) (dataquery.BundleResult, error) {
 	if r == nil || r.db == nil {
 		return dataquery.BundleResult{}, fmt.Errorf("materialization runtime is not initialized")
+	}
+	state, err := r.requireSemanticProtectionState()
+	if err != nil {
+		return dataquery.BundleResult{}, err
+	}
+	if state.protected {
+		return dataquery.BundleResult{}, &dataquery.BundleIncompatibleError{Err: fmt.Errorf("protected semantic bundles require lifecycle qualification; execute governed branches separately")}
 	}
 	if len(requests) < 2 {
 		return dataquery.BundleResult{}, &dataquery.BundleIncompatibleError{Err: fmt.Errorf("bundle requires at least two branches")}
@@ -192,6 +208,13 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 			out.misses = append(out.misses, branch)
 			continue
 		}
+		if !plan.Plan.Deterministic || !dependencyProjectionCacheDeterministic(r.model, projection) {
+			// Branch projections preserve independent cache admission even when
+			// another branch in the shared physical statement is volatile.
+			out.slots[branch.ID] = bundleCacheSlot{decision: dataquery.CacheAdmissionBypassed, admissionReason: dataquery.CacheAdmissionReasonNonDeterministic, started: cacheStarted}
+			out.misses = append(out.misses, branch)
+			continue
+		}
 		dependency, reusable := r.dependencyForProjection(projection)
 		if !reusable {
 			out.slots[branch.ID] = bundleCacheSlot{decision: dataquery.CacheAdmissionBypassed, admissionReason: dataquery.CacheAdmissionReasonDependencyUnavailable, started: cacheStarted}
@@ -205,7 +228,7 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 			continue
 		}
 		started := time.Now()
-		cached, address, hit, lookup, err := r.queryCache.lookupArrow(ctx, branch.Query, r.resultPartition, dependency, plan.Plan.SQL)
+		cached, address, hit, lookup, err := r.queryCache.lookupArrowWithDigest(ctx, branch.Query, r.resultPartition, dependency, plan.Plan.SQL, branchResultEquivalenceDigest(plan, branch.ID, branch.Query))
 		duration := time.Since(started)
 		if err != nil {
 			observePendingBundleCacheError(ctx, out)
@@ -418,7 +441,7 @@ func (r *Runtime) executeArrowBundle(ctx context.Context, planned plannedBundle)
 	summary := dataquery.Result{PlanningMS: planned.planningMS, SQL: planned.plan.Plan.SQL}
 	// captureArrowPlan transfers one creator-owned reference to this stage.
 	// It is released here after splitting on every success and error path.
-	source, err := r.captureArrowPlan(ctx, planned.plan.Plan)
+	source, err := r.captureArrowPlan(ctx, dataquery.Query{ModelID: r.modelID}, planned.plan.Plan)
 	if source != nil {
 		defer source.Release()
 	}

@@ -561,7 +561,6 @@ func savedAdapterContext(principalID string) context.Context {
 func savedAdapterGraph(t *testing.T) (projectgraph.ProjectGraph, projectgraph.ServingIdentity) {
 	t.Helper()
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: savedAdapterProject, Kind: projectgraph.KindProject, Name: "saved"},
 		{ID: "semantic:sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
 		{ID: "semantic:marketing", Kind: projectgraph.KindSemanticModel, Name: "marketing"},
 		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders"},

@@ -3,21 +3,23 @@ package materialize
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	resultcacheidentity "github.com/flidai/leapview/internal/analytics/cache"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/pkg/arrowresult"
 )
-
-var localCacheID atomic.Uint64
 
 // queryResultCache retains the materialization-specific key contract while the
 // stable result scope owns retention and invalidation, the byte scope owns
@@ -49,11 +51,81 @@ type queryCacheAddress struct {
 	generation uint64
 }
 
+// executeArrow is retained for cache-unit tests and low-level callers that
+// intentionally provide an authored-query identity. Runtime execution uses
+// executeArrowWithPlan so the key is always derived from normalized PlanIR.
 func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
 	if observationStarted.IsZero() {
 		observationStarted = time.Now()
 	}
-	address, err := c.cacheAddress(request, partition, dependency)
+	queryDigest, err := resultcacheidentity.CanonicalQueryDigest(request)
+	if err != nil {
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		return dataquery.Result{}, err
+	}
+	return c.executeArrowWithDigest(ctx, request, partition, dependency, diagnosticsSQL, observationStarted, queryDigest, execute)
+}
+
+func (c *queryResultCache) executeArrowWithPlan(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, plan semanticquery.Plan, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
+	if observationStarted.IsZero() {
+		observationStarted = time.Now()
+	}
+	baseDigest, err := plan.ResultEquivalenceDigest()
+	if err != nil {
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		return dataquery.Result{}, err
+	}
+	queryDigest := materializeResultEquivalenceDigest(baseDigest, request)
+	return c.executeArrowWithDigest(ctx, request, partition, dependency, diagnosticsSQL, observationStarted, queryDigest, execute)
+}
+
+const authorizationProjectionDomain = "flid.resultidentity.authorization-projection.v1"
+
+// materializeResultEquivalenceDigest binds the authorization-only projection
+// to a planner-owned result identity. Authorization aliases and declaration
+// order are presentation details; the sorted, deduplicated field-name set is
+// the complete authorization semantic that can affect the result.
+func materializeResultEquivalenceDigest(baseDigest string, request dataquery.Query) string {
+	if baseDigest == "" || len(request.AuthorizationFields) == 0 {
+		return baseDigest
+	}
+	fieldSet := make(map[string]struct{}, len(request.AuthorizationFields))
+	for _, field := range request.AuthorizationFields {
+		name := strings.TrimSpace(field.Field)
+		if name != "" {
+			fieldSet[name] = struct{}{}
+		}
+	}
+	if len(fieldSet) == 0 {
+		return baseDigest
+	}
+	fields := make([]string, 0, len(fieldSet))
+	for field := range fieldSet {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	canonical, err := json.Marshal(struct {
+		Base   string   `json:"base"`
+		Fields []string `json:"fields"`
+	}{Base: baseDigest, Fields: fields})
+	if err != nil {
+		// The input consists only of strings, so encoding cannot fail. Keep this
+		// fail-open if that ever changes: an unbound digest is still preferable
+		// to making an otherwise valid query unavailable.
+		return baseDigest
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(authorizationProjectionDomain))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write(canonical)
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+func (c *queryResultCache) executeArrowWithDigest(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, queryDigest string, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
+	if observationStarted.IsZero() {
+		observationStarted = time.Now()
+	}
+	address, err := c.cacheAddressWithDigest(request, partition, dependency, queryDigest)
 	if err != nil {
 		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
 		return dataquery.Result{}, err
@@ -187,12 +259,12 @@ func newQueryResultCacheWithLimits(capacity int, maxBytes int64) *queryResultCac
 	if maxBytes <= 0 {
 		maxBytes = 1
 	}
-	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: capacity, RuntimeBytes: maxBytes, NodeEntries: capacity, NodeBytes: maxBytes})
+	pool, err := resultcache.New(resultcache.Limits{PartitionEntries: capacity, PartitionBytes: maxBytes, NodeEntries: capacity, NodeBytes: maxBytes})
 	if err != nil {
 		panic(err)
 	}
-	id := fmt.Sprintf("local-%d", localCacheID.Add(1))
-	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: id})
+	id := fmt.Sprintf("cache-%p", pool)
+	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: id, PartitionID: "local:" + id})
 	if err != nil {
 		panic(err)
 	}
@@ -255,12 +327,23 @@ func (c *queryResultCache) coalesceBytes(ctx context.Context, key string, execut
 }
 
 func (c *queryResultCache) lookupArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string) (dataquery.Result, queryCacheAddress, bool, resultcache.LookupObservation, error) {
-	address, err := c.cacheAddress(request, partition, dependency)
+	queryDigest, err := resultcacheidentity.CanonicalQueryDigest(request)
+	if err != nil {
+		return dataquery.Result{}, queryCacheAddress{}, false, resultcache.LookupObservation{}, err
+	}
+	return c.lookupArrowWithDigest(ctx, request, partition, dependency, diagnosticsSQL, queryDigest)
+}
+
+func (c *queryResultCache) lookupArrowWithDigest(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL, canonicalDigest string) (dataquery.Result, queryCacheAddress, bool, resultcache.LookupObservation, error) {
+	address, err := c.cacheAddressWithDigest(request, partition, dependency, canonicalDigest)
 	if err != nil {
 		return dataquery.Result{}, queryCacheAddress{}, false, resultcache.LookupObservation{}, err
 	}
 	result, hit, observation, err := c.getArrowObserved(ctx, request, address, diagnosticsSQL)
-	return result, address, hit, observation, err
+	if err != nil || hit {
+		return result, address, hit, observation, err
+	}
+	return result, address, false, observation, nil
 }
 
 func (c *queryResultCache) cacheKey(request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency) (string, uint64, error) {
@@ -272,38 +355,30 @@ func (c *queryResultCache) cacheAddress(request dataquery.Query, partition resul
 	if !queryCacheIdentityAvailable(request, partition, dependency) {
 		return queryCacheAddress{}, fmt.Errorf("complete query result cache identity is required")
 	}
-	spatialTileGenerationVersion := 0
-	if request.SpatialTile != nil || request.SpatialTileBudget != nil {
-		// Bump whenever MVT encoding or promoted feature identity changes so an
-		// active cache can never serve bytes from an older tile contract.
-		spatialTileGenerationVersion = 5
-	}
-	partitionCanonical := partition.Canonical()
-	key := queryResultCacheKey{
-		Version:                    resultidentity.CacheKeyFormatVersion,
-		Partition:                  json.RawMessage(partitionCanonical),
-		DependencyDigest:           dependency.Digest(),
-		EffectivePolicyFingerprint: request.EffectivePolicyFingerprint,
-		Query: governedQueryCacheKey{
-			Operation: request.Operation, ModelID: request.ModelID, Kind: request.Kind, Target: request.Target,
-			Fields: request.Fields, Metrics: request.Metrics, AuthorizationFields: request.AuthorizationFields,
-			Value: request.Value, Time: request.Time, Filters: request.Filters, Sort: request.Sort,
-			ColumnMasks: request.ColumnMasks, Offset: request.Offset, Limit: request.Limit,
-			BinCount: request.BinCount, Histogram: request.Histogram, Distribution: request.Distribution,
-			IncludeTotal: request.IncludeTotal, SpatialTile: request.SpatialTile,
-			SpatialTileBudget:            request.SpatialTileBudget,
-			SpatialTileGenerationVersion: spatialTileGenerationVersion, SpatialMetadata: request.SpatialMetadata,
-		},
-	}
-	keyBytes, err := json.Marshal(key)
+	queryDigest, err := resultcacheidentity.CanonicalQueryDigest(request)
 	if err != nil {
-		return queryCacheAddress{}, fmt.Errorf("encode governed query cache key: %w", err)
+		return queryCacheAddress{}, err
+	}
+	return c.cacheAddressWithDigest(request, partition, dependency, queryDigest)
+}
+
+func (c *queryResultCache) cacheAddressWithDigest(request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, queryDigest string) (queryCacheAddress, error) {
+	if !queryCacheIdentityAvailable(request, partition, dependency) {
+		return queryCacheAddress{}, fmt.Errorf("complete query result cache identity is required")
+	}
+	key, err := resultcacheidentity.NewKey(resultcacheidentity.KeyInput{
+		Partition: partition, Dependency: dependency,
+		EffectivePolicyFingerprint: request.EffectivePolicyFingerprint,
+		CanonicalQueryDigest:       queryDigest,
+	})
+	if err != nil {
+		return queryCacheAddress{}, err
 	}
 	familyBytes, err := json.Marshal(queryResultCacheFamily{
-		Version:                    key.Version,
-		Partition:                  key.Partition,
-		DependencyDigest:           key.DependencyDigest,
-		EffectivePolicyFingerprint: key.EffectivePolicyFingerprint,
+		Version:                    key.Version(),
+		Partition:                  json.RawMessage(key.Partition().Canonical()),
+		DependencyDigest:           key.DependencyDigest(),
+		EffectivePolicyFingerprint: key.PolicyFingerprint(),
 	})
 	if err != nil {
 		return queryCacheAddress{}, fmt.Errorf("encode governed query cache family: %w", err)
@@ -313,7 +388,7 @@ func (c *queryResultCache) cacheAddress(request dataquery.Query, partition resul
 	c.mu.Lock()
 	c.generation = generation
 	c.mu.Unlock()
-	return queryCacheAddress{key: string(keyBytes), family: resultcache.QueryFamily(family), generation: generation}, nil
+	return queryCacheAddress{key: key.Digest(), family: resultcache.QueryFamily(family), generation: generation}, nil
 }
 
 func queryCacheIdentityAvailable(request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency) bool {
@@ -348,14 +423,6 @@ func queryCacheIdentityReason(request dataquery.Query, partition resultidentity.
 	return dataquery.CacheAdmissionReasonEligible
 }
 
-type queryResultCacheKey struct {
-	Version                    int                   `json:"version"`
-	Partition                  json.RawMessage       `json:"partition"`
-	DependencyDigest           string                `json:"dependencyDigest"`
-	EffectivePolicyFingerprint string                `json:"effectivePolicyFingerprint"`
-	Query                      governedQueryCacheKey `json:"query"`
-}
-
 type queryResultCacheFamily struct {
 	Version                    int             `json:"version"`
 	Partition                  json.RawMessage `json:"partition"`
@@ -382,31 +449,6 @@ func observeTypedCacheFinal(ctx context.Context, outcome dataquery.CacheObservat
 
 func observeTypedCacheFinalWithSource(ctx context.Context, outcome dataquery.CacheObservationOutcome, source resultcache.HitSource, duration time.Duration) {
 	dataquery.ObserveCache(ctx, dataquery.CacheObservation{Phase: dataquery.CacheObservationFinal, Outcome: outcome, HitSource: dataquery.CacheHitSource(source), Duration: duration})
-}
-
-type governedQueryCacheKey struct {
-	Operation                    string                         `json:"operation"`
-	ModelID                      string                         `json:"modelId"`
-	Kind                         dataquery.Kind                 `json:"kind"`
-	Target                       string                         `json:"target"`
-	Fields                       []dataquery.Field              `json:"fields,omitempty"`
-	Metrics                      []dataquery.Field              `json:"metrics,omitempty"`
-	AuthorizationFields          []dataquery.Field              `json:"authorizationFields,omitempty"`
-	Value                        dataquery.Field                `json:"value"`
-	Time                         dataquery.Time                 `json:"time"`
-	Filters                      []dataquery.Filter             `json:"filters,omitempty"`
-	Sort                         []dataquery.Sort               `json:"sort,omitempty"`
-	ColumnMasks                  []dataquery.ColumnMask         `json:"columnMasks,omitempty"`
-	Offset                       int                            `json:"offset,omitempty"`
-	Limit                        int                            `json:"limit,omitempty"`
-	BinCount                     int                            `json:"binCount,omitempty"`
-	Histogram                    *dataquery.HistogramOptions    `json:"histogram,omitempty"`
-	Distribution                 *dataquery.DistributionOptions `json:"distribution,omitempty"`
-	IncludeTotal                 bool                           `json:"includeTotal,omitempty"`
-	SpatialTile                  *dataquery.SpatialTile         `json:"spatialTile,omitempty"`
-	SpatialTileBudget            *dataquery.SpatialTileBudget   `json:"spatialTileBudget,omitempty"`
-	SpatialTileGenerationVersion int                            `json:"spatialTileGenerationVersion,omitempty"`
-	SpatialMetadata              *dataquery.SpatialMetadata     `json:"spatialMetadata,omitempty"`
 }
 
 func (c *queryResultCache) clear() {

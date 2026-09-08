@@ -11,7 +11,7 @@ import (
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/securestore"
-	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const authoringCredentialService = "com.leapview.cli.authoring.v1"
@@ -63,17 +63,24 @@ func (applicationTargetDiscovery) Discover(ctx context.Context, target string) (
 	}, nil
 }
 
-type applicationProjectIdentity struct{}
+type applicationProjectIdentity struct {
+	profiles *cliapi.ProfileStore
+}
 
-func (applicationProjectIdentity) ProjectID(path string) (string, error) {
-	project, err := projectcompiler.LoadProject(path)
+func (identity applicationProjectIdentity) ProjectID(externallyIssuedUID string) (string, error) {
+	if identity.profiles == nil {
+		return "", fmt.Errorf("project authority state is unavailable")
+	}
+	authority, err := identity.profiles.ResolveProjectAuthority(externallyIssuedUID, validateProjectAuthorityResourceID)
 	if err != nil {
 		return "", err
 	}
-	// Authoring credentials are scoped to the immutable graph root. The
-	// metadata name is only an executable-facing label and must not be used as
-	// the server-bound project assertion.
-	return project.ID.String(), nil
+	return authority.ProjectUID, nil
+}
+
+func validateProjectAuthorityResourceID(value string) error {
+	_, err := projectgraph.NewResourceID(value)
+	return err
 }
 
 func openSystemBrowser(uri string) error {

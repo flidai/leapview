@@ -94,7 +94,6 @@ type Store interface {
 	Load(context.Context, Key) (Record, error)
 	CompareAndSwap(context.Context, Key, uint64, State) (Record, error)
 	Touch(context.Context, Key) error
-	DeleteExpired(context.Context) error
 }
 
 type MemoryStore struct {

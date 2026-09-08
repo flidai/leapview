@@ -2,8 +2,6 @@ package service_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"testing"
 
@@ -13,6 +11,8 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/document"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+const appendRequestID = "01912f14-7b3c-7e31-8a74-6a6e8f9d4c20"
 
 func TestAppendExplorationReplaysBeforePreparationAfterDraftAdvance(t *testing.T) {
 	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
@@ -106,13 +106,32 @@ func TestAppendExplorationAuthorizationPrecedesDurableLookupAndPreparation(t *te
 	}
 }
 
+func TestAppendExplorationRejectsNonNativeRequestIDBeforeDurableLookup(t *testing.T) {
+	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
+	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-append", "draft-append", "revision-append", "revision-append-result")
+	created, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "actor", Title: "Append", Slug: "append", SemanticModel: "model:test", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-append"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := appendIntent(created)
+	intent.RequestID = "legacy-request-id"
+	if _, err := svc.AppendExploration(t.Context(), intent, func(context.Context, service.AppendExplorationIntent, authoring.DashboardLifecycle) (service.AppendExplorationPreparation, error) {
+		t.Fatal("invalid request identity reached preparation")
+		return service.AppendExplorationPreparation{}, nil
+	}); err == nil {
+		t.Fatal("invalid request identity was accepted")
+	}
+	if repository.lookupCommandCalls != 0 {
+		t.Fatalf("invalid request identity reached durable lookup: calls=%d", repository.lookupCommandCalls)
+	}
+}
+
 func appendIntent(result service.Result) service.AppendExplorationIntent {
-	return service.AppendExplorationIntent{ProjectID: projectgraph.ResourceID("project:test"), ActorID: "actor", DashboardID: result.Lifecycle.ID, DraftID: result.Lifecycle.Draft.ID, ExpectedRevision: result.Revision, PageID: "overview", RequestID: "append-request-1", PlacementChoice: "half", Spec: structExplorationSpec()}
+	return service.AppendExplorationIntent{ProjectID: projectgraph.ResourceID("project:test"), ActorID: "actor", DashboardID: result.Lifecycle.ID, DraftID: result.Lifecycle.Draft.ID, ExpectedRevision: result.Revision, PageID: "overview", RequestID: appendRequestID, PlacementChoice: "half", Spec: structExplorationSpec()}
 }
 
 func preparedAppend(input service.AppendExplorationIntent) service.AppendExplorationPreparation {
-	digest := sha256.Sum256([]byte(input.RequestID))
-	return service.AppendExplorationPreparation{Command: authoring.Command{ID: authoring.CommandID("explore-" + hex.EncodeToString(digest[:16])), DashboardID: input.DashboardID, DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: input.ActorID}, AppendExplorationVisual: &authoring.AppendExplorationVisualPayload{PageID: input.PageID, VisualID: "append_visual", ComponentID: "append_component", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4}, SemanticModel: "model:test", Visual: appendVisual()}}, Release: func() {}}
+	return service.AppendExplorationPreparation{Command: authoring.Command{ID: authoring.CommandID(input.RequestID), DashboardID: input.DashboardID, DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: input.ActorID}, AppendExplorationVisual: &authoring.AppendExplorationVisualPayload{PageID: input.PageID, VisualID: "append_visual", ComponentID: "append_component", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4}, SemanticModel: "model:test", Visual: appendVisual()}}, Release: func() {}}
 }
 
 func appendVisual() document.DashboardVisual {

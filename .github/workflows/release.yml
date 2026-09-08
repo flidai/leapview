@@ -328,11 +328,6 @@ jobs:
               }, target, indent=2)
               target.write("\n")
           PY
-          go run ./internal/app/tools/transitionpolicy \
-            --bind-release release-identity.json \
-            --candidate-admission assembled-image-admission.json \
-            --predecessor-evidence-output predecessor-verification.json \
-            --bind-output release-transition-policy.json
           build_ldflags="-s -w \
             -X github.com/flidai/leapview/internal/platform/buildinfo.version=$BUILD_VERSION \
             -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$BUILD_REVISION \
@@ -345,18 +340,39 @@ jobs:
             "darwin amd64"
             "darwin arm64"
           )
+          canonical_postgres_init="deploy/postgres/init.sh"
+          test -s "$canonical_postgres_init"
+          test -x "$canonical_postgres_init"
+          canonical_postgres_init_sha256="$(sha256sum "$canonical_postgres_init" | awk '{print $1}')"
           for target in "${targets[@]}"; do
             read -r os arch <<<"$target"
             package="leapview-compose-${RELEASE_TAG}-${os}-${arch}"
             mkdir -p "dist/$package"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="$build_ldflags" -o "dist/$package/leapviewctl" ./cmd/leapviewctl
             cp deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/README.md deploy/compose/QUALIFICATION.md "dist/$package/"
-            cp deploy/host/files/leapviewctl-wrapper deploy/host/files/leapview-backup-hook deploy/host/files/leapview-backup.service deploy/host/files/leapview-backup.timer deploy/host/files/leapview-backup-maintenance.service deploy/host/files/leapview-backup-maintenance.timer deploy/host/files/leapview-recovery-qualification.service deploy/host/files/leapview-recovery-qualification.timer "dist/$package/"
+            cp deploy/host/files/leapviewctl-wrapper "dist/$package/"
             cp deploy/host/bootstrap-ubuntu.sh "dist/$package/"
             cp -R deploy/compose/qualification "dist/$package/qualification"
+            chmod 0755 "dist/$package/qualification/validate-bundle.sh"
+            cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"
+            # GitHub artifact extraction (and hardened runners using umask
+            # 0077) can leave checked-in executable assets owner-only. The
+            # PostgreSQL entrypoint runs the init hook as the unprivileged
+            # `postgres` user, so preserve the reviewed world-readable mode
+            # explicitly instead of relying on cp's source mode.
+            chmod 0755 "dist/$package/qualification/postgres-init.sh"
+            test -x "dist/$package/qualification/postgres-init.sh"
+            test "$(stat -c '%a' "dist/$package/qualification/postgres-init.sh")" = "755"
+            test "$(sha256sum "dist/$package/qualification/postgres-init.sh" | awk '{print $1}')" = "$canonical_postgres_init_sha256"
+            # The HTTPS proxy reads this bind-mounted file. Preserve its
+            # reviewed readable mode in the archive instead of relying on the
+            # checkout or cp mode.
+            chmod 0644 "dist/$package/Caddyfile"
+            test "$(stat -c '%a' "dist/$package/Caddyfile")" = "644"
             cp deploy/compose/leapview.env.example "dist/$package/leapview.env.example"
+            "dist/$package/qualification/validate-bundle.sh" "dist/$package"
             sed "s|ghcr.io/flidai/leapview@sha256:<release-digest>|$IMAGE_REFERENCE|" deploy/compose/deployment.env.example > "dist/$package/deployment.env.example"
-            cp image-reference.txt release-identity.json release-transition-policy.json predecessor-verification.json "dist/$package/"
+            cp image-reference.txt release-identity.json "dist/$package/"
             if [ "$os" = linux ] && [ "$arch" = amd64 ]; then
               (
                 cd "dist/$package"
@@ -395,9 +411,7 @@ jobs:
           path: |
             image-reference.txt
             release-identity.json
-            release-transition-policy.json
             assembled-image-admission.json
-            predecessor-verification.json
             dist/*.tar.gz
             dist/*.tar.gz.sha256
 
@@ -416,7 +430,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 270
     permissions:
       contents: read
       packages: read
@@ -487,62 +501,8 @@ jobs:
       - name: Run installed-candidate journey
         run: |
           cd "$PACKAGE_ROOT"
-          previous_image="$(
-            jq -r --arg platform "linux/${{ matrix.arch }}" '
-              .candidateRelease as $candidate |
-              first(
-                .transitions[]? |
-                select(.operation == "upgrade" and .to == $candidate and .decision.allowed == true and (.platforms | index($platform))) |
-                .from as $previous |
-                .releases[] |
-                select(.id == $previous) |
-                .artifacts[] |
-                select(.platform == $platform) |
-                .image
-              ) // ""
-            ' release-transition-policy.json
-          )"
-          test -n "$previous_image" || {
-            echo "candidate policy has no reviewed predecessor transition for linux/${{ matrix.arch }}" >&2
-            exit 1
-          }
-          args=(qualify installed-candidate --require-release-transition --previous-image "$previous_image" --evidence-dir "$RUNNER_TEMP/installed-candidate-evidence")
+          args=(qualify installed-candidate --bundle "$PACKAGE_ROOT" --evidence-dir "$RUNNER_TEMP/installed-candidate-evidence" --multi-node-process)
           ./leapviewctl "${args[@]}"
-
-      - name: Restore least-privilege GHCR access for historical qualification
-        if: matrix.arch == 'amd64'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Run exact v0.1 preservation qualification
-        if: matrix.arch == 'amd64'
-        run: |
-          set -euo pipefail
-          cd "$PACKAGE_ROOT"
-          evidence_dir="$RUNNER_TEMP/installed-candidate-evidence"
-          predecessor_evidence="$evidence_dir/v0.1-reviewed-identity.json"
-          qualification_evidence="$evidence_dir/v0.1-preservation-qualification.json"
-          candidate_admission="$GITHUB_WORKSPACE/candidate/assembled-image-admission.json"
-          policy="$PACKAGE_ROOT/release-transition-policy.json"
-          policy_sha256="$(sha256sum "$policy" | awk '{print $1}')"
-          test -s "$candidate_admission"
-          test -s "$policy"
-          mkdir -p "$evidence_dir"
-          ./leapviewctl qualify v0.1-artifact-review \
-            --transition-policy "$policy" \
-            --policy-sha256 "$policy_sha256" \
-            --evidence "$predecessor_evidence"
-          test -s "$predecessor_evidence"
-          ./leapviewctl qualify v0.1-preservation \
-            --candidate-admission "$candidate_admission" \
-            --transition-policy "$policy" \
-            --policy-sha256 "$policy_sha256" \
-            --predecessor-evidence "$predecessor_evidence" \
-            --evidence-dir "$evidence_dir"
-          test -s "$qualification_evidence"
 
       - name: Upload bounded qualification evidence
         if: always()
@@ -561,8 +521,6 @@ jobs:
             ${{ runner.temp }}/installed-candidate-evidence/policy-validation.json
             ${{ runner.temp }}/installed-candidate-evidence/decision.json
             ${{ runner.temp }}/installed-candidate-evidence/transition-qualification.json
-            ${{ runner.temp }}/installed-candidate-evidence/v0.1-reviewed-identity.json
-            ${{ runner.temp }}/installed-candidate-evidence/v0.1-preservation-qualification.json
             ${{ runner.temp }}/installed-candidate-evidence/*.log
             ${{ runner.temp }}/installed-candidate-evidence/browser-failure.png
 
@@ -778,8 +736,6 @@ jobs:
             "${release_flags[@]}" \
             candidate/image-reference.txt \
             candidate/release-identity.json \
-            candidate/release-transition-policy.json \
             candidate/assembled-image-admission.json \
-            candidate/predecessor-verification.json \
             candidate/dist/*.tar.gz \
             candidate/dist/*.tar.gz.sha256

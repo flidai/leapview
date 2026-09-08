@@ -21,10 +21,15 @@ type document struct {
 }
 
 type schema struct {
-	Extensions    map[string]json.RawMessage `json:"extensions"`
-	Properties    map[string]property        `json:"properties"`
-	OneOf         []schemaRef                `json:"one_of"`
-	Discriminator *discriminator             `json:"discriminator"`
+	Type                 string                     `json:"type"`
+	Required             []string                   `json:"required"`
+	Extensions           map[string]json.RawMessage `json:"extensions"`
+	Properties           map[string]property        `json:"properties"`
+	OneOf                []schemaRef                `json:"one_of"`
+	Discriminator        *discriminator             `json:"discriminator"`
+	Items                *schemaRef                 `json:"items"`
+	AdditionalProperties *property                  `json:"additional_properties"`
+	Base                 *schemaRef                 `json:"base"`
 }
 
 type discriminator struct {
@@ -37,9 +42,11 @@ type property struct {
 }
 
 type schemaRef struct {
-	Ref  string   `json:"ref"`
-	Type string   `json:"type"`
-	Enum []string `json:"enum"`
+	Ref                  string     `json:"ref"`
+	Type                 string     `json:"type"`
+	Enum                 []string   `json:"enum"`
+	Items                *schemaRef `json:"items"`
+	AdditionalProperties *property  `json:"additional_properties"`
 }
 
 type profile struct {
@@ -65,6 +72,10 @@ func main() {
 	doc, err := loadDocument(input)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "generate connector registry:", err)
+		os.Exit(1)
+	}
+	if err := verifyContractProjectionCoverage(doc, "internal/project/contractprojection/exclusions.json"); err != nil {
+		fmt.Fprintln(os.Stderr, "verify contract projection coverage:", err)
 		os.Exit(1)
 	}
 	profiles, err := buildProfiles(doc)

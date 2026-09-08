@@ -19,10 +19,12 @@ func TestDockerCLIRuntimeStartsContainerWithDeterministicArguments(t *testing.T)
 		Name:        "qualification-browser",
 		Image:       "browser:stable",
 		NetworkMode: "host",
+		ReadOnly:    true,
 		Volumes: []qualificationContainerVolume{
 			{Source: "/host/read-only", Target: "/qualification", ReadOnly: true},
 			{Source: "/host/evidence", Target: "/evidence"},
 		},
+		Tmpfs: []string{"/var/lib/postgresql:rw,exec,nosuid,nodev,size=512m"},
 		Environment: map[string]string{
 			"QUALIFICATION_URL":        "https://localhost",
 			"QUALIFICATION_PROJECT_ID": "evaluation",
@@ -35,9 +37,11 @@ func TestDockerCLIRuntimeStartsContainerWithDeterministicArguments(t *testing.T)
 	}
 	want := []string{
 		"run", "--detach", "--name", "qualification-browser",
+		"--read-only",
 		"--network", "host",
 		"--volume", "/host/read-only:/qualification:ro",
 		"--volume", "/host/evidence:/evidence",
+		"--tmpfs", "/var/lib/postgresql:rw,exec,nosuid,nodev,size=512m",
 		"--env", "QUALIFICATION_PROJECT_ID=evaluation",
 		"--env", "QUALIFICATION_URL=https://localhost",
 		"browser:stable", "sleep", "infinity",
@@ -45,6 +49,22 @@ func TestDockerCLIRuntimeStartsContainerWithDeterministicArguments(t *testing.T)
 	if len(executor.requests) != 1 || !slices.Equal(executor.requests[0].Arguments, want) {
 		t.Fatalf("arguments=%v", executor.requests)
 	}
+}
+
+func TestQualificationNamedContainerHandlePreservesNameAfterRemovalFailure(t *testing.T) {
+	removeErr := errors.New("docker removal failed")
+	runtime := &nativePostgresRuntimeFixture{
+		container: &nativePostgresContainerFixture{removeErrs: []error{removeErr, nil}},
+	}
+	name := "qualification-browser"
+
+	err := removeQualificationNamedContainerHandle(t.Context(), runtime, &name)
+	require.ErrorIs(t, err, removeErr)
+	require.Equal(t, "qualification-browser", name)
+
+	require.NoError(t, removeQualificationNamedContainerHandle(t.Context(), runtime, &name))
+	require.Empty(t, name)
+	require.Equal(t, 2, runtime.container.removed)
 }
 
 func TestDockerCLIContainerMapsLifecycleOperations(t *testing.T) {

@@ -3,6 +3,7 @@ package devloop
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -26,7 +27,7 @@ type Update struct {
 }
 
 type Watcher struct {
-	projectPath    string
+	sourceRoot     string
 	service        *Service
 	debounce       time.Duration
 	retryMin       time.Duration
@@ -35,8 +36,8 @@ type Watcher struct {
 	resolveSources func(string) ([]string, error)
 }
 
-func NewWatcher(projectPath string, service *Service) (*Watcher, error) {
-	return newWatcher(projectPath, service, watcherOptions{
+func NewWatcher(sourceRoot string, service *Service) (*Watcher, error) {
+	return newWatcher(sourceRoot, service, watcherOptions{
 		debounce:       defaultDebounce,
 		retryMin:       defaultRetryMin,
 		retryMax:       defaultRetryMax,
@@ -53,10 +54,13 @@ type watcherOptions struct {
 	resolveSources func(string) ([]string, error)
 }
 
-func newWatcher(projectPath string, service *Service, options watcherOptions) (*Watcher, error) {
-	projectPath, err := filepath.Abs(projectPath)
+func newWatcher(sourceRoot string, service *Service, options watcherOptions) (*Watcher, error) {
+	sourceRoot, err := filepath.Abs(sourceRoot)
 	if err != nil {
 		return nil, err
+	}
+	if info, statErr := os.Stat(sourceRoot); statErr == nil && !info.IsDir() {
+		return nil, fmt.Errorf("Project authoring was removed; pass the analytics source root directory %q instead of %q", filepath.Dir(sourceRoot), sourceRoot)
 	}
 	if service == nil || options.debounce <= 0 ||
 		options.newSource == nil || options.resolveSources == nil {
@@ -72,7 +76,7 @@ func newWatcher(projectPath string, service *Service, options watcherOptions) (*
 		return nil, fmt.Errorf("project watcher retry bounds are invalid")
 	}
 	return &Watcher{
-		projectPath:    projectPath,
+		sourceRoot:     filepath.Clean(sourceRoot),
 		service:        service,
 		debounce:       options.debounce,
 		retryMin:       options.retryMin,
@@ -101,7 +105,10 @@ func (watcher *Watcher) Run(ctx context.Context, report func(Update)) error {
 	sourceErrors := source.Errors()
 
 	tracked := make(map[string]struct{})
-	watchedDirectories := make(map[string]struct{})
+	watchedDirectories := map[string]struct{}{watcher.sourceRoot: {}}
+	if err := source.Add(watcher.sourceRoot); err != nil {
+		return fmt.Errorf("watch analytics source root: %w", err)
+	}
 	installSources := func(paths []string) error {
 		next := make(map[string]struct{}, len(paths))
 		for _, path := range paths {
@@ -123,7 +130,7 @@ func (watcher *Watcher) Run(ctx context.Context, report func(Update)) error {
 		return nil
 	}
 	resolveAndInstall := func() error {
-		paths, err := watcher.resolveSources(watcher.projectPath)
+		paths, err := watcher.resolveSources(watcher.sourceRoot)
 		if err != nil {
 			return err
 		}
@@ -131,11 +138,10 @@ func (watcher *Watcher) Run(ctx context.Context, report func(Update)) error {
 	}
 	if err := resolveAndInstall(); err != nil {
 		// Keep the manifest repairable even when the initial project is invalid.
-		if addErr := source.Add(filepath.Dir(watcher.projectPath)); addErr != nil {
-			return fmt.Errorf("watch project manifest: %w", addErr)
+		if addErr := source.Add(watcher.sourceRoot); addErr != nil {
+			return fmt.Errorf("watch analytics source root: %w", addErr)
 		}
-		watchedDirectories[filepath.Dir(watcher.projectPath)] = struct{}{}
-		tracked[watcher.projectPath] = struct{}{}
+		watchedDirectories[watcher.sourceRoot] = struct{}{}
 	}
 
 	var timer *time.Timer
@@ -198,7 +204,7 @@ func (watcher *Watcher) Run(ctx context.Context, report func(Update)) error {
 			eventPath = filepath.Clean(eventPath)
 			_, relevant := tracked[eventPath]
 			if !relevant {
-				paths, resolveErr := watcher.resolveSources(watcher.projectPath)
+				paths, resolveErr := watcher.resolveSources(watcher.sourceRoot)
 				if resolveErr != nil {
 					continue
 				}

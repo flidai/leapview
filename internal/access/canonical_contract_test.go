@@ -150,7 +150,7 @@ func TestCanonicalCapabilitiesRoundTripAndMatrixIsDefensive(t *testing.T) {
 	if third[0] == CapabilityResourcePublish {
 		t.Fatal("canonical capabilities leaked mutable caller state")
 	}
-	for _, kind := range []graph.Kind{graph.KindProject, graph.KindConnection, graph.KindSource, graph.KindModel, graph.KindSemanticModel, graph.KindPipeline, graph.KindDashboard} {
+	for _, kind := range []graph.Kind{graph.KindProjectNamespace, graph.KindConnection, graph.KindSource, graph.KindModel, graph.KindSemanticModel, graph.KindPipeline, graph.KindDashboard} {
 		got := CapabilitiesForKind(kind)
 		if len(got) == 0 {
 			t.Fatalf("CapabilitiesForKind(%q) is empty", kind)
@@ -179,14 +179,14 @@ func TestCanonicalCapabilityMatrixEnforcesKinds(t *testing.T) {
 	if !SupportsCapability(graph.KindDashboard, CapabilityResourceShare) || !SupportsCapability(graph.KindDashboard, CapabilityResourcePublish) {
 		t.Fatal("dashboard does not support sharing and publishing")
 	}
-	if !SupportsCapability(graph.KindProject, CapabilityProjectAdmin) {
+	if !SupportsCapability(graph.KindProjectNamespace, CapabilityProjectAdmin) {
 		t.Fatal("project does not support project admin")
 	}
 	for _, capability := range []Capability{
 		CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit,
 		CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish,
 	} {
-		if SupportsCapability(graph.KindProject, capability) {
+		if SupportsCapability(graph.KindProjectNamespace, capability) {
 			t.Errorf("project unexpectedly supports resource capability %q", capability)
 		}
 	}
@@ -272,7 +272,6 @@ func TestCanonicalConstructorsRejectNonCanonicalLiterals(t *testing.T) {
 
 func TestCanonicalReferencesMustMatchAuthoritativeGraph(t *testing.T) {
 	project, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_demo", Kind: graph.KindProject, Name: "demo"},
 		{ID: "model_orders", Kind: graph.KindModel, Name: "orders"},
 	}, nil)
 	if err != nil {
@@ -291,6 +290,58 @@ func TestCanonicalReferencesMustMatchAuthoritativeGraph(t *testing.T) {
 	}
 	if _, err := NewCanonicalGrant(project, subject, wrongKind, CapabilityResourcePublish); !errors.Is(err, ErrResourceKindMismatch) {
 		t.Fatalf("wrong-kind grant construction = %v", err)
+	}
+}
+
+func TestCanonicalProjectNamespaceAndGraphBinding(t *testing.T) {
+	project := canonicalTestProject(t)
+	namespace, err := NewResourceRef("project_demo", graph.KindProjectNamespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := namespace.ValidateAgainst(project); err != nil {
+		t.Fatalf("project namespace rejected against portable graph: %v", err)
+	}
+	identity := graph.ServingIdentity{ProjectID: "project_demo", Environment: "production", GenerationID: "generation_1"}
+	if err := ValidateProjectNamespace(namespace, identity); err != nil {
+		t.Fatalf("project namespace rejected for owning serving identity: %v", err)
+	}
+	identity.ProjectID = "other_project"
+	if err := ValidateProjectNamespace(namespace, identity); !errors.Is(err, ErrInvalidCanonicalGrant) {
+		t.Fatalf("project namespace accepted for another serving identity: %v", err)
+	}
+
+	subject, err := NewSubjectRef(SubjectKindPrincipal, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := NewResourceRef("dashboard_main", graph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := NewCanonicalGrant(project, subject, resource, CapabilityResourceRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := grant.ValidateAgainst(project); err != nil {
+		t.Fatalf("grant rejected against its bound graph: %v", err)
+	}
+	changedProject, err := graph.NewProjectGraph([]graph.Resource{
+		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "renamed"},
+		{ID: "model_orders", Kind: graph.KindModel, Name: "orders"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := grant.ValidateAgainst(changedProject); !errors.Is(err, ErrInvalidCanonicalGrant) {
+		t.Fatalf("grant accepted against a graph with a different digest: %v", err)
+	}
+
+	if _, err := NewCanonicalGrant(graph.ProjectGraph{}, subject, namespace, CapabilityProjectAdmin); !errors.Is(err, ErrInvalidCanonicalGrant) {
+		t.Fatalf("grant accepted an uninitialized graph: %v", err)
+	}
+	if err := namespace.ValidateAgainst(graph.ProjectGraph{}); !errors.Is(err, ErrInvalidResourceRef) {
+		t.Fatalf("namespace accepted an uninitialized graph: %v", err)
 	}
 }
 
@@ -339,7 +390,6 @@ func TestCanonicalGrantCannotProduceAuthorizationKeyWithoutGraphBinding(t *testi
 func canonicalTestProject(t *testing.T) graph.ProjectGraph {
 	t.Helper()
 	project, err := graph.NewProjectGraph([]graph.Resource{
-		{ID: "project_demo", Kind: graph.KindProject, Name: "demo"},
 		{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "main"},
 		{ID: "model_orders", Kind: graph.KindModel, Name: "orders"},
 	}, nil)

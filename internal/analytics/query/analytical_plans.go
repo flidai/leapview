@@ -40,7 +40,7 @@ func (p *Planner) PlanHistogram(request RawValueRequest, binCount int, options .
 		return Plan{}, fmt.Errorf("histogram domain requires finite minimum less than maximum")
 	}
 	request.IncludeNull = histogram.NullPolicy == "include"
-	raw, err := p.PlanRawValues(request)
+	raw, err := p.planRawValues(request, false)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -61,7 +61,7 @@ func (p *Planner) PlanHistogram(request RawValueRequest, binCount int, options .
 		envelope.DomainMinimum = &histogram.Domain.Minimum
 		envelope.DomainMaximum = &histogram.Domain.Maximum
 	}
-	return renderAnalyticalEnvelopePlan(raw.IR, envelope, "histogram")
+	return p.renderAnalyticalEnvelopePlan(raw.IR, envelope, "histogram", requestRawValueMemberRefs(p, request))
 }
 
 func (p *Planner) PlanDistribution(request RawValueRequest, sorts []Sort, limit int, options ...DistributionOptions) (Plan, error) {
@@ -87,7 +87,7 @@ func (p *Planner) PlanDistribution(request RawValueRequest, sorts []Sort, limit 
 	// Distribution statistics operate on numeric observations; null metric
 	// inputs never form a quantile population and are deterministically omitted.
 	request.IncludeNull = false
-	raw, err := p.PlanRawValues(request)
+	raw, err := p.planRawValues(request, false)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -135,7 +135,7 @@ func (p *Planner) PlanDistribution(request RawValueRequest, sorts []Sort, limit 
 		envelope.WhiskerLower = &distribution.Whiskers.Lower
 		envelope.WhiskerUpper = &distribution.Whiskers.Upper
 	}
-	return renderAnalyticalEnvelopePlan(raw.IR, envelope, "distribution")
+	return p.renderAnalyticalEnvelopePlan(raw.IR, envelope, "distribution", requestRawValueMemberRefs(p, request))
 }
 
 func finiteFloat(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }

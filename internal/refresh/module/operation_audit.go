@@ -40,9 +40,6 @@ func buildRefreshAuditIntent(_ context.Context, operationID, principalID, projec
 	}
 	hash := sha256.Sum256([]byte(operationID + "\x00" + principalID + "\x00" + targetType + "\x00" + projectID + "\x00" + requestID))
 	outcome := "success"
-	if operationID == string(refreshgen.GenOperationCreateRefreshRun) {
-		outcome = "accepted"
-	}
 	return &access.AuditIntent{
 		EventID: "sha256:" + hex.EncodeToString(hash[:]), Source: contract.Command.Owner, Operation: operationID,
 		PrincipalID: strings.TrimSpace(principalID), Action: contract.Command.Audit.SuccessAction, ResourceKind: targetType, ResourceID: strings.TrimSpace(projectID),

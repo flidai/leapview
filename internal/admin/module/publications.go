@@ -1,7 +1,9 @@
 package module
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -9,9 +11,50 @@ import (
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/dashboard/publication"
-	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	"github.com/flidai/leapview/pkg/pagestream"
+	"github.com/google/uuid"
 )
+
+// authorizePublicationReplay re-checks the exact project capability required
+// by a completed browser publication command. The durable protocol may return
+// a captured response without dispatching PublicationCommand, so this check
+// must run against the current principal and credential on every replay.
+func (m *Module) authorizePublicationReplay(r *http.Request) bool {
+	if m == nil || r == nil {
+		return false
+	}
+	principal, ok := m.principal(r)
+	if !ok {
+		return false
+	}
+	var signals struct {
+		AdminPublicationCommand uisignals.AdminPublicationCommand `json:"adminPublicationCommand"`
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return false
+	}
+	// The protocol may invoke replay authorization more than once while a
+	// concurrent first request is still completing. Preserve the body for the
+	// next authorization pass (and for any downstream handler on first use).
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	probe := r.Clone(r.Context())
+	probe.Body = io.NopCloser(bytes.NewReader(body))
+	if err := pagestream.ReadSignals(probe, &signals); err != nil {
+		return false
+	}
+	command := signals.AdminPublicationCommand
+	if strings.TrimSpace(command.ProjectID) == "" || strings.TrimSpace(command.Publication) == "" || strings.TrimSpace(command.Action) == "" || !adminPublicationRevisionMatches(r, command.ExpectedRevision) {
+		return false
+	}
+	if principal.DevBypass {
+		return true
+	}
+	credential, hasCredential := m.credential(r)
+	allowed, err := m.capabilityAllowed(r, principal.ID, command.ProjectID, access.CapabilityResourcePublish, credential, hasCredential)
+	return err == nil && allowed
+}
 
 func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPublicationCommand) error {
 	if m == nil || m.publications == nil || !m.publications.PublicationsConfigured() {
@@ -40,7 +83,11 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 	}
 	requestID := firstAdminPublicationHeader(r, "X-Request-Id", "X-Request-ID")
 	if requestID == "" {
-		requestID = apitransport.NewRequestID()
+		generated, err := uuid.NewV7()
+		if err != nil {
+			return err
+		}
+		requestID = generated.String()
 		r.Header.Set("X-Request-ID", requestID)
 	}
 	correlationID := firstAdminPublicationHeader(r, "X-Correlation-Id", "X-Correlation-ID")
@@ -49,19 +96,29 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 	}
 	idempotencyKey := firstAdminPublicationHeader(r, "Idempotency-Key")
 	if idempotencyKey == "" {
-		// Browser commands identify one mutation with the request ID. This keeps
-		// the UI retry identity stable without requiring a separate signal field.
-		idempotencyKey = requestID
+		return fmt.Errorf("%w: missing Idempotency-Key", publication.ErrConflict)
+	}
+	parsedID, err := uuid.Parse(idempotencyKey)
+	if err != nil || parsedID.String() != idempotencyKey || parsedID.Version() != 7 {
+		return fmt.Errorf("%w: Idempotency-Key must be canonical UUIDv7", publication.ErrConflict)
+	}
+	if !adminPublicationRevisionMatches(r, command.ExpectedRevision) {
+		return fmt.Errorf("%w: If-Match does not match expected publication revision", publication.ErrConflict)
 	}
 	invocation := publication.CommandInvocation{
-		OperationID:    binding.OperationID(),
-		Surface:        "ui",
-		IdempotencyKey: idempotencyKey,
-		RequestID:      requestID,
-		CorrelationID:  correlationID,
+		OperationID:      binding.OperationID(),
+		Surface:          "ui",
+		IdempotencyKey:   idempotencyKey,
+		RequestID:        requestID,
+		CorrelationID:    correlationID,
+		ExpectedRevision: command.ExpectedRevision,
 	}
-	_, err := m.publications.MutatePublicationWithInvocation(r.Context(), command.ProjectID, command.Publication, principal.ID, publication.Action(command.Action), invocation)
+	_, err = m.publications.MutatePublicationWithInvocation(r.Context(), command.ProjectID, command.Publication, principal.ID, publication.Action(command.Action), invocation)
 	return err
+}
+
+func adminPublicationRevisionMatches(r *http.Request, expected int64) bool {
+	return r != nil && expected > 0 && strings.TrimSpace(r.Header.Get("If-Match")) == fmt.Sprintf("\"%d\"", expected)
 }
 
 func firstAdminPublicationHeader(r *http.Request, names ...string) string {
@@ -130,7 +187,7 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 		}
 		out = append(out, ui.AdminPublication{
 			ProjectID: row.ProjectID.String(), Name: row.Name, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage,
-			Status: string(row.Status()), Origins: append([]string(nil), row.AllowedOrigins...), Generation: row.ServingStateID,
+			Status: string(row.Status()), Revision: row.Revision, Origins: append([]string(nil), row.AllowedOrigins...), Generation: row.ServingStateID,
 			PublicURL: dto.PublicURL, EmbedURL: dto.EmbedURL, IFrameSnippet: dto.IFrameSnippet,
 			ConfiguredAt: row.ConfiguredAt, SuspendedAt: row.SuspendedAt, DisabledAt: row.DisabledAt, RotatedAt: row.RotatedAt,
 			History: history,

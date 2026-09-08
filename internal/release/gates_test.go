@@ -1,6 +1,7 @@
 package release
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -51,5 +52,16 @@ func TestGateEvidenceRejectsAggregateTampering(t *testing.T) {
 	evidence.Outcome = GateWarning
 	if err := evidence.Validate(); err == nil {
 		t.Fatal("tampered aggregate outcome was accepted")
+	}
+}
+
+func TestGateEvidenceRejectsComponentAggregateOverflow(t *testing.T) {
+	evidence := validGateEvidenceForTest()
+	evidence.Bounds.MaxRows = math.MaxInt64
+	evidence.ObservedRows = math.MaxInt64
+	evidence.Sources[0].ObservationRows = 1 << 62
+	evidence.Checks = []GateCheckEvidence{{Identity: "model-1:row_count", Kind: "row_count", ResourceID: "model-1", Outcome: GateSuccess, Severity: "error", ObservedRows: 1 << 62, Queries: 0}}
+	if err := evidence.Validate(); err == nil {
+		t.Fatal("overflowing component row total was accepted")
 	}
 }

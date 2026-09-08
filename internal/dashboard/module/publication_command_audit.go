@@ -1,8 +1,6 @@
 package module
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +11,7 @@ import (
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/google/uuid"
 )
 
 var errPublicationCommandAuditUnavailable = apigenfailure.New("audit_unavailable", "dashboard publication command audit is unavailable")
@@ -41,7 +40,7 @@ func validatePublicationCommandAuditContracts() error {
 			return fmt.Errorf("dashboard publication operation %q is missing its generated command contract", operationID)
 		}
 		command := generated.Command
-		if command.AuthzMode != "authenticated" || generated.AuthzMode != command.AuthzMode ||
+		if command.AuthzMode != "privilege" || command.Privilege != string(access.CapabilityResourcePublish) || generated.AuthzMode != command.AuthzMode ||
 			!command.Audit.Required || command.Audit.SuccessAction == "" || command.Target == nil ||
 			command.Audit.Guarantee != "transactional" || command.Target.Type != "project" || command.Target.Parameter != "project" {
 			return fmt.Errorf("dashboard publication operation %q has an invalid generated command audit contract", operationID)
@@ -93,15 +92,17 @@ func buildPublicationAuditIntent(input publicationCommandAuditInput) (access.Aud
 	if idempotencyKey == "" {
 		return access.AuditIntent{}, fmt.Errorf("dashboard publication audit intent requires idempotency key")
 	}
+	if !canonicalPublicationUUIDv7(idempotencyKey) {
+		return access.AuditIntent{}, fmt.Errorf("dashboard publication idempotency key must be a canonical UUIDv7")
+	}
 	// The caller's idempotency key is the stable request identity for this
 	// durable event. Transport request/correlation IDs may legitimately change
 	// when a response is lost and the same command is replayed.
 	requestID := idempotencyKey
-	sum := sha256.Sum256([]byte("dashboard-publication\x00" + input.operationID + "\x00" + aggregateKey + "\x00" + idempotencyKey))
 	intent := access.AuditIntent{
-		EventID: "dashboard-publication:" + hex.EncodeToString(sum[:16]),
+		EventID: idempotencyKey,
 		Source:  "dashboard.publication", Operation: input.operationID,
-		PrincipalID: strings.TrimSpace(input.principalID), Action: command.Audit.SuccessAction,
+		ActorID: strings.TrimSpace(input.principalID), PrincipalID: strings.TrimSpace(input.principalID), Action: command.Audit.SuccessAction,
 		ResourceKind: "project", ResourceID: input.projectID.String(), Capability: access.CapabilityResourcePublish,
 		Outcome: "success", RequestID: requestID, CorrelationID: requestID,
 		AggregateKey: aggregateKey, MetadataJSON: metadata,
@@ -111,6 +112,11 @@ func buildPublicationAuditIntent(input publicationCommandAuditInput) (access.Aud
 		return access.AuditIntent{}, err
 	}
 	return canonical, nil
+}
+
+func canonicalPublicationUUIDv7(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id.Version() == 7 && id.String() == value
 }
 
 func publicationOperationID(action publication.Action) (dashboardgen.GenCommandOperationID, bool) {

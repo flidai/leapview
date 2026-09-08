@@ -1430,7 +1430,13 @@ export class ReportTable extends LitElement {
               role="columnheader"
               style=${this.pinnedCellStyle(header.column)}
             >
-              <button class="header-button" type="button" title=${column.label} @click=${() => this.sortColumn(column)}>
+              <button
+                class="header-button"
+                type="button"
+                data-column-key=${column.key}
+                title=${column.label}
+                @click=${() => this.sortColumn(column)}
+              >
                 <span>${flexRender(header.column.columnDef.header, header.getContext())}</span>
                 <span class="sort">${sortMark}</span>
               </button>

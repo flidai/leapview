@@ -39,7 +39,7 @@ func TestTrustedClaimSourceIdentityUsesVerifierLimits(t *testing.T) {
 
 func TestSemanticAttributeControlMigrationUsesVerifierIssuerLimit(t *testing.T) {
 	constraint := "octet_length(issuer) BETWEEN 1 AND 1024"
-	if !strings.Contains(SemanticAttributeControlMigrationSQL(), constraint) {
+	if !strings.Contains(SchemaSQL(), constraint) {
 		t.Fatalf("semantic attribute control migration is missing %q", constraint)
 	}
 }

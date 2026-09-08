@@ -1,8 +1,7 @@
 package mcpoauth
 
-// PostgreSQL-backed fosite state.  This adapter intentionally uses the native
-// pgx transaction surface and qualified access.oauth_* tables; it never opens
-// database/sql or falls back to the legacy SQLite store.
+// PostgreSQL-backed fosite state. This adapter intentionally uses the native
+// pgx transaction surface and qualified access.oauth_* tables.
 
 import (
 	"context"
@@ -44,8 +43,6 @@ func NewPostgresStore(db postgres.DBTX) (*PostgresStore, error) {
 	}
 	return &PostgresStore{db: db}, nil
 }
-
-func (s *PostgresStore) IsPostgresBacked() bool { return s != nil && s.db != nil }
 
 func (s *PostgresStore) SetSessionRetention(retention time.Duration) {
 	if s != nil {
@@ -411,4 +408,4 @@ func (s *PostgresStore) DeletePKCERequestSession(ctx context.Context, signature 
 	return s.deleteSession(ctx, sessionPKCE, signature)
 }
 
-var _ StoreBackend = (*PostgresStore)(nil)
+var _ fosite.Storage = (*PostgresStore)(nil)

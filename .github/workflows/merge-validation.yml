@@ -91,7 +91,11 @@ jobs:
         run: task ci:lane:go:application
 
   frontend-validation:
-    name: Frontend tests (merge queue)
+    name: Frontend tests (merge queue, ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [core, reports, chat, data, site]
     if: github.repository == 'flidai/leapview'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -113,7 +117,7 @@ jobs:
         run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare
 
       - name: Run frontend validation
-        run: node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend
+        run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}
 
       - name: Verify generated artifacts
         run: task generated:check
@@ -121,7 +125,7 @@ jobs:
   full-validation:
     name: Full merge validation
     if: github.repository == 'flidai/leapview'
-    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation]
+    # This runner prepares its own inputs; only the final gate joins the lanes.
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:

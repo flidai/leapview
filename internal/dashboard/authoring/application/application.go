@@ -213,6 +213,18 @@ func (a *Application) PublishedCompilationReader() dashboardresolver.PublishedCo
 	return a.repository
 }
 
+// MatchesRepository reports whether the application was composed with the
+// supplied repository instance. The repository remains an internal
+// application detail; callers only get an opaque identity check so native
+// composition can prove that its application and persistence bundle share
+// one authority.
+func (a *Application) MatchesRepository(repository authoring.Repository) bool {
+	if a == nil || a.repository == nil || repository == nil {
+		return false
+	}
+	return a.repository == repository
+}
+
 // Preview renders one exact draft revision through a request-scoped provider
 // and the existing read-only preview service.
 func (a *Application) Preview(ctx context.Context, request preview.PreviewRequest) (preview.Preview, error) {

@@ -125,7 +125,7 @@ func TestAppendExplorationRejectsRuntimeIdentityMismatch(t *testing.T) {
 	}
 	_, err = app.AppendExploration(t.Context(), application.ExplorationAppendRequest{
 		ProjectID: "project:test", ActorID: "actor", DashboardID: "dashboard:test", PageID: "overview",
-		RevisionToken: token, RequestID: "runtime-identity-mismatch", PlacementChoice: "half",
+		RevisionToken: token, RequestID: "01912f14-7b3c-7e35-8a74-6a6e8f9d4c20", PlacementChoice: "half",
 		Spec: explorationSpecForTest(),
 	})
 	if err == nil || repository.appendCalls != 0 || lease.releases != 1 {

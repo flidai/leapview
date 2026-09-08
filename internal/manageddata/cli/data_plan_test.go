@@ -45,7 +45,7 @@ func TestDataPlanCommandPlansWithPreviousManifest(t *testing.T) {
 	command.SetErr(&stdout)
 	command.SetArgs([]string{
 		"plan",
-		"--project", "/project/leapview.yaml",
+		"--source-root", "/project",
 		"--connection", "warehouse",
 		"--from", "/local/export",
 		"--previous-manifest", previousPath,
@@ -54,7 +54,7 @@ func TestDataPlanCommandPlansWithPreviousManifest(t *testing.T) {
 	if err := command.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if planner.request.ProjectPath != "/project/leapview.yaml" || planner.request.Connection != "warehouse" {
+	if planner.request.SourceRoot != "/project" || planner.request.Connection != "warehouse" {
 		t.Fatalf("planner request = %#v", planner.request)
 	}
 	if planner.request.From != "/local/export" {

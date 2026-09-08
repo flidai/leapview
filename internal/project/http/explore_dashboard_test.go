@@ -15,6 +15,7 @@ import (
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -29,6 +30,12 @@ type addDashboardAuthoringStub struct {
 	targets       []authoringapplication.ExplorationTarget
 	targetCalls   int
 }
+
+const (
+	testAppendRequestID      = "01912f14-7b3c-7e31-8a74-6a6e8f9d4c20"
+	testAppendIdempotencyKey = "01912f14-7b3c-7e32-8a74-6a6e8f9d4c20"
+	testAppendTraceRequestID = "01912f14-7b3c-7e33-8a74-6a6e8f9d4c20"
+)
 
 func (s *addDashboardAuthoringStub) ExplorationTargets(context.Context, authoringapplication.ExplorationTargetsRequest) ([]authoringapplication.ExplorationTarget, error) {
 	return s.targets, nil
@@ -172,8 +179,55 @@ func TestDataExplorerAddToDashboardPassesOpaqueTargetToAtomicApplication(t *test
 	if app.appendCalls != 1 {
 		t.Fatalf("application calls append=%d", app.appendCalls)
 	}
-	if app.appendRequest.DashboardID != dashboardauthoring.DashboardID(command.DashboardID) || app.appendRequest.PageID != command.PageID || app.appendRequest.RevisionToken != command.RevisionToken || app.appendRequest.PlacementChoice != command.PlacementChoice || app.appendRequest.Spec.ModelID != command.Spec.ModelID || app.appendRequest.RequestID != "add-exploration-test-1" {
+	if app.appendRequest.DashboardID != dashboardauthoring.DashboardID(command.DashboardID) || app.appendRequest.PageID != command.PageID || app.appendRequest.RevisionToken != command.RevisionToken || app.appendRequest.PlacementChoice != command.PlacementChoice || app.appendRequest.Spec.ModelID != command.Spec.ModelID || app.appendRequest.RequestID != testAppendRequestID {
 		t.Fatalf("append request = %#v", app.appendRequest)
+	}
+}
+
+func TestDataExplorerAddToDashboardPrefersDurableIdempotencyKey(t *testing.T) {
+	app := &addDashboardAuthoringStub{}
+	h := &BrowserHandler{
+		DashboardAuthoring:        app,
+		DashboardAuthoringCommand: analyticsgen.GenUIActionExecuteDashboardAuthoringCommand(),
+		ResolveProjectID:          func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:               func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+	}
+	command := addExplorationToDashboardCommand{
+		DashboardID: "dashboard:test", RevisionToken: "opaque-revision", PageID: "overview", PlacementChoice: "half",
+		Spec: exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{{Field: "status_count"}}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
+	}
+	request := addDashboardRequest(t, command)
+	request.Header.Set("X-Request-ID", testAppendTraceRequestID)
+	request.Header.Set("Idempotency-Key", testAppendIdempotencyKey)
+	recorder := httptest.NewRecorder()
+	h.DataExplorerAddToDashboard(recorder, request)
+	if recorder.Code != stdhttp.StatusOK || app.appendCalls != 1 {
+		t.Fatalf("add status=%d append=%d body=%q", recorder.Code, app.appendCalls, recorder.Body.String())
+	}
+	if app.appendRequest.RequestID != testAppendIdempotencyKey {
+		t.Fatalf("durable append identity=%q, want %q", app.appendRequest.RequestID, testAppendIdempotencyKey)
+	}
+}
+
+func TestDataExplorerAddToDashboardRejectsMiddlewareGeneratedRequestID(t *testing.T) {
+	app := &addDashboardAuthoringStub{}
+	h := &BrowserHandler{
+		DashboardAuthoring:        app,
+		DashboardAuthoringCommand: analyticsgen.GenUIActionExecuteDashboardAuthoringCommand(),
+		ResolveProjectID:          func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:               func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+	}
+	command := addExplorationToDashboardCommand{
+		DashboardID: "dashboard:test", RevisionToken: "opaque-revision", PageID: "overview", PlacementChoice: "half",
+		Spec: exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{{Field: "status_count"}}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
+	}
+	request := addDashboardRequest(t, command)
+	request.Header.Del("X-Request-ID")
+	request.Header.Del("Idempotency-Key")
+	recorder := httptest.NewRecorder()
+	httpmiddleware.RequestCorrelation(stdhttp.HandlerFunc(h.DataExplorerAddToDashboard)).ServeHTTP(recorder, request)
+	if recorder.Code != stdhttp.StatusBadRequest || app.appendCalls != 0 {
+		t.Fatalf("generated request identity status=%d append=%d body=%q", recorder.Code, app.appendCalls, recorder.Body.String())
 	}
 }
 
@@ -195,7 +249,7 @@ func addDashboardRequest(t *testing.T, command addExplorationToDashboardCommand)
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/add-to-dashboard", bytes.NewReader(body))
-	request.Header.Set("X-Request-ID", "add-exploration-test-1")
+	request.Header.Set("X-Request-ID", testAppendRequestID)
 	request.Header.Set(uicommand.HeaderOperationID, analyticsgen.GenUIActionExecuteDashboardAuthoringCommand().OperationID())
 	return request
 }

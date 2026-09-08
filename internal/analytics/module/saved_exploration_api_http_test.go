@@ -22,6 +22,8 @@ import (
 	saved "github.com/flidai/leapview/internal/analytics/exploration/saved"
 	savedapplication "github.com/flidai/leapview/internal/analytics/exploration/saved/application"
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
+	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
+	"github.com/flidai/leapview/internal/platform/http/idempotency"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -320,6 +322,8 @@ func TestSavedExplorationRESTReplayReauthorizesAndNeverDispatchesMutation(t *tes
 		return ctx, actor == "principal-1"
 	}
 	protocol, err := apiprotocol.Build(t.Context(), apiprotocol.Config{
+		Store:         idempotency.NewMemoryStore(),
+		CursorSigning: cursorsigning.NewEphemeralInitializer(),
 		BearerToken:   func(*http.Request) string { return "credential" },
 		AcceptsBearer: func(*http.Request) bool { return true },
 		PrincipalID:   func(*http.Request) (string, bool) { return "principal-1", true },
@@ -853,7 +857,6 @@ func TestSavedExplorationHTTPFailureMappingAndTransportGuards(t *testing.T) {
 		{name: "not found", err: saved.ErrNotFound, code: http.StatusNotFound, public: "SAVED_EXPLORATION_NOT_FOUND"},
 		{name: "invalid identifier", err: saved.ErrInvalidIdentifier, code: http.StatusUnprocessableEntity, public: "INVALID_SAVED_EXPLORATION"},
 		{name: "unavailable", err: saved.ErrUnavailable, code: http.StatusServiceUnavailable, public: "SAVED_EXPLORATION_UNAVAILABLE"},
-		{name: "audit outbox capacity", err: access.ErrAuditOutboxCapacity, code: http.StatusServiceUnavailable, public: "SAVED_EXPLORATION_UNAVAILABLE"},
 		{name: "wrapped audit recorder failure", err: errors.Join(saved.ErrUnavailable, errors.New("injected audit failure")), code: http.StatusServiceUnavailable, public: "SAVED_EXPLORATION_UNAVAILABLE"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 // authored YAML into the typed semantic-attribute authority. The guard is
 // intentionally structural: it leaves those columns available to their
 // existing SCIM/access callers while requiring typed state to enter through
-// the access-owned registry/control migrations and repositories.
+// the access-owned baseline schema and repositories.
 func TestSemanticAttributeAuthorityIsTypedAndControlPlaneOwned(t *testing.T) {
 	root := repoRoot(t)
 	baseline := readArchitectureFixture(t, root, "internal/access/postgres/schema.sql")
@@ -26,8 +26,6 @@ func TestSemanticAttributeAuthorityIsTypedAndControlPlaneOwned(t *testing.T) {
 	}
 
 	typedFiles := []string{
-		"internal/access/postgres/migrations/002_typed_attribute_registry.sql",
-		"internal/access/postgres/migrations/003_semantic_attribute_control.sql",
 		"internal/access/postgres/queries/semantic_attribute_control.sql",
 		"internal/access/postgres/semantic_attributes.go",
 		"internal/access/postgres/semantic_attribute_control.go",
@@ -45,11 +43,9 @@ func TestSemanticAttributeAuthorityIsTypedAndControlPlaneOwned(t *testing.T) {
 	}
 
 	for relative, tables := range map[string][]string{
-		"internal/access/postgres/migrations/002_typed_attribute_registry.sql": {
+		"internal/access/postgres/schema.sql": {
 			"access.semantic_attribute_registry",
 			"access.semantic_attribute_definition",
-		},
-		"internal/access/postgres/migrations/003_semantic_attribute_control.sql": {
 			"access.semantic_attribute_control_state",
 			"access.semantic_attribute_assignment",
 			"access.semantic_attribute_claim_mapping",

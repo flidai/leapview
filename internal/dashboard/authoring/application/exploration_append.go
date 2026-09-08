@@ -68,8 +68,10 @@ func appendIDs(requestID string, dashboardID authoring.DashboardID, pageID strin
 	seed := requestID + "\x00" + dashboardID.String() + "\x00" + pageID
 	digest := sha256.Sum256([]byte(seed))
 	encoded := fmt.Sprintf("%x", digest[:12])
-	requestDigest := sha256.Sum256([]byte(requestID))
-	return "exploration_" + encoded, "exploration_component_" + encoded, authoring.CommandID("explore-" + fmt.Sprintf("%x", requestDigest[:16]))
+	// The service validates RequestID as the canonical UUIDv7 durable key
+	// before preparation. Reuse it here rather than deriving a second command
+	// identity that could drift from the service's replay lookup.
+	return "exploration_" + encoded, "exploration_component_" + encoded, authoring.CommandID(requestID)
 }
 
 // prepareAppendExploration performs active model, selected binding, and

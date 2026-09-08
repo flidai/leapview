@@ -74,13 +74,12 @@ func explorationModelFixture(t *testing.T, allowed bool) (*explorationModelProvi
 		t.Fatal(err)
 	}
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project:demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "semantic:sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := projectgraph.NewServingIdentity(graph.ProjectID(), "production", "generation:test")
+	identity, err := projectgraph.NewServingIdentity("project:demo", "production", "generation:test")
 	if err != nil {
 		t.Fatal(err)
 	}

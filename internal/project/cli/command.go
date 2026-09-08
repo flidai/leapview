@@ -16,7 +16,7 @@ import (
 )
 
 type options struct {
-	catalog      string
+	sourceRoot   string
 	jsonOutput   bool
 	schemaFormat string
 	schemaOut    string
@@ -26,22 +26,22 @@ type options struct {
 func ValidateCommand(ctx context.Context) *cobra.Command {
 	opts := &options{}
 	cmd := &cobra.Command{
-		Use:   "validate [project]",
-		Short: "Validate a configuration-as-code project",
+		Use:   "validate [source-root]",
+		Short: "Validate a LeapView source root",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 1 {
-				return fmt.Errorf("validate accepts at most one positional project")
+				return fmt.Errorf("validate accepts at most one positional source root")
 			}
 			if len(args) == 1 {
-				if cmd.Flags().Changed("project") {
-					return fmt.Errorf("choose either --project or positional project, not both")
+				if cmd.Flags().Changed("source-root") {
+					return fmt.Errorf("choose either --source-root or positional source root, not both")
 				}
-				opts.catalog = args[0]
+				opts.sourceRoot = args[0]
 			}
 			return runValidate(ctx, opts, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&opts.catalog, "project", filepath.Join("dashboards", "leapview.yaml"), "project path")
+	cmd.Flags().StringVar(&opts.sourceRoot, "source-root", "dashboards", "analytics source root")
 	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "emit JSON diagnostics")
 	return cmd
 }
@@ -55,22 +55,22 @@ func PlanCommand(ctx context.Context, operations ...any) *cobra.Command {
 	}
 	opts := &options{}
 	cmd := &cobra.Command{
-		Use:   "plan [project]",
-		Short: "Emit a deterministic configuration-as-code plan",
+		Use:   "plan [source-root]",
+		Short: "Emit a deterministic source-root plan",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 1 {
-				return fmt.Errorf("plan accepts at most one positional project")
+				return fmt.Errorf("plan accepts at most one positional source root")
 			}
 			if len(args) == 1 {
-				if cmd.Flags().Changed("project") {
-					return fmt.Errorf("choose either --project or positional project, not both")
+				if cmd.Flags().Changed("source-root") {
+					return fmt.Errorf("choose either --source-root or positional source root, not both")
 				}
-				opts.catalog = args[0]
+				opts.sourceRoot = args[0]
 			}
 			return runPlan(ctx, opts, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&opts.catalog, "project", filepath.Join("dashboards", "leapview.yaml"), "project path")
+	cmd.Flags().StringVar(&opts.sourceRoot, "source-root", "dashboards", "analytics source root")
 	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "emit JSON plan")
 	return cmd
 }
@@ -102,7 +102,7 @@ type validateResponse struct {
 }
 
 func runValidate(ctx context.Context, opts *options, out io.Writer) error {
-	diagnostics := validateProject(ctx, opts.catalog)
+	diagnostics := validateProject(ctx, opts.sourceRoot)
 	response := validateResponse{OK: len(diagnostics) == 0, Diagnostics: diagnostics}
 	if opts.jsonOutput {
 		encoder := json.NewEncoder(out)
@@ -116,7 +116,7 @@ func runValidate(ctx context.Context, opts *options, out io.Writer) error {
 		return fmt.Errorf("validation failed")
 	}
 	if response.OK {
-		fmt.Fprintf(out, "ok %s\n", opts.catalog)
+		fmt.Fprintf(out, "ok source-root %s\n", opts.sourceRoot)
 		return nil
 	}
 	for _, diagnostic := range diagnostics {
@@ -126,7 +126,7 @@ func runValidate(ctx context.Context, opts *options, out io.Writer) error {
 }
 
 func runPlan(ctx context.Context, opts *options, out io.Writer) error {
-	plan, err := projectcompiler.PlanProject(opts.catalog)
+	plan, err := projectcompiler.PlanSourceRoot(opts.sourceRoot)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func runPlan(ctx context.Context, opts *options, out io.Writer) error {
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(plan)
 	}
-	if err := renderProjectPlan(out, plan); err != nil {
+	if err := renderBundlePlan(out, plan); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -144,18 +144,14 @@ func runPlan(ctx context.Context, opts *options, out io.Writer) error {
 	return nil
 }
 
-func renderProjectPlan(out io.Writer, plan projectcompiler.ProjectPlan) error {
-	fmt.Fprintf(out, "project %s\n", plan.Project)
+func renderBundlePlan(out io.Writer, plan projectcompiler.BundlePlan) error {
+	fmt.Fprintln(out, "source bundle")
 	fmt.Fprintf(out, "  connections %s\n", strings.Join(plan.Connections, ","))
 	fmt.Fprintf(out, "  sources %s\n", strings.Join(plan.Sources, ","))
 	fmt.Fprintf(out, "  models %s\n", strings.Join(plan.Models, ","))
 	fmt.Fprintf(out, "  semantic_models %s\n", strings.Join(plan.SemanticModels, ","))
 	fmt.Fprintf(out, "  pipelines %s\n", strings.Join(plan.Pipelines, ","))
 	fmt.Fprintf(out, "  dashboards %s\n", strings.Join(plan.Dashboards, ","))
-	fmt.Fprintf(out, "  groups %s\n", strings.Join(plan.Groups, ","))
-	fmt.Fprintf(out, "  role_bindings %s\n", strings.Join(plan.RoleBindings, ","))
-	fmt.Fprintf(out, "  grants %s\n", strings.Join(plan.Grants, ","))
-	fmt.Fprintf(out, "  data_policies %s\n", strings.Join(plan.DataPolicies, ","))
 	if len(plan.Changes) > 0 || len(plan.DependencyChanges) > 0 {
 		fmt.Fprintf(out, "  changes +%d ~%d -%d dependencies %d\n", plan.Summary.Added, plan.Summary.Changed, plan.Summary.Removed, plan.Summary.DependencyChanges)
 		for _, change := range plan.Changes {
@@ -177,7 +173,7 @@ func renderProjectPlan(out io.Writer, plan projectcompiler.ProjectPlan) error {
 	return nil
 }
 
-func planChangeAnnotations(change projectcompiler.ProjectPlanChange) string {
+func planChangeAnnotations(change projectcompiler.BundlePlanChange) string {
 	parts := []string{}
 	if change.MaterializationImpact {
 		parts = append(parts, "refresh")
@@ -185,8 +181,8 @@ func planChangeAnnotations(change projectcompiler.ProjectPlanChange) string {
 	return strings.Join(parts, ",")
 }
 
-func validateProject(ctx context.Context, projectPath string) []configschema.Diagnostic {
-	if _, err := projectcompiler.CompileProject(projectPath); err != nil {
+func validateProject(ctx context.Context, sourceRoot string) []configschema.Diagnostic {
+	if _, err := projectcompiler.Compile(sourceRoot); err != nil {
 		return configschema.Diagnostics(err)
 	}
 	if err := ctx.Err(); err != nil {

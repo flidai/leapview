@@ -1,7 +1,7 @@
-// Package artifact owns the immutable, environment-neutral project artifact.
+// Package artifact owns the immutable, environment-neutral source bundle.
 //
-// A project artifact is deliberately smaller than a serving artifact. It
-// contains one portable resource graph and the compiler's project-wide
+// A source bundle is deliberately smaller than a serving artifact. It
+// contains one portable resource graph and the compiler's resource
 // manifest. Environment, generation, leases, and other serving concerns are
 // added by the deployment layer (LEA-374), never inferred here.
 package artifact
@@ -26,122 +26,122 @@ import (
 )
 
 const (
-	// Version is the project artifact wire contract version. It is independent
-	// of graph.GraphVersion and of serving ArtifactEnvelope versions.
-	Version = 2
+	// Version is the unbound source bundle wire contract version. It is
+	// independent of graph.GraphVersion and serving ArtifactEnvelope versions.
+	Version = 3
 
 	// CompilerVersion identifies the project compiler contract that produced
 	// the manifest. It is informational and is not part of serving identity.
-	CompilerVersion = "leapview-project-compiler:v1"
+	CompilerVersion = "leapview-source-compiler:v1"
 )
 
-// UnsupportedVersionError identifies a project artifact contract this binary
+// UnsupportedVersionError identifies a source-bundle contract this binary
 // cannot decode.
 type UnsupportedVersionError struct {
 	Version int
 }
 
 func (e UnsupportedVersionError) Error() string {
-	return fmt.Sprintf("unsupported project artifact version %d; rebuild and redeploy the project", e.Version)
+	return fmt.Sprintf("unsupported source bundle version %d; rebuild and redeploy the source", e.Version)
 }
 
-// projectWire is intentionally flat: there is exactly one graph and one
-// project manifest. It carries no serving selector or target identity.
-type projectWire struct {
+// sourceBundleWire is intentionally flat: there is exactly one portable graph
+// and one authored manifest. It carries no serving selector or target identity.
+type sourceBundleWire struct {
 	Version  int                       `json:"version"`
 	Graph    projectgraph.ProjectGraph `json:"graph"`
-	Manifest manifest.Project          `json:"manifest"`
+	Manifest manifest.ResourceManifest `json:"manifest"`
 	Runtime  RuntimeProjection         `json:"runtime"`
 }
 
-// Project is an immutable, environment-neutral project artifact. All values
-// returned by its methods are detached copies.
-type Project struct {
+// SourceBundle is an immutable, environment-neutral source bundle. Serialized
+// values are unbound and carry no Project identity.
+type SourceBundle struct {
 	graph     projectgraph.ProjectGraph
-	manifest  manifest.Project
+	manifest  manifest.ResourceManifest
 	canonical []byte
 	digest    string
 }
 
-// NewProject validates and retains one project graph and one project-wide
-// manifest. The manifest identity must match graph.ProjectID(). The input is
-// defensively copied through the canonical wire representation.
-func NewProject(graph projectgraph.ProjectGraph, project manifest.Project) (Project, error) {
+// NewSourceBundle validates and retains one portable graph and one resource
+// manifest. Project identity is intentionally not required or compared: the
+// deployment authority binds an external Project UID at serving time. The
+// input is defensively copied through the canonical wire representation.
+func NewSourceBundle(graph projectgraph.ProjectGraph, project manifest.ResourceManifest) (SourceBundle, error) {
 	if err := validateGraphManifest(graph, project); err != nil {
-		return Project{}, fmt.Errorf("project artifact: %w", err)
+		return SourceBundle{}, fmt.Errorf("source bundle: %w", err)
 	}
 
 	portable, runtime, err := prepareRuntimeProjection(project)
 	if err != nil {
-		return Project{}, fmt.Errorf("prepare runtime projection: %w", err)
+		return SourceBundle{}, fmt.Errorf("prepare runtime projection: %w", err)
 	}
-	wire := projectWire{Version: Version, Graph: graph, Manifest: portable, Runtime: runtime}
+	wire := sourceBundleWire{Version: Version, Graph: graph, Manifest: portable, Runtime: runtime}
 	canonical, err := json.Marshal(wire)
 	if err != nil {
-		return Project{}, fmt.Errorf("encode canonical project artifact: %w", err)
+		return SourceBundle{}, fmt.Errorf("encode canonical source bundle: %w", err)
 	}
 	// Decode the just-encoded bytes so maps, slices, and pointers in the
 	// compiler manifest cannot alias the caller's mutable value.
 	decoded, err := decodeCanonical(canonical)
 	if err != nil {
-		return Project{}, err
+		return SourceBundle{}, err
 	}
 	if !bytes.Equal(canonical, decoded.Canonical()) {
-		return Project{}, errors.New("project artifact canonical bytes changed during decode")
+		return SourceBundle{}, errors.New("source bundle canonical bytes changed during decode")
 	}
 	sum := sha256.Sum256(canonical)
-	return Project{
+	return SourceBundle{
 		graph: decoded.graph, manifest: decoded.manifest,
 		canonical: append([]byte(nil), canonical...),
 		digest:    "sha256:" + hex.EncodeToString(sum[:]),
 	}, nil
 }
 
-// Decode decodes a canonical project artifact. Unknown fields, duplicate
-// fields, trailing JSON, unsupported versions, and identity mismatches are
-// rejected before the artifact is retained.
-func Decode(data []byte) (Project, error) {
+// Decode decodes a canonical source bundle. Unknown fields, duplicate fields,
+// trailing JSON, and unsupported versions are rejected before retention.
+func Decode(data []byte) (SourceBundle, error) {
 	return decodeCanonical(data)
 }
 
-func decodeCanonical(data []byte) (Project, error) {
+func decodeCanonical(data []byte) (SourceBundle, error) {
 	if err := rejectDuplicateJSONKeys(data); err != nil {
-		return Project{}, fmt.Errorf("decode project artifact: %w", err)
+		return SourceBundle{}, fmt.Errorf("decode source bundle: %w", err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	var wire projectWire
+	var wire sourceBundleWire
 	if err := decoder.Decode(&wire); err != nil {
-		return Project{}, fmt.Errorf("decode project artifact: %w", err)
+		return SourceBundle{}, fmt.Errorf("decode source bundle: %w", err)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err == nil {
-		return Project{}, errors.New("decode project artifact: trailing JSON value")
+		return SourceBundle{}, errors.New("decode source bundle: trailing JSON value")
 	} else if !errors.Is(err, io.EOF) {
-		return Project{}, fmt.Errorf("decode project artifact: trailing data: %w", err)
+		return SourceBundle{}, fmt.Errorf("decode source bundle: trailing data: %w", err)
 	}
 	if wire.Version != Version {
-		return Project{}, UnsupportedVersionError{Version: wire.Version}
+		return SourceBundle{}, UnsupportedVersionError{Version: wire.Version}
 	}
 	if err := validatePortableConnections(wire.Manifest); err != nil {
-		return Project{}, fmt.Errorf("decode project artifact: %w", err)
+		return SourceBundle{}, fmt.Errorf("decode source bundle: %w", err)
 	}
 	if err := applyRuntimeProjection(&wire.Manifest, wire.Runtime); err != nil {
-		return Project{}, fmt.Errorf("decode project artifact runtime projection: %w", err)
+		return SourceBundle{}, fmt.Errorf("decode source bundle runtime projection: %w", err)
 	}
 	if err := validateGraphManifest(wire.Graph, wire.Manifest); err != nil {
-		return Project{}, fmt.Errorf("decode project artifact: %w", err)
+		return SourceBundle{}, fmt.Errorf("decode source bundle: %w", err)
 	}
 	canonical, err := json.Marshal(wire)
 	if err != nil {
-		return Project{}, fmt.Errorf("encode canonical project artifact: %w", err)
+		return SourceBundle{}, fmt.Errorf("encode canonical source bundle: %w", err)
 	}
 	// Canonical bytes are required to be stable. This catches hand-written
 	// non-canonical encodings while still accepting insignificant JSON spacing.
 	// We compare decoded semantic values rather than raw input so callers may
 	// submit ordinary JSON and receive the canonical retained form.
 	sum := sha256.Sum256(canonical)
-	return Project{
+	return SourceBundle{
 		graph: wire.Graph, manifest: wire.Manifest,
 		canonical: canonical,
 		digest:    "sha256:" + hex.EncodeToString(sum[:]),
@@ -149,20 +149,12 @@ func decodeCanonical(data []byte) (Project, error) {
 }
 
 // validateGraphManifest is the single graph/manifest consistency boundary for
-// project artifacts. Resource IDs are exact map keys: names, paths, and
-// authoring metadata never provide a compatibility lookup. Access and
-// publication declarations remain manifest snapshots, not graph nodes.
-func validateGraphManifest(graph projectgraph.ProjectGraph, project manifest.Project) error {
+// source bundles. Resource IDs are exact map keys: names, paths, and authoring
+// metadata never provide a compatibility lookup.
+func validateGraphManifest(graph projectgraph.ProjectGraph, project manifest.ResourceManifest) error {
 	if err := graph.Validate(); err != nil {
 		return fmt.Errorf("project graph: %w", err)
 	}
-	if strings.TrimSpace(project.ID) == "" {
-		return errors.New("project manifest id is required")
-	}
-	if project.ID != graph.ProjectID().String() {
-		return fmt.Errorf("%w: manifest %q, graph %q", projectgraph.ErrProjectIdentityMismatch, project.ID, graph.ProjectID())
-	}
-
 	resources := make(map[projectgraph.ResourceID]projectgraph.Resource, len(graph.Resources()))
 	for _, resource := range graph.Resources() {
 		resources[resource.ID] = resource
@@ -211,9 +203,6 @@ func validateGraphManifest(graph projectgraph.ProjectGraph, project manifest.Pro
 		}
 	}
 	for _, resource := range graph.Resources() {
-		if resource.Kind == projectgraph.KindProject {
-			continue
-		}
 		projectionName := manifestProjectionName(resource.Kind)
 		if projectionName == "" {
 			continue
@@ -333,7 +322,7 @@ func manifestProjectionName(kind projectgraph.Kind) string {
 	}
 }
 
-func manifestProjectionContains(project manifest.Project, kind projectgraph.Kind, id projectgraph.ResourceID) bool {
+func manifestProjectionContains(project manifest.ResourceManifest, kind projectgraph.Kind, id projectgraph.ResourceID) bool {
 	switch kind {
 	case projectgraph.KindConnection:
 		_, ok := project.Connections[id.String()]
@@ -359,25 +348,18 @@ func manifestProjectionContains(project manifest.Project, kind projectgraph.Kind
 	}
 }
 
-// Version returns the artifact wire version.
-func (p Project) Version() int { return Version }
+// Version returns the source bundle wire version.
+func (p SourceBundle) Version() int { return Version }
 
-// ProjectID returns the graph's canonical project resource ID.
-func (p Project) ProjectID() projectgraph.ResourceID { return p.graph.ProjectID() }
+// Graph returns the immutable portable graph by value.
+func (p SourceBundle) Graph() projectgraph.ProjectGraph { return p.graph }
 
-// ID is retained as a concise alias for ProjectID. It returns the graph ID,
-// never an environment or generation identity.
-func (p Project) ID() projectgraph.ResourceID { return p.ProjectID() }
-
-// Graph returns the immutable project graph by value.
-func (p Project) Graph() projectgraph.ProjectGraph { return p.graph }
-
-// Manifest returns a detached project-wide compiler manifest.
-func (p Project) Manifest() manifest.Project { return cloneManifest(p.manifest) }
+// Manifest returns a detached compiler resource manifest.
+func (p SourceBundle) Manifest() manifest.ResourceManifest { return cloneManifest(p.manifest) }
 
 // RuntimeProjection returns the private execution/location payload required
 // to reconstruct this project's manifest after a generic JSON round trip.
-func (p Project) RuntimeProjection() RuntimeProjection {
+func (p SourceBundle) RuntimeProjection() RuntimeProjection {
 	_, projection, err := prepareRuntimeProjection(p.manifest)
 	if err != nil {
 		panic(fmt.Sprintf("project artifact runtime projection: %v", err))
@@ -387,25 +369,25 @@ func (p Project) RuntimeProjection() RuntimeProjection {
 
 // RestoreRuntimeProjection applies the artifact-owned private payload to a
 // generic manifest and validates exact key coverage and runtime invariants.
-func RestoreRuntimeProjection(value *manifest.Project, projection RuntimeProjection) error {
+func RestoreRuntimeProjection(value *manifest.ResourceManifest, projection RuntimeProjection) error {
 	return applyRuntimeProjection(value, projection)
 }
 
 // Canonical returns deterministic artifact bytes.
-func (p Project) Canonical() []byte { return append([]byte(nil), p.canonical...) }
+func (p SourceBundle) Canonical() []byte { return append([]byte(nil), p.canonical...) }
 
 // Digest returns the SHA-256 digest of Canonical. It is portable and does not
 // include serving environment or generation identity.
-func (p Project) Digest() string { return p.digest }
+func (p SourceBundle) Digest() string { return p.digest }
 
-func (p Project) MarshalJSON() ([]byte, error) {
+func (p SourceBundle) MarshalJSON() ([]byte, error) {
 	if len(p.canonical) == 0 {
 		return nil, errors.New("project artifact is not initialized")
 	}
 	return p.Canonical(), nil
 }
 
-func (p *Project) UnmarshalJSON(data []byte) error {
+func (p *SourceBundle) UnmarshalJSON(data []byte) error {
 	if p == nil {
 		return errors.New("cannot unmarshal project artifact into nil receiver")
 	}
@@ -418,18 +400,18 @@ func (p *Project) UnmarshalJSON(data []byte) error {
 }
 
 // Connections returns detached project-wide connection projections.
-func (p Project) Connections() map[string]semanticmodel.Connection {
+func (p SourceBundle) Connections() map[string]semanticmodel.Connection {
 	return cloneValue(p.manifest.Connections)
 }
 
 // Models returns detached project-wide semantic model projections.
-func (p Project) Models() map[string]*semanticmodel.Model {
+func (p SourceBundle) Models() map[string]*semanticmodel.Model {
 	return cloneRuntimeModels(p.manifest.SemanticModels)
 }
 
 // ModelTables returns detached model materialization projections keyed by
 // canonical resource ID.
-func (p Project) ModelTables() map[string]semanticmodel.Table {
+func (p SourceBundle) ModelTables() map[string]semanticmodel.Table {
 	return cloneRuntimeTables(p.manifest.Models)
 }
 
@@ -437,7 +419,7 @@ func (p Project) ModelTables() map[string]semanticmodel.Table {
 // reuse. Each digest includes the table descriptor and transitive Model
 // dependency descriptors; callers supply target-scoped pinned-input context
 // separately so a changed source revision cannot retain stale files.
-func (p Project) RelationExecutionDigests(context string) (map[string]string, error) {
+func (p SourceBundle) RelationExecutionDigests(context string) (map[string]string, error) {
 	contexts := make(map[string]string)
 	for id := range p.manifest.Models {
 		contexts[id] = context
@@ -449,14 +431,14 @@ func (p Project) RelationExecutionDigests(context string) (map[string]string, er
 // RelationExecutionDigests. Each materialized-Model digest receives only its own
 // transitive source/binding/pin context; callers can therefore change an
 // unrelated source without invalidating untouched physical references.
-func (p Project) RelationExecutionDigestsByContext(contexts map[string]string) (map[string]string, error) {
+func (p SourceBundle) RelationExecutionDigestsByContext(contexts map[string]string) (map[string]string, error) {
 	return p.relationExecutionDigestsByContext(contexts, func(table semanticmodel.Table) any { return table }, func(encoded []byte) string {
 		sum := sha256.Sum256(encoded)
 		return "sha256:" + hex.EncodeToString(sum[:])
 	})
 }
 
-func (p Project) relationExecutionDigestsByContext(
+func (p SourceBundle) relationExecutionDigestsByContext(
 	contexts map[string]string,
 	projectTable func(semanticmodel.Table) any,
 	digest func([]byte) string,
@@ -525,19 +507,19 @@ func (p Project) relationExecutionDigestsByContext(
 
 // DashboardDefinitions returns detached compiled dashboard definitions keyed
 // by canonical dashboard ID.
-func (p Project) DashboardDefinitions() map[string]dashboarddefinition.Definition {
+func (p SourceBundle) DashboardDefinitions() map[string]dashboarddefinition.Definition {
 	return cloneValue(p.manifest.DashboardDefinitions)
 }
 
 // DashboardSources returns detached authored dashboard documents and their
 // source/provenance metadata, preserving the evidence required for export.
-func (p Project) DashboardSources() map[string]manifest.DashboardSource {
+func (p SourceBundle) DashboardSources() map[string]manifest.DashboardSource {
 	return cloneValue(p.manifest.DashboardSources)
 }
 
 // AuthoredDashboardSource returns one detached authored dashboard source by
 // canonical ID. A missing source is explicit through the bool result.
-func (p Project) AuthoredDashboardSource(id string) (manifest.DashboardSource, bool) {
+func (p SourceBundle) AuthoredDashboardSource(id string) (manifest.DashboardSource, bool) {
 	source, ok := p.manifest.DashboardSources[strings.TrimSpace(id)]
 	if !ok {
 		return manifest.DashboardSource{}, false
@@ -546,18 +528,18 @@ func (p Project) AuthoredDashboardSource(id string) (manifest.DashboardSource, b
 }
 
 // RefreshPipelines returns detached project-wide refresh projections.
-func (p Project) RefreshPipelines() map[string]refreshschedule.Definition {
+func (p SourceBundle) RefreshPipelines() map[string]refreshschedule.Definition {
 	return cloneValue(p.manifest.RefreshPipelines)
 }
 
 // RefreshDefinition returns a detached project-level projection consumed by
 // refresh execution.
-func (p Project) RefreshDefinition() *refreshartifact.Definition {
+func (p SourceBundle) RefreshDefinition() *refreshartifact.Definition {
 	return RefreshProjection(p.manifest)
 }
 
 // RefreshProjection narrows a project manifest to refresh-owned resources.
-func RefreshProjection(value manifest.Project) *refreshartifact.Definition {
+func RefreshProjection(value manifest.ResourceManifest) *refreshartifact.Definition {
 	return &refreshartifact.Definition{
 		Models:        cloneRuntimeModels(value.SemanticModels),
 		ModelTables:   refreshModelTables(value),
@@ -566,7 +548,7 @@ func RefreshProjection(value manifest.Project) *refreshartifact.Definition {
 	}
 }
 
-func refreshModelTables(value manifest.Project) map[string]semanticmodel.Table {
+func refreshModelTables(value manifest.ResourceManifest) map[string]semanticmodel.Table {
 	modelNames := make(map[string]string, len(value.NameIndex.Models))
 	for name, id := range value.NameIndex.Models {
 		modelNames[id] = name
@@ -610,7 +592,7 @@ func refreshModelTables(value manifest.Project) map[string]semanticmodel.Table {
 	return cloneRuntimeTables(result)
 }
 
-func cloneManifest(value manifest.Project) manifest.Project {
+func cloneManifest(value manifest.ResourceManifest) manifest.ResourceManifest {
 	cloned, projection, err := prepareRuntimeProjection(value)
 	if err != nil {
 		panic(fmt.Sprintf("clone artifact manifest: prepare runtime projection: %v", err))

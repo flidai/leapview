@@ -68,7 +68,7 @@ func (c revalidationTestCompiler) Compile(_ context.Context, generation Revalida
 
 func revalidationTestFixture(t *testing.T) (RevalidationGeneration, DashboardLifecycle, Revision, CompiledRevision) {
 	t.Helper()
-	project, err := graph.NewProjectGraph([]graph.Resource{{ID: "project", Kind: graph.KindProject, Name: "project"}, {ID: "dashboard", Kind: graph.KindDashboard, Name: "dashboard", Provenance: graph.Provenance{Origin: "instance"}}, {ID: "semantic", Kind: graph.KindSemanticModel, Name: "semantic"}, {ID: "model", Kind: graph.KindModel, Name: "model"}}, []graph.Edge{{From: "dashboard", To: "semantic"}, {From: "semantic", To: "model"}})
+	project, err := graph.NewProjectGraph([]graph.Resource{{ID: "dashboard", Kind: graph.KindDashboard, Name: "dashboard", Provenance: graph.Provenance{Origin: "instance"}}, {ID: "semantic", Kind: graph.KindSemanticModel, Name: "semantic"}, {ID: "model", Kind: graph.KindModel, Name: "model"}}, []graph.Edge{{From: "dashboard", To: "semantic"}, {From: "semantic", To: "model"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestRevalidationAttemptIDCanonicalValidation(t *testing.T) {
 	if err := ValidateRevalidationAttemptID(id); err != nil {
 		t.Fatalf("generated ID %q rejected: %v", id, err)
 	}
-	for _, invalid := range []string{"", "attempt-short", "attempt_0000000000000000000000000000000G", "attempt_00000000000000000000000000000001 "} {
+	for _, invalid := range []string{"", "attempt-short", "018f4f2e-0000-6000-8000-000000000000", "018f4f2e-0000-7000-8000-000000000001 "} {
 		if err := ValidateRevalidationAttemptID(invalid); err == nil {
 			t.Fatalf("invalid ID %q accepted", invalid)
 		}

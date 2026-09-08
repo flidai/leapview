@@ -1,9 +1,10 @@
 import "@yacobolo/apigen";
+import "./contract-projections.tsp";
 
 @apigen.`package`(#{
   title: "LeapView v1 data-resource contracts",
   version: "1.0.0",
-  description: "Strict authored Connection, Source, and Model-definition contracts.",
+  description: "Strict authored Connection, Source, Model, and SemanticModel contracts.",
 })
 namespace LeapViewDataResources;
 
@@ -17,8 +18,43 @@ scalar ModelReference extends string;
 @pattern("^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$")
 scalar ResourceName extends string;
 
+// SemanticModel names retain the legacy control-plane grammar. In particular,
+// dots are opaque name characters rather than segment separators, so values
+// such as a..b, a.1, and a. remain valid here without widening other resources.
+@pattern("^[A-Za-z_][A-Za-z0-9_.-]*$")
+scalar SemanticModelResourceName extends string;
+
 @pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 scalar ResourceID extends string;
+
+// Semantic Versioning 2.0.0. Numeric prerelease identifiers may not contain
+// leading zeroes; identifiers containing letters or hyphens remain valid.
+@pattern("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$")
+scalar SemanticVersion extends string;
+
+// APIGen currently does not emit custom scalar `@format` annotations into its
+// JSON Schema output. Keep the annotation for downstream consumers and use a
+// narrow scheme/non-whitespace shape constraint at this contract boundary;
+// complete URI conformance remains a separate hardening concern.
+@format("uri")
+@pattern("^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]+$")
+scalar AuthoritativeURL extends string;
+
+model ContractMetadata {
+  version: SemanticVersion;
+  compatibility: "backward";
+}
+
+model AuthoritativeDefinition {
+  type: "businessDefinition" | "transformationImplementation";
+  url: AuthoritativeURL;
+}
+
+model FieldDeprecation {
+  since: SemanticVersion;
+  reason: string;
+  replacement?: Identifier;
+}
 
 /**
  * Portable access is intentionally tiny. Endpoints, credentials, secret
@@ -270,6 +306,11 @@ model SourceSchemaField {
   datatype: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
   nullable?: boolean;
   description?: string;
+  tags?: string[];
+  criticalDataElement?: boolean;
+  classification?: Identifier;
+  authoritativeDefinitions?: AuthoritativeDefinition[];
+  deprecation?: FieldDeprecation;
 }
 
 model AIContext {
@@ -429,6 +470,12 @@ model ModelField {
   label?: string;
   description?: string;
   aiContext?: AIContext;
+  nullable?: boolean;
+  tags?: string[];
+  criticalDataElement?: boolean;
+  classification?: Identifier;
+  authoritativeDefinitions?: AuthoritativeDefinition[];
+  deprecation?: FieldDeprecation;
 }
 
 model ModelEntity {
@@ -443,36 +490,51 @@ model ModelGrain {
 }
 
 model NonNullModelCheck {
+  id: Identifier;
   type: "non_null";
   field: Identifier;
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model UniqueModelCheck {
+  id: Identifier;
   type: "unique";
   fields: Identifier[];
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model AcceptedValuesModelCheck {
+  id: Identifier;
   type: "accepted_values";
   field: Identifier;
   values: string[];
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model RelationshipModelCheck {
+  id: Identifier;
   type: "relationship";
   field: Identifier;
   to: ModelReference;
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model RowCountModelCheck {
+  id: Identifier;
   type: "row_count";
   minimum?: int64;
   maximum?: int64;
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 @discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
@@ -494,6 +556,285 @@ model ModelSpec {
   checks?: ModelCheck[];
 }
 
+@pattern("^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$")
+scalar SemanticFieldReference extends string;
+
+model SemanticAccessFilter {
+  field: Identifier;
+  userAttribute: Identifier;
+}
+
+model SemanticDataset {
+  `model`: SemanticModelResourceName;
+  defaultTimeDimension?: Identifier;
+  displayName?: string;
+  description?: string;
+  aiContext?: AIContext;
+  @minItems(1)
+  @apigen.uniqueItems
+  requiredAccessGrants?: Identifier[];
+  accessFilters?: SemanticAccessFilter[];
+}
+
+model NamedSemanticRelationshipEndpoint {
+  dataset: Identifier;
+  entity: Identifier;
+}
+
+model FieldsSemanticRelationshipEndpoint {
+  dataset: Identifier;
+  @minItems(1)
+  fields: Identifier[];
+}
+
+/** Relationship endpoints retain the authored entity-or-fields structural union. */
+union SemanticRelationshipEndpoint {
+  named: NamedSemanticRelationshipEndpoint,
+  fields: FieldsSemanticRelationshipEndpoint,
+}
+
+model SemanticRelationship {
+  from: SemanticRelationshipEndpoint;
+  to: SemanticRelationshipEndpoint;
+  description?: string;
+  aiContext?: AIContext;
+}
+
+model SemanticDimensionBinding {
+  field: SemanticFieldReference;
+  path?: Identifier[];
+}
+
+model SemanticTimeSemantics {
+  nativeGrain: "second" | "minute" | "hour" | "day" | "week" | "month" | "quarter" | "year";
+  @minItems(1)
+  grains: ("second" | "minute" | "hour" | "day" | "week" | "month" | "quarter" | "year")[];
+  calendar?: string;
+  timezone?: string;
+}
+
+model SemanticDimension {
+  label?: string;
+  description?: string;
+  aiContext?: AIContext;
+  datatype: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
+  time?: SemanticTimeSemantics;
+  @apigen.propertyNames(Identifier)
+  bindings: Record<SemanticDimensionBinding>;
+  @minItems(1)
+  @apigen.uniqueItems
+  requiredAccessGrants?: Identifier[];
+}
+
+/** Authored filter literals deliberately exclude null, arrays, and objects. */
+union SemanticLiteral {
+  text: string,
+  number: float64,
+  boolean: boolean,
+}
+
+@minItems(1)
+@maxItems(1024)
+model SemanticTextAllowedValues is string[];
+
+@minItems(1)
+@maxItems(1024)
+model SemanticNumberAllowedValues is float64[];
+
+@minItems(1)
+@maxItems(1024)
+model SemanticBooleanAllowedValues is boolean[];
+
+/** Access-grant values are homogeneous by JSON scalar category. */
+@apigen.exactNumbers
+union SemanticAllowedValues {
+  text: SemanticTextAllowedValues,
+  number: SemanticNumberAllowedValues,
+  boolean: SemanticBooleanAllowedValues,
+}
+
+model SemanticAccessGrant {
+  userAttribute: Identifier;
+  @apigen.uniqueItems
+  allowedValues: SemanticAllowedValues;
+}
+
+model EqualsSemanticFilter {
+  field: SemanticFieldReference;
+  operator: "equals";
+  value: SemanticLiteral;
+  path?: Identifier[];
+  aiContext?: AIContext;
+}
+
+model NotEqualsSemanticFilter {
+  field: SemanticFieldReference;
+  operator: "not_equals";
+  value: SemanticLiteral;
+  path?: Identifier[];
+  aiContext?: AIContext;
+}
+
+model InSemanticFilter {
+  field: SemanticFieldReference;
+  operator: "in";
+  @minItems(1)
+  value: SemanticLiteral[];
+  path?: Identifier[];
+  aiContext?: AIContext;
+}
+
+model NotInSemanticFilter {
+  field: SemanticFieldReference;
+  operator: "not_in";
+  @minItems(1)
+  value: SemanticLiteral[];
+  path?: Identifier[];
+  aiContext?: AIContext;
+}
+
+model LessThanSemanticFilter {
+  field: SemanticFieldReference;
+  operator: "less_than";
+  value: SemanticLiteral;
+  path?: Identifier[];
+  aiContext?: AIContext;
+}
+
+model LessThanOrEqualSemanticFilter {
+  field: SemanticFieldReference;
+  operator: "less_than_or_equal";
+  value: SemanticLiteral;
+  path?: Identifier[];
+  aiContext?: AIContext;
+}
+
+model GreaterThanSemanticFilter {
+  field: SemanticFieldReference;
+  operator: "greater_than";
+  value: SemanticLiteral;
+  path?: Identifier[];
+  aiContext?: AIContext;
+}
+
+model GreaterThanOrEqualSemanticFilter {
+  field: SemanticFieldReference;
+  operator: "greater_than_or_equal";
+  value: SemanticLiteral;
+  path?: Identifier[];
+  aiContext?: AIContext;
+}
+
+model IsNullSemanticFilter {
+  field: SemanticFieldReference;
+  operator: "is_null";
+  path?: Identifier[];
+  aiContext?: AIContext;
+}
+
+model IsNotNullSemanticFilter {
+  field: SemanticFieldReference;
+  operator: "is_not_null";
+  path?: Identifier[];
+  aiContext?: AIContext;
+}
+
+model AllSemanticFilter {
+  @minItems(1)
+  all: SemanticFilter[];
+}
+
+model AnySemanticFilter {
+  @minItems(1)
+  any: SemanticFilter[];
+}
+
+model NotSemanticFilter {
+  not: SemanticFilter;
+}
+
+/** Recursive filters remain wrapper-free and select exactly one leaf or boolean node. */
+@apigen.exactNumbers
+union SemanticFilter {
+  equals: EqualsSemanticFilter,
+  not_equals: NotEqualsSemanticFilter,
+  in: InSemanticFilter,
+  not_in: NotInSemanticFilter,
+  less_than: LessThanSemanticFilter,
+  less_than_or_equal: LessThanOrEqualSemanticFilter,
+  greater_than: GreaterThanSemanticFilter,
+  greater_than_or_equal: GreaterThanOrEqualSemanticFilter,
+  is_null: IsNullSemanticFilter,
+  is_not_null: IsNotNullSemanticFilter,
+  all: AllSemanticFilter,
+  any: AnySemanticFilter,
+  not: NotSemanticFilter,
+}
+
+model SemanticMetricCommon {
+  label?: string;
+  description?: string;
+  aiContext?: AIContext;
+  unit?: string;
+  format?: string;
+  hidden?: boolean;
+  @minItems(1)
+  @apigen.uniqueItems
+  requiredAccessGrants?: Identifier[];
+}
+
+model SemanticMetricInput {
+  field: SemanticFieldReference;
+}
+
+model AggregateSemanticMetric {
+  type: "aggregate";
+  dataset: Identifier;
+  aggregation: "sum" | "count" | "count_distinct" | "avg" | "min" | "max";
+  input: SemanticMetricInput;
+  @minItems(1)
+  where?: Identifier[];
+  empty?: "zero" | "null";
+  timeDimension?: Identifier;
+  ...SemanticMetricCommon;
+}
+
+model DerivedSemanticMetric {
+  type: "derived";
+  expression: string;
+  ...SemanticMetricCommon;
+}
+
+model RatioSemanticMetric {
+  type: "ratio";
+  numerator: Identifier;
+  denominator: Identifier;
+  ...SemanticMetricCommon;
+}
+
+@discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
+union SemanticMetric {
+  aggregate: AggregateSemanticMetric,
+  derived: DerivedSemanticMetric,
+  ratio: RatioSemanticMetric,
+}
+
+model SemanticModelSpec {
+  @apigen.minProperties(1)
+  @apigen.propertyNames(Identifier)
+  datasets: Record<SemanticDataset>;
+  @apigen.propertyNames(Identifier)
+  accessGrants?: Record<SemanticAccessGrant>;
+  @apigen.propertyNames(Identifier)
+  relationships?: Record<SemanticRelationship>;
+  @apigen.propertyNames(Identifier)
+  dimensions?: Record<SemanticDimension>;
+  @apigen.propertyNames(Identifier)
+  filters?: Record<SemanticFilter>;
+  @apigen.propertyNames(Identifier)
+  metrics: Record<SemanticMetric>;
+}
+
 model ResourceProvenance {
   origin?: string;
   path?: string;
@@ -503,6 +844,25 @@ model ResourceProvenance {
 model ResourceMetadata {
   id: ResourceID;
   name: ResourceName;
+  displayName?: string;
+  description?: string;
+  owner?: string;
+  domain?: string;
+  tags?: string[];
+  documentation?: string;
+  provenance?: ResourceProvenance;
+}
+
+model ContractResourceMetadata {
+  ...ResourceMetadata;
+  contract?: ContractMetadata;
+}
+
+// SemanticModel retains the legacy ResourceName grammar while other authored
+// resources use the stricter shared ResourceName contract.
+model SemanticModelMetadata {
+  id: ResourceID;
+  name: SemanticModelResourceName;
   displayName?: string;
   description?: string;
   owner?: string;
@@ -524,7 +884,7 @@ model Connection {
 model Source {
   apiVersion: "leapview.dev/v1";
   kind: "Source";
-  metadata: ResourceMetadata;
+  metadata: ContractResourceMetadata;
   spec: SourceSpec;
 }
 
@@ -532,7 +892,17 @@ model Source {
 model Model {
   apiVersion: "leapview.dev/v1";
   kind: "Model";
-  metadata: ResourceMetadata;
+  metadata: ContractResourceMetadata;
   aiContext?: AIContext;
   spec: ModelSpec;
+}
+
+@apigen.metadata(#{ `x-leapview-semantic-access-profile`: "leapview.semantic-access/v1" })
+@apigen.contract(#{ kind: "resource", tags: #["semantic-model", "data-resource"] })
+model SemanticModel {
+  apiVersion: "leapview.dev/v1";
+  kind: "SemanticModel";
+  metadata: SemanticModelMetadata;
+  aiContext?: AIContext;
+  spec: SemanticModelSpec;
 }

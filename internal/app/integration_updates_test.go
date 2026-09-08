@@ -97,7 +97,10 @@ func TestUpdatesStreamsSetupRequiredPatchForMissingData(t *testing.T) {
 
 func TestUpdatesIgnoresMalformedDatastarSignals(t *testing.T) {
 	h := newHarness(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	// The malformed signal is ignored before the initial dashboard refresh,
+	// but the refresh itself still exercises the full integration runtime. Give
+	// cold CI runners the same bounded budget as the neighboring stream tests.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, h.updatesPath()+"?route=dashboard&dashboard=executive-sales&page=overview&datastar=%7Bnot-json", nil)
 	rec := httptest.NewRecorder()

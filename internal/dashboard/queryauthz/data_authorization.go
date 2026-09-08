@@ -33,20 +33,24 @@ type Principal struct {
 }
 
 type Options struct {
-	SnapshotFromContext   func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
-	SubjectsFromContext   func(context.Context, string) ([]access.SubjectRef, error)
-	PrincipalFromContext  func(context.Context) (Principal, bool)
-	CredentialFromContext func(context.Context) (access.APICredential, bool)
-	AuditRecorder         access.CanonicalAuditRecorder
+	InstanceID                string
+	ResolveSemanticAttributes func(context.Context) (access.SemanticAttributeResolution, error)
+	SnapshotFromContext       func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	SubjectsFromContext       func(context.Context, string) ([]access.SubjectRef, error)
+	PrincipalFromContext      func(context.Context) (Principal, bool)
+	CredentialFromContext     func(context.Context) (access.APICredential, bool)
+	AuditRecorder             access.CanonicalAuditRecorder
 }
 
 type Metrics struct {
 	queryruntime.Metrics
-	snapshotFromContext   func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
-	subjectsFromContext   func(context.Context, string) ([]access.SubjectRef, error)
-	principalFromContext  func(context.Context) (Principal, bool)
-	credentialFromContext func(context.Context) (access.APICredential, bool)
-	auditRecorder         access.CanonicalAuditRecorder
+	instanceID                string
+	resolveSemanticAttributes func(context.Context) (access.SemanticAttributeResolution, error)
+	snapshotFromContext       func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	subjectsFromContext       func(context.Context, string) ([]access.SubjectRef, error)
+	principalFromContext      func(context.Context) (Principal, bool)
+	credentialFromContext     func(context.Context) (access.APICredential, bool)
+	auditRecorder             access.CanonicalAuditRecorder
 }
 
 // Planner forwards the activation-owned planner exposed by the active runtime.
@@ -89,12 +93,14 @@ func IsDenied(err error) bool {
 
 func New(metrics queryruntime.Metrics, options Options) Metrics {
 	return Metrics{
-		Metrics:               metrics,
-		snapshotFromContext:   options.SnapshotFromContext,
-		subjectsFromContext:   options.SubjectsFromContext,
-		principalFromContext:  options.PrincipalFromContext,
-		credentialFromContext: options.CredentialFromContext,
-		auditRecorder:         options.AuditRecorder,
+		instanceID:                options.InstanceID,
+		resolveSemanticAttributes: options.ResolveSemanticAttributes,
+		Metrics:                   metrics,
+		snapshotFromContext:       options.SnapshotFromContext,
+		subjectsFromContext:       options.SubjectsFromContext,
+		principalFromContext:      options.PrincipalFromContext,
+		credentialFromContext:     options.CredentialFromContext,
+		auditRecorder:             options.AuditRecorder,
 	}
 }
 
@@ -126,9 +132,17 @@ func (m Metrics) ExecuteDataQuery(ctx context.Context, request dataquery.Query) 
 		return dataquery.Result{}, errors.New("query metrics are not configured")
 	}
 	if m.snapshotFromContext == nil {
-		return m.Metrics.ExecuteDataQuery(ctx, request)
+		bound, err := m.bindSemanticQuery(ctx, request)
+		if err != nil {
+			return rejectedDataQueryResult(err)
+		}
+		return m.Metrics.ExecuteDataQuery(bound, request)
 	}
 	governed, transform, err := m.GovernDataQuery(ctx, request)
+	if err != nil {
+		return rejectedDataQueryResult(err)
+	}
+	ctx, err = m.bindSemanticQuery(ctx, governed)
 	if err != nil {
 		return rejectedDataQueryResult(err)
 	}
@@ -154,9 +168,17 @@ func (m Metrics) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Qu
 		return dataquery.Result{}, errors.New("query metrics do not support native Arrow execution")
 	}
 	if m.snapshotFromContext == nil {
-		return executor.ExecuteDataQueryArrow(ctx, request, sink)
+		bound, err := m.bindSemanticQuery(ctx, request)
+		if err != nil {
+			return rejectedDataQueryResult(err)
+		}
+		return executor.ExecuteDataQueryArrow(bound, request, sink)
 	}
 	governed, transform, err := m.GovernDataQuery(ctx, request)
+	if err != nil {
+		return rejectedDataQueryResult(err)
+	}
+	ctx, err = m.bindSemanticQuery(ctx, governed)
 	if err != nil {
 		return rejectedDataQueryResult(err)
 	}
@@ -338,13 +360,17 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	if ok, err := m.authorizeDataQuery(ctx, snapshot, principalID, capabilityAction, request, objects); err != nil {
-		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
-		return request, nil, err
-	} else if !ok {
-		err := DeniedError{PrincipalID: principalID, Capability: capabilityAction}
-		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
-		return request, nil, err
+	bootstrapCandidateOwner := candidateQuery && candidateCapability.BootstrapAuthorized &&
+		!viewAsQuery && request.PrincipalID == candidateCapability.OwnerPrincipalID
+	if !bootstrapCandidateOwner {
+		if ok, err := m.authorizeDataQuery(ctx, snapshot, principalID, capabilityAction, request, objects); err != nil {
+			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
+			return request, nil, err
+		} else if !ok {
+			err := DeniedError{PrincipalID: principalID, Capability: capabilityAction}
+			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
+			return request, nil, err
+		}
 	}
 	governed, policies, err := m.applyDataPolicies(ctx, request, objects, resourceIndex)
 	if err != nil {
@@ -469,7 +495,11 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 	dimensions := dataFieldsToSemanticFields(request.Fields)
 	metrics := dataFieldsToSemanticFields(request.Metrics)
 	for _, field := range request.AuthorizationFields {
-		if semanticFieldIsMetric(model, field.Field) {
+		isMetric, err := authorizationFieldIsMetric(model, field)
+		if err != nil {
+			return nil, nil, err
+		}
+		if isMetric {
 			metrics = append(metrics, semanticquery.Field{Field: field.Field, Alias: field.Alias})
 		} else {
 			dimensions = append(dimensions, semanticquery.Field{Field: field.Field, Alias: field.Alias})
@@ -510,7 +540,11 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 		}
 		semanticObjects = append(semanticObjects, modelObject)
 	}
-	physicalObjects := make([]access.ResourceRef, 0, len(dependencies.Datasets)+len(dependencies.PhysicalFields))
+	// Dependency cardinality is compiler-controlled, but do not combine two
+	// independently sized slices into an allocation hint: the addition can
+	// overflow before make applies its own bounds check. Appends retain the
+	// same bounded result without an attacker-controlled capacity calculation.
+	physicalObjects := make([]access.ResourceRef, 0)
 	datasets := map[string]access.ResourceRef{}
 	for _, datasetName := range dependencies.Datasets {
 		dataset, ok := resourceIndex.byName(datasetName, projectgraph.KindModel)
@@ -633,7 +667,7 @@ func (m Metrics) recordDataAccessAudit(ctx context.Context, request dataquery.Qu
 	}
 	resource, ok := canonicalResourceByID(snapshot.Project(), request.ModelID, projectgraph.KindSemanticModel)
 	if !ok {
-		resource, err = access.NewResourceRef(request.ProjectID, projectgraph.KindProject)
+		resource, err = access.NewResourceRef(request.ProjectID, projectgraph.KindProjectNamespace)
 		if err != nil {
 			return err
 		}
@@ -1005,7 +1039,7 @@ func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Qu
 			return effectiveDataPolicySet{}, err
 		}
 	}
-	if projectResource, err := access.NewResourceRef(request.ProjectID, projectgraph.KindProject); err == nil {
+	if projectResource, err := access.NewResourceRef(request.ProjectID, projectgraph.KindProjectNamespace); err == nil {
 		if err := addObject(projectResource); err != nil {
 			return effectiveDataPolicySet{}, err
 		}
@@ -1258,7 +1292,7 @@ func (m Metrics) authorizationSnapshot(ctx context.Context, projectID projectgra
 	if err := snapshot.ValidateBound(); err != nil {
 		return accesssnapshot.AuthorizationSnapshot{}, err
 	}
-	if snapshot.Identity().ProjectID != projectID || snapshot.Project().ProjectID() != projectID || m.Metrics.Catalog().Project.ID != projectID {
+	if snapshot.Identity().ProjectID != projectID || m.Metrics.Catalog().Project.ID != projectID {
 		return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("authorization snapshot project identity does not match active project %q", projectID)
 	}
 	return snapshot, nil

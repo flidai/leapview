@@ -2,7 +2,6 @@
 package resolver
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -28,11 +27,13 @@ var (
 )
 
 // Repository is the read-only portion of manageddata.Repository needed to
-// reconstruct a serving state's immutable managed-data bindings.
+// reconstruct serving-state bindings and detached candidate pin resolutions.
 type Repository interface {
 	ListServingStateBindings(context.Context, projectgraph.ServingIdentity) ([]manageddata.ServingStateBinding, error)
 	CollectionByID(context.Context, projectgraph.ResourceID) (manageddata.Collection, error)
+	CollectionByProjectConnection(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (manageddata.Collection, error)
 	RevisionByID(context.Context, manageddata.RevisionID) (manageddata.Revision, error)
+	ListRevisions(context.Context, projectgraph.ResourceID) ([]manageddata.Revision, error)
 	ListRevisionFiles(context.Context, manageddata.RevisionID) ([]manageddata.RevisionFile, error)
 }
 
@@ -84,6 +85,90 @@ func (r *Resolver) ResolveManagedData(ctx context.Context, identity projectgraph
 		return Resolution{}, err
 	}
 	return r.resolveBindings(ctx, identity, bindings)
+}
+
+// ResolveCandidateManagedData resolves exact immutable managed-data revision
+// digests for a detached candidate. Candidate preparation runs before a
+// serving-state row is admitted, so this path deliberately resolves metadata
+// by project and connection instead of consulting serving-state bindings.
+func (r *Resolver) ResolveCandidateManagedData(ctx context.Context, projectID projectgraph.ResourceID, pins map[projectgraph.ResourceID]string) (Resolution, error) {
+	if r == nil || r.repository == nil {
+		return Resolution{}, ErrRepository
+	}
+	if !projectID.Valid() {
+		return Resolution{}, invalidMetadata("candidate project is invalid")
+	}
+	if pins == nil {
+		pins = map[projectgraph.ResourceID]string{}
+	}
+
+	resolved := make([]resolvedBinding, 0, len(pins))
+	connections := make([]projectgraph.ResourceID, 0, len(pins))
+	for connectionID, digest := range pins {
+		if !connectionID.Valid() {
+			return Resolution{}, invalidMetadata("candidate connection is invalid")
+		}
+		if manageddata.ValidateRevisionID(digest) != nil {
+			return Resolution{}, invalidMetadata("candidate revision digest is invalid")
+		}
+		connections = append(connections, connectionID)
+	}
+	sort.Slice(connections, func(i, j int) bool { return connections[i] < connections[j] })
+
+	for _, connectionID := range connections {
+		collection, err := r.repository.CollectionByProjectConnection(ctx, projectID, connectionID)
+		if err != nil {
+			return Resolution{}, sanitizeRepositoryError(ctx, "load candidate collection", err)
+		}
+		if !collection.ID.Valid() || collection.ProjectID != projectID || collection.ConnectionID != connectionID {
+			return Resolution{}, invalidMetadata("candidate collection relationship or identity is invalid")
+		}
+		if collection.Status != manageddata.CollectionStatusActive {
+			return Resolution{}, invalidMetadata("candidate collection is not active")
+		}
+
+		revisions, err := r.repository.ListRevisions(ctx, collection.ID)
+		if err != nil {
+			return Resolution{}, sanitizeRepositoryError(ctx, "list candidate revisions", err)
+		}
+		var selected *manageddata.Revision
+		digestSeen := false
+		for index := range revisions {
+			revision := revisions[index]
+			if revision.CollectionID != collection.ID {
+				return Resolution{}, invalidMetadata("candidate revision relationship is invalid")
+			}
+			if revision.Digest != pins[connectionID] {
+				continue
+			}
+			digestSeen = true
+			if revision.Status != manageddata.RevisionStatusReady {
+				// Non-ready rows with the same content digest do not shadow a
+				// unique ready revision. If no ready row exists, report the
+				// digest as not ready below.
+				continue
+			}
+			if selected != nil {
+				return Resolution{}, invalidMetadata("candidate revision digest is ambiguous")
+			}
+			selected = &revision
+		}
+		if selected == nil {
+			if digestSeen {
+				return Resolution{}, ErrRevisionNotReady
+			}
+			return Resolution{}, invalidMetadata("candidate revision digest is unavailable")
+		}
+		if selected.ID.String() == "" {
+			return Resolution{}, invalidMetadata("candidate revision relationship is invalid")
+		}
+		binding, err := r.validateResolvedBinding(ctx, projectID, connectionID, *selected)
+		if err != nil {
+			return Resolution{}, err
+		}
+		resolved = append(resolved, binding)
+	}
+	return r.materializeBindings(ctx, resolved)
 }
 
 type resolvedBinding struct {
@@ -140,24 +225,36 @@ func (r *Resolver) resolveBindings(ctx context.Context, identity projectgraph.Se
 		if revision.ID != binding.RevisionID || revision.CollectionID != collection.ID {
 			return Resolution{}, invalidMetadata("revision relationship is invalid")
 		}
-		if revision.Status != manageddata.RevisionStatusReady {
-			return Resolution{}, ErrRevisionNotReady
+		resolvedBinding, resolveErr := r.validateResolvedBinding(ctx, collection.ProjectID, collection.ConnectionID, revision)
+		if resolveErr != nil {
+			return Resolution{}, resolveErr
 		}
-		manifest, manifestErr := validateRevisionManifest(revision)
-		if manifestErr != nil {
-			return Resolution{}, manifestErr
-		}
-		files, loadErr := r.repository.ListRevisionFiles(ctx, revision.ID)
-		if loadErr != nil {
-			return Resolution{}, sanitizeRepositoryError(ctx, "load revision files", loadErr)
-		}
-		if metadataErr := validateRevisionFiles(revision, manifest, files); metadataErr != nil {
-			return Resolution{}, metadataErr
-		}
-		resolved = append(resolved, resolvedBinding{
-			project: collection.ProjectID, connection: collection.ConnectionID,
-			manifestDigest: revision.Digest, manifest: manifest,
-		})
+		resolved = append(resolved, resolvedBinding)
+	}
+	return r.materializeBindings(ctx, resolved)
+}
+
+func (r *Resolver) validateResolvedBinding(ctx context.Context, projectID, connectionID projectgraph.ResourceID, revision manageddata.Revision) (resolvedBinding, error) {
+	if revision.Status != manageddata.RevisionStatusReady {
+		return resolvedBinding{}, ErrRevisionNotReady
+	}
+	manifest, manifestErr := validateRevisionManifest(revision)
+	if manifestErr != nil {
+		return resolvedBinding{}, manifestErr
+	}
+	files, loadErr := r.repository.ListRevisionFiles(ctx, revision.ID)
+	if loadErr != nil {
+		return resolvedBinding{}, sanitizeRepositoryError(ctx, "load revision files", loadErr)
+	}
+	if metadataErr := validateRevisionFiles(revision, manifest, files); metadataErr != nil {
+		return resolvedBinding{}, metadataErr
+	}
+	return resolvedBinding{project: projectID, connection: connectionID, manifestDigest: revision.Digest, manifest: manifest}, nil
+}
+
+func (r *Resolver) materializeBindings(ctx context.Context, resolved []resolvedBinding) (Resolution, error) {
+	if len(resolved) == 0 {
+		return Resolution{Roots: map[projectgraph.ResourceID]string{}}, nil
 	}
 
 	sort.Slice(resolved, func(i, j int) bool {
@@ -235,12 +332,8 @@ func validateRevisionManifest(revision manageddata.Revision) (manageddata.Manife
 	if err := requireJSONEnd(decoder); err != nil {
 		return manageddata.Manifest{}, invalidMetadata("stored manifest is invalid")
 	}
-	canonical, err := manifest.CanonicalJSON()
-	if err != nil {
+	if _, err := manifest.CanonicalJSON(); err != nil {
 		return manageddata.Manifest{}, invalidMetadata("stored manifest is invalid")
-	}
-	if !bytes.Equal(canonical, []byte(revision.ManifestJSON)) {
-		return manageddata.Manifest{}, invalidMetadata("stored manifest is not canonical")
 	}
 	if revision.Digest != manifest.RevisionID() {
 		return manageddata.Manifest{}, invalidMetadata("stored manifest digest does not match revision")

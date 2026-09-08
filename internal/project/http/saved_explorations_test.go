@@ -497,7 +497,7 @@ func TestSavedExplorationReopenLeavesIncompatibleWorkingCopiesUnexecuted(t *test
 			{ID: "model:orders", ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
 			{ID: "semantic:sales", ProjectID: projectID, ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{}`},
 		}}},
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{ID: string(projectID), Models: map[string]semanticmodel.Table{"model:orders": model.Tables["orders"]}, SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}, NameIndex: projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}},
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{Models: map[string]semanticmodel.Table{"model:orders": model.Tables["orders"]}, SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}, NameIndex: projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}},
 		QueryExecutor:           query, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
 		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test", DevBypass: true}, true },
 		SavedExplorations: &service,

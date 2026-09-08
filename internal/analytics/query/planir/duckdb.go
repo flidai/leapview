@@ -106,15 +106,16 @@ type duckRenderer struct {
 }
 
 type sourceContext struct {
-	from        string
-	where       []string
-	aliases     map[string][]string
-	pathAliases map[string]string
-	lineage     []PhysicalLineage
-	root        string
-	joined      bool
-	lastAlias   string
-	path        []string
+	from          string
+	where         []string
+	whereArgCount int
+	aliases       map[string][]string
+	pathAliases   map[string]string
+	lineage       []PhysicalLineage
+	root          string
+	joined        bool
+	lastAlias     string
+	path          []string
 }
 
 func (r *duckRenderer) renderNode(id string) (string, []string, error) {
@@ -130,7 +131,7 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		return "", nil, fmt.Errorf("renderer node %q is unavailable", id)
 	}
 	switch value := node.(type) {
-	case ScanDataset, *ScanDataset, TraverseRelationship, *TraverseRelationship, FilterRows, *FilterRows:
+	case ScanDataset, *ScanDataset, SecurityBarrier, *SecurityBarrier, TraverseRelationship, *TraverseRelationship, FilterRows, *FilterRows:
 		return r.renderSource(id)
 	case AggregateMetrics, *AggregateMetrics:
 		n, ok := asAggregate(value)
@@ -516,6 +517,13 @@ func (r *duckRenderer) source(id string) (sourceContext, error) {
 			return sourceContext{}, fmt.Errorf("source node %q is nil", id)
 		}
 		return r.scanContext(id, *n), nil
+	case SecurityBarrier:
+		return r.sourceSecurityBarrier(n)
+	case *SecurityBarrier:
+		if n == nil {
+			return sourceContext{}, fmt.Errorf("source node %q is nil", id)
+		}
+		return r.sourceSecurityBarrier(*n)
 	case FilterRows:
 		return r.sourceFilter(n)
 	case *FilterRows:
@@ -585,6 +593,7 @@ func (r *duckRenderer) sourceFilter(n FilterRows) (sourceContext, error) {
 		return sourceContext{}, err
 	}
 	ctx.lineage = append(ctx.lineage, n.PhysicalLineage...)
+	argStart := len(r.args)
 	resolve := func(name string) (string, error) { return r.fieldExpr(name, ctx) }
 	var predicate string
 	if n.MatchGuard && len(n.FieldRoutes) > 0 {
@@ -598,6 +607,7 @@ func (r *duckRenderer) sourceFilter(n FilterRows) (sourceContext, error) {
 		return sourceContext{}, err
 	}
 	ctx.where = append(ctx.where, predicate)
+	ctx.whereArgCount += len(r.args) - argStart
 	return ctx, nil
 }
 
@@ -624,53 +634,6 @@ func (r *duckRenderer) filterFieldGuard(routes []RelationshipRoute, ctx sourceCo
 		guards = append(guards, quoteName(alias)+"."+quoteName(columnName(edge.JoinKeys[len(edge.JoinKeys)-1].To))+" IS NOT NULL")
 	}
 	return strings.Join(guards, " AND "), nil
-}
-
-func (r *duckRenderer) sourceTraverse(n TraverseRelationship) (sourceContext, error) {
-	ctx, err := r.source(n.Input)
-	if err != nil {
-		return sourceContext{}, err
-	}
-	if err := validName(n.Path.ToDataset); err != nil {
-		return sourceContext{}, fmt.Errorf("relationship target %q: %w", n.Path.ToDataset, err)
-	}
-	toRelation := n.Path.ToRelation
-	if toRelation == "" {
-		toRelation = quoteName(n.Path.ToDataset)
-	}
-	left := n.Path.FromDataset
-	leftAlias := ctx.latestAlias(left)
-	joined := ctx.joined
-	if leftAlias == "" {
-		leftAlias = "r0"
-		ctx.from = ctx.from + " AS " + quoteName(leftAlias)
-		ctx.aliases[ctx.root] = []string{leftAlias}
-		joined = true
-	}
-	alias := fmt.Sprintf("r%d", len(ctx.aliases)+1)
-	ctx.from += " LEFT JOIN " + toRelation + " AS " + quoteName(alias) + " ON "
-	parts := make([]string, 0, len(n.Path.JoinKeys))
-	for _, key := range n.Path.JoinKeys {
-		if err := validName(key.From); err != nil {
-			return sourceContext{}, fmt.Errorf("relationship key %q: %w", key.From, err)
-		}
-		if err := validName(key.To); err != nil {
-			return sourceContext{}, fmt.Errorf("relationship key %q: %w", key.To, err)
-		}
-		parts = append(parts, quoteName(leftAlias)+"."+quoteName(key.From)+" = "+quoteName(alias)+"."+quoteName(key.To))
-	}
-	ctx.from += strings.Join(parts, " AND ")
-	ctx.aliases[n.Path.ToDataset] = append(ctx.aliases[n.Path.ToDataset], alias)
-	ctx.path = append(append([]string(nil), ctx.path...), n.Path.Name)
-	if ctx.pathAliases == nil {
-		ctx.pathAliases = map[string]string{}
-	}
-	ctx.pathAliases[strings.Join(ctx.path, "/")] = alias
-	ctx.pathAliases[n.Path.Name] = alias
-	ctx.joined = joined
-	ctx.lastAlias = alias
-	ctx.lineage = append(ctx.lineage, n.PhysicalLineage...)
-	return ctx, nil
 }
 
 func (c sourceContext) latestAlias(dataset string) string {

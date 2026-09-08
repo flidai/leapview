@@ -2,18 +2,39 @@
 
 This is the production operations package for the public LeapView image. It
 runs exactly one application process with one named state volume and one
-configured environment, and adds hardened defaults, HTTPS, backups, and paired
-image-and-state rollback. The included `leapviewctl` is a standalone Go
+configured environment, and adds hardened defaults and HTTPS. The included
+`leapviewctl` is a standalone Go
 operations binary for the archive's operating system and architecture.
 
 ```sh
 cp deployment.env.example deployment.env
+cp leapview.env.example leapview.env
+# Configure the external PostgreSQL URLs and roles in leapview.env.
+# Run pool bootstrap without --apply; the database-free result contains the
+# deterministic pool_id and compatibility_digest. Copy them into leapview.env.
 ./leapviewctl init --admin-email admin@example.com --domain dash.example.com
+# Initialization has now applied the control baseline. Inject the operation-only
+# DuckLake migrator credential and repeat the exact bootstrap with --apply.
+# Do not store that owner-capable credential in leapview.env.
 ./leapviewctl start
 ./leapviewctl first-login
 ```
 
-Set the released `LEAPVIEW_IMAGE` digest before initialization. HTTPS is
+Set the released `LEAPVIEW_IMAGE` digest before initialization. Production
+requires provider-owned PostgreSQL control and DuckLake URLs, distinct
+migrator/runtime/maintenance roles, and the exact target delivery pool ID and
+compatibility digest. Edit those values in `leapview.env`; initialization
+preserves them and fails with the missing variable name when they are absent.
+Each PostgreSQL URL must use `sslmode=verify-full` with a trusted provider CA
+(through `sslrootcert` or the image's system trust store); `require` and
+`verify-ca` are intentionally rejected because they do not authenticate both
+the server certificate and hostname.
+The pre-initialization pool command must be a dry run. Apply the same reviewed
+pool/evidence pair only after `init`, because durable admission verifies the
+control baseline created during initialization. Inject the DuckLake migrator
+URL only into that apply command through the target secret manager; ordinary
+serving must not receive it.
+LeapView does not provision a PostgreSQL container in this bundle. HTTPS is
 enabled by default through the Caddy overlay. Initialization derives
 `LEAPVIEW_PUBLIC_URL=https://<domain>`, the allowed host, and the Caddy domain
 from the validated `--domain` hostname. Use `--no-https` only when a trusted
@@ -22,38 +43,17 @@ the Caddy overlay but preserves the HTTPS public URL and secure cookies.
 
 Pulling and running the public image does not require this package or the
 controller; see the installation guide for the localhost evaluation path. For
-production, `leapviewctl` provides the supported initialization, backup,
-restore, upgrade, and rollback workflow. Run `./leapviewctl help` for its
-commands.
+production, `leapviewctl` provides the supported initialization and health
+lifecycle. Production backup/PITR and DuckLake/object-store recovery use
+provider-native tooling; follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore). Run `./leapviewctl help` for the
+current lifecycle commands.
 
 The same archive also carries the provider-neutral Ubuntu bootstrap and host
 operations assets. VPS adapters use the matching payload embedded in the
 immutable application image and delegate installation to `leapviewctl host
 install`; they do not maintain a provider-specific Compose lifecycle.
-
-## v0.1.0 migration policy
-
-State created by v0.1.0 is **fresh-install-only** for LeapView v0.2.0-rc.1.
-The released image
-`ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153`
-uses the `LIBREDASH_*` configuration namespace, `/var/lib/libredash`,
-`libredash.db`, and a `libredash-backup.json` archive contract. Do not point
-this Compose package at that volume or pass the image to `leapviewctl upgrade`.
-The server and controller reject those paths before changing instance state.
-The historical package requires authentication and contains only a
-`linux/amd64` runtime.
-
-Release archives also contain `release-transition-policy.json`. It is generated
-after OCI admission, names the exact candidate digest, and must be supplied to
-both `leapviewctl upgrade --transition-policy release-transition-policy.json`
-and `leapviewctl rollback --transition-policy release-transition-policy.json`.
-
-Use the v0.1.0 image's `admin backup` command to preserve the old instance,
-then provision a fresh LeapView volume, redeploy project source, reload source
-data, and reprovision identities and grants. Keep the old image, archive,
-checksum, configuration, and volume until the new instance is accepted. The
-full command sequence is in the installed documentation under
-`/docs/guides/operate/upgrades#move-from-v010`.
 
 ## Qualify the exact installed candidate
 
@@ -62,11 +62,20 @@ Before publishing or adopting a release, follow the bundled
 journey validates the archive checksums, anonymous immutable image pull,
 initialization, browser-approved enterprise authoring and protected publish,
 five-minute sample, governed access and denial auditing, restart persistence,
-backup, and isolated restore:
+and recovery-readiness checks:
 
 ```sh
 ./leapviewctl qualify installed-candidate
 ```
+
+The release archive carries the canonical PostgreSQL role/bootstrap script at
+`qualification/postgres-init.sh`; release packaging verifies it byte-for-byte
+against `deploy/postgres/init.sh`. Qualification starts an isolated PostgreSQL
+18 sidecar on the Compose-owned network, generates short-lived TLS files in a
+private temporary directory, and requires
+`LEAPVIEW_POSTGRES_REQUIRE_TLS=true`. The sidecar is removed before the
+application network and volumes are torn down. No SQLite or file-backed
+control-plane fallback is used by this journey.
 
 The controller writes only bounded redacted evidence and removes its isolated
 containers, volumes, temporary credentials, and restored instance when it

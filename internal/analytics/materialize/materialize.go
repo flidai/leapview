@@ -22,6 +22,15 @@ type ModelTablePlanner interface {
 	PlanModelTable(ctx context.Context, model *semanticmodel.Model, tableName string, table semanticmodel.Table) (ModelTablePlan, error)
 }
 
+// NamespacedModelTablePlanner is the candidate-write extension of
+// ModelTablePlanner. The relation namespace is value-only and is validated by
+// the caller before it reaches a planner. Keeping this as an optional
+// capability preserves the active/legacy planner contract while ensuring
+// candidate writes cannot silently fall back to the shared model schema.
+type NamespacedModelTablePlanner interface {
+	PlanModelTableInNamespace(ctx context.Context, model *semanticmodel.Model, tableName string, table semanticmodel.Table, relationNamespace string) (ModelTablePlan, error)
+}
+
 type PreparedSources interface {
 	ModelTablePlanner
 	Close() error
@@ -231,7 +240,31 @@ func ModelTables(ctx context.Context, executor Executor, sources ModelTablePlann
 	return ModelTablesNamed(ctx, executor, sources, model, order)
 }
 
+// ModelTablesInNamespace is the full-refresh counterpart to
+// ModelTablesNamedInNamespace.
+func ModelTablesInNamespace(ctx context.Context, executor Executor, sources ModelTablePlanner, model *semanticmodel.Model, relationNamespace string) error {
+	if executor == nil {
+		return fmt.Errorf("materialization executor is required")
+	}
+	if sources == nil {
+		return fmt.Errorf("Model planner is required")
+	}
+	order, err := ModelTableOrder(model)
+	if err != nil {
+		return err
+	}
+	return ModelTablesNamedInNamespace(ctx, executor, sources, model, order, relationNamespace)
+}
+
 func ModelTablesNamed(ctx context.Context, executor Executor, sources ModelTablePlanner, model *semanticmodel.Model, tableNames []string) error {
+	return ModelTablesNamedInNamespace(ctx, executor, sources, model, tableNames, "model")
+}
+
+// ModelTablesNamedInNamespace materializes selected Models into the
+// validated relation namespace. Native candidate requests use this entrypoint
+// so every DDL statement is scoped to the candidate's authority-derived
+// schema. Legacy callers should continue using ModelTablesNamed.
+func ModelTablesNamedInNamespace(ctx context.Context, executor Executor, sources ModelTablePlanner, model *semanticmodel.Model, tableNames []string, relationNamespace string) error {
 	if executor == nil {
 		return fmt.Errorf("materialization executor is required")
 	}
@@ -241,15 +274,23 @@ func ModelTablesNamed(ctx context.Context, executor Executor, sources ModelTable
 	if model == nil {
 		return fmt.Errorf("semantic model is required")
 	}
+	if err := validateRelationNamespace(relationNamespace); err != nil {
+		return fmt.Errorf("relation namespace: %w", err)
+	}
+	if relationNamespace != "model" {
+		if _, ok := sources.(NamespacedModelTablePlanner); !ok {
+			return fmt.Errorf("materialization planner does not support relation namespace %q", relationNamespace)
+		}
+	}
 	ordered, err := selectedModelTableOrder(model, tableNames)
 	if err != nil {
 		return err
 	}
-	if err := executor.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS model"); err != nil {
+	if err := executor.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+relationNamespaceSQLName(relationNamespace)); err != nil {
 		return err
 	}
 	for _, name := range ordered {
-		if err := materializeModelTable(ctx, executor, sources, model, name); err != nil {
+		if err := materializeModelTableInNamespace(ctx, executor, sources, model, name, relationNamespace); err != nil {
 			return err
 		}
 	}
@@ -356,8 +397,22 @@ func ModelTableDependencyOrder(model *semanticmodel.Model, selectedTable string)
 }
 
 func materializeModelTable(ctx context.Context, executor Executor, sources ModelTablePlanner, model *semanticmodel.Model, name string) error {
+	return materializeModelTableInNamespace(ctx, executor, sources, model, name, "model")
+}
+
+func materializeModelTableInNamespace(ctx context.Context, executor Executor, sources ModelTablePlanner, model *semanticmodel.Model, name, relationNamespace string) error {
 	table := model.Tables[name]
-	plan, err := sources.PlanModelTable(ctx, model, name, table)
+	var plan ModelTablePlan
+	var err error
+	if relationNamespace != "model" {
+		namespaced, ok := sources.(NamespacedModelTablePlanner)
+		if !ok {
+			return fmt.Errorf("materialization planner does not support relation namespace %q", relationNamespace)
+		}
+		plan, err = namespaced.PlanModelTableInNamespace(ctx, model, name, table, relationNamespace)
+	} else {
+		plan, err = sources.PlanModelTable(ctx, model, name, table)
+	}
 	if err != nil {
 		return err
 	}
@@ -365,7 +420,7 @@ func materializeModelTable(ctx context.Context, executor Executor, sources Model
 		return fmt.Errorf("Model %q produced empty materialization SQL", name)
 	}
 	if err := executor.Exec(ctx, plan.SQL); err != nil {
-		return fmt.Errorf("materializing model.%s: %w", name, err)
+		return fmt.Errorf("materializing %s.%s: %w", relationNamespace, name, err)
 	}
 	return nil
 }
@@ -424,4 +479,24 @@ func validateIdentifier(value string) error {
 		return fmt.Errorf("invalid identifier %q", value)
 	}
 	return nil
+}
+
+func validateRelationNamespace(value string) error {
+	if err := validateIdentifier(value); err != nil {
+		return err
+	}
+	if value != strings.ToLower(value) {
+		return fmt.Errorf("relation namespace %q must be lowercase canonical", value)
+	}
+	if len(value) > 63 {
+		return fmt.Errorf("relation namespace %q exceeds 63 bytes", value)
+	}
+	return nil
+}
+
+func relationNamespaceSQLName(value string) string {
+	// validateRelationNamespace has already constrained this value to a plain
+	// SQL identifier, so emitting it directly preserves the canonical DDL text
+	// for both the legacy and authority-derived schemas.
+	return value
 }

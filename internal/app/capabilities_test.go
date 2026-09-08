@@ -29,7 +29,7 @@ func TestCapabilitiesReportOnlyEnabledUploadProtocols(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Environment != "prod" || len(response.UploadProtocols) != 0 {
+	if response.Environment != "prod" || response.DeliveryMode != apigenapi.DeliveryModeNativePostgres || len(response.UploadProtocols) != 0 {
 		t.Fatalf("capabilities = %#v", response)
 	}
 	if response.BuildVersion != buildinfo.DevelopmentVersion ||

@@ -15,7 +15,7 @@ import (
 )
 
 type authorizedModelRuntimeStub struct {
-	definition    projectmanifest.Project
+	definition    projectmanifest.ResourceManifest
 	compiled      map[string]*semanticquery.CompiledModel
 	identity      projectgraph.ServingIdentity
 	manifestReads int
@@ -26,7 +26,7 @@ type authorizedModelRuntimeStub struct {
 func (r *authorizedModelRuntimeStub) Close() error                           { return nil }
 func (r *authorizedModelRuntimeStub) Identity() projectgraph.ServingIdentity { return r.identity }
 
-func (r *authorizedModelRuntimeStub) ProjectManifest() projectmanifest.Project {
+func (r *authorizedModelRuntimeStub) ProjectManifest() projectmanifest.ResourceManifest {
 	r.manifestReads++
 	return r.definition
 }
@@ -96,13 +96,12 @@ func authorizedModelFixture(t *testing.T, allow bool) (*authorizedModelProviderS
 		t.Fatal(err)
 	}
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
-		{ID: "project:demo", Kind: projectgraph.KindProject, Name: "demo"},
 		{ID: "semantic:sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := projectgraph.NewServingIdentity(project.ProjectID(), "production", "generation:test")
+	identity, err := projectgraph.NewServingIdentity("project:demo", "production", "generation:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +125,7 @@ func authorizedModelFixture(t *testing.T, allow bool) (*authorizedModelProviderS
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := &authorizedModelRuntimeStub{definition: projectmanifest.Project{ID: project.ProjectID().String(), SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": planner.CompiledModel()}}
+	runtime := &authorizedModelRuntimeStub{definition: projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": planner.CompiledModel()}}
 	runtime.identity = identity
 	provider := &authorizedModelProviderStub{lease: &authorizedModelLeaseStub{runtime: runtime, identity: identity, snapshot: snapshot}}
 	subjects := func(_ context.Context, actorID string) ([]access.SubjectRef, error) {

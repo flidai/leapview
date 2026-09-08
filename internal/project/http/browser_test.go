@@ -21,7 +21,6 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
-	"github.com/flidai/leapview/internal/dashboard/publication"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
@@ -312,7 +311,7 @@ func TestDashboardCreationProjectionAllowsConfiguredDevelopmentBypass(t *testing
 }
 
 type browserProjectDefinitionStub struct {
-	definition projectmanifest.Project
+	definition projectmanifest.ResourceManifest
 	compiled   map[string]*semanticquery.CompiledModel
 	err        error
 }
@@ -340,7 +339,7 @@ func (s *browserDataQueryStub) ExecuteDataQuery(_ context.Context, query dataque
 	return s.result, s.err
 }
 
-func (s browserProjectDefinitionStub) ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error) {
+func (s browserProjectDefinitionStub) ProjectDefinitionSnapshot(context.Context) (projectmanifest.ResourceManifest, map[string]*semanticquery.CompiledModel, error) {
 	return s.definition, s.compiled, s.err
 }
 
@@ -351,8 +350,7 @@ func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{{
 			ID: assetID, ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "zip_geolocations", Title: "ZIP locations", PayloadJSON: `{"kind":"model"}`,
 		}}}},
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
-			ID: projectID,
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
 			Models: map[string]semanticmodel.Table{assetID: {
 				SourceDependencies: []string{"geolocations"}, Execution: semanticmodel.ExecutionDefinition{SQL: "select zip_code from source.geolocations"},
 				Entities: map[string]semanticmodel.EntityDefinition{"zip": {Type: "primary", Fields: []string{"zip_code"}}}, GrainEntity: "zip", Dimensions: map[string]semanticmodel.MetricDimension{"zip_code": {Label: "ZIP code"}},
@@ -399,8 +397,7 @@ func TestPipelineDefinitionBootstrapDoesNotDependOnRefreshState(t *testing.T) {
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{{
 			ID: assetID, ProjectID: projectID, ServingStateID: "state", Type: "refresh_pipeline", Key: "daily", Title: "Daily refresh", PayloadJSON: `{}`,
 		}}}},
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
-			ID: projectID,
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
 			RefreshPipelines: map[string]refreshschedule.Definition{
 				assetID: {ID: assetID, Name: "daily", SemanticModelID: "semantic:sales"},
 			},
@@ -582,8 +579,7 @@ func TestModelAssetBootstrapUsesAuthoredSQLWhenRuntimeProjectionIsTargetBound(t 
 		{ID: "model:zip_geolocations", ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "zip_geolocations", Title: "ZIP locations", PayloadJSON: `{}`},
 		{ID: "model:sales_orders", ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "sales_orders", Title: "Sales orders", PayloadJSON: `{}`},
 	}
-	definition := projectmanifest.Project{
-		ID: projectID,
+	definition := projectmanifest.ResourceManifest{
 		// Target-bound runtime execution is intentionally not used as authored
 		// source. Both tables look like direct sources in this projection.
 		Models: map[string]semanticmodel.Table{
@@ -630,8 +626,8 @@ func TestModelAssetReadModelIncludesServingCatalogStatistics(t *testing.T) {
 	snapshotAt := time.Date(2026, 8, 24, 14, 32, 0, 0, time.UTC)
 	h := &BrowserHandler{
 		Environment: "dev",
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
-			ID: "project:test", Models: map[string]semanticmodel.Table{assetID: {ModelName: "zip_geolocations"}},
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
+			Models: map[string]semanticmodel.Table{assetID: {ModelName: "zip_geolocations"}},
 		}},
 		PhysicalCatalog: browserPhysicalCatalogStub{"zip_geolocations": {
 			RowCount: 99_441, ColumnCount: 5, FileCount: 2, SizeBytes: 1_572_864, SnapshotID: 17,
@@ -664,8 +660,8 @@ func TestModelAssetReadModelRemainsAvailableWhenServingCatalogStatisticsAreUnava
 	const assetID = "model:zip_geolocations"
 	h := &BrowserHandler{
 		Environment: "dev",
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
-			ID: "project:test", Models: map[string]semanticmodel.Table{assetID: {ModelName: "zip_geolocations"}},
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
+			Models: map[string]semanticmodel.Table{assetID: {ModelName: "zip_geolocations"}},
 		}},
 		PhysicalCatalog: browserUnavailablePhysicalCatalogStub{},
 	}
@@ -688,8 +684,8 @@ func TestSourceAssetReadModelUsesActiveGenerationObservedSchema(t *testing.T) {
 	observedAt := time.Date(2026, 8, 24, 7, 30, 0, 0, time.UTC)
 	h := &BrowserHandler{
 		Environment: "dev",
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
-			ID: "project:test", Sources: map[string]semanticmodel.Source{assetID: {
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
+			Sources: map[string]semanticmodel.Source{assetID: {
 				SchemaMode: "compatible",
 				Fields: map[string]semanticmodel.SourceField{
 					"order_id": {Datatype: semanticmodel.DataTypeString, Description: "Order identifier"},
@@ -728,8 +724,8 @@ func TestSourceAssetReadModelFallsBackWhenObservedSchemaIsUnavailable(t *testing
 	const assetID = "source:orders"
 	h := &BrowserHandler{
 		Environment: "dev",
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
-			ID: "project:test", Sources: map[string]semanticmodel.Source{assetID: {
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
+			Sources: map[string]semanticmodel.Source{assetID: {
 				SchemaMode: "compatible", Fields: map[string]semanticmodel.SourceField{"order_id": {Datatype: semanticmodel.DataTypeString}},
 			}},
 		}},
@@ -750,16 +746,12 @@ func TestSourceAssetReadModelFallsBackWhenObservedSchemaIsUnavailable(t *testing
 	}
 }
 
-func TestDashboardAssetReadModelProjectsCompiledDefinitionAndPublications(t *testing.T) {
+func TestDashboardAssetReadModelProjectsCompiledDefinitionWithoutAuthoredPublications(t *testing.T) {
 	const configuration = "apiVersion: leapview.dev/v1\nkind: Dashboard\n"
 	asset := projectview.DevelopAssetView{ID: "dashboard:sales", Type: string(projectview.AssetTypeDashboard), Key: "sales", Title: "Sales", Payload: map[string]any{"kind": "dashboard"}}
-	definition := projectmanifest.Project{
+	definition := projectmanifest.ResourceManifest{
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{
 			"dashboard:sales": {ID: "dashboard:sales", Title: "Sales", SemanticModel: "semantic:sales", Pages: []dashboard.Page{{ID: "overview", Title: "Overview"}}, Visualizations: map[string]visualizationdefinition.Definition{}},
-		},
-		Publications: map[string]publication.Definition{
-			"publication:website": {Name: "publication:website", Dashboard: "dashboard:sales", DefaultPage: "overview", AllowedOrigins: []string{"https://example.test"}, ConfigurationDigest: "sha256:abc"},
-			"publication:other":   {Name: "publication:other", Dashboard: "dashboard:other"},
 		},
 		AuthoredResourceSources: map[string]string{"dashboard:sales": configuration},
 	}
@@ -767,12 +759,8 @@ func TestDashboardAssetReadModelProjectsCompiledDefinitionAndPublications(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	publications, ok := enriched.Payload["Publications"].([]map[string]any)
-	if !ok || len(publications) != 1 {
-		t.Fatalf("publications payload = %#v, want one matching publication", enriched.Payload["Publications"])
-	}
-	if publications[0]["Name"] != "publication:website" || publications[0]["DefaultPage"] != "overview" {
-		t.Fatalf("publication payload = %#v, want authored definition", publications[0])
+	if _, ok := enriched.Payload["Publications"]; ok {
+		t.Fatalf("dashboard payload retained authored publication state: %#v", enriched.Payload)
 	}
 	if _, ok := enriched.Payload["pages"]; !ok {
 		t.Fatalf("dashboard payload = %#v, want compiled pages", enriched.Payload)
@@ -784,7 +772,7 @@ func TestDashboardAssetReadModelProjectsCompiledDefinitionAndPublications(t *tes
 
 func TestConnectionAssetReadModelDefinitionRedactsSensitiveConfiguration(t *testing.T) {
 	asset := projectview.DevelopAssetView{ID: "connection:warehouse", Type: string(projectview.AssetTypeConnection), Key: "warehouse", Title: "Warehouse", Payload: map[string]any{}}
-	definition := projectmanifest.Project{Connections: map[string]semanticmodel.Connection{
+	definition := projectmanifest.ResourceManifest{Connections: map[string]semanticmodel.Connection{
 		asset.ID: {
 			Kind: "postgres", Host: "private.database.internal", Port: 5432, Database: "finance", Username: "analyst", Path: "/target/files", Root: "/managed/root", Scope: "target-only",
 			Credentials: semanticmodel.ConnectionCredentials{Provider: "infisical", Secret: "prod/warehouse/password"},
@@ -811,7 +799,7 @@ func TestConnectionAssetBootstrapUsesConnectionPageSignalOnCanonicalStream(t *te
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{{
 			ID: assetID, ProjectID: "project:test", ServingStateID: "state", Type: "connection", Key: "warehouse", Title: "Warehouse", PayloadJSON: `{}`,
 		}}}},
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{Connections: map[string]semanticmodel.Connection{
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{Connections: map[string]semanticmodel.Connection{
 			assetID: {Kind: "duckdb"},
 		}}},
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
@@ -855,8 +843,7 @@ func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 			{ID: "model:orders", ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
 			{ID: "semantic:sales", ProjectID: projectID, ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{}`},
 		}}},
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
-			ID:             projectID,
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
 			Sources:        map[string]semanticmodel.Source{"source:orders": {Fields: map[string]semanticmodel.SourceField{"id": {Type: "integer"}}}},
 			Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"]},
 			SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
@@ -1009,8 +996,8 @@ func TestAssetDataExplorerScopesModelsAndSemanticModels(t *testing.T) {
 			{ID: "model:orders", ProjectID: projectID, Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
 			{ID: "semantic-model:sales", ProjectID: projectID, Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{}`},
 		}}},
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
-			ID: projectID, Models: map[string]semanticmodel.Table{"model:orders": model.Tables["orders"]},
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
+			Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"]},
 			SemanticModels: map[string]*semanticmodel.Model{"semantic-model:sales": model}, NameIndex: projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
 		}, compiled: map[string]*semanticquery.CompiledModel{"semantic-model:sales": compiled}},
 		QueryExecutor: executor, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
@@ -1071,7 +1058,7 @@ func TestSemanticModelAssetBootstrapUsesCompiledModelProjection(t *testing.T) {
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{
 			Assets: []servingstate.Asset{{ID: assetID, ProjectID: projectID, ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{"kind":"semantic_model"}`}},
 		}},
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{ID: projectID, SemanticModels: map[string]*semanticmodel.Model{assetID: model}}, compiled: map[string]*semanticquery.CompiledModel{assetID: compiled}},
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{assetID: model}}, compiled: map[string]*semanticquery.CompiledModel{assetID: compiled}},
 		ResolveProjectID:        func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
 		Environment:             "dev",
 		CurrentUser:             func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
@@ -1103,7 +1090,7 @@ func TestSemanticModelAssetBootstrapRejectsMissingCompiledModel(t *testing.T) {
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{
 			Assets: []servingstate.Asset{{ID: "semantic:sales", ProjectID: "project:test", ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{"kind":"semantic_model"}`}},
 		}},
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{ID: "project:test", SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}},
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}},
 		ResolveProjectID:        func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 		Environment:             "dev",
 		CurrentUser:             func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },

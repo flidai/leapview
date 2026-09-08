@@ -23,20 +23,17 @@ import (
 )
 
 const (
-	govulncheckVersion  = "v1.6.0"
-	auditLevel          = "critical"
-	defaultTimeout      = 10 * time.Minute
-	defaultScanBudget   = 40 * time.Minute
-	rootLookupTimeout   = 30 * time.Second
-	maxDiagnosticBytes  = 64 << 10
-	bunAuditMaxAttempts = 3
-	bunAuditMaxRetries  = 3
+	govulncheckVersion = "v1.6.0"
+	auditLevel         = "critical"
+	defaultTimeout     = 10 * time.Minute
+	rootLookupTimeout  = 30 * time.Second
+	bunRetryBackoff    = 5 * time.Second
+	maxDiagnosticBytes = 64 << 10
 )
 
 var ghsaPattern = regexp.MustCompile(`GHSA-[A-Za-z0-9-]+`)
 var sensitiveDiagnostic = regexp.MustCompile(`(?i)(\b(?:token|password|secret|api[_-]?key|authorization|private[_-]?key)\b\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)`)
-var bunTransportError = regexp.MustCompile(`(?:(?:ConnectionClosed|Timeout): audit request failed|audit request failed \(status 503\))`)
-var errDependencyScanBudget = errors.New("dependency scan budget exhausted")
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 type exceptionContract = securitypolicy.Exceptions
 type findingIdentity = securitypolicy.Finding
@@ -47,21 +44,33 @@ func matches(contract exceptionContract, finding findingIdentity) bool {
 }
 
 type commandResult struct {
-	stdout []byte
-	stderr []byte
-	status int
-	err    error
+	stdout   []byte
+	stderr   []byte
+	status   int
+	err      error
+	timedOut bool
+	canceled bool
+	signaled bool
 }
 
 type runner struct {
-	root                string
-	timeout             time.Duration
-	stdout              io.Writer
-	stderr              io.Writer
-	bunTransportRetries int
-	scanBudget          time.Duration
-	scanDeadline        time.Time
-	now                 func() time.Time
+	root          string
+	timeout       time.Duration
+	stdout        io.Writer
+	stderr        io.Writer
+	now           func() time.Time
+	bunRetryUsed  bool
+	bunRetrySleep func(time.Duration)
+	bunCommand    func(string, ...string) commandResult
+	// goInstallCommand and govulnCommand are injectable seams for hermetic
+	// tests. The default path provisions a private govulncheck binary and
+	// invokes that binary directly, keeping scanner runs independent of Go's
+	// module-download diagnostics.
+	goInstallCommand func(string, string, ...string) commandResult
+	govulnCommand    func(string, string, ...string) commandResult
+	goCommand        func(string, ...string) commandResult
+	npmCommand       func(string, ...string) commandResult
+	govulncheckPath  string
 }
 
 // commandOutput is used instead of passing scanner output directly to a
@@ -80,42 +89,14 @@ func commandOutput(data []byte) []byte {
 }
 
 func (r *runner) command(dir, name string, args ...string) commandResult {
-	deadline, err := r.commandDeadline(dir, name)
-	if err != nil {
-		return commandResult{status: 1, err: err}
-	}
-	ctx, cancel := context.WithDeadline(context.Background(), deadline)
-	defer cancel()
-	command := exec.CommandContext(ctx, name, args...)
-	command.Dir = dir
-	var stdout, stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	err = command.Run()
-	status := 0
-	if err != nil {
-		status = 1
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
-			status = exitError.ExitCode()
-			if status < 0 {
-				status = 1
-			}
-		}
-		if ctx.Err() != nil {
-			if r.scanBudgetExpired() {
-				err = fmt.Errorf("%w while running %s %s", errDependencyScanBudget, name, dir)
-			} else {
-				err = fmt.Errorf("%w (command timed out after %s)", ctx.Err(), r.timeout)
-			}
-		}
-	}
-	return commandResult{stdout: stdout.Bytes(), stderr: stderr.Bytes(), status: status, err: err}
+	return r.commandWithEnv(dir, name, nil, args...)
 }
 
 func (r *runner) run() error {
-	r.bunTransportRetries = 0
-	r.scanDeadline = r.currentTime().Add(r.scanBudgetOrDefault())
+	// A runner corresponds to one scanner process invocation. Keep the Bun
+	// transport retry budget process-wide rather than spending one retry per
+	// discovered lockfile.
+	r.bunRetryUsed = false
 	contract, err := r.loadContract()
 	if err != nil {
 		return err
@@ -124,22 +105,47 @@ func (r *runner) run() error {
 	if err != nil {
 		return err
 	}
+	var cleanup func()
+	if len(modules) > 0 {
+		var scannerPath string
+		scannerPath, cleanup, err = r.prepareGovulncheck()
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		previousPath := r.govulncheckPath
+		r.govulncheckPath = scannerPath
+		defer func() { r.govulncheckPath = previousPath }()
+	}
 	for _, path := range modules {
 		if err := r.scanGo(path, contract); err != nil {
 			return err
 		}
 	}
-	for _, path := range buns {
-		if err := r.scanBun(path, contract); err != nil {
-			return err
-		}
+	return r.evaluateCheckedInJavaScriptEvidence(buns, npms, contract)
+}
+
+// runRefresh performs the opt-in live JavaScript scan and atomically publishes
+// its normalized evidence only after every discovered graph has succeeded.
+func (r *runner) runRefresh() error {
+	r.bunRetryUsed = false
+	contract, err := r.loadContract()
+	if err != nil {
+		return err
 	}
-	for _, path := range npms {
-		if err := r.scanNPM(path, contract); err != nil {
-			return err
-		}
+	_, buns, npms, err := discover(r.root)
+	if err != nil {
+		return err
 	}
-	return nil
+	evidence, err := r.refreshJavaScriptEvidence(buns, npms)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(r.root, javascriptEvidenceRelativePath)
+	if err := writeJavaScriptEvidenceAtomic(path, evidence); err != nil {
+		return err
+	}
+	return r.evaluateJavaScriptFindings(evidence, contract)
 }
 
 func (r *runner) loadContract() (*exceptionContract, error) {
@@ -149,7 +155,7 @@ func (r *runner) loadContract() (*exceptionContract, error) {
 		return nil, nil
 	}
 	fmt.Fprintln(r.stdout, "dependency security: validating exception contract")
-	contract, err := securitypolicy.LoadValidatedExceptions(r.root, time.Now().UTC())
+	contract, err := securitypolicy.LoadValidatedExceptions(r.root, r.nowUTC())
 	if err != nil {
 		return nil, fmt.Errorf("validated exception contract is unavailable: %w", err)
 	}
@@ -178,15 +184,24 @@ func discover(root string) (modules, buns, npms []string, err error) {
 				return nil
 			}
 		}
-		if info.IsDir() || !info.Mode().IsRegular() {
+		if info.IsDir() {
 			return nil
 		}
 		switch info.Name() {
 		case "go.mod":
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("maintained dependency file %s must be a regular file", path)
+			}
 			modules = append(modules, path)
 		case "bun.lock":
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("maintained dependency file %s must be a regular file", path)
+			}
 			buns = append(buns, path)
 		case "package-lock.json":
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("maintained dependency file %s must be a regular file", path)
+			}
 			npms = append(npms, path)
 		}
 		return nil
@@ -207,33 +222,42 @@ func excludedPath(path string) bool {
 	return false
 }
 
-func (r *runner) scanGo(moduleFile string, contract *exceptionContract) error {
+func (r *runner) scanGo(moduleFile string, _ *exceptionContract) error {
 	dir := filepath.Dir(moduleFile)
 	fmt.Fprintf(r.stdout, "govulncheck %s\n", dir)
-	args := []string{"run", "golang.org/x/vuln/cmd/govulncheck@" + govulncheckVersion}
-	if contract != nil {
-		args = append(args, "-json")
+	var result commandResult
+	if r.govulncheckPath != "" {
+		result = r.runGovulnCommand(dir, r.govulncheckPath, "-json", "./...")
+	} else {
+		args := []string{"run", "golang.org/x/vuln/cmd/govulncheck@" + govulncheckVersion, "-json", "./..."}
+		result = r.runGoCommand(dir, args...)
 	}
-	args = append(args, "./...")
-	result := r.command(dir, "go", args...)
-	if errors.Is(result.err, errDependencyScanBudget) {
+	if isCommandLifecycleError(result) {
 		r.emitFailure(result)
-		fmt.Fprintf(r.stderr, "govulncheck %s: dependency scan budget exhausted; failing closed\n", dir)
 		return commandError("govulncheck", dir, result)
 	}
-	if contract == nil {
-		r.emitDirect(result)
+	if len(bytes.TrimSpace(result.stderr)) != 0 {
+		r.emitFailure(result)
+		return fmt.Errorf("govulncheck %s emitted diagnostics on stderr", dir)
+	}
+	if result.status != 0 {
+		r.emitFailure(result)
+		return statusError("govulncheck", dir, result.status)
+	}
+	if result.err != nil {
+		r.emitFailure(result)
 		return commandError("govulncheck", dir, result)
 	}
-	if result.status == 0 {
-		return nil
+	stream, err := parseGovulnStream(result.stdout)
+	if err != nil {
+		r.emitFailure(result)
+		return fmt.Errorf("govulncheck %s output is malformed or incomplete: %w", dir, err)
 	}
-	if allGovulnFindingsWaived(result.stdout, *contract) {
-		fmt.Fprintf(r.stdout, "govulncheck %s: all findings match exact, active exceptions\n", dir)
-		return nil
+	if len(stream.findings) > 0 {
+		finding := stream.findings[0]
+		return fmt.Errorf("govulncheck %s reported finding %s in %s", dir, finding.OSV, finding.Trace[0].Module)
 	}
-	r.emitFailure(result)
-	return commandError("govulncheck", dir, result)
+	return nil
 }
 
 func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
@@ -243,21 +267,36 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 	if contract != nil {
 		args = append(args, "--json")
 	}
-	result := r.runBunAudit(dir, args...)
-	if errors.Is(result.err, errDependencyScanBudget) {
-		r.emitFailure(result)
-		fmt.Fprintf(r.stderr, "bun audit %s: dependency scan budget exhausted; failing closed\n", dir)
-		return commandError("bun audit", dir, result)
-	}
+	result := r.runBunCommand(dir, args...)
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("bun audit", dir, result)
 	}
+	if isBunLifecycleError(result) {
+		r.emitFailure(result)
+		return commandError("bun audit", dir, result)
+	}
 	count, critical, err := bunFindingCounts(result.stdout)
+	if critical == 0 && r.shouldRetryBun(result) {
+		r.bunRetryUsed = true
+		fmt.Fprintf(r.stdout, "bun audit %s: retrying once after transport failure (%s backoff)\n", dir, bunRetryBackoff)
+		r.waitForBunRetry()
+		result = r.runBunCommand(dir, args...)
+		if isBunLifecycleError(result) {
+			r.emitFailure(result)
+			return commandError("bun audit", dir, result)
+		}
+		count, critical, err = bunFindingCounts(result.stdout)
+	}
 	if err != nil {
 		r.emitFailure(result)
 		fmt.Fprintf(r.stderr, "bun audit %s: scanner output is not valid JSON\n", dir)
 		return errors.New("bun audit output is malformed")
+	}
+	if critical == 0 && isBunTransportFailure(result) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "bun audit %s: transport failure exhausted the bounded retry budget\n", dir)
+		return statusError("bun audit", dir, result.status)
 	}
 	if critical == 0 {
 		if result.status == 1 && count > 0 {
@@ -272,6 +311,10 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 		fmt.Fprintf(r.stdout, "bun audit %s: no Critical findings\n", dir)
 		return nil
 	}
+	if isBunTransportFailure(result) {
+		r.emitFailure(result)
+		return statusError("bun audit", dir, result.status)
+	}
 	status := result.status
 	if status == 0 {
 		status = 1
@@ -284,68 +327,67 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 	return statusError("bun audit", dir, status)
 }
 
-func (r *runner) runBunAudit(dir string, args ...string) commandResult {
-	for attempt := 1; attempt <= bunAuditMaxAttempts; attempt++ {
-		result := r.command(dir, "bun", args...)
-		if !retryableBunAuditTransport(result) {
-			return result
+func (r *runner) shouldRetryBun(result commandResult) bool {
+	return !r.bunRetryUsed && isBunTransportFailure(result)
+}
+
+func (r *runner) runBunCommand(dir string, args ...string) commandResult {
+	if r.bunCommand != nil {
+		return r.bunCommand(dir, args...)
+	}
+	return r.command(dir, "bun", args...)
+}
+
+func (r *runner) runGoCommand(dir string, args ...string) commandResult {
+	if r.goCommand != nil {
+		return r.goCommand(dir, args...)
+	}
+	return r.command(dir, "go", args...)
+}
+
+func (r *runner) runNPMCommand(dir string, args ...string) commandResult {
+	if r.npmCommand != nil {
+		return r.npmCommand(dir, args...)
+	}
+	return r.command(dir, "npm", args...)
+}
+
+func (r *runner) waitForBunRetry() {
+	if r.bunRetrySleep != nil {
+		r.bunRetrySleep(bunRetryBackoff)
+		return
+	}
+	time.Sleep(bunRetryBackoff)
+}
+
+func isBunTransportFailure(result commandResult) bool {
+	return !isBunLifecycleError(result) &&
+		(hasBunTransportSignature(result.stdout) || hasBunTransportSignature(result.stderr))
+}
+
+func isBunLifecycleError(result commandResult) bool {
+	return isCommandLifecycleError(result)
+}
+
+func isCommandLifecycleError(result commandResult) bool {
+	if result.timedOut || result.canceled || result.signaled {
+		return true
+	}
+	if errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded) {
+		return true
+	}
+	var exitError *exec.ExitError
+	return errors.As(result.err, &exitError) && exitError.ProcessState != nil && exitError.ProcessState.ExitCode() < 0
+}
+
+func hasBunTransportSignature(data []byte) bool {
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if bytes.Equal(line, []byte("Timeout: audit request failed")) || bytes.Equal(line, []byte("ConnectionClosed: audit request failed")) {
+			return true
 		}
-		if attempt == bunAuditMaxAttempts {
-			fmt.Fprintf(r.stdout, "bun audit %s: transient transport failure; per-lock retry budget exhausted after %d attempts\n", dir, bunAuditMaxAttempts)
-			return result
-		}
-		if r.scanBudgetExpired() {
-			fmt.Fprintf(r.stdout, "bun audit %s: dependency scan budget exhausted before retry; failing closed\n", dir)
-			return result
-		}
-		if r.bunTransportRetries >= bunAuditMaxRetries {
-			fmt.Fprintf(r.stdout, "bun audit %s: global transient transport retry budget exhausted after %d retries\n", dir, bunAuditMaxRetries)
-			return result
-		}
-		r.bunTransportRetries++
-		fmt.Fprintf(r.stdout, "bun audit %s: transient transport failure; retrying (attempt %d/%d)\n", dir, attempt+1, bunAuditMaxAttempts)
 	}
-	return commandResult{status: 1, err: errors.New("bun audit retry budget was invalid")}
-}
-
-func retryableBunAuditTransport(result commandResult) bool {
-	return result.status != 0 && len(bytes.TrimSpace(result.stdout)) == 0 && bunTransportError.Match(result.stderr)
-}
-
-func (r *runner) commandDeadline(dir, name string) (time.Time, error) {
-	now := r.currentTime()
-	if r.timeout <= 0 {
-		return time.Time{}, errors.New("scanner command timeout must be positive")
-	}
-	deadline := now.Add(r.timeout)
-	if r.scanDeadline.IsZero() {
-		return deadline, nil
-	}
-	if !r.scanDeadline.After(now) {
-		return time.Time{}, fmt.Errorf("%w before running %s %s", errDependencyScanBudget, name, dir)
-	}
-	if r.scanDeadline.Before(deadline) {
-		return r.scanDeadline, nil
-	}
-	return deadline, nil
-}
-
-func (r *runner) currentTime() time.Time {
-	if r.now != nil {
-		return r.now()
-	}
-	return time.Now()
-}
-
-func (r *runner) scanBudgetOrDefault() time.Duration {
-	if r.scanBudget > 0 {
-		return r.scanBudget
-	}
-	return defaultScanBudget
-}
-
-func (r *runner) scanBudgetExpired() bool {
-	return !r.scanDeadline.IsZero() && !r.scanDeadline.After(r.currentTime())
+	return false
 }
 
 func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
@@ -355,39 +397,13 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 	if contract != nil {
 		args = append(args, "--json")
 	}
-	result := r.command(dir, "npm", args...)
-	if errors.Is(result.err, errDependencyScanBudget) {
-		r.emitFailure(result)
-		fmt.Fprintf(r.stderr, "npm audit %s: dependency scan budget exhausted; failing closed\n", dir)
-		return commandError("npm audit", dir, result)
-	}
-	retried := false
-	if contract != nil && retryableNPMAuditTransport(result) {
-		fmt.Fprintf(r.stdout, "npm audit %s: transient transport failure; retrying once\n", dir)
-		retried = true
-		result = r.command(dir, "npm", args...)
-	}
-	if errors.Is(result.err, errDependencyScanBudget) {
-		r.emitFailure(result)
-		fmt.Fprintf(r.stderr, "npm audit %s: dependency scan budget exhausted; failing closed\n", dir)
-		return commandError("npm audit", dir, result)
-	}
-	if retried && result.status == 0 && !validNPMAuditReport(result.stdout) {
-		r.emitFailure(result)
-		fmt.Fprintf(r.stderr, "npm audit %s: scanner output after retry is not a valid audit report\n", dir)
-		return errors.New("npm audit output after retry was malformed")
-	}
+	result := r.runNPMCommand(dir, args...)
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("npm audit", dir, result)
 	}
 	if result.status == 0 {
 		return nil
-	}
-	if !validNPMAuditReport(result.stdout) {
-		r.emitFailure(result)
-		fmt.Fprintf(r.stderr, "npm audit %s: scanner output is not a valid audit report\n", dir)
-		return errors.New("npm audit output was malformed")
 	}
 	if allNPMFindingsWaived(result.stdout, *contract) {
 		fmt.Fprintf(r.stdout, "npm audit %s: all findings match exact, active exceptions\n", dir)
@@ -397,100 +413,12 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 	return commandError("npm audit", dir, result)
 }
 
-func retryableNPMAuditTransport(result commandResult) bool {
-	if result.status == 0 {
-		return false
+func (r *runner) nowUTC() time.Time {
+	if r.now != nil {
+		return r.now().UTC()
 	}
-	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal(result.stdout, &envelope); err != nil || envelope == nil {
-		return false
-	}
-	for field := range envelope {
-		switch field {
-		case "statusCode", "message", "method", "uri", "headers", "body", "error":
-		default:
-			return false
-		}
-	}
-	var payload struct {
-		StatusCode      int                        `json:"statusCode"`
-		Message         string                     `json:"message"`
-		Method          string                     `json:"method"`
-		URI             string                     `json:"uri"`
-		Headers         json.RawMessage            `json:"headers"`
-		Body            map[string]json.RawMessage `json:"body"`
-		Error           json.RawMessage            `json:"error"`
-		Vulnerabilities json.RawMessage            `json:"vulnerabilities"`
-	}
-	if err := json.Unmarshal(result.stdout, &payload); err != nil || payload.Vulnerabilities != nil {
-		return false
-	}
-	if payload.StatusCode != 503 || payload.Message != npmAuditBulk503Message {
-		return false
-	}
-	if payload.Method != "" && payload.Method != "POST" || payload.URI != "" && payload.URI != npmAuditBulkEndpoint {
-		return false
-	}
-	if payload.Headers != nil {
-		var headers map[string]json.RawMessage
-		if json.Unmarshal(payload.Headers, &headers) != nil || headers == nil {
-			return false
-		}
-	}
-	if payload.Error != nil && !validNPMAuditTransportError(payload.Error) {
-		return false
-	}
-	if len(payload.Body) != 1 {
-		return false
-	}
-	bodyError, ok := payload.Body["error"]
-	if !ok {
-		return false
-	}
-	var bodyErrorText string
-	if json.Unmarshal(bodyError, &bodyErrorText) != nil || bodyErrorText != "Service Unavailable" {
-		return false
-	}
-	diagnostic := string(result.stderr)
-	return strings.Contains(diagnostic, "npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable") &&
-		strings.Contains(diagnostic, "npm error audit endpoint returned an error")
+	return time.Now().UTC()
 }
-
-func validNPMAuditTransportError(data []byte) bool {
-	var diagnostic map[string]json.RawMessage
-	if json.Unmarshal(data, &diagnostic) != nil || len(diagnostic) != 2 {
-		return false
-	}
-	for _, field := range []string{"summary", "detail"} {
-		var value string
-		raw, present := diagnostic[field]
-		if !present || json.Unmarshal(raw, &value) != nil || value != "" {
-			return false
-		}
-	}
-	return true
-}
-
-func validNPMAuditReport(data []byte) bool {
-	var report map[string]json.RawMessage
-	if err := json.Unmarshal(data, &report); err != nil || report == nil {
-		return false
-	}
-	for _, errorField := range []string{"statusCode", "message", "body", "error"} {
-		if _, present := report[errorField]; present {
-			return false
-		}
-	}
-	vulnerabilities, ok := report["vulnerabilities"]
-	if !ok {
-		return false
-	}
-	var object map[string]json.RawMessage
-	return json.Unmarshal(vulnerabilities, &object) == nil && object != nil
-}
-
-const npmAuditBulkEndpoint = "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk"
-const npmAuditBulk503Message = "503 Service Unavailable - POST " + npmAuditBulkEndpoint + " - Service Unavailable"
 
 func (r *runner) emitDirect(result commandResult) {
 	if len(result.stdout) > 0 {
@@ -511,6 +439,12 @@ func (r *runner) emitFailure(result commandResult) {
 }
 
 func commandError(scanner, dir string, result commandResult) error {
+	if isCommandLifecycleError(result) {
+		if result.err != nil {
+			return fmt.Errorf("%s %s failed: %w", scanner, dir, result.err)
+		}
+		return fmt.Errorf("%s %s failed due to command lifecycle interruption", scanner, dir)
+	}
 	if result.err != nil {
 		return fmt.Errorf("%s %s failed: %w", scanner, dir, result.err)
 	}
@@ -527,54 +461,10 @@ func statusError(scanner, dir string, status int) error {
 	return fmt.Errorf("%s %s failed with status %d", scanner, dir, status)
 }
 
-type govulnEnvelope struct {
-	Finding *govulnFinding `json:"finding"`
-}
-
-type govulnFinding struct {
-	OSV   json.RawMessage `json:"osv"`
-	Trace []struct {
-		Module json.RawMessage `json:"module"`
-	} `json:"trace"`
-	Severity json.RawMessage `json:"severity"`
-}
-
-func allGovulnFindingsWaived(data []byte, contract exceptionContract) bool {
-	findings, ok := decodeGovulnFindings(data)
-	if !ok || len(findings) == 0 {
-		return false
-	}
-	for _, finding := range findings {
-		if finding.OSV == nil || len(finding.Trace) == 0 || finding.Trace[0].Module == nil || finding.Severity == nil {
-			return false
-		}
-		identity := findingIdentity{Scanner: "govulncheck", Rule: jsonScalar(finding.OSV), Resource: jsonScalar(finding.Trace[0].Module), Severity: jsonScalar(finding.Severity)}
-		if identity.Rule == "" || identity.Resource == "" || identity.Severity == "" || !matches(contract, identity) {
-			return false
-		}
-	}
-	return true
-}
-
-func decodeGovulnFindings(data []byte) ([]govulnFinding, bool) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	var findings []govulnFinding
-	for {
-		var envelope govulnEnvelope
-		err := decoder.Decode(&envelope)
-		if errors.Is(err, io.EOF) {
-			return findings, true
-		}
-		if err != nil {
-			return nil, false
-		}
-		if envelope.Finding != nil {
-			findings = append(findings, *envelope.Finding)
-		}
-	}
-}
-
 func bunFindingCounts(data []byte) (findingCount, criticalCount int, err error) {
+	if err = rejectDuplicateJSONKeys(data); err != nil {
+		return
+	}
 	var packages map[string]json.RawMessage
 	if err = json.Unmarshal(data, &packages); err != nil || packages == nil {
 		if err == nil {
@@ -582,39 +472,59 @@ func bunFindingCounts(data []byte) (findingCount, criticalCount int, err error) 
 		}
 		return
 	}
-	for _, rawPackage := range packages {
+	packageNames := make([]string, 0, len(packages))
+	for name := range packages {
+		packageNames = append(packageNames, name)
+	}
+	sort.Strings(packageNames)
+	recordError := func(parseErr error) {
+		if err == nil {
+			err = parseErr
+		}
+	}
+	for _, name := range packageNames {
+		rawPackage := packages[name]
 		if bytes.Equal(bytes.TrimSpace(rawPackage), []byte("null")) {
-			return findingCount, criticalCount, errors.New("package findings are not an array")
+			recordError(errors.New("package findings are not an array"))
+			continue
 		}
 		var rawFindings []json.RawMessage
-		if err = json.Unmarshal(rawPackage, &rawFindings); err != nil || rawFindings == nil {
-			if err == nil {
-				err = errors.New("package findings are not an array")
+		if parseErr := json.Unmarshal(rawPackage, &rawFindings); parseErr != nil || rawFindings == nil {
+			if parseErr == nil {
+				parseErr = errors.New("package findings are not an array")
 			}
-			return
+			recordError(parseErr)
+			continue
 		}
 		for _, raw := range rawFindings {
 			var finding struct {
 				Severity string `json:"severity"`
 			}
-			if err = json.Unmarshal(raw, &finding); err != nil || !json.Valid(raw) {
-				if err == nil {
-					err = errors.New("finding is not an object")
+			if parseErr := json.Unmarshal(raw, &finding); parseErr != nil || !json.Valid(raw) {
+				if parseErr == nil {
+					parseErr = errors.New("finding is not an object")
 				}
-				return
+				recordError(parseErr)
+				continue
 			}
 			// Unmarshalling a scalar into the struct fails; an object without a
 			// severity is malformed rather than an advisory below the threshold.
 			var shape map[string]json.RawMessage
-			if err = json.Unmarshal(raw, &shape); err != nil || shape == nil {
-				if err == nil {
-					err = errors.New("finding is not an object")
+			if parseErr := json.Unmarshal(raw, &shape); parseErr != nil || shape == nil {
+				if parseErr == nil {
+					parseErr = errors.New("finding is not an object")
 				}
-				return
+				recordError(parseErr)
+				continue
 			}
 			severity, present := shape["severity"]
 			if !present || json.Unmarshal(severity, &finding.Severity) != nil {
-				return findingCount, criticalCount, errors.New("finding severity is not a string")
+				recordError(errors.New("finding severity is not a usable string"))
+				continue
+			}
+			if !usableBunSeverity(finding.Severity) {
+				recordError(errors.New("finding severity is not usable"))
+				continue
 			}
 			findingCount++
 			if strings.EqualFold(finding.Severity, "critical") {
@@ -622,10 +532,25 @@ func bunFindingCounts(data []byte) (findingCount, criticalCount int, err error) 
 			}
 		}
 	}
-	return findingCount, criticalCount, nil
+	return findingCount, criticalCount, err
+}
+
+func usableBunSeverity(severity string) bool {
+	if severity == "" {
+		return false
+	}
+	switch strings.ToLower(severity) {
+	case "low", "moderate", "high", "critical":
+		return true
+	default:
+		return false
+	}
 }
 
 func allBunFindingsWaived(data []byte, contract exceptionContract) bool {
+	if rejectDuplicateJSONKeys(data) != nil {
+		return false
+	}
 	var packages map[string][]json.RawMessage
 	if json.Unmarshal(data, &packages) != nil || packages == nil {
 		return false
@@ -658,6 +583,9 @@ func allBunFindingsWaived(data []byte, contract exceptionContract) bool {
 }
 
 func allNPMFindingsWaived(data []byte, contract exceptionContract) bool {
+	if rejectDuplicateJSONKeys(data) != nil {
+		return false
+	}
 	var root struct {
 		Vulnerabilities map[string]npmVulnerability `json:"vulnerabilities"`
 	}
@@ -721,18 +649,84 @@ func jsonScalar(raw json.RawMessage) string {
 	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
 		return ""
 	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
 	var value any
-	if json.Unmarshal(raw, &value) != nil {
+	if decoder.Decode(&value) != nil {
 		return ""
 	}
 	switch value := value.(type) {
 	case string:
 		return value
-	case float64:
-		return strconv.FormatFloat(value, 'g', -1, 64)
+	case json.Number:
+		return value.String()
 	case bool:
 		return strconv.FormatBool(value)
 	default:
 		return ""
 	}
+}
+
+func rejectDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := consumeJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func consumeJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := map[string]struct{}{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("JSON object key is not a string")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("duplicate JSON object key %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := consumeJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for decoder.More() {
+			if err := consumeJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	default:
+		return errors.New("unexpected JSON delimiter")
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	closingDelimiter, ok := closing.(json.Delim)
+	if !ok || (delimiter == '{' && closingDelimiter != '}') || (delimiter == '[' && closingDelimiter != ']') {
+		return errors.New("mismatched JSON delimiter")
+	}
+	return nil
 }

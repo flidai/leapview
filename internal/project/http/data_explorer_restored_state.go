@@ -23,6 +23,10 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 	semanticModelID := strings.TrimSpace(spec.ModelID)
 	selectedSemanticModelID := strings.TrimSpace(projection.Command.Spec.ModelID)
 
+	compiled := compiledModels[selectedSemanticModelID]
+	if selectedSemanticModelID != "" && (compiled == nil || len(compiled.DatasetNames()) == 0) {
+		return fmt.Errorf("semantic model %q has no active compiled definition; reload the explorer after the serving state is ready", selectedSemanticModelID)
+	}
 	if semanticModelID != "" {
 		if !explorerSemanticModelByID(projection.SemanticModels, semanticModelID) {
 			return fmt.Errorf("semantic model %q is no longer available; choose an active semantic model", semanticModelID)
@@ -33,10 +37,6 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 	}
 	if selectedSemanticModelID == "" {
 		return fmt.Errorf("no active semantic model is available; choose an active semantic model")
-	}
-	compiled := compiledModels[selectedSemanticModelID]
-	if compiled == nil || len(compiled.DatasetNames()) == 0 {
-		return fmt.Errorf("semantic model %q has no active compiled definition; reload the explorer after the serving state is ready", selectedSemanticModelID)
 	}
 	if model != nil {
 		// Legacy explore URLs historically allowed the model operand to be

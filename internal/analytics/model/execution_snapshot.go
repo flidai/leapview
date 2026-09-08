@@ -32,6 +32,7 @@ func (m *Model) ExecutionSnapshot() *Model {
 	clone.Dimensions = snapshotSemanticDimensions(m.Dimensions)
 	clone.Filters = snapshotSemanticFilters(m.Filters)
 	clone.Metrics = snapshotMetrics(m.Metrics)
+	clone.AccessPolicy = cloneSemanticAccessPolicy(m.AccessPolicy)
 	return &clone
 }
 
@@ -217,6 +218,7 @@ func snapshotModelChecks(values []ModelCheck) []ModelCheck {
 		clone[index] = value
 		clone[index].Fields = append([]string(nil), value.Fields...)
 		clone[index].Values = append([]string(nil), value.Values...)
+		clone[index].Tags = append([]string(nil), value.Tags...)
 		if value.Minimum != nil {
 			minimum := *value.Minimum
 			clone[index].Minimum = &minimum

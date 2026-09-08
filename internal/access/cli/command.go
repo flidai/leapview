@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -31,7 +30,7 @@ type ProjectIdentityResolver interface {
 
 func LoginCommand(ctx context.Context, authentication AuthenticationService, discovery TargetDiscovery, projects ProjectIdentityResolver) *cobra.Command {
 	var name string
-	projectPath := filepath.Join("dashboards", "leapview.yaml")
+	var projectUID string
 	var headless bool
 	format := "text"
 	command := &cobra.Command{
@@ -42,24 +41,27 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 			if authentication == nil || discovery == nil || projects == nil {
 				return fmt.Errorf("login dependencies are unavailable")
 			}
+			if format != "text" && format != "json" {
+				return fmt.Errorf("login format must be text or json")
+			}
+			// Resolve and durably persist the issuer-owned project identity before
+			// contacting a target. A failed or unreachable target must not leave
+			// the local authority able to mint a different identity later.
+			projectID, err := projects.ProjectID(projectUID)
+			if err != nil {
+				return fmt.Errorf("read authoring project identity: %w", err)
+			}
+			if strings.TrimSpace(projectID) == "" {
+				return fmt.Errorf("authoring project has no identity")
+			}
 			origin := strings.TrimRight(strings.TrimSpace(args[0]), "/")
 			metadata, err := discovery.Discover(ctx, origin)
 			if err != nil {
 				return fmt.Errorf("discover LeapView target: %w", err)
 			}
-			projectID, err := projects.ProjectID(projectPath)
-			if err != nil {
-				return fmt.Errorf("read authoring project identity: %w", err)
-			}
-			if strings.TrimSpace(projectID) == "" {
-				return fmt.Errorf("authoring project %q has no identity", projectPath)
-			}
 			profileName := strings.TrimSpace(name)
 			if profileName == "" {
 				profileName = metadata.Origin
-			}
-			if format != "text" && format != "json" {
-				return fmt.Errorf("login format must be text or json")
 			}
 			encoder := json.NewEncoder(command.OutOrStdout())
 			var eventErr error
@@ -105,7 +107,7 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 		},
 	}
 	command.Flags().StringVar(&name, "name", "", "stable local name for this target")
-	command.Flags().StringVar(&projectPath, "project", projectPath, "project entrypoint used to scope authoring credentials")
+	command.Flags().StringVar(&projectUID, "project-id", "", "externally issued ProjectUID (first bootstrap only)")
 	command.Flags().BoolVar(&headless, "no-browser", false, "show the verification URL and code without opening a browser")
 	command.Flags().StringVar(&format, "format", format, "output format: text or json")
 	return command

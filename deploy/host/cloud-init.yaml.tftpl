@@ -15,11 +15,5 @@ write_files:
     permissions: "0600"
     encoding: b64
     content: ${image_b64}
-  - path: /run/leapview/release-transition-policy.json
-    owner: root:root
-    permissions: "0600"
-    encoding: b64
-    content: ${policy_b64}
-
 runcmd:
   - [/usr/local/sbin/leapview-bootstrap]

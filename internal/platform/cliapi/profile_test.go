@@ -5,11 +5,104 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
+
+func validateTestProjectResourceID(value string) error {
+	_, err := projectgraph.NewResourceID(value)
+	return err
+}
+
+func TestProfileStoreProjectAuthorityMintsOnceAndSurvivesTargetRecreation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cli.json")
+	store := NewProfileStore(path)
+	first, err := store.ResolveProjectAuthority("", validateTestProjectResourceID)
+	require.NoError(t, err)
+	second, err := NewProfileStore(path).ResolveProjectAuthority("", validateTestProjectResourceID)
+	require.NoError(t, err)
+	require.Equal(t, first, second)
+	require.NotEmpty(t, first.IssuerID)
+	require.NotEmpty(t, first.ProjectUID)
+
+	profile := TargetProfile{Origin: "https://example.com", InstanceID: "lvinst_one", Environment: "development", CredentialAccount: "one", ProjectID: first.ProjectUID}
+	require.NoError(t, store.Put("local", profile))
+	require.NoError(t, store.Delete("local"))
+	afterDelete, err := store.ResolveProjectAuthority("", validateTestProjectResourceID)
+	require.NoError(t, err)
+	require.Equal(t, first, afterDelete)
+
+	profile.InstanceID = "lvinst_two"
+	profile.Environment = "production"
+	require.NoError(t, store.Put("recreated", profile))
+	require.Equal(t, first.ProjectUID, profile.ProjectID)
+}
+
+func TestProfileStoreProjectAuthorityAcceptsExternalUIDAndRejectsReplacement(t *testing.T) {
+	store := NewProfileStore(filepath.Join(t.TempDir(), "cli.json"))
+	authority, err := store.ResolveProjectAuthority("project:externally-issued", validateTestProjectResourceID)
+	require.NoError(t, err)
+	require.Equal(t, "project:externally-issued", authority.ProjectUID)
+
+	replay, err := store.ResolveProjectAuthority("project:externally-issued", validateTestProjectResourceID)
+	require.NoError(t, err)
+	require.Equal(t, authority, replay)
+
+	_, err = store.ResolveProjectAuthority("project:forged-replacement", validateTestProjectResourceID)
+	require.ErrorIs(t, err, ErrProjectAuthorityConflict)
+}
+
+func TestProfileStoreProjectAuthorityCanBindSameUIDToSeparateTargets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cli.json")
+	store := NewProfileStore(path)
+	authority, err := store.ResolveProjectAuthority("project:shared", validateTestProjectResourceID)
+	require.NoError(t, err)
+	for name, profile := range map[string]TargetProfile{
+		"development": {Origin: "http://127.0.0.1:8080", InstanceID: "lvinst_dev", Environment: "development", CredentialAccount: "dev", ProjectID: authority.ProjectUID},
+		"production":  {Origin: "https://prod.example.com", InstanceID: "lvinst_prod", Environment: "production", CredentialAccount: "prod", ProjectID: authority.ProjectUID},
+	} {
+		require.NoError(t, store.Put(name, profile))
+	}
+	dev, err := store.Get("development")
+	require.NoError(t, err)
+	prod, err := store.Get("production")
+	require.NoError(t, err)
+	require.Equal(t, dev.ProjectID, prod.ProjectID)
+}
+
+func TestProfileStoreProjectAuthorityConcurrentFirstUseConverges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cli.json")
+	const callers = 8
+	results := make(chan ProjectAuthority, callers)
+	errors := make(chan error, callers)
+	var group sync.WaitGroup
+	for range callers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			authority, err := NewProfileStore(path).ResolveProjectAuthority("", validateTestProjectResourceID)
+			results <- authority
+			errors <- err
+		}()
+	}
+	group.Wait()
+	close(results)
+	close(errors)
+	for err := range errors {
+		require.NoError(t, err)
+	}
+	var expected ProjectAuthority
+	for authority := range results {
+		if expected.ProjectUID == "" {
+			expected = authority
+		}
+		require.Equal(t, expected, authority)
+	}
+}
 
 func TestProfileStorePersistsOnlyNonSecretTargetMetadata(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cli.json")

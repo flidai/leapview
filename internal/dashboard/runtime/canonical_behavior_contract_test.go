@@ -35,6 +35,29 @@ type canonicalVerifyingRuntime struct {
 	verifies  int
 }
 
+type heatmapFilterRuntime struct {
+	canonicalDataRuntime
+	requests []dataquery.Query
+}
+
+func (r *heatmapFilterRuntime) ExecuteDataQuery(_ context.Context, request dataquery.Query) (dataquery.Result, error) {
+	r.requests = append(r.requests, request)
+	rows := []dataquery.Row{
+		{"state": "SP", "order_status": "delivered", "order_count": int64(2)},
+		{"state": "RJ", "order_status": "delivered", "order_count": int64(1)},
+	}
+	for _, filter := range request.Filters {
+		if filter.Field == "state" && filter.Operator == "in" && len(filter.Values) == 1 && filter.Values[0] == "SP" {
+			rows = rows[:1]
+			break
+		}
+	}
+	return dataquery.Result{
+		Rows: rows, RowsReturned: len(rows), PlanningMS: 1, DatabaseMS: 1, ExecutionMS: 1,
+		Status: dataquery.StatusSuccess, ExecutionState: dataquery.ExecutionSucceeded,
+	}, nil
+}
+
 func (r *canonicalVerifyingRuntime) VerifySemantic(context.Context) error {
 	r.verifies++
 	return r.verifyErr
@@ -123,6 +146,41 @@ func canonicalCartesian(t *testing.T, id string) visualizationdefinition.Definit
 	return definition
 }
 
+func canonicalHeatmap(t *testing.T, id string) visualizationdefinition.Definition {
+	fields := []visualizationir.VisualizationField{
+		{ID: "state", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "State"},
+		{ID: "order_status", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "Status"},
+		{ID: "order_count", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeInteger, Label: "Orders"},
+	}
+	base := canonicalBase("cartesian", id, fields)
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{
+		VisualizationSpecBase: base,
+		Kind:                  "cartesian",
+		Mark:                  visualizationir.VisualizationCartesianMarkHeatmap,
+		X:                     visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "state"},
+		Y: []visualizationir.VisualizationFieldRef{
+			{Dataset: "primary", Field: "order_status"},
+			{Dataset: "primary", Field: "order_count"},
+		},
+		Presentation: visualizationir.CartesianVisualizationPresentation{VisualizationPresentation: visualizationir.VisualizationPresentation{
+			LabelPolicy: visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityHidden, MaxCharacters: 24, TooltipFallback: true},
+		}},
+	}}
+	definition, err := visualizationdefinition.New(id, spec, visualizationdefinition.QueryBinding{
+		Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultMatrixCells, ModelID: "model_1", DatasetID: "primary",
+		Aggregate: &visualizationdefinition.AggregateQueryBinding{
+			TableID:    "orders",
+			Dimensions: []visualizationdefinition.FieldBinding{{FieldID: "state", Alias: "state"}, {FieldID: "order_status", Alias: "order_status"}},
+			Metrics:    []visualizationdefinition.FieldBinding{{FieldID: "order_count", Alias: "order_count"}},
+			Limit:      100,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return definition
+}
+
 func canonicalTable(t *testing.T) visualizationdefinition.Definition {
 	fields := []visualizationir.VisualizationField{{ID: "order_id", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "Order"}, {ID: "status", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "Status"}}
 	base := canonicalBase("table", "Orders", fields)
@@ -163,6 +221,74 @@ func canonicalBehaviorRuntime(t *testing.T, definition *ProjectDefinition, data 
 		t.Fatal(err)
 	}
 	return service
+}
+
+func TestHeatmapPageStateFilterTargetsEveryHeatmap(t *testing.T) {
+	definition, compiled := canonicalBehaviorDefinition(t, false)
+	visualIDs := []string{"state_status_heatmap", "category_status_heatmap", "category_status_heatmap_labels"}
+	compiled.Visualizations = map[string]visualizationdefinition.Definition{}
+	pageVisuals := make([]dashboard.PageVisual, 0, len(visualIDs))
+	for index, visualID := range visualIDs {
+		compiled.Visualizations[visualID] = canonicalHeatmap(t, visualID)
+		pageVisuals = append(pageVisuals, dashboard.PageVisual{ID: visualID + "-card", Kind: "visual", Visual: visualID, Placement: dashboard.PagePlacement{Col: index + 1, Row: 1, ColSpan: 4, RowSpan: 4}})
+	}
+	compiled.Pages = []dashboard.Page{{ID: "heatmap", Title: "Heatmap", Visuals: pageVisuals}}
+	compiled.FilterDefinitions = map[string]dashboardfilter.Definition{
+		"state": {Field: "state", Dataset: "orders", ValueKind: dashboardfilter.ValueString},
+	}
+	compiled.FilterBindings = map[string]dashboardfilter.Binding{
+		"state": {Key: "state-key", Filter: "state", Scope: dashboardfilter.ScopeReport, Targets: []string{
+			"heatmap/state_status_heatmap-card",
+			"heatmap/category_status_heatmap-card",
+			"heatmap/category_status_heatmap_labels-card",
+		}},
+	}
+	definition, err := NewProjectDefinition("project_1", "Project", "", definition.Models(), map[graph.ResourceID]dashboarddefinition.Definition{"dashboard_1": compiled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := &heatmapFilterRuntime{}
+	service := canonicalBehaviorRuntime(t, definition, data, nil)
+	defer service.Close()
+
+	initial, err := service.QueryDashboardPage(context.Background(), "dashboard_1", "heatmap", dashboard.Filters{})
+	if err != nil || initial.Status.Error != "" {
+		t.Fatalf("initial patch=%#v err=%v", initial, err)
+	}
+	if len(initial.Visuals) != len(visualIDs) {
+		t.Fatalf("initial visuals = %d, want %d", len(initial.Visuals), len(visualIDs))
+	}
+	for _, visualID := range visualIDs {
+		visual := initial.Visuals[visualID]
+		if visual.Status.Kind != visualizationir.VisualizationStatusKindReady || len(visual.Diagnostics) != 0 {
+			t.Fatalf("initial %s status=%#v diagnostics=%#v", visualID, visual.Status, visual.Diagnostics)
+		}
+		state := visual.DataState.Value.(*visualizationir.InlineVisualizationDataState)
+		if len(state.Datasets) != 1 || len(state.Datasets[0].Rows) != 2 {
+			t.Fatalf("initial %s rows=%#v", visualID, state.Datasets)
+		}
+	}
+
+	selected := dashboardfilter.State{Revision: 1, AppliedControls: map[string]dashboardfilter.AppliedState{
+		"state-key": {ResolvedExpression: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionSet, Operator: dashboardfilter.OperatorIn, Values: []dashboardfilter.Value{{Kind: dashboardfilter.ValueString, Value: "SP"}}}},
+	}}
+	filtered, err := service.QueryDashboardPage(context.Background(), "dashboard_1", "heatmap", dashboard.Filters{CompiledState: &selected})
+	if err != nil || filtered.Status.Error != "" {
+		t.Fatalf("filtered patch=%#v err=%v", filtered, err)
+	}
+	if len(data.requests) != 6 {
+		t.Fatalf("aggregate requests = %d, want initial and filtered request per heatmap", len(data.requests))
+	}
+	for _, visualID := range visualIDs {
+		visual := filtered.Visuals[visualID]
+		if visual.Status.Kind != visualizationir.VisualizationStatusKindReady || len(visual.Diagnostics) != 0 {
+			t.Fatalf("filtered %s status=%#v diagnostics=%#v", visualID, visual.Status, visual.Diagnostics)
+		}
+		state := visual.DataState.Value.(*visualizationir.InlineVisualizationDataState)
+		if len(state.Datasets) != 1 || len(state.Datasets[0].Rows) != 1 || state.Datasets[0].Rows[0][0] != "SP" {
+			t.Fatalf("filtered %s rows=%#v", visualID, state.Datasets)
+		}
+	}
 }
 
 func TestCanonicalMissingDataReturnsSetupPatch(t *testing.T) {

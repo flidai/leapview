@@ -598,11 +598,15 @@ async function verifyFilterShowcase(): Promise<void> {
         bindingID: 'purchase_date',
         mutate: async () => {
           const control = page.getByRole('region', { name: 'Purchase date', exact: true })
-          const from = control.getByLabel('Start date')
-          const to = control.getByLabel('End date')
-          await from.fill('2017-01-01')
-          await to.fill('2018-12-31')
-          // Native date inputs expose platform-specific internal Tab stops.
+          const from = control.getByRole('button', { name: /Start date/ })
+          const to = control.getByRole('button', { name: /End date/ })
+          const now = new Date()
+          const month = String(now.getMonth() + 1).padStart(2, '0')
+          const year = String(now.getFullYear()).padStart(4, '0')
+          await from.click()
+          await page.getByRole('dialog', { name: 'Start date calendar', exact: true }).locator(`[data-date="${year}-${month}-01"]`).click()
+          await to.click()
+          await page.getByRole('dialog', { name: 'End date calendar', exact: true }).locator(`[data-date="${year}-${month}-02"]`).click()
           // Enter is the filter control's deterministic compound-commit boundary.
           await to.press('Enter')
         },

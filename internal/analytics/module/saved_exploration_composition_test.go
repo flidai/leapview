@@ -3,13 +3,11 @@ package module
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"strings"
 	"testing"
 
-	accessmodule "github.com/flidai/leapview/internal/access/module"
-	"github.com/flidai/leapview/internal/platform/transaction"
+	saved "github.com/flidai/leapview/internal/analytics/exploration/saved"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 )
@@ -32,19 +30,44 @@ func (savedExplorationModuleExecutor) Execute(context.Context, projectruntime.Le
 	return SavedExplorationResult{}, nil
 }
 
-type savedExplorationModuleAuditRecorder struct{}
+type savedExplorationModuleRepository struct{}
 
-func (savedExplorationModuleAuditRecorder) RecordAuditIntent(context.Context, transaction.Transaction, accessmodule.AuditIntent) error {
-	return nil
+var _ SavedExplorationRepository = (*savedExplorationModuleRepository)(nil)
+
+func (*savedExplorationModuleRepository) Create(context.Context, saved.CreateInput) (saved.MutationResult, error) {
+	return saved.MutationResult{}, saved.ErrUnavailable
+}
+func (*savedExplorationModuleRepository) LookupMutation(context.Context, saved.MutationLookupInput) (saved.MutationReplayMetadata, bool, error) {
+	return saved.MutationReplayMetadata{}, false, saved.ErrUnavailable
+}
+func (*savedExplorationModuleRepository) GetLifecycle(context.Context, saved.ReadInput) (saved.Lifecycle, error) {
+	return saved.Lifecycle{}, saved.ErrUnavailable
+}
+func (*savedExplorationModuleRepository) GetRevision(context.Context, saved.RevisionReadInput) (saved.Revision, error) {
+	return saved.Revision{}, saved.ErrUnavailable
+}
+func (*savedExplorationModuleRepository) ListPage(context.Context, saved.ListInput) (saved.ListPage, error) {
+	return saved.ListPage{}, saved.ErrUnavailable
+}
+func (*savedExplorationModuleRepository) UpdateVersion(context.Context, saved.UpdateVersionInput) (saved.MutationResult, error) {
+	return saved.MutationResult{}, saved.ErrUnavailable
+}
+func (*savedExplorationModuleRepository) Duplicate(context.Context, saved.DuplicateInput) (saved.MutationResult, error) {
+	return saved.MutationResult{}, saved.ErrUnavailable
+}
+func (*savedExplorationModuleRepository) List(context.Context, saved.ListInput) ([]saved.Lifecycle, error) {
+	return nil, saved.ErrUnavailable
+}
+func (*savedExplorationModuleRepository) Archive(context.Context, saved.ArchiveInput) (saved.MutationResult, error) {
+	return saved.MutationResult{}, saved.ErrUnavailable
 }
 
 func TestBuildSavedExplorationServiceRequiresModulePorts(t *testing.T) {
 	base := SavedExplorationServiceOptions{
-		Database:            &sql.DB{},
-		AuditIntentRecorder: savedExplorationModuleAuditRecorder{},
-		Authorizer:          savedExplorationModuleAuthorizer{},
-		Runtime:             savedExplorationModuleProvider{},
-		Executor:            savedExplorationModuleExecutor{},
+		Repository: &savedExplorationModuleRepository{},
+		Authorizer: savedExplorationModuleAuthorizer{},
+		Runtime:    savedExplorationModuleProvider{},
+		Executor:   savedExplorationModuleExecutor{},
 	}
 	if service, err := BuildSavedExplorationService(base); err != nil || service == nil {
 		t.Fatalf("complete module composition: service=%v err=%v", service, err)
@@ -54,8 +77,7 @@ func TestBuildSavedExplorationServiceRequiresModulePorts(t *testing.T) {
 		name   string
 		mutate func(*SavedExplorationServiceOptions)
 	}{
-		{name: "database", mutate: func(options *SavedExplorationServiceOptions) { options.Database = nil }},
-		{name: "audit intent recorder", mutate: func(options *SavedExplorationServiceOptions) { options.AuditIntentRecorder = nil }},
+		{name: "repository", mutate: func(options *SavedExplorationServiceOptions) { options.Repository = nil }},
 		{name: "authorizer", mutate: func(options *SavedExplorationServiceOptions) { options.Authorizer = nil }},
 		{name: "runtime provider", mutate: func(options *SavedExplorationServiceOptions) { options.Runtime = nil }},
 		{name: "executor", mutate: func(options *SavedExplorationServiceOptions) { options.Executor = nil }},

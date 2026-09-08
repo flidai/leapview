@@ -112,7 +112,7 @@ func portableSchema(value any, definitions map[string]any, resolving map[string]
 		hasConstant := false
 		for key, item := range typed {
 			switch key {
-			case "$defs", "$schema":
+			case "$defs", "$schema", "uniqueItems":
 				continue
 			case "const":
 				// Provider input schemas do not support const. Defer writing
