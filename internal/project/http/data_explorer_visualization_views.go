@@ -48,13 +48,13 @@ func explorerVisualizationCandidate(spec exploration.ExplorationSpec, result pro
 		return explorerKPIEnvelope(spec, nil, columns, base, frame, modelID, datasetID, result)
 	}
 	if len(dimensions) == 1 && len(metrics) >= 1 && dimensions[0].Temporal {
-		return explorerCartesianEnvelope(spec, &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.VisualizationCartesianMarkLine}, columns, base, frame, modelID, datasetID, result)
+		return explorerCartesianEnvelope(spec, &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkLine}, columns, base, frame, modelID, datasetID, result)
 	}
 	if len(dimensions) == 1 && len(metrics) == 1 && explorerCategoricalDimension(dimensions[0]) && explorerResultHasAtMostCategories(result, dimensions[0].Output, 7) && explorerResultHasNonnegativeValues(result, metrics[0].Output) {
-		return explorerProportionalEnvelope(spec, &exploration.ProportionalExplorationVisualization{Kind: "proportional", Mark: exploration.VisualizationProportionalMarkDonut}, columns, base, frame, modelID, datasetID, result)
+		return explorerProportionalEnvelope(spec, &exploration.ProportionalExplorationVisualization{Kind: "proportional", Mark: exploration.ExplorationVisualizationProportionalMarkDonut}, columns, base, frame, modelID, datasetID, result)
 	}
 	if len(dimensions) == 1 && len(metrics) >= 1 {
-		return explorerCartesianEnvelope(spec, &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.VisualizationCartesianMarkBar}, columns, base, frame, modelID, datasetID, result)
+		return explorerCartesianEnvelope(spec, &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkBar}, columns, base, frame, modelID, datasetID, result)
 	}
 	if len(dimensions) == 2 && len(metrics) >= 1 {
 		// A temporal/category pair is a time series regardless of which axis
@@ -67,10 +67,10 @@ func explorerVisualizationCandidate(spec exploration.ExplorationSpec, result pro
 			}
 			if explorerCategoricalDimension(category) {
 				ordered := explorerSpecWithDimensionOrder(spec, temporal, category)
-				return explorerCartesianEnvelope(ordered, &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.VisualizationCartesianMarkLine}, columns, base, frame, modelID, datasetID, result)
+				return explorerCartesianEnvelope(ordered, &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkLine}, columns, base, frame, modelID, datasetID, result)
 			}
 		}
-		return explorerCartesianEnvelope(spec, &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.VisualizationCartesianMarkBar}, columns, base, frame, modelID, datasetID, result)
+		return explorerCartesianEnvelope(spec, &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkBar}, columns, base, frame, modelID, datasetID, result)
 	}
 	return dataExplorerTableViewID, nil, "result shape has no safe chart projection; showing table"
 }

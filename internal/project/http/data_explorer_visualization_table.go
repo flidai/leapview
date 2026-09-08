@@ -127,23 +127,23 @@ func explorerMaterializedChunkSize(rowCount int) int {
 	return rowCount
 }
 
-func explorerVisualizationFormat(format *exploration.VisualizationFormat) *visualizationir.VisualizationFormat {
+func explorerVisualizationFormat(format *exploration.ExplorationVisualizationFormat) *visualizationir.VisualizationFormat {
 	if format == nil || format.Value == nil {
 		return nil
 	}
 	var value visualizationir.VisualizationFormatVariant
 	switch variant := format.Value.(type) {
-	case *exploration.NumberVisualizationFormat:
+	case *exploration.ExplorationNumberVisualizationFormat:
 		value = &visualizationir.NumberVisualizationFormat{Kind: "number", MinimumFractionDigits: variant.MinimumFractionDigits, MaximumFractionDigits: variant.MaximumFractionDigits}
-	case *exploration.CurrencyVisualizationFormat:
+	case *exploration.ExplorationCurrencyVisualizationFormat:
 		value = &visualizationir.CurrencyVisualizationFormat{Kind: "currency", Currency: variant.Currency, MinimumFractionDigits: variant.MinimumFractionDigits, MaximumFractionDigits: variant.MaximumFractionDigits}
-	case *exploration.PercentVisualizationFormat:
+	case *exploration.ExplorationPercentVisualizationFormat:
 		value = &visualizationir.PercentVisualizationFormat{Kind: "percent", MinimumFractionDigits: variant.MinimumFractionDigits, MaximumFractionDigits: variant.MaximumFractionDigits}
-	case *exploration.CompactVisualizationFormat:
+	case *exploration.ExplorationCompactVisualizationFormat:
 		value = &visualizationir.CompactVisualizationFormat{Kind: "compact", MaximumFractionDigits: variant.MaximumFractionDigits}
-	case *exploration.DurationVisualizationFormat:
+	case *exploration.ExplorationDurationVisualizationFormat:
 		value = &visualizationir.DurationVisualizationFormat{Kind: "duration", Unit: variant.Unit}
-	case *exploration.TemporalVisualizationFormat:
+	case *exploration.ExplorationTemporalVisualizationFormat:
 		value = &visualizationir.TemporalVisualizationFormat{Kind: "temporal", DateStyle: variant.DateStyle, TimeStyle: variant.TimeStyle}
 	default:
 		return nil
