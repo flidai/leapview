@@ -34,7 +34,9 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   })
   const patch: Record<string, any> = { grid: Array.isArray(option.grid) ? grid : grid[0] }
   if (option.legend !== undefined) patch.legend = compact ? compactLegend(option.legend) : option.legend
-  if (option.dataZoom !== undefined) patch.dataZoom = compact ? compactDataZoom(option.dataZoom, bottomLegend) : stripDataZoomNavigation(option.dataZoom)
+  if (option.dataZoom !== undefined) patch.dataZoom = compact
+    ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
+    : stripDataZoomNavigation(option.dataZoom)
   return patch
 }
 
@@ -70,12 +72,17 @@ function compactLegend(value: unknown): unknown {
   return Array.isArray(value) ? result : result[0]
 }
 
-function compactDataZoom(value: unknown, bottomLegend: boolean): unknown {
+function compactDataZoom(value: unknown, bottomLegend: boolean, preserveExisting: boolean): unknown {
   if (!Array.isArray(value)) return stripDataZoomNavigation(value)
   return value.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
     const layout = stripDataZoomNavigationEntry(entry as Record<string, unknown>)
-    return layout.type === 'slider' ? { ...layout, bottom: bottomLegend ? 28 : 12 } : layout
+    if (layout.type !== 'slider') return layout
+    const fallback = bottomLegend ? 28 : 12
+    const bottom = preserveExisting && typeof layout.bottom === 'number' && Number.isFinite(layout.bottom)
+      ? Math.max(layout.bottom, fallback)
+      : fallback
+    return { ...layout, bottom }
   })
 }
 

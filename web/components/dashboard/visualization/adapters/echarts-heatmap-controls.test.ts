@@ -95,16 +95,25 @@ test('compact generated heatmap keeps rotated categories above its visual map', 
   const option = { ...source, ...responsiveEChartsPatch(source, 358, 411) }
   expect(option.grid.bottom).toBe(96)
   expect(option.xAxis.axisLabel.rotate).toBe(24)
+  expect(option.dataZoom.find((entry: any) => entry.id === 'dataZoom:heatmap:slider')?.bottom).toBe(64)
 
   const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 358, height: 411 })
   try {
     chart.setOption(option, { notMerge: true, lazyUpdate: false })
     chart.renderToSVGString()
-    assertCompactHeatmapBounds(chart, 'unfocused')
+    assertCompactHeatmapBounds(chart, 'initial compact')
 
     chart.setOption({ dataZoom: heatmapFocusDataZoom(true) }, { lazyUpdate: false })
     chart.renderToSVGString()
     assertCompactHeatmapBounds(chart, 'focused')
+
+    chart.setOption({ dataZoom: heatmapFocusDataZoom(false) }, { lazyUpdate: false })
+    chart.renderToSVGString()
+    assertCompactHeatmapBounds(chart, 'unfocused')
+
+    chart.resize({ width: 358, height: 411, silent: true })
+    chart.renderToSVGString()
+    assertCompactHeatmapBounds(chart, 'resized compact')
   } finally {
     chart.dispose()
   }
@@ -120,15 +129,18 @@ function assertCompactHeatmapBounds(chart: echarts.EChartsType, state: string): 
   const sliderGroup = slider ? (chart as any).getViewOfComponentModel(slider)?.group : undefined
   expect(visualMapGroup, `${state} visual map should render`).toBeDefined()
   expect(sliderGroup, `${state} zoom slider should render`).toBeDefined()
-  const visualMapBounds = globalBounds(visualMapGroup)
-  const sliderBounds = globalBounds(sliderGroup)
-  expect(sliderBounds.width, `${state} zoom slider should have visible width`).toBeGreaterThan(0)
-  expect(visualMapBounds.width, `${state} visual map should have visible width`).toBeGreaterThan(0)
+  const visualMapBounds = visibleBounds(chart, visualMapGroup)
+  const sliderBounds = visibleBounds(chart, sliderGroup)
+  expect(visualMapBounds, `${state} visual map should have visible primitives`).toBeDefined()
+  expect(sliderBounds, `${state} zoom slider should have visible primitives`).toBeDefined()
+  expect(visualMapBounds!.width).toBeGreaterThan(0)
+  expect(sliderBounds!.width).toBeGreaterThan(0)
   for (const label of labels) {
     const labelBounds = globalBounds(label)
-    expect(labelBounds.y + labelBounds.height, `${state} ${label.style.text} should clear zoom slider`).toBeLessThanOrEqual(sliderBounds.y)
-    expect(labelBounds.y + labelBounds.height, `${state} ${label.style.text} should clear visual map`).toBeLessThanOrEqual(visualMapBounds.y)
+    expect(labelBounds.y + labelBounds.height, `${state} ${label.style.text} should clear zoom slider`).toBeLessThanOrEqual(sliderBounds!.y)
+    expect(labelBounds.y + labelBounds.height, `${state} ${label.style.text} should clear visual map`).toBeLessThanOrEqual(visualMapBounds!.y)
   }
+  expect(sliderBounds!.y + sliderBounds!.height, `${state} zoom slider should clear visual map`).toBeLessThanOrEqual(visualMapBounds!.y)
 }
 
 function cartesianFixture(mark: string, columns = ['label', 'value']): VisualizationEnvelope {
@@ -147,4 +159,28 @@ function globalBounds(item: any): { x: number; y: number; width: number; height:
   const transform = item.getComputedTransform?.() ?? item.transform
   if (transform) bounds.applyTransform(transform)
   return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+}
+
+function visibleBounds(chart: echarts.EChartsType, group: any): { x: number; y: number; width: number; height: number } | undefined {
+  const items = chart.getZr().storage.getDisplayList().filter((item: any) => belongsTo(item, group) && hasVisiblePaint(item))
+  if (items.length === 0) return undefined
+  const bounds = items.map(globalBounds)
+  const left = Math.min(...bounds.map((value) => value.x))
+  const top = Math.min(...bounds.map((value) => value.y))
+  const right = Math.max(...bounds.map((value) => value.x + value.width))
+  const bottom = Math.max(...bounds.map((value) => value.y + value.height))
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+function belongsTo(item: any, group: any): boolean {
+  for (let parent = item.parent; parent; parent = parent.parent) if (parent === group) return true
+  return false
+}
+
+function hasVisiblePaint(item: any): boolean {
+  const style = item.style ?? {}
+  const fill = style.fill
+  const visibleFill = fill !== undefined && fill !== null && fill !== 'transparent' && fill !== 'rgba(0,0,0,0)'
+  const visibleStroke = style.stroke !== undefined && style.stroke !== null && style.stroke !== 'transparent' && style.lineWidth !== 0
+  return visibleFill || visibleStroke
 }
