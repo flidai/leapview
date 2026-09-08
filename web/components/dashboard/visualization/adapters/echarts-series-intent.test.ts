@@ -101,6 +101,8 @@ test('ECharts split series keep the generated source category domain in both ori
         const data = model.getSeriesByIndex(index).getData() as any
         const points = Array.from(data._layout?.points ?? []) as number[]
         const positions = points.filter((_, pointIndex) => pointIndex % 2 === (horizontal ? 1 : 0))
+        expect(positions.length, `${horizontal ? 'horizontal' : 'vertical'} ${model.getSeriesByIndex(index).name} has rendered points`).toBeGreaterThan(1)
+        expect(positions.every((position) => Number.isFinite(position)), `${horizontal ? 'horizontal' : 'vertical'} ${model.getSeriesByIndex(index).name} positions`).toBe(true)
         const direction = Math.sign((positions.at(-1) ?? 0) - (positions[0] ?? 0)) || 1
         expect(positions.every((position, positionIndex) => positionIndex === 0 || (position - positions[positionIndex - 1]!) * direction >= -0.001), `${horizontal ? 'horizontal' : 'vertical'} ${model.getSeriesByIndex(index).name} geometry`).toBe(true)
       }
@@ -122,7 +124,16 @@ test('ECharts split category domains preserve authored row order and typed/null 
 
   const nullCategory = structuredClone(envelope) as any
   nullCategory.dataState.datasets[0].rows = [['B', 1, 10], [null, '1', 20]]
-  expect((echartsOption(nullCategory, defaultRendererContext) as any).xAxis.data).toBeUndefined()
+  const nullOption = echartsOption(nullCategory, defaultRendererContext) as any
+  expect(nullOption.xAxis.data).toBeUndefined()
+  const nullChart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    nullChart.setOption(nullOption)
+    nullChart.renderToSVGString()
+    expect(nullChart.getModel().getComponent('xAxis').axis.scale.getOrdinalMeta().categories).toEqual(['B', null])
+  } finally {
+    nullChart.dispose()
+  }
 
   const numeric = structuredClone(envelope) as any
   numeric.dataState.datasets[0].rows = [[1, '1', 10], ['1', '1', 20], [2, null, 30]]
