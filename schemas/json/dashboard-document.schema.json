@@ -1630,6 +1630,7 @@
           "type": "integer"
         },
         "radius": {
+          "description": "Approximate CSS-pixel clustering target for tiled maps. The server uses a\nglobally aligned grid with max(1, floor(256 / radius)) cells per tile;\nradii 129–512 therefore share one cell per tile. This does not promise\npixel-identical cluster membership between inline and tiled data.",
           "format": "int32",
           "maximum": 512,
           "minimum": 1,
