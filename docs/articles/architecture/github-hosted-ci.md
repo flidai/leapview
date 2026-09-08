@@ -37,9 +37,10 @@ adds desktop tests, static and selected race analysis, route QA, and deployment 
 `task ci:nightly` adds dependency and vulnerability scans. `task ci:local` remains a
 compatibility alias for the full current-machine contract.
 
-GitHub Actions distributes those same Taskfile units across clean runners. Pull requests run
-APIGen, the non-application Go packages, sharded application tests, and frontend validation
-concurrently. The repository validation jobs execute `task ci:prepare`; the independent APIGen module
+GitHub Actions distributes those same Taskfile units across clean runners. Pull requests first run the existing `ciplan` dependency classifier against the tested
+candidate, then run selected APIGen, Go package/application, frontend, docs/site, PostgreSQL,
+dbt, and spatial validation lanes concurrently. Unknown and cross-cutting inputs, manual
+dispatch, the `ci:full` label, and deterministic audit PRs run the full PR tier. The repository validation jobs execute `task ci:prepare`; the independent APIGen module
 does not need generated or embedded application assets and skips that preparation. The merge queue
 adds `task ci:full:extras`, and the daily schedule also runs `task ci:nightly:extras`. Local
 composition remains available through the tier targets; the workflow does not duplicate individual
@@ -49,7 +50,9 @@ Frontend validation has five isolated shards: `core`, `reports`, `chat`, `data`,
 Each hosted shard runs `task ci:lane:frontend:shard SHARD=<name>` on its own runner with a
 180-second watchdog and at most one retry for a timeout, never for an assertion failure.
 This bounds each independent suite without treating the cumulative runtime of five healthy
-suites as a hang. Every shard must succeed for `CI gate` to pass. Local `task ci` runs the
+suites as a hang. Every selected shard must succeed for `CI gate` to pass. The gate requires successful
+planning, checks candidate/run/attempt provenance, and rejects missing lane results or a
+frontend matrix differing from the versioned plan. Unselected jobs must report skipped. Local `task ci` runs the
 same bounded shards sequentially to avoid browser and bundler contention on a shared machine.
 
 ## Toolchain and caches
@@ -87,21 +90,29 @@ change validation behavior.
 
 ## Workflow tiers
 
-The pull-request workflow runs APIGen, Go package, Go application, and frontend validation on
-independent four-vCPU runners and reports the stable required `CI gate` check. This prevents browser
+The pull-request workflow runs selected validation lanes on independent four-vCPU runners
+and reports the stable required `CI gate` check. Docs/site changes use a dedicated contract
+lane so embedded Go documentation tests remain covered when backend lanes are unselected. This prevents browser
 and Go test contention and shortens wall-clock feedback without increasing per-job machine size.
 
 For a native GitHub pull-request stack, only the top pull request runs those validation lanes.
 Lower layers report a successful `CI gate` with a summary that validation is deferred to the
 stack tip. The workflow listens for the `stacked` action, and its concurrency key uses the native
 stack ID, so rebasing a stack cancels obsolete feedback for the whole stack instead of filling the
-runner queue. Standalone pull requests and manual dispatches continue to run both lanes.
+runner queue. Standalone pull requests use the selected plan; manual dispatch runs the complete PR tier.
+Stack planning compares the cumulative candidate against its merge base with the fetched
+default branch, including lower-layer changes. For stacks targeting another branch this
+is a conservative broader diff. Label changes also trigger planning.
 
 The main-branch ruleset must require GitHub's merge queue. A deferred lower-layer gate is feedback,
 not authorization to merge directly. The queue validates the exact candidate selected for main,
 whether that candidate is the complete stack or a contiguous prefix, by running the Go and frontend
 lanes plus the full extras. Merge-validation concurrency is scoped to the candidate ref: a rebuilt
 candidate cancels its obsolete run without making distinct queue candidates cancel one another.
+Full merge validation starts alongside the base lanes on a separate runner and prepares its own
+inputs. The always-running CI gate still requires every lane to succeed and the native desktop
+proof to succeed for the exact merge candidate. Local full validation remains sequential to avoid
+contention on a shared machine.
 
 Nightly CI also runs security scans in parallel. Post-merge artifact CI builds and pushes the
 production image using a BuildKit cache, then qualifies its immutable digest on a second clean runner.

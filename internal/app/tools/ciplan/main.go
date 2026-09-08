@@ -6,11 +6,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 
+	ciadapter "github.com/flidai/leapview/internal/app/tools/ciadapter"
 	platformci "github.com/flidai/leapview/internal/platform/ci"
 )
 
@@ -32,7 +35,11 @@ func runPlan(args []string) error {
 	flags := flag.NewFlagSet("ciplan", flag.ContinueOnError)
 	event := flags.String("event", "", "GitHub event name")
 	base := flags.String("base", "", "base commit")
-	head := flags.String("head", "", "head commit")
+	head := flags.String("head", "", "tested candidate commit")
+	stackBase := flags.String("stack-base", "", "cumulative stack target ref")
+	deferred := flags.Bool("deferred", false, "defer lower stack layer")
+	runID := flags.String("run-id", "", "GitHub run identity")
+	attempt := flags.String("attempt", "", "GitHub attempt identity")
 	prNumber := flags.Int("pr-number", 0, "pull request number")
 	labels := flags.String("labels", "", "comma-separated pull request labels")
 	output := flags.String("output", "ci-plan.json", "plan JSON output")
@@ -45,6 +52,31 @@ func runPlan(args []string) error {
 		return errors.New("--event is required")
 	}
 
+	if *head != "" {
+		resolved, err := resolveCommit(*head)
+		if err != nil {
+			return err
+		}
+		*head = resolved
+	}
+	if *stackBase != "" {
+		resolved, err := resolveCommit(*stackBase)
+		if err != nil {
+			return err
+		}
+		data, err := exec.Command("git", "merge-base", resolved, *head).Output()
+		if err != nil {
+			return fmt.Errorf("resolve cumulative stack base: %w", err)
+		}
+		*base = strings.TrimSpace(string(data))
+	}
+	if *base != "" {
+		resolved, err := resolveCommit(*base)
+		if err != nil {
+			return err
+		}
+		*base = resolved
+	}
 	var changes []platformci.Change
 	if *event == "pull_request" {
 		if *base == "" || *head == "" {
@@ -64,7 +96,22 @@ func runPlan(args []string) error {
 		PullRequestNumber: *prNumber,
 		Labels:            splitLabels(*labels),
 	}, changes)
-	planJSON, err := plan.JSON()
+	plan.PR.Base = *base
+	plan.PR.Head = *head
+	plan.PR.RunID = *runID
+	plan.PR.Attempt = *attempt
+	if *deferred {
+		if *event != "pull_request" {
+			return errors.New("only PR stack layers can defer")
+		}
+		plan.PR.Deferred = true
+		plan.PR.Effective = platformci.PRJobs{}
+		plan.Reason = "Validation is deferred to the top of this stack."
+	}
+	if err := platformci.ValidatePRPlan(plan); err != nil {
+		return err
+	}
+	planJSON, err := ciadapter.MarshalPlan(plan)
 	if err != nil {
 		return err
 	}
@@ -89,6 +136,11 @@ func runGate(args []string) error {
 	flags := flag.NewFlagSet("ciplan gate", flag.ContinueOnError)
 	planPath := flags.String("plan", "ci-plan.json", "plan JSON")
 	resultsPath := flags.String("results", "", "job results JSON")
+	expectedHead := flags.String("expected-head", "", "tested candidate")
+	expectedRun := flags.String("expected-run-id", "", "run identity")
+	expectedAttempt := flags.String("expected-attempt", "", "attempt identity")
+	expectedDeferred := flags.Bool("expected-deferred", false, "event stack deferral")
+	frontendMatrix := flags.String("frontend-matrix", "", "matrix consumed by the workflow")
 	githubSummary := flags.String("github-summary", "", "GitHub Actions summary file")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -96,13 +148,29 @@ func runGate(args []string) error {
 	if *resultsPath == "" {
 		return errors.New("--results is required")
 	}
-	var plan platformci.Plan
-	if err := readJSON(*planPath, &plan); err != nil {
+	plan, err := readPlan(*planPath)
+	if err != nil {
 		return fmt.Errorf("read plan: %w", err)
 	}
 	results := map[string]string{}
 	if err := readJSON(*resultsPath, &results); err != nil {
 		return fmt.Errorf("read results: %w", err)
+	}
+	results, err = ciadapter.InternalResults(results)
+	if err != nil {
+		return fmt.Errorf("normalize results: %w", err)
+	}
+	if err := platformci.ValidatePRPlan(plan); err != nil {
+		return err
+	}
+	if *expectedHead == "" || *expectedRun == "" || *expectedAttempt == "" {
+		return errors.New("gate requires candidate/run/attempt identity")
+	}
+	if plan.PR.Head != *expectedHead || plan.PR.RunID != *expectedRun || plan.PR.Attempt != *expectedAttempt || plan.PR.Deferred != *expectedDeferred {
+		return errors.New("plan identity or stack deferral does not match this event")
+	}
+	if *frontendMatrix != prFrontendMatrix(plan) {
+		return errors.New("workflow frontend matrix differs from plan")
 	}
 	report := platformci.EvaluatePlanGate(plan, results)
 	if *githubSummary != "" {
@@ -118,7 +186,15 @@ func runGate(args []string) error {
 	if len(report.AuditMisses) > 0 {
 		message += "\nselection audit misses: " + strings.Join(report.AuditMisses, ", ")
 	}
-	return errors.New(message)
+	return errors.New(ciadapter.WorkflowText(message))
+}
+
+func resolveCommit(ref string) (string, error) {
+	data, err := exec.Command("git", "rev-parse", "--verify", "--end-of-options", ref+"^{commit}").Output()
+	if err != nil {
+		return "", fmt.Errorf("resolve commit %q: %w", ref, err)
+	}
+	return strings.TrimSpace(string(data)), nil
 }
 
 func gitDiff(base, head string) ([]byte, error) {
@@ -140,6 +216,19 @@ func writeGitHubOutputs(filename string, plan platformci.Plan) error {
 	defer file.Close()
 
 	selected := plan.Effective.Selected()
+	if plan.PR != nil {
+		selected = plan.PR.Effective.Selected()
+	}
+	if plan.PR != nil {
+		for _, name := range sortedJobNames(selected) {
+			workflowName := ciadapter.WorkflowJobID(name)
+			if _, err := fmt.Fprintf(file, "%s=%t\n", strings.ReplaceAll(workflowName, "-", "_"), selected[name]); err != nil {
+				return err
+			}
+		}
+		_, err := fmt.Fprintf(file, "frontend_matrix=%s\n", prFrontendMatrix(plan))
+		return err
+	}
 	for _, name := range []string{
 		"prepare", "frontend-prepare", "docs", "go-tests", "frontend-tests",
 		"go-analysis", "ui-route-qa", "node-audit", "go-vuln", "site-image",
@@ -197,12 +286,15 @@ func appendSummary(filename string, plan platformci.Plan) error {
 	defer file.Close()
 
 	selected := plan.Effective.Selected()
+	if plan.PR != nil {
+		selected = plan.PR.Effective.Selected()
+	}
 	var run, skip []string
 	for _, name := range sortedJobNames(selected) {
 		if selected[name] {
-			run = append(run, name)
+			run = append(run, ciadapter.WorkflowJobID(name))
 		} else {
-			skip = append(skip, name)
+			skip = append(skip, ciadapter.WorkflowJobID(name))
 		}
 	}
 	_, err = fmt.Fprintf(file,
@@ -225,11 +317,31 @@ func appendGateSummary(filename string, report platformci.GateReport) error {
 		_, err = fmt.Fprintln(file, "## CI gate\n\nAll selected jobs passed.")
 		return err
 	}
-	_, err = fmt.Fprintf(file, "## CI gate\n\n- %s\n", strings.Join(report.Problems, "\n- "))
+	problems := make([]string, len(report.Problems))
+	for i, problem := range report.Problems {
+		problems[i] = wireJobText(problem)
+	}
+	_, err = fmt.Fprintf(file, "## CI gate\n\n- %s\n", strings.Join(problems, "\n- "))
 	if err == nil && len(report.AuditMisses) > 0 {
-		_, err = fmt.Fprintf(file, "\n**Selection audit misses:** %s\n", strings.Join(report.AuditMisses, ", "))
+		misses := make([]string, len(report.AuditMisses))
+		for i, miss := range report.AuditMisses {
+			misses[i] = ciadapter.WorkflowJobID(miss)
+		}
+		_, err = fmt.Fprintf(file, "\n**Selection audit misses:** %s\n", strings.Join(misses, ", "))
 	}
 	return err
+}
+
+func readPlan(filename string) (platformci.Plan, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return platformci.Plan{}, err
+	}
+	return ciadapter.DecodePlan(bytes.NewReader(data))
+}
+
+func wireJobText(value string) string {
+	return ciadapter.WorkflowText(value)
 }
 
 func readJSON(filename string, destination any) error {
@@ -237,7 +349,16 @@ func readJSON(filename string, destination any) error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, destination)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return errors.New("trailing JSON data")
+	}
+	return nil
 }
 
 func splitLabels(value string) []string {
@@ -251,10 +372,19 @@ func splitLabels(value string) []string {
 }
 
 func sortedJobNames(selected map[string]bool) []string {
-	order := []string{
-		"prepare", "frontend-prepare", "docs", "go-tests", "frontend-tests",
-		"go-analysis", "ui-route-qa", "node-audit", "go-vuln", "site-image",
-		"production-image", "deployment-contracts",
+	names := make([]string, 0, len(selected))
+	for name := range selected {
+		names = append(names, name)
 	}
-	return order
+	sort.Strings(names)
+	return names
+}
+
+func prFrontendMatrix(plan platformci.Plan) string {
+	shards := plan.PR.Effective.Frontend
+	if len(shards) == 0 {
+		shards = []string{"not-selected"}
+	}
+	data, _ := json.Marshal(map[string][]string{"shard": shards})
+	return string(data)
 }

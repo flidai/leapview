@@ -1394,6 +1394,14 @@ tasks:
       - task: quality:critical:coverage
       - task: test:go:packages
 
+  ci:lane:quality:
+    desc: Run cross-language quality and architecture contracts
+    cmds:
+      - task: quality:budget:check
+      - task: quality:exceptions:check
+      - task: quality:trends:report
+      - go test ./internal/platform/architecture -count=1
+
   ci:lane:go:apigen:
     desc: Run the vendored APIGen Go module and TypeSpec tests
     cmds:
@@ -1472,7 +1480,7 @@ tasks:
       - task: ci:full:extras
 
   ci:full:extras:
-    desc: Run merge-only validation after the fast CI contract has passed
+    desc: Run merge-only validation on prepared inputs; hosted merge CI runs this alongside base lanes
     cmds:
       - task: desktop:test
       - go vet ./...

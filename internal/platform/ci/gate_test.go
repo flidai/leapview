@@ -98,3 +98,90 @@ func successfulResults(jobs Jobs) map[string]string {
 	}
 	return results
 }
+
+func TestPRGateRequiresPlannerAndSelectedLanes(t *testing.T) {
+	p := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "M", Paths: []string{"README.md"}}})
+	if p.PR == nil {
+		t.Fatal("missing current PR schema")
+	}
+	results := map[string]string{"prepare": "success"}
+	for name, on := range p.PR.Effective.Selected() {
+		results[name] = "skipped"
+		if on {
+			results[name] = "success"
+		}
+	}
+	if !EvaluatePlanGate(p, results).OK {
+		t.Fatal("intentional skips rejected")
+	}
+	results["prepare"] = "failure"
+	if EvaluatePlanGate(p, results).OK {
+		t.Fatal("planner failure accepted")
+	}
+	results["prepare"] = "success"
+	results["docs-validation"] = "skipped"
+	if EvaluatePlanGate(p, results).OK {
+		t.Fatal("selected skip accepted")
+	}
+}
+
+func TestPRGateRequiresQualityLaneEvidence(t *testing.T) {
+	t.Parallel()
+
+	plan := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "M", Paths: []string{"docs/articles/start.md"}}})
+	if plan.PR == nil || !plan.PR.Effective.Quality {
+		t.Fatalf("docs plan did not select quality lane: %#v", plan.PR)
+	}
+	results := map[string]string{"prepare": "success"}
+	for name, selected := range plan.PR.Effective.Selected() {
+		results[name] = "skipped"
+		if selected {
+			results[name] = "success"
+		}
+	}
+	if report := EvaluatePlanGate(plan, results); !report.OK {
+		t.Fatalf("valid quality result rejected: %#v", report)
+	}
+	for _, result := range []string{"failure", "skipped", ""} {
+		if result == "" {
+			delete(results, "quality-validation")
+		} else {
+			results["quality-validation"] = result
+		}
+		if report := EvaluatePlanGate(plan, results); report.OK {
+			t.Fatalf("quality result %q accepted", result)
+		}
+	}
+}
+
+func TestPRGateRejectsTamperedQualityProjectionAndHistoricalArtifact(t *testing.T) {
+	t.Parallel()
+
+	plan := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "M", Paths: []string{"README.md"}}})
+	plan.PR.Effective.Quality = false
+	if report := EvaluatePlanGate(plan, successfulPRResults(plan)); report.OK {
+		t.Fatal("tampered quality projection accepted")
+	}
+
+	historical := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "M", Paths: []string{"README.md"}}})
+	historical.Version = HistoricalPRPlanVersion
+	historical.PR.Nominal.Quality = false
+	historical.PR.Effective.Quality = false
+	if err := ValidateHistoricalPRPlan(historical); err != nil {
+		t.Fatalf("valid historical v2 plan rejected: %v", err)
+	}
+	if report := EvaluatePlanGate(historical, successfulPRResults(historical)); report.OK {
+		t.Fatal("obsolete v2 plan accepted by current gate")
+	}
+}
+
+func successfulPRResults(plan Plan) map[string]string {
+	results := map[string]string{"prepare": "success"}
+	for name, selected := range plan.PR.Effective.Selected() {
+		results[name] = "skipped"
+		if selected {
+			results[name] = "success"
+		}
+	}
+	return results
+}
