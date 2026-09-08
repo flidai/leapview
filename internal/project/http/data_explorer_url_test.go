@@ -116,7 +116,7 @@ func (e *countingDataQueryExecutor) ExecuteDataQuery(context.Context, dataquery.
 	return dataquery.Result{Rows: []dataquery.Row{{"status": "paid"}}}, nil
 }
 
-func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingDataQueryExecutor) {
+func newDataExplorerURLTestHandler(t testing.TB) (*BrowserHandler, *countingDataQueryExecutor) {
 	t.Helper()
 	const projectID = "project:test"
 	const modelID = "semantic:sales"
