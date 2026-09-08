@@ -67,6 +67,15 @@ refreshed through the live repository tool across all five graphs; existing
 findings and lockfile hashes were unchanged. Remote checks on the corrected
 head must pass before this PR can be described as green.
 
+The corrected head cleared the remote security gates. A subsequent data
+frontend job timed out during its browser setup before running any tests.
+The affected fixture now allows 15 seconds for setup; product assertions and
+test-body timeouts are unchanged. Three independent local suite invocations
+passed (13 tests each). Nonstandard same-process `--rerun-each=3` stress runs
+remain unstable, including browser-close timeouts after successful startup;
+that result is not counted as passing and remains a test-harness follow-up.
+The normal isolated-process CI lane still requires exact-head verification.
+
 Earlier CI attempts exposed the integration fixes listed above. One attempt
 ended with signal exit 143 before completion; it was not counted as passing.
 The final complete run supersedes those attempts. Earlier feature-only release

@@ -38,7 +38,7 @@ beforeAll(async () => {
   if (!address || typeof address === 'string') throw new Error('test server did not bind to a port')
   baseURL = `http://127.0.0.1:${address.port}`
   browser = await chromium.launch()
-})
+}, 15_000)
 
 afterAll(async () => {
   await browser?.close()
