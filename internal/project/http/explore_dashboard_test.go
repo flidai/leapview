@@ -32,9 +32,9 @@ type addDashboardAuthoringStub struct {
 }
 
 const (
-	testAppendRequestID      = "01912f14-7b3c-7e31-8a74-6a6e8f9d4c20"
-	testAppendIdempotencyKey = "01912f14-7b3c-7e32-8a74-6a6e8f9d4c20"
-	testAppendTraceRequestID = "01912f14-7b3c-7e33-8a74-6a6e8f9d4c20"
+	testAppendRequestID      = "00000000-0000-7000-8000-000000000001"
+	testAppendIdempotencyKey = "00000000-0000-7000-8000-000000000002"
+	testAppendTraceRequestID = "00000000-0000-7000-8000-000000000003"
 )
 
 func (s *addDashboardAuthoringStub) ExplorationTargets(context.Context, authoringapplication.ExplorationTargetsRequest) ([]authoringapplication.ExplorationTarget, error) {

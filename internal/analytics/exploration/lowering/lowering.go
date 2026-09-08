@@ -94,7 +94,7 @@ func hasMultiRootMetric(spec exploration.ExplorationSpec, model *semanticmodel.M
 }
 
 func queryAliases(spec exploration.ExplorationSpec) map[string]string {
-	fields := make([]string, 0, len(spec.Dimensions)+len(spec.Metrics)+1)
+	fields := make([]string, 0, len(spec.Dimensions))
 	aliases := make(map[string]string, len(fields))
 	dimensionFields := make(map[string]struct{}, len(spec.Dimensions))
 	for _, dimension := range spec.Dimensions {
@@ -139,7 +139,7 @@ func queryAliases(spec exploration.ExplorationSpec) map[string]string {
 }
 
 func lowerFilters(spec exploration.ExplorationSpec) ([]dataquery.Filter, error) {
-	filters := make([]dataquery.Filter, 0, len(spec.Filters)+2)
+	filters := make([]dataquery.Filter, 0, len(spec.Filters))
 	for index, authored := range spec.Filters {
 		dataset := pointerString(authored.DatasetID)
 		if value, ok := authored.Expression.Value.(*exploration.RangeExplorationFilterExpression); ok {

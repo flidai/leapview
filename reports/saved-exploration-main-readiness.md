@@ -4,9 +4,11 @@ Tracking: [FAI-769](https://linear.app/flid/issue/FAI-769/reconcile-saved-data-e
 
 ## Current status
 
-Implementation and local validation are complete. The main-target PR and
-exact-head GitHub checks are the next gate. This report does not authorize a
-main merge or a production deployment.
+Implementation and full local CI validation reached a stable checkpoint.
+The main-target [PR #543](https://github.com/flidai/leapview/pull/543) is open
+and unmerged. Exact-head GitHub checks remain the next gate; initial security
+findings are being corrected and revalidated. This report does not authorize
+a main merge or a production deployment.
 
 Linear milestones 1–3 are complete. Milestone 4 remains in progress for final
 integration/release readiness and Jacob's review. No new Jacob comments were
@@ -57,6 +59,14 @@ Code checkpoint: `aa686efaa35c267823f26e1e63bdd16eaa9dd7bf`.
 Local evidence: `/tmp/fai769-task-ci-4.log` ends with `CI_EXIT_STATUS=0`;
 race evidence is in `/tmp/fai769-native-race.log`.
 
+The subsequent security-correction patch was reviewed separately: focused
+HTTP and query-lowering tests, the maximum-selection/range-expansion test
+under the race detector, dependency-evidence validator tests, the full
+`security:source` task and the quality budget passed. JavaScript evidence was
+refreshed through the live repository tool across all five graphs; existing
+findings and lockfile hashes were unchanged. Remote checks on the corrected
+head must pass before this PR can be described as green.
+
 Earlier CI attempts exposed the integration fixes listed above. One attempt
 ended with signal exit 143 before completion; it was not counted as passing.
 The final complete run supersedes those attempts. Earlier feature-only release
@@ -74,8 +84,11 @@ for this main-readiness claim.
 
 ## Remaining steps and rollout limits
 
-1. Open the main-target PR and verify all required GitHub checks on its exact
-   head; investigate and patch any real failure with normal commits/pushes.
+1. Verify all required GitHub checks on PR #543's exact head; investigate and
+   patch failures with normal commits/pushes. Initial remote blockers were a
+   high-entropy UUID test fixture flagged by Gitleaks, stale JavaScript
+   manifest evidence after test-script changes, and CodeQL allocation-size
+   arithmetic alerts. No security gate or suppression policy was weakened.
 2. Obtain Jacob's final product/code review. Keep FAI-769 in review rather than
    declaring production release complete.
 3. Only after separate approval, follow the repository's final merge and

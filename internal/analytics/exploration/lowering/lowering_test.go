@@ -1,6 +1,7 @@
 package lowering
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/flidai/leapview/internal/analytics/exploration"
@@ -63,6 +64,43 @@ func TestQueryRejectsUnsupportedRelativeFilter(t *testing.T) {
 	spec.Filters = []exploration.ExplorationFilter{{Field: "orders.status", Expression: exploration.ExplorationFilterExpression{Value: &exploration.RelativePeriodExplorationFilterExpression{Kind: "relative_period"}}}}
 	if _, err := Query(spec); err == nil {
 		t.Fatal("relative filter error = nil")
+	}
+}
+
+func TestQueryHandlesMaximumValidatedSelectionCounts(t *testing.T) {
+	spec := basicSpec()
+	spec.Dimensions = make([]exploration.ExplorationDimensionRef, 100)
+	for index := range spec.Dimensions {
+		spec.Dimensions[index] = exploration.ExplorationDimensionRef{Field: fmt.Sprintf("orders.dimension_%d", index)}
+	}
+	spec.Metrics = make([]exploration.ExplorationMetricRef, 100)
+	for index := range spec.Metrics {
+		spec.Metrics[index] = exploration.ExplorationMetricRef{Field: fmt.Sprintf("metric_%d", index)}
+	}
+	spec.Filters = make([]exploration.ExplorationFilter, 100)
+	for index := range spec.Filters {
+		spec.Filters[index] = exploration.ExplorationFilter{
+			Field: fmt.Sprintf("orders.dimension_%d", index),
+			Expression: exploration.ExplorationFilterExpression{Value: &exploration.RangeExplorationFilterExpression{
+				Kind: "range", Lower: &exploration.ExplorationFilterBound{
+					Inclusive: true,
+					Value:     exploration.ExplorationFilterValue{Value: &exploration.IntegerExplorationFilterValue{Kind: "integer", Value: "0"}},
+				}, Upper: &exploration.ExplorationFilterBound{
+					Value: exploration.ExplorationFilterValue{Value: &exploration.IntegerExplorationFilterValue{Kind: "integer", Value: "100"}},
+				},
+			}},
+		}
+	}
+
+	query, err := Query(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(query.Fields) != len(spec.Dimensions) || len(query.Metrics) != len(spec.Metrics) || len(query.Filters) != 2*len(spec.Filters) {
+		t.Fatalf("lowered maximum-shape query counts = fields %d, metrics %d, filters %d; want %d, %d, %d", len(query.Fields), len(query.Metrics), len(query.Filters), len(spec.Dimensions), len(spec.Metrics), 2*len(spec.Filters))
+	}
+	if first, last := query.Filters[0], query.Filters[len(query.Filters)-1]; first.Field != "orders.dimension_0" || first.Operator != "greater_than_or_equal" || first.Values[0] != int64(0) || last.Field != "orders.dimension_99" || last.Operator != "less_than" || last.Values[0] != int64(100) {
+		t.Fatalf("lowered range boundary filters = %#v, %#v", first, last)
 	}
 }
 
