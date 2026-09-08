@@ -7,6 +7,7 @@ const baseURL = `http://127.0.0.1:${sitePort}`
 let browser: Browser
 let siteServer: SiteTestServer | undefined
 const siteReadyTimeout = 60_000
+const lineExampleIDs = ['revenue_line', 'revenue_line_axis_policies', 'revenue_line_status', 'revenue_line_running', 'revenue_line_step', 'revenue_line_context']
 
 beforeAll(async () => {
   const startupDeadline = Date.now() + siteReadyTimeout
@@ -920,6 +921,7 @@ test('documentation search finds authored and generated content', async () => {
 })
 
 test('chart documentation renders every executable variation from its YAML', async () => {
+  const expectedExampleIDs = lineExampleIDs
   const page = await browser.newPage()
   try {
     await page.goto(`${baseURL}/docs/visuals/line`)
@@ -968,26 +970,22 @@ test('chart documentation renders every executable variation from its YAML', asy
     expect(await page.getByRole('heading', { name: 'Multiple series' }).isVisible()).toBe(true)
     expect(await page.getByRole('heading', { name: 'Visual calculation' }).isVisible()).toBe(true)
     expect(await page.getByRole('heading', { name: 'Stepped line' }).isVisible()).toBe(true)
-    await page.waitForFunction(() => {
+    await page.waitForFunction((expectedIDs) => {
       const examples = [...document.querySelectorAll('lv-site-visual-example')] as Array<HTMLElement & { shadowRoot: ShadowRoot }>
-      return examples.length === 5 && examples.every((example) => {
+      return examples.length === expectedIDs.length && examples.every((example, index) => {
         const host = example.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement & { envelope?: { dataState?: { datasets?: Array<{ rows?: unknown[] }> } } }
-        return Boolean(host?.envelope?.dataState?.datasets?.some((dataset) => dataset.rows?.length))
+        return example.getAttribute('example-id') === expectedIDs[index] && Boolean(host?.envelope?.dataState?.datasets?.some((dataset) => dataset.rows?.length))
       })
-    })
-    expect(await page.locator('lv-site-visual-example').count()).toBe(5)
-    expect(await page.locator('lv-site-visual-example').nth(0).getAttribute('example-id')).toBe('revenue_line')
-    expect(await page.locator('lv-site-visual-example').nth(2).getAttribute('example-id')).toBe('revenue_line_running')
-    expect(await page.locator('lv-site-visual-example').nth(3).getAttribute('example-id')).toBe('revenue_line_step')
-    expect(await page.locator('lv-site-visual-example').nth(4).getAttribute('example-id')).toBe('revenue_line_context')
+    }, expectedExampleIDs)
+    expect(await page.locator('lv-site-visual-example').evaluateAll((examples) => examples.map((example) => example.getAttribute('example-id')))).toEqual(expectedExampleIDs)
     const configurations = await page.locator('.site-docs-article pre code').allTextContents()
     expect(configurations.some((source) => source.includes('visuals:\n  revenue_line:'))).toBe(true)
     expect(configurations.every((source) => !source.includes('shape:'))).toBe(true)
     expect(configurations.some((source) => source.includes('step: true'))).toBe(true)
     const keyFields = await page.locator('.site-visual-key-fields').allTextContents()
-    expect(keyFields).toHaveLength(5)
-    expect(keyFields[2]).toContain('calculations')
-    expect(keyFields[3]).toContain('presentation.step')
+    expect(keyFields).toHaveLength(expectedExampleIDs.length)
+    expect(keyFields[expectedExampleIDs.indexOf('revenue_line_running')]).toContain('calculations')
+    expect(keyFields[expectedExampleIDs.indexOf('revenue_line_step')]).toContain('presentation.step')
     await page.waitForFunction(() => document.querySelectorAll('lv-code-block[data-visual-example="revenue_line_step"] .code-block-highlighted-line').length === 3)
     const steppedConfiguration = page.locator('lv-code-block[data-visual-example="revenue_line_step"]')
     expect(await steppedConfiguration.getAttribute('data-highlighted-fields')).toBe('presentation.dataZoom,presentation.showSymbols,presentation.step')
@@ -1009,7 +1007,7 @@ test('chart documentation renders every executable variation from its YAML', asy
     expect(await steppedConfiguration.locator('.code-block-focused-line').allTextContents()).toEqual(['      step: true'])
     await stepField.blur()
     await page.waitForFunction(() => document.querySelectorAll('lv-code-block[data-visual-example="revenue_line_step"] .code-block-focused-line').length === 0)
-    const stepped = await page.locator('lv-site-visual-example').nth(3).evaluate((element) => {
+    const stepped = await page.locator('lv-site-visual-example[example-id="revenue_line_step"]').evaluate((element) => {
       const host = element.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement & { envelope?: { spec?: { presentation?: Record<string, unknown> } } }
       return host?.envelope?.spec?.presentation?.step
     })
@@ -1283,7 +1281,7 @@ test('every visual documentation page mounts its generated production payloads',
   try {
     for (const visualType of visualTypes) {
       await page.goto(`${baseURL}/docs/visuals/${visualType}`)
-      const expected = visualType === 'map' ? 6 : visualType === 'line' ? 5 : visualType === 'candlestick' ? 2 : visualType === 'kpi' ? 9 : visualType === 'table' ? 2 : ['matrix', 'pivot'].includes(visualType) ? 1 : 3
+      const expected = visualType === 'map' ? 6 : visualType === 'line' ? lineExampleIDs.length : visualType === 'candlestick' ? 2 : visualType === 'kpi' ? 9 : visualType === 'table' ? 2 : ['matrix', 'pivot'].includes(visualType) ? 1 : 3
       await page.waitForFunction(
         ({ count }) => {
           const examples = [...document.querySelectorAll('lv-site-visual-example')]
