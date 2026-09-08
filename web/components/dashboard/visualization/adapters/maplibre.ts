@@ -1,4 +1,4 @@
-import type { VisualizationEnvelope, VisualizationGeographicLayer, VisualizationGeometryAsset } from '../../../../generated/visualization'
+import type { VisualizationEnvelope, VisualizationGeographicLayer, VisualizationGeometryAsset, VisualizationMapStyleAsset } from '../../../../generated/visualization'
 import { Map as MapLibre, NavigationControl, type GeoJSONSource, type Map as MapLibreMap, type MapMouseEvent, type VectorTileSource } from 'maplibre-gl'
 import type { FeatureCollection } from 'geojson'
 import type { OptimisticInteractionCommand } from '../../interaction-selection'
