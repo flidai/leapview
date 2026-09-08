@@ -1,12 +1,36 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
+
+func TestPMTilesCommandPinsArchiveEncodingToolchain(t *testing.T) {
+	t.Setenv("GOTOOLCHAIN", "go1.27.1")
+	t.Setenv("LEAPVIEW_MAP_TEST_ENV", "preserved")
+	command := pmtilesCommand(context.Background(), "extract", "input", "output", "--maxzoom=6")
+	want := []string{"go", "run", "github.com/protomaps/go-pmtiles@v1.31.1", "extract", "input", "output", "--maxzoom=6"}
+	if !slices.Equal(command.Args, want) {
+		t.Fatalf("command arguments = %q, want %q", command.Args, want)
+	}
+	environment := make(map[string]string)
+	for _, entry := range command.Environ() {
+		key, value, _ := strings.Cut(entry, "=")
+		environment[key] = value
+	}
+	if environment["GOTOOLCHAIN"] != "go1.26.8" {
+		t.Fatalf("archive encoder toolchain = %q, want go1.26.8", environment["GOTOOLCHAIN"])
+	}
+	if environment["LEAPVIEW_MAP_TEST_ENV"] != "preserved" {
+		t.Fatal("archive command discarded the inherited environment")
+	}
+}
 
 func TestVerifyFileFailsClosedOnDigestMismatch(t *testing.T) {
 	name := filepath.Join(t.TempDir(), "asset")
