@@ -92,26 +92,44 @@ test('compact generated heatmap keeps rotated categories above its visual map', 
   const document = (visualDocumentation as any).documents['visuals/heatmap']
   const envelope = structuredClone(document.find((candidate: any) => candidate.visualID === 'category_status_heatmap')) as VisualizationEnvelope
   const source = echartsOption(envelope, defaultRendererContext) as Record<string, any>
-  source.dataZoom = heatmapFocusDataZoom(true)
   const option = { ...source, ...responsiveEChartsPatch(source, 358, 411) }
   expect(option.grid.bottom).toBe(96)
+  expect(option.xAxis.axisLabel.rotate).toBe(24)
 
   const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 358, height: 411 })
   try {
     chart.setOption(option, { notMerge: true, lazyUpdate: false })
     chart.renderToSVGString()
-    const label = chart.getZr().storage.getDisplayList().find((item: any) => item.type === 'tspan' && item.style?.text === 'Electronics')
-    const visualMap = chart.getModel().findComponents({ mainType: 'visualMap' })[0]
-    const visualMapGroup = visualMap ? (chart as any).getViewOfComponentModel(visualMap)?.group : undefined
-    expect(label).toBeDefined()
-    expect(visualMapGroup).toBeDefined()
-    const labelBounds = globalBounds(label)
-    const visualMapBounds = globalBounds(visualMapGroup)
-    expect(labelBounds.y + labelBounds.height).toBeLessThanOrEqual(visualMapBounds.y)
+    assertCompactHeatmapBounds(chart, 'unfocused')
+
+    chart.setOption({ dataZoom: heatmapFocusDataZoom(true) }, { lazyUpdate: false })
+    chart.renderToSVGString()
+    assertCompactHeatmapBounds(chart, 'focused')
   } finally {
     chart.dispose()
   }
 })
+
+function assertCompactHeatmapBounds(chart: echarts.EChartsType, state: string): void {
+  const categories = new Set(['Books', 'Sports', 'Electronics', 'Fashion', 'Beauty', 'Home'])
+  const labels = chart.getZr().storage.getDisplayList().filter((item: any) => item.type === 'tspan' && categories.has(item.style?.text))
+  expect(labels, `${state} category labels should render`).toHaveLength(categories.size)
+  const visualMap = chart.getModel().findComponents({ mainType: 'visualMap' })[0]
+  const slider = chart.getModel().findComponents({ mainType: 'dataZoom' }).find((component: any) => component.option?.id === 'dataZoom:heatmap:slider')
+  const visualMapGroup = visualMap ? (chart as any).getViewOfComponentModel(visualMap)?.group : undefined
+  const sliderGroup = slider ? (chart as any).getViewOfComponentModel(slider)?.group : undefined
+  expect(visualMapGroup, `${state} visual map should render`).toBeDefined()
+  expect(sliderGroup, `${state} zoom slider should render`).toBeDefined()
+  const visualMapBounds = globalBounds(visualMapGroup)
+  const sliderBounds = globalBounds(sliderGroup)
+  expect(sliderBounds.width, `${state} zoom slider should have visible width`).toBeGreaterThan(0)
+  expect(visualMapBounds.width, `${state} visual map should have visible width`).toBeGreaterThan(0)
+  for (const label of labels) {
+    const labelBounds = globalBounds(label)
+    expect(labelBounds.y + labelBounds.height, `${state} ${label.style.text} should clear zoom slider`).toBeLessThanOrEqual(sliderBounds.y)
+    expect(labelBounds.y + labelBounds.height, `${state} ${label.style.text} should clear visual map`).toBeLessThanOrEqual(visualMapBounds.y)
+  }
+}
 
 function cartesianFixture(mark: string, columns = ['label', 'value']): VisualizationEnvelope {
   const fields = columns.map((id, index) => ({ id, role: index === 0 ? 'dimension' : 'metric', dataType: index === 0 || id === 'row' ? 'string' : 'decimal', nullable: false, label: id }))
