@@ -346,6 +346,31 @@ test('ECharts translation emits one multi-value financial series', () => {
   }])
 })
 
+test('ECharts candlestick colors use authored intents and a neutral equal-value fallback', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'ohlc-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    spec: {
+      kind: 'cartesian', title: 'OHLC', mark: 'candlestick',
+      datasets: [{ id: 'primary', fields: ['label', 'open', 'close', 'low', 'high'].map((id, index) => ({ id, role: index ? 'metric' : 'dimension', dataType: index ? 'decimal' : 'string', nullable: false, label: id })) }],
+      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'OHLC', description: 'OHLC' }, interactions: [],
+      x: { dataset: 'primary', field: 'label' }, y: ['open', 'close', 'low', 'high'].map((field) => ({ dataset: 'primary', field })),
+      presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: false, dataZoom: false, area: false, step: false, gainColor: 'data_2', lossColor: 'warning' },
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [
+      { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['label', 'open', 'close', 'low', 'high'], rows: [['Gain', 1, 2, 0, 3], ['Loss', 2, 1, 0, 3], ['Flat', 2, 2, 1, 3]], completeness: 'complete' },
+    ] },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const color = option.series[0].itemStyle.color
+  expect(color({ value: [1, 2, 0, 3] })).toBe(defaultRendererContext.colors.data[1])
+  expect(color({ value: [2, 1, 0, 3] })).toBe(defaultRendererContext.colors.attention)
+  expect(color({ value: [2, 2, 1, 3] })).toBe(defaultRendererContext.colors.muted)
+  expect(option.series[0].data.map((row: any) => row.__lv_row_index)).toEqual([0, 1, 2])
+  expect((echartsOption(envelope, { ...defaultRendererContext, theme: 'dark', colors: { ...defaultRendererContext.colors, data: ['#111111', '#222222'], attention: '#aaaaaa', muted: '#bbbbbb' } }) as any).series[0].itemStyle.color({ value: [1, 2, 0, 3] })).toBe('#222222')
+})
+
 function cartesianFixture(mark: string, columns = ['label', 'value']): VisualizationEnvelope {
   const fields = columns.map((id, index) => ({ id, role: index === 0 ? 'dimension' : 'metric', dataType: index === 0 || id === 'row' ? 'string' : 'decimal', nullable: false, label: id }))
   const y = columns.slice(1).map((field) => ({ dataset: 'primary', field }))

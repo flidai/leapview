@@ -734,6 +734,9 @@ model CartesianDashboardPresentation extends DashboardPresentation {
   series?: DashboardComboSeries[];
   /** Stable per-series color and order policy. Category values may be data-dependent for non-combo Cartesian series. */
   seriesIntent?: DashboardSeriesIntent[];
+  /** Candlestick gain/loss colors; omitted values use the active theme success/danger colors. */
+  gainColor?: LeapViewVisualization.VisualizationColorIntent;
+  lossColor?: LeapViewVisualization.VisualizationColorIntent;
   axes?: DashboardAxisConfiguration[];
   referenceLines?: DashboardReferenceLine[];
   referenceBands?: DashboardReferenceBand[];

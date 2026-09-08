@@ -62481,6 +62481,12 @@ components:
             - color: accent
               order: 1
               value: example
+        gainColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick gain/loss colors; omitted values use the active
+            theme success/danger colors.
+        lossColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
         axes:
           type: array
           items:
@@ -62559,6 +62565,7 @@ components:
             id: example
             label: example
             tone: neutral
+        gainColor: accent
         labelPosition: automatic
         labels:
           density: hidden
@@ -62572,6 +62579,7 @@ components:
           - label: example
             value: example
         legendTitle: example
+        lossColor: accent
         orientation: horizontal
         referenceBands:
           - axis: x
@@ -62658,6 +62666,12 @@ components:
             - color: accent
               order: 1
               value: example
+        gainColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick gain/loss intents; omitted values use theme success/danger
+            colors.
+        lossColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
       example:
         area: true
         comboSeries:
@@ -62665,8 +62679,10 @@ components:
             mark: line
             seriesValue: example
         dataZoom: true
+        gainColor: accent
         histogramBins: 1
         labelPosition: automatic
+        lossColor: accent
         orientation: horizontal
         seriesIntent:
           - color: accent
@@ -62796,8 +62812,10 @@ components:
               mark: line
               seriesValue: example
           dataZoom: true
+          gainColor: accent
           histogramBins: 1
           labelPosition: automatic
+          lossColor: accent
           orientation: horizontal
           seriesIntent:
             - color: accent

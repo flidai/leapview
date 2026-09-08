@@ -128,7 +128,7 @@ Cartesian marks all support the common `labels`, `labelPosition`, `displayUnits`
 | Waterfall | `dataZoom`, `referenceLines`, `referenceBands`, `eventAnnotations` |
 | Heatmap | No additional mark-specific fields |
 | Histogram | `dataZoom` |
-| Candlestick | `legend`, `dataZoom` (legend title is supported; legend item overrides are not) |
+| Candlestick | `legend`, `dataZoom`, `gainColor`, `lossColor` (legend title is supported; legend item overrides are not) |
 | Boxplot | `dataZoom` |
 
 Proportional and polar presentations share the common `legend`, `labels`, and `displayUnits` fields where those channels are meaningful. Mark-specific fields are intentionally scoped to the marks that can render them:
@@ -140,6 +140,27 @@ Proportional and polar presentations share the common `legend`, `labels`, and `d
 | Funnel | `orientation`, `labelPosition`, `align`, `sort` |
 | Radar | `area`, `maximum` |
 | Gauge | `minimum`, `maximum`, `target`, `showPointer`, `progressWidth`, `thresholds` |
+
+Hierarchy controls are mark-scoped. `layout` applies to tree and graph (`standard`
+or `circular`); `initialDepth` applies to tree and treemap; `roam` applies to
+graph, tree, treemap, and sunburst; `breadcrumb` applies to treemap; `nodeGap`
+applies to Sankey; `curveness` applies to graph and Sankey; and `focus` applies
+to graph. Sankey flow rows are intentionally bipartite: the renderer keeps
+source nodes on the source side and target nodes on the target side, with no
+free node-alignment control. Unknown presentation keys such as `nodeAlignment`
+are rejected by the closed dashboard schema.
+
+| Family | Supported controls |
+| --- | --- |
+| Hierarchy | `legend`, `labels`; mark-scoped `orientation`, `initialDepth`, `roam`, `layout`, `breadcrumb`, `nodeGap`, `curveness`, `focus` as described above |
+| Proportional | `legend`, `labels`, `displayUnits`; pie/donut `rose`, `labelPosition`, `outerRadius`; donut `centerLabel`, `innerRadius`; funnel `orientation`, `labelPosition`, `align`, `sort` |
+| Polar | `legend`, `labels`, `displayUnits`; radar `area`, `maximum`; gauge `minimum`, `maximum`, `target`, `showPointer`, `progressWidth`, `thresholds` |
+
+Candlestick gain/loss colors are renderer-neutral color intents. Omitted values
+use the active theme's `success` and `danger` colors; equal open/close values
+use the active theme's neutral/muted color, so a flat candle is not presented
+as a gain or loss. The same compiled option is used for light, dark, and image
+export rendering.
 
 Gauge has no categorical legend; radar can use `legend` when its aggregate query includes a second governed dimension for series values. A field from another mark's row is rejected during project validation rather than silently changing the rendered visual.
 

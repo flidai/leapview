@@ -319,6 +319,38 @@ func TestValidateSpecSeriesIntentSupportsSingleMetricAndRejectsNoOpOrWhitespace(
 	}
 }
 
+func TestValidateSpecGainLossColorsAreCandlestickOnly(t *testing.T) {
+	base := VisualizationSpecBase{
+		Kind: "cartesian", Title: "OHLC",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "date", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Date"},
+			{ID: "open", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Open"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 10, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "OHLC", Description: "OHLC"}, Interactions: []VisualizationInteraction{},
+	}
+	color := VisualizationColorIntentSuccess
+	newSpec := func(mark VisualizationCartesianMark) VisualizationSpec {
+		return VisualizationSpec{Value: &CartesianVisualizationSpec{
+			VisualizationSpecBase: base, Kind: "cartesian", Mark: mark,
+			X: VisualizationFieldRef{Dataset: "primary", Field: "date"}, Y: []VisualizationFieldRef{{Dataset: "primary", Field: "open"}},
+			Presentation: CartesianVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionHidden), GainColor: &color},
+		}}
+	}
+	if err := ValidateSpec(newSpec(VisualizationCartesianMarkCandlestick)); err != nil {
+		t.Fatalf("candlestick gain color rejected: %v", err)
+	}
+	if err := ValidateSpec(newSpec(VisualizationCartesianMarkLine)); err == nil || !strings.Contains(err.Error(), "spec.presentation.gainColor") {
+		t.Fatalf("line gain color error = %v", err)
+	}
+	invalid := VisualizationColorIntent("invalid")
+	bad := newSpec(VisualizationCartesianMarkCandlestick).Value.(*CartesianVisualizationSpec)
+	bad.Presentation.GainColor = &invalid
+	if err := ValidateSpec(VisualizationSpec{Value: bad}); err == nil || !strings.Contains(err.Error(), "spec.presentation.gainColor") {
+		t.Fatalf("invalid gain color error = %v", err)
+	}
+}
+
 func TestValidateSpecUsesComboAxisOwnersForContext(t *testing.T) {
 	t.Parallel()
 

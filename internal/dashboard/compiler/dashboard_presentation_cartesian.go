@@ -94,6 +94,12 @@ func validateCanonicalCartesianPresentationApplicability(variant *document.Carte
 			visualType == document.DashboardVisualTypeCombo); err != nil {
 		return err
 	}
+	if err := optionSupported("gainColor", variant.GainColor != nil, visualType == document.DashboardVisualTypeCandlestick); err != nil {
+		return err
+	}
+	if err := optionSupported("lossColor", variant.LossColor != nil, visualType == document.DashboardVisualTypeCandlestick); err != nil {
+		return err
+	}
 	// Decision-context declarations are lowered separately, but their authored
 	// presence is part of the same applicability contract. Empty explicitly-
 	// authored collections are still declarations and must not be accepted on

@@ -8,6 +8,7 @@ import { echartsLabelPolicy } from './label-policy'
 import { categoryIdentity, type CategoryColorRegistry } from './category-colors'
 import { parseDecimal } from '../../decimal'
 import { reduceReferenceValue } from './decimal-reference'
+import { financialOption } from './financial'
 import {
   cartesianCategoryLookup,
   cartesianIsHorizontal,
@@ -68,24 +69,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     }
   }
   if (spec.mark === 'candlestick') {
-    const dataset = inlineDataset(envelope, spec.x.dataset)
-    const categoryIndex = dataset?.columns.indexOf(spec.x.field) ?? -1
-    const valueIndices = spec.y.map((item) => dataset?.columns.indexOf(item.field) ?? -1)
-    const data = (dataset?.rows ?? []).map((row, rowIndex) => ({
-      name: formatField(envelope, spec.x, row[categoryIndex], context),
-      value: valueIndices.map((index) => row[index]),
-      __lv_dataset: dataset?.id ?? spec.x.dataset,
-      __lv_row_index: rowIndex,
-    }))
-    return {
-      ...axes, xAxis: { ...axes.xAxis, data: (dataset?.rows ?? []).map((row) => formatField(envelope, spec.x, row[categoryIndex], context)) }, dataZoom,
-      ...legendDecoration(spec.presentation.legend, context, false, spec.presentation, [{ value: spec.title, name: spec.title }]),
-      series: [{
-        id: 'series:primary:candlestick', type: 'candlestick', name: spec.title, data,
-        tooltip: { formatter: tooltipFormatterForRow(envelope, context, { fallbackRefs: [spec.x, ...spec.y] }) },
-        ...chartLabel(envelope, spec.y[0], spec, context),
-      }],
-    }
+    return financialOption(envelope, context, axes, dataZoom, chartLabel(envelope, spec.y[0], spec, context))!
   }
   if (spec.mark === 'boxplot') {
     const dataset = inlineDataset(envelope, spec.x.dataset)

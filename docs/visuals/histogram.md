@@ -2,6 +2,11 @@
 
 Use a histogram to show how raw values are distributed across generated numeric bins.
 
+`query.bins` controls the number of generated bins. An optional
+`query.domain.minimum`/`query.domain.maximum` fixes the numeric domain while
+preserving the same null-policy and approximation contract; omitted bounds use
+the observed domain.
+
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
 ## Basic distribution

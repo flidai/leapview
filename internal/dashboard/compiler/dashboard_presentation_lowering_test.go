@@ -37,6 +37,27 @@ func TestLowerCanonicalCartesianPresentationPreservesEveryField(t *testing.T) {
 	}
 }
 
+func TestLowerCanonicalCandlestickPresentationPreservesGainLossColors(t *testing.T) {
+	gain, loss := visualizationir.VisualizationColorIntentData2, visualizationir.VisualizationColorIntentWarning
+	value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", GainColor: &gain, LossColor: &loss}}
+	lowered, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeCandlestick)
+	if err != nil {
+		t.Fatalf("lower candlestick colors: %v", err)
+	}
+	got := lowered.(visualizationir.CartesianVisualizationPresentation)
+	if got.GainColor == nil || *got.GainColor != gain || got.LossColor == nil || *got.LossColor != loss {
+		t.Fatalf("candlestick colors = %#v", got)
+	}
+	if _, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeBar); err == nil || !strings.Contains(err.Error(), "presentation.gainColor is not supported for bar visuals") {
+		t.Fatalf("gain color on bar error = %v", err)
+	}
+	invalid := visualizationir.VisualizationColorIntent("#fff")
+	_, err = LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", GainColor: &invalid}}, document.DashboardVisualTypeCandlestick)
+	if err == nil || !strings.Contains(err.Error(), "presentation.gainColor") {
+		t.Fatalf("invalid gain color error = %v", err)
+	}
+}
+
 func TestLowerCanonicalPointPresentationPreservesOverplotAndLabels(t *testing.T) {
 	legend := document.DashboardLegendPositionRight
 	labels := document.DashboardLabelPolicy{Density: document.DashboardLabelDensityAutomatic}
