@@ -72696,7 +72696,7 @@ components:
             - cartesian
           example: example
         mark:
-          $ref: '#/components/schemas/VisualizationCartesianMark'
+          $ref: '#/components/schemas/ExplorationVisualizationCartesianMark'
         x:
           $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
         'y':
@@ -84070,6 +84070,54 @@ components:
             subjectType: example
         resourceId: example
         resourceKind: project
+    ExplorationCompactVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - compact
+          example: example
+        maximumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        kind: example
+        maximumFractionDigits: 1
+    ExplorationCurrencyVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+        - currency
+      properties:
+        kind:
+          type: string
+          enum:
+            - currency
+          example: example
+        currency:
+          type: string
+          example: example
+        minimumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+        maximumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        currency: example
+        kind: example
+        maximumFractionDigits: 1
+        minimumFractionDigits: 1
     ExplorationDimensionRef:
       type: object
       required:
@@ -84094,6 +84142,25 @@ components:
         alias: example
         field: example
         grain: second
+    ExplorationDurationVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+        - unit
+      properties:
+        kind:
+          type: string
+          enum:
+            - duration
+          example: example
+        unit:
+          type: string
+          example: example
+      example:
+        kind: example
+        unit: example
     ExplorationFilter:
       type: object
       required:
@@ -84202,33 +84269,33 @@ components:
       type: object
       properties:
         mode:
-          $ref: '#/components/schemas/VisualizationKPIMode'
+          $ref: '#/components/schemas/ExplorationVisualizationKPIMode'
         delta:
-          $ref: '#/components/schemas/VisualizationKPIDeltaMode'
+          $ref: '#/components/schemas/ExplorationVisualizationKPIDeltaMode'
         favorableDirection:
-          $ref: '#/components/schemas/VisualizationKPIDirection'
+          $ref: '#/components/schemas/ExplorationVisualizationKPIDirection'
         missingComparison:
-          $ref: '#/components/schemas/VisualizationKPIMissingComparison'
+          $ref: '#/components/schemas/ExplorationVisualizationKPIMissingComparison'
         ranges:
           type: array
           items:
-            $ref: '#/components/schemas/VisualizationKPIQualitativeRange'
+            $ref: '#/components/schemas/ExplorationVisualizationKPIQualitativeRange'
           example:
             - label: example
               maximum: 1
               minimum: 1
               tone: neutral
         displayUnits:
-          $ref: '#/components/schemas/VisualizationDisplayUnits'
+          $ref: '#/components/schemas/ExplorationVisualizationDisplayUnits'
         note:
           type: string
           example: example
         tone:
-          $ref: '#/components/schemas/VisualizationTone'
+          $ref: '#/components/schemas/ExplorationVisualizationTone'
         thresholds:
           type: array
           items:
-            $ref: '#/components/schemas/VisualizationThreshold'
+            $ref: '#/components/schemas/ExplorationVisualizationThreshold'
           example:
             - tone: neutral
               value: 1
@@ -84286,6 +84353,54 @@ components:
       example:
         alias: example
         field: example
+    ExplorationNumberVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - number
+          example: example
+        minimumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+        maximumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        kind: example
+        maximumFractionDigits: 1
+        minimumFractionDigits: 1
+    ExplorationPercentVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - percent
+          example: example
+        minimumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+        maximumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        kind: example
+        maximumFractionDigits: 1
+        minimumFractionDigits: 1
     ExplorationPivotConfig:
       type: object
       required:
@@ -84592,7 +84707,7 @@ components:
           maximum: 2000
           example: 1
         format:
-          $ref: '#/components/schemas/VisualizationFormat'
+          $ref: '#/components/schemas/ExplorationVisualizationFormat'
       example:
         field: example
         label: example
@@ -84659,6 +84774,28 @@ components:
           example: example
       example:
         kind: example
+    ExplorationTemporalVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - temporal
+          example: example
+        dateStyle:
+          type: string
+          example: example
+        timeStyle:
+          type: string
+          example: example
+      example:
+        dateStyle: example
+        kind: example
+        timeStyle: example
     ExplorationTimeBound:
       type: object
       required:
@@ -84730,6 +84867,20 @@ components:
         alias: example
         field: example
         grain: second
+    ExplorationVisualizationCartesianMark:
+      type: string
+      enum:
+        - line
+        - area
+        - bar
+        - column
+        - histogram
+        - combo
+        - waterfall
+        - candlestick
+        - boxplot
+        - heatmap
+      example: line
     ExplorationVisualizationConfig:
       oneOf:
         - $ref: '#/components/schemas/CartesianExplorationVisualization'
@@ -84770,13 +84921,13 @@ components:
           type: string
           example: example
         legend:
-          $ref: '#/components/schemas/VisualizationLegendPosition'
+          $ref: '#/components/schemas/ExplorationVisualizationLegendPosition'
         displayUnits:
-          $ref: '#/components/schemas/VisualizationDisplayUnits'
+          $ref: '#/components/schemas/ExplorationVisualizationDisplayUnits'
         orientation:
-          $ref: '#/components/schemas/VisualizationOrientation'
+          $ref: '#/components/schemas/ExplorationVisualizationOrientation'
         stacking:
-          $ref: '#/components/schemas/VisualizationStackingMode'
+          $ref: '#/components/schemas/ExplorationVisualizationStackingMode'
       example:
         displayUnits: auto
         kind: example
@@ -84785,6 +84936,16 @@ components:
         stacking: none
         subtitle: example
         title: example
+    ExplorationVisualizationDisplayUnits:
+      type: string
+      enum:
+        - auto
+        - none
+        - thousands
+        - millions
+        - billions
+        - trillions
+      example: auto
     ExplorationVisualizationFieldRef:
       type: object
       required:
@@ -84797,11 +84958,159 @@ components:
           pattern: ^[A-Za-z_][A-Za-z0-9_.:-]*$
           example: example
         format:
-          $ref: '#/components/schemas/VisualizationFormat'
+          $ref: '#/components/schemas/ExplorationVisualizationFormat'
       description: Authored visualization bindings use semantic IDs or authored aliases,
         never result data.
       example:
         field: example
+    ExplorationVisualizationFormat:
+      oneOf:
+        - $ref: '#/components/schemas/ExplorationNumberVisualizationFormat'
+        - $ref: '#/components/schemas/ExplorationCurrencyVisualizationFormat'
+        - $ref: '#/components/schemas/ExplorationPercentVisualizationFormat'
+        - $ref: '#/components/schemas/ExplorationCompactVisualizationFormat'
+        - $ref: '#/components/schemas/ExplorationDurationVisualizationFormat'
+        - $ref: '#/components/schemas/ExplorationTemporalVisualizationFormat'
+      discriminator:
+        propertyName: kind
+        mapping:
+          compact: '#/components/schemas/ExplorationCompactVisualizationFormat'
+          currency: '#/components/schemas/ExplorationCurrencyVisualizationFormat'
+          duration: '#/components/schemas/ExplorationDurationVisualizationFormat'
+          number: '#/components/schemas/ExplorationNumberVisualizationFormat'
+          percent: '#/components/schemas/ExplorationPercentVisualizationFormat'
+          temporal: '#/components/schemas/ExplorationTemporalVisualizationFormat'
+    ExplorationVisualizationFormatBase:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          example: example
+      description: |-
+        Authored visualization formats are kept local so this contract has no
+        dependency on a compiled renderer or dashboard-owned IR package.
+      example:
+        kind: example
+    ExplorationVisualizationHierarchyMark:
+      type: string
+      enum:
+        - treemap
+        - sunburst
+        - tree
+        - sankey
+        - graph
+      example: treemap
+    ExplorationVisualizationKPIDeltaMode:
+      type: string
+      enum:
+        - absolute
+        - relative
+      example: absolute
+    ExplorationVisualizationKPIDirection:
+      type: string
+      enum:
+        - increase
+        - decrease
+        - neutral
+      example: increase
+    ExplorationVisualizationKPIMissingComparison:
+      type: string
+      enum:
+        - show_unavailable
+        - hide
+      example: show_unavailable
+    ExplorationVisualizationKPIMode:
+      type: string
+      enum:
+        - compact
+        - bullet
+        - progress
+      example: compact
+    ExplorationVisualizationKPIQualitativeRange:
+      type: object
+      required:
+        - label
+        - tone
+      properties:
+        minimum:
+          type: number
+          format: double
+          example: 1
+        maximum:
+          type: number
+          format: double
+          example: 1
+        label:
+          type: string
+          example: example
+        tone:
+          $ref: '#/components/schemas/ExplorationVisualizationTone'
+      example:
+        label: example
+        maximum: 1
+        minimum: 1
+        tone: neutral
+    ExplorationVisualizationLegendPosition:
+      type: string
+      enum:
+        - hidden
+        - top
+        - right
+        - bottom
+        - left
+      example: hidden
+    ExplorationVisualizationOrientation:
+      type: string
+      enum:
+        - horizontal
+        - vertical
+      example: horizontal
+    ExplorationVisualizationPolarMark:
+      type: string
+      enum:
+        - radar
+        - gauge
+      example: radar
+    ExplorationVisualizationProportionalMark:
+      type: string
+      enum:
+        - pie
+        - donut
+        - funnel
+      example: pie
+    ExplorationVisualizationStackingMode:
+      type: string
+      enum:
+        - none
+        - normal
+        - percent
+      example: none
+    ExplorationVisualizationThreshold:
+      type: object
+      required:
+        - value
+        - tone
+      properties:
+        value:
+          type: number
+          format: double
+          example: 1
+        tone:
+          $ref: '#/components/schemas/ExplorationVisualizationTone'
+      example:
+        tone: neutral
+        value: 1
+    ExplorationVisualizationTone:
+      type: string
+      enum:
+        - neutral
+        - ink
+        - success
+        - warning
+        - danger
+      example: neutral
     FieldDashboardReferenceValue:
       type: object
       allOf:
@@ -85710,7 +86019,7 @@ components:
             - hierarchy
           example: example
         mark:
-          $ref: '#/components/schemas/VisualizationHierarchyMark'
+          $ref: '#/components/schemas/ExplorationVisualizationHierarchyMark'
         node:
           $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
         parent:
@@ -88282,7 +88591,7 @@ components:
             - polar
           example: example
         mark:
-          $ref: '#/components/schemas/VisualizationPolarMark'
+          $ref: '#/components/schemas/ExplorationVisualizationPolarMark'
         category:
           $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
         value:
@@ -89255,7 +89564,7 @@ components:
             - proportional
           example: example
         mark:
-          $ref: '#/components/schemas/VisualizationProportionalMark'
+          $ref: '#/components/schemas/ExplorationVisualizationProportionalMark'
         category:
           $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
         value:

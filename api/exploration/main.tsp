@@ -44,46 +44,46 @@ scalar ExplorationDecimalValue extends string;
 /** Authored visualization formats are kept local so this contract has no
  * dependency on a compiled renderer or dashboard-owned IR package. */
 @discriminator("kind")
-model VisualizationFormat {
+model ExplorationVisualizationFormat {
   kind: string;
 }
 
-model NumberVisualizationFormat extends VisualizationFormat {
+model ExplorationNumberVisualizationFormat extends ExplorationVisualizationFormat {
   kind: "number";
   minimumFractionDigits?: int32;
   maximumFractionDigits?: int32;
 }
 
-model CurrencyVisualizationFormat extends VisualizationFormat {
+model ExplorationCurrencyVisualizationFormat extends ExplorationVisualizationFormat {
   kind: "currency";
   currency: string;
   minimumFractionDigits?: int32;
   maximumFractionDigits?: int32;
 }
 
-model PercentVisualizationFormat extends VisualizationFormat {
+model ExplorationPercentVisualizationFormat extends ExplorationVisualizationFormat {
   kind: "percent";
   minimumFractionDigits?: int32;
   maximumFractionDigits?: int32;
 }
 
-model CompactVisualizationFormat extends VisualizationFormat {
+model ExplorationCompactVisualizationFormat extends ExplorationVisualizationFormat {
   kind: "compact";
   maximumFractionDigits?: int32;
 }
 
-model DurationVisualizationFormat extends VisualizationFormat {
+model ExplorationDurationVisualizationFormat extends ExplorationVisualizationFormat {
   kind: "duration";
   unit: string;
 }
 
-model TemporalVisualizationFormat extends VisualizationFormat {
+model ExplorationTemporalVisualizationFormat extends ExplorationVisualizationFormat {
   kind: "temporal";
   dateStyle?: string;
   timeStyle?: string;
 }
 
-enum VisualizationCartesianMark {
+enum ExplorationVisualizationCartesianMark {
   line: "line",
   area: "area",
   bar: "bar",
@@ -96,13 +96,13 @@ enum VisualizationCartesianMark {
   heatmap: "heatmap",
 }
 
-enum VisualizationProportionalMark {
+enum ExplorationVisualizationProportionalMark {
   pie: "pie",
   donut: "donut",
   funnel: "funnel",
 }
 
-enum VisualizationHierarchyMark {
+enum ExplorationVisualizationHierarchyMark {
   treemap: "treemap",
   sunburst: "sunburst",
   tree: "tree",
@@ -110,12 +110,12 @@ enum VisualizationHierarchyMark {
   graph: "graph",
 }
 
-enum VisualizationPolarMark {
+enum ExplorationVisualizationPolarMark {
   radar: "radar",
   gauge: "gauge",
 }
 
-enum VisualizationDisplayUnits {
+enum ExplorationVisualizationDisplayUnits {
   auto: "auto",
   none: "none",
   thousands: "thousands",
@@ -124,29 +124,29 @@ enum VisualizationDisplayUnits {
   trillions: "trillions",
 }
 
-enum VisualizationKPIMode {
+enum ExplorationVisualizationKPIMode {
   compact: "compact",
   bullet: "bullet",
   progress: "progress",
 }
 
-enum VisualizationKPIDeltaMode {
+enum ExplorationVisualizationKPIDeltaMode {
   absolute: "absolute",
   relative: "relative",
 }
 
-enum VisualizationKPIDirection {
+enum ExplorationVisualizationKPIDirection {
   increase: "increase",
   decrease: "decrease",
   neutral: "neutral",
 }
 
-enum VisualizationKPIMissingComparison {
+enum ExplorationVisualizationKPIMissingComparison {
   showUnavailable: "show_unavailable",
   hide: "hide",
 }
 
-enum VisualizationTone {
+enum ExplorationVisualizationTone {
   neutral: "neutral",
   ink: "ink",
   success: "success",
@@ -154,18 +154,18 @@ enum VisualizationTone {
   danger: "danger",
 }
 
-enum VisualizationStackingMode {
+enum ExplorationVisualizationStackingMode {
   none: "none",
   normal: "normal",
   percent: "percent",
 }
 
-enum VisualizationOrientation {
+enum ExplorationVisualizationOrientation {
   horizontal: "horizontal",
   vertical: "vertical",
 }
 
-enum VisualizationLegendPosition {
+enum ExplorationVisualizationLegendPosition {
   hidden: "hidden",
   top: "top",
   right: "right",
@@ -173,16 +173,16 @@ enum VisualizationLegendPosition {
   left: "left",
 }
 
-model VisualizationThreshold {
+model ExplorationVisualizationThreshold {
   value: float64;
-  tone: VisualizationTone;
+  tone: ExplorationVisualizationTone;
 }
 
-model VisualizationKPIQualitativeRange {
+model ExplorationVisualizationKPIQualitativeRange {
   minimum?: float64;
   maximum?: float64;
   label: string;
-  tone: VisualizationTone;
+  tone: ExplorationVisualizationTone;
 }
 
 /** The supported authored calendar grains. */
@@ -434,7 +434,7 @@ model ExplorationTableColumn {
   @minValue(1)
   @maxValue(2000)
   width?: int32;
-  format?: VisualizationFormat;
+  format?: ExplorationVisualizationFormat;
 }
 
 enum ExplorationTableDensity {
@@ -457,7 +457,7 @@ model ExplorationTableDisplayConfig {
 /** Authored visualization bindings use semantic IDs or authored aliases, never result data. */
 model ExplorationVisualizationFieldRef {
   field: ExplorationFieldReference;
-  format?: VisualizationFormat;
+  format?: ExplorationVisualizationFormat;
 }
 
 @discriminator("kind")
@@ -465,15 +465,15 @@ model ExplorationVisualizationConfig {
   kind: string;
   title?: string;
   subtitle?: string;
-  legend?: VisualizationLegendPosition;
-  displayUnits?: VisualizationDisplayUnits;
-  orientation?: VisualizationOrientation;
-  stacking?: VisualizationStackingMode;
+  legend?: ExplorationVisualizationLegendPosition;
+  displayUnits?: ExplorationVisualizationDisplayUnits;
+  orientation?: ExplorationVisualizationOrientation;
+  stacking?: ExplorationVisualizationStackingMode;
 }
 
 model CartesianExplorationVisualization extends ExplorationVisualizationConfig {
   kind: "cartesian";
-  mark: VisualizationCartesianMark;
+  mark: ExplorationVisualizationCartesianMark;
   x?: ExplorationVisualizationFieldRef;
   y?: ExplorationVisualizationFieldRef[];
   series?: ExplorationVisualizationFieldRef;
@@ -493,7 +493,7 @@ model PointExplorationVisualization extends ExplorationVisualizationConfig {
 
 model ProportionalExplorationVisualization extends ExplorationVisualizationConfig {
   kind: "proportional";
-  mark: VisualizationProportionalMark;
+  mark: ExplorationVisualizationProportionalMark;
   category: ExplorationVisualizationFieldRef;
   value: ExplorationVisualizationFieldRef;
   series?: ExplorationVisualizationFieldRef;
@@ -501,7 +501,7 @@ model ProportionalExplorationVisualization extends ExplorationVisualizationConfi
 
 model HierarchyExplorationVisualization extends ExplorationVisualizationConfig {
   kind: "hierarchy";
-  mark: VisualizationHierarchyMark;
+  mark: ExplorationVisualizationHierarchyMark;
   node: ExplorationVisualizationFieldRef;
   parent?: ExplorationVisualizationFieldRef;
   value?: ExplorationVisualizationFieldRef;
@@ -509,7 +509,7 @@ model HierarchyExplorationVisualization extends ExplorationVisualizationConfig {
 
 model PolarExplorationVisualization extends ExplorationVisualizationConfig {
   kind: "polar";
-  mark: VisualizationPolarMark;
+  mark: ExplorationVisualizationPolarMark;
   category?: ExplorationVisualizationFieldRef;
   value: ExplorationVisualizationFieldRef;
   series?: ExplorationVisualizationFieldRef;
@@ -557,15 +557,15 @@ model ExplorationKPITrend {
 
 /** Optional authored KPI presentation; omitted properties retain renderer defaults. */
 model ExplorationKPIPresentation {
-  mode?: VisualizationKPIMode;
-  delta?: VisualizationKPIDeltaMode;
-  favorableDirection?: VisualizationKPIDirection;
-  missingComparison?: VisualizationKPIMissingComparison;
-  ranges?: VisualizationKPIQualitativeRange[];
-  displayUnits?: VisualizationDisplayUnits;
+  mode?: ExplorationVisualizationKPIMode;
+  delta?: ExplorationVisualizationKPIDeltaMode;
+  favorableDirection?: ExplorationVisualizationKPIDirection;
+  missingComparison?: ExplorationVisualizationKPIMissingComparison;
+  ranges?: ExplorationVisualizationKPIQualitativeRange[];
+  displayUnits?: ExplorationVisualizationDisplayUnits;
   note?: string;
-  tone?: VisualizationTone;
-  thresholds?: VisualizationThreshold[];
+  tone?: ExplorationVisualizationTone;
+  thresholds?: ExplorationVisualizationThreshold[];
 }
 
 model KPIExplorationVisualization extends ExplorationVisualizationConfig {
