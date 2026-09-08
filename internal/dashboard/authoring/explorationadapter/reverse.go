@@ -318,7 +318,7 @@ func (c reverseConverter) metrics(values []document.DashboardMetricSelection, ou
 }
 
 func selectionAliases(dimensions []document.DashboardDimensionSelection, metrics []document.DashboardMetricSelection) map[string]bool {
-	result := make(map[string]bool, len(dimensions)+len(metrics))
+	result := make(map[string]bool)
 	for _, value := range dimensions {
 		if value.Reference != nil && value.Reference.Alias != nil && strings.TrimSpace(*value.Reference.Alias) != "" {
 			result[strings.TrimSpace(*value.Reference.Alias)] = true

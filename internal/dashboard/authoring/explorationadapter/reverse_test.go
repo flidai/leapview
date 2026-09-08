@@ -74,6 +74,23 @@ func TestFromDashboardDocumentMonthlyRevenueByCustomerState(t *testing.T) {
 	}
 }
 
+func TestSelectionAliasesCollectsDimensionAndMetricAliases(t *testing.T) {
+	shared := " shared_alias "
+	dimensions := []document.DashboardDimensionSelection{
+		{Reference: &document.DashboardDimensionReference{Dimension: "region", Alias: &shared}},
+		{Reference: &document.DashboardDimensionReference{Dimension: "status", Alias: stringPointer("shared_alias")}},
+		{String: stringPointer("without_alias")},
+	}
+	metrics := []document.DashboardMetricSelection{
+		{Reference: &document.DashboardMetricReference{Metric: "revenue", Alias: stringPointer("revenue_alias")}},
+		{String: stringPointer("without_metric_alias")},
+	}
+	want := map[string]bool{"shared_alias": true, "revenue_alias": true}
+	if got := selectionAliases(dimensions, metrics); !reflect.DeepEqual(got, want) {
+		t.Fatalf("selection aliases = %#v, want %#v", got, want)
+	}
+}
+
 func TestFromDashboardDocumentRejectsModelMismatch(t *testing.T) {
 	visual := document.DashboardVisual{
 		Type: document.DashboardVisualTypeTable,

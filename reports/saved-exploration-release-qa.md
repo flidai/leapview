@@ -69,3 +69,19 @@ A timeout or browser-worker shutdown is not treated as passing evidence.
 
 Remote exact-head PR checks and feature-branch integration remain required.
 This report is not approval to merge into main.
+
+## Remote security follow-up
+
+PR #539's initial CodeQL run reported allocation-size arithmetic in reverse
+alias collection and a redirect data-flow warning ending at the dashboard
+handoff route. Alias collection now avoids capacity arithmetic entirely.
+The HTTP redirect boundary validates the exact local `/explore` destination
+and reconstructs it from a fixed path plus the canonical query. Regression
+tests reject external, network-path, backslash, encoded-path and CRLF inputs
+while preserving encoded query state. No scan suppression or credential
+resolver change was used. These corrections require a fresh exact-head scan
+before feature-branch integration.
+
+Focused adapter and dashboard-handoff tests passed three repetitions with
+the race detector after these corrections. The explicit quality budget also
+passed; full CI and the replacement remote scan are separate gates.

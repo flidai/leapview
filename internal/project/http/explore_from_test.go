@@ -374,6 +374,42 @@ func TestExploreFromDashboardRouteReturnsCanonicalLocationAndSafePage(t *testing
 	}
 }
 
+func TestSafeExploreRedirectURLKeepsRedirectOnCanonicalExplorerPath(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "canonical query", input: "/explore?mode=explore&state=abc", want: "/explore?mode=explore&state=abc"},
+		{name: "encoded external-looking query", input: "/explore?state=https%3A%2F%2Fevil.test", want: "/explore?state=https%3A%2F%2Fevil.test"},
+		{name: "canonical without query", input: "/explore", want: "/explore"},
+		{name: "scheme", input: "https://evil.test/explore?state=abc", wantErr: true},
+		{name: "network path", input: "//evil.test/explore?state=abc", wantErr: true},
+		{name: "encoded path", input: "/%65xplore?state=abc", wantErr: true},
+		{name: "alternate path", input: "/explore/other?state=abc", wantErr: true},
+		{name: "fragment", input: "/explore?state=abc#//evil.test", wantErr: true},
+		{name: "backslash", input: "/explore\\@evil.test", wantErr: true},
+		{name: "slash backslash authority", input: "/\\evil.test", wantErr: true},
+		{name: "carriage return", input: "/explore?state=abc\r\nLocation: https://evil.test", wantErr: true},
+		{name: "leading whitespace", input: " /explore?state=abc", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := safeExploreRedirectURL(test.input)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("safeExploreRedirectURL(%q) = %q, want error", test.input, got)
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("safeExploreRedirectURL(%q) = %q, %v; want %q", test.input, got, err, test.want)
+			}
+		})
+	}
+}
+
 func TestExploreFromDashboardRouteSupportsPublishedInstanceComponent(t *testing.T) {
 	modelValue, compiled := exploreFromModel(t)
 	doc := document.DashboardDocument{Spec: document.DashboardSpec{

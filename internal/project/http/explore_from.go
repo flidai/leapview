@@ -260,6 +260,28 @@ func appendExploreReturnContext(href string, context ExploreReturnContext) (stri
 	return parsed.String(), nil
 }
 
+// safeExploreRedirectURL validates the canonical handoff URL at the HTTP
+// redirect boundary and rebuilds it from a fixed local destination. The
+// explorer URL is assembled from authorized authored values, but keeping the
+// redirect target explicit here prevents those values from influencing the
+// destination authority or path.
+func safeExploreRedirectURL(value string) (string, error) {
+	if strings.TrimSpace(value) != value || strings.ContainsAny(value, "\\\r\n") {
+		return "", errors.New("canonical explorer URL contains unsafe characters")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", fmt.Errorf("canonical explorer URL: %w", err)
+	}
+	if parsed.Scheme != "" || parsed.Host != "" || parsed.User != nil || parsed.Opaque != "" || parsed.Fragment != "" || parsed.Path != "/explore" || parsed.RawPath != "" {
+		return "", errors.New("canonical explorer URL must target /explore")
+	}
+	if parsed.RawQuery == "" {
+		return "/explore", nil
+	}
+	return "/explore?" + parsed.RawQuery, nil
+}
+
 func dashboardReturnWithRequestPage(value ExploreReturnContext, dashboardID authoring.DashboardID, pageID string) ExploreReturnContext {
 	if value.Surface != ExploreReturnDashboard {
 		return value
@@ -769,5 +791,10 @@ func (h *BrowserHandler) ExploreFromDashboardRoute(w stdhttp.ResponseWriter, r *
 		stdhttp.NotFound(w, r)
 		return
 	}
-	stdhttp.Redirect(w, r, result.URL, stdhttp.StatusSeeOther)
+	location, err := safeExploreRedirectURL(result.URL)
+	if err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusInternalServerError), stdhttp.StatusInternalServerError)
+		return
+	}
+	stdhttp.Redirect(w, r, location, stdhttp.StatusSeeOther)
 }
