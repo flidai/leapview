@@ -204,6 +204,25 @@ test('controller does not serialize an unchanged shared data frame for status-on
   expect(serializations).toBe(0)
 })
 
+test('controller sends highlight-only changes so renderers can update and clear emphasis', async () => {
+  const updates: Change[] = []
+  const handle: RendererHandle = {
+    update: (_value, change) => updates.push(change), resize: () => {}, snapshot: async () => new Blob(), dispose: () => {},
+  }
+  const registry = new RendererRegistry()
+  registry.register({
+    id: 'test', version: '1.0.0', schemaVersion: currentVisualizationSchemaVersion, kinds: ['kpi'], capabilities: { snapshot: true, windowed: false, interactive: false },
+    load: async () => ({ mount: () => handle }),
+  })
+  const controller = new VisualizationController(registry, {} as HTMLElement)
+  const initial = { ...envelope(1), highlights: [] } as VisualizationEnvelope
+  const highlighted = { ...initial, highlights: [{ sourceVisualID: 'source', interactionID: 'hover', entries: [], label: 'Revenue' }] } as unknown as VisualizationEnvelope
+  await controller.apply(initial)
+  await controller.apply(highlighted)
+  await controller.apply({ ...highlighted, highlights: [] })
+  expect(updates).toEqual([Change.Highlight, Change.Highlight])
+})
+
 test('controller transfers renderer view state across a lazy focus mount', async () => {
   const camera = { center: [-46.63, -23.55], zoom: 7 }
   const restored: unknown[] = []

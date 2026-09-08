@@ -4,14 +4,117 @@ import { Change, defaultRendererContext, normalizeRendererLocale, type RendererA
 import { clearInteractionCommand, interactionCommandForRow } from '../interaction-command'
 import { projectVisualizationHighlights } from '../highlight'
 import { baseOption } from './echarts/common'
-import { CategoryColorRegistry, categoryColorRegistryFor } from './echarts/category-colors'
+import { CategoryColorRegistry, categoryColorRegistryFor, categoryIdentity } from './echarts/category-colors'
 import { cartesianOption } from './echarts/cartesian'
 import { hierarchyOption } from './echarts/hierarchy'
 import { polarOption } from './echarts/polar'
 import { pointCategoryRowIndexes, pointOption } from './echarts/point'
-import { proportionalCenterText, proportionalOption } from './echarts/proportional'
+import { proportionalCategories, proportionalCenterText, proportionalOption } from './echarts/proportional'
 
 export { interactionCommandForRow, normalizeRendererLocale }
+
+export type EChartsNavigationDefaults = Readonly<{ dataZoom: boolean; roam: boolean }>
+export type EChartsViewState = Readonly<{
+  dataZoom?: readonly Readonly<Record<string, unknown>>[]
+  series?: readonly Readonly<{ id: string; center?: readonly unknown[]; zoom?: number }>[]
+}>
+
+export function echartsNavigationDefaults(envelope: VisualizationEnvelope): EChartsNavigationDefaults {
+  return {
+    dataZoom: envelope.spec.kind === 'cartesian' && envelope.spec.presentation.dataZoom === true,
+    roam: envelope.spec.kind === 'hierarchy' && envelope.spec.presentation.roam === true,
+  }
+}
+
+export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
+  if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 || option.grid === undefined) return {}
+  const compact = width < 480 || height < 280
+  const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
+  const bottomLegend = compact && hasBottomLegend(option.legend)
+  const slider = compact && hasSliderDataZoom(option.dataZoom)
+  const compactBottom = 12 + (bottomLegend ? 28 : 0) + (slider ? 42 : 0)
+  const grid = grids.map((value: Record<string, any>) => {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+    return {
+      ...source,
+      ...(compact ? {
+        left: compactInset(source.left, 8),
+        right: compactInset(source.right, 8),
+        top: compactInset(source.top, 10),
+        bottom: compactBottomInset(source.bottom, compactBottom),
+      } : {}),
+    }
+  })
+  const patch: Record<string, any> = { grid: Array.isArray(option.grid) ? grid : grid[0] }
+  if (option.legend !== undefined) patch.legend = compact ? compactLegend(option.legend) : option.legend
+  if (option.dataZoom !== undefined) patch.dataZoom = compact ? compactDataZoom(option.dataZoom, bottomLegend) : option.dataZoom
+  return patch
+}
+
+function compactInset(value: unknown, fallback: number): unknown {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.min(value, fallback)
+  if (typeof value === 'string') return value
+  return fallback
+}
+
+function compactBottomInset(value: unknown, fallback: number): unknown {
+  if (typeof value === 'string') return value
+  return fallback
+}
+
+function hasBottomLegend(value: unknown): boolean {
+  const legends = Array.isArray(value) ? value : [value]
+  return legends.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && (entry as Record<string, unknown>).bottom !== undefined)
+}
+
+function hasSliderDataZoom(value: unknown): boolean {
+  if (!Array.isArray(value)) return false
+  return value.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && (entry as Record<string, unknown>).type === 'slider')
+}
+
+function compactLegend(value: unknown): unknown {
+  const legends = Array.isArray(value) ? value : [value]
+  const result = legends.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const legend = entry as Record<string, unknown>
+    return legend.bottom === undefined ? legend : { ...legend, bottom: 0 }
+  })
+  return Array.isArray(value) ? result : result[0]
+}
+
+function compactDataZoom(value: unknown, bottomLegend: boolean): unknown {
+  if (!Array.isArray(value)) return value
+  return value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || (entry as Record<string, unknown>).type !== 'slider') return entry
+    return { ...(entry as Record<string, unknown>), bottom: bottomLegend ? 28 : 12 }
+  })
+}
+
+export function captureEChartsViewState(option: Record<string, any>): EChartsViewState {
+  if (!option || typeof option !== 'object') return {}
+  const dataZoom = Array.isArray(option.dataZoom)
+    ? option.dataZoom.flatMap((value: Record<string, any>) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+        const state = Object.fromEntries(
+          ['start', 'end', 'startValue', 'endValue'].flatMap((key) => value[key] === undefined ? [] : [[key, value[key]]]),
+        )
+        return Object.keys(state).length > 0 ? [state] : []
+      })
+    : undefined
+  const series = Array.isArray(option.series)
+    ? option.series.flatMap((value: Record<string, any>) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+        if (typeof value.id !== 'string') return []
+        const center = Array.isArray(value.center) ? [...value.center] : undefined
+        const zoom = typeof value.zoom === 'number' && Number.isFinite(value.zoom) ? value.zoom : undefined
+        return center === undefined && zoom === undefined ? [] : [{ id: value.id, ...(center ? { center } : {}), ...(zoom === undefined ? {} : { zoom }) }]
+      })
+    : undefined
+  return {
+    ...(dataZoom && dataZoom.length > 0 ? { dataZoom } : {}),
+    ...(series && series.length > 0 ? { series } : {}),
+  }
+}
 
 export function echartsOption(envelope: VisualizationEnvelope, context: RendererContext = defaultRendererContext, categoryColors = new CategoryColorRegistry()): EChartsOption {
   const base = baseOption(envelope, context)
@@ -48,7 +151,11 @@ function applyCrossHighlight(option: Record<string, any>, envelope: Visualizatio
     item.itemStyle = { ...(item.itemStyle ?? {}), opacity }
     item.lineStyle = { ...(item.lineStyle ?? {}), opacity: 0.55 }
   }
-  option.aria = { ...(option.aria ?? {}), enabled: true, description: projection.announcement }
+  option.aria = {
+    ...(option.aria ?? {}),
+    enabled: true,
+    description: [option.aria?.description, projection.announcement].filter(Boolean).join(' '),
+  }
 }
 
 function seriesRowIndices(
@@ -93,12 +200,15 @@ export function removeEChartsRendererFrame(container: ParentNode, frame: HTMLEle
   if (frame.parentNode === container) frame.remove()
 }
 
-class EChartsHandle implements RendererHandle {
+export class EChartsHandle implements RendererHandle {
   private envelope?: VisualizationEnvelope
   private context?: RendererContext
   private disposed = false
   private readiness: Promise<void> = Promise.resolve()
   private readinessAbort?: AbortController
+  private compactLayout?: boolean
+  private lastWidth = 0
+  private lastHeight = 0
 
   constructor(private readonly container: HTMLElement, private readonly frame: HTMLElement, private readonly chart: ECharts, private readonly categoryColors: CategoryColorRegistry) {
     this.chart.on('click', this.handleClick)
@@ -121,14 +231,34 @@ class EChartsHandle implements RendererHandle {
 
   update(envelope: VisualizationEnvelope, change: Change, context: RendererContext): void {
     if (this.disposed) return
+    const previous = this.envelope
+    const viewState = previous && preservesEChartsViewState(previous, envelope) ? this.captureViewState() : undefined
     this.envelope = envelope
     this.context = context
     const option = echartsOption(envelope, context, this.categoryColors)
     const plan = echartsUpdatePlan(change, option)
     this.chart.setOption(plan.option, plan.settings)
+    if (viewState) this.restoreViewState(viewState)
+    this.applyResponsiveLayout(true)
   }
 
-  resize(width: number, height: number): void { this.chart.resize({ width, height, silent: true }) }
+  resize(width: number, height: number): void {
+    this.chart.resize({ width, height, silent: true })
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+    this.lastWidth = width
+    this.lastHeight = height
+    this.applyResponsiveLayout(false)
+  }
+
+  private applyResponsiveLayout(force: boolean): void {
+    const envelope = this.envelope
+    if (!envelope || !this.context || this.lastWidth <= 0 || this.lastHeight <= 0) return
+    const compact = this.lastWidth < 480 || this.lastHeight < 280
+    if (!force && compact === this.compactLayout) return
+    this.compactLayout = compact
+    const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
+    if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: !force })
+  }
 
   async snapshot(): Promise<Blob> {
     const response = await fetch(this.chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: 'transparent' }))
@@ -147,6 +277,19 @@ class EChartsHandle implements RendererHandle {
     this.chart.off('mouseout', this.handleMouseOut)
     this.chart.dispose()
     removeEChartsRendererFrame(this.container, this.frame)
+  }
+
+  captureViewState(): EChartsViewState {
+    return captureEChartsViewState(this.chart.getOption() as Record<string, any>)
+  }
+
+  restoreViewState(state: unknown): void {
+    if (!state || typeof state !== 'object') return
+    const value = state as EChartsViewState
+    const patch: Record<string, any> = {}
+    if (Array.isArray(value.dataZoom) && value.dataZoom.length > 0) patch.dataZoom = value.dataZoom
+    if (Array.isArray(value.series) && value.series.length > 0) patch.series = value.series
+    if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: false })
   }
 
   private readonly handleClick = (params: unknown) => {
@@ -183,7 +326,7 @@ class EChartsHandle implements RendererHandle {
     const event = params as { name?: unknown }
     if (!envelope || envelope.spec.kind !== 'proportional' || typeof event.name !== 'string') return
     this.chart.dispatchAction({ type: 'legendSelect', name: event.name })
-    const command = legendSelectionCommand(envelope, event.name)
+    const command = legendSelectionCommand(envelope, event.name, this.context ?? defaultRendererContext)
     if (!command) return
     this.container.dispatchEvent(new CustomEvent('lv-interaction-select', { bubbles: true, composed: true, detail: command }))
   }
@@ -211,13 +354,94 @@ class EChartsHandle implements RendererHandle {
 
 }
 
-export function legendSelectionCommand(envelope: VisualizationEnvelope, categoryName: string) {
+export function preservesEChartsViewState(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {
+  const previousMark = 'mark' in previous.spec ? previous.spec.mark : undefined
+  const nextMark = 'mark' in next.spec ? next.spec.mark : undefined
+  if (previous.spec.kind !== next.spec.kind || previousMark !== nextMark) return false
+  if (echartsNavigationChannelSignature(previous.spec) !== echartsNavigationChannelSignature(next.spec)) return false
+  if (echartsNavigationPresentationSignature(previous.spec) !== echartsNavigationPresentationSignature(next.spec)) return false
+  const oldNavigation = echartsNavigationDefaults(previous)
+  const nextNavigation = echartsNavigationDefaults(next)
+  return oldNavigation.dataZoom && nextNavigation.dataZoom || oldNavigation.roam && nextNavigation.roam
+}
+
+/**
+ * Navigation state is meaningful only while the chart's camera has the same
+ * semantic coordinate system.  Keep this separate from the renderer option:
+ * legend/label styling can change without invalidating a user's zoom, while an
+ * axis domain, orientation, or hierarchy layout change cannot.
+ */
+function echartsNavigationPresentationSignature(spec: VisualizationEnvelope['spec']): string {
+  switch (spec.kind) {
+    case 'cartesian':
+      return JSON.stringify({
+        displayUnits: spec.presentation.displayUnits,
+        orientation: spec.presentation.orientation,
+        stacked: spec.presentation.stacked,
+        stacking: spec.presentation.stacking,
+        comboSeries: spec.presentation.comboSeries,
+        axes: [...(spec.axes ?? [])]
+          .sort((left, right) => left.id.localeCompare(right.id))
+          .map((axis) => [
+            axis.id, axis.type, axis.scale, axis.zero, axis.inversion,
+            axis.minimum, axis.maximum, axis.unit, axis.displayUnits, axis.dateUnit,
+          ]),
+      })
+    case 'hierarchy':
+      return JSON.stringify({
+        orientation: spec.presentation.orientation,
+        layout: spec.presentation.layout,
+        initialDepth: spec.presentation.initialDepth,
+        nodeGap: spec.presentation.nodeGap,
+        curveness: spec.presentation.curveness,
+      })
+    default:
+      return ''
+  }
+}
+
+function echartsNavigationChannelSignature(spec: VisualizationEnvelope['spec']): string {
+  const channels: Record<string, unknown> = {}
+  const ref = (value: unknown): string | undefined => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const candidate = value as { dataset?: unknown; field?: unknown }
+    return typeof candidate.dataset === 'string' && typeof candidate.field === 'string'
+      ? `${candidate.dataset}:${candidate.field}` : undefined
+  }
+  const refs = (values: unknown): Array<string | undefined> => Array.isArray(values) ? values.map(ref) : [ref(values)]
+  switch (spec.kind) {
+    case 'cartesian':
+      channels.x = ref(spec.x)
+      channels.y = refs(spec.y)
+      channels.series = ref(spec.series)
+      break
+    case 'hierarchy':
+      channels.node = ref(spec.node)
+      channels.parent = ref(spec.parent)
+      channels.source = ref(spec.source)
+      channels.target = ref(spec.target)
+      channels.value = ref(spec.value)
+      break
+    default:
+      break
+  }
+  return JSON.stringify({
+    datasets: spec.datasets.map((dataset) => ({ id: dataset.id, fields: dataset.fields.map((field) => [field.id, field.dataType]) })),
+    channels,
+  })
+}
+
+export function legendSelectionCommand(envelope: VisualizationEnvelope, categoryName: string, context: RendererContext = defaultRendererContext) {
   if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') return undefined
   const ref = envelope.spec.category
   const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === ref.dataset)
   const categoryIndex = dataset?.columns.indexOf(ref.field) ?? -1
   if (!dataset || categoryIndex < 0) return undefined
-  const row = dataset.rows.find((candidate) => String(candidate[categoryIndex]) === categoryName)
+  const values = dataset.rows.map((candidate) => candidate[categoryIndex])
+  const categories = proportionalCategories(values, envelope, ref, context)
+  const matches = categories.filter((candidate) => candidate.name === categoryName || candidate.rawName === categoryName || candidate.label === categoryName)
+  if (matches.length !== 1) return undefined
+  const row = dataset.rows.find((candidate) => categoryIdentity(candidate[categoryIndex]) === matches[0]!.identity)
   return row ? interactionCommandForRow(envelope, dataset.id, row) : undefined
 }
 
@@ -269,17 +493,23 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption): EChart
     patch.dataset = source.dataset
     patch.series = source.series
     patch.legend = source.legend ?? []
+    patch.dataZoom = source.dataZoom ?? []
     patch.visualMap = source.visualMap ?? []
     patch.graphic = source.graphic ?? []
     if (source.aria !== undefined) patch.aria = source.aria
     for (const key of ['xAxis', 'yAxis', 'radar']) {
       if (source[key] !== undefined) patch[key] = source[key]
     }
-    replaceMerge.push('dataset', 'series', 'legend', 'visualMap', 'graphic')
+    replaceMerge.push('dataset', 'series', 'legend', 'dataZoom', 'visualMap', 'graphic')
   } else if ((change & Change.Selection) !== 0) {
     patch.dataset = source.dataset
     patch.visualMap = source.visualMap ?? []
     replaceMerge.push('dataset', 'visualMap')
+  }
+  if ((change & Change.Highlight) !== 0) {
+    patch.series = source.series
+    if (source.aria !== undefined) patch.aria = source.aria
+    if (!replaceMerge.includes('series')) replaceMerge.push('series')
   }
   if ((change & Change.Status) !== 0) {
     patch.title = source.title ?? []
@@ -287,6 +517,7 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption): EChart
     replaceMerge.push('title', 'graphic')
   }
   if ((change & Change.Context) !== 0) Object.assign(patch, echartsContextPatch(source))
+  if ((change & (Change.Context | Change.Status)) !== 0 && source.aria !== undefined) patch.aria = source.aria
   return {
     option: patch,
     settings: { notMerge: false, lazyUpdate: (change & Change.Data) === 0, ...(replaceMerge.length ? { replaceMerge } : {}) },

@@ -5,6 +5,8 @@ import { Change, defaultRendererContext } from '../host-controller'
 import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echartsUpdatePlan, interactionCommandForRow, legendSelectionCommand, normalizeRendererLocale, removeEChartsRendererFrame, waitForEChartsFrame } from './echarts'
 import { echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
 import { CategoryColorRegistry } from './echarts/category-colors'
+import { completenessAccessibilitySummary } from './echarts/common'
+import { cartesianFixture, proportionalFixture } from './echarts-test-fixtures'
 import { proportionalCenterText } from './echarts/proportional'
 
 test('ECharts label policy truncates by grapheme and preserves selected and threshold labels', () => {
@@ -144,46 +146,6 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   }])
 })
 
-test('ECharts keeps point conditional cues visible for null, first-match, and default outcomes', () => {
-  const envelope = {
-    schemaVersion: 9, visualID: 'health-points', rendererID: 'echarts', specRevision: 'sha256:health-points', dataRevision: 1,
-    spec: {
-      kind: 'point', title: 'Health points', datasets: [{ id: 'primary', fields: [
-        { id: 'label', role: 'dimension', dataType: 'string', nullable: false, label: 'Label' },
-        { id: 'x', role: 'metric', dataType: 'decimal', nullable: false, label: 'X' },
-        { id: 'y', role: 'metric', dataType: 'decimal', nullable: false, label: 'Y' },
-        { id: 'score', role: 'metric', dataType: 'decimal', nullable: true, label: 'Score' },
-      ] }],
-      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Health points', description: 'Health points' }, interactions: [],
-      x: { dataset: 'primary', field: 'x' }, y: { dataset: 'primary', field: 'y' }, color: { dataset: 'primary', field: 'score' },
-      label: { dataset: 'primary', field: 'label' }, tooltip: [{ dataset: 'primary', field: 'score' }], colorScale: { kind: 'quantitative' },
-      presentation: { legend: 'bottom', labelPolicy: { density: 'always', priority: [], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, overplot: 'opacity', opacity: 0.55, largeMode: 'automatic', largeThreshold: 1000, brush: [] },
-      conditionalFormatting: [{
-        id: 'score-status', target: 'mark_fill', field: { dataset: 'primary', field: 'score' },
-        rule: {
-          kind: 'rules',
-          rules: [
-            { operator: 'greater_or_equal', value: 0, style: { color: 'warning', icon: 'circle' } },
-            { operator: 'greater_or_equal', value: 80, style: { color: 'success', icon: 'arrow_up' } },
-          ],
-          nullStyle: { color: 'neutral', icon: 'warning' }, defaultStyle: { color: 'danger', icon: 'arrow_down' },
-        },
-      }],
-    },
-    dataState: { kind: 'inline', specRevision: 'sha256:health-points', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:health-points', dataRevision: 1, generation: 1, columns: ['label', 'x', 'y', 'score'], rows: [['Missing', 1, 1, null], ['High', 2, 2, 90], ['Low', 3, 3, -1]], completeness: 'complete' }] },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
-  const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, attention: '#d29922', danger: '#ff7b72', success: '#56d364', muted: '#8b949e' } }
-  const series = (echartsOption(envelope, dark) as any).series[0]
-
-  expect(series.symbol(['Missing', 1, 1, null])).toContain('path://')
-  expect(series.itemStyle.color({ value: ['Missing', 1, 1, null] })).toBe(dark.colors.muted)
-  expect(series.symbol(['High', 2, 2, 90])).toBe('circle')
-  expect(series.itemStyle.color({ value: ['High', 2, 2, 90] })).toBe(dark.colors.attention)
-  expect(series.symbol(['Low', 3, 3, -1])).toBe('arrow')
-  expect(series.itemStyle.color({ value: ['Low', 3, 3, -1] })).toBe(dark.colors.danger)
-})
-
 test('superseded ECharts mounts own isolated renderer frames', () => {
   const mounted: HTMLElement[] = []
   const container = {
@@ -232,230 +194,6 @@ test('ECharts translation uses dataset and encode without native option passthro
   expect(option.dataset.source).toEqual([['month', 'revenue'], ['Jan', 10]])
   expect(option.series[0].encode).toEqual({ x: 'month', y: 'revenue' })
   expect(JSON.stringify(option)).not.toContain('rendererOptions')
-})
-
-test('ECharts applies governed row formatting with theme colors and redundant cues', () => {
-  const envelope = cartesianFixture('column') as any
-  envelope.spec.presentation.labelPolicy.density = 'automatic'
-  envelope.spec.presentation.labelPolicy.priority = ['anomaly', 'threshold']
-  envelope.spec.conditionalFormatting = [
-    {
-      id: 'value-gradient', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-      rule: {
-        kind: 'gradient', minimum: 0, maximum: 100,
-        low: { color: 'danger' }, high: { color: 'success' }, nullStyle: { color: 'neutral' },
-      },
-    },
-    {
-      id: 'value-health', target: 'label_foreground', field: { dataset: 'primary', field: 'value' },
-      rule: {
-        kind: 'rules',
-        rules: [{ operator: 'less_than', value: 50, style: { color: 'danger', icon: 'arrow_down' } }],
-        nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'arrow_up' },
-      },
-    },
-  ]
-  envelope.dataState.datasets[0].rows = [['A', 25], ['B', 75]]
-
-  const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.series[0].itemStyle.color({ value: ['A', 25] })).toBe('rgb(162 57 48)')
-  expect(option.series[0].itemStyle.color({ value: ['B', 75] })).toBe('rgb(71 104 53)')
-  expect(option.series[0].label.show).toBe(true)
-  expect(option.series[0].labelLayout).toEqual({ hideOverlap: false })
-  expect(option.series[0].label.formatter({ value: ['A', 25] })).toBe('↓ 25')
-  expect(option.series[0].label.formatter({ value: ['B', 75] })).toBe('↑ 75')
-})
-
-test('ECharts gives explicit icon targets precedence when Cartesian formats share a field', () => {
-  const envelope = cartesianFixture('column') as any
-  envelope.spec.presentation.labelPolicy.density = 'always'
-  envelope.spec.conditionalFormatting = [
-    {
-      id: 'fill-cue', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-      rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { color: 'warning', icon: 'warning' } }], nullStyle: { icon: 'circle' }, defaultStyle: { color: 'neutral', icon: 'circle' } },
-    },
-    {
-      id: 'icon-cue', target: 'icon', field: { dataset: 'primary', field: 'value' },
-      rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'arrow_up' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'arrow_down' } },
-    },
-  ]
-  const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.series[0].label.formatter({ value: ['A', 1] })).toBe('↑ 1')
-})
-
-test('ECharts keeps Cartesian conditional icons visible when labels are hidden', () => {
-  const envelope = cartesianFixture('column') as any
-  envelope.spec.presentation.labelPolicy.density = 'hidden'
-  envelope.spec.conditionalFormatting = [{
-    id: 'value-icon', target: 'icon', field: { dataset: 'primary', field: 'value' },
-    rule: {
-      kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'arrow_up' } }],
-      nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'arrow_down' },
-    },
-  }]
-
-  const series = (echartsOption(envelope, defaultRendererContext) as any).series[0]
-  expect(series).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
-  expect(series.label.formatter({ value: ['A', 1] })).toBe('↑ 1')
-})
-
-test('ECharts keeps heatmap visualMap colors with icon-only conditional cues', () => {
-  for (const target of ['mark_fill', 'series_color'] as const) {
-    const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any; envelope.spec.presentation.labelPolicy.density = 'hidden'
-    envelope.spec.conditionalFormatting = [{
-      id: 'value-icon', target, field: { dataset: 'primary', field: 'value' },
-      rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'arrow_up' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'arrow_down' } },
-    }]
-
-    const option = echartsOption(envelope, defaultRendererContext) as any
-    expect(option.visualMap).toMatchObject({ type: 'continuous', dimension: 'value', inRange: { color: [expect.any(String), expect.any(String)] }, outOfRange: { opacity: 1 } })
-    expect(option.series[0].itemStyle.color({ value: ['A', 'R1', 1] })).toBeTypeOf('string')
-    expect(option.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
-    expect(option.series[0].label.formatter({ value: ['A', 'R1', 1] })).toBe('↑ 1')
-  }
-})
-
-test('ECharts falls back to inside contrast for icon-only label colors', () => {
-  for (const mark of ['bar', 'column', 'waterfall', 'histogram'] as const) {
-    const columns = mark === 'waterfall' ? ['label', 'start', 'value'] : ['label', 'value']
-    const envelope = cartesianFixture(mark, columns) as any
-    envelope.spec.presentation.labelPolicy.density = 'hidden'
-    envelope.spec.conditionalFormatting = [{
-      id: 'value-icon', target: 'label_foreground', field: { dataset: 'primary', field: 'value' },
-      rule: {
-        kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'arrow_up' } }],
-        nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'arrow_down' },
-      },
-    }]
-
-    const option = echartsOption(envelope, defaultRendererContext) as any
-    const series = mark === 'waterfall' ? option.series[1] : option.series[0]
-    const row = mark === 'waterfall' ? ['A', 0, 1] : ['A', 1]
-    expect(series.label.color({ value: row })).toBe('#fff')
-    expect(series.label).toMatchObject({ textBorderColor: 'rgba(0, 0, 0, 0.55)', textBorderWidth: 2 })
-  }
-})
-
-test('ECharts translates governed heatmap gradients and waterfall rule styles', () => {
-  const heatmap = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
-  heatmap.spec.conditionalFormatting = [{
-    id: 'heat', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-    rule: {
-      kind: 'gradient', minimum: 0, maximum: 100,
-      low: { color: 'danger' }, high: { color: 'success' }, nullStyle: { color: 'neutral' },
-    },
-  }]
-  const heatmapOption = echartsOption(heatmap, defaultRendererContext) as any
-  expect(heatmapOption.visualMap).toMatchObject({
-    type: 'continuous',
-    dimension: 'value',
-    min: 0,
-    max: 100,
-    calculable: true,
-    text: ['100', '0'],
-    inRange: { color: [defaultRendererContext.colors.danger, defaultRendererContext.colors.success] },
-    outOfRange: { opacity: 1 },
-  })
-  expect(heatmapOption.series[0].itemStyle.color({ value: ['A', 'R1', null] })).toBe(defaultRendererContext.colors.muted)
-
-  const waterfall = cartesianFixture('waterfall', ['label', 'start', 'value']) as any
-  waterfall.spec.conditionalFormatting = [{
-    id: 'delta', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-    rule: {
-      kind: 'rules', rules: [{ operator: 'less_than', value: 0, style: { color: 'danger', icon: 'arrow_down' } }],
-      nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'arrow_up' },
-    },
-  }]
-  waterfall.dataState.datasets[0].rows = [['Returns', 10, -4]]
-  const waterfallOption = echartsOption(waterfall, defaultRendererContext) as any
-  expect(waterfallOption.series[1].itemStyle.color({ value: ['Returns', 10, -4] })).toBe(defaultRendererContext.colors.danger)
-  expect(waterfallOption.series[1].label.formatter({ value: ['Returns', 10, -4] })).toBe('↓ -4')
-})
-
-test('ECharts composes conditional heatmap colors per outcome and keeps null cells visible', () => {
-  const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any; envelope.dataState.datasets[0].rows = [['A', 'R1', 100], ['B', 'R1', 50], ['C', 'R1', null], ['D', 'R1', 'bad']]
-  envelope.spec.presentation.labelPolicy.density = 'hidden'
-  envelope.spec.conditionalFormatting = [{
-    id: 'value-status', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-    rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 75, style: { color: 'danger', icon: 'arrow_up' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'circle' } },
-  }]
-
-  const option = echartsOption(envelope, defaultRendererContext) as any; const color = option.series[0].itemStyle.color
-  expect(color({ value: ['A', 'R1', 100] })).toBe(defaultRendererContext.colors.danger)
-  expect(color({ value: ['B', 'R1', 50] })).toBeTypeOf('string'); expect(color({ value: ['B', 'R1', 50] })).not.toBe(defaultRendererContext.colors.danger)
-  expect(color({ value: ['C', 'R1', null] })).toBe(defaultRendererContext.colors.muted); expect(color({ value: ['D', 'R1', 'bad'] })).toBe(defaultRendererContext.colors.muted)
-  expect(option.visualMap).toBeUndefined()
-  expect(option.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
-  expect(option.series[0].label.formatter({ value: ['C', 'R1', null] })).toBe('⚠ —')
-})
-
-test('ECharts uses series color when mark fill only supplies an icon for a row', () => {
-  const envelope = proportionalFixture('donut') as any; envelope.dataState.datasets[0].rows = [['High', 20], ['Medium', 5], ['Low', -1]]
-  envelope.spec.conditionalFormatting = [
-    {
-      id: 'fill-status', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-      rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 10, style: { color: 'danger', icon: 'arrow_up' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'circle' } },
-    },
-    {
-      id: 'series-status', target: 'series_color', field: { dataset: 'primary', field: 'value' },
-      rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { color: 'success', icon: 'arrow_up' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'square' } },
-    },
-  ]
-
-  const categoryColors = new CategoryColorRegistry(); const option = echartsOption(envelope, defaultRendererContext, categoryColors) as any; const color = option.series[0].itemStyle.color
-  expect(color({ value: ['High', 20] })).toBe(defaultRendererContext.colors.danger)
-  expect(color({ value: ['Medium', 5] })).toBe(defaultRendererContext.colors.success)
-  const fallback = categoryColors.color(envelope, envelope.spec.category, 'Low', defaultRendererContext)
-  expect(color({ value: ['Low', -1] })).toBe(fallback)
-})
-
-test('ECharts keeps signed waterfall fallback after icon-only conditional outcomes', () => {
-  const envelope = cartesianFixture('waterfall', ['label', 'start', 'value']) as any
-  envelope.dataState.datasets[0].rows = [['Increase', 0, 4], ['Decrease', 4, -3]]
-  envelope.spec.conditionalFormatting = [{
-    id: 'value-icon', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-    rule: {
-      kind: 'rules', rules: [{ operator: 'greater_than', value: 100, style: { icon: 'arrow_up' } }],
-      nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'circle' },
-    },
-  }]
-
-  const option = echartsOption(envelope, defaultRendererContext) as any
-  const color = option.series[1].itemStyle.color
-  expect(color({ value: ['Increase', 0, 4] })).toBe(defaultRendererContext.colors.success)
-  expect(color({ value: ['Decrease', 4, -3] })).toBe(defaultRendererContext.colors.danger)
-})
-
-test('ECharts binds waterfall formatting to the authored metric alias', () => {
-  const waterfall = cartesianFixture('waterfall', ['label', 'start', 'order_total']) as any
-  waterfall.spec.conditionalFormatting = [{
-    id: 'delta', target: 'mark_fill', field: { dataset: 'primary', field: 'order_total' },
-    rule: {
-      kind: 'rules', rules: [{ operator: 'less_than', value: 0, style: { color: 'danger', icon: 'arrow_down' } }],
-      nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'arrow_up' },
-    },
-  }]
-  waterfall.dataState.datasets[0].rows = [['Returns', 10, -4]]
-  const waterfallOption = echartsOption(waterfall, defaultRendererContext) as any
-  expect(waterfallOption.series[1].encode.y).toBe('order_total')
-  expect(waterfallOption.series[1].itemStyle.color({ value: ['Returns', 10, -4] })).toBe(defaultRendererContext.colors.danger)
-
-})
-
-test('ECharts keeps direct-IR waterfall metric before the start offset', () => {
-  const waterfall = cartesianFixture('waterfall', ['label', 'value', 'start']) as any
-  waterfall.spec.conditionalFormatting = [{
-    id: 'delta', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-    rule: {
-      kind: 'rules', rules: [{ operator: 'less_than', value: 0, style: { color: 'danger', icon: 'arrow_down' } }],
-      nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'arrow_up' },
-    },
-  }]
-  waterfall.dataState.datasets[0].rows = [['Returns', -4, 10]]
-  const option = echartsOption(waterfall, defaultRendererContext) as any
-  expect(option.series[0].encode.y).toBe('start')
-  expect(option.series[1].encode.y).toBe('value')
-  expect(option.series[1].itemStyle.color({ value: ['Returns', -4, 10] })).toBe(defaultRendererContext.colors.danger)
 })
 
 test('ECharts interactions translate stable IR field mappings without renderer row keys', () => {
@@ -768,6 +506,17 @@ test('ECharts constructs deterministic nested hierarchy data and honors layout p
   expect(option.series[0].data).toEqual([{ name: 'root', value: 10, __lv_dataset: 'primary', __lv_row_index: 0, children: [{ name: 'child', value: 4, __lv_dataset: 'primary', __lv_row_index: 1 }] }])
 })
 
+test('ECharts hierarchy keeps null display labels separate from typed node identity', () => {
+  const envelope = hierarchyFixture('tree') as any
+  envelope.dataState.datasets[0].rows = [
+    [null, null, 10], ['—', null, 9], [1, null, 8], ['1', null, 7],
+  ]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const roots = option.series[0].data[0].children
+  expect(roots.map((node: any) => node.name)).toEqual(['—', '—', '1', '1'])
+  expect(roots.map((node: any) => node.__lv_row_index)).toEqual([0, 1, 2, 3])
+})
+
 test('ECharts hierarchy source nodes select only when their compiled identity tuple is complete', () => {
   const envelope = hierarchyFixture('treemap') as any
   envelope.spec.datasets[0].fields.push(
@@ -816,6 +565,16 @@ test('ECharts network links retain source-row selection while aggregate nodes st
   expect(option.series[0].data[0].__lv_dataset).toBeUndefined()
 })
 
+test('ECharts network node identities keep numeric and string endpoints distinct', () => {
+  const envelope = networkFixture('graph') as any
+  envelope.dataState.datasets[0].rows = [[1, '1', 4], ['1', 1, 3]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].links.map((link: any) => [link.source, link.target])).toEqual([
+    ['number:1', 'string:1'], ['string:1', 'number:1'],
+  ])
+  expect(option.series[0].data.map((node: any) => node.name)).toEqual(['number:1', 'string:1'])
+})
+
 test('ECharts incremental plans commit data synchronously, preserve interaction state, and do not resend data for context changes', () => {
   const option = {
     dataset: { id: 'dataset:primary', source: [['month', 'value'], ['Jan', 10]] },
@@ -825,8 +584,9 @@ test('ECharts incremental plans commit data synchronously, preserve interaction 
   } as any
 
   const data = echartsUpdatePlan(Change.Data, option)
-  expect(data.settings).toEqual({ notMerge: false, lazyUpdate: false, replaceMerge: ['dataset', 'series', 'legend', 'visualMap', 'graphic'] })
-  expect(data.option).toEqual({ dataset: option.dataset, series: option.series, legend: option.legend, visualMap: [], graphic: [], xAxis: option.xAxis, yAxis: option.yAxis })
+  expect(data.settings).toEqual({ notMerge: false, lazyUpdate: false, replaceMerge: ['dataset', 'series', 'legend', 'dataZoom', 'visualMap', 'graphic'] })
+  expect(data.option).toEqual({ dataset: option.dataset, series: option.series, legend: option.legend, dataZoom: option.dataZoom, visualMap: [], graphic: [], xAxis: option.xAxis, yAxis: option.yAxis })
+  expect(echartsUpdatePlan(Change.Data, { ...option, dataZoom: undefined } as any).option.dataZoom).toEqual([])
 
   const selection = echartsUpdatePlan(Change.Selection, option)
   expect(selection.settings.replaceMerge).toEqual(['dataset', 'visualMap'])
@@ -836,9 +596,35 @@ test('ECharts incremental plans commit data synchronously, preserve interaction 
   expect(context.settings.replaceMerge).toBeUndefined()
   expect(context.option.dataset).toBeUndefined()
   expect(context.option.series[0].data).toBeUndefined()
-  expect(context.option.series[0].encode).toBeUndefined()
-  expect(context.option.dataZoom).toBeUndefined()
+    expect(context.option.series[0].encode).toBeUndefined()
+    expect(context.option.dataZoom).toBeUndefined()
 
+})
+
+test('ECharts incremental context and status plans refresh the renderer-owned ARIA description', () => {
+  const option = { aria: { enabled: true, description: 'Updated data summary' }, title: { text: 'Partial data' } } as any
+  expect(echartsUpdatePlan(Change.Context, option).option.aria).toBe(option.aria)
+  expect(echartsUpdatePlan(Change.Status, option).option.aria).toBe(option.aria)
+})
+
+test('ECharts highlight plans replace series and refresh ARIA for apply and clear', () => {
+  const option = { aria: { enabled: true, description: 'Highlights cleared.' }, series: [{ id: 'series:primary:value', itemStyle: { opacity: 0.2 } }] } as any
+  const plan = echartsUpdatePlan(Change.Highlight, option)
+  expect(plan.option.series).toBe(option.series)
+  expect(plan.option.aria).toBe(option.aria)
+  expect(plan.settings.replaceMerge).toEqual(['series'])
+})
+
+test('ECharts completeness ARIA prioritizes partial or truncated empty frames', () => {
+  const partial = cartesianFixture('line') as any
+  partial.dataState.datasets[0].rows = []
+  partial.dataState.datasets[0].completeness = 'partial'
+  const truncated = structuredClone(partial)
+  truncated.dataState.datasets[0].completeness = 'truncated'
+  expect(completenessAccessibilitySummary(partial)).toBe('Data is partial; 0 rows are currently available.')
+  expect(completenessAccessibilitySummary(truncated)).toBe('Data is truncated; showing 0 rows.')
+  expect((echartsOption(partial, defaultRendererContext) as any).aria.description.indexOf('Data is partial')).toBeGreaterThanOrEqual(0)
+  expect((echartsOption(partial, defaultRendererContext) as any).aria.description.indexOf('No data rows')).toBe(-1)
 })
 
 test('ECharts first-frame readiness resolves on the first valid rendered frame and removes its listener', async () => {
@@ -982,14 +768,14 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   const graph = echartsOption(networkFixture('graph'), defaultRendererContext) as any
   expect(graph.series[0]).toMatchObject({ id: 'series:hierarchy:graph', type: 'graph', layout: 'circular', roam: true, left: '8%', right: '8%', top: '8%', bottom: '8%', symbolSize: 16, center: ['50%', '52%'], zoom: 0.76, label: { position: 'right', distance: 8, fontSize: 13 }, labelLayout: { moveOverlap: 'shiftY' }, itemStyle: { borderColor: defaultRendererContext.colors.surface, borderWidth: 2 }, lineStyle: { curveness: 0.3 }, emphasis: { focus: 'adjacency' } })
   expect(graph.series[0]).not.toHaveProperty('force')
-  expect(graph.series[0].links[0]).toMatchObject({ source: 'A', target: 'B', __lv_dataset: 'primary', __lv_row_index: 0 })
+  expect(graph.series[0].links[0]).toMatchObject({ source: 'string:A', target: 'string:B', __lv_dataset: 'primary', __lv_row_index: 0 })
   const layeredGraphEnvelope = networkFixture('graph') as any
   layeredGraphEnvelope.spec.presentation.layout = 'standard'
   const layeredGraph = echartsOption(layeredGraphEnvelope, defaultRendererContext) as any
   expect(layeredGraph.series[0]).toMatchObject({ layout: 'none', left: '30%', right: '30%', top: '12%', bottom: '12%' })
   expect(layeredGraph.series[0].data).toEqual([
-    { name: 'A', x: 0, y: 50, label: { position: 'left', align: 'right' } },
-    { name: 'B', x: 100, y: 50, label: { position: 'right', align: 'left' } },
+    { name: 'string:A', displayName: 'A', x: 0, y: 50, label: { position: 'left', align: 'right' } },
+    { name: 'string:B', displayName: 'B', x: 100, y: 50, label: { position: 'right', align: 'left' } },
   ])
   const sankeyEnvelope = networkFixture('sankey') as any
   sankeyEnvelope.spec.presentation.orientation = 'horizontal'
@@ -998,8 +784,8 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   expect(sankey.series[0]).toMatchObject({ id: 'series:hierarchy:sankey', type: 'sankey', orient: 'horizontal', nodeGap: 18 })
   expect(sankey.series[0].lineStyle).toMatchObject({ color: 'gradient', opacity: 0.45, curveness: 0.3 })
   expect(sankey.series[0]).toMatchObject({ left: '4%', right: '30%', top: '8%', bottom: '8%', label: { width: 96 } })
-  expect(sankey.series[0].links).toEqual([{ source: 'source:Same', target: 'target:Same', sourceLabel: 'Same', targetLabel: 'Same', value: 4, __lv_dataset: 'primary', __lv_row_index: 0 }])
-  expect(sankey.series[0].data).toEqual([{ name: 'source:Same', displayName: 'Same' }, { name: 'target:Same', displayName: 'Same' }])
+  expect(sankey.series[0].links).toEqual([{ source: 'source:string:Same', target: 'target:string:Same', sourceLabel: 'Same', targetLabel: 'Same', value: 4, __lv_dataset: 'primary', __lv_row_index: 0 }])
+  expect(sankey.series[0].data).toEqual([{ name: 'source:string:Same', displayName: 'Same' }, { name: 'target:string:Same', displayName: 'Same' }])
   expect(sankey.series[0].label.formatter({ data: sankey.series[0].data[0] })).toBe('Same')
   expect(sankey.series[0].tooltip.formatter({ data: sankey.series[0].links[0] })).toBe('Same → Same: 4')
 
@@ -1091,67 +877,6 @@ test('ECharts gives donuts legible renderer defaults without changing their cate
   const update = echartsUpdatePlan(Change.Data, filtered)
   expect(update.option.graphic[0].style.text).toBe('{centerValue|3}\n{centerLabel|Total}')
   expect(update.option.aria.decal.show).toBe(false)
-})
-
-test('ECharts keeps proportional conditional icon cues visible for null, first-match, and default outcomes', () => {
-  const envelope = proportionalFixture('donut') as any
-  envelope.spec.conditionalFormatting = [{
-    id: 'value-status', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-    rule: {
-      kind: 'rules',
-      rules: [
-        { operator: 'greater_or_equal', value: 0, style: { color: 'warning', icon: 'circle' } },
-        { operator: 'greater_or_equal', value: 80, style: { color: 'success', icon: 'arrow_up' } },
-      ],
-      nullStyle: { color: 'neutral', icon: 'warning' },
-      defaultStyle: { color: 'danger', icon: 'arrow_down' },
-    },
-  }]
-  envelope.dataState.datasets[0].rows = [['Missing', null], ['High', 90], ['Low', -1]]
-  envelope.spec.presentation.labelPolicy.density = 'hidden'
-
-  const contexts = [
-    defaultRendererContext,
-    { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, foreground: '#f0f6fc', surface: '#0d1117' } },
-  ]
-  for (const context of contexts) {
-    const option = echartsOption(envelope, context) as any
-    const formatter = option.series[0].label.formatter
-    expect(option.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false }, minShowLabelAngle: 0 })
-    expect(formatter({ value: ['Missing', null] })).toBe('⚠ Missing: —')
-    expect(formatter({ value: ['High', 90] })).toBe('● High: 90')
-    expect(formatter({ value: ['Low', -1] })).toBe('↓ Low: -1')
-  }
-
-  envelope.spec.mark = 'funnel'
-  const funnel = echartsOption(envelope, defaultRendererContext) as any
-  expect(funnel.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
-  expect(funnel.series[0].label.formatter({ value: ['Missing', null] })).toBe('⚠ Missing: —')
-})
-
-test('ECharts preserves typed category colors for proportional icon-only outcomes', () => {
-  for (const target of ['mark_fill', 'series_color'] as const) {
-    const envelope = proportionalFixture('donut') as any
-    envelope.spec.datasets[0].fields[0].sourceRef = 'orders.status'
-    envelope.dataState.datasets[0].rows = [[null, 10], [1, 20], ['1', 30]]
-    envelope.spec.conditionalFormatting = [{
-      id: 'value-icon', target, field: { dataset: 'primary', field: 'value' },
-      rule: {
-        kind: 'rules', rules: [{ operator: 'greater_than', value: 100, style: { icon: 'arrow_up' } }],
-        nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'circle' },
-      },
-    }]
-    const reordered = structuredClone(envelope)
-    reordered.dataState.datasets[0].rows.reverse()
-
-    const initialColor = (echartsOption(envelope, defaultRendererContext, new CategoryColorRegistry()) as any).series[0].itemStyle.color
-    const reorderedColor = (echartsOption(reordered, defaultRendererContext, new CategoryColorRegistry()) as any).series[0].itemStyle.color
-    for (const category of [null, 1, '1']) {
-      const initial = initialColor({ value: [category, 1] })
-      expect(initial).toBe(reorderedColor({ value: [category, 1] }))
-      expect(initial).toBeTypeOf('string')
-    }
-  }
 })
 
 test('ECharts preserves proportional category colors when filtering changes row order', () => {
@@ -1246,6 +971,43 @@ test('ECharts translates proportional legend categories into governed selections
   expect(legendSelectionCommand(envelope, 'missing')).toBeUndefined()
 })
 
+test('ECharts proportional legends keep raw item names while formatting display labels and rejecting collisions', () => {
+  const envelope = proportionalFixture('pie') as any
+  envelope.spec.datasets[0].fields[0] = { ...envelope.spec.datasets[0].fields[0], role: 'identity', nullable: true }
+  envelope.spec.interactions = [{
+    id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{
+      source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetDatasetID: 'orders',
+    }],
+  }]
+  envelope.dataState.datasets[0].rows = [['—', 1], [null, 2], ['null', 3]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.legend.data).toEqual([{ name: '—' }, { name: 'null [null:]' }, { name: 'null [string:null]' }])
+  expect(option.legend.formatter('—')).toBe('— [string:—]')
+  expect(option.legend.formatter('null [null:]')).toBe('— [null:]')
+  expect(option.legend.formatter('null [string:null]')).toBe('null')
+  expect(legendSelectionCommand(envelope, '—')).toMatchObject({ mappings: [{ value: '—' }] })
+  expect(legendSelectionCommand(envelope, 'null [null:]')).toBeUndefined()
+  expect(legendSelectionCommand(envelope, 'null [string:null]')).toMatchObject({ mappings: [{ value: 'null' }] })
+})
+
+test('ECharts proportional legends preserve numeric and string category identities', () => {
+  const envelope = proportionalFixture('pie') as any
+  envelope.spec.datasets[0].fields[0] = { ...envelope.spec.datasets[0].fields[0], role: 'identity', dataType: 'string', nullable: true }
+  envelope.spec.interactions = [{
+    id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{
+      source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetDatasetID: 'orders',
+    }],
+  }]
+  envelope.dataState.datasets[0].rows = [[1, 1], ['1', 2]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.legend.data).toEqual([{ name: '1 [number:1]' }, { name: '1 [string:1]' }])
+  expect(option.series[0].data.map((entry: any) => [entry.name, entry.value[0]])).toEqual([
+    ['1 [number:1]', 1], ['1 [string:1]', '1'],
+  ])
+  expect(legendSelectionCommand(envelope, '1 [number:1]')).toMatchObject({ mappings: [{ value: 1 }] })
+  expect(legendSelectionCommand(envelope, '1 [string:1]')).toMatchObject({ mappings: [{ value: '1' }] })
+})
+
 test('ECharts wraps a hierarchy forest so every tree root is rendered', () => {
   const envelope = hierarchyFixture('tree') as any
   envelope.dataState.datasets[0].rows = [['A', null, 10], ['A child', 'A', 4], ['B', null, 8], ['B child', 'B', 3]]
@@ -1277,6 +1039,34 @@ test('ECharts scopes repeated hierarchy labels to their compiled parent path', (
       { name: 'Electronics', value: 5, __lv_dataset: 'primary', __lv_row_index: 1, children: [{ name: 'BA', value: 1, __lv_dataset: 'primary', __lv_row_index: 3, children: [{ name: 'delivered', value: 1, __lv_dataset: 'primary', __lv_row_index: 5 }] }] },
     ],
   }])
+})
+
+test('ECharts hierarchy treats a raw unit-separator node as one typed identity', () => {
+  const envelope = hierarchyFixture('tree') as any
+  const raw = 'A\u001fB'
+  // Go emits the escaped canonical identity as the child's parent.  The raw
+  // display value itself is not a canonical parent path.
+  const canonicalRoot = 'A\u001f\u001fB'
+  envelope.dataState.datasets[0].rows = [[raw, null, 10], ['child', canonicalRoot, 4]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].data[0]).toMatchObject({ name: raw, children: [{ name: 'child' }] })
+})
+
+test('ECharts hierarchy resolves canonical paths before typed root labels', () => {
+  const envelope = hierarchyFixture('tree') as any
+  const separator = '\u001f'
+  envelope.dataState.datasets[0].rows = [
+    [`A${separator}B`, null, 10],
+    ['A', null, 9],
+    ['B', 'A', 8],
+    ['child', `A${separator}B`, 7],
+  ]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const roots = option.series[0].data[0].children
+  expect(roots[0]).toMatchObject({ name: `A${separator}B` })
+  expect(roots[0].children).toBeUndefined()
+  expect(roots[1]).toMatchObject({ name: 'A', children: [{ name: 'B', children: [{ name: 'child' }] }] })
 })
 
 test('ECharts leaves absent proportional geometry fields to renderer defaults', () => {
@@ -1360,25 +1150,6 @@ test('ECharts renders a visible diagnostic instead of clipping an out-of-domain 
   expect(option.series).toEqual([])
   expect(option.graphic[0].style.text).toContain('outside configured gauge domain 0.0%–100.0%')
 })
-
-function cartesianFixture(mark: string, columns = ['label', 'value']): VisualizationEnvelope {
-  const fields = columns.map((id, index) => ({ id, role: index === 0 ? 'dimension' : 'metric', dataType: index === 0 || id === 'row' ? 'string' : 'decimal', nullable: false, label: id }))
-  const y = columns.slice(1).map((field) => ({ dataset: 'primary', field }))
-  const row = columns.map((id, index) => index === 0 ? 'A' : id === 'row' ? 'R1' : index)
-  return {
-    schemaVersion: 9, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
-    spec: { kind: 'cartesian', title: mark, mark, datasets: [{ id: 'primary', fields }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], x: { dataset: 'primary', field: 'label' }, y, presentation: { legend: 'bottom', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: true, stacked: true, showSymbols: false, dataZoom: true, area: mark === 'area', step: true, symbolSize: 12, labelPosition: 'top', orientation: mark === 'bar' ? 'horizontal' : 'vertical', histogramBins: mark === 'histogram' ? 10 : undefined } },
-    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns, rows: [row], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
-}
-
-function proportionalFixture(mark: 'pie' | 'donut' | 'funnel'): VisualizationEnvelope {
-  return {
-    schemaVersion: 9, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
-    spec: { kind: 'proportional', title: mark, mark, datasets: [{ id: 'primary', fields: [{ id: 'label', role: 'dimension', dataType: 'string', nullable: false, label: 'Label' }, { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' }] }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], category: { dataset: 'primary', field: 'label' }, value: { dataset: 'primary', field: 'value' }, presentation: { legend: 'right', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, orientation: 'vertical', rose: true, centerLabel: mark === 'donut' ? 'Orders' : undefined, labelPosition: 'outside', innerRadius: mark === 'donut' ? 0.54 : undefined, outerRadius: mark === 'donut' ? 0.76 : undefined, align: mark === 'funnel' ? 'left' : undefined, sort: mark === 'funnel' ? 'ascending' : undefined } },
-    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [['A', 10]], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
-}
 
 function hierarchyFixture(mark: 'tree' | 'treemap' | 'sunburst'): VisualizationEnvelope {
   const envelope = cartesianFixture('line') as any

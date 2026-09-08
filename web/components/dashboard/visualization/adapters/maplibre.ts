@@ -314,11 +314,11 @@ export class MapLibreHandle implements RendererHandle {
     this.updateSpatialSelectionControl(envelope)
     if (specChanged) this.updateMapInteractionState(envelope)
     if (densityOnlySpecChange) {
-      if ((change & Change.Selection) !== 0) this.updateSelectionData(envelope)
+      if ((change & (Change.Selection | Change.Highlight)) !== 0) this.updateSelectionData(envelope)
       return
     }
     if ((change & (Change.Spec | Change.Data)) === 0) {
-      if ((change & Change.Selection) !== 0) this.updateSelectionData(envelope)
+      if ((change & (Change.Selection | Change.Highlight)) !== 0) this.updateSelectionData(envelope)
       return
     }
     if ((change & Change.Spec) === 0 && (change & Change.Data) !== 0 && this.dynamicLayers.length > 0) {

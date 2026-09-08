@@ -3,6 +3,7 @@ import type { RendererContext } from '../../host-controller'
 import { displayUnitForField, formatDisplayField, formatField, inlineDataset, legendDecoration, toneColor, type EChartsTranslation } from './common'
 import { echartsLabelPolicy, truncateVisualizationLabel } from './label-policy'
 import { parseDecimal } from '../../decimal'
+import { categoryIdentity } from './category-colors'
 
 export function polarOption(envelope: VisualizationEnvelope, context: RendererContext): EChartsTranslation {
   const spec = envelope.spec
@@ -93,11 +94,11 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
   const categoryIndex = spec.category ? dataset.columns.indexOf(spec.category.field) : -1
   const valueIndex = dataset.columns.indexOf(spec.value.field)
   const seriesIndex = spec.series ? dataset.columns.indexOf(spec.series.field) : -1
-  const categories = [...new Set(dataset.rows.map((row, index) => String(categoryIndex >= 0 ? row[categoryIndex] : index + 1)))]
-  const seriesValues = [...new Set(dataset.rows.map((row) => String(seriesIndex >= 0 ? row[seriesIndex] : spec.title)))]
+  const categories = uniquePolarValues(dataset.rows.map((row, index) => categoryIndex >= 0 ? row[categoryIndex] : index + 1))
+  const seriesValues = uniquePolarValues(dataset.rows.map((row) => seriesIndex >= 0 ? row[seriesIndex] : spec.title))
   const values = seriesValues.map((series) => ({
-    name: series,
-    value: categories.map((category) => dataset.rows.find((row, index) => String(seriesIndex >= 0 ? row[seriesIndex] : spec.title) === series && String(categoryIndex >= 0 ? row[categoryIndex] : index + 1) === category)?.[valueIndex] ?? null),
+    name: series.key,
+    value: categories.map((category) => dataset.rows.find((row, index) => categoryIdentity(seriesIndex >= 0 ? row[seriesIndex] : spec.title) === series.identity && categoryIdentity(categoryIndex >= 0 ? row[categoryIndex] : index + 1) === category.identity)?.[valueIndex] ?? null),
   }))
   const configuredMaximum = spec.presentation.maximum
   const observedMaximum = Math.max(0, ...values.flatMap((series) => series.value.flatMap((value) => {
@@ -114,15 +115,58 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
     context,
   )
   return {
-    dataset: undefined, ...legendDecoration(spec.presentation.legend, context, false, spec.series ? spec.presentation : undefined, spec.series ? seriesValues.map((value) => ({ value, name: value })) : undefined),
+    dataset: undefined, ...polarLegendDecoration(spec.presentation.legend, context, spec.series ? spec.presentation : undefined, seriesValues),
     radar: {
-      indicator: categories.map((name, index) => ({ name, max: maxima[index], color: context.colors.muted })),
+      indicator: categories.map((category, index) => ({ name: category.label, max: maxima[index], color: context.colors.muted })),
       axisLine: { lineStyle: { color: context.colors.grid } },
       splitLine: { lineStyle: { color: context.colors.grid } },
       splitArea: { areaStyle: { color: [context.colors.surface, context.colors.grid], opacity: 0.18 } },
     },
     series: [{ id: 'series:polar:radar', type: 'radar', data: values, areaStyle: spec.presentation.area ? {} : undefined, ...labels }],
   }
+}
+
+function polarLegendDecoration(
+  position: string,
+  context: RendererContext,
+  presentation: Extract<VisualizationEnvelope['spec'], { kind: 'polar' }>['presentation'] | undefined,
+  values: readonly PolarValue[],
+): EChartsTranslation {
+  const result = legendDecoration(position, context, false, presentation, values.map((value) => ({ value: value.key, name: value.label })))
+  if (!result.legend || values.length === 0) return result
+  const configured = presentation?.legendItems ?? []
+  const configuredValues = new Set(configured.map((item) => item.value))
+  const configuredEntries = configured.flatMap((item) => {
+    const value = values.find((candidate) => candidate.key === item.value || candidate.label === item.value)
+    return value ? [value] : []
+  })
+  const ordered = configuredEntries.length > 0
+    ? [...configuredEntries, ...values.filter((value) => !configuredValues.has(value.key) && !configuredValues.has(value.label))]
+    : values
+  const labels = new Map(configured.flatMap((item) => {
+    const value = values.find((candidate) => candidate.key === item.value || candidate.label === item.value)
+    return value ? [[value.key, item.label ?? value.label] as const] : []
+  }))
+  result.legend.data = ordered.map((value) => ({ name: value.key }))
+  result.legend.formatter = (name: string) => labels.get(name) ?? values.find((value) => value.key === name)?.label ?? name
+  return result
+}
+
+type PolarValue = Readonly<{ identity: string; key: string; label: string }>
+
+function uniquePolarValues(values: readonly unknown[]): PolarValue[] {
+  const unique = new Map<string, { identity: string; label: string }>()
+  for (const value of values) {
+    const identity = categoryIdentity(value)
+    if (!unique.has(identity)) unique.set(identity, { identity, label: displayPolarValue(value) })
+  }
+  const valuesByLabel = new Map<string, number>()
+  for (const value of unique.values()) valuesByLabel.set(value.label, (valuesByLabel.get(value.label) ?? 0) + 1)
+  return [...unique.values()].map((value) => ({ ...value, key: valuesByLabel.get(value.label) === 1 ? value.label : value.identity }))
+}
+
+function displayPolarValue(value: unknown): string {
+  return value === null || value === undefined ? '—' : String(value)
 }
 
 function niceRadarMaximum(value: number): number {

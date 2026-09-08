@@ -4,7 +4,7 @@ import { formatDisplayField, formatField, inlineDataset, legendDecoration, type 
 import { conditionalIconGlyph, resolveConditionalFormat } from '../../conditional-format'
 import { conditionalItemColor } from './conditional-color'
 import { echartsLabelPolicy } from './label-policy'
-import type { CategoryColorRegistry } from './category-colors'
+import { categoryIdentity, type CategoryColorRegistry } from './category-colors'
 import { conditionalColorWithFallback } from './series-intent'
 
 const CENTER_GRAPHIC_ID = 'graphic:proportional:center'
@@ -53,6 +53,8 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   const itemColor = markFill || seriesFill
     ? conditionalColorWithFallback(markFill, conditionalColorWithFallback(seriesFill, categoryColor))
     : categoryColor
+  const categories = proportionalCategories(categoryValues, envelope, spec.category, context)
+  const typedItemNames = categories.some((category, index) => categories.findIndex((candidate) => candidate.rawName === category.rawName) !== index)
   const series: EChartsTranslation = {
     id: `series:primary:${spec.mark}`, type: spec.mark === 'funnel' ? 'funnel' : 'pie',
     encode: { itemName: spec.category.field, value: spec.value.field },
@@ -76,6 +78,19 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     itemStyle: {
       color: itemColor,
     },
+    // Explicit item names keep ECharts' legend and interaction events typed
+    // when values such as 1, "1", and null stringify to the same name.
+    ...(typedItemNames && dataset && categoryIndex >= 0 ? {
+      data: dataset.rows.map((row, rowIndex) => {
+        const category = categories.find((candidate) => candidate.identity === categoryIdentity(row[categoryIndex]))
+        return {
+          value: row,
+          ...(category ? { name: category.name } : {}),
+          __lv_dataset: dataset.id,
+          __lv_row_index: rowIndex,
+        }
+      }),
+    } : {}),
   }
   if (radius !== undefined) series.radius = radius
   if (presentation.legendTitle !== undefined) {
@@ -126,7 +141,8 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     }],
   }
   const repeatsColors = uniqueValueCount(categoryValues) > context.colors.data.length
-  const decoration = legendDecoration(presentation.legend, context, true, presentation, categoryValues.map((value) => ({ value: String(value), name: String(value) })))
+  const decoration = legendDecoration(presentation.legend, context, true, presentation, categories.map((category) => ({ value: category.name, name: category.label })))
+  applyProportionalLegend(decoration.legend, presentation.legendItems, categories)
   const graphics = [...(decoration.graphic ?? []), ...(center.graphic ?? [])]
   return {
     ...decoration,
@@ -190,13 +206,71 @@ function escapeRichText(value: string): string {
 }
 
 function uniqueValueCount(values: readonly unknown[]): number {
-  return new Set(values.map((value) => `${typeof value}:${String(value)}`)).size
+  return new Set(values.map(categoryIdentity)).size
 }
 
 function minimumLabelAngle(density: string): number {
   if (density === 'always') return 0
   if (density === 'dense') return 1
   return 3
+}
+
+function applyProportionalLegend(
+  legend: EChartsTranslation | undefined,
+  configuredItems: NonNullable<Extract<VisualizationEnvelope['spec'], { kind: 'proportional' }>['presentation']['legendItems']> | undefined,
+  categories: readonly ProportionalCategory[],
+): void {
+  if (!legend) return
+  const configured = configuredItems?.flatMap((item) => {
+    const matches = categories.filter((category) => category.name === item.value || category.rawName === item.value || category.label === item.value)
+    return matches.length === 1 ? [{ item, category: matches[0]! }] : []
+  }) ?? []
+  const configuredValues = new Set(configured.map(({ category }) => category.identity))
+  const ordered = configured.length > 0
+    ? [...configured.map(({ category }) => category), ...categories.filter((category) => !configuredValues.has(category.identity))]
+    : categories
+  legend.data = ordered.map((category) => ({ name: category.name }))
+  const labels = new Map(configured.map(({ item, category }) => [category.name, item.label ?? category.label]))
+  legend.formatter = (value: string) => labels.get(value) ?? categories.find((category) => category.name === value)?.label ?? value
+}
+
+type ProportionalCategory = Readonly<{
+  identity: string
+  rawName: string
+  name: string
+  label: string
+  value: unknown
+}>
+
+export function proportionalCategories(
+  values: readonly unknown[],
+  envelope: VisualizationEnvelope,
+  ref: VisualizationFieldRef,
+  context: RendererContext,
+): ProportionalCategory[] {
+  const unique = new Map<string, unknown>()
+  for (const value of values) {
+    const identity = categoryIdentity(value)
+    if (!unique.has(identity)) unique.set(identity, value)
+  }
+  const categories = [...unique.entries()].map(([identity, value]) => ({
+    identity,
+    rawName: String(value),
+    name: String(value),
+    label: formatField(envelope, ref, value, context),
+    value,
+  }))
+  const names = new Map<string, number>()
+  const labels = new Map<string, number>()
+  for (const category of categories) {
+    names.set(category.rawName, (names.get(category.rawName) ?? 0) + 1)
+    labels.set(category.label, (labels.get(category.label) ?? 0) + 1)
+  }
+  return categories.map((category) => ({
+    ...category,
+    name: names.get(category.rawName) === 1 ? category.rawName : `${category.rawName} [${category.identity}]`,
+    label: labels.get(category.label) === 1 ? category.label : `${category.label} [${category.identity}]`,
+  }))
 }
 
 function percent(value: number | undefined, fallback: number): string {

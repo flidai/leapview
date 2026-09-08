@@ -3,6 +3,7 @@ import { state } from 'lit/decorators.js'
 import { X } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import { mountVisualFocus, restoreVisualFocus, visualSourceFromEvent, type VisualFocusMount } from './visual-modal-focus'
+import { visualDataActionNotice, visualDataSummary, visualDataToDelimited } from './visual-modal-actions'
 import '../shared/record-table'
 
 type VisualActionName = 'focus' | 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'
@@ -23,6 +24,9 @@ export type VisualActionDetail = {
   columns: VisualColumn[]
   rows: VisualRow[]
   selection: string[]
+  totalRows?: number
+  truncated?: boolean
+  dataStatus?: string
   chart?: Record<string, unknown>
   table?: Record<string, unknown>
 }
@@ -290,10 +294,15 @@ export class VisualModal extends LitElement {
   private renderData(detail: VisualActionDetail) {
     const columns = detail.columns ?? []
     const rows = detail.rows ?? []
-    if (columns.length === 0 || rows.length === 0) return html`<div class="empty">No visual data</div>`
+    if (columns.length === 0 || rows.length === 0) return html`
+      <div class="data-shell">
+        <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
+        <div class="empty">No visual data</div>
+      </div>
+    `
     return html`
       <div class="data-shell">
-        <div class="data-summary">${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'} from current visual data</div>
+        <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
         <div class="data-scroll">
           <lv-record-table
             .table=${{
@@ -453,13 +462,13 @@ export class VisualModal extends LitElement {
   }
 
   private async copy(detail: VisualActionDetail): Promise<void> {
-    const text = toDelimited(detail, '\t')
+    const text = visualDataToDelimited(detail, '\t')
     try {
       await navigator.clipboard.writeText(text)
-      this.flash('Copied visual data')
+      this.flash(visualDataActionNotice(detail, 'copy-data'))
     } catch {
       this.fallbackCopy(text)
-      this.flash('Copied visual data')
+      this.flash(visualDataActionNotice(detail, 'copy-data'))
     }
   }
 
@@ -476,7 +485,7 @@ export class VisualModal extends LitElement {
   }
 
   private exportCSV(detail: VisualActionDetail): void {
-    const blob = new Blob([toDelimited(detail, ',')], { type: 'text/csv;charset=utf-8' })
+    const blob = new Blob([visualDataToDelimited(detail, ',')], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -485,7 +494,7 @@ export class VisualModal extends LitElement {
     link.click()
     link.remove()
     URL.revokeObjectURL(url)
-    this.flash('Downloaded CSV')
+    this.flash(visualDataActionNotice(detail, 'export-csv'))
   }
 
   private flash(message: string): void {
@@ -494,27 +503,6 @@ export class VisualModal extends LitElement {
       if (this.notice === message) this.notice = ''
     }, 1800)
   }
-}
-
-function toDelimited(detail: VisualActionDetail, delimiter: ',' | '\t'): string {
-  const columns = detail.columns ?? []
-  const rows = detail.rows ?? []
-  return [
-    columns.map((column) => escapeCell(column.label, delimiter)).join(delimiter),
-    ...rows.map((row) => columns.map((column) => escapeCell(row[column.key], delimiter)).join(delimiter)),
-  ].join('\n')
-}
-
-function escapeCell(value: unknown, delimiter: ',' | '\t'): string {
-  const text = stringValue(value)
-  if (delimiter === '\t') return text.replace(/\t/g, ' ').replace(/\r?\n/g, ' ')
-  if (!/[",\r\n]/.test(text)) return text
-  return `"${text.replace(/"/g, '""')}"`
-}
-
-function stringValue(value: unknown): string {
-  if (value === null || value === undefined) return ''
-  return String(value)
 }
 
 function slug(value: string): string {

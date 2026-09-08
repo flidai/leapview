@@ -61,6 +61,30 @@ test('ECharts translation builds radar indicators and aligned series from typed 
   expect(empty.series[0].data).toEqual([])
 })
 
+test('ECharts radar keeps null, display-colliding, and typed series identities distinct', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'quality-identities', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    spec: {
+      kind: 'polar', title: 'Quality', mark: 'radar',
+      datasets: [{ id: 'primary', fields: [
+        { id: 'metric', role: 'dimension', dataType: 'string', nullable: false, label: 'Metric' },
+        { id: 'team', role: 'dimension', dataType: 'string', nullable: true, label: 'Team' },
+        { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' },
+      ] }],
+      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Quality', description: 'Quality by team' }, interactions: [],
+      category: { dataset: 'primary', field: 'metric' }, series: { dataset: 'primary', field: 'team' }, value: { dataset: 'primary', field: 'value' },
+      presentation: { legend: 'bottom', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, showPointer: false, area: false },
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['metric', 'team', 'value'], rows: [['Speed', null, '8'], ['Speed', '—', '9'], ['Speed', 1, '6'], ['Speed', '1', '7']], completeness: 'complete' }] },
+    selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].data.map((entry: any) => entry.name)).toEqual(['null:', 'string:—', 'number:1', 'string:1'])
+  expect(option.legend.data).toEqual([{ name: 'null:' }, { name: 'string:—' }, { name: 'number:1' }, { name: 'string:1' }])
+  expect(option.legend.formatter('null:')).toBe('—')
+  expect(option.legend.formatter('number:1')).toBe('1')
+})
+
 test('ECharts emits only mark-supported proportional fields and preserves explicit false and zero', () => {
   const pie = proportionalFixture('pie') as any
   pie.spec.presentation.rose = false

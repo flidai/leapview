@@ -862,11 +862,12 @@ func TestPostgresRefreshRunMayPublishTxLocksWorkerFence(t *testing.T) {
 	r := New(admin)
 	ctx := t.Context()
 	digest := "sha256:" + strings.Repeat("a", 64)
+	const lease = 5 * time.Second
 	seedRefreshJob(t, admin, "job-fence-lock", "fence-lock-run", "p", "prod", "principal")
 	if _, err := r.CreateRun(ctx, RunInput{RunID: "fence-lock-run", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-fence-lock"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.ClaimAttempt(ctx, "fence-lock-run", "worker-a", 1, 10*time.Millisecond); err != nil {
+	if _, err := r.ClaimAttempt(ctx, "fence-lock-run", "worker-a", 1, lease); err != nil {
 		t.Fatal(err)
 	}
 	tx1, err := admin.Begin(ctx)
@@ -878,6 +879,10 @@ func TestPostgresRefreshRunMayPublishTxLocksWorkerFence(t *testing.T) {
 	if err != nil || !allowed {
 		t.Fatalf("RunMayPublishTx() = %v, %v; want live fence", allowed, err)
 	}
+	// ClaimAttempt performs several database round trips, so keep setup well
+	// clear of lease expiry; expire the live lease while tx1 owns its row lock
+	// before admitting the contender.
+	time.Sleep(lease + time.Second)
 	tx2, err := admin.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -888,8 +893,8 @@ func TestPostgresRefreshRunMayPublishTxLocksWorkerFence(t *testing.T) {
 		_, claimErr := r.ClaimAttemptTx(ctx, tx2, "fence-lock-run", "worker-b", 2, time.Minute)
 		takeover <- claimErr
 	}()
-	// The lease expires while tx1 still owns the row lock. A takeover must
-	// remain blocked until the publishing transaction releases that lock.
+	// A takeover admitted after expiry must remain blocked until the publishing
+	// transaction releases that lock.
 	time.Sleep(80 * time.Millisecond)
 	select {
 	case claimErr := <-takeover:
