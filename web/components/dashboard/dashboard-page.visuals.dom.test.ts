@@ -4,7 +4,8 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import validateVisualizationEnvelope from '../../generated/visualization/validate'
-import { testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
+import { currentVisualizationSchemaVersion } from '../../generated/visualization/schema-version'
+import { testDocument, testVisualizationEnvelopes, testVisualizationSignals } from './dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
@@ -13,10 +14,14 @@ const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/dashboard-page-test')
 
 test('dashboard fixtures satisfy the fail-closed visualization contract', () => {
-  for (const [id, envelope] of Object.entries(testVisualizationEnvelopes())) {
+  const envelopes = testVisualizationEnvelopes()
+  const signals = testVisualizationSignals()
+  for (const [id, envelope] of Object.entries(envelopes)) {
     if (!validateVisualizationEnvelope(envelope)) {
       throw new Error(`${id}: ${JSON.stringify((validateVisualizationEnvelope as typeof validateVisualizationEnvelope & { errors?: unknown }).errors)}`)
     }
+    expect(signals[id]?.schemaVersion).toBe(currentVisualizationSchemaVersion)
+    expect(signals[id]?.schemaVersion).toBe(envelope.schemaVersion)
   }
 })
 

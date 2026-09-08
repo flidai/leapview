@@ -193,3 +193,11 @@ unrelated generated audit document was preserved unchanged.
   and the saved-service gate additionally rejects typed-nil interfaces.
 - All focused fixes pass. Complete CI, frontend suites and exact-head remote
   checks remain outstanding; no PR or main merge has occurred.
+
+Frontend validation exposed a stale dashboard signal declaration: it advertised
+schema version 4 while the canonical visualization IR and backend producer use
+11. The signal source now matches the existing producer, with signal/envelope
+parity coverage and the canonical version constant in its fixture. App type
+checking, 11 focused visualization tests and Go signal contract tests pass.
+The reports, chat, data and site frontend shards all pass. A new full CI run
+will validate these reviewed fixes together before any push or PR.
