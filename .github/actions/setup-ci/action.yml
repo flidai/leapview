@@ -92,7 +92,6 @@ runs:
           done
         }
         install_go_tool github.com/go-task/task/v3/cmd/task@v3.50.0
-        install_go_tool github.com/bufbuild/buf/cmd/buf@v1.57.2
         echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
 
     - name: Install cached Chromium and system dependencies

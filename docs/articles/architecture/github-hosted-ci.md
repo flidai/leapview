@@ -57,7 +57,7 @@ same bounded shards sequentially to avoid browser and bundler contention on a sh
 
 ## Toolchain and caches
 
-`.github/actions/setup-ci` installs pinned Go, Node.js, Bun, Task, and Buf versions. Jobs opt
+`.github/actions/setup-ci` installs pinned Go, Node.js, Bun, and Task versions. Jobs opt
 into the pinned Terraform and Playwright installations only when their validation requires
 them. The action is shared by pull-request, merge, nightly, and production qualification jobs
 so a toolchain change has one reviewable source.

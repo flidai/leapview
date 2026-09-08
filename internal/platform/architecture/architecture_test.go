@@ -3675,7 +3675,6 @@ func TestGitHubHostedWorkflowsUseEphemeralRunnersAndBoundedCaches(t *testing.T) 
 		"for attempt in 1 2 3",
 		"GODEBUG=http2client=0 go install",
 		"github.com/go-task/task/v3/cmd/task@v3.50.0",
-		"github.com/bufbuild/buf/cmd/buf@v1.57.2",
 		"playwright install --with-deps chromium",
 	} {
 		if !strings.Contains(setupText, want) {
@@ -3755,7 +3754,6 @@ func TestLeapViewDeclaresGitHubHostedCIContract(t *testing.T) {
 		"bun-version: 1.3.14",
 		"terraform_version: 1.13.5",
 		"github.com/go-task/task/v3/cmd/task@v3.50.0",
-		"github.com/bufbuild/buf/cmd/buf@v1.57.2",
 		"@playwright/test@1.61.1",
 		"playwright install --with-deps chromium",
 		"PLAYWRIGHT_BROWSERS_PATH=",
