@@ -2789,8 +2789,12 @@ test('rejected filter validation reconciles optimistic state and announces the e
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    await page.waitForFunction(() => {
+      const element = document.querySelector('lv-dashboard-page') as any
+      return Boolean(element?.page && !element.isUpdatePending)
+    })
+    const moduleHandle = await page.evaluateHandle(() => import('/static/vendor/datastar-1.0.2.js?v=dev'))
+    const mutation = await page.locator('lv-dashboard-page').evaluate((element: any) => {
       let command: any
       element.addEventListener('lv-filter-command', (event: CustomEvent) => {
         command = event.detail
@@ -2800,28 +2804,25 @@ test('rejected filter validation reconciles optimistic state and announces the e
         operator: 'in',
         values: [{ kind: 'string', value: 'CA' }],
       })
-      element.requestUpdate()
-      await element.updateComplete
-      const optimistic = element.filterController.projected.appliedControls.fb_state.expression
-
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      mergePatch({
-        filterValidation: {
-          accepted: false,
-          message: 'range lower bound must not exceed upper bound',
-          currentRevision: 0,
-          clientMutationID: command.clientMutationID,
-        },
-      })
-      await element.updateComplete
-      return {
-        optimistic,
-        reconciled: element.filterController.projected.appliedControls.fb_state.expression,
-        pending: element.filterController.pending,
-        alert: element.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),
-      }
+      return { command, optimistic: element.filterController.projected.appliedControls.fb_state.expression }
     })
-    expect(result).toEqual({
+    await moduleHandle.evaluate((module: any, validation: any) => module.mergePatch({ filterValidation: validation }), {
+      accepted: false,
+      message: 'range lower bound must not exceed upper bound',
+      currentRevision: 0,
+      clientMutationID: mutation.command.clientMutationID,
+    })
+    await page.waitForFunction((clientMutationID) => {
+      const element = document.querySelector('lv-dashboard-page') as any
+      const validation = element?.signal('filterValidation', null)
+      return Boolean(element && !element.filterController.pending && !element.isUpdatePending && validation?.clientMutationID === clientMutationID)
+    }, mutation.command.clientMutationID)
+    const result = await page.locator('lv-dashboard-page').evaluate((element: any) => ({
+      reconciled: element.filterController.projected.appliedControls.fb_state.expression,
+      pending: element.filterController.pending,
+      alert: element.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),
+    }))
+    expect({ optimistic: mutation.optimistic, ...result }).toEqual({
       optimistic: {
         kind: 'set',
         operator: 'in',
