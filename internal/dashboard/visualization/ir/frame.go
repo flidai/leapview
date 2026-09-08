@@ -1965,6 +1965,17 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 				}
 			}
 		}
+		if value.Axes != nil {
+			for _, authoredAxis := range *value.Axes {
+				if authoredAxis.ID != axis || authoredAxis.Scale != VisualizationAxisScaleLog {
+					continue
+				}
+				if number, ok := reference.Value.(*NumberVisualizationReferenceValue); ok && number != nil && number.Value <= 0 {
+					return fmt.Errorf("%s must be positive on a log axis", path)
+				}
+				break
+			}
+		}
 		return nil
 	}
 	ids := map[string]struct{}{}

@@ -273,6 +273,158 @@ func TestValidateSpecChecksXReferenceDomains(t *testing.T) {
 
 }
 
+func TestValidateSpecValidatesLogReferenceLiterals(t *testing.T) {
+	number := func(value float64) VisualizationReferenceValue {
+		return VisualizationReferenceValue{Value: &NumberVisualizationReferenceValue{VisualizationReferenceValueBase: VisualizationReferenceValueBase{Kind: "number"}, Kind: "number", Value: value}}
+	}
+	field := func(name string) VisualizationReferenceValue {
+		return VisualizationReferenceValue{Value: &FieldVisualizationReferenceValue{VisualizationReferenceValueBase: VisualizationReferenceValueBase{Kind: "field"}, Kind: "field", Field: VisualizationFieldRef{Dataset: "primary", Field: name}, Reducer: VisualizationReferenceReducerFirst}}
+	}
+	base := VisualizationSpecBase{
+		Kind: "cartesian", Title: "Revenue",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "category", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Category"},
+			{ID: "metric", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Metric"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "Revenue", Description: "Revenue by category"},
+		Interactions:  []VisualizationInteraction{},
+	}
+	logAxis := func(id VisualizationCartesianAxis, axisType VisualizationAxisType) VisualizationAxisConfiguration {
+		return VisualizationAxisConfiguration{
+			ID: id, Type: axisType, Scale: VisualizationAxisScaleLog, Zero: VisualizationAxisZeroPolicyExclude,
+			Inversion: VisualizationAxisInversionAutomatic, Ticks: VisualizationAxisTickVisibilityAutomatic, Grid: VisualizationAxisGridVisibilityAutomatic,
+			LabelRotation: VisualizationAxisLabelRotationAutomatic, DateUnit: VisualizationDateDisplayUnitAutomatic, TickDensity: VisualizationAxisTickDensityAutomatic,
+		}
+	}
+	makeSpec := func(axis VisualizationCartesianAxis, xField string, axisType VisualizationAxisType, line *VisualizationReferenceLine, band *VisualizationReferenceBand, event *VisualizationEventAnnotation) VisualizationSpec {
+		axes := []VisualizationAxisConfiguration{logAxis(axis, axisType)}
+		return VisualizationSpec{Value: &CartesianVisualizationSpec{
+			VisualizationSpecBase: base, Kind: "cartesian", Mark: VisualizationCartesianMarkLine,
+			X: VisualizationFieldRef{Dataset: "primary", Field: xField}, Y: []VisualizationFieldRef{{Dataset: "primary", Field: "metric"}},
+			Axes: &axes, ReferenceLines: func() *[]VisualizationReferenceLine {
+				if line == nil {
+					return nil
+				}
+				return &[]VisualizationReferenceLine{*line}
+			}(), ReferenceBands: func() *[]VisualizationReferenceBand {
+				if band == nil {
+					return nil
+				}
+				return &[]VisualizationReferenceBand{*band}
+			}(), EventAnnotations: func() *[]VisualizationEventAnnotation {
+				if event == nil {
+					return nil
+				}
+				return &[]VisualizationEventAnnotation{*event}
+			}(),
+			Presentation: CartesianVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionBottom)},
+		}}
+	}
+	line := func(axis VisualizationCartesianAxis, value VisualizationReferenceValue) *VisualizationReferenceLine {
+		return &VisualizationReferenceLine{ID: "line", Axis: axis, Value: value, Tone: VisualizationToneNeutral}
+	}
+	band := func(axis VisualizationCartesianAxis, from, to VisualizationReferenceValue) *VisualizationReferenceBand {
+		return &VisualizationReferenceBand{ID: "band", Axis: axis, From: from, To: to, Tone: VisualizationToneNeutral}
+	}
+	event := func(value VisualizationReferenceValue) *VisualizationEventAnnotation {
+		return &VisualizationEventAnnotation{ID: "event", Axis: VisualizationCartesianAxisX, Value: value, Label: "Event", Tone: VisualizationToneNeutral}
+	}
+	valueAxis := VisualizationAxisTypeValue
+	tests := []struct {
+		name string
+		spec VisualizationSpec
+		want string
+	}{
+		{name: "primary Y line zero", spec: makeSpec(VisualizationCartesianAxisPrimaryY, "category", VisualizationAxisTypeAutomatic, line(VisualizationCartesianAxisPrimaryY, number(0)), nil, nil), want: "reference line \"line\" must be positive on a log axis"},
+		{name: "primary Y line negative", spec: makeSpec(VisualizationCartesianAxisPrimaryY, "category", VisualizationAxisTypeAutomatic, line(VisualizationCartesianAxisPrimaryY, number(-1)), nil, nil), want: "reference line \"line\" must be positive on a log axis"},
+		{name: "primary Y band from negative", spec: makeSpec(VisualizationCartesianAxisPrimaryY, "category", VisualizationAxisTypeAutomatic, nil, band(VisualizationCartesianAxisPrimaryY, number(-1), number(1)), nil), want: "reference band \"band\" from must be positive on a log axis"},
+		{name: "value X line zero", spec: makeSpec(VisualizationCartesianAxisX, "metric", valueAxis, line(VisualizationCartesianAxisX, number(0)), nil, nil), want: "reference line \"line\" must be positive on a log axis"},
+		{name: "value X band to zero", spec: makeSpec(VisualizationCartesianAxisX, "metric", valueAxis, nil, band(VisualizationCartesianAxisX, number(1), number(0)), nil), want: "reference band \"band\" to must be positive on a log axis"},
+		{name: "value X event negative", spec: makeSpec(VisualizationCartesianAxisX, "metric", valueAxis, nil, nil, event(number(-1))), want: "event annotation \"event\" must be positive on a log axis"},
+		{name: "value X positive fraction", spec: makeSpec(VisualizationCartesianAxisX, "metric", valueAxis, line(VisualizationCartesianAxisX, number(0.125)), nil, nil)},
+		{name: "primary Y dynamic field remains allowed", spec: makeSpec(VisualizationCartesianAxisPrimaryY, "category", VisualizationAxisTypeAutomatic, line(VisualizationCartesianAxisPrimaryY, field("metric")), nil, nil)},
+		{name: "linear Y negative literal remains allowed", spec: func() VisualizationSpec {
+			value := makeSpec(VisualizationCartesianAxisPrimaryY, "category", VisualizationAxisTypeAutomatic, line(VisualizationCartesianAxisPrimaryY, number(-1)), nil, nil)
+			value.Value.(*CartesianVisualizationSpec).Axes = func() *[]VisualizationAxisConfiguration {
+				axes := []VisualizationAxisConfiguration{logAxis(VisualizationCartesianAxisPrimaryY, VisualizationAxisTypeAutomatic)}
+				axes[0].Scale = VisualizationAxisScaleLinear
+				return &axes
+			}()
+			return value
+		}()},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateSpec(test.spec)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("ValidateSpec() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateSpec() error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateSpecValidatesPointLogReferenceLiteral(t *testing.T) {
+	spec := pointEnvelope(t, [][]any{{"o-1", 2.0, 80.0}}).Spec
+	point := spec.Value.(*PointVisualizationSpec)
+	point.Axes = func() *[]VisualizationAxisConfiguration {
+		axes := []VisualizationAxisConfiguration{{
+			ID: VisualizationCartesianAxisX, Type: VisualizationAxisTypeAutomatic, Scale: VisualizationAxisScaleLog, Zero: VisualizationAxisZeroPolicyExclude,
+			Inversion: VisualizationAxisInversionAutomatic, Ticks: VisualizationAxisTickVisibilityAutomatic, Grid: VisualizationAxisGridVisibilityAutomatic,
+			LabelRotation: VisualizationAxisLabelRotationAutomatic, DateUnit: VisualizationDateDisplayUnitAutomatic, TickDensity: VisualizationAxisTickDensityAutomatic,
+		}}
+		return &axes
+	}()
+	point.ReferenceLines = func() *[]VisualizationReferenceLine {
+		value := VisualizationReferenceValue{Value: &NumberVisualizationReferenceValue{VisualizationReferenceValueBase: VisualizationReferenceValueBase{Kind: "number"}, Kind: "number", Value: -1}}
+		lines := []VisualizationReferenceLine{{ID: "target", Axis: VisualizationCartesianAxisX, Value: value, Tone: VisualizationToneNeutral}}
+		return &lines
+	}()
+	if err := ValidateSpec(spec); err == nil || !strings.Contains(err.Error(), "reference line \"target\" must be positive on a log axis") {
+		t.Fatalf("point log reference error = %v", err)
+	}
+}
+
+func TestValidateSpecValidatesSecondaryComboLogReferenceLiteral(t *testing.T) {
+	base := VisualizationSpecBase{
+		Kind: "cartesian", Title: "Combo",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "category", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Category"},
+			{ID: "primary_value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Primary"},
+			{ID: "secondary_value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Secondary"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "Combo", Description: "Combo"},
+		Interactions:  []VisualizationInteraction{},
+	}
+	axis := VisualizationAxisConfiguration{
+		ID: VisualizationCartesianAxisSecondaryY, Type: VisualizationAxisTypeAutomatic, Scale: VisualizationAxisScaleLog, Zero: VisualizationAxisZeroPolicyExclude,
+		Inversion: VisualizationAxisInversionAutomatic, Ticks: VisualizationAxisTickVisibilityAutomatic, Grid: VisualizationAxisGridVisibilityAutomatic,
+		LabelRotation: VisualizationAxisLabelRotationAutomatic, DateUnit: VisualizationDateDisplayUnitAutomatic, TickDensity: VisualizationAxisTickDensityAutomatic,
+	}
+	value := VisualizationReferenceValue{Value: &NumberVisualizationReferenceValue{VisualizationReferenceValueBase: VisualizationReferenceValueBase{Kind: "number"}, Kind: "number", Value: -1}}
+	spec := VisualizationSpec{Value: &CartesianVisualizationSpec{
+		VisualizationSpecBase: base, Kind: "cartesian", Mark: VisualizationCartesianMarkCombo,
+		X:              VisualizationFieldRef{Dataset: "primary", Field: "category"},
+		Y:              []VisualizationFieldRef{{Dataset: "primary", Field: "primary_value"}, {Dataset: "primary", Field: "secondary_value"}},
+		Axes:           &[]VisualizationAxisConfiguration{axis},
+		ReferenceLines: &[]VisualizationReferenceLine{{ID: "target", Axis: VisualizationCartesianAxisSecondaryY, Value: value, Tone: VisualizationToneNeutral}},
+		Presentation: CartesianVisualizationPresentation{
+			VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionBottom),
+			ComboSeries:               &[]VisualizationComboSeries{{SeriesValue: "primary_value", Axis: VisualizationAxisPrimary}, {SeriesValue: "secondary_value", Axis: VisualizationAxisSecondary}},
+		},
+	}}
+	if err := ValidateSpec(spec); err == nil || !strings.Contains(err.Error(), "reference line \"target\" must be positive on a log axis") {
+		t.Fatalf("secondary combo log reference error = %v", err)
+	}
+}
+
 func TestValidateSpecEnforcesStackingAndSeriesIntent(t *testing.T) {
 	t.Parallel()
 

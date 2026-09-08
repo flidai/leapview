@@ -251,6 +251,126 @@ func ptrDashboardReferenceValue(value document.DashboardReferenceValue) *documen
 	return &value
 }
 
+func TestLowerCanonicalDecisionContextValidatesLogReferenceLiterals(t *testing.T) {
+	number := func(value float64) document.DashboardReferenceValue {
+		return document.DashboardReferenceValue{Value: &document.NumberDashboardReferenceValue{DashboardReferenceValueBase: document.DashboardReferenceValueBase{Kind: "number"}, Kind: "number", Value: value}}
+	}
+	field := func(name string) document.DashboardReferenceValue {
+		return document.DashboardReferenceValue{Value: &document.FieldDashboardReferenceValue{DashboardReferenceValueBase: document.DashboardReferenceValueBase{Kind: "field"}, Kind: "field", Field: name, Reducer: visualizationir.VisualizationReferenceReducerFirst}}
+	}
+	valueType := visualizationir.VisualizationAxisTypeValue
+	tests := []struct {
+		name      string
+		xField    string
+		axis      visualizationir.VisualizationCartesianAxis
+		axisType  *visualizationir.VisualizationAxisType
+		scale     visualizationir.VisualizationAxisScale
+		lineValue *document.DashboardReferenceValue
+		band      *document.DashboardReferenceBand
+		event     *document.DashboardEventAnnotation
+		want      string
+	}{
+		{name: "primary Y line zero", xField: "category", axis: visualizationir.VisualizationCartesianAxisPrimaryY, lineValue: ptrDashboardReferenceValue(number(0)), want: "presentation.referenceLines[0].value must be positive on a log axis"},
+		{name: "primary Y line negative", xField: "category", axis: visualizationir.VisualizationCartesianAxisPrimaryY, lineValue: ptrDashboardReferenceValue(number(-1)), want: "presentation.referenceLines[0].value must be positive on a log axis"},
+		{name: "primary Y band from negative", xField: "category", axis: visualizationir.VisualizationCartesianAxisPrimaryY, band: &document.DashboardReferenceBand{ID: "range", Axis: visualizationir.VisualizationCartesianAxisPrimaryY, From: number(-1), To: number(1)}, want: "presentation.referenceBands[0].from must be positive on a log axis"},
+		{name: "value X line zero", xField: "metric", axis: visualizationir.VisualizationCartesianAxisX, axisType: &valueType, lineValue: ptrDashboardReferenceValue(number(0)), want: "presentation.referenceLines[0].value must be positive on a log axis"},
+		{name: "value X band to zero", xField: "metric", axis: visualizationir.VisualizationCartesianAxisX, axisType: &valueType, band: &document.DashboardReferenceBand{ID: "range", Axis: visualizationir.VisualizationCartesianAxisX, From: number(1), To: number(0)}, want: "presentation.referenceBands[0].to must be positive on a log axis"},
+		{name: "value X event negative", xField: "metric", axis: visualizationir.VisualizationCartesianAxisX, axisType: &valueType, event: &document.DashboardEventAnnotation{ID: "event", Axis: visualizationir.VisualizationCartesianAxisX, Value: number(-1), Label: "Event"}, want: "presentation.eventAnnotations[0].value must be positive on a log axis"},
+		{name: "value X positive fraction", xField: "metric", axis: visualizationir.VisualizationCartesianAxisX, axisType: &valueType, lineValue: ptrDashboardReferenceValue(number(0.125))},
+		{name: "primary Y dynamic field remains allowed", xField: "category", axis: visualizationir.VisualizationCartesianAxisPrimaryY, lineValue: ptrDashboardReferenceValue(field("metric"))},
+		{name: "linear Y negative literal remains allowed", xField: "category", axis: visualizationir.VisualizationCartesianAxisPrimaryY, scale: visualizationir.VisualizationAxisScaleLinear, lineValue: ptrDashboardReferenceValue(number(-1))},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fields := []visualizationir.VisualizationField{
+				{ID: "category", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString},
+				{ID: "metric", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal},
+			}
+			spec := visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{
+				VisualizationSpecBase: visualizationir.VisualizationSpecBase{Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: fields}}},
+				Kind:                  "cartesian", Mark: visualizationir.VisualizationCartesianMarkLine,
+				X: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: test.xField},
+				Y: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "metric"}},
+			}}
+			scale := test.scale
+			if scale == "" {
+				scale = visualizationir.VisualizationAxisScaleLog
+			}
+			axis := document.DashboardAxisConfiguration{ID: test.axis, Type: test.axisType, Scale: scale, Zero: visualizationir.VisualizationAxisZeroPolicyExclude, TickDensity: visualizationir.VisualizationAxisTickDensityAutomatic}
+			presentation := document.CartesianDashboardPresentation{Type: "cartesian", Axes: &[]document.DashboardAxisConfiguration{axis}}
+			if test.lineValue != nil {
+				presentation.ReferenceLines = &[]document.DashboardReferenceLine{{ID: "line", Axis: test.axis, Value: *test.lineValue, Tone: visualizationir.VisualizationToneNeutral}}
+			}
+			if test.band != nil {
+				test.band.Tone = visualizationir.VisualizationToneNeutral
+				presentation.ReferenceBands = &[]document.DashboardReferenceBand{*test.band}
+			}
+			if test.event != nil {
+				test.event.Tone = visualizationir.VisualizationToneNeutral
+				presentation.EventAnnotations = &[]document.DashboardEventAnnotation{*test.event}
+			}
+			query := LoweredDashboardQuery{ResultFrame: []DashboardQueryResultField{{Name: "category"}, {Name: "metric"}}}
+			err := lowerCanonicalDecisionContext(&spec, document.DashboardPresentation{Value: &presentation}, document.DashboardVisualTypeLine, query)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("lowerCanonicalDecisionContext() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("lowerCanonicalDecisionContext() error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalDecisionContextValidatesPointLogReferenceLiteral(t *testing.T) {
+	value := -1.0
+	axis := document.DashboardAxisConfiguration{ID: visualizationir.VisualizationCartesianAxisX, Scale: visualizationir.VisualizationAxisScaleLog, Zero: visualizationir.VisualizationAxisZeroPolicyExclude, TickDensity: visualizationir.VisualizationAxisTickDensityAutomatic}
+	authored := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
+		Type: "point", Identity: []string{"category"}, X: "metric", Y: "metric", Axes: &[]document.DashboardAxisConfiguration{axis},
+		ReferenceLines: &[]document.DashboardReferenceLine{{ID: "target", Axis: visualizationir.VisualizationCartesianAxisX, Value: document.DashboardReferenceValue{Value: &document.NumberDashboardReferenceValue{DashboardReferenceValueBase: document.DashboardReferenceValueBase{Kind: "number"}, Kind: "number", Value: value}}, Tone: visualizationir.VisualizationToneNeutral}},
+	}}
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.PointVisualizationSpec{
+		VisualizationSpecBase: visualizationir.VisualizationSpecBase{Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: []visualizationir.VisualizationField{
+			{ID: "category", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString},
+			{ID: "metric", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal},
+		}}}},
+		Kind: "point", Identity: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "category"}},
+		X: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "metric"}, Y: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "metric"},
+	}}
+	err := lowerCanonicalDecisionContext(&spec, authored, document.DashboardVisualTypeScatter, LoweredDashboardQuery{ResultFrame: []DashboardQueryResultField{{Name: "category"}, {Name: "metric"}}})
+	if err == nil || !strings.Contains(err.Error(), "presentation.referenceLines[0].value must be positive on a log axis") {
+		t.Fatalf("point log reference error = %v", err)
+	}
+}
+
+func TestLowerCanonicalDecisionContextValidatesSecondaryComboLogReferenceLiteral(t *testing.T) {
+	value := -1.0
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{
+		VisualizationSpecBase: visualizationir.VisualizationSpecBase{Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: []visualizationir.VisualizationField{
+			{ID: "category", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString},
+			{ID: "primary_value", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal},
+			{ID: "secondary_value", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal},
+		}}}},
+		Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkCombo,
+		X: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "category"},
+		Y: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "primary_value"}, {Dataset: "primary", Field: "secondary_value"}},
+		Presentation: visualizationir.CartesianVisualizationPresentation{ComboSeries: &[]visualizationir.VisualizationComboSeries{
+			{SeriesValue: "primary_value", Axis: visualizationir.VisualizationAxisPrimary},
+			{SeriesValue: "secondary_value", Axis: visualizationir.VisualizationAxisSecondary},
+		}},
+	}}
+	authored := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+		Type: "cartesian", Axes: &[]document.DashboardAxisConfiguration{{ID: visualizationir.VisualizationCartesianAxisSecondaryY, Scale: visualizationir.VisualizationAxisScaleLog, Zero: visualizationir.VisualizationAxisZeroPolicyExclude, TickDensity: visualizationir.VisualizationAxisTickDensityAutomatic}},
+		ReferenceLines: &[]document.DashboardReferenceLine{{ID: "target", Axis: visualizationir.VisualizationCartesianAxisSecondaryY, Value: document.DashboardReferenceValue{Value: &document.NumberDashboardReferenceValue{DashboardReferenceValueBase: document.DashboardReferenceValueBase{Kind: "number"}, Kind: "number", Value: value}}, Tone: visualizationir.VisualizationToneNeutral}},
+	}}
+	err := lowerCanonicalDecisionContext(&spec, authored, document.DashboardVisualTypeCombo, LoweredDashboardQuery{ResultFrame: []DashboardQueryResultField{{Name: "category"}, {Name: "primary_value"}, {Name: "secondary_value"}}})
+	if err == nil || !strings.Contains(err.Error(), "presentation.referenceLines[0].value must be positive on a log axis") {
+		t.Fatalf("secondary combo log reference error = %v", err)
+	}
+}
+
 func TestLowerCanonicalDecisionContextUsesFirstPrimaryComboOwner(t *testing.T) {
 	t.Parallel()
 

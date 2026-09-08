@@ -300,6 +300,17 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 				}
 			}
 		}
+		if axes != nil {
+			for _, authoredAxis := range *axes {
+				if authoredAxis.ID != axis || authoredAxis.Scale != visualizationir.VisualizationAxisScaleLog {
+					continue
+				}
+				if number, ok := value.value.Value.(*visualizationir.NumberVisualizationReferenceValue); ok && number != nil && number.Value <= 0 {
+					return fmt.Errorf("%s must be positive on a log axis", path)
+				}
+				break
+			}
+		}
 		return nil
 	}
 	ids := make(map[string]string)

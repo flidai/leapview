@@ -207,6 +207,8 @@ visuals:
 
 ## Governed decision context
 
+Reference lines, bands, and event annotations on a log axis use the positive numeric domain: authored numeric literals must be greater than zero. Field and reducer references are evaluated after the result is filtered; a nonpositive resolved line or event is omitted, and a band is omitted when either endpoint is nonpositive. A positive reference outside the visible log bounds remains an ordinary out-of-range reference.
+
 Use a named context dataset when a title or description must be recomputed from the same active semantic filters as the chart. Context queries are compiled with the visual and delivered in the typed visualization envelope.
 
 Here the context query summarizes the first status separately; it does not filter the revenue line to that status. Its metadata is labeled as context, independently of the fixed reference target.
