@@ -24,6 +24,10 @@ func (s *Service) openCurrent(ctx context.Context, request saved.ReadRequest, ac
 }
 
 func (s *Service) openCurrentWithLease(ctx context.Context, lease projectruntime.Lease, request saved.ReadRequest, action AuthorizationAction) (saved.OpenResult, *semanticmodel.Model, error) {
+	return s.openCurrentWithLeaseAtRevision(ctx, lease, request, action, nil)
+}
+
+func (s *Service) openCurrentWithLeaseAtRevision(ctx context.Context, lease projectruntime.Lease, request saved.ReadRequest, action AuthorizationAction, expected *saved.RevisionToken) (saved.OpenResult, *semanticmodel.Model, error) {
 	lifecycle, err := s.repository.GetLifecycle(ctx, saved.ReadInput{ProjectID: request.ProjectID, ID: request.ID})
 	if err != nil {
 		return saved.OpenResult{}, nil, err
@@ -36,6 +40,13 @@ func (s *Service) openCurrentWithLease(ctx context.Context, lease projectruntime
 	}
 	if action == AuthorizationActionExecute && lifecycle.Status == saved.StatusArchived {
 		return saved.OpenResult{}, nil, saved.ErrArchived
+	}
+	// A caller-supplied revision token is a concurrency guard, not an
+	// existence oracle. Compare it only after lifecycle authorization so
+	// unauthorized callers cannot distinguish a stale token from another
+	// inaccessible revision.
+	if expected != nil && lifecycle.CurrentRevision.Token() != *expected {
+		return saved.OpenResult{}, nil, saved.ErrStaleRevision
 	}
 	revision, err := s.repository.GetRevision(ctx, saved.RevisionReadInput{ProjectID: request.ProjectID, ID: request.ID, Revision: lifecycle.CurrentRevision.Token()})
 	if err != nil {

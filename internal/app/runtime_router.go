@@ -19,6 +19,7 @@ import (
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
+	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	apiapigenruntime "github.com/flidai/leapview/internal/app/api/apigenruntime"
 	apigenapi "github.com/flidai/leapview/internal/app/api/gen"
@@ -1075,7 +1076,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return principal.ID, ok
 			},
 		},
-		SavedExplorations: savedExplorationAPIGenConfig(runtime.savedExplorationService, routes.accessModule, platform.auth),
+		SavedExplorations: savedExplorationAPIGenConfig(runtime.savedExplorationService, routes.accessModule, platform.auth, func() queryaudit.Recorder {
+			if runtime.analyticsModule == nil {
+				return nil
+			}
+			return runtime.analyticsModule.QueryAuditRecorder()
+		}()),
 	}
 	if routes.deploymentModule == nil {
 		config := moduleWorkflow.deploymentConfig

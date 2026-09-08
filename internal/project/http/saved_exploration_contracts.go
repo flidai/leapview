@@ -22,6 +22,14 @@ type SavedExplorationService interface {
 	Reopen(context.Context, savedexploration.ReopenRequest) (savedexploration.ReopenResult, error)
 }
 
+// savedExplorationQueryExecutor is optional: only the concrete application
+// service may execute governed exploration state. Read/mutation test doubles
+// therefore cannot accidentally turn URL possession into query authority.
+type savedExplorationQueryExecutor interface {
+	Execute(context.Context, savedexploration.ExecuteRequest) (savedexploration.ExecuteResult, error)
+	ExecuteSpec(context.Context, savedexploration.ExecuteSpecRequest) (savedexploration.ExecuteResult, error)
+}
+
 // SavedExplorationCommandBindings are generated operation claims projected
 // into the browser. The handler verifies the claimed action before any
 // lifecycle or repository call.

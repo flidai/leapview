@@ -11,12 +11,14 @@ import (
 	apigenapi "github.com/flidai/leapview/internal/app/api/gen"
 )
 
-const expectedAPIGenAggregateOperationCount = 219
+const expectedAPIGenAggregateOperationCount = 221
 
 var savedExplorationOperationIDs = map[string]struct{}{
 	"archiveSavedExploration":   {},
 	"createSavedExploration":    {},
 	"duplicateSavedExploration": {},
+	"exportSavedExploration":    {},
+	"exportSavedExplorationURL": {},
 	"getSavedExploration":       {},
 	"listSavedExplorations":     {},
 	"updateSavedExploration":    {},
@@ -24,7 +26,7 @@ var savedExplorationOperationIDs = map[string]struct{}{
 
 func TestAPIGenSavedExplorationOperationSurface(t *testing.T) {
 	contracts := gen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 17; got != want {
+	if got, want := len(contracts), 19; got != want {
 		t.Fatalf("Analytics generated operations = %d, want %d", got, want)
 	}
 	appContracts := apigenapi.GetAPIGenOperationContracts()
@@ -147,6 +149,8 @@ func TestAPIGenSavedExplorationRoutesAndAuthz(t *testing.T) {
 		"/api/v1/projects/{project}/saved-explorations/{exploration}",
 		"/api/v1/projects/{project}/saved-explorations/{exploration}/archive",
 		"/api/v1/projects/{project}/saved-explorations/{exploration}/duplicate",
+		"/api/v1/projects/{project}/saved-explorations/{exploration}/export",
+		"/api/v1/projects/{project}/saved-explorations/url-export",
 	} {
 		if _, ok := paths[path]; !ok {
 			t.Fatalf("generated OpenAPI missing saved-exploration path %s", path)

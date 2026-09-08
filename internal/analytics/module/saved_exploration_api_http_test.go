@@ -17,6 +17,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	canonical "github.com/flidai/leapview/internal/analytics/exploration"
 	saved "github.com/flidai/leapview/internal/analytics/exploration/saved"
 	savedapplication "github.com/flidai/leapview/internal/analytics/exploration/saved/application"
@@ -25,19 +26,23 @@ import (
 )
 
 type savedExplorationServiceStub struct {
-	fixture           savedExplorationHTTPFixture
-	create            func(context.Context, saved.CreateRequest) (saved.MutationResult, error)
-	reopen            func(context.Context, saved.ReopenRequest) (saved.ReopenResult, error)
-	list              func(context.Context, saved.ListRequest) ([]saved.Lifecycle, error)
-	update            func(context.Context, saved.UpdateVersionRequest) (saved.MutationResult, error)
-	duplicate         func(context.Context, saved.DuplicateRequest) (saved.MutationResult, error)
-	archive           func(context.Context, saved.ArchiveRequest) (saved.MutationResult, error)
-	authorizeReplay   func(context.Context, savedapplication.MutationReplayAuthorizationRequest) (bool, error)
-	createRequest     saved.CreateRequest
-	createRequests    []saved.CreateRequest
-	updateRequest     saved.UpdateVersionRequest
-	duplicateRequest  saved.DuplicateRequest
-	duplicateRequests []saved.DuplicateRequest
+	fixture            savedExplorationHTTPFixture
+	create             func(context.Context, saved.CreateRequest) (saved.MutationResult, error)
+	reopen             func(context.Context, saved.ReopenRequest) (saved.ReopenResult, error)
+	list               func(context.Context, saved.ListRequest) ([]saved.Lifecycle, error)
+	update             func(context.Context, saved.UpdateVersionRequest) (saved.MutationResult, error)
+	duplicate          func(context.Context, saved.DuplicateRequest) (saved.MutationResult, error)
+	archive            func(context.Context, saved.ArchiveRequest) (saved.MutationResult, error)
+	execute            func(context.Context, saved.ExecuteRequest) (saved.ExecuteResult, error)
+	executeSpec        func(context.Context, saved.ExecuteSpecRequest) (saved.ExecuteResult, error)
+	authorizeReplay    func(context.Context, savedapplication.MutationReplayAuthorizationRequest) (bool, error)
+	createRequest      saved.CreateRequest
+	createRequests     []saved.CreateRequest
+	updateRequest      saved.UpdateVersionRequest
+	duplicateRequest   saved.DuplicateRequest
+	duplicateRequests  []saved.DuplicateRequest
+	executeRequest     saved.ExecuteRequest
+	executeSpecRequest saved.ExecuteSpecRequest
 }
 
 func (stub *savedExplorationServiceStub) AuthorizeMutationReplay(ctx context.Context, request savedapplication.MutationReplayAuthorizationRequest) (bool, error) {
@@ -124,6 +129,22 @@ func (stub *savedExplorationServiceStub) Archive(ctx context.Context, request sa
 		return stub.archive(ctx, request)
 	}
 	return stub.fixture.result, nil
+}
+
+func (stub *savedExplorationServiceStub) Execute(ctx context.Context, request saved.ExecuteRequest) (saved.ExecuteResult, error) {
+	stub.executeRequest = request
+	if stub.execute != nil {
+		return stub.execute(ctx, request)
+	}
+	return saved.ExecuteResult{Result: dataquery.Result{Status: dataquery.StatusSuccess, ExecutionState: dataquery.ExecutionSucceeded}}, nil
+}
+
+func (stub *savedExplorationServiceStub) ExecuteSpec(ctx context.Context, request saved.ExecuteSpecRequest) (saved.ExecuteResult, error) {
+	stub.executeSpecRequest = request
+	if stub.executeSpec != nil {
+		return stub.executeSpec(ctx, request)
+	}
+	return saved.ExecuteResult{Result: dataquery.Result{Status: dataquery.StatusSuccess, ExecutionState: dataquery.ExecutionSucceeded}}, nil
 }
 
 type savedExplorationHTTPFixture struct {

@@ -18,6 +18,7 @@ import (
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	saved "github.com/flidai/leapview/internal/analytics/exploration/saved"
 	savedapplication "github.com/flidai/leapview/internal/analytics/exploration/saved/application"
+	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -27,8 +28,12 @@ import (
 // Actor, IDs, fingerprints, and evidence are all derived here or below the
 // transport boundary; none are accepted from request bodies.
 type SavedExplorationAPIGenConfig struct {
-	Service          SavedExplorationService
-	CurrentPrincipal func(*http.Request) (string, bool)
+	Service SavedExplorationService
+	// ExportAuditRecorder records the delivery outcome separately from the
+	// governed query event. Query execution can succeed while encoding or
+	// sending is rejected by export bounds/cancellation.
+	ExportAuditRecorder queryaudit.Recorder
+	CurrentPrincipal    func(*http.Request) (string, bool)
 	// ReplayContext installs the canonical authenticated principal (and any
 	// credential attenuation) before the read-only replay authorization runs.
 	// The public protocol invokes replay authorization before APIGen's normal

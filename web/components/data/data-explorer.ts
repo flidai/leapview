@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronRight, Columns3, Database, Eye, Filter, Play, Plus, RotateCcw, Search, Server, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
+import { ChevronRight, Columns3, Database, Filter, Play, Plus, RotateCcw, Search, Sigma, Square, SquareCheckBig, X } from 'lucide'
 import type {
   AgentReferenceSignal,
   DataExploreCommand,
@@ -52,10 +52,14 @@ import { dataExplorerURL } from './data-explorer-url'
 import { DataExplorerClientState } from './data-explorer-client'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import { filterObjects, objectColumnMatchesSearch } from './data-explorer-search'
+import { groupObjectsBySemanticModel, type ResourceGroup } from './data-explorer-groups'
+import { iconForLayer, label, layerLabel } from './data-explorer-object-labels'
 import {
   emptySavedExplorations,
   renderSavedExplorations,
   SavedExplorationTracker,
+  type SavedExplorationCurrent,
+  type SavedExplorationVisibility,
   savedExplorationStyles,
   synchronizeSavedExplorationURL,
   updateSavedExplorationURL,
@@ -100,12 +104,6 @@ const emptyExplorer: DataExplorerSignal = {
   warnings: [],
 }
 
-type ResourceGroup = {
-  id: string
-  title: string
-  objects: DataExplorerObjectSignal[]
-}
-
 type ExplorerColumn = { key: string, label?: string }
 
 class DataExplorerPage extends DatastarLit(LitElement) {
@@ -125,6 +123,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private exploreTransportAction: 'run' | 'stop' | null = null
   @state() private savedTitle = ''
   @state() private savedDuplicateTitle = ''
+  @state() private savedVisibility: SavedExplorationVisibility = 'private'
+  @state() private savedVisibilityOverride: SavedExplorationVisibility | undefined
+  @state() private savedShareStatus = ''
+  @state() private savedShareFallbackURL = ''
   private lastSearch = ''
   private expandedGroupIDs = new Set<string>()
   private exploreTimer = 0
@@ -141,7 +143,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private readonly selectionController = new DataExplorerSelectionController()
   private readonly clientState = new DataExplorerClientState()
   private readonly savedExplorationTracker = new SavedExplorationTracker({
-    onBaselineChanged: () => this.savedDuplicateTitle = '',
+    onBaselineChanged: (current) => {
+      this.savedDuplicateTitle = ''
+      this.savedVisibilityOverride = current ? (current.visibility === 'organization' ? 'organization' : 'private') : undefined
+      this.savedShareStatus = ''
+      this.savedShareFallbackURL = ''
+    },
     onDirty: () => this.dispatchEvent(new CustomEvent('lv-saved-exploration-dirty', { bubbles: true, composed: true })),
   })
 
@@ -1182,9 +1189,19 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         ${renderSavedExplorations(savedExplorations, {
           savedTitle: () => this.savedTitle,
           savedDuplicateTitle: () => this.savedDuplicateTitle,
+          savedVisibility: () => this.savedVisibility,
+          currentSavedVisibility: (current: SavedExplorationCurrent) => this.savedVisibilityOverride ?? (current.visibility === 'organization' ? 'organization' : 'private'),
           activeSpec: () => this.optimisticExplore?.spec ?? this.dataExplorer.explore?.command?.spec ?? emptyExplorer.explore.command.spec,
           onSavedTitleInput: (value) => this.savedTitle = value,
           onDuplicateTitleInput: (value) => this.savedDuplicateTitle = value,
+          onSavedVisibilityInput: (value) => this.savedVisibility = value,
+          onCurrentSavedVisibilityInput: (value) => this.savedVisibilityOverride = value,
+          shareStatus: () => this.savedShareStatus,
+          shareFallbackURL: () => this.savedShareFallbackURL,
+          onShareStatus: (message, fallbackURL = '') => {
+            this.savedShareStatus = message
+            this.savedShareFallbackURL = fallbackURL
+          },
           onCommand: (command) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-command', { bubbles: true, composed: true, detail: command })),
           onReopen: (current) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
             bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },
@@ -2002,51 +2019,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.closeFilter()
     window.location.reload()
   }
-}
-
-function groupObjectsBySemanticModel(objects: DataExplorerObjectSignal[], semanticModels: DataExploreSignal['semanticModels'] = []): ResourceGroup[] {
-  const groups = new Map<string, ResourceGroup>()
-  const modelTitles = new Map(semanticModels.map((model) => [model.id, model.title]))
-  for (const object of objects) {
-    if (object.layer === 'source') continue
-    const id = object.semanticModelId || object.layer
-    if (!groups.has(id)) {
-      groups.set(id, { id, title: modelTitles.get(id) || object.semanticModelId || 'Data objects', objects: [] })
-    }
-    groups.get(id)!.objects.push(object)
-  }
-  return Array.from(groups.values()).filter((group) => group.objects.length > 0)
-}
-
-function iconForLayer(layer: string): any {
-  switch (layer) {
-    case 'source':
-      return Server
-    case 'semantic_view':
-      return Eye
-    case 'model':
-      return Table2
-    default:
-      return Database
-  }
-}
-
-function layerLabel(layer: string): string {
-  switch (layer) {
-    case 'source':
-      return 'Source'
-    case 'model':
-      return 'Model'
-    case 'semantic_view':
-      return 'Semantic view'
-    default:
-      return label(layer)
-  }
-}
-
-function label(value: unknown): string {
-  if (value == null || value === '') return '-'
-  return String(value)
 }
 
 if (!customElements.get('lv-data-explorer')) customElements.define('lv-data-explorer', DataExplorerPage)

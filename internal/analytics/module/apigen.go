@@ -133,6 +133,10 @@ func (d *analyticsAPIGenDispatcher) GetSavedExploration(w http.ResponseWriter, r
 	d.savedExplorations.Get(w, r, project, exploration)
 }
 
+func (d *analyticsAPIGenDispatcher) ExportSavedExplorationURL(w http.ResponseWriter, r *http.Request, project string) {
+	d.savedExplorations.ExportSavedExplorationURL(w, r, project)
+}
+
 func (d *analyticsAPIGenDispatcher) UpdateSavedExploration(w http.ResponseWriter, r *http.Request, project, exploration string, headers analyticsgen.GenUpdateSavedExplorationHeaders) {
 	d.savedExplorations.Update(w, r, project, exploration, headers)
 }
@@ -143,6 +147,10 @@ func (d *analyticsAPIGenDispatcher) ArchiveSavedExploration(w http.ResponseWrite
 
 func (d *analyticsAPIGenDispatcher) DuplicateSavedExploration(w http.ResponseWriter, r *http.Request, project, exploration string, headers analyticsgen.GenDuplicateSavedExplorationHeaders) {
 	d.savedExplorations.Duplicate(w, r, project, exploration, headers)
+}
+
+func (d *analyticsAPIGenDispatcher) ExportSavedExploration(w http.ResponseWriter, r *http.Request, project, exploration string, headers analyticsgen.GenExportSavedExplorationHeaders) {
+	d.savedExplorations.ExportSavedExploration(w, r, project, exploration, headers)
 }
 
 func (d *analyticsAPIGenDispatcher) TestTargetConnectionBinding(
