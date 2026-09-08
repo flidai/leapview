@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -14,11 +15,17 @@ import {
 import { verifyFrontendBundleStaticCoverage } from './frontend_bundle_files'
 import { frontendBundleEvidenceSha256 } from './frontend_bundle_active_baseline'
 import { applyReviewedFrontendBundleBudgetProposal } from './frontend_bundle_budget_proposal'
-import { currentGitRevision, frontendCommitIdentity, frontendSourceInputDigest } from './frontend_bundle_identity'
+import {
+  assertFrontendBundleWriterProvenance,
+  currentGitRevision,
+  frontendCommitIdentity,
+  frontendSourceInputDigest,
+} from './frontend_bundle_identity'
 
 const temporaryPaths: string[] = []
 const currentSourceDigest = frontendSourceInputDigest()
 const currentCommit = currentGitRevision()
+const writerModes = ['update', 'propose', 'apply'] as const
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => Bun.file(path).delete()))
@@ -26,6 +33,24 @@ afterEach(async () => {
 
 function pair(rawBytes: number, gzipBytes = rawBytes): { rawBytes: number; gzipBytes: number } {
   return { rawBytes, gzipBytes }
+}
+
+function gitFixture(): { root: string; head: string } {
+  const root = mkdtempSync(join(tmpdir(), 'frontend-writer-provenance-'))
+  execFileSync('git', ['init', '--quiet'], { cwd: root })
+  execFileSync('git', ['config', 'user.email', 'frontend-budget-test@example.invalid'], { cwd: root })
+  execFileSync('git', ['config', 'user.name', 'frontend budget test'], { cwd: root })
+  writeFileSync(join(root, 'tracked.txt'), 'clean fixture\n')
+  execFileSync('git', ['add', 'tracked.txt'], { cwd: root })
+  execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: root })
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+  return { root, head }
+}
+
+function expectWriterModesToReject(root: string, identity: { commit: string | null; commitSource: 'git' | 'build-arg' | 'unavailable' }, environment: Record<string, string | undefined> = {}, message: string): void {
+  for (const mode of writerModes) {
+    expect(() => assertFrontendBundleWriterProvenance(mode, identity, environment, root)).toThrow(message)
+  }
 }
 
 function policy(overrides: Partial<FrontendBundleBudgetPolicy['budgets']['entries']['app']> = {}): FrontendBundleBudgetPolicy {
@@ -191,6 +216,76 @@ test('rejects malformed BUILD_REVISION instead of silently falling back to Git',
     if (previous === undefined) delete process.env.BUILD_REVISION
     else process.env.BUILD_REVISION = previous
   }
+})
+
+test('writer modes require a clean real Git checkout and matching recorded HEAD', () => {
+  const fixture = gitFixture()
+  try {
+    const identity = { commit: fixture.head, commitSource: 'git' as const }
+    for (const mode of writerModes) {
+      expect(() => assertFrontendBundleWriterProvenance(mode, identity, {}, fixture.root)).not.toThrow()
+    }
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true })
+  }
+})
+
+test('writer modes reject invocation below the Git worktree root', () => {
+  const fixture = gitFixture()
+  const nested = join(fixture.root, 'nested')
+  try {
+    mkdirSync(nested)
+    expectWriterModesToReject(nested, { commit: fixture.head, commitSource: 'git' }, {}, 'must run from the Git worktree root')
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true })
+  }
+})
+
+for (const dirtyKind of ['staged', 'unstaged', 'untracked'] as const) {
+  test(`writer modes reject ${dirtyKind} nonignored changes`, () => {
+    const fixture = gitFixture()
+    try {
+      if (dirtyKind === 'untracked') {
+        writeFileSync(join(fixture.root, 'untracked.txt'), 'not ignored\n')
+      } else {
+        writeFileSync(join(fixture.root, 'tracked.txt'), `${dirtyKind} change\n`)
+        if (dirtyKind === 'staged') execFileSync('git', ['add', 'tracked.txt'], { cwd: fixture.root })
+      }
+      expectWriterModesToReject(fixture.root, { commit: fixture.head, commitSource: 'git' }, {}, 'clean nonignored working tree')
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+}
+
+test('writer modes reject missing Git metadata and BUILD_REVISION overrides', () => {
+  const missingGit = gitFixture()
+  try {
+    rmSync(join(missingGit.root, '.git'), { recursive: true, force: true })
+    expectWriterModesToReject(missingGit.root, { commit: missingGit.head, commitSource: 'git' }, {}, 'clean Git checkout')
+  } finally {
+    rmSync(missingGit.root, { recursive: true, force: true })
+  }
+
+  const buildArg = gitFixture()
+  try {
+    expectWriterModesToReject(buildArg.root, { commit: buildArg.head, commitSource: 'git' }, { BUILD_REVISION: '0'.repeat(40) }, 'BUILD_REVISION cannot override')
+  } finally {
+    rmSync(buildArg.root, { recursive: true, force: true })
+  }
+})
+
+test('writer modes reject a recorded commit that differs from real HEAD', () => {
+  const fixture = gitFixture()
+  try {
+    expectWriterModesToReject(fixture.root, { commit: '0'.repeat(40), commitSource: 'git' }, {}, 'does not match real Git HEAD')
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true })
+  }
+})
+
+test('ordinary evidence comparison remains available for the normal check path', () => {
+  expect(compareFrontendBundleEvidence(policy(), evidence())).toEqual([])
 })
 
 test('independently rejects shipped JavaScript omitted from aggregate coverage', async () => {

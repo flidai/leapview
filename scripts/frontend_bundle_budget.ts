@@ -8,6 +8,7 @@ import {
 import { applyReviewedFrontendBundleBudgetProposal } from './frontend_bundle_budget_proposal'
 import { verifyFrontendBundleFiles } from './frontend_bundle_files'
 import {
+  assertFrontendBundleWriterProvenance,
   currentGitRevision,
   frontendLockfileSha256,
   frontendPackageManager,
@@ -631,6 +632,9 @@ async function main(arguments_: string[]): Promise<void> {
   const policy = validateFrontendBundlePolicy(await readJson(options.policyPath), options.policyPath)
   const evidence = validateFrontendBundleEvidence(await readJson(options.evidencePath), options.evidencePath)
   await verifyFrontendBundleFiles(evidence, options.evidencePath)
+  if (options.mode !== 'check') {
+    assertFrontendBundleWriterProvenance(options.mode, evidence.identity)
+  }
 
   if (options.mode === 'check') {
     const violations = compareFrontendBundleEvidence(policy, evidence)

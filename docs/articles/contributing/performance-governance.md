@@ -79,6 +79,13 @@ justify a zero-noise size ratchet; they do not justify a runtime timing claim.
 `task quality:frontend-bundle:update` only tightens budgets. For an intentional
 increase, produce a proposal with
 `task quality:frontend-bundle:propose PROPOSAL=path.json REASON='explanation'`.
+Keep the proposal JSON outside the checkout and `.tmp` (for example under
+`$RUNNER_TEMP`) so it is an explicit review artifact rather than an ignored
+working-tree file.
+The `update`, `propose`, and `apply` writers require real Git metadata, a
+matching 40-character `HEAD`, and a clean nonignored index/worktree; `BUILD_REVISION`
+cannot override that provenance. Normal checks and development evidence remain
+usable without this writer-only guard.
 Retain before/after evidence, identify the added behavior and alternatives, and
 obtain independent review before applying it. A proposal's requested limits must
 match its measured candidate; it cannot introduce arbitrary extra headroom.

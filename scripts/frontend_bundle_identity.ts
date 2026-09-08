@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join, relative } from 'node:path'
 
@@ -8,6 +8,10 @@ export type FrontendCommitIdentity = {
   commit: string | null
   commitSource: 'git' | 'build-arg' | 'unavailable'
 }
+
+export type FrontendBundleWriterMode = 'update' | 'propose' | 'apply'
+
+export type FrontendBundleWriterIdentity = Pick<FrontendCommitIdentity, 'commit' | 'commitSource'>
 
 const COMMIT_SHA = /^[0-9a-f]{40}$/
 // Keep this list limited to authored inputs that can change the production
@@ -92,5 +96,57 @@ export function currentGitRevision(): string | null {
     return COMMIT_SHA.test(revision) ? revision : null
   } catch {
     return null
+  }
+}
+
+function gitOutput(arguments_: string[], cwd: string): string {
+  return execFileSync('git', arguments_, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim()
+}
+
+export function assertFrontendBundleWriterProvenance(
+  mode: FrontendBundleWriterMode,
+  identity: FrontendBundleWriterIdentity,
+  environment: Record<string, string | undefined> = process.env,
+  cwd = process.cwd(),
+): void {
+  if (environment.BUILD_REVISION !== undefined) {
+    throw new Error(`frontend bundle budget: ${mode} requires the real Git HEAD; BUILD_REVISION cannot override writer provenance`)
+  }
+  if (identity.commitSource !== 'git' || identity.commit === null) {
+    throw new Error(`frontend bundle budget: ${mode} requires evidence recorded from real Git metadata`)
+  }
+  if (!COMMIT_SHA.test(identity.commit)) {
+    throw new Error(`frontend bundle budget: ${mode} requires a 40-character recorded Git commit SHA`)
+  }
+
+  let head: string
+  let insideWorkTree: string
+  let workTreeRoot: string
+  let canonicalCwd: string
+  let status: string
+  try {
+    canonicalCwd = realpathSync(cwd)
+    workTreeRoot = gitOutput(['rev-parse', '--show-toplevel'], cwd)
+    insideWorkTree = gitOutput(['rev-parse', '--is-inside-work-tree'], cwd)
+    head = gitOutput(['rev-parse', '--verify', 'HEAD'], cwd)
+    status = gitOutput(['status', '--porcelain=v1', '--untracked-files=all'], cwd)
+  } catch (error) {
+    throw new Error(`frontend bundle budget: ${mode} requires a clean Git checkout with real metadata (${error instanceof Error ? error.message : String(error)})`)
+  }
+  if (insideWorkTree !== 'true' || !COMMIT_SHA.test(head)) {
+    throw new Error(`frontend bundle budget: ${mode} requires a real 40-character Git HEAD in a work tree`)
+  }
+  if (workTreeRoot !== canonicalCwd) {
+    throw new Error(`frontend bundle budget: ${mode} must run from the Git worktree root (${workTreeRoot})`)
+  }
+  if (head !== identity.commit) {
+    throw new Error(`frontend bundle budget: ${mode} evidence commit ${identity.commit} does not match real Git HEAD ${head}`)
+  }
+  if (status.length > 0) {
+    throw new Error(`frontend bundle budget: ${mode} requires a clean nonignored working tree and index (git status is not empty)`)
   }
 }
