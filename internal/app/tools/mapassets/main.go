@@ -290,9 +290,17 @@ func reuseVerifiedArchive(primary, legacy, digest, target string) error {
 }
 
 func runPMTiles(ctx context.Context, arguments ...string) error {
+	return pmtilesCommand(ctx, arguments...).Run()
+}
+
+func pmtilesCommand(ctx context.Context, arguments ...string) *exec.Cmd {
 	command := exec.CommandContext(ctx, "go", append([]string{"run", "github.com/protomaps/go-pmtiles@v1.31.1"}, arguments...)...)
+	// Archive digests cover compressed bytes, not just tile contents. Go 1.27
+	// changed DEFLATE output, so pin the encoder independently of the host Go
+	// version. Changing this toolchain requires regenerating the archive digests.
+	command.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.8")
 	command.Stdout, command.Stderr = os.Stdout, os.Stderr
-	return command.Run()
+	return command
 }
 
 func downloadIfMissing(ctx context.Context, client *http.Client, remote, target, expected string) error {
