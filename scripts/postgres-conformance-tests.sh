@@ -41,12 +41,12 @@ case "${1:-list}" in
       printf '%s\n' 'PostgreSQL conformance inventory is empty' >&2
       exit 1
     fi
-    # Keep package execution bounded like the ordinary package lane while
-    # retaining one fail-closed inventory. Include integration and DuckDB
-    # build tags so source-inventoried DuckLake PostgreSQL suites are actually
-    # compiled and executed in this lane. MinIO has its own external lane.
+    # Bound this conformance lane at four package workers while retaining one
+    # fail-closed inventory. Include integration and DuckDB build tags so
+    # source-inventoried DuckLake PostgreSQL suites are actually compiled and
+    # executed in this lane. MinIO has its own external lane.
     LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1 \
-      go test -tags 'integration duckdb_arrow' -p 2 -count=1 -v -skip '^TestMinIOParquetSourceRefreshContract$' "${packages[@]}"
+      go test -tags 'integration duckdb_arrow' -p 4 -count=1 -v -skip '^TestMinIOParquetSourceRefreshContract$' "${packages[@]}"
     ;;
   *)
     printf 'usage: %s [list|run]\n' "$0" >&2

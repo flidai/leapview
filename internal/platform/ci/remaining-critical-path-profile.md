@@ -1,5 +1,197 @@
 # Remaining merge CI critical path — #520
 
+## Current optimization record — post-#540, 2026-09-08
+
+**Target not achieved — further work deferred pending hosted experiment evidence.**
+The latest successful merge-group candidate observation is **16m14s**. There is only one
+successful post-#540 candidate; a representative post-#540 merge p95 is **not
+established**. No projected result is treated as a measured quantile.
+
+### Baseline and eligibility
+
+| Population | Hosted evidence | Interpretation |
+|---|---|---|
+| Pre-#520 | 44m40s p95, supplied historical baseline | Historical quantile; not recalculated here |
+| Post-barrier, pre-#540 | 21m09s, 22m02s, 22m41s | Three successful candidate observations, not p95 |
+| Post-#540 cache code, superseded candidate | [34231318413](https://github.com/flidai/leapview/actions/runs/34231318413), 23m51s, failure | Cold-cache candidate; frontend failed; excluded from successful population and retained as diagnostic evidence |
+| Post-#540 final candidate | [34238120694](https://github.com/flidai/leapview/actions/runs/34238120694), **16m14s**, success | Warm same-queue-ref observation; not a general fresh-queue baseline |
+
+Both new runs are `merge_group`, attempt 1. The successful tested SHA is
+`603773f3e3bbec6faf29d20272ccf36ace09d714`, the squash merge of
+[PR #540](https://github.com/flidai/leapview/pull/540). The earlier SHA is
+`7e42e298cf0042a00b9b02026787bdf788fe2307`; it contains the cache ownership change
+but predates the final frontend test refactor. Both retain independent full/base
+validation and unchanged required gates. A candidate is eligible before its final
+merge timestamp: #540 merged at 14:41:44, after its validation completed.
+
+The successful run was created/started at **14:25:05**, first required validation
+started **14:25:10**, last validation completed **14:41:11**, and CI gate was
+created **14:41:12**, started **14:41:15**, completed **14:41:19**. Thus workflow
+queue is 0s, initial dispatch 5s, gate dependency wait from run start 16m07s,
+gate scheduling 3s, and gate execution 4s. Native proof checking took 1s.
+The failed candidate started 13:20:06 and ended 13:43:57. These durations use
+last job completion, not mutable workflow `updated_at`.
+
+The exact-SHA merge-group [Security run 34238120701](https://github.com/flidai/leapview/actions/runs/34238120701)
+completed 14:25:05–14:30:18; its gate ran 14:29:47–14:30:18.
+[Native proof run 34238120401](https://github.com/flidai/leapview/actions/runs/34238120401)
+completed 14:25:05–14:29:04; Electron gate ran 14:29:01–14:29:04. Both passed,
+well before CI gate. Push-event proofs are not substituted for these merge proofs.
+
+All job timestamps below are UTC on 2026-09-08. Scheduling means job creation
+to start, not pure runner-capacity wait. Setup/preparation are explicit steps;
+execution is the main `Run ...` step and includes nested preparation. Other steps
+and cleanup make up the remaining job duration; parallel rows must not be summed
+to infer workflow latency.
+
+| Lane | Created | Started | Completed | Scheduling | Job duration | Setup | Preparation | Main validation |
+|---|---|---|---|---:|---:|---:|---:|---:|
+| [Go application tests (merge queue)](https://github.com/flidai/leapview/actions/runs/34238120694/job/102101021267) | 14:25:06 | 14:25:10 | 14:41:11 | 0m04s | 16m01s | 0m58s | 0m48s | 14m02s |
+| [APIGen tests (merge queue)](https://github.com/flidai/leapview/actions/runs/34238120694/job/102101021472) | 14:25:06 | 14:25:11 | 14:27:49 | 0m05s | 2m38s | 0m35s | 0m00s | 1m53s |
+| [Go package tests (merge queue)](https://github.com/flidai/leapview/actions/runs/34238120694/job/102101021513) | 14:25:06 | 14:25:46 | 14:33:51 | 0m40s | 8m05s | 1m05s | 0m49s | 5m12s |
+| [Frontend tests (merge queue, core)](https://github.com/flidai/leapview/actions/runs/34238120694/job/102101021548) | 14:25:06 | 14:25:10 | 14:28:10 | 0m04s | 3m00s | 1m17s | 0m49s | 0m33s |
+| [Frontend tests (merge queue, reports)](https://github.com/flidai/leapview/actions/runs/34238120694/job/102101021585) | 14:25:06 | 14:25:10 | 14:28:13 | 0m04s | 3m03s | 1m19s | 0m45s | 0m41s |
+| [Full merge validation](https://github.com/flidai/leapview/actions/runs/34238120694/job/102101021631) | 14:25:06 | 14:25:10 | 14:38:32 | 0m04s | 13m22s | 1m12s | 0m48s | 11m09s |
+| [Frontend tests (merge queue, data)](https://github.com/flidai/leapview/actions/runs/34238120694/job/102101021644) | 14:25:06 | 14:25:10 | 14:27:47 | 0m04s | 2m37s | 1m01s | 0m48s | 0m29s |
+| [Frontend tests (merge queue, chat)](https://github.com/flidai/leapview/actions/runs/34238120694/job/102101021675) | 14:25:06 | 14:25:10 | 14:27:21 | 0m04s | 2m11s | 1m11s | 0m37s | 0m08s |
+| [Frontend tests (merge queue, site)](https://github.com/flidai/leapview/actions/runs/34238120694/job/102101021790) | 14:25:06 | 14:25:10 | 14:28:07 | 0m04s | 2m57s | 1m23s | 0m42s | 0m35s |
+| [CI gate](https://github.com/flidai/leapview/actions/runs/34238120694/job/102106924599) | 14:41:12 | 14:41:15 | 14:41:19 | 0m03s | 0m04s | 0m00s | 0m00s | 0m00s |
+
+### Cache impact and provenance
+
+Application, package, and full lanes restored their exact `go-validation-v1`
+workload keys, with Go 1.26.8, Linux/X64/ubuntu24 and dependency/tool hash
+`f73d267d86aa8a45df227ac8bcc6d469b51a07146ff733d45f6ff309196793aa`.
+Their keys begin respectively with `go-validation-v1-go-application-validation-`,
+`go-validation-v1-go-packages-validation-`, and `go-validation-v1-full-validation-`.
+The identity and trust contract is documented in [go-cache-ownership.md](go-cache-ownership.md).
+
+| Cache | Archive bytes | Producer run / save time | Hit-to-restored interval in successful candidate | Save outcome |
+|---|---:|---|---:|---|
+| Application | 1,797,336,371 | 34231318413 / 13:41:59 | 32.97s | Exact hit; no replacement save |
+| Packages | 1,909,576,798 | 34231318413 / 13:36:46 | 37.26s | Exact hit; no replacement save |
+| Full | 2,644,093,773 | 34231318413 / 13:43:47 | 34.68s | Exact hit; no replacement save |
+
+All three producers belong to
+`refs/heads/gh-readonly-queue/main/pr-540-a97e07e35abb11a9f97052c28a3d8a1855c850bb`.
+The second candidate reused that ref. At collection time there were **no main-ref
+application/package/full entries** for these keys. This proves ownership and warm
+reuse, but not availability to a new queue ref. The successful jobs of the failed
+candidate legitimately populated caches; those caches are not validation proof.
+
+The existing [nightly workflow dispatch 34241712716](https://github.com/flidai/leapview/actions/runs/34241712716)
+on merged main SHA `603773f3...` was requested to establish trusted main-ref
+producers before the experiment. This is an operational baseline prerequisite,
+not another workflow optimization and not a merge-latency sample. Its outcome and
+cache provenance must be checked before labelling a new candidate warm. Its
+nightly dependency-security job failed the Node audit (including fast-uri
+advisories); successful cache-producing jobs do not make that workflow green.
+This experiment does not change dependency security.
+
+| Question | Evidence-based answer |
+|---|---|
+| Did raw cache restore become faster? | Not established; richer Go archives now cost about 33–37s to restore. |
+| Did overall setup/preparation shrink? | Yes in the warm observation: application 1m46s versus 5m11s–6m13s; full 2m00s versus 6m02s–6m24s; packages 1m54s versus 5m19s–6m02s. This is not a controlled cache-only attribution; Buf removal is included. |
+| Did validation become faster? | Application 14m02s versus 14m26s–15m44s; full 11m09s versus 14m46s–15m12s; package main step 5m12s versus 9m32s/15m49s in the primary earlier samples. Source/runner/cache variation remains. |
+| Did merge critical path shrink? | The warm observation is 16m14s versus earlier 21–23m observations; no representative p95 or guaranteed 1–3m cache-only saving is established. |
+
+### Current critical path and command profile
+
+```mermaid
+flowchart LR
+  accTitle: Post-540 warm merge validation critical path
+  accDescr: Application validation ends at 14:41:11 and blocks the gate. Full validation ends 2 minutes 39 seconds earlier. Security and native proof complete earlier still.
+  C[Candidate starts 14:25:05] --> A[Application setup and preparation: 1m46s]
+  A --> U[Application shards: 1m16s; MinIO: 10s]
+  U --> P[PostgreSQL conformance: 12m36s]
+  P --> G[CI gate finishes 14:41:19]
+  C --> F[Full validation: 13m22s; ends 14:38:32]
+  F --> G
+  C --> O[Packages: 8m05s; frontend and APIGen finish earlier]
+  O --> G
+  S[Security and native proof finish before 14:30:18] --> G
+```
+
+Within the application preparation, SQL generation took about 17.0s and schema
+generation about 0.6s. The conformance log contains 475 PostgreSQL container
+creation events; disposable instances remain an intentional isolation cost.
+
+Application command markers place its four ordinary shards at
+14:27:03.812–14:28:19.762 (**75.95s**), isolated MinIO at
+14:28:19.762–14:28:29.897 (**10.13s**), and source-inventoried PostgreSQL
+conformance at 14:28:29.897–14:41:05.719 (**755.82s**).
+PostgreSQL is the tail of the actual blocking lane, not just work inside a long
+nonblocking job. The observed baseline ran 54 packages with two concurrent Go
+package slots. The
+reported package test durations sum to 1,403.917 seconds, with the largest package
+171.735s, supporting an experiment with more bounded package concurrency.
+Package log output can be buffered; report-line timestamps are not exact package
+start/completion timestamps and are not used as such.
+
+Full extras remain sequential: critical race qualification about 2m57s,
+UI/framework QA about 4m19s, deployment checks about 35s, MinIO about 7s, and
+lifecycle/GC about 2m20s. Workload qualification is about 17s and multi-node
+PostgreSQL about 19s. Vet/package race are now small warm steps. UI QA owns a
+managed server and generated paths; splitting it safely would require isolated
+execution. This experiment does not parallelize full extras or share workspaces.
+
+Preparation artifacts remain an unproven alternative: generated inputs could be
+immutable at an exact SHA, but SQL determinism/generated-output checks must still
+run locally, extension provisioning has platform/private-path requirements, and
+all databases, test credentials, evidence and mutable workspace state must stay
+isolated. Current warm preparation is under one minute per long lane, so saving
+aggregate runner-minutes is not a justification for a new preparation barrier.
+
+### Ranked experiments
+
+| Candidate | Current cost | Critical-path impact | Expected saving | Risk | Recommendation |
+|---|---:|---:|---:|---|---|
+| Raise PostgreSQL package cap 2 to 4 | 12m36s | Direct tail of blocking application lane | Hypothesis: reduce PostgreSQL substantially; merge benefit capped near 2m39s by full extras | Medium: CPU, memory and Docker contention may erase gains | Run this one bounded experiment |
+| Overlap ordinary app shards and external validation | 1m26s before PostgreSQL | At most 1m26s before contention/overlap overhead | Smaller than the first candidate | Medium: shared runner concurrency and container load | Defer |
+| Split full extras | 13m22s entire job | Zero benefit by itself in this observation | Runner work may overlap, but application remains blocker | Medium/high: isolated runners or shared-state audit needed | Defer until application improvement is measured |
+| Centralize generated preparation | 37–49s explicit warm prep | Less than one minute before added barrier/transfer costs | Mostly aggregate runner-minute savings; elapsed gain unproven | High relative to measured opportunity | Do not implement |
+| Additional cache redesign | 33–37s Go restores | Warm setup now small; publication prerequisite already uses existing nightly | No defensible extra saving yet | Storage/ref-scope and toolchain trust | Observe existing ownership fix only |
+
+### Experiment 1 — bounded PostgreSQL package concurrency
+
+**Hypothesis:** allowing four source-inventoried packages to run concurrently on
+the existing runner reduces the 12m36s PostgreSQL tail while preserving the whole
+inventory. The overall improvement is bounded by unchanged full extras: even an
+instant application lane would leave approximately 13m30s including gate delay.
+This experiment alone cannot be claimed to meet the 12-minute target.
+
+**Implementation:** change only `scripts/postgres-conformance-tests.sh` package
+parallelism from `-p 2` to `-p 4`, with executable regression coverage. No runner,
+workflow, Task target, required name, planner selection, gate dependency or cache
+key changes. `-count=1`, integration/DuckDB tags, mandatory PostgreSQL flag,
+MinIO ownership and package-wide source inventory remain intact. Each package
+still uses the disposable PostgreSQL harness; no database/workspace is shared.
+
+**Failure and safety:** reduced free memory or Docker contention can worsen
+latency or fail tests; no retry or timeout increase will mask it. Empty inventories
+and failed Go commands must remain failures. This experiment does not publish
+artifacts or introduce a new cache. Existing caches remain optional input reuse,
+not evidence that tests executed.
+
+**Decision criteria:** compare exact-SHA successful hosted merge candidates with
+matching warm-cache provenance, record cold/miss runs separately, confirm every
+required lane/security/native proof, and measure PostgreSQL and total elapsed.
+If no material elapsed reduction is supported, revert the concurrency change
+rather than adding another optimization. One after run is an observation, not a
+new representative p95. Hosted result and final retain/revert decision are pending.
+
+**Local validation:** planner/gate/reporting and complete architecture tests passed;
+frontend workflow contracts, quality budget/exception checks, and workflow lint
+passed. The new runner contract failed against the old two-worker setting and
+passed with four, including empty-inventory and Go-error failure cases. The live
+source inventory is byte-identical at 54 packages after adding the contract test.
+`task ci` ran generation and SQL verification, then stopped at PostgreSQL baseline
+validation because this workspace cannot access Docker. This is an environment
+blocker; real PostgreSQL execution and resource contention require hosted CI.
+
+## Historical pre-#540 profile
+
+
 Profiled 2026-09-08, before the tool-installation follow-up. The deployed Phase 2.3
 cohort and exact-SHA eligibility checks are in
 [hosted-remediation-measurement.md](hosted-remediation-measurement.md). The older
