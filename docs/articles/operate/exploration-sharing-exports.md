@@ -23,7 +23,7 @@ If-Match: "<complete revision token>"
 
 The URL-backed API accepts the canonical `ExplorationSpec` in `POST /api/v1/projects/{project}/saved-explorations/url-export`. Both paths execute through the current viewer's policy and serving lease. They do not accept a saved ID as a shortcut to another user's working copy.
 
-Exports default to at most 10,000 rows and 32 MiB, with the same independent row and byte bounds applied during query retention and encoding. CSV preserves typed scalar text and prefixes spreadsheet-formula values (including values beginning with tab, carriage return, or newline). Files are sent only after a complete, successful, bounded result is encoded.
+Exports default to at most 10,000 rows and 32 MiB, with the same independent row and byte bounds applied during query retention and encoding. The canonical authored query still caps `limit` at 1,000; the export ceiling never raises that query limit. CSV preserves typed scalar text and prefixes spreadsheet-formula values (including values beginning with tab, carriage return, or newline). Files are sent only after a complete, successful, bounded result is encoded.
 
 ## Troubleshooting rejected exports
 
@@ -33,4 +33,4 @@ Exports default to at most 10,000 rows and 32 MiB, with the same independent row
 
 Executed exports produce a governed query event plus an export-preparation outcome (format, status, bounded row/byte counts, and stable error class). Preparation success does not prove the client received the file. Terminal failures are audited when the recorder is available; parse/authentication failures before execution and an unavailable audit recorder cannot produce an event. The metadata does not record SQL, filters, plans, or result values.
 
-Parquet preserves signed/unsigned integers, fixed-scale decimal128 values up to 38 digits, booleans, nulls, and strings. Because the result contract carries names but no declared column types, all-null or empty columns conservatively use nullable UTF-8; mixed or unsupported values are rejected rather than coerced lossily.
+Parquet preserves declared signed/unsigned integer widths, floats, booleans, strings, dates, timestamps, and fixed-scale decimal128 values up to 38 digits. Arrow-backed results retain that declaration even when a column is all-null or empty. Legacy producers without type metadata use conservative nullable UTF-8 for those columns; mixed, malformed, or unsupported typed values are rejected rather than coerced lossily.

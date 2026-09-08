@@ -14,7 +14,7 @@ a claim that every dashboard browser scenario has passed.
 | Stale or incompatible URL state fails closed before execution | `internal/project/http/data_explorer_url_test.go`, `internal/project/http/data_explorer_projection_test.go` | Covered |
 | Owner/viewer RLS and policy identity remain isolated through export | `internal/app/saved_exploration_export_integration_test.go` (wiring and DuckDB-backed parity tests) | Covered |
 | Viewer column masks reach aggregate results before CSV/Parquet encoding | Real DuckDB regression in `internal/app/saved_exploration_export_integration_test.go`; planner matching and output-type regressions in `internal/analytics/query/aggregate_plan_ir_mask_test.go` | Security correction under review; integrated validation pending |
-| CSV/Parquet output is complete, bounded, typed, and cancellation-safe | `internal/analytics/exploration/export/export_test.go`, `internal/analytics/exploration/export/benchmark_test.go` | Covered |
+| CSV/Parquet output is complete, bounded, typed, and cancellation-safe | `internal/analytics/arrowquery/export/export_test.go` (declared decimal/date/timestamp and all-null schema retention), `internal/analytics/arrowquery/export/benchmark_test.go` | Covered |
 | Recovery guidance for stale revisions, denied access, cancellation, limits, and unavailable audit | [Exploration links and exports](/docs/guides/operate/exploration-sharing-exports) | Covered |
 
 ## Focused validation
@@ -22,10 +22,10 @@ a claim that every dashboard browser scenario has passed.
 Run the Go evidence with the release build tags:
 
 ```text
-GOFLAGS='-tags=duckdb_arrow -buildvcs=false' go test ./internal/app ./internal/project/http ./internal/analytics/exploration/export -count=1
+GOFLAGS='-tags=duckdb_arrow -buildvcs=false' go test ./internal/app ./internal/project/http ./internal/analytics/arrowquery/export -count=1
 GOFLAGS='-tags=duckdb_arrow -buildvcs=false' go test ./internal/app -run 'TestSavedExploration(URLExport|Executor)' -count=1
 GOFLAGS='-tags=duckdb_arrow -buildvcs=false' go test ./internal/project/http -run '^$' -bench CanonicalExplorationURLDecodeAndHydration -benchmem
-GOFLAGS='-tags=duckdb_arrow -buildvcs=false' go test ./internal/analytics/exploration/export -run '^$' -bench EncodeGovernedResultCSVAndParquet -benchmem
+GOFLAGS='-tags=duckdb_arrow -buildvcs=false' go test ./internal/analytics/arrowquery/export -run '^$' -bench EncodeGovernedResultCSVAndParquet -benchmem
 ```
 
 The benchmarks report allocations and use fixed canonical state plus 128- and

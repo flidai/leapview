@@ -9,9 +9,9 @@ import (
 	"net/url"
 	"testing"
 
+	explorationexport "github.com/flidai/leapview/internal/analytics/arrowquery/export"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/analytics/exploration"
-	explorationexport "github.com/flidai/leapview/internal/analytics/exploration/export"
 	"github.com/flidai/leapview/internal/analytics/exploration/saved"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"

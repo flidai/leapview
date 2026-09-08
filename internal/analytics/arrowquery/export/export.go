@@ -284,7 +284,11 @@ func encodeParquet(ctx context.Context, result dataquery.Result, maxBytes int64)
 		for columnIndex, column := range result.Columns {
 			value := row[column.Name]
 			if value != nil {
-				encoded[column.Name] = parquetJSONValue(value, types[columnIndex])
+				converted, conversionErr := parquetJSONValue(value, types[columnIndex], column.Type)
+				if conversionErr != nil {
+					return nil, fmt.Errorf("export column %q: %w", column.Name, conversionErr)
+				}
+				encoded[column.Name] = converted
 			}
 		}
 		if err := encoder.Encode(encoded); err != nil {
@@ -300,7 +304,7 @@ func encodeParquet(ctx context.Context, result dataquery.Result, maxBytes int64)
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrCanceled, err)
 	}
-	// Preserve uint64 and decimal lexemes through JSON; the default decoder's
+	// Preserve integer and decimal lexemes through JSON; the default decoder's
 	// float64 path rounds large integers before Arrow sees them.
 	record, _, err := array.RecordFromJSON(memory.DefaultAllocator, schema, bytes.NewReader(jsonRows.Bytes()), array.WithUseNumber())
 	if err != nil {
@@ -308,8 +312,9 @@ func encodeParquet(ctx context.Context, result dataquery.Result, maxBytes int64)
 	}
 	defer record.Release()
 	output := &boundedBuffer{max: maxBytes}
-	// Persist the Arrow schema so unsigned and decimal logical types survive a
-	// Parquet round trip; physical INT64 alone cannot distinguish signedness.
+	// Persist the Arrow schema so declared widths and decimal/temporal logical
+	// types survive a Parquet round trip; physical storage alone cannot preserve
+	// all of those distinctions.
 	writer, err := pqarrow.NewFileWriter(schema, output, parquet.NewWriterProperties(), pqarrow.NewArrowWriterProperties(pqarrow.WithStoreSchema()))
 	if err != nil {
 		return nil, err
@@ -330,6 +335,21 @@ func encodeParquet(ctx context.Context, result dataquery.Result, maxBytes int64)
 func parquetTypes(result dataquery.Result) ([]arrow.DataType, error) {
 	types := make([]arrow.DataType, len(result.Columns))
 	for index, column := range result.Columns {
+		if column.Type.Kind != "" {
+			typed, err := parquetTypeForColumn(column.Type)
+			if err != nil {
+				return nil, fmt.Errorf("export column %q: %w", column.Name, err)
+			}
+			for _, row := range result.Rows {
+				if value := row[column.Name]; value != nil {
+					if err := validateTypedValue(value, column.Type); err != nil {
+						return nil, fmt.Errorf("export column %q: %w", column.Name, err)
+					}
+				}
+			}
+			types[index] = typed
+			continue
+		}
 		var selected arrow.DataType
 		var decimalPrecision, decimalScale int32
 		for _, row := range result.Rows {
@@ -356,9 +376,9 @@ func parquetTypes(result dataquery.Result) ([]arrow.DataType, error) {
 			}
 		}
 		if selected == nil {
-			// dataquery.Column carries only the projected name. With no non-null
-			// value, the conservative supported contract is nullable UTF-8 text;
-			// no logical type can be recovered from an all-null result.
+			// Producers without retained schema metadata carry only the projected
+			// name. With no non-null value, the conservative legacy contract is
+			// nullable UTF-8 text; Arrow-backed producers use the typed path above.
 			selected = arrow.BinaryTypes.String
 		} else if selected.ID() == arrow.DECIMAL128 {
 			// Align all fixed-scale decimals to one scale without converting them
@@ -441,63 +461,179 @@ func parquetType(value any) (arrow.DataType, error) {
 	}
 }
 
-func parquetJSONValue(value any, dtype arrow.DataType) any {
+func parquetJSONValue(value any, dtype arrow.DataType, columnType dataquery.ColumnType) (any, error) {
 	if dtype.ID() == arrow.INT64 {
 		switch value := value.(type) {
 		case json.Number:
 			parsed, _ := strconv.ParseInt(value.String(), 10, 64)
-			return parsed
+			return parsed, nil
 		case int:
-			return int64(value)
+			return int64(value), nil
 		case int8:
-			return int64(value)
+			return int64(value), nil
 		case int16:
-			return int64(value)
+			return int64(value), nil
 		case int32:
-			return int64(value)
+			return int64(value), nil
 		}
 	}
 	if dtype.ID() == arrow.UINT64 {
 		switch value := value.(type) {
 		case json.Number:
-			return value.String()
+			return value.String(), nil
 		case uint64:
-			return strconv.FormatUint(value, 10)
+			return strconv.FormatUint(value, 10), nil
 		case uint:
-			return strconv.FormatUint(uint64(value), 10)
+			return strconv.FormatUint(uint64(value), 10), nil
 		case uint8:
-			return strconv.FormatUint(uint64(value), 10)
+			return strconv.FormatUint(uint64(value), 10), nil
 		case uint16:
-			return strconv.FormatUint(uint64(value), 10)
+			return strconv.FormatUint(uint64(value), 10), nil
 		case uint32:
-			return strconv.FormatUint(uint64(value), 10)
+			return strconv.FormatUint(uint64(value), 10), nil
 		}
 	}
 	if dtype.ID() == arrow.DECIMAL128 {
+		if columnType.Kind == dataquery.ColumnTypeDecimal {
+			text, err := decimalValueText(value, columnType.Scale, columnType.Precision)
+			if err != nil {
+				return nil, err
+			}
+			return text, nil
+		}
 		if number, ok := value.(json.Number); ok {
 			// The decimal builder accepts strings and parses them exactly. Keeping
 			// this as a JSON number makes some Arrow decoder paths round it through
 			// binary floating point before the decimal builder sees it.
-			return number.String()
+			return number.String(), nil
 		}
+	}
+	if columnType.Kind == dataquery.ColumnTypeDate || columnType.Kind == dataquery.ColumnTypeTimestamp {
+		encoded, err := temporalJSONValue(value, columnType)
+		if err != nil {
+			return nil, err
+		}
+		return encoded, nil
 	}
 	if dtype.ID() == arrow.FLOAT64 {
 		if value, ok := value.(float32); ok {
-			return float64(value)
+			return float64(value), nil
 		}
 	}
 	if dtype.ID() == arrow.STRING {
 		if value, ok := value.([]byte); ok {
-			return string(value)
+			return string(value), nil
 		}
 		if value, ok := value.(time.Time); ok {
-			return value.UTC().Format(time.RFC3339Nano)
+			return value.UTC().Format(time.RFC3339Nano), nil
 		}
 		if _, ok := value.(string); !ok {
-			return scalarString(value)
+			return scalarString(value), nil
 		}
 	}
-	return value
+	return value, nil
+}
+
+func decimalValueText(value any, scale, precision int32) (string, error) {
+	if precision < 1 || precision > 38 || scale < 0 || scale > precision {
+		return "", fmt.Errorf("invalid decimal precision/scale %d/%d", precision, scale)
+	}
+	var text string
+	switch value := value.(type) {
+	case string:
+		text = value
+	case []byte:
+		text = string(value)
+	case json.Number:
+		text = value.String()
+	default:
+		return "", fmt.Errorf("incompatible decimal value type %T", value)
+	}
+	if text == "" || strings.ContainsAny(text, "eE") {
+		return "", fmt.Errorf("invalid decimal value %q", text)
+	}
+	negative := strings.HasPrefix(text, "-")
+	if negative || strings.HasPrefix(text, "+") {
+		text = text[1:]
+	}
+	parts := strings.Split(text, ".")
+	if len(parts) > 2 || text == "" {
+		return "", fmt.Errorf("invalid decimal value %q", text)
+	}
+	whole, fraction := parts[0], ""
+	if len(parts) == 2 {
+		fraction = parts[1]
+	}
+	if whole == "" && fraction == "" {
+		return "", fmt.Errorf("invalid decimal value %q", text)
+	}
+	if whole == "" {
+		whole = "0"
+	}
+	if !allDigits(whole) || !allDigits(fraction) || int32(len(fraction)) > scale {
+		return "", fmt.Errorf("decimal value %q is incompatible with scale %d", text, scale)
+	}
+	trimmedWhole := strings.TrimLeft(whole, "0")
+	if trimmedWhole == "" {
+		trimmedWhole = "0"
+	}
+	fraction = fraction + strings.Repeat("0", int(scale)-len(fraction))
+	unscaled := strings.TrimLeft(trimmedWhole+fraction, "0")
+	if unscaled == "" {
+		unscaled = "0"
+	}
+	if int32(len(unscaled)) > precision {
+		return "", fmt.Errorf("decimal value exceeds precision %d", precision)
+	}
+	sign := ""
+	if negative && unscaled != "0" {
+		sign = "-"
+	}
+	if scale == 0 {
+		return sign + trimmedWhole, nil
+	}
+	return sign + trimmedWhole + "." + fraction, nil
+}
+
+func temporalJSONValue(value any, columnType dataquery.ColumnType) (any, error) {
+	var instant time.Time
+	switch value := value.(type) {
+	case time.Time:
+		instant = value
+	case string:
+		parsed, err := time.Parse(time.RFC3339Nano, value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid temporal value %q", value)
+		}
+		instant = parsed
+	default:
+		return nil, fmt.Errorf("incompatible temporal value type %T", value)
+	}
+	instant = instant.UTC()
+	if columnType.Kind == dataquery.ColumnTypeDate {
+		if instant.Hour() != 0 || instant.Minute() != 0 || instant.Second() != 0 || instant.Nanosecond() != 0 {
+			return nil, fmt.Errorf("date value %q contains time-of-day", instant.Format(time.RFC3339Nano))
+		}
+		switch columnType.Unit {
+		case "day":
+			return json.Number(strconv.FormatInt(int64(arrow.Date32FromTime(instant)), 10)), nil
+		case "millisecond":
+			return json.Number(strconv.FormatInt(int64(arrow.Date64FromTime(instant)), 10)), nil
+		default:
+			return nil, fmt.Errorf("invalid date unit %q", columnType.Unit)
+		}
+	}
+	unit, err := parquetTimeUnit(columnType.Unit)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := arrow.TimestampFromTime(instant, unit); err != nil {
+		return nil, err
+	}
+	// RecordFromJSON accepts RFC3339 text for timestamps and applies the
+	// declared unit without losing the retained timezone semantics. Numeric
+	// timestamp text is not accepted by every Arrow builder version.
+	return instant.Format(time.RFC3339Nano), nil
 }
 
 func decimalShape(value string) (precision, scale int32, err error) {
