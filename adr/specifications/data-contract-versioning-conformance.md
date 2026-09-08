@@ -284,6 +284,12 @@ production activation evidence remains open. The
 unchanged 55 PASS / 45 PARTIAL / 2 FAIL matrix, CI recovery attempts and remaining
 upstream/activation ownership; it does not start FAI-649 or qualify FAI-632.
 
+The later [FAI-649 deadline readiness layer](semantic-access-activation-readiness-layer.md)
+hardens admission without claiming a complete production migration. Exact
+semantic publication/version-to-approval binding and production activation
+remain deferred; standalone DataPolicy deprecation is not STR-08/ENF-06 removal.
+No FAI-622/662 publication authority or historical evidence is changed.
+
 The FAI-622 boundary classifies and preserves contract evidence. FAI-662 closes
 the projector, manifest, and database integrity gaps without changing the
 generated wire DTOs, RFC 8785 implementation, compatibility classifier, or

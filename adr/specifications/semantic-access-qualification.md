@@ -1,5 +1,10 @@
 # ADR-0017 semantic-access qualification matrix
 
+The [FAI-649 deadline readiness layer](semantic-access-activation-readiness-layer.md)
+adds safety restrictions, not production activation or DataPolicy removal.
+It preserves this matrix's counts and records unimplemented semantic
+publication-to-approval binding explicitly rather than promoting a partial row.
+
 Current acceptance interpretation: [FAI-648 acceptance boundary](semantic-access-acceptance-boundary.md)
 defines positively exercised building blocks, excluded production capabilities,
 control ownership, and the evidence FAI-649 must consume. It does not enable
