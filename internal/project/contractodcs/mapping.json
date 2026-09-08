@@ -118,7 +118,7 @@
       "sourceField": "contract.checks[]",
       "odcsTargetField": "schema[].{quality|properties[].quality|relationships}",
       "transformation": "Map closed non-null, unique, accepted-values, relationship, and row-count checks to ODCS library metrics or relationships.",
-      "limitations": "ODCS generic arguments do not fully standardize accepted-value or composite-unique execution; those mappings are reported degraded.",
+      "limitations": "Relationship shorthand must resolve within the exported object; external targets require unavailable contract authority and reject export. ODCS generic arguments do not fully standardize accepted-value or composite-unique execution; those mappings are reported degraded.",
       "compatibilityImpact": "Unsupported or internally inconsistent checks reject export."
     },
     {

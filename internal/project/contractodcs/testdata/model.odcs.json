@@ -64,7 +64,7 @@
           "relationships": [
             {
               "type": "foreignKey",
-              "to": "customers.id"
+              "to": "orders.id"
             }
           ]
         }
@@ -92,7 +92,7 @@
         "namespace": "leapview.dev/odcs-extension/v1",
         "resourceKind": "Model",
         "projectionProfile": "leapview.contract/v1",
-        "projectionDigest": "sha256:b5890fa790e7656f40bdc25e74959faf75bce0e54d1428bfae60d74b79e425cc"
+        "projectionDigest": "sha256:4c115ae37ad85710573209736552e126605df12dac53d473f9558a0df2fc1ff8"
       },
       "description": "Immutable LeapView publication provenance; not executable contract semantics."
     }

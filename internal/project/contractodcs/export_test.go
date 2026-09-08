@@ -86,6 +86,20 @@ func TestSchemaAndExtensionValidationRejectUnsupportedFields(t *testing.T) {
 	}
 }
 
+func TestOracleNegativeFixturesViolateOfficialSchema(t *testing.T) {
+	for _, name := range []string{"invalid-unknown", "invalid-version", "invalid-format", "invalid-logical-type"} {
+		t.Run(name, func(t *testing.T) {
+			document, err := os.ReadFile("testdata/" + name + ".odcs.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Validate(document); err == nil || !strings.Contains(err.Error(), "official schema") {
+				t.Fatalf("fixture must fail the upstream schema, not just LeapView extension validation: %v", err)
+			}
+		})
+	}
+}
+
 func TestUnsupportedFeaturesRejectWithoutPartialDocument(t *testing.T) {
 	var authored projectcontracts.SemanticModel
 	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic-model:sales","name":"sales"},"spec":{"datasets":{},"metrics":{}}}`), &authored); err != nil {
@@ -149,6 +163,35 @@ func TestInvalidQualityMappingRejects(t *testing.T) {
 	}
 }
 
+func TestRelationshipMappingRequiresAnExportedTarget(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target string
+		valid  bool
+	}{
+		{name: "same object and property", target: "orders.id", valid: true},
+		{name: "missing property", target: "orders.missing"},
+		{name: "external object", target: "customers.id"},
+		{name: "external contract requires unavailable authority", target: "customers.yaml#/schema/customers/properties/id"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := Export(publication(t, modelProjectionWithRelationship(false, test.target)))
+			if test.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(result.Document), `"to": "orders.id"`) {
+					t.Fatal("resolved relationship was not exported")
+				}
+				return
+			}
+			if !errors.Is(err, ErrUnsupportedMapping) || len(result.Document) != 0 || !hasLoss(result.LossReport, LossUnsupported, "contract.checks.customer_link") {
+				t.Fatalf("unresolved relationship emitted %d bytes, loss=%#v err=%v", len(result.Document), result.LossReport, err)
+			}
+		})
+	}
+}
+
 func sourcePublication(t *testing.T) identityledger.ContractPublication {
 	t.Helper()
 	var source projectcontracts.Source
@@ -176,12 +219,20 @@ func modelPublication(t *testing.T) identityledger.ContractPublication {
 }
 
 func modelProjection(unsupported bool) contractprojection.Model {
+	return modelProjectionWithRelationship(unsupported, "orders.id")
+}
+
+func modelProjectionWithRelationship(unsupported bool, target string) contractprojection.Model {
+	encodedTarget, err := json.Marshal(target)
+	if err != nil {
+		panic(err)
+	}
 	checks := `
     ,"checks":[
       {"id":"id_present","type":"non_null","field":"id","severity":"error"},
       {"id":"email_values","type":"accepted_values","field":"email","values":["a@example.com","b@example.com"],"severity":"warning"},
       {"id":"email_unique","type":"unique","fields":["email"],"severity":"error"},
-      {"id":"customer_link","type":"relationship","field":"id","to":"customers.id","severity":"warning"},
+      {"id":"customer_link","type":"relationship","field":"id","to":` + string(encodedTarget) + `,"severity":"warning"},
       {"id":"row_bounds","type":"row_count","minimum":1,"maximum":100,"severity":"error"}`
 	if unsupported {
 		checks += `,{"id":"bad_values","type":"accepted_values","field":"unknown","values":["unused"]}`

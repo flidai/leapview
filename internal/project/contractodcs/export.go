@@ -374,6 +374,13 @@ func mapChecks(checks []contractprojection.ModelCheck, object *SchemaObject, pro
 			if property == nil || check.To == nil || !odcsShorthandReference.MatchString(*check.To) {
 				return unsupportedCheck(check, reports)
 			}
+			// Shorthand is local to this ODCS document. A single publication
+			// cannot establish another contract's identity or property authority.
+			targetObject, targetField, _ := strings.Cut(*check.To, ".")
+			if targetObject != object.Name || propertyIndex[targetField] == nil {
+				reports.loss(unsupported("contract.checks."+check.ID, "Relationship shorthand must resolve to a property in the exported object; external contract authority is unavailable."))
+				return ErrUnsupportedMapping
+			}
 			property.Relationships = append(property.Relationships, Relationship{Type: "foreignKey", To: *check.To})
 			if check.Severity != nil {
 				reports.loss(degradedCheck(check, "ODCS relationships do not retain LeapView quality severity."))

@@ -34,6 +34,21 @@ physical bindings, and other intentionally excluded information are never
 serialized; the loss report records the dropped semantic category without
 copying sensitive values.
 
-The independent `odcs` CLI oracle is pinned and run only by GitHub CI through
+The independent `datacontract-cli` oracle is pinned to 1.1.3 and run only by GitHub CI through
 `task odcs:oracle`. It is not a Go dependency and is not linked into LeapView
 production binaries.
+
+Relationship shorthand resolves only within the single exported object's
+properties. Missing or cross-contract targets reject export with an unsupported
+loss report and no partial document. The adapter cannot manufacture an external
+contract reference from a resource name without that contract's authority.
+
+The former Rust CLI 0.9.1's stable-ID character rule and object-only SLA lookup
+rejected the profile's IDs and column-level SLA references, although ODCS permits
+those values. The replacement runs document lint against the same checksum-checked
+vendored schema, with hash-locked dependencies and no connection extras. Its
+environment is cleared, dotenv/config loading is disabled, and external
+definition inlining is disabled. Go validation retains ownership of sealed
+LeapView extensions and safe relationship mapping. See the
+[conformance evidence](../../../adr/specifications/odcs-export-conformance.md#hosted-oracle-investigation)
+for the distinction between exporter defects and upstream-tool limitations.
