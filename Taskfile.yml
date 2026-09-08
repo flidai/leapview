@@ -737,14 +737,16 @@ tasks:
       - internal/manageddata/postgres/internal/db/*.go
       - internal/platform/events/postgres/internal/db/*.go
       - internal/platform/**/sqlite/*db/*.go
+    # Match setup-ci's HTTP/1.1 workaround for checksum-service HTTP/2 stream
+    # failures; transport only, with sqlc checksums and TLS integrity unchanged.
     cmds:
-      - GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
+      - GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
 
   db:verify:
     desc: Compile generated PostgreSQL sqlc packages and audit handwritten SQL boundaries
     cmds:
-      - GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 vet --no-remote
-      - GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff --no-remote
+      - GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 vet --no-remote
+      - GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff --no-remote
       - |
         packages="$(
           find internal -type f -name '*.go' -print |
@@ -812,7 +814,7 @@ tasks:
             done
         }
         git diff --binary -- '*.go' >"$before"
-        GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
+        GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
         generated_snapshot >"$generated_after"
         git diff --binary -- '*.go' >"$after"
         if ! cmp -s "$before" "$after"; then
@@ -823,7 +825,7 @@ tasks:
         # A second local generation catches nondeterministic or newly emitted
         # untracked sqlc files without rejecting the intentionally build-only
         # output created by a clean checkout.
-        GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
+        GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
         generated_snapshot >"$generated_repeat"
         cmp -s "$generated_after" "$generated_repeat" || {
           printf '%s\n' 'sqlc generation is nondeterministic across generated Go outputs' >&2

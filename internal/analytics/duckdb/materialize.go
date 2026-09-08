@@ -786,7 +786,8 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 			return "model." + physical, nil
 		}
 		view, err := analyticsmaterialize.NewRuntimeView(ctx, analyticsmaterialize.RuntimeConfig{
-			ModelID: modelID, Model: model, ResultPartition: config.ResultPartition,
+			ServingStateID: config.ServingStateID,
+			ModelID:        modelID, Model: model, ResultPartition: config.ResultPartition,
 			Database: r.db, Sources: r.sources, Resolver: r.sources,
 			SnapshotOnly: config.SnapshotID > 0, TableRelation: tableRelation,
 			QueryResultCache: config.QueryResultCache, ImmutableByteCache: config.ImmutableByteCache,

@@ -13,10 +13,12 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenruntime "github.com/flidai/leapview/internal/app/api/apigenruntime"
+	"github.com/flidai/leapview/internal/deployment"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -34,12 +36,19 @@ func (l nativeDeliveryTestPreparationLease) Release() {
 }
 
 func nativeDeliveryHandlerModule(port NativeDeliveryMutationPort) *Module {
+	claims := &candidateProjectClaimRepositoryStub{claim: deployment.ProjectClaim{ProjectID: "finance", Environment: "prod", ClaimedBy: "bootstrap-admin", ClaimedAt: time.Now().UTC()}}
+	claimService, err := deployment.NewProjectClaimService(claims)
+	if err != nil {
+		panic(err)
+	}
 	return &Module{
 		nativeDeliveryMutations: port,
+		projectClaims:           claimService,
 		candidateAdmission: CandidatePreparationAdmitterFunc(func(ctx context.Context) (CandidatePreparationLease, error) {
 			return nativeDeliveryTestPreparationLease{ctx: ctx}, nil
 		}),
-		instanceID: "target",
+		instanceID:          "target",
+		instanceEnvironment: servingstate.Environment("prod"),
 		handler: deploymenthttp.NewHandler(deploymenthttp.Options{
 			InstanceEnvironment: "prod",
 			CurrentPrincipal: func(*http.Request) (deploymenthttp.Principal, bool) {
@@ -149,6 +158,53 @@ func TestNativeDeliveryBuildAdmissionFailureDoesNotInvokeMutation(t *testing.T) 
 	m.BuildDeliveryPlan(recorder, httptest.NewRequest(http.MethodPost, "/", nil), "finance", "0198f2c0-7c7a-7f00-8a11-000000000102", "build-key")
 	if recorder.Code != http.StatusServiceUnavailable || called {
 		t.Fatalf("status = %d, called = %v, body = %s", recorder.Code, called, recorder.Body.String())
+	}
+}
+
+func TestNativeDeliveryBuildRequiresExactClaimBeforeAdmission(t *testing.T) {
+	called, acquired := false, false
+	port := NativeDeliveryMutationFuncs{Build: func(context.Context, NativeDeliveryBuildRequest) (NativeDeliveryBuild, error) {
+		called = true
+		return NativeDeliveryBuild{}, nil
+	}}
+	m := nativeDeliveryHandlerModule(port)
+	claims := &candidateProjectClaimRepositoryStub{}
+	claimService, err := deployment.NewProjectClaimService(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.projectClaims = claimService
+	m.candidateAdmission = CandidatePreparationAdmitterFunc(func(context.Context) (CandidatePreparationLease, error) {
+		acquired = true
+		return nativeDeliveryTestPreparationLease{}, nil
+	})
+	recorder := httptest.NewRecorder()
+	m.BuildDeliveryPlan(recorder, httptest.NewRequest(http.MethodPost, "/", nil), "finance", "0198f2c0-7c7a-7f00-8a11-000000000102", "build-key")
+	if recorder.Code != http.StatusServiceUnavailable || claims.calls != 1 || called || acquired {
+		t.Fatalf("status = %d, claim calls = %d, called = %v, acquired = %v, body = %s", recorder.Code, claims.calls, called, acquired, recorder.Body.String())
+	}
+}
+
+func TestNativeDeliveryBuildRejectsForeignClaimBeforeAdmission(t *testing.T) {
+	called, acquired := false, false
+	m := nativeDeliveryHandlerModule(NativeDeliveryMutationFuncs{Build: func(context.Context, NativeDeliveryBuildRequest) (NativeDeliveryBuild, error) {
+		called = true
+		return NativeDeliveryBuild{}, nil
+	}})
+	claims := &candidateProjectClaimRepositoryStub{claim: deployment.ProjectClaim{ProjectID: "other-project", Environment: "prod", ClaimedBy: "bootstrap-admin", ClaimedAt: time.Now().UTC()}}
+	claimService, err := deployment.NewProjectClaimService(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.projectClaims = claimService
+	m.candidateAdmission = CandidatePreparationAdmitterFunc(func(context.Context) (CandidatePreparationLease, error) {
+		acquired = true
+		return nativeDeliveryTestPreparationLease{}, nil
+	})
+	recorder := httptest.NewRecorder()
+	m.BuildDeliveryPlan(recorder, httptest.NewRequest(http.MethodPost, "/", nil), "finance", "0198f2c0-7c7a-7f00-8a11-000000000102", "build-key")
+	if recorder.Code != http.StatusConflict || claims.calls != 1 || called || acquired {
+		t.Fatalf("status = %d, claim calls = %d, called = %v, acquired = %v, body = %s", recorder.Code, claims.calls, called, acquired, recorder.Body.String())
 	}
 }
 

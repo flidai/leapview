@@ -68,6 +68,8 @@ type nativeOperationLookup interface {
 // exact same caller-owned PostgreSQL transaction.
 type NativeCreatePlanConfig struct {
 	Repository      *deploymentnative.Repository
+	TargetID        string
+	Environment     string
 	Sources         project.CandidateSourceAttestationReader
 	Artifacts       NativeReleaseArtifactInspector
 	BindingEvidence deployment.CandidateConnectionEvidenceResolver
@@ -104,6 +106,8 @@ type NativePlanWorkflowInput struct {
 // fails closed until native physical build orchestration is wired.
 type NativeCreatePlanCoordinator struct {
 	repository      *deploymentnative.Repository
+	targetID        string
+	environment     string
 	sources         project.CandidateSourceAttestationReader
 	artifacts       NativeReleaseArtifactInspector
 	bindingEvidence deployment.CandidateConnectionEvidenceResolver
@@ -128,6 +132,12 @@ var _ deploymentmodule.NativeDeliveryCommandCompleter = (*NativeCreatePlanCoordi
 func NewNativeCreatePlanCoordinator(config NativeCreatePlanConfig) (*NativeCreatePlanCoordinator, error) {
 	if config.Repository == nil || !config.Repository.Configured() || !config.Repository.TransactionCapable() {
 		return nil, errors.New("native create-plan requires a configured transaction-capable PostgreSQL repository")
+	}
+	if err := validateText(config.TargetID, "target id", 255); err != nil {
+		return nil, fmt.Errorf("native create-plan target identity: %w", err)
+	}
+	if err := projectgraph.ValidateServingEnvironment(config.Environment); err != nil {
+		return nil, fmt.Errorf("native create-plan environment identity: %w", err)
 	}
 	if config.Sources == nil {
 		return nil, errors.New("native create-plan source attestation reader is required")
@@ -165,7 +175,8 @@ func NewNativeCreatePlanCoordinator(config NativeCreatePlanConfig) (*NativeCreat
 		clock = func() time.Time { return time.Now().UTC() }
 	}
 	return &NativeCreatePlanCoordinator{
-		repository: config.Repository, sources: config.Sources, artifacts: inspector, bindingEvidence: config.BindingEvidence,
+		repository: config.Repository, targetID: config.TargetID, environment: config.Environment,
+		sources: config.Sources, artifacts: inspector, bindingEvidence: config.BindingEvidence,
 		runtimeVersion: strings.TrimSpace(config.RuntimeVersion), policy: config.Policy, policyResolver: config.PolicyResolver, clock: clock,
 		events: config.Events, eventReader: eventReader, audit: config.Audit, auditReader: auditReader, workflow: config.Workflow,
 		operations: config.Operations, operationLookup: operationLookup, workflowFactory: config.WorkflowFactory,
@@ -195,6 +206,9 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	}
 	if err := validateNativeCreatePlanRequest(request); err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	if request.TargetID != c.targetID || request.Environment != c.environment {
+		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("%w: target or environment differs from configured instance", deployment.ErrDeliveryConflict)
 	}
 	claim, err := c.repository.GetProjectClaim(ctx)
 	if errors.Is(err, deployment.ErrProjectClaimNotFound) {

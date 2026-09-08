@@ -155,6 +155,10 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 
 	if semanticModelID != "" {
 		if !explorerSemanticModelByID(projection.SemanticModels, semanticModelID) {
+			compiled, hasCompiled := compiledModels[semanticModelID]
+			if len(compiledModels) == 0 || (hasCompiled && (compiled == nil || len(compiled.DatasetNames()) == 0)) {
+				return fmt.Errorf("semantic model %q has no active compiled definition; reload the explorer after the serving state is ready", semanticModelID)
+			}
 			return fmt.Errorf("semantic model %q is no longer available; choose an active semantic model", semanticModelID)
 		}
 		if selectedSemanticModelID != semanticModelID {

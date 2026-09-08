@@ -8,6 +8,7 @@ import (
 )
 
 type Telemetry struct {
+	prewarmOutcomes      *prometheus.CounterVec
 	refreshDuration      *prometheus.HistogramVec
 	stageDuration        *prometheus.HistogramVec
 	refreshInFlight      *prometheus.GaugeVec
@@ -37,6 +38,7 @@ type Telemetry struct {
 
 func New(registerer prometheus.Registerer) *Telemetry {
 	telemetry := &Telemetry{
+		prewarmOutcomes: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "leapview_dashboard_prewarm_outcomes_total", Help: "Bounded public dashboard prewarm outcomes; completion does not imply cache usefulness."}, []string{"outcome", "reason"}),
 		refreshDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "leapview_dashboard_refresh_duration_seconds",
 			Help:    "End-to-end dashboard refresh duration in seconds.",
@@ -143,6 +145,7 @@ func New(registerer prometheus.Registerer) *Telemetry {
 		registerer.MustRegister(
 			telemetry.refreshDuration,
 			telemetry.stageDuration,
+			telemetry.prewarmOutcomes,
 			telemetry.refreshInFlight,
 			telemetry.refreshCancellations,
 			telemetry.cacheOutcomes,
@@ -169,6 +172,23 @@ func New(registerer prometheus.Registerer) *Telemetry {
 		)
 	}
 	return telemetry
+}
+
+func (t *Telemetry) DashboardPrewarmObserved(outcome, reason string) {
+	if t == nil {
+		return
+	}
+	switch outcome {
+	case "attempted", "completed", "skipped", "failed", "canceled":
+	default:
+		outcome = "other"
+	}
+	switch reason {
+	case "scheduled", "publication_changed", "runtime_unavailable", "preparation", "target_limit", "execution", "executed", "cache_bypassed", "store_rejected", "canceled", "deadline":
+	default:
+		reason = "other"
+	}
+	t.prewarmOutcomes.WithLabelValues(outcome, reason).Inc()
 }
 
 func (t *Telemetry) SpatialTileObserved(outcome, cache, precision string, queryMS, encodingMS int64, encodedBytes, features int, fallback bool) {

@@ -23,9 +23,20 @@ func (m *Module) Start(ctx context.Context) error {
 	}
 	monitorCtx, cancel := context.WithCancel(ctx)
 	m.lifecycleCancel = cancel
+	m.prewarm = newPrewarmCoordinator(m.prewarmConfig, m.executePrewarm, func(outcome, reason string) {
+		if observer, ok := m.dashboardTelemetry.(interface{ DashboardPrewarmObserved(string, string) }); ok {
+			observer.DashboardPrewarmObserved(outcome, reason)
+		}
+	})
+	if m.prewarm != nil {
+		coordinator := m.prewarm
+		m.lifecycleWG.Add(1)
+		go func() { defer m.lifecycleWG.Done(); coordinator.run(monitorCtx) }()
+	}
 	m.lifecycleWG.Add(1)
+	coordinator := m.prewarm
 	m.lifecycleMu.Unlock()
-	go m.monitorPublications(monitorCtx)
+	go m.monitorPublications(monitorCtx, coordinator)
 	return nil
 }
 
@@ -60,7 +71,7 @@ func (m *Module) Stop(ctx context.Context) error {
 	}
 }
 
-func (m *Module) monitorPublications(ctx context.Context) {
+func (m *Module) monitorPublications(ctx context.Context, prewarm *prewarmCoordinator) {
 	defer m.lifecycleWG.Done()
 	reconcile := func() {
 		rows, err := m.AllPublications(ctx)
@@ -77,6 +88,13 @@ func (m *Module) monitorPublications(ctx context.Context) {
 			}
 		}
 		m.streams.Reconcile(ctx, active)
+		if prewarm != nil {
+			generation := ""
+			if m.snapshot != nil {
+				generation, _ = m.snapshot(ctx)
+			}
+			prewarm.reconcile(rows, generation)
+		}
 	}
 	reconcile()
 	ticker := time.NewTicker(publicationMonitorInterval)

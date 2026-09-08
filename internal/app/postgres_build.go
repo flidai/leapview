@@ -190,6 +190,14 @@ func composeNativeProjectSource(
 	}, nil
 }
 
+func dashboardPrewarmConfig(cfg config.Config) dashboardmodule.PrewarmConfig {
+	var ids []string
+	if cfg.DashboardPrewarmPublicationIDs != "" {
+		ids = strings.Split(cfg.DashboardPrewarmPublicationIDs, ",")
+	}
+	return dashboardmodule.PrewarmConfig{PublicationIDs: ids, MaxPublications: cfg.DashboardPrewarmMaxPublications, MaxTargets: cfg.DashboardPrewarmMaxTargets, ExecutionDeadline: cfg.DashboardPrewarmDeadline, Concurrency: cfg.DashboardPrewarmConcurrency}
+}
+
 // buildPostgresTarget assembles the native graph and HTTP surface. Production
 // and local development differ only in policy toggles; both use the same
 // PostgreSQL authority graph and lifecycle.
@@ -553,7 +561,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	graph.ApprovalAuthorizer.SetCandidateResolver(func(resolveCtx context.Context, generationID, principalID string) (string, string, []access.Capability, error) {
 		return candidateApprovalCapabilities(resolveCtx, graph.ServingState, nativeProjectSource.Objects, accessBundle.Module.AuthorizationSubjects, generationID, principalID)
 	})
-	projectCatalogService, err := projectcatalog.NewService(projectCatalogLeaseProvider{provider: runtimeHost.Provider()}, projectCatalogSubjectResolver{resolve: accessBundle.Module.AuthorizationSubjects})
+	projectCatalogService, err := projectcatalog.NewService(projectCatalogLeaseProvider{provider: runtimeHost.Provider()}, projectCatalogSubjectResolver{resolve: accessBundle.Module.AuthorizationSubjects}, projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility(instanceID, accessBundle.Module.ResolveSemanticAttributes)))
 	if err != nil {
 		return fail(err)
 	}
@@ -686,6 +694,8 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	runtimeVersion := identity.Version + ":" + identity.Revision
 	planCoordinator, err := appdeploymentpostgres.NewNativeCreatePlanCoordinator(appdeploymentpostgres.NativeCreatePlanConfig{
 		Repository:      graph.DeploymentRepository,
+		TargetID:        instanceID,
+		Environment:     string(environment),
 		Sources:         nativeProjectSource.CandidateSourceReader,
 		Artifacts:       release,
 		BindingEvidence: candidateConnections,
@@ -739,6 +749,8 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	})
 	buildCoordinator, err := appdeploymentpostgres.NewNativeBuildCoordinator(appdeploymentpostgres.NativeBuildConfig{
 		Repository:            graph.DeploymentRepository,
+		TargetID:              instanceID,
+		Environment:           string(environment),
 		Sources:               nativeProjectSource.CandidateSourceReader,
 		Artifacts:             release,
 		ArtifactRecovery:      release,
@@ -910,7 +922,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		}
 		defer lease.Release()
 		return lease.Identity().GenerationID, nil
-	}, DefaultEnvironment: string(environment), SCIMBearerToken: cfg.SCIMBearerToken, MetricsBearerToken: cfg.MetricsBearerToken, Assets: assets, InstanceID: instanceID, AllowedHosts: allowedHosts, RequireActiveDeployment: false, RequireQueryAuthorization: production || !cfg.DevAuthBypass, AllowDevAuthBypass: !production && cfg.DevAuthBypass, SealedServing: true, DeliveryStartup: deliveryStartup}, httpAssemblyInputs{PublicURL: publicURL, DesktopDiscovery: desktopdiscovery.Config{CanonicalOrigin: publicURL, InstanceID: instanceID, DisplayName: "LeapView", ServerVersion: assets.Version(), AllowLoopbackHTTP: !production}, RateLimits: rateLimits, SecurityHeaders: apihttpmiddleware.SecurityHeaders(cfg.HSTSEnabled(cookieSecure)), RequestLogging: cfg.RequestLoggingEnabled(), Logger: slog.Default(), JobLeaseTimeout: cfg.RefreshJobLeaseTimeout, ManagedDataTus: managedData.TusHandler()})
+	}, Prewarm: dashboardPrewarmConfig(cfg), DefaultEnvironment: string(environment), SCIMBearerToken: cfg.SCIMBearerToken, MetricsBearerToken: cfg.MetricsBearerToken, Assets: assets, InstanceID: instanceID, AllowedHosts: allowedHosts, RequireActiveDeployment: false, RequireQueryAuthorization: production || !cfg.DevAuthBypass, AllowDevAuthBypass: !production && cfg.DevAuthBypass, SealedServing: true, DeliveryStartup: deliveryStartup}, httpAssemblyInputs{PublicURL: publicURL, DesktopDiscovery: desktopdiscovery.Config{CanonicalOrigin: publicURL, InstanceID: instanceID, DisplayName: "LeapView", ServerVersion: assets.Version(), AllowLoopbackHTTP: !production}, RateLimits: rateLimits, SecurityHeaders: apihttpmiddleware.SecurityHeaders(cfg.HSTSEnabled(cookieSecure)), RequestLogging: cfg.RequestLoggingEnabled(), Logger: slog.Default(), JobLeaseTimeout: cfg.RefreshJobLeaseTimeout, ManagedDataTus: managedData.TusHandler()})
 	if err != nil {
 		return fail(err)
 	}

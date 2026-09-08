@@ -329,6 +329,7 @@ type workflowAssemblyInputs struct {
 }
 
 type runtimeAssemblyInputs struct {
+	Prewarm     dashboardmodule.PrewarmConfig
 	RuntimeHost *runtimehostmodule.Module
 	// Production selects the fail-closed native module admission path. It is
 	// intentionally separate from SealedServing, which is also used by local
@@ -612,8 +613,10 @@ func buildApplicationSurfaces(
 	}
 	if metrics != nil && authorizationSnapshot != nil && capabilities.AccessModule != nil {
 		metrics = dashboardmodule.WithQueryAuthorization(metrics, dashboardmodule.QueryAuthorizationConfig{
-			SnapshotFromContext: authorizationSnapshot,
-			SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
+			InstanceID:                runtimeConfig.InstanceID,
+			ResolveSemanticAttributes: capabilities.AccessModule.ResolveSemanticAttributes,
+			SnapshotFromContext:       authorizationSnapshot,
+			SubjectsFromContext:       capabilities.AccessModule.AuthorizationSubjects,
 			PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 				principal, ok := accessmodule.PrincipalFromContext(ctx)
 				devBypass := principal.DevBypass
@@ -682,8 +685,10 @@ func buildApplicationSurfaces(
 		}
 		if candidateAuthorizationSnapshot != nil && capabilities.AccessModule != nil {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{
-				SnapshotFromContext: candidateAuthorizationSnapshot,
-				SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
+				InstanceID:                runtimeConfig.InstanceID,
+				ResolveSemanticAttributes: capabilities.AccessModule.ResolveSemanticAttributes,
+				SnapshotFromContext:       candidateAuthorizationSnapshot,
+				SubjectsFromContext:       capabilities.AccessModule.AuthorizationSubjects,
 				PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 					principal, ok := accessmodule.PrincipalFromContext(ctx)
 					devBypass := principal.DevBypass
@@ -1199,6 +1204,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
+			Prewarm:                  runtimeConfig.Prewarm,
 			NativePersistence:        persistence.dashboardPersistence,
 			RequireNativePersistence: persistence.requireNativeDashboard,
 			RequireAuthoring:         persistence.requireNativeDashboard,
@@ -1293,7 +1299,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return principal.ID
 				},
 				AuthorizeListResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
-					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
+					return authorizeSemanticModelResourceRead(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, resource, capability)
 				},
 				QueryFreshness: func(ctx context.Context, projectID, modelID, servingSnapshot string) (dashboardmodule.QueryFreshness, bool) {
 					if routes.refreshModule == nil {

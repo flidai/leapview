@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -361,5 +362,137 @@ func TestPostgresNativeRefreshFinalizerRejectsExpiredDeliveryLease(t *testing.T)
 	publication, err := f.delivery.Publication(t.Context(), pubID)
 	if err != nil || publication.State != "pending" {
 		t.Fatalf("pending publication after expired lease = %#v, %v", publication, err)
+	}
+}
+
+func TestPostgresNativeRefreshFinalizerPreservesLeaseThenTargetLockOrder(t *testing.T) {
+	runNativeRefreshFinalizerLockOrderTest(t, false)
+}
+
+func TestPostgresNativeRefreshFinalizerLocksExistingPendingLeaseBeforeTarget(t *testing.T) {
+	runNativeRefreshFinalizerLockOrderTest(t, true)
+}
+
+func runNativeRefreshFinalizerLockOrderTest(t *testing.T, existingPendingLease bool) {
+	f := newNativeRefreshFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if existingPendingLease {
+		publicationID, leaseID, _, requestDigest := apprefreshpostgres.NativeRefreshIdentities(f.job, f.result, f.evidence)
+		generation, err := f.delivery.Generation(ctx, f.result.ServingStateID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.delivery.CreatePublication(ctx, deploymentpostgres.PublicationInput{
+			PublicationID: publicationID, TargetID: f.targetID, GenerationID: f.resultID,
+			ExpectedBaseGenerationID: f.baseID, CandidateID: generation.CandidateID,
+			SnapshotSealID: generation.SnapshotSealID, ExpectedTargetRevision: f.evidence.ExpectedTargetRevision,
+			ActorID: f.job.PrincipalID, RequestDigest: requestDigest,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.delivery.AcquireLease(ctx, deploymentpostgres.LeaseInput{
+			LeaseID: leaseID, TargetID: f.targetID, OwnerID: f.job.LeaseOwner,
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Candidate admission owns the target-fence lock before it reaches the
+	// target row. Keep that fence held while the refresh finalizer runs. The
+	// finalizer must not acquire a target share lock before waiting for the
+	// fence, or the admission transaction cannot acquire the target row.
+	admissionTx, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admissionTx.Rollback(context.Background())
+	if existingPendingLease {
+		if _, err := admissionTx.Exec(ctx, `SELECT target_id FROM delivery.delivery_target_fence WHERE target_id=$1 FOR UPDATE`, f.targetID); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		holderLeaseID := "0198f2c0-7c7a-7f00-8a11-000000000121"
+		if _, err := f.delivery.AcquireLeaseTx(ctx, admissionTx, deploymentpostgres.LeaseInput{
+			LeaseID: holderLeaseID, TargetID: f.targetID, OwnerID: "candidate-admission-order",
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var admissionPID int32
+	if err := admissionTx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&admissionPID); err != nil {
+		t.Fatal(err)
+	}
+
+	finalizerTx, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var finalizerPID int32
+	if err := finalizerTx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&finalizerPID); err != nil {
+		_ = finalizerTx.Rollback(context.Background())
+		t.Fatal(err)
+	}
+	verifier, err := apprefreshpostgres.NewPostgresCanonicalVerifierAdapter(f.delivery, f.targetID)
+	if err != nil {
+		_ = finalizerTx.Rollback(context.Background())
+		t.Fatal(err)
+	}
+	finalizerResult := make(chan error, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		publicationEvidence, verifyErr := verifier.VerifyCanonicalRefreshTx(ctx, finalizerTx, f.job, f.result)
+		if verifyErr != nil {
+			finalizerResult <- verifyErr
+			return
+		}
+		finalizerResult <- f.finalizer.FinalizeCanonicalRefreshTx(ctx, finalizerTx, f.job, f.result, publicationEvidence)
+	}()
+	defer func() {
+		cancel()
+		_ = admissionTx.Rollback(context.Background())
+		<-finished
+		_ = finalizerTx.Rollback(context.Background())
+	}()
+
+	// Wait for the finalizer to reach lease acquisition, rather than relying
+	// on scheduler timing to establish the lock ordering under test.
+	for {
+		var blocked bool
+		if err := f.db.QueryRow(ctx, `SELECT $1::int = ANY(pg_blocking_pids($2::int))`, admissionPID, finalizerPID).Scan(&blocked); err != nil {
+			t.Fatalf("wait for refresh finalizer to reach the held target fence: %v", err)
+		}
+		if blocked {
+			break
+		}
+		select {
+		case err := <-finalizerResult:
+			t.Fatalf("refresh finalizer returned before reaching the held target fence: %v", err)
+		default:
+			runtime.Gosched()
+		}
+	}
+
+	// The target row must still be available to the fence owner. An early
+	// TargetForShareTx in the finalizer, or a publication FK lock acquired
+	// before lease admission, would make this NOWAIT probe fail and reproduce
+	// the lease/fence -> target-row deadlock cycle.
+	if _, err := admissionTx.Exec(ctx, `SELECT target_id FROM delivery.delivery_target WHERE target_id=$1 FOR UPDATE NOWAIT`, f.targetID); err != nil {
+		t.Fatalf("refresh finalizer inverted lease/target lock order: %v", err)
+	}
+	if err := admissionTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-finalizerResult:
+		if err != nil {
+			t.Fatalf("refresh finalizer after target-fence release: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("refresh finalizer did not finish after target-fence release: %v", ctx.Err())
 	}
 }

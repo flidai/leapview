@@ -123,7 +123,11 @@ func loadCanonicalDeliveryArtifacts(ctx context.Context, tx refreshpostgres.Tx, 
 	if generation.GenerationID != request.GenerationID || generation.TargetID != targetID || generation.CandidateID == "" || generation.SnapshotSealID == "" || generation.PlanID == "" || generation.PlanDigest == "" {
 		return canonicalDeliveryEvidence{}, mismatchError("canonical generation is not admitted for target")
 	}
-	target, err := deployment.TargetForShareTx(ctx, tx, targetID)
+	// Target identity is immutable evidence for this read. The refresh
+	// finalizer/ActivateTx performs the authoritative target fence and CAS
+	// after lease admission, so an early share lock would invert that lock
+	// order with candidate builds.
+	target, err := deployment.TargetTx(ctx, tx, targetID)
 	if err != nil {
 		return canonicalDeliveryEvidence{}, unavailableError("load canonical target: %v", err)
 	}

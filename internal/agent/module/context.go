@@ -100,6 +100,9 @@ func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, 
 	if err := validateDataExploration(model, exploration); err != nil {
 		return agent.TurnContext{}, err
 	}
+	if err := authorizeSemanticExploration(ctx, metrics, resolvedModel.String(), datasetID, model, exploration); err != nil {
+		return agent.TurnContext{}, errors.New("semantic context is unknown or unauthorized")
+	}
 	return agent.TurnContext{
 		Surface: "data", ModelID: resolvedModel.String(), DatasetID: datasetID,
 		Exploration: exploration,

@@ -668,14 +668,18 @@ func TestDashboardResultCacheEligibility(t *testing.T) {
 		dataquery.OperationDashboardSpatialTileBudget,
 		dataquery.OperationDashboardSpatialMetadata,
 	} {
-		request := dataquery.Query{Surface: dataquery.SurfaceDashboard, Operation: operation, EffectivePolicyFingerprint: materializeTestDigest('p')}
-		if !dashboardQueryResultCacheable(request) {
-			t.Errorf("operation %q was not cacheable", operation)
+		for _, surface := range []string{dataquery.SurfaceDashboard, dataquery.SurfacePublicDashboard} {
+			request := dataquery.Query{Surface: surface, Operation: operation, EffectivePolicyFingerprint: materializeTestDigest('p')}
+			if !dashboardQueryResultCacheable(request) {
+				t.Errorf("surface %q operation %q was not cacheable", surface, operation)
+			}
 		}
 	}
 	for _, request := range []dataquery.Query{
 		{Surface: dataquery.SurfaceAPI, Operation: dataquery.OperationDashboardAggregate},
 		{Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationAPIQuery},
+		{Surface: dataquery.SurfacePublicDashboard, Operation: dataquery.OperationAPIQuery},
+		{Surface: dataquery.SurfacePublicDashboard, Operation: dataquery.OperationDashboardRows, Kind: dataquery.KindModelRows},
 		{Operation: dataquery.OperationDashboardAggregate},
 	} {
 		if dashboardQueryResultCacheable(request) {

@@ -15,7 +15,9 @@ import (
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/google/uuid"
 )
 
@@ -140,6 +142,7 @@ func nativeBuildPlanCoordinatorFixture(t *testing.T, exactReusable bool) (*Nativ
 	rich.Operation = deploymentdomain.DeliveryOperationRestatement
 	rich.SourceOwnerID = "owner-native-build"
 	rich.Provenance.AttestationDigest = attestationDigest
+	rich.BaseTargetRevision = 1
 	const operationID = "0198f2c0-7c7a-7f00-8a11-000000001910"
 	candidateID, err := nativeBuildConsequenceID(operationID, "candidate")
 	if err != nil {
@@ -164,6 +167,11 @@ func nativeBuildPlanCoordinatorFixture(t *testing.T, exactReusable bool) (*Nativ
 	if _, err := repository.CreateTarget(t.Context(), deploymentnative.TargetInput{TargetID: targetID, ProjectID: projectID, Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := repository.ClaimProject(t.Context(), deploymentdomain.ProjectClaimInput{
+		ProjectID: projectgraph.ResourceID(projectID), Environment: servingstate.Environment("prod"), ClaimedBy: "bootstrap-admin", ClaimedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("claim native build project: %v", err)
+	}
 	if _, err := repository.CreatePlan(t.Context(), planInput); err != nil {
 		t.Fatalf("persist native build plan fixture: %v", err)
 	}
@@ -176,7 +184,7 @@ func nativeBuildPlanCoordinatorFixture(t *testing.T, exactReusable bool) (*Nativ
 	physicalPoolID := "pool-native-build"
 	compatibilityDigest := admissionDigest('a')
 	coordinator := &NativeBuildCoordinator{
-		repository: repository, sources: &nativePlanSourceReader{snap: source}, artifacts: artifacts,
+		repository: repository, targetID: targetID, environment: "prod", sources: &nativePlanSourceReader{snap: source}, artifacts: artifacts,
 		artifactRecovery: nativeBuildPlanArtifactRecovery{}, managedData: nativeBuildPlanManagedData{}, contract: nativeBuildPlanContract{physicalPoolID: physicalPoolID, compatibilityDigest: compatibilityDigest},
 		physicalPoolID: physicalPoolID, compatibilityDigest: compatibilityDigest, operations: operations, heartbeat: nativeBuildPlanHeartbeat{},
 		attemptAdmission: nativeBuildPlanAttemptAdmission{}, attemptTermination: nativeBuildPlanAttemptTermination{}, generationAdmission: nativeBuildPlanGenerationAdmission{},
@@ -359,6 +367,7 @@ func TestNativeBuildPreflightFailureClassification(t *testing.T) {
 	for _, err := range []error{
 		deploymentdomain.ErrDeliveryInvalid,
 		deploymentdomain.ErrDeliveryConflict,
+		deploymentdomain.ErrDeliveryStale,
 		deploymentdomain.ErrDeliveryPlanExpired,
 		deploymentnative.ErrInvalid,
 		deploymentnative.ErrConflict,
