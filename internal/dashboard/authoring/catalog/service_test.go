@@ -32,6 +32,9 @@ func TestListAuthorizesBeforeRevisionDisclosureAndExcludesArchived(t *testing.T)
 	if result.Count != 1 || result.Items[0].ID.String() != "good" || len(repo.revisionReads) != 1 || repo.revisionReads[0] != "good" {
 		t.Fatalf("result/revision reads = %#v/%#v", result, repo.revisionReads)
 	}
+	if result.Items[0].FirstPageID != "overview" {
+		t.Fatalf("first page = %q, want overview", result.Items[0].FirstPageID)
+	}
 	if len(auth.requests) != 2 || !auth.requested("good") || !auth.requested("denied") {
 		t.Fatalf("authorization requests = %#v", auth.requests)
 	}
@@ -231,7 +234,7 @@ func catalogToken(id string, number uint64) authoring.RevisionToken {
 }
 func catalogRevision(id, revisionID, description string) authoring.Revision {
 	descriptionPtr := description
-	return authoring.Revision{ID: authoring.RevisionID(revisionID), DashboardID: authoring.DashboardID(id), Number: 1, ContentHash: "sha256:" + strings.Repeat("b", 64), Document: document.DashboardDocument{Metadata: document.DashboardMetadata{ID: id, Name: id, Description: &descriptionPtr}}}
+	return authoring.Revision{ID: authoring.RevisionID(revisionID), DashboardID: authoring.DashboardID(id), Number: 1, ContentHash: "sha256:" + strings.Repeat("b", 64), Document: document.DashboardDocument{Metadata: document.DashboardMetadata{ID: id, Name: id, Description: &descriptionPtr}, Spec: document.DashboardSpec{Pages: []document.DashboardPage{{ID: "overview", Title: "Overview", Components: []document.DashboardPageComponent{}}}}}}
 }
 
 var _ projectruntime.Provider = (*catalogProvider)(nil)

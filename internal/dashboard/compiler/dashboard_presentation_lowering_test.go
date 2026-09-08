@@ -16,11 +16,11 @@ func TestLowerCanonicalCartesianPresentationPreservesEveryField(t *testing.T) {
 	labels := document.DashboardLabelPolicy{Density: density, Priority: &priority}
 	stacking := document.DashboardStackingModePercent
 	orientation := document.DashboardOrientationHorizontal
-	showSymbols, smooth, dataZoom := true, true, true
+	showSymbols, smooth, dataZoom, axisVisible := true, true, true, false
 	symbolSize := 14.0
 	position := document.DashboardLabelPositionInside
 	units := visualizationir.VisualizationDisplayUnitsMillions
-	value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", Legend: &legend, Labels: &labels, Stacking: &stacking, Orientation: &orientation, ShowSymbols: &showSymbols, Smooth: &smooth, DataZoom: &dataZoom, SymbolSize: &symbolSize, LabelPosition: &position, DisplayUnits: &units}}
+	value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{AxisVisible: &axisVisible}, Type: "cartesian", Legend: &legend, Labels: &labels, Stacking: &stacking, Orientation: &orientation, ShowSymbols: &showSymbols, Smooth: &smooth, DataZoom: &dataZoom, SymbolSize: &symbolSize, LabelPosition: &position, DisplayUnits: &units}}
 	lowered, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeBar)
 	if err != nil {
 		t.Fatalf("lower presentation: %v", err)
@@ -29,7 +29,7 @@ func TestLowerCanonicalCartesianPresentationPreservesEveryField(t *testing.T) {
 	if !ok {
 		t.Fatalf("lowered type = %T", lowered)
 	}
-	if got.Legend != visualizationir.VisualizationLegendPositionRight || got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityDense || len(got.LabelPolicy.Priority) != 1 || got.LabelPolicy.Priority[0] != visualizationir.VisualizationLabelPriorityThreshold || got.Stacking == nil || *got.Stacking != visualizationir.VisualizationStackingModePercent || got.Orientation == nil || *got.Orientation != visualizationir.VisualizationOrientationHorizontal || !got.ShowSymbols || !got.Smooth || !got.DataZoom || got.SymbolSize == nil || *got.SymbolSize != 14 || got.LabelPosition == nil || *got.LabelPosition != visualizationir.VisualizationLabelPositionInside || got.DisplayUnits == nil || *got.DisplayUnits != visualizationir.VisualizationDisplayUnitsMillions {
+	if got.Legend != visualizationir.VisualizationLegendPositionRight || got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityDense || len(got.LabelPolicy.Priority) != 1 || got.LabelPolicy.Priority[0] != visualizationir.VisualizationLabelPriorityThreshold || got.AxisVisible == nil || *got.AxisVisible || got.Stacking == nil || *got.Stacking != visualizationir.VisualizationStackingModePercent || got.Orientation == nil || *got.Orientation != visualizationir.VisualizationOrientationHorizontal || !got.ShowSymbols || !got.Smooth || !got.DataZoom || got.SymbolSize == nil || *got.SymbolSize != 14 || got.LabelPosition == nil || *got.LabelPosition != visualizationir.VisualizationLabelPositionInside || got.DisplayUnits == nil || *got.DisplayUnits != visualizationir.VisualizationDisplayUnitsMillions {
 		t.Fatalf("lowered presentation dropped fields: %#v", got)
 	}
 }

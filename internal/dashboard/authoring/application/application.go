@@ -247,6 +247,29 @@ func (a *Application) Preview(ctx context.Context, request preview.PreviewReques
 	return service.Preview(ctx, request)
 }
 
+// Compile strictly compiles one exact draft revision without executing a
+// dashboard page. Filter-option loading uses this path so a failing visual
+// query cannot hide an otherwise valid governed filter contract.
+func (a *Application) Compile(ctx context.Context, request preview.CompileRequest) (preview.Compilation, error) {
+	if err := a.validate(); err != nil {
+		return preview.Compilation{}, err
+	}
+	projectID, err := projectID(request.ProjectID)
+	if err != nil {
+		return preview.Compilation{}, err
+	}
+	service, err := preview.NewService(preview.Options{
+		Repository: a.repository,
+		Authorizer: a.authorizer,
+		Provider:   projectProvider{projectID: projectID, acquire: a.acquireRuntime},
+	})
+	if err != nil {
+		return preview.Compilation{}, err
+	}
+	request.ProjectID = projectID
+	return service.Compile(ctx, request)
+}
+
 // Builder returns the governed dashboard-builder bootstrap for one exact
 // project draft. The runtime provider is scoped to the normalized request
 // project and the builder service owns the single lease for this call.
@@ -273,6 +296,16 @@ func (a *Application) Builder(ctx context.Context, request builderview.Request) 
 // are intentionally absent from the active serving graph; the authoring
 // service loads their lifecycle and applies the owner/project-role context.
 func (a *Application) AuthorizeDashboardEdit(ctx context.Context, requestedProject projectgraph.ResourceID, actorID string, dashboardID authoring.DashboardID) error {
+	return a.authorizeDashboardAction(ctx, requestedProject, actorID, dashboardID, authoring.AuthorizationActionEdit)
+}
+
+// AuthorizeDashboardManage performs the repository-backed manage decision
+// used before lifecycle operations such as archive are exposed.
+func (a *Application) AuthorizeDashboardManage(ctx context.Context, requestedProject projectgraph.ResourceID, actorID string, dashboardID authoring.DashboardID) error {
+	return a.authorizeDashboardAction(ctx, requestedProject, actorID, dashboardID, authoring.AuthorizationActionArchive)
+}
+
+func (a *Application) authorizeDashboardAction(ctx context.Context, requestedProject projectgraph.ResourceID, actorID string, dashboardID authoring.DashboardID, action authoring.AuthorizationAction) error {
 	if err := a.validate(); err != nil {
 		return err
 	}
@@ -298,7 +331,7 @@ func (a *Application) AuthorizeDashboardEdit(ctx context.Context, requestedProje
 		ActorID: actorID, ProjectID: project, DashboardID: dashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
 		Target: authoringservice.AuthorizationTargetAuthoredDashboard, Visibility: lifecycle.Visibility,
-		Action: authoring.AuthorizationActionEdit,
+		Action: action,
 	})
 }
 

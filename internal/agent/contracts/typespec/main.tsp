@@ -351,6 +351,47 @@ model DashboardAuthoringDraftGetResult {
   revision: Record<unknown>;
 }
 
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "source"] })
+model DashboardAuthoringSourceReadInput {
+  @minLength(1)
+  dashboardId: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "source"] })
+model DashboardAuthoringSourceReadResult {
+  dashboardId: string;
+  draftId: string;
+  revision: DashboardAuthoringRevisionToken;
+  yaml: string;
+}
+
+model DashboardAuthoringSourceReplacement {
+  @minLength(1)
+  oldText: string;
+  newText: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "source"] })
+model DashboardAuthoringSourceEditInput {
+  @minLength(1)
+  dashboardId: string;
+  @minLength(1)
+  draftId: string;
+  expectedRevision: DashboardAuthoringRevisionToken;
+  @minItems(1)
+  @maxItems(64)
+  edits: DashboardAuthoringSourceReplacement[];
+}
+
+@apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "source"] })
+model DashboardAuthoringSourceEditResult {
+  revision: Record<unknown>;
+  lifecycle: Record<unknown>;
+  yaml: string;
+  diff: string;
+  changedBlocks: int32;
+}
+
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "create"] })
 model DashboardAuthoringCreateInput {
   @minLength(1)

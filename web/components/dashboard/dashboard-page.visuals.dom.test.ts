@@ -110,7 +110,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
           tableAfterChart: (tableFrame?.top ?? 0) > (chart?.bottom ?? 0),
         }
       })
-      expect(state.title).toBe('Overview')
+      expect(state.title).toBe('Executive Sales Dashboard')
       expect(state.hostCount).toBe(3)
       expect(state.legacyCount).toBe(0)
       expect(state.kinds).toEqual(['cartesian', 'kpi', 'table'])

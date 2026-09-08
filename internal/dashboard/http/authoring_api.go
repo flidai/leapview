@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	nethttp "net/http"
 	"net/url"
 	"strings"
@@ -476,13 +477,7 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeAuthoringError(w, r, err)
 		return
 	}
-	privilege := access.CapabilityResourceEdit
-	if action, actionErr := command.RequiredAction(); actionErr == nil && (action == authoring.AuthorizationActionPublish || action == authoring.AuthorizationActionArchive) {
-		privilege = access.CapabilityResourcePublish
-		if action == authoring.AuthorizationActionArchive {
-			privilege = access.CapabilityResourceManage
-		}
-	}
+	privilege := authoringCommandCapability(command)
 	var result authoringservice.Result
 	err = executeAuthoringMutation(r, "executeDashboardAuthoringCommand", projectID.String(), key, actor, command.DashboardID.String(), command.DraftID.String(), origin, privilege, h.RecordAudit, nil, func(ctx context.Context) error {
 		var mutationErr error
@@ -692,6 +687,27 @@ func metadataPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringMe
 	}, nil
 }
 
+func updateDashboardMetadataPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringUpdateDashboardMetadataIntent) *authoring.UpdateDashboardMetadataPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.UpdateDashboardMetadataPayload{Title: value.Title, Description: value.Description}
+}
+
+func updatePageMetadataPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringUpdatePageMetadataIntent) *authoring.UpdatePageMetadataPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.UpdatePageMetadataPayload{PageID: value.PageId, Title: value.Title, Description: value.Description}
+}
+
+func updateHeaderMetadataPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringUpdateHeaderMetadataIntent) *authoring.UpdateHeaderMetadataPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.UpdateHeaderMetadataPayload{PageID: value.PageId, HeaderID: value.HeaderId, Title: value.Title, Description: value.Description}
+}
+
 func upsertPagePayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardPage) *authoring.UpsertPagePayload {
 	if value == nil {
 		return nil
@@ -717,7 +733,105 @@ func removeVisualPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthori
 	if value == nil {
 		return nil
 	}
-	return &authoring.RemoveVisualPayload{VisualID: value.VisualId}
+	payload := &authoring.RemoveVisualPayload{VisualID: value.VisualId}
+	if value.PageId != nil {
+		payload.PageID = *value.PageId
+	}
+	return payload
+}
+
+func setVisualTypePayloadFromAPIGen(value *dashboardgen.DashboardAuthoringSetVisualTypeIntent) *authoring.SetVisualTypePayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.SetVisualTypePayload{PageID: value.PageId, VisualID: value.VisualId, Type: value.Type}
+}
+
+func setVisualQueryOptionsPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringSetVisualQueryOptionsIntent) *authoring.SetVisualQueryOptionsPayload {
+	if value == nil {
+		return nil
+	}
+	payload := &authoring.SetVisualQueryOptionsPayload{
+		PageID: value.PageId, VisualID: value.VisualId, Alias: value.Alias,
+		Grain: value.Grain, Sort: value.Sort, Limit: value.Limit,
+	}
+	if value.FieldId != nil {
+		payload.FieldID = *value.FieldId
+	}
+	if value.FieldRole != nil {
+		payload.Role = authoring.FieldRole(*value.FieldRole)
+	}
+	if value.ClearGrain != nil {
+		payload.ClearGrain = *value.ClearGrain
+	}
+	if value.ClearLimit != nil {
+		payload.ClearLimit = *value.ClearLimit
+	}
+	return payload
+}
+
+func renameVisualPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringRenameVisualIntent) *authoring.RenameVisualPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.RenameVisualPayload{PageID: value.PageId, VisualID: value.VisualId, Title: value.Title}
+}
+
+func duplicateVisualPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringDuplicateVisualIntent) *authoring.DuplicateVisualPayload {
+	if value == nil {
+		return nil
+	}
+	payload := &authoring.DuplicateVisualPayload{PageID: value.PageId, VisualID: value.VisualId, Title: derefString(value.Title)}
+	payload.NewVisualID = derefString(value.NewVisualId)
+	payload.NewComponentID = derefString(value.NewComponentId)
+	return payload
+}
+
+func restoreRevisionPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringRestoreRevisionIntent) (*authoring.RestoreRevisionPayload, error) {
+	if value == nil {
+		return nil, nil
+	}
+	target, err := revisionTokenFromAPIGen(value.TargetRevision)
+	if err != nil {
+		return nil, err
+	}
+	return &authoring.RestoreRevisionPayload{TargetRevision: target}, nil
+}
+
+func updateVisualFormatPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringUpdateVisualFormatIntent) *authoring.UpdateVisualFormatPayload {
+	if value == nil {
+		return nil
+	}
+	formatKey := ""
+	if value.FormatKey != nil {
+		formatKey = *value.FormatKey
+	}
+	return &authoring.UpdateVisualFormatPayload{PageID: value.PageId, VisualID: value.VisualId, Title: value.Title, TitleVisible: value.TitleVisible, LegendVisible: value.LegendVisible, AxisVisible: value.AxisVisible, DataLabelsVisible: value.DataLabelsVisible, FormatKey: formatKey, FormatValue: value.FormatValue}
+}
+
+func removeFieldPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringRemoveFieldIntent) *authoring.RemoveFieldPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.RemoveFieldPayload{PageID: value.PageId, VisualID: value.VisualId, FieldID: value.FieldId, Role: authoring.FieldRole(value.Role)}
+}
+
+func moveFieldPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringMoveFieldIntent) *authoring.MoveFieldPayload {
+	if value == nil {
+		return nil
+	}
+	payload := &authoring.MoveFieldPayload{PageID: value.PageId, VisualID: value.VisualId, FieldID: value.FieldId, Role: authoring.FieldRole(value.Role)}
+	if value.TargetRole != nil {
+		payload.TargetRole = authoring.FieldRole(*value.TargetRole)
+	}
+	if value.Direction != nil {
+		payload.Direction = *value.Direction
+	}
+	if value.Index != nil {
+		index := int(*value.Index)
+		payload.Index = &index
+	}
+	return payload
 }
 
 func setLayoutPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringSetLayoutIntent) *authoring.SetLayoutPayload {
@@ -758,6 +872,15 @@ func setInteractionPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAutho
 	return payload
 }
 
+func setInteractionTargetPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringSetInteractionTargetIntent) *authoring.SetInteractionTargetPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.SetInteractionTargetPayload{
+		PageID: value.PageId, VisualID: value.VisualId, TargetVisualID: value.TargetVisualId, Effect: value.Effect,
+	}
+}
+
 func addPagePayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringAddPageIntent) *authoring.AddPagePayload {
 	if value == nil {
 		return nil
@@ -793,6 +916,15 @@ func commandFromAPIGen(input dashboardgen.GenSchemaDashboardAuthoringCommandRequ
 	case *dashboardgen.DashboardAuthoringMetadataCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.Metadata, payloadErr = metadataPayloadFromAPIGen(&value.Metadata)
+	case *dashboardgen.DashboardAuthoringUpdateDashboardMetadataCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.UpdateDashboardMetadata = updateDashboardMetadataPayloadFromAPIGen(&value.UpdateDashboardMetadata)
+	case *dashboardgen.DashboardAuthoringUpdatePageMetadataCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.UpdatePageMetadata = updatePageMetadataPayloadFromAPIGen(&value.UpdatePageMetadata)
+	case *dashboardgen.DashboardAuthoringUpdateHeaderMetadataCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.UpdateHeaderMetadata = updateHeaderMetadataPayloadFromAPIGen(&value.UpdateHeaderMetadata)
 	case *dashboardgen.DashboardAuthoringSetVisibilityCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.SetVisibility, payloadErr = setVisibilityPayloadFromAPIGen(&value.SetVisibility)
@@ -805,6 +937,30 @@ func commandFromAPIGen(input dashboardgen.GenSchemaDashboardAuthoringCommandRequ
 	case *dashboardgen.DashboardAuthoringAssignFieldCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.AssignField = assignFieldPayloadFromAPIGen(&value.AssignField)
+	case *dashboardgen.DashboardAuthoringSetVisualTypeCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.SetVisualType = setVisualTypePayloadFromAPIGen(&value.SetVisualType)
+	case *dashboardgen.DashboardAuthoringSetVisualQueryOptionsCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.SetVisualQueryOptions = setVisualQueryOptionsPayloadFromAPIGen(&value.SetVisualQueryOptions)
+	case *dashboardgen.DashboardAuthoringRenameVisualCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.RenameVisual = renameVisualPayloadFromAPIGen(&value.RenameVisual)
+	case *dashboardgen.DashboardAuthoringDuplicateVisualCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.DuplicateVisual = duplicateVisualPayloadFromAPIGen(&value.DuplicateVisual)
+	case *dashboardgen.DashboardAuthoringRestoreRevisionCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.RestoreRevision, payloadErr = restoreRevisionPayloadFromAPIGen(&value.RestoreRevision)
+	case *dashboardgen.DashboardAuthoringUpdateVisualFormatCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.UpdateVisualFormat = updateVisualFormatPayloadFromAPIGen(&value.UpdateVisualFormat)
+	case *dashboardgen.DashboardAuthoringRemoveFieldCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.RemoveField = removeFieldPayloadFromAPIGen(&value.RemoveField)
+	case *dashboardgen.DashboardAuthoringMoveFieldCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.MoveField = moveFieldPayloadFromAPIGen(&value.MoveField)
 	case *dashboardgen.DashboardAuthoringUpsertPageCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.UpsertPage = upsertPagePayloadFromAPIGen(&value.UpsertPage)
@@ -826,6 +982,9 @@ func commandFromAPIGen(input dashboardgen.GenSchemaDashboardAuthoringCommandRequ
 	case *dashboardgen.DashboardAuthoringSetInteractionCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.SetInteraction = setInteractionPayloadFromAPIGen(&value.SetInteraction)
+	case *dashboardgen.DashboardAuthoringSetInteractionTargetCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.SetInteractionTarget = setInteractionTargetPayloadFromAPIGen(&value.SetInteractionTarget)
 	case *dashboardgen.DashboardAuthoringPublishCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.Publish = &authoring.PublishPayload{}
@@ -940,11 +1099,25 @@ type authoringAuditTarget struct {
 }
 
 func executeAuthoringMutation(r *nethttp.Request, operationID, project, key, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, legacyRecorder func(context.Context, access.AuditEventInput) error, target *authoringAuditTarget, mutate func(context.Context) error) error {
+	return executeAuthoringMutationForSurface(r, apigencommand.SurfaceAPI, operationID, project, key, actor, dashboardID, draftID, origin, capability, legacyRecorder, target, mutate)
+}
+
+// executeAuthoringUIMutation applies the same generated command contract and
+// transaction-bound audit intent as the headless API, while requiring the
+// operation to be explicitly exposed to the browser UI by TypeSpec.
+func executeAuthoringUIMutation(r *nethttp.Request, operationID, project, key, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, target *authoringAuditTarget, mutate func(context.Context) error) error {
+	err := executeAuthoringMutationForSurface(r, apigencommand.SurfaceUI, operationID, project, key, actor, dashboardID, draftID, origin, capability, nil, target, mutate)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "dashboard authoring UI mutation failed", "operation", operationID, "dashboard", dashboardID, "draft", draftID, "error", err)
+	}
+	return err
+}
+
+func executeAuthoringMutationForSurface(r *nethttp.Request, invocation apigencommand.Surface, operationID, project, key, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, legacyRecorder func(context.Context, access.AuditEventInput) error, target *authoringAuditTarget, mutate func(context.Context) error) error {
 	executor, err := apigencommand.NewExecutor(dashboardgen.GetAPIGenCommandRuntimeContract, nil)
 	if err != nil {
 		return err
 	}
-	invocation := apigencommand.SurfaceAPI
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
 	execution := apigencommand.Execution{Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
@@ -994,6 +1167,19 @@ func executeAuthoringMutation(r *nethttp.Request, operationID, project, key, act
 	default:
 		return fmt.Errorf("unknown dashboard authoring command %q", operationID)
 	}
+}
+
+func authoringCommandCapability(command authoring.Command) access.Capability {
+	capability := access.CapabilityResourceEdit
+	if action, err := command.RequiredAction(); err == nil {
+		switch action {
+		case authoring.AuthorizationActionPublish:
+			capability = access.CapabilityResourcePublish
+		case authoring.AuthorizationActionArchive:
+			capability = access.CapabilityResourceManage
+		}
+	}
+	return capability
 }
 
 func buildAuthoringAuditIntent(contract apigencommand.Contract, project, idempotencyKey, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, requestID, correlationID string) (access.AuditIntent, error) {

@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
+import { repeat } from 'lit/directives/repeat.js'
 import {
   ArrowUpDown,
   Bot,
@@ -16,13 +17,17 @@ import {
   Component,
   Database,
   Download,
+  FilePenLine,
   FileText,
   LayoutDashboard,
+  LockKeyhole,
+  EllipsisVertical,
   Plus,
   Plug,
   Play,
   RefreshCw,
   Search,
+  Star,
   Table2,
   TableProperties,
   UsersRound,
@@ -53,22 +58,26 @@ export type EntityListItem = {
   group?: string
   columns?: Record<string, string | number>
   columnTitles?: Record<string, string>
+  people?: Record<string, { name: string, imageUrl?: string }>
   sortValues?: Record<string, string | number>
   badges?: EntityListBadge[]
+  favorite?: boolean
+  favoriteLabel?: string
   actions?: EntityListRowAction[]
 }
 
 export type EntityListRowAction = {
   label: string
   action: string
-  icon?: 'play' | 'refresh' | 'details' | 'cancel'
+  icon?: 'play' | 'refresh' | 'details' | 'cancel' | 'more'
   disabled?: boolean
 }
 
 export type EntityListBadge = {
-  icon: 'popularity'
+  icon: 'popularity' | 'draft' | 'changes'
   label: string
-  level: 'low' | 'medium' | 'high'
+  level?: 'low' | 'medium' | 'high'
+  text?: string
 }
 
 export type EntityListColumn = {
@@ -77,7 +86,7 @@ export type EntityListColumn = {
   width?: string
   align?: 'left' | 'right'
   sortable?: boolean
-  render?: 'badges' | 'actions' | 'status'
+  render?: 'badges' | 'actions' | 'status' | 'quiet-status' | 'person' | 'person-avatar' | 'popularity' | 'datetime'
 }
 
 export type EntityListFilter = {
@@ -107,6 +116,13 @@ const entityListStyles = `
   }
 
   .entity-toolbar-actions {
+    display: flex;
+    margin-left: auto;
+    align-items: center;
+    gap: var(--base-size-8);
+  }
+
+  .entity-toolbar-trailing {
     display: flex;
     margin-left: auto;
     align-items: center;
@@ -522,6 +538,25 @@ const entityListStyles = `
     flex: 1 1 auto;
   }
 
+  .entity-list-favorite {
+    display: inline-grid;
+    width: var(--control-medium-size, 32px);
+    height: var(--control-medium-size, 32px);
+    flex: 0 0 auto;
+    place-items: center;
+    border: 0;
+    border-radius: var(--lv-radius-default);
+    color: var(--lv-fg-muted);
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .entity-list-favorite:hover { color: var(--lv-fg-default); background: var(--lv-bg-control-hover); }
+  .entity-list-favorite:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+  .entity-list-favorite[aria-pressed='true'] { color: var(--display-yellow-fgColor); }
+  .entity-list-favorite[aria-pressed='true'] svg { fill: currentColor; }
+
   .entity-list-copy {
     display: grid;
     min-width: 0;
@@ -553,12 +588,15 @@ const entityListStyles = `
   }
 
   .entity-list-badge {
-    display: inline-grid;
-    width: var(--base-size-16);
+    display: inline-flex;
+    width: auto;
     height: var(--base-size-16);
     flex: 0 0 auto;
-    place-items: center;
+    align-items: center;
+    gap: var(--base-size-4);
     color: var(--fgColor-disabled);
+    font: var(--lv-type-caption);
+    white-space: nowrap;
   }
 
   .entity-list-badge-popularity svg path {
@@ -574,6 +612,9 @@ const entityListStyles = `
     stroke: var(--display-blue-fgColor);
   }
 
+  .entity-list-badge-draft { color: var(--lv-fg-muted); }
+  .entity-list-badge-changes { color: var(--lv-fg-attention, var(--display-yellow-fgColor)); }
+
   .entity-list-badge-empty {
     display: inline-block;
     width: var(--base-size-16);
@@ -587,12 +628,124 @@ const entityListStyles = `
     font: var(--lv-type-caption);
   }
 
+  .entity-list-secondary {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--base-size-6);
+  }
+
+  .entity-list-secondary-separator { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+
+  .entity-list-meta {
+    display: inline-flex;
+    min-width: 0;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: var(--base-size-4);
+  }
+
+  .entity-list-meta svg { width: var(--base-size-12); height: var(--base-size-12); flex: 0 0 auto; }
+
   .entity-list-cell {
     overflow: hidden;
     color: var(--lv-fg-muted);
     font: var(--lv-type-body);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .entity-list-cell.is-hover-indicator {
+    overflow: visible;
+  }
+
+  .entity-list-person {
+    display: inline-flex;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    gap: var(--base-size-8);
+    color: var(--lv-fg-default);
+  }
+
+  .entity-list-person lv-user-avatar {
+    --lv-user-avatar-size: var(--base-size-20);
+  }
+
+  .entity-list-person-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .entity-list-person-avatar,
+  .entity-list-popularity,
+  .entity-list-datetime {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--lv-radius-full);
+  }
+
+  .entity-list-person-avatar:focus-visible,
+  .entity-list-popularity:focus-visible,
+  .entity-list-datetime:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-outline-offset);
+  }
+
+  .entity-list-person-avatar lv-user-avatar {
+    --lv-user-avatar-size: var(--base-size-20);
+  }
+
+  .entity-list-popularity {
+    width: var(--base-size-20);
+    height: var(--base-size-20);
+    justify-content: center;
+    color: var(--fgColor-disabled);
+  }
+
+  .entity-list-popularity svg {
+    width: var(--base-size-16);
+    height: var(--base-size-16);
+  }
+
+  .entity-list-datetime {
+    color: var(--lv-fg-muted);
+    white-space: nowrap;
+  }
+
+  .entity-list-hover-tooltip {
+    position: absolute;
+    z-index: var(--z-index-dropdown);
+    top: calc(100% + var(--base-size-8));
+    left: 50%;
+    display: inline-flex;
+    width: max-content;
+    max-width: 16rem;
+    align-items: center;
+    gap: var(--base-size-8);
+    visibility: hidden;
+    transform: translateX(-50%);
+    opacity: 0;
+    border: var(--lv-border-default);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-overlay);
+    box-shadow: var(--lv-shadow-floating-lg);
+    color: var(--lv-fg-default);
+    padding: var(--base-size-8) var(--base-size-12);
+    font: var(--lv-type-body-compact);
+    pointer-events: none;
+    transition: opacity var(--motion-transition-stateChange);
+  }
+
+  .entity-list-person-avatar:hover .entity-list-hover-tooltip,
+  .entity-list-person-avatar:focus .entity-list-hover-tooltip,
+  .entity-list-popularity:hover .entity-list-hover-tooltip,
+  .entity-list-popularity:focus .entity-list-hover-tooltip,
+  .entity-list-datetime:hover .entity-list-hover-tooltip,
+  .entity-list-datetime:focus .entity-list-hover-tooltip {
+    visibility: visible;
+    opacity: 1;
   }
 
   .entity-list-status {
@@ -623,6 +776,21 @@ const entityListStyles = `
   .entity-list-status.is-success .entity-list-status-icon { color: var(--lv-fg-success); }
   .entity-list-status.is-danger .entity-list-status-icon { color: var(--lv-fg-danger); }
   .entity-list-status.is-attention .entity-list-status-icon { color: var(--lv-fg-warning); }
+
+  .entity-list-status.is-quiet {
+    gap: var(--base-size-4);
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-body-compact);
+    font-weight: var(--base-text-weight-normal);
+  }
+
+  .entity-list-status.is-quiet.is-attention { color: var(--lv-fg-default); }
+
+  .entity-list-status.is-quiet .entity-list-status-icon,
+  .entity-list-status.is-quiet .entity-list-status-icon svg {
+    width: calc(var(--base-size-16) - var(--borderWidth-thick));
+    height: calc(var(--base-size-16) - var(--borderWidth-thick));
+  }
 
   .entity-list.is-compact {
     gap: var(--base-size-8);
@@ -688,6 +856,9 @@ const entityListStyles = `
       margin-left: auto;
     }
 
+    .entity-toolbar-trailing { width: 100%; margin-left: 0; }
+    .entity-list-badge-text { display: none; }
+
     .entity-list-table th,
     .entity-list-table td {
       padding-inline: var(--base-size-4);
@@ -700,6 +871,7 @@ class EntityList extends LitElement {
   @property({ attribute: false }) columns: EntityListColumn[] = []
   @property({ attribute: false }) filters: EntityListFilter[] = []
   @property({ attribute: false }) actions: EntityListAction[] = []
+  @property({ attribute: false }) toolbarTrailing: unknown = nothing
   @property({ attribute: 'list-label' }) listLabel = 'List'
   @property({ attribute: 'export-filename' }) exportFilename = ''
   @property({ attribute: 'search-placeholder' }) searchPlaceholder = 'Search'
@@ -763,6 +935,7 @@ class EntityList extends LitElement {
               </select>
             </label>
           ` : ''}
+          ${this.toolbarTrailing !== nothing ? html`<div class="entity-toolbar-trailing">${this.toolbarTrailing}</div>` : ''}
           ${this.exportFilename || this.actions.length ? html`
             <div class="entity-toolbar-actions">
               ${this.exportFilename ? html`<button class="entity-export" type="button" @click=${this.exportCSV}>
@@ -793,6 +966,9 @@ class EntityList extends LitElement {
                   ${columns.map((column) => {
                     const direction = this.sortColumnId === column.id ? this.sortDirection : false
                     const sortable = column.sortable !== false && column.render !== 'actions'
+                    if (column.render === 'actions') {
+                      return html`<th class=${column.align === 'right' ? 'is-right' : ''} scope="col"><span class="entity-list-visually-hidden">${column.label}</span></th>`
+                    }
                     return html`
                       <th
                         class=${column.align === 'right' ? 'is-right' : ''}
@@ -818,7 +994,7 @@ class EntityList extends LitElement {
               </thead>
               ${this.groupBy
                 ? this.groupedItems(items).map((group) => this.renderGroup(group, columns))
-                : html`<tbody>${items.map((item) => this.renderItem(item, columns))}</tbody>`}
+                : html`<tbody>${repeat(items, (item) => item.id, (item) => this.renderItem(item, columns))}</tbody>`}
             </table>
             <p class="entity-list-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>
           </div>
@@ -908,7 +1084,7 @@ class EntityList extends LitElement {
             </button>
           </th>
         </tr>
-        ${collapsed ? '' : group.items.map((item) => this.renderItem(item, columns))}
+        ${collapsed ? '' : repeat(group.items, (item) => `${group.key}:${item.id}`, (item) => this.renderItem(item, columns))}
       </tbody>
     `
   }
@@ -955,18 +1131,31 @@ class EntityList extends LitElement {
           <span class="entity-list-title">${item.title}</span>
           ${badgesColumn ? '' : (item.badges ?? []).map((badge) => this.renderBadge(badge))}
         </span>
-        ${item.description ? html`<span class="entity-list-description">${item.description}</span>` : ''}
+        ${item.description || item.meta ? html`<span class="entity-list-secondary">
+          ${item.description ? html`<span class="entity-list-description">${item.description}</span>` : ''}
+          ${item.description && item.meta ? html`<span class="entity-list-secondary-separator" aria-hidden="true">·</span>` : ''}
+          ${item.meta ? html`<span class="entity-list-meta">${lucideIcon(Database, { size: 12, strokeWidth: 1.8 })}<span>${item.meta}</span></span>` : ''}
+        </span>` : ''}
       </span>
     `
+    const favorite = item.favoriteLabel ? html`
+      <button
+        type="button"
+        class="entity-list-favorite"
+        aria-label=${item.favoriteLabel}
+        aria-pressed=${String(Boolean(item.favorite))}
+        @click=${(event: Event) => this.toggleFavorite(event, item)}
+      >${lucideIcon(Star, { size: 16, strokeWidth: 1.8 })}</button>
+    ` : ''
     return html`
       <th scope="row">
         ${item.iconButtonLabel
-          ? html`<span class="entity-list-identity-row">${icon}${item.href
-            ? html`<a class="entity-list-identity" href=${item.href} @click=${this.stopRowAction}>${copy}</a>`
+          ? html`<span class="entity-list-identity-row">${favorite}${icon}${item.href
+            ? html`<a class="entity-list-identity" data-item-id=${item.id} href=${item.href} @click=${(event: Event) => this.activateIdentity(event, item)}>${copy}</a>`
             : html`<span class="entity-list-identity">${copy}</span>`}</span>`
           : item.href
-            ? html`<a class="entity-list-identity" href=${item.href} @click=${this.stopRowAction}>${icon}${copy}</a>`
-            : html`<span class="entity-list-identity">${icon}${copy}</span>`}
+            ? html`<span class="entity-list-identity-row">${favorite}<a class="entity-list-identity" data-item-id=${item.id} href=${item.href} @click=${(event: Event) => this.activateIdentity(event, item)}>${icon}${copy}</a></span>`
+            : html`<span class="entity-list-identity-row">${favorite}<span class="entity-list-identity">${icon}${copy}</span></span>`}
       </th>
     `
   }
@@ -978,7 +1167,7 @@ class EntityList extends LitElement {
       ? badges.map((badge) => badge.label).join(', ')
       : item.columnTitles?.[column.id] ?? String(value ?? '')
     return html`
-      <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''}`} title=${title}>
+      <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''} ${column.render === 'person-avatar' || column.render === 'popularity' || column.render === 'datetime' ? 'is-hover-indicator' : ''}`} title=${column.render === 'person-avatar' || column.render === 'popularity' || column.render === 'datetime' ? '' : title}>
         ${column.render === 'badges'
           ? (badges.length ? badges.map((badge) => this.renderBadge(badge)) : html`
               <span class="entity-list-badge-empty" role="img" aria-label="No popularity data">—</span>
@@ -992,21 +1181,110 @@ class EntityList extends LitElement {
                   aria-label=${action.label}
                   ?disabled=${action.disabled}
                   @click=${(event: Event) => this.emitRowAction(event, action, item)}
+                  aria-haspopup=${action.icon === 'more' ? 'menu' : nothing}
                 >${lucideIcon(entityActionIcon(action.icon), { size: 15, strokeWidth: 2 })}</button>
 	              `)}</span>`
-            : column.render === 'status'
-              ? this.renderStatus(value)
+            : column.render === 'status' || column.render === 'quiet-status'
+              ? this.renderStatus(value, column.render === 'quiet-status')
+              : column.render === 'person'
+                ? this.renderPerson(item, column.id, value)
+                : column.render === 'person-avatar'
+                  ? this.renderPersonAvatar(item, column.id, value)
+                  : column.render === 'popularity'
+                    ? this.renderPopularity(item, column.id, value, title)
+                    : column.render === 'datetime'
+                      ? this.renderDateTime(item, column, value, title)
               : (value == null || value === '' ? '—' : value)}
       </td>
     `
   }
 
-  private renderBadge(badge: EntityListBadge) {
+  private renderPerson(item: EntityListItem, columnID: string, value: string | number | undefined) {
+    const person = item.people?.[columnID]
+    const name = person?.name.trim() || String(value ?? '').trim()
+    if (!name || name === '—') return '—'
     return html`
-      <span class=${`entity-list-badge entity-list-badge-${badge.icon} is-${badge.level}`} role="img" aria-label=${badge.label} title=${badge.label}>
-        ${lucideIcon(badgeIcon(badge.icon), { size: 16, strokeWidth: 2.5 })}
+      <span class="entity-list-person">
+        <lv-user-avatar .name=${name} .imageUrl=${person?.imageUrl ?? ''} aria-hidden="true"></lv-user-avatar>
+        <span class="entity-list-person-name">${name}</span>
       </span>
     `
+  }
+
+  private renderPersonAvatar(item: EntityListItem, columnID: string, value: string | number | undefined) {
+    const person = item.people?.[columnID]
+    const name = person?.name.trim() || String(value ?? '').trim()
+    if (!name || name === '—') return '—'
+    const tooltipID = `entity-person-${item.id}-${columnID}`.replace(/[^A-Za-z0-9_-]/g, '-')
+    return html`
+      <span class="entity-list-person-avatar" role="group" aria-label=${name} aria-describedby=${tooltipID} tabindex="0">
+        <lv-user-avatar .name=${name} .imageUrl=${person?.imageUrl ?? ''} aria-hidden="true"></lv-user-avatar>
+        <span class="entity-list-hover-tooltip" id=${tooltipID} role="tooltip">
+          <lv-user-avatar .name=${name} .imageUrl=${person?.imageUrl ?? ''} aria-hidden="true"></lv-user-avatar>
+          <span>${name}</span>
+        </span>
+      </span>
+    `
+  }
+
+  private renderPopularity(item: EntityListItem, columnID: string, value: string | number | undefined, title: string) {
+    const level = value === 'high' || value === 'medium' || value === 'low' ? value : ''
+    const label = title || 'No popularity data yet'
+    const tooltipID = `entity-popularity-${item.id}-${columnID}`.replace(/[^A-Za-z0-9_-]/g, '-')
+    return html`
+      <span class=${`entity-list-popularity entity-list-badge-popularity${level ? ` is-${level}` : ''}`} role="group" aria-label=${label} aria-describedby=${tooltipID} tabindex="0">
+        ${lucideIcon(ChartNoAxesColumnIncreasing, { size: 16, strokeWidth: 2 })}
+        <span class="entity-list-hover-tooltip" id=${tooltipID} role="tooltip">${label}</span>
+      </span>
+    `
+  }
+
+  private renderDateTime(item: EntityListItem, column: EntityListColumn, value: string | number | undefined, title: string) {
+    const display = String(value ?? '').trim()
+    if (!display || display === '—' || !title) return '—'
+    const tooltipID = `entity-datetime-${item.id}-${column.id}`.replace(/[^A-Za-z0-9_-]/g, '-')
+    const dateTime = String(item.sortValues?.[column.id] ?? '').trim()
+    return html`
+      <time
+        class="entity-list-datetime"
+        data-column=${column.id}
+        datetime=${dateTime || nothing}
+        aria-label=${`${column.label}: ${title}`}
+        aria-describedby=${tooltipID}
+        tabindex="0"
+      >
+        <span class="entity-list-datetime-value">${display}</span>
+        <span class="entity-list-hover-tooltip" id=${tooltipID} role="tooltip">${title}</span>
+      </time>
+    `
+  }
+
+  private renderBadge(badge: EntityListBadge) {
+    return html`
+      <span class=${`entity-list-badge entity-list-badge-${badge.icon}${badge.level ? ` is-${badge.level}` : ''}`} role="img" aria-label=${badge.label} title=${badge.label}>
+        ${lucideIcon(badgeIcon(badge.icon), { size: 16, strokeWidth: 2.5 })}
+        ${badge.text ? html`<span class="entity-list-badge-text">${badge.text}</span>` : ''}
+      </span>
+    `
+  }
+
+  private toggleFavorite(event: Event, item: EntityListItem): void {
+    event.preventDefault()
+    event.stopPropagation()
+    this.dispatchEvent(new CustomEvent('lv-entity-list-favorite-toggle', {
+      bubbles: true,
+      composed: true,
+      detail: { item },
+    }))
+  }
+
+  private activateIdentity(event: Event, item: EntityListItem): void {
+    event.stopPropagation()
+    this.dispatchEvent(new CustomEvent('lv-entity-list-item-activate', {
+      bubbles: true,
+      composed: true,
+      detail: { item },
+    }))
   }
 
   private activateIcon(event: Event, item: EntityListItem): void {
@@ -1019,12 +1297,12 @@ class EntityList extends LitElement {
     }))
   }
 
-  private renderStatus(value: string | number | undefined) {
+  private renderStatus(value: string | number | undefined, quiet = false) {
     const label = value == null || value === '' ? '—' : String(value)
     const status = entityStatusPresentation(label)
     return html`
-      <span class=${`entity-list-status is-${status.tone}`}>
-        <span class="entity-list-status-icon" aria-hidden="true">${lucideIcon(status.icon, { size: 16, strokeWidth: 2 })}</span>
+      <span class=${`entity-list-status is-${status.tone}${quiet ? ' is-quiet' : ''}`}>
+        <span class="entity-list-status-icon" aria-hidden="true">${lucideIcon(status.icon, { size: quiet ? 14 : 16, strokeWidth: 2 })}</span>
         <span>${label}</span>
       </span>
     `
@@ -1057,7 +1335,7 @@ class EntityList extends LitElement {
     this.dispatchEvent(new CustomEvent('lv-entity-list-row-action', {
       bubbles: true,
       composed: true,
-      detail: { action: action.action, item },
+      detail: { action: action.action, item, anchor: event.currentTarget },
     }))
   }
 
@@ -1069,8 +1347,6 @@ class EntityList extends LitElement {
       detail: { action: this.rowAction, item },
     }))
   }
-
-  private stopRowAction = (event: Event): void => event.stopPropagation()
 
   private toggleSort(columnId: string): void {
     if (this.sortColumnId === columnId) {
@@ -1112,6 +1388,8 @@ class EntityList extends LitElement {
 function badgeIcon(type: EntityListBadge['icon']): IconNode {
   switch (type) {
     case 'popularity': return ChartNoAxesColumnIncreasing
+    case 'draft': return LockKeyhole
+    case 'changes': return FilePenLine
   }
 }
 
@@ -1139,6 +1417,7 @@ function entityIcon(type = ''): IconNode {
 
 function entityActionIcon(type: EntityListRowAction['icon']): IconNode {
   switch (type) {
+    case 'more': return EllipsisVertical
     case 'refresh': return RefreshCw
     case 'details': return FileText
     case 'cancel': return XCircle
@@ -1151,7 +1430,14 @@ function entityStatusPresentation(label: string): { icon: IconNode, tone: 'succe
     case 'succeeded':
     case 'success':
     case 'healthy':
+    case 'published':
       return { icon: CheckCircle2, tone: 'success' }
+    case 'private draft':
+    case 'draft':
+      return { icon: LockKeyhole, tone: 'muted' }
+    case 'unpublished changes':
+    case 'changes pending':
+      return { icon: FilePenLine, tone: 'attention' }
     case 'failed':
     case 'cancelled':
     case 'error':

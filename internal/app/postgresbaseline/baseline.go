@@ -70,6 +70,7 @@ const rolePolicySQL = `
 REVOKE ALL ON FUNCTION delivery.lock_retention_root(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.lock_live_snapshot_retention(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) FROM PUBLIC;
+REVOKE ALL ON FUNCTION dashboard.lock_authoring_dashboard(text, text) FROM PUBLIC;
 DO $$
 BEGIN
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
@@ -83,6 +84,7 @@ BEGIN
 		GRANT SELECT, UPDATE ON admin.product_identity TO leapview_control_runtime;
 		GRANT SELECT, INSERT, UPDATE ON dashboard.view_session, dashboard.view_day, dashboard.appearance_override TO leapview_control_runtime;
 		GRANT SELECT ON dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts, dashboard.publications, dashboard.publication_events, dashboard.publication_streams TO leapview_control_runtime;
+		GRANT EXECUTE ON FUNCTION dashboard.lock_authoring_dashboard(text, text) TO leapview_control_runtime;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts, dashboard.publications, dashboard.publication_events, dashboard.publication_streams FROM leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
             ON release.release_record, release.release_connection

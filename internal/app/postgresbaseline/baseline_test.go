@@ -117,6 +117,7 @@ func TestProductRolePolicyDoesNotBroadenDashboardProjectionMutation(t *testing.T
 	}
 	for _, required := range []string{
 		"GRANT SELECT ON dashboard.authoring_dashboards, dashboard.authoring_revisions",
+		"GRANT EXECUTE ON FUNCTION dashboard.lock_authoring_dashboard(text, text) TO leapview_control_runtime",
 		"dashboard.publication_events, dashboard.publication_streams TO leapview_control_runtime",
 		"REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON dashboard.authoring_dashboards",
 		"dashboard.publication_events, dashboard.publication_streams FROM leapview_control_runtime",

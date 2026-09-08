@@ -233,6 +233,39 @@ func TestCanonicalServiceCreateEditPublishArchiveAndAuthorization(t *testing.T) 
 	}
 }
 
+func TestCanonicalServiceRestoresRetainedRevisionAsNewDraft(t *testing.T) {
+	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
+	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-created", "draft-created", "revision-created", "revision-edited", "revision-restored")
+	created, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "model:test", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-restore"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := "Changed orders"
+	edited, err := svc.Execute(t.Context(), "project:test", authoring.Command{
+		ID: "edit-before-restore", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID,
+		ExpectedRevision: created.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"},
+		Metadata: &authoring.MetadataPatch{Title: &title},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := svc.Execute(t.Context(), "project:test", authoring.Command{
+		ID: "restore-original", DashboardID: edited.Lifecycle.ID, DraftID: edited.Lifecycle.Draft.ID,
+		ExpectedRevision: edited.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"},
+		RestoreRevision: &authoring.RestoreRevisionPayload{TargetRevision: created.Revision},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := repository.revisions[restored.Revision.RevisionID]
+	if restored.Revision.Number != 3 || value.ContentHash != created.Revision.ContentHash || restored.Lifecycle.Title != "Orders" {
+		t.Fatalf("restored result = %#v revision=%#v", restored, value)
+	}
+	if repository.getRevisionCalls < 3 {
+		t.Fatalf("revision reads = %d, want current and retained target", repository.getRevisionCalls)
+	}
+}
+
 func TestCanonicalServiceCreateUsesProjectCapabilityBeforeDashboardExists(t *testing.T) {
 	repository, compiler := newCanonicalRepository(), &canonicalCompiler{}
 	var authorized []access.ResourceRef

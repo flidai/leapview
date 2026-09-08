@@ -475,7 +475,10 @@ publish_running() {
 		echo "Dev server port file missing. Run task dev first." >&2
 		return 1
 	}
-  curl -fsS "http://localhost:${port}/" >/dev/null || {
+  # A healthy process may intentionally have no active project yet. Use the
+  # process health endpoint so this command can perform the first publication
+  # after a PostgreSQL bootstrap.
+  curl -fsS "http://localhost:${port}/healthz" >/dev/null || {
 		echo "Dev server is not running on http://localhost:${port}. Run task dev first." >&2
 		return 1
 	}

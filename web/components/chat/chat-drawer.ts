@@ -35,6 +35,7 @@ const emptyAgent: ChatSignal = {
 
 class ChatDrawer extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) open = false
+  @property({ type: Boolean, reflect: true }) embedded = false
   @property({ attribute: false }) suggestions: AgentReferenceSignal[] = []
   @state() private references: AgentReferenceSignal[] = []
   @state() private referenceLimitMessage = ''
@@ -57,6 +58,11 @@ class ChatDrawer extends DatastarLit(LitElement) {
     :host([open]) {
 			width: 100%;
       border-left-width: 1px;
+    }
+
+    :host([embedded]) {
+      height: 100%;
+      border-left: 0;
     }
 
     .drawer {
@@ -131,6 +137,19 @@ class ChatDrawer extends DatastarLit(LitElement) {
       margin-left: var(--lv-space-xs);
     }
 
+    :host([embedded]) .title,
+    :host([embedded]) .close-action {
+      display: none;
+    }
+
+    :host([embedded]) .toolbar {
+      justify-content: flex-end;
+    }
+
+    :host([embedded]) .header {
+      padding-block-start: var(--lv-space-sm);
+    }
+
     .context {
       display: grid;
 			gap: var(--lv-space-sm);
@@ -190,8 +209,18 @@ class ChatDrawer extends DatastarLit(LitElement) {
         border-left: 0;
       }
 
+      :host([open][embedded]) {
+        position: static;
+        width: 100%;
+        height: 100%;
+      }
+
       .drawer {
         width: 100vw;
+      }
+
+      :host([embedded]) .drawer {
+        width: 100%;
       }
     }
 

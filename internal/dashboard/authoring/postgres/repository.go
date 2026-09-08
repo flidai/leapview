@@ -1082,6 +1082,9 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx Tx, lifecycle aut
 	if commandID == "" {
 		return fmt.Errorf("dashboard authoring audit command identity is required")
 	}
+	if !strings.HasSuffix(intent.Action, ".draft_created") && commandID != strings.TrimSpace(intent.EventID) {
+		return fmt.Errorf("dashboard authoring command and audit event identities must match")
+	}
 	revisionNumber, err := checkedInt64(revision.Number, "audit revision number")
 	if err != nil {
 		return err

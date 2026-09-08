@@ -33,7 +33,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if variant.Series != nil && visualType != document.DashboardVisualTypeCombo {
 			return nil, fmt.Errorf("presentation.series is only supported for combo visuals")
 		}
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -87,7 +87,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.PointDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, nil)
+		base, err := lowerBasePresentation(variant.Legend, variant.Labels, nil, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -133,7 +133,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.ProportionalDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +174,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		out.Sort = variant.Sort
 		return out, nil
 	case *document.HierarchyDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, nil)
+		base, err := lowerBasePresentation(variant.Legend, variant.Labels, nil, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -206,7 +206,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.PolarDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -231,7 +231,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.GeographicDashboardPresentation:
-		base, err := lowerBasePresentation(nil, variant.Labels, nil)
+		base, err := lowerBasePresentation(nil, variant.Labels, nil, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -446,8 +446,8 @@ func validateCanonicalComboSeries(value document.DashboardPresentation, query Lo
 	return nil
 }
 
-func lowerBasePresentation(legend *document.DashboardLegendPosition, labels *document.DashboardLabelPolicy, units *visualizationir.VisualizationDisplayUnits) (visualizationir.VisualizationPresentation, error) {
-	out := visualizationir.VisualizationPresentation{Legend: visualizationir.VisualizationLegendPositionBottom, LabelPolicy: defaultCanonicalLabelPolicy(), DisplayUnits: units}
+func lowerBasePresentation(legend *document.DashboardLegendPosition, labels *document.DashboardLabelPolicy, units *visualizationir.VisualizationDisplayUnits, axisVisible *bool) (visualizationir.VisualizationPresentation, error) {
+	out := visualizationir.VisualizationPresentation{Legend: visualizationir.VisualizationLegendPositionBottom, LabelPolicy: defaultCanonicalLabelPolicy(), AxisVisible: axisVisible, DisplayUnits: units}
 	if legend != nil {
 		value, err := lowerLegend(*legend)
 		if err != nil {

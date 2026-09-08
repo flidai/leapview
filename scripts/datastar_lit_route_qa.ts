@@ -255,6 +255,12 @@ async function verifyKeyboardAccessibilityJourney(): Promise<void> {
     await page.waitForSelector('lv-catalog-page')
     await assertDocumentFocusReset(page, 'Insights route')
 
+    // A production catalog can contain hundreds of dashboards. Exercise the
+    // keyboard-search path before locating a specific row so this journey is
+    // independent of catalog cardinality and row ordering.
+    const dashboardSearch = page.getByRole('searchbox', { name: 'Search dashboards' })
+    await focusByTab(page, dashboardSearch, 'Dashboard catalog search')
+    await page.keyboard.type('Visual Showcase')
     const dashboardLink = page.locator('a[href="/dashboards/dashboard:visual-showcase"]')
     await focusByTab(page, dashboardLink, 'Visual Showcase dashboard link')
     await page.keyboard.press('Enter')

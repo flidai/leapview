@@ -1008,6 +1008,116 @@
       }
     },
     {
+      "name": "edit_dashboard_source",
+      "description": "Apply atomic exact-text replacements to one canonical dashboard YAML revision. Each oldText must match exactly once; invalid, ambiguous, overlapping, or stale edits leave the draft unchanged.",
+      "authzMode": "privilege",
+      "privilege": "RESOURCE_EDIT",
+      "effect": "write",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "source"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboardId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "draftId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "edits": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "newText": {
+                  "type": "string"
+                },
+                "oldText": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "newText",
+                "oldText"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "expectedRevision": {
+            "additionalProperties": false,
+            "properties": {
+              "contentHash": {
+                "type": "string"
+              },
+              "number": {
+                "type": "integer"
+              },
+              "revisionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contentHash",
+              "number",
+              "revisionId"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "dashboardId",
+          "draftId",
+          "edits",
+          "expectedRevision"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "changedBlocks": {
+            "type": "integer"
+          },
+          "diff": {
+            "type": "string"
+          },
+          "lifecycle": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "revision": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "yaml": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "changedBlocks",
+          "diff",
+          "lifecycle",
+          "revision",
+          "yaml"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "execute_dashboard_command",
       "description": "Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision. Actor and agent provenance are server-bound.",
       "authzMode": "privilege",
@@ -5031,9 +5141,9 @@
                 },
                 "targets": {
                   "items": {
-                    "maxLength": 128,
+                    "maxLength": 257,
                     "minLength": 1,
-                    "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(?:/[A-Za-z_][A-Za-z0-9_-]*)?$",
                     "type": "string"
                   },
                   "type": "array"
@@ -6337,6 +6447,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -7713,6 +7827,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -9139,6 +9257,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -9805,6 +9927,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -10453,6 +10579,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -11120,6 +11250,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -12677,6 +12811,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -13253,6 +13391,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -14710,6 +14852,10 @@
               },
               "title": {
                 "type": "string"
+              },
+              "titleVisible": {
+                "description": "Controls whether the authored title is shown in the visual frame.",
+                "type": "boolean"
               },
               "type": {
                 "enum": [
@@ -16315,6 +16461,80 @@
           "summary",
           "title",
           "type"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "read_dashboard_source",
+      "description": "Read the exact current private dashboard draft as canonical YAML for a subsequent source edit.",
+      "authzMode": "privilege",
+      "privilege": "RESOURCE_EDIT",
+      "effect": "read",
+      "operationId": "manual",
+      "defaults": {},
+      "tags": [
+        "dashboard",
+        "authoring",
+        "source"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboardId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboardId"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dashboardId": {
+            "type": "string"
+          },
+          "draftId": {
+            "type": "string"
+          },
+          "revision": {
+            "additionalProperties": false,
+            "properties": {
+              "contentHash": {
+                "type": "string"
+              },
+              "number": {
+                "type": "integer"
+              },
+              "revisionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contentHash",
+              "number",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          "yaml": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboardId",
+          "draftId",
+          "revision",
+          "yaml"
         ],
         "type": "object"
       }

@@ -25,7 +25,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")

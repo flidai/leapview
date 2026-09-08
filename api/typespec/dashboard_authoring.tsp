@@ -175,13 +175,32 @@ model DashboardAuthoringMetadataIntent {
   appearance?: LeapViewDashboard.DashboardAppearance;
 }
 
+/** Narrow browser-builder metadata edits; broader metadata remains API-only. */
+model DashboardAuthoringUpdateDashboardMetadataIntent {
+  title?: string;
+  description?: string;
+}
+
+model DashboardAuthoringUpdatePageMetadataIntent {
+  pageId: string;
+  title?: string;
+  description?: string;
+}
+
+model DashboardAuthoringUpdateHeaderMetadataIntent {
+  pageId: string;
+  headerId: string;
+  title?: string;
+  description?: string;
+}
+
 model DashboardAuthoringUpsertVisualIntent {
   visualId: string;
   visual: LeapViewDashboard.DashboardVisual;
 }
 
 model DashboardAuthoringRemovePageIntent { pageId: string; }
-model DashboardAuthoringRemoveVisualIntent { visualId: string; }
+model DashboardAuthoringRemoveVisualIntent { pageId?: string; visualId: string; }
 model DashboardAuthoringSetLayoutIntent {
   pageId: string;
   layout?: LeapViewDashboard.DashboardLayoutOverride;
@@ -196,12 +215,84 @@ model DashboardAuthoringSetInteractionIntent {
   interaction?: LeapViewDashboard.DashboardInteraction;
   clear?: boolean;
 }
+model DashboardAuthoringSetInteractionTargetIntent {
+  pageId: string;
+  visualId: string;
+  targetVisualId: string;
+  effect: "filter" | "highlight" | "none";
+}
 
 model DashboardAuthoringAssignFieldIntent {
   pageId: string;
   visualId: string;
   fieldId: string;
   role: "metric" | "dimension" | "detail";
+}
+
+model DashboardAuthoringSetVisualTypeIntent {
+  pageId: string;
+  visualId: string;
+  type: LeapViewDashboard.DashboardVisualType;
+}
+
+model DashboardAuthoringSetVisualQueryOptionsIntent {
+  pageId: string;
+  visualId: string;
+  fieldId?: string;
+  fieldRole?: "metric" | "dimension" | "detail";
+  `alias`?: LeapViewDashboard.DashboardResultField;
+  grain?: LeapViewDashboard.DashboardTimeGrain;
+  clearGrain?: boolean;
+  sort?: LeapViewDashboard.DashboardSort[];
+  limit?: int32;
+  clearLimit?: boolean;
+}
+
+model DashboardAuthoringRenameVisualIntent {
+  pageId: string;
+  visualId: string;
+  title: string;
+}
+
+model DashboardAuthoringDuplicateVisualIntent {
+  pageId: string;
+  visualId: string;
+  newVisualId?: string;
+  newComponentId?: string;
+  title?: string;
+}
+
+model DashboardAuthoringRestoreRevisionIntent {
+  targetRevision: DashboardAuthoringRevisionToken;
+}
+
+model DashboardAuthoringUpdateVisualFormatIntent {
+  pageId: string;
+  visualId: string;
+  title?: string;
+  titleVisible?: boolean;
+  legendVisible?: boolean;
+  axisVisible?: boolean;
+  dataLabelsVisible?: boolean;
+  formatKey?: string;
+  formatValue?: string;
+}
+
+model DashboardAuthoringRemoveFieldIntent {
+  pageId: string;
+  visualId: string;
+  fieldId: string;
+  role: "metric" | "dimension" | "detail";
+}
+
+model DashboardAuthoringMoveFieldIntent {
+  pageId: string;
+  visualId: string;
+  fieldId: string;
+  role: "metric" | "dimension" | "detail";
+  targetRole?: "metric" | "dimension" | "detail";
+  direction?: string;
+  index?: int32;
 }
 
 @discriminator("kind")
@@ -217,6 +308,21 @@ model DashboardAuthoringCommandRequest {
 model DashboardAuthoringMetadataCommand extends DashboardAuthoringCommandRequest {
   kind: "metadata";
   metadata: DashboardAuthoringMetadataIntent;
+}
+
+model DashboardAuthoringUpdateDashboardMetadataCommand extends DashboardAuthoringCommandRequest {
+  kind: "updateDashboardMetadata";
+  updateDashboardMetadata: DashboardAuthoringUpdateDashboardMetadataIntent;
+}
+
+model DashboardAuthoringUpdatePageMetadataCommand extends DashboardAuthoringCommandRequest {
+  kind: "updatePageMetadata";
+  updatePageMetadata: DashboardAuthoringUpdatePageMetadataIntent;
+}
+
+model DashboardAuthoringUpdateHeaderMetadataCommand extends DashboardAuthoringCommandRequest {
+  kind: "updateHeaderMetadata";
+  updateHeaderMetadata: DashboardAuthoringUpdateHeaderMetadataIntent;
 }
 
 model DashboardAuthoringSetVisibilityCommand extends DashboardAuthoringCommandRequest {
@@ -237,6 +343,46 @@ model DashboardAuthoringAddVisualCommand extends DashboardAuthoringCommandReques
 model DashboardAuthoringAssignFieldCommand extends DashboardAuthoringCommandRequest {
   kind: "assignField";
   assignField: DashboardAuthoringAssignFieldIntent;
+}
+
+model DashboardAuthoringSetVisualTypeCommand extends DashboardAuthoringCommandRequest {
+  kind: "setVisualType";
+  setVisualType: DashboardAuthoringSetVisualTypeIntent;
+}
+
+model DashboardAuthoringSetVisualQueryOptionsCommand extends DashboardAuthoringCommandRequest {
+  kind: "setVisualQueryOptions";
+  setVisualQueryOptions: DashboardAuthoringSetVisualQueryOptionsIntent;
+}
+
+model DashboardAuthoringRenameVisualCommand extends DashboardAuthoringCommandRequest {
+  kind: "renameVisual";
+  renameVisual: DashboardAuthoringRenameVisualIntent;
+}
+
+model DashboardAuthoringDuplicateVisualCommand extends DashboardAuthoringCommandRequest {
+  kind: "duplicateVisual";
+  duplicateVisual: DashboardAuthoringDuplicateVisualIntent;
+}
+
+model DashboardAuthoringRestoreRevisionCommand extends DashboardAuthoringCommandRequest {
+  kind: "restoreRevision";
+  restoreRevision: DashboardAuthoringRestoreRevisionIntent;
+}
+
+model DashboardAuthoringUpdateVisualFormatCommand extends DashboardAuthoringCommandRequest {
+  kind: "updateVisualFormat";
+  updateVisualFormat: DashboardAuthoringUpdateVisualFormatIntent;
+}
+
+model DashboardAuthoringRemoveFieldCommand extends DashboardAuthoringCommandRequest {
+  kind: "removeField";
+  removeField: DashboardAuthoringRemoveFieldIntent;
+}
+
+model DashboardAuthoringMoveFieldCommand extends DashboardAuthoringCommandRequest {
+  kind: "moveField";
+  moveField: DashboardAuthoringMoveFieldIntent;
 }
 
 model DashboardAuthoringUpsertPageCommand extends DashboardAuthoringCommandRequest {
@@ -272,6 +418,11 @@ model DashboardAuthoringSetFiltersCommand extends DashboardAuthoringCommandReque
 model DashboardAuthoringSetInteractionCommand extends DashboardAuthoringCommandRequest {
   kind: "setInteraction";
   setInteraction: DashboardAuthoringSetInteractionIntent;
+}
+
+model DashboardAuthoringSetInteractionTargetCommand extends DashboardAuthoringCommandRequest {
+  kind: "setInteractionTarget";
+  setInteractionTarget: DashboardAuthoringSetInteractionTargetIntent;
 }
 
 model DashboardAuthoringPublishCommand extends DashboardAuthoringCommandRequest {
@@ -660,6 +811,7 @@ interface DashboardAuthoring {
   @route("/drafts")
   @post
   @apigen.authz(#{ mode: "authenticated" })
+  @apigen.ui("dashboard.builder.create")
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_created", guarantee: "transactional", failures: #[] })
   createDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @body body: DashboardAuthoringCreateRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
 
@@ -675,6 +827,7 @@ interface DashboardAuthoring {
   @route("/forks")
   @post
   @apigen.authz(#{ mode: "authenticated" })
+  @apigen.ui("dashboard.builder.fork")
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_forked", guarantee: "transactional", failures: #[] })
   forkDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @body body: DashboardAuthoringForkRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
 
