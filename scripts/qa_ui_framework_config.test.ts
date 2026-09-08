@@ -9,6 +9,17 @@ test('UI framework QA gives the managed dev task its full readiness budget', asy
   expect(source).toContain("LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts)")
 })
 
+test('managed UI QA isolates CLI credentials and candidate checkpoints for startup and publication', async () => {
+  const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
+  expect(source).toContain('const managedCLIEnv = { LEAPVIEW_CLI_CONFIG: `${qaHome}/cli.json` }')
+  const startup = source.slice(source.indexOf("devTask = spawn(['task', 'dev']"), source.indexOf('void devTask.exited'))
+  expect(startup).toContain('...managedCLIEnv,')
+  const publication = source.slice(source.indexOf('async function deployManagedProject'), source.indexOf('async function waitForManagedServer'))
+  expect(publication).toContain('await run(command, managedCLIEnv)')
+  expect(publication).not.toContain('await run(command)')
+  expect(source).toContain('env: { ...Bun.env, ...extraEnv }')
+})
+
 test('UI framework QA waits for asynchronous publication activation', async () => {
   const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
 
