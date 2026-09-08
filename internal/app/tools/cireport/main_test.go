@@ -278,3 +278,96 @@ func TestCurrentPRPlanProvenanceAndMatrixReporting(t *testing.T) {
 		t.Fatal("stale artifact trusted")
 	}
 }
+
+func TestHostedTestedMergeCandidateProvenance(t *testing.T) {
+	const base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const merge = "cccccccccccccccccccccccccccccccccccccccc"
+	for _, tc := range []struct {
+		name, event, runHead, planHead, planBase, planRun, planAttempt string
+		parents                                                        []string
+		missingPR, unavailable, wrongCommit                            bool
+		wantTrusted                                                    bool
+	}{
+		{name: "PR merge commit", event: "pull_request", parents: []string{base, head}, wantTrusted: true},
+		{name: "stack cumulative diff base differs from merge parent", event: "pull_request", planBase: "stack-ancestor", parents: []string{base, head}, wantTrusted: true},
+		{name: "wrong PR head", event: "pull_request", parents: []string{base, base}},
+		{name: "wrong target base", event: "pull_request", parents: []string{merge, head}},
+		{name: "reversed parents", event: "pull_request", parents: []string{head, base}},
+		{name: "single parent", event: "pull_request", parents: []string{head}},
+		{name: "missing PR metadata", event: "pull_request", missingPR: true, parents: []string{base, head}},
+		{name: "unavailable merge commit", event: "pull_request", unavailable: true},
+		{name: "wrong resolved commit", event: "pull_request", wrongCommit: true, parents: []string{base, head}},
+		{name: "stale run", event: "pull_request", planRun: "122", parents: []string{base, head}},
+		{name: "stale attempt", event: "pull_request", planAttempt: "2", parents: []string{base, head}},
+		{name: "merge queue exact SHA", event: "merge_group", runHead: merge, wantTrusted: true},
+		{name: "merge queue cannot accept PR parent relationship", event: "merge_group", parents: []string{base, head}},
+		{name: "PR direct head checkout remains supported", event: "pull_request", planHead: head, wantTrusted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := platformci.PlanChanges(platformci.Input{Event: "pull_request", PullRequestNumber: 1}, []platformci.Change{{Status: "M", Paths: []string{"README.md"}}})
+			plan.PR.Head, plan.PR.Base, plan.PR.RunID, plan.PR.Attempt = merge, base, "123", "1"
+			for target, value := range map[*string]string{&plan.PR.Head: tc.planHead, &plan.PR.Base: tc.planBase, &plan.PR.RunID: tc.planRun, &plan.PR.Attempt: tc.planAttempt} {
+				if value != "" {
+					*target = value
+				}
+			}
+			runHead := head
+			if tc.runHead != "" {
+				runHead = tc.runHead
+			}
+			prJSON := fmt.Sprintf(`[{"base":{"sha":%q},"head":{"sha":%q}}]`, base, head)
+			if tc.missingPR {
+				prJSON = `[]`
+			}
+			var run githubRun
+			if err := json.Unmarshal([]byte(fmt.Sprintf(`{"id":123,"run_attempt":1,"event":%q,"head_sha":%q,"pull_requests":%s}`, tc.event, runHead, prJSON)), &run); err != nil {
+				t.Fatal(err)
+			}
+			run.Workflow = "ci.yml"
+			data, _ := json.Marshal(plan)
+			var archive bytes.Buffer
+			writer := zip.NewWriter(&archive)
+			file, _ := writer.Create("ci-plan.json")
+			_, _ = file.Write(data)
+			_ = writer.Close()
+			api := client{http: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/jobs"):
+					return jsonResponse(`{"jobs":[]}`)
+				case strings.HasSuffix(r.URL.Path, "/artifacts"):
+					return jsonResponse(`{"artifacts":[{"name":"ci-plan","archive_download_url":"https://api.github.com/archive"}]}`)
+				case r.URL.Path == "/archive":
+					return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(archive.Bytes()))}, nil
+				case strings.Contains(r.URL.Path, "/commits/"):
+					if tc.event != "pull_request" {
+						t.Fatal("non-PR candidate attempted merge-parent fallback")
+					}
+					if tc.unavailable {
+						return &http.Response{StatusCode: 404, Status: "404 Not Found", Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+					}
+					parents := make([]map[string]string, 0, len(tc.parents))
+					for _, sha := range tc.parents {
+						parents = append(parents, map[string]string{"sha": sha})
+					}
+					sha := merge
+					if tc.wrongCommit {
+						sha = head
+					}
+					body, _ := json.Marshal(map[string]any{"sha": sha, "parents": parents})
+					return jsonResponse(string(body))
+				default:
+					t.Fatalf("unexpected request %s", r.URL)
+					return nil, nil
+				}
+			})}}
+			got, err := api.healthRun(context.Background(), "owner/repo", run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (got.PlanIssue == "") != tc.wantTrusted {
+				t.Fatalf("trusted=%v, want %v; issue=%q", got.PlanIssue == "", tc.wantTrusted, got.PlanIssue)
+			}
+		})
+	}
+}

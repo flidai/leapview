@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -20,6 +21,11 @@ import (
 )
 
 type githubRun struct {
+	TestedSHA    string `json:"-"`
+	PullRequests []struct {
+		Base githubRevision `json:"base"`
+		Head githubRevision `json:"head"`
+	} `json:"pull_requests"`
 	HeadSHA    string    `json:"head_sha"`
 	ID         int64     `json:"id"`
 	Workflow   string    `json:"-"`
@@ -29,6 +35,10 @@ type githubRun struct {
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 	Conclusion string    `json:"conclusion"`
+}
+
+type githubRevision struct {
+	SHA string `json:"sha"`
 }
 
 type githubJob struct {
@@ -196,7 +206,41 @@ func (c *client) healthRun(ctx context.Context, repo string, run githubRun) (pla
 	if err != nil {
 		return platformci.HealthRun{}, err
 	}
+	run.TestedSHA = c.testedCandidate(ctx, repo, run, plan)
 	return observedRun(run, jobs, plan), nil
+}
+
+// PR run metadata names the source head, while checkout tests GitHub's merge
+// commit. Verify the immutable candidate's two parents against the PR metadata
+// attached to this run; never resolve today's mutable refs/pull/N/merge.
+func (c *client) testedCandidate(ctx context.Context, repo string, run githubRun, plan platformci.Plan) string {
+	if plan.PR == nil || run.Event != "pull_request" || plan.PR.Head == run.HeadSHA {
+		return run.HeadSHA
+	}
+	if run.HeadSHA == "" || len(run.PullRequests) == 0 || platformci.ValidatePRPlan(plan) != nil || plan.PR.RunID != fmt.Sprint(run.ID) || plan.PR.Attempt != fmt.Sprint(run.Attempt) {
+		return run.HeadSHA
+	}
+	var commit struct {
+		SHA     string           `json:"sha"`
+		Parents []githubRevision `json:"parents"`
+	}
+	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/commits/%s", repo, url.PathEscape(plan.PR.Head))
+	if err := c.getJSON(ctx, endpoint, &commit); err != nil {
+		// Unavailable candidate evidence leaves the plan unverified, without
+		// discarding observed job results or inventing a selection.
+		return run.HeadSHA
+	}
+	if commit.SHA != plan.PR.Head || len(commit.Parents) != 2 || commit.Parents[1].SHA != run.HeadSHA {
+		return run.HeadSHA
+	}
+	for _, pr := range run.PullRequests {
+		if pr.Head.SHA == run.HeadSHA && pr.Base.SHA != "" && pr.Base.SHA == commit.Parents[0].SHA {
+			// plan.PR.Base is a diff base, potentially a cumulative stack
+			// ancestor; it need not be this merge commit's first parent.
+			return commit.SHA
+		}
+	}
+	return run.HeadSHA
 }
 
 func observedRun(run githubRun, jobs []githubJob, plan platformci.Plan) platformci.HealthRun {
@@ -230,7 +274,11 @@ func observedRun(run githubRun, jobs []githubJob, plan platformci.Plan) platform
 	if run.Attempt > 1 && plan.Version != 0 && plan.PR == nil {
 		planIssue = "plan artifact is not bound to the latest attempt"
 	}
-	if plan.PR != nil && (plan.PR.Head != run.HeadSHA || plan.PR.RunID != fmt.Sprint(run.ID) || plan.PR.Attempt != fmt.Sprint(run.Attempt)) {
+	candidate := run.HeadSHA
+	if run.Event == "pull_request" && run.TestedSHA != "" {
+		candidate = run.TestedSHA
+	}
+	if plan.PR != nil && (plan.PR.Head != candidate || plan.PR.RunID != fmt.Sprint(run.ID) || plan.PR.Attempt != fmt.Sprint(run.Attempt)) {
 		planIssue = "plan provenance does not match run/attempt/candidate"
 	}
 	deferred := run.Event == "pull_request" && deferredStackRun(jobs)
