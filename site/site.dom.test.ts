@@ -2483,13 +2483,15 @@ test('visual showcase renders every supported visual type', async () => {
     const chartLabelPolicies = await page.locator('lv-site-visual-showcase').evaluate((element) =>
       Array.from(element.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []).flatMap((host: any) => {
         const { kind, mark, presentation } = host.envelope?.spec ?? {}
-        const supportsDataLabels = ['cartesian', 'point', 'proportional', 'hierarchy'].includes(kind) || (kind === 'polar' && mark === 'gauge')
-        return supportsDataLabels ? [{ visualID: host.envelope?.visualID, density: presentation?.labelPolicy?.density }] : []
+        const hasChartLabelPolicy = ['cartesian', 'point', 'proportional', 'hierarchy'].includes(kind) || (kind === 'polar' && mark === 'gauge')
+        return hasChartLabelPolicy ? [{ visualID: host.envelope?.visualID, density: presentation?.labelPolicy?.density }] : []
       }),
     )
     expect(chartLabelPolicies.length).toBeGreaterThan(0)
     expect(chartLabelPolicies.filter(({ density }) => density !== 'automatic' && density !== 'hidden')).toEqual([])
     expect(chartLabelPolicies.filter(({ density }) => density === 'hidden').map(({ visualID }) => visualID).sort()).toEqual([
+      'delivery_distribution',
+      'market_candlestick',
       'revenue',
       'revenue_line',
       'revenue_orders_combo',
