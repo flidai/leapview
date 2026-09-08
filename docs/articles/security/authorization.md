@@ -24,6 +24,14 @@ Choose the narrowest object and privilege that supports the task. Avoid accumula
 
 ## Data policies
 
+Standalone DataPolicy authoring is deprecated. New creation through the public
+DataPolicy API is restricted; this is not a complete migration or deletion of
+the legacy compiler/runtime. Existing policy-bearing artifacts keep their
+compatibility enforcement. Do not remove them or silently translate expressions
+or masks. The replacement authoring contract is SemanticModel access grants and
+typed access filters, but protected production activation remains gated pending
+its evidence and verification integration.
+
 Data policies constrain analytical access beyond navigation or query permission. A row-filter policy limits eligible records; a column-mask policy changes exposure of a protected column. Policies target a securable object and may target a subject.
 
 Policy expressions are part of the governed server query boundary. Apply them consistently to browser dashboards, headless API queries, agent tools, preview, and other data surfaces. Do not rely on hiding a dashboard component or browser column as a security control.

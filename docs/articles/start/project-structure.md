@@ -33,6 +33,12 @@ There is no authored `kind: Project` manifest or include registry. Groups, role 
 
 ## Resource layers
 
+The retained `access/` DataPolicy loader is a deprecated compatibility boundary,
+not an additional supported authoring kind. New public-API creation is restricted.
+Legacy source loading and historical artifacts are not removed in the activation
+readiness layer; a complete policy migration remains separate work. Do not drop
+an existing policy before a qualified semantic-access replacement is available.
+
 - **Connections** define how LeapView reaches physical data.
 - **Sources** use a connection and provide stable logical names, paths, and field definitions.
 - **Model tables** transform permitted sources into reusable analytical tables.

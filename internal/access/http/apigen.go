@@ -110,6 +110,9 @@ func (d *APIGenDispatcher) ListEffectiveCapabilities(w stdhttp.ResponseWriter, r
 func (d *APIGenDispatcher) CheckAuthorizationBatch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	d.handler.CheckAuthorizationBatch(w, r)
 }
+func (d *APIGenDispatcher) CreateDataPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenCreateDataPolicyHeaders) {
+	d.handler.CreateDataPolicy(w, r)
+}
 func (d *APIGenDispatcher) ListGrants(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListGrantsParams) {
 	d.handler.ListGrants(w, r)
 }

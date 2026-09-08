@@ -65,6 +65,8 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.ListEffectiveCapabilities(w, r)
 	case "checkAuthorizationBatch":
 		m.handler.CheckAuthorizationBatch(w, r)
+	case "createDataPolicy":
+		m.handler.CreateDataPolicy(w, r)
 	case "listGrants":
 		m.handler.ListGrants(w, r)
 	case "createGrant":
