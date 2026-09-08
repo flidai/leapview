@@ -28,7 +28,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
         left: compactInset(source.left, 8),
         right: compactInset(source.right, 8),
         top: compactInset(source.top, 10),
-        bottom: compactBottomInset(source.bottom, compactBottom),
+        bottom: compactBottomInset(source.bottom, compactBottom, option.visualMap !== undefined),
       } : {}),
     }
   })
@@ -44,7 +44,8 @@ function compactInset(value: unknown, fallback: number): unknown {
   return fallback
 }
 
-function compactBottomInset(value: unknown, fallback: number): unknown {
+function compactBottomInset(value: unknown, fallback: number, preserveExisting: boolean): unknown {
+  if (preserveExisting && typeof value === 'number' && Number.isFinite(value)) return Math.max(value, fallback)
   if (typeof value === 'string') return value
   return fallback
 }

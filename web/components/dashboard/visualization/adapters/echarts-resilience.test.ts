@@ -49,7 +49,7 @@ test('heatmap options emit a grid so compact responsive layout is applied', () =
   heatmap.spec.y = [heatmap.spec.y[0], { dataset: 'primary', field: 'value' }]
   const option = echartsOption(heatmap, defaultRendererContext) as Record<string, any>
   expect(option.grid).toBeDefined()
-  expect(responsiveEChartsPatch(option, 320, 240).grid).toMatchObject({ bottom: 12 })
+  expect(responsiveEChartsPatch(option, 320, 240).grid).toMatchObject({ bottom: 64 })
 })
 
 test('ECharts view-state capture keeps supported zoom/pan fields and drops library internals', () => {

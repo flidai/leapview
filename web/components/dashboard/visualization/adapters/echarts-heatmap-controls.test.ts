@@ -1,9 +1,11 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
-import { echartsOption, heatmapFocusDataZoom, heatmapFocusZoomEnabled } from './echarts'
+import { echartsOption, heatmapFocusDataZoom, heatmapFocusZoomEnabled, responsiveEChartsPatch } from './echarts'
 import { constrainEChartsLabelToDataRect, echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
+import visualDocumentation from '../../../../../docs/visuals/examples.gen.json'
 
 test('ECharts label policy truncates by grapheme and preserves selected and threshold labels', () => {
   const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
@@ -86,6 +88,31 @@ test('ECharts heatmap focus requires initialized generated zoom controls', () =>
   expect(heatmapFocusZoomEnabled(envelope, false)).toBe(false)
 })
 
+test('compact generated heatmap keeps rotated categories above its visual map', () => {
+  const document = (visualDocumentation as any).documents['visuals/heatmap']
+  const envelope = structuredClone(document.find((candidate: any) => candidate.visualID === 'category_status_heatmap')) as VisualizationEnvelope
+  const source = echartsOption(envelope, defaultRendererContext) as Record<string, any>
+  source.dataZoom = heatmapFocusDataZoom(true)
+  const option = { ...source, ...responsiveEChartsPatch(source, 358, 411) }
+  expect(option.grid.bottom).toBe(96)
+
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 358, height: 411 })
+  try {
+    chart.setOption(option, { notMerge: true, lazyUpdate: false })
+    chart.renderToSVGString()
+    const label = chart.getZr().storage.getDisplayList().find((item: any) => item.type === 'tspan' && item.style?.text === 'Electronics')
+    const visualMap = chart.getModel().findComponents({ mainType: 'visualMap' })[0]
+    const visualMapGroup = visualMap ? (chart as any).getViewOfComponentModel(visualMap)?.group : undefined
+    expect(label).toBeDefined()
+    expect(visualMapGroup).toBeDefined()
+    const labelBounds = globalBounds(label)
+    const visualMapBounds = globalBounds(visualMapGroup)
+    expect(labelBounds.y + labelBounds.height).toBeLessThanOrEqual(visualMapBounds.y)
+  } finally {
+    chart.dispose()
+  }
+})
+
 function cartesianFixture(mark: string, columns = ['label', 'value']): VisualizationEnvelope {
   const fields = columns.map((id, index) => ({ id, role: index === 0 ? 'dimension' : 'metric', dataType: index === 0 || id === 'row' ? 'string' : 'decimal', nullable: false, label: id }))
   const y = columns.slice(1).map((field) => ({ dataset: 'primary', field }))
@@ -95,4 +122,11 @@ function cartesianFixture(mark: string, columns = ['label', 'value']): Visualiza
     spec: { kind: 'cartesian', title: mark, mark, datasets: [{ id: 'primary', fields }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], x: { dataset: 'primary', field: 'label' }, y, presentation: { legend: 'bottom', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: true, stacked: true, showSymbols: false, dataZoom: true, area: mark === 'area', step: true, symbolSize: 12, labelPosition: 'top', orientation: mark === 'bar' ? 'horizontal' : 'vertical', histogramBins: mark === 'histogram' ? 10 : undefined } },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns, rows: [row], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
+}
+
+function globalBounds(item: any): { x: number; y: number; width: number; height: number } {
+  const bounds = item.getBoundingRect().clone()
+  const transform = item.getComputedTransform?.() ?? item.transform
+  if (transform) bounds.applyTransform(transform)
+  return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
 }
