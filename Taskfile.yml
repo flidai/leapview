@@ -1471,7 +1471,7 @@ tasks:
       - task: ci:full:extras
 
   ci:full:extras:
-    desc: Run merge-only validation after the fast CI contract has passed
+    desc: Run merge-only validation on prepared inputs; hosted merge CI runs this alongside base lanes
     cmds:
       - task: desktop:test
       - go vet ./...
