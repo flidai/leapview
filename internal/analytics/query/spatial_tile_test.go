@@ -222,6 +222,61 @@ func TestSpatialTileClusterRadiusBounds(t *testing.T) {
 	}
 }
 
+func TestSpatialTileClusterRadiusUsesQuantizedGlobalBuckets(t *testing.T) {
+	planner := mustNewCompiledPlanner(t, testModel())
+	tests := []struct {
+		name        string
+		radius      *int32
+		globalCells int
+		members     bool
+	}{
+		{name: "radius 40", radius: int32ptr(40), globalCells: 96, members: true},
+		{name: "nearby radius 41", radius: int32ptr(41), globalCells: 96, members: true},
+		{name: "radius 128", radius: int32ptr(128), globalCells: 32, members: true},
+		{name: "radius 129 saturates", radius: int32ptr(129), globalCells: 16, members: true},
+		{name: "radius 512 saturates", radius: int32ptr(512), globalCells: 16, members: true},
+		{name: "zero uses transport cell fallback", globalCells: 80},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := SpatialTileRequest{
+				Dataset: "orders", Metrics: []Field{{Field: "revenue", Alias: "revenue"}},
+				Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
+				Zoom: 4, TargetZoom: 6, MetatileX: 4, MetatileY: 8, MetatileSize: 4, CellPixels: 48, Buffer: 768,
+			}
+			if test.radius != nil {
+				request.Cluster = &SpatialClusterPolicy{Enabled: true, Radius: *test.radius, MaximumZoom: 14, MinimumPoints: 3, ShowCount: true}
+			}
+			plan, err := planner.PlanSpatialTileAggregate(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			token := fmt.Sprintf("* %d)))", test.globalCells)
+			aggregateStart := strings.Index(plan.SQL, "p_aggregate_0 AS")
+			aggregateEnd := strings.Index(plan.SQL, "p_sort_limit AS")
+			if aggregateStart < 0 || aggregateEnd <= aggregateStart || !strings.Contains(plan.SQL[aggregateStart:aggregateEnd], token) {
+				t.Fatalf("aggregate bucket token %q missing from PlanIR SQL:\n%s", token, plan.SQL)
+			}
+			memberStart := strings.Index(plan.SQL, "member_buckets AS")
+			if test.members {
+				if memberStart < 0 {
+					t.Fatalf("member bucket branch missing from PlanIR SQL:\n%s", plan.SQL)
+				}
+				memberEnd := strings.Index(plan.SQL[memberStart:], "tile_features AS")
+				if memberEnd < 0 || !strings.Contains(plan.SQL[memberStart:memberStart+memberEnd], token) {
+					t.Fatalf("member bucket token %q missing from PlanIR SQL:\n%s", token, plan.SQL)
+				}
+			} else if memberStart >= 0 {
+				t.Fatalf("zero cluster radius unexpectedly created a member bucket branch:\n%s", plan.SQL)
+			}
+		})
+	}
+}
+
+func int32ptr(value int32) *int32 {
+	return &value
+}
+
 func TestSpatialTilePlansCrossDatasetCoordinatesWithoutTableScope(t *testing.T) {
 	model := testModel()
 	customers := model.Tables["customers"]

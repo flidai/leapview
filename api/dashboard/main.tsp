@@ -917,6 +917,12 @@ model DashboardMapLineStyle {
 
 model DashboardMapCluster {
   enabled?: boolean;
+  /**
+   * Approximate CSS-pixel clustering target for tiled maps. The server uses a
+   * globally aligned grid with max(1, floor(256 / radius)) cells per tile;
+   * radii 129–512 therefore share one cell per tile. This does not promise
+   * pixel-identical cluster membership between inline and tiled data.
+   */
   @minValue(1)
   @maxValue(512)
   radius?: int32;

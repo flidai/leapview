@@ -72,13 +72,17 @@ Bind latitude and longitude dimensions to semantic fields. The compiler owns
 the geographic renderer, tile policy, and point styling.
 
 Tiled point layers keep the authored `cluster` policy as renderer-neutral
-contract data. `radius` is the clustering radius in CSS pixels (1–512),
+contract data. `radius` is an approximate CSS-pixel clustering target (1–512),
+not an exact radial distance. Tiled aggregation uses a globally aligned grid
+with `max(1, floor(256 / radius))` cells per tile, so the effective cell width
+is `256 / max(1, floor(256 / radius))` CSS pixels and radii 129–512 share one
+cell per tile. The transport cell radius remains separate; cluster membership
+is not promised to be pixel-identical between inline and tiled data.
 `maximumZoom` is the last zoom at which clusters may be served,
 `minimumPoints` controls the cluster threshold, and `showCount` labels a
 cluster with its contained coordinate count. These settings are shared by
 point layers on one tiled source; incompatible policies are rejected during
-compilation. The transport cell radius is independent and is not silently
-changed by the authored cluster radius. `maximumZoom` must be below the
+compilation. `maximumZoom` must be below the
 tiled terminal zoom (18); at the terminal zoom and above there is no valid
 `maximumZoom + 1` raw transition.
 
