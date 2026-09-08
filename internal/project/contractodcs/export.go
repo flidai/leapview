@@ -1,21 +1,19 @@
 package contractodcs
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"regexp"
 	"sort"
 	"strings"
 
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
-	"github.com/flidai/leapview/internal/project/contractpublication"
 	"github.com/flidai/leapview/internal/project/contractprojection"
+	"github.com/flidai/leapview/internal/project/contractpublication"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-var odcsShorthandReference = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$`)
+var odcsShorthandReference = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]*\.[A-Za-z_][A-Za-z0-9_]*$`)
 
 type projectionEnvelope struct {
 	Profile  string `json:"profile"`
@@ -58,14 +56,14 @@ func Export(publication contractpublication.ContractPublication) (Result, error)
 	var mappingErr error
 	switch envelope.Kind {
 	case "Source":
-		var projection contractprojection.Source
-		if err := decodeStrictProjection(publication.CanonicalBytes, &projection); err != nil {
+		projection, err := contractprojection.DecodeSourcePublication(publication.CanonicalBytes)
+		if err != nil {
 			return Result{}, fmt.Errorf("%w: decode Source projection: %v", ErrInvalidPublication, err)
 		}
 		mappingErr = mapSource(projection, &document, reports)
 	case "Model":
-		var projection contractprojection.Model
-		if err := decodeStrictProjection(publication.CanonicalBytes, &projection); err != nil {
+		projection, err := contractprojection.DecodeModelPublication(publication.CanonicalBytes)
+		if err != nil {
 			return Result{}, fmt.Errorf("%w: decode Model projection: %v", ErrInvalidPublication, err)
 		}
 		mappingErr = mapModel(projection, &document, reports)
@@ -119,20 +117,7 @@ func validatePublication(publication contractpublication.ContractPublication) (p
 	return envelope, nil
 }
 
-func decodeStrictProjection(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return fmt.Errorf("trailing JSON value")
-	}
-	return nil
-}
-
-func mapSource(projection contractprojection.Source, document *Document, reports *reportBuilder) error {
+func mapSource(projection contractprojection.SourceView, document *Document, reports *reportBuilder) error {
 	reports.mapped("schema.object")
 	reports.loss(LossEntry{
 		Kind: LossDropped, SourceField: "contract.schema.mode", Reason: "ODCS 3.1 has no equivalent for LeapView declared-versus-inferred schema mode.",
@@ -175,13 +160,17 @@ func mapSource(projection contractprojection.Source, document *Document, reports
 	return nil
 }
 
-func mapModel(projection contractprojection.Model, document *Document, reports *reportBuilder) error {
+func mapModel(projection contractprojection.ModelView, document *Document, reports *reportBuilder) error {
 	reports.mapped("schema.object")
 	reports.loss(LossEntry{
 		Kind: LossDropped, SourceField: "contract.definition", Reason: "Executable SQL AST and direct source bindings are never exported to ODCS.",
 		CompatibilityImpact: "Transformation execution and dependency round-trip conformance are unavailable.",
 	})
-	properties, err := mapFields(projection.Contract.Fields, "contract.fields", reports)
+	fields := make(map[string]contractprojection.Field, len(projection.Contract.Fields))
+	for name, field := range projection.Contract.Fields {
+		fields[name] = contractprojection.Field(field)
+	}
+	properties, err := mapFields(fields, "contract.fields", reports)
 	if err != nil {
 		return err
 	}
@@ -194,7 +183,7 @@ func mapModel(projection contractprojection.Model, document *Document, reports *
 		return err
 	}
 	if projection.Contract.Checks != nil {
-		if err := mapChecks(*projection.Contract.Checks, &object, propertyIndex, reports); err != nil {
+		if err := mapChecks(*projection.Contract.Checks, projection.Metadata.ID, &object, propertyIndex, reports); err != nil {
 			return err
 		}
 	}
@@ -289,7 +278,7 @@ func logicalType(value string) (string, map[string]any, bool, bool) {
 	}
 }
 
-func mapEntities(projection contractprojection.Model, object *SchemaObject, propertyIndex map[string]*SchemaProperty, reports *reportBuilder) error {
+func mapEntities(projection contractprojection.ModelView, object *SchemaObject, propertyIndex map[string]*SchemaProperty, reports *reportBuilder) error {
 	grain, exists := projection.Contract.Entities[projection.Contract.Grain.Entity]
 	if !exists {
 		reports.loss(unsupported("contract.grain.entity", "Selected grain does not resolve to a projected entity."))
@@ -347,7 +336,7 @@ func mapEntities(projection contractprojection.Model, object *SchemaObject, prop
 	return nil
 }
 
-func mapChecks(checks []contractprojection.ModelCheck, object *SchemaObject, propertyIndex map[string]*SchemaProperty, reports *reportBuilder) error {
+func mapChecks(checks []contractprojection.ModelCheck, authoredID string, object *SchemaObject, propertyIndex map[string]*SchemaProperty, reports *reportBuilder) error {
 	reports.mapped("model.quality")
 	for _, check := range checks {
 		quality := Quality{ID: check.ID, Name: check.ID, Type: "library", Severity: stringValue(check.Severity)}
@@ -389,7 +378,14 @@ func mapChecks(checks []contractprojection.ModelCheck, object *SchemaObject, pro
 			if property == nil || check.To == nil || !odcsShorthandReference.MatchString(*check.To) {
 				return unsupportedCheck(check, reports)
 			}
-			property.Relationships = append(property.Relationships, Relationship{Type: "foreignKey", To: *check.To})
+			// Shorthand is local to this ODCS document. A single publication
+			// cannot establish another contract's identity or property authority.
+			targetObject, targetField, _ := strings.Cut(*check.To, ".")
+			if (targetObject != object.Name && targetObject != authoredID) || propertyIndex[targetField] == nil {
+				reports.loss(unsupported("contract.checks."+check.ID, "Relationship shorthand must resolve to a property in the exported object; external contract authority is unavailable."))
+				return ErrUnsupportedMapping
+			}
+			property.Relationships = append(property.Relationships, Relationship{Type: "foreignKey", To: object.Name + "." + targetField})
 			if check.Severity != nil {
 				reports.loss(degradedCheck(check, "ODCS relationships do not retain LeapView quality severity."))
 			}

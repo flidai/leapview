@@ -1786,8 +1786,8 @@ func TestODCSExportIsIsolatedAndIndependentOracleIsCIOnly(t *testing.T) {
 		want []string
 	}{
 		{name: "Taskfile", text: string(taskfile), want: []string{"odcs:oracle:", "bash scripts/validate_odcs_oracle.sh"}},
-		{name: "CI workflow", text: string(workflow), want: []string{"cargo install odcs --version '=0.9.1' --locked", "run: task odcs:oracle"}},
-		{name: "oracle", text: string(oracle), want: []string{"expected_cli_version=\"0.9.1\"", "expected_spec_version=\"3.1.0\"", "odcs validate", "invalid-unknown.odcs.json"}},
+		{name: "CI workflow", text: string(workflow), want: []string{"pip install --require-hashes -r scripts/odcs-oracle-requirements.txt", "run: task odcs:oracle"}},
+		{name: "oracle", text: string(oracle), want: []string{"expected_cli_version=\"1.1.3\"", "expected_spec_version=\"3.1.0\"", "oracle lint", "--json-schema", "sha256sum --check", "env -i", "PYTHON_DOTENV_DISABLED=1", "--config-file /dev/null", "--no-inline-references", "invalid-unknown.odcs.json", "invalid-version.odcs.json", "invalid-logical-type.odcs.json"}},
 	} {
 		for _, want := range check.want {
 			if !strings.Contains(check.text, want) {

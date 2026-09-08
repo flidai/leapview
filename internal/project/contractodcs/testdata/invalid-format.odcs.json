@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0",
+  "kind": "DataContract",
+  "apiVersion": "v9.9.9",
+  "id": "invalid-format",
+  "status": "active"
+}

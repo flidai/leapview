@@ -126,7 +126,10 @@ jobs:
           browser: "false"
 
       - name: Install pinned independent ODCS validator
-        run: cargo install odcs --version '=0.9.1' --locked
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/odcs-oracle"
+          "${RUNNER_TEMP}/odcs-oracle/bin/python" -m pip install --require-hashes -r scripts/odcs-oracle-requirements.txt
+          echo "${RUNNER_TEMP}/odcs-oracle/bin" >> "${GITHUB_PATH}"
 
       - name: Validate ODCS exports independently
         run: task odcs:oracle
