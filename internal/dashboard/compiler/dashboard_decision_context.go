@@ -84,6 +84,30 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 		field, ok := axisField(axis)
 		return ok && dashboardNumericField(field)
 	}
+	axisDefaultType := func(axis visualizationir.VisualizationCartesianAxis) visualizationir.VisualizationAxisType {
+		field, hasField := axisField(axis)
+		temporal := hasField && (field.DataType == visualizationir.VisualizationDataTypeTemporal || field.DataType == visualizationir.VisualizationDataTypeDate)
+		if temporal {
+			return visualizationir.VisualizationAxisTypeTime
+		}
+		if axisIsNumeric(axis) && (point != nil || (cartesian != nil && axis != visualizationir.VisualizationCartesianAxisX && cartesian.Mark != visualizationir.VisualizationCartesianMarkHeatmap)) {
+			return visualizationir.VisualizationAxisTypeValue
+		}
+		return visualizationir.VisualizationAxisTypeCategory
+	}
+	axisEffectiveType := func(axis visualizationir.VisualizationCartesianAxis) visualizationir.VisualizationAxisType {
+		effective := axisDefaultType(axis)
+		if axes != nil {
+			for _, authoredAxis := range *axes {
+				if authoredAxis.ID != axis || authoredAxis.Type == nil || *authoredAxis.Type == visualizationir.VisualizationAxisTypeAutomatic {
+					continue
+				}
+				effective = *authoredAxis.Type
+				break
+			}
+		}
+		return effective
+	}
 
 	lowerAxes := func() (*[]visualizationir.VisualizationAxisConfiguration, error) {
 		if axes == nil {
@@ -117,12 +141,7 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 			numeric := axisIsNumeric(authoredAxis.ID)
 			fieldDefinition, hasAxisField := axisField(authoredAxis.ID)
 			temporal := hasAxisField && (fieldDefinition.DataType == visualizationir.VisualizationDataTypeTemporal || fieldDefinition.DataType == visualizationir.VisualizationDataTypeDate)
-			effectiveType := visualizationir.VisualizationAxisTypeCategory
-			if temporal {
-				effectiveType = visualizationir.VisualizationAxisTypeTime
-			} else if numeric && (point != nil || (cartesian != nil && authoredAxis.ID != visualizationir.VisualizationCartesianAxisX && cartesian.Mark != visualizationir.VisualizationCartesianMarkHeatmap)) {
-				effectiveType = visualizationir.VisualizationAxisTypeValue
-			}
+			effectiveType := axisDefaultType(authoredAxis.ID)
 			if authoredAxis.Type != nil {
 				switch *authoredAxis.Type {
 				case visualizationir.VisualizationAxisTypeAutomatic:
@@ -269,8 +288,17 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 		return nil
 	}
 	validateAxisValue := func(value loweredValue, axis visualizationir.VisualizationCartesianAxis, path string) error {
+		effectiveType := axisEffectiveType(axis)
 		if axis != visualizationir.VisualizationCartesianAxisX && value.domain != "number" {
 			return fmt.Errorf("%s must use a numeric value on %s", path, axis)
+		}
+		if axis == visualizationir.VisualizationCartesianAxisX {
+			switch effectiveType {
+			case visualizationir.VisualizationAxisTypeValue:
+				if value.domain != "number" {
+					return fmt.Errorf("%s must use a numeric value on x (effective type is value)", path)
+				}
+			}
 		}
 		return nil
 	}
@@ -377,6 +405,9 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 			}
 			value, err := lowerValue(annotation.Value, path+".value")
 			if err != nil {
+				return nil, err
+			}
+			if err := validateAxisValue(value, annotation.Axis, path+".value"); err != nil {
 				return nil, err
 			}
 			if !validDashboardTone(annotation.Tone) {

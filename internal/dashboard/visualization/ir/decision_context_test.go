@@ -183,6 +183,96 @@ func TestValidateSpecRejectsInvalidDecisionContext(t *testing.T) {
 	}
 }
 
+func TestValidateSpecChecksXReferenceDomains(t *testing.T) {
+	number := func(value float64) VisualizationReferenceValue {
+		return VisualizationReferenceValue{Value: &NumberVisualizationReferenceValue{VisualizationReferenceValueBase: VisualizationReferenceValueBase{Kind: "number"}, Kind: "number", Value: value}}
+	}
+	text := func(value string) VisualizationReferenceValue {
+		return VisualizationReferenceValue{Value: &TextVisualizationReferenceValue{VisualizationReferenceValueBase: VisualizationReferenceValueBase{Kind: "text"}, Kind: "text", Value: value}}
+	}
+	field := func(name string) VisualizationReferenceValue {
+		return VisualizationReferenceValue{Value: &FieldVisualizationReferenceValue{VisualizationReferenceValueBase: VisualizationReferenceValueBase{Kind: "field"}, Kind: "field", Field: VisualizationFieldRef{Dataset: "primary", Field: name}, Reducer: VisualizationReferenceReducerFirst}}
+	}
+	base := VisualizationSpecBase{
+		Kind: "cartesian", Title: "Revenue",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "category", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Category"},
+			{ID: "period", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDate, Label: "Period"},
+			{ID: "metric", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Metric"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "Revenue", Description: "Revenue by category"},
+		Interactions:  []VisualizationInteraction{},
+	}
+	axis := func(axisType VisualizationAxisType) VisualizationAxisConfiguration {
+		return VisualizationAxisConfiguration{
+			ID: VisualizationCartesianAxisX, Type: axisType, Scale: VisualizationAxisScaleAutomatic, Zero: VisualizationAxisZeroPolicyAutomatic,
+			Inversion: VisualizationAxisInversionAutomatic, Ticks: VisualizationAxisTickVisibilityAutomatic, Grid: VisualizationAxisGridVisibilityAutomatic,
+			LabelRotation: VisualizationAxisLabelRotationAutomatic, DateUnit: VisualizationDateDisplayUnitAutomatic, TickDensity: VisualizationAxisTickDensityAutomatic,
+		}
+	}
+	line := func(value VisualizationReferenceValue) []VisualizationReferenceLine {
+		return []VisualizationReferenceLine{{ID: "line", Axis: VisualizationCartesianAxisX, Value: value, Tone: VisualizationToneNeutral}}
+	}
+	band := func(from, to VisualizationReferenceValue) []VisualizationReferenceBand {
+		return []VisualizationReferenceBand{{ID: "band", Axis: VisualizationCartesianAxisX, From: from, To: to, Tone: VisualizationToneNeutral}}
+	}
+	event := func(value VisualizationReferenceValue) []VisualizationEventAnnotation {
+		return []VisualizationEventAnnotation{{ID: "event", Axis: VisualizationCartesianAxisX, Value: value, Label: "Event", Tone: VisualizationToneNeutral}}
+	}
+	makeSpec := func(xField string, axisType VisualizationAxisType, lines *[]VisualizationReferenceLine, bands *[]VisualizationReferenceBand, events *[]VisualizationEventAnnotation) VisualizationSpec {
+		return VisualizationSpec{Value: &CartesianVisualizationSpec{
+			VisualizationSpecBase: base, Kind: "cartesian", Mark: VisualizationCartesianMarkLine,
+			X: VisualizationFieldRef{Dataset: "primary", Field: xField}, Y: []VisualizationFieldRef{{Dataset: "primary", Field: "metric"}},
+			Axes: func() *[]VisualizationAxisConfiguration {
+				value := []VisualizationAxisConfiguration{axis(axisType)}
+				return &value
+			}(),
+			ReferenceLines: lines, ReferenceBands: bands, EventAnnotations: events,
+			Presentation: CartesianVisualizationPresentation{VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionBottom)},
+		}}
+	}
+	tests := []struct {
+		name string
+		spec VisualizationSpec
+		want string
+	}{
+		{name: "value line rejects text", spec: makeSpec("metric", VisualizationAxisTypeValue, func() *[]VisualizationReferenceLine { value := line(text("not-a-number")); return &value }(), nil, nil), want: "must use a numeric value on x"},
+		{name: "value band rejects text", spec: makeSpec("metric", VisualizationAxisTypeValue, nil, func() *[]VisualizationReferenceBand { value := band(text("low"), text("high")); return &value }(), nil), want: "must use a numeric value on x"},
+		{name: "value event rejects text", spec: makeSpec("metric", VisualizationAxisTypeValue, nil, nil, func() *[]VisualizationEventAnnotation { value := event(text("launch")); return &value }()), want: "must use a numeric value on x"},
+		{name: "value accepts numeric literal", spec: makeSpec("metric", VisualizationAxisTypeValue, func() *[]VisualizationReferenceLine { value := line(number(10)); return &value }(), nil, nil)},
+		{name: "value field reducer rejects text field", spec: makeSpec("metric", VisualizationAxisTypeValue, func() *[]VisualizationReferenceLine { value := line(field("category")); return &value }(), nil, nil), want: "must use a numeric value on x"},
+		{name: "value field reducer accepts numeric field", spec: makeSpec("metric", VisualizationAxisTypeValue, func() *[]VisualizationReferenceLine { value := line(field("metric")); return &value }(), nil, nil)},
+		{name: "category accepts text", spec: makeSpec("category", VisualizationAxisTypeCategory, func() *[]VisualizationReferenceLine { value := line(text("North")); return &value }(), nil, nil)},
+		{name: "time accepts text", spec: makeSpec("period", VisualizationAxisTypeTime, func() *[]VisualizationReferenceLine { value := line(text("2026-09")); return &value }(), nil, nil)},
+		{name: "time accepts numeric epoch literal", spec: makeSpec("period", VisualizationAxisTypeTime, func() *[]VisualizationReferenceLine { value := line(number(1700000000000)); return &value }(), nil, nil)},
+		{name: "time accepts temporal field reducer", spec: makeSpec("period", VisualizationAxisTypeTime, func() *[]VisualizationReferenceLine { value := line(field("period")); return &value }(), nil, nil)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateSpec(test.spec)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("ValidateSpec() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateSpec() error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+
+	point := pointEnvelope(t, [][]any{{"o-1", 2.0, 80.0}}).Spec
+	pointValue := point.Value.(*PointVisualizationSpec)
+	pointText := text("not-a-number")
+	pointValue.ReferenceLines = func() *[]VisualizationReferenceLine { value := line(pointText); return &value }()
+	if err := ValidateSpec(point); err == nil || !strings.Contains(err.Error(), "must use a numeric value on x") {
+		t.Fatalf("numeric point X text reference error = %v", err)
+	}
+
+}
+
 func TestValidateSpecEnforcesStackingAndSeriesIntent(t *testing.T) {
 	t.Parallel()
 

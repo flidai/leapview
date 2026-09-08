@@ -1777,6 +1777,7 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 		}
 	}
 	axes := map[VisualizationCartesianAxis]struct{}{}
+	effectiveAxisTypes := map[VisualizationCartesianAxis]VisualizationAxisType{}
 	if value.Axes != nil {
 		for _, axis := range *value.Axes {
 			if axis.ID != VisualizationCartesianAxisX && axis.ID != VisualizationCartesianAxisPrimaryY && axis.ID != VisualizationCartesianAxisSecondaryY {
@@ -1913,7 +1914,58 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 					return fmt.Errorf("axis %q log scale requires positive bounds", axis.ID)
 				}
 			}
+			effectiveAxisTypes[axis.ID] = effectiveType
 		}
+	}
+	axisEffectiveType := func(axis VisualizationCartesianAxis) VisualizationAxisType {
+		if effective, ok := effectiveAxisTypes[axis]; ok {
+			return effective
+		}
+		axisField := value.X
+		if axis != VisualizationCartesianAxisX {
+			if value.Mark == VisualizationCartesianMarkCombo {
+				axisField, _ = CartesianComboAxisOwner(*value, axis)
+			} else if len(value.Y) > 0 {
+				axisField = value.Y[0]
+			}
+		}
+		field, hasField := visualizationField(axisField, schemas)
+		if hasField && (field.DataType == VisualizationDataTypeDate || field.DataType == VisualizationDataTypeTemporal) {
+			return VisualizationAxisTypeTime
+		}
+		if hasField && numericVisualizationField(field) && (pointAxisDefaults || (value.Mark != VisualizationCartesianMarkHeatmap && axis != VisualizationCartesianAxisX)) {
+			return VisualizationAxisTypeValue
+		}
+		return VisualizationAxisTypeCategory
+	}
+	validateAxisValue := func(reference VisualizationReferenceValue, axis VisualizationCartesianAxis, path string) error {
+		domain := "text"
+		switch typed := reference.Value.(type) {
+		case *NumberVisualizationReferenceValue:
+			domain = "number"
+		case *FieldVisualizationReferenceValue:
+			field, ok := visualizationField(typed.Field, schemas)
+			if !ok {
+				return fmt.Errorf("%s references an unknown visualization field %q", path, typed.Field.Field)
+			}
+			if numericVisualizationField(field) {
+				domain = "number"
+			} else if field.DataType == VisualizationDataTypeDate || field.DataType == VisualizationDataTypeTemporal {
+				domain = "time"
+			}
+		}
+		if axis != VisualizationCartesianAxisX && domain != "number" {
+			return fmt.Errorf("%s must use a numeric value on %s", path, axis)
+		}
+		if axis == VisualizationCartesianAxisX {
+			switch axisEffectiveType(axis) {
+			case VisualizationAxisTypeValue:
+				if domain != "number" {
+					return fmt.Errorf("%s must use a numeric value on x (effective type is value)", path)
+				}
+			}
+		}
+		return nil
 	}
 	ids := map[string]struct{}{}
 	addID := func(id string) error {
@@ -1958,6 +2010,9 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 			if err := validateVisualizationReferenceValue(line.Value); err != nil {
 				return fmt.Errorf("reference line %q: %w", line.ID, err)
 			}
+			if err := validateAxisValue(line.Value, line.Axis, fmt.Sprintf("reference line %q", line.ID)); err != nil {
+				return err
+			}
 		}
 	}
 	if value.ReferenceBands != nil {
@@ -1976,6 +2031,12 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 			}
 			if err := validateVisualizationReferenceValue(band.To); err != nil {
 				return fmt.Errorf("reference band %q to: %w", band.ID, err)
+			}
+			if err := validateAxisValue(band.From, band.Axis, fmt.Sprintf("reference band %q from", band.ID)); err != nil {
+				return err
+			}
+			if err := validateAxisValue(band.To, band.Axis, fmt.Sprintf("reference band %q to", band.ID)); err != nil {
+				return err
 			}
 			from, fromOK := band.From.Value.(*NumberVisualizationReferenceValue)
 			to, toOK := band.To.Value.(*NumberVisualizationReferenceValue)
@@ -2002,6 +2063,9 @@ func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, 
 			}
 			if err := validateVisualizationReferenceValue(annotation.Value); err != nil {
 				return fmt.Errorf("event annotation %q: %w", annotation.ID, err)
+			}
+			if err := validateAxisValue(annotation.Value, annotation.Axis, fmt.Sprintf("event annotation %q", annotation.ID)); err != nil {
+				return err
 			}
 		}
 	}

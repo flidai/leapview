@@ -173,6 +173,84 @@ func TestLowerCanonicalDecisionContextUsesCartesianXCategoryDefault(t *testing.T
 	}
 }
 
+func TestLowerCanonicalDecisionContextValidatesXReferenceValueType(t *testing.T) {
+	valueType := visualizationir.VisualizationAxisTypeValue
+	categoryType := visualizationir.VisualizationAxisTypeCategory
+	timeType := visualizationir.VisualizationAxisTypeTime
+	number := func(value float64) document.DashboardReferenceValue {
+		return document.DashboardReferenceValue{Value: &document.NumberDashboardReferenceValue{DashboardReferenceValueBase: document.DashboardReferenceValueBase{Kind: "number"}, Kind: "number", Value: value}}
+	}
+	text := func(value string) document.DashboardReferenceValue {
+		return document.DashboardReferenceValue{Value: &document.TextDashboardReferenceValue{DashboardReferenceValueBase: document.DashboardReferenceValueBase{Kind: "text"}, Kind: "text", Value: value}}
+	}
+	field := func(name string) document.DashboardReferenceValue {
+		return document.DashboardReferenceValue{Value: &document.FieldDashboardReferenceValue{DashboardReferenceValueBase: document.DashboardReferenceValueBase{Kind: "field"}, Kind: "field", Field: name, Reducer: visualizationir.VisualizationReferenceReducerFirst}}
+	}
+	tests := []struct {
+		name      string
+		xField    string
+		axisType  *visualizationir.VisualizationAxisType
+		lineValue *document.DashboardReferenceValue
+		band      *document.DashboardReferenceBand
+		event     *document.DashboardEventAnnotation
+		want      string
+	}{
+		{name: "value axis rejects text line", xField: "metric", axisType: &valueType, lineValue: ptrDashboardReferenceValue(text("not-a-number")), want: "presentation.referenceLines[0].value must use a numeric value on x"},
+		{name: "value axis rejects text band", xField: "metric", axisType: &valueType, band: &document.DashboardReferenceBand{ID: "range", Axis: visualizationir.VisualizationCartesianAxisX, From: text("low"), To: text("high")}, want: "presentation.referenceBands[0].from must use a numeric value on x"},
+		{name: "value axis rejects text event", xField: "metric", axisType: &valueType, event: &document.DashboardEventAnnotation{ID: "launch", Axis: visualizationir.VisualizationCartesianAxisX, Value: text("launch"), Label: "Launch"}, want: "presentation.eventAnnotations[0].value must use a numeric value on x"},
+		{name: "value axis accepts numeric literal", xField: "metric", axisType: &valueType, lineValue: ptrDashboardReferenceValue(number(10))},
+		{name: "value axis accepts numeric field reducer", xField: "metric", axisType: &valueType, lineValue: ptrDashboardReferenceValue(field("metric"))},
+		{name: "value axis rejects text field reducer", xField: "metric", axisType: &valueType, lineValue: ptrDashboardReferenceValue(field("category")), want: "must use a numeric value on x"},
+		{name: "category axis accepts text", xField: "category", axisType: &categoryType, lineValue: ptrDashboardReferenceValue(text("North"))},
+		{name: "time axis accepts text", xField: "period", axisType: &timeType, lineValue: ptrDashboardReferenceValue(text("2026-09"))},
+		{name: "time axis accepts numeric epoch literal", xField: "period", axisType: &timeType, lineValue: ptrDashboardReferenceValue(number(1700000000000))},
+		{name: "time axis accepts temporal field reducer", xField: "period", axisType: &timeType, lineValue: ptrDashboardReferenceValue(field("period"))},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fields := []visualizationir.VisualizationField{
+				{ID: "category", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString},
+				{ID: "period", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeDate},
+				{ID: "metric", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal},
+			}
+			spec := visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{
+				VisualizationSpecBase: visualizationir.VisualizationSpecBase{Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: fields}}},
+				Kind:                  "cartesian", Mark: visualizationir.VisualizationCartesianMarkLine,
+				X: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: test.xField},
+				Y: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "metric"}},
+			}}
+			axis := document.DashboardAxisConfiguration{ID: visualizationir.VisualizationCartesianAxisX, Type: test.axisType, Scale: visualizationir.VisualizationAxisScaleAutomatic, Zero: visualizationir.VisualizationAxisZeroPolicyAutomatic, TickDensity: visualizationir.VisualizationAxisTickDensityAutomatic}
+			presentation := document.CartesianDashboardPresentation{Type: "cartesian", Axes: &[]document.DashboardAxisConfiguration{axis}}
+			if test.lineValue != nil {
+				presentation.ReferenceLines = &[]document.DashboardReferenceLine{{ID: "line", Axis: visualizationir.VisualizationCartesianAxisX, Value: *test.lineValue, Tone: visualizationir.VisualizationToneNeutral}}
+			}
+			if test.band != nil {
+				test.band.Tone = visualizationir.VisualizationToneNeutral
+				presentation.ReferenceBands = &[]document.DashboardReferenceBand{*test.band}
+			}
+			if test.event != nil {
+				test.event.Tone = visualizationir.VisualizationToneNeutral
+				presentation.EventAnnotations = &[]document.DashboardEventAnnotation{*test.event}
+			}
+			query := LoweredDashboardQuery{ResultFrame: []DashboardQueryResultField{{Name: "category"}, {Name: "period"}, {Name: "metric"}}}
+			err := lowerCanonicalDecisionContext(&spec, document.DashboardPresentation{Value: &presentation}, document.DashboardVisualTypeLine, query)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("lowerCanonicalDecisionContext() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("lowerCanonicalDecisionContext() error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
+
+func ptrDashboardReferenceValue(value document.DashboardReferenceValue) *document.DashboardReferenceValue {
+	return &value
+}
+
 func TestLowerCanonicalDecisionContextUsesFirstPrimaryComboOwner(t *testing.T) {
 	t.Parallel()
 
