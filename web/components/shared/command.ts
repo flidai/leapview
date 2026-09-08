@@ -19,7 +19,8 @@ function dataExplorerClientID(): string {
     return generated
   } catch {
     return ''
-	}
+  }
+}
 
 // Generate a canonical lower-case UUIDv7 for durable command identity. The
 // browser's randomUUID() is UUIDv4, which is intentionally not accepted by
@@ -34,16 +35,16 @@ function uuidv7(): string {
   bytes[6] = (bytes[6] & 0x0f) | 0x70
   bytes[8] = (bytes[8] & 0x3f) | 0x80
   const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
-	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 export function headers(operation?: CommandOperation, ifMatch?: string): CommandHeaders {
   const token = csrfToken()
-	const explorerClientID = dataExplorerClientID()
-	// Datastar evaluates headers once per request. Keep request and durable
-	// idempotency identities distinct while ensuring the latter is UUIDv7.
-	const requestID = uuidv7()
-	const idempotencyKey = uuidv7()
+  const explorerClientID = dataExplorerClientID()
+  // Datastar evaluates headers once per request. Keep request and durable
+  // idempotency identities distinct while ensuring the latter is UUIDv7.
+  const requestID = uuidv7()
+  const idempotencyKey = uuidv7()
   const operationIDs = (Array.isArray(operation) ? operation : [operation])
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value))
