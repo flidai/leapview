@@ -144,8 +144,12 @@ jobs:
       - name: Remove registry credentials before the public journey
         run: docker logout ghcr.io >/dev/null 2>&1
 
-      - name: Run installed-candidate journey
+      - name: Run installed-candidate journey with absolute performance checks
         env:
+          # This historical, multi-architecture public-install journey does not
+          # supply a compatible reference. It is not comparative qualification.
+          QUALIFICATION_PERFORMANCE_MODE: bootstrap
+          QUALIFICATION_PERFORMANCE_BASELINE: ''
           PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
           EVIDENCE_ROOT: ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}
         run: |

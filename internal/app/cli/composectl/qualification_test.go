@@ -607,8 +607,13 @@ func validQualificationPerformancePolicy() qualificationPerformancePolicy {
 	var policy qualificationPerformancePolicy
 	policy.SchemaVersion = 1
 	policy.Workload = "qualification"
+	policy.Fixture = qualificationPerformanceFixturePath
+	policy.SampleProtocol = qualificationPerformanceSampleProtocol
 	policy.Assumptions.MinimumLogicalCPUs = 2
 	policy.Assumptions.MinimumMemoryBytes = 1024
+	policy.Assumptions.Runtime = "Docker Engine test"
+	policy.Assumptions.Dataset.Name = "test fixture"
+	policy.Assumptions.Dataset.Orders = 1
 	policy.Assumptions.Samples.ColdDashboardLoads = 1
 	policy.Assumptions.Samples.WarmDashboardLoads = 1
 	policy.Assumptions.Samples.FilterInteractions = 1

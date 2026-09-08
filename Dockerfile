@@ -41,11 +41,17 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       go run ./internal/app/tools/mapassets --out .data/map-assets; \
     fi
 
-FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS web
+FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS web
 WORKDIR /src
+
+# Keep the web builder on the same Bun release as package.json and CI. A
+# caller may provide a validated revision for archive builds; when omitted,
+# the evidence records the explicit no-Git identity instead.
+ARG BUILD_REVISION
 
 COPY --from=go-deps /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 COPY package.json bun.lock tsconfig.json ./
+COPY .quality ./.quality
 COPY scripts ./scripts
 COPY static ./static
 COPY web ./web
@@ -57,7 +63,8 @@ RUN bun install --frozen-lockfile --no-cache
 RUN mkdir -p internal/dashboard/appearance && \
     bun scripts/generate_lucide_icon_catalog.ts && \
     bun scripts/generate_visualization_validator.ts && \
-    bun run build
+    if [ -n "${BUILD_REVISION}" ]; then BUILD_REVISION="${BUILD_REVISION}" bun run build; else env -u BUILD_REVISION bun run build; fi && \
+    bun scripts/frontend_bundle_budget.ts
 
 FROM go-deps AS build
 
@@ -184,6 +191,7 @@ COPY deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compos
 COPY deploy/compose/qualification /usr/local/share/leapview/deployment/qualification
 COPY deploy/host/files/ /usr/local/share/leapview/deployment/
 COPY --from=web /src/static ./static
+COPY --from=web /src/.tmp/frontend-bundle-evidence.json /usr/local/share/leapview/deployment/frontend-bundle-evidence.json
 COPY --from=build /src/schemas ./schemas
 COPY --from=sourcegen /src/.data/map-assets ./.data/map-assets
 COPY dashboards ./dashboards

@@ -17,6 +17,13 @@ test('local frontend validation runs every bounded shard without suppressing fai
   expect(tasks['ci:lane:frontend:shard'].ignore_error).toBeUndefined()
 })
 
+test('frontend core checks prepared bundle evidence without rebuilding production assets', () => {
+  const commands = tasks['ci:test:frontend:core'].cmds
+  expect(commands).toContainEqual({ task: 'quality:frontend-bundle:check' })
+  expect(commands).not.toContain('bun scripts/build_assets.ts')
+  expect(commands).not.toContain('bun run build')
+})
+
 for (const workflow of ['ci', 'merge-validation', 'nightly']) {
   test(`${workflow} requires all isolated frontend shards with the existing watchdog bound`, () => {
     const config = parse(readFileSync(`.github/workflows/${workflow}.yml`, 'utf8'))

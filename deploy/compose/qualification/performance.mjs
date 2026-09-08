@@ -69,7 +69,7 @@ async function runWorkload(path) {
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({ ignoreHTTPSErrors: true })
   const page = await context.newPage({ viewport: { width: 1440, height: 960 } })
-  const controlled = { requests: 0, errors: 0, failures: [] }
+  const controlled = { requests: 0, operations: 0, errors: 0, failures: [] }
   const warmDashboardReadyMs = []
   const filterToSettleMs = []
   const tableInteractionMs = []
@@ -102,6 +102,7 @@ async function runWorkload(path) {
       await waitForDashboardIdle(page, 60_000)
       warmDashboardReadyMs.push(round(performance.now() - startedAt))
       controlled.requests += 1
+      controlled.operations += 1
     }
     metricSamples.push(await metricSnapshot())
 
@@ -131,6 +132,7 @@ async function runWorkload(path) {
       await table.locator(`button.cell-action[aria-label="state: ${value}"]`).first().waitFor({ state: 'visible', timeout: 30_000 })
       filterToSettleMs.push(round(performance.now() - startedAt))
       controlled.requests += 1
+      controlled.operations += 1
     }
     metricSamples.push(await metricSnapshot())
 
@@ -142,6 +144,7 @@ async function runWorkload(path) {
       await waitForTableSort(table, previous, 'order_id', 30_000)
       tableInteractionMs.push(round(performance.now() - startedAt))
       controlled.requests += 1
+      controlled.operations += 1
     }
     metricSamples.push(await metricSnapshot())
 
@@ -161,6 +164,7 @@ async function runWorkload(path) {
         data: queryBody,
       })
       controlled.requests += 1
+      controlled.operations += 1
       if (!response.ok()) {
         controlled.errors += 1
         controlled.failures.push(`governed query returned ${response.status()}`)
@@ -189,6 +193,7 @@ async function runWorkload(path) {
         data: { pipelineId: pipelineID },
       })
       controlled.requests += 1
+      controlled.operations += 1
       if (!response.ok()) {
         controlled.errors += 1
         controlled.failures.push(`refresh creation returned ${response.status()}: ${(await response.text()).slice(0, 500)}`)
@@ -214,6 +219,7 @@ async function runWorkload(path) {
           data: queryBody,
         })
         controlled.requests += 1
+        controlled.operations += 1
         if (!response.ok()) {
           controlled.errors += 1
           controlled.failures.push(`concurrent governed query returned ${response.status()}`)
@@ -256,6 +262,7 @@ async function runWorkload(path) {
     },
     reliability: {
       requests: controlled.requests,
+      operations: controlled.operations,
       errors: controlled.errors,
       failures: controlled.failures,
     },

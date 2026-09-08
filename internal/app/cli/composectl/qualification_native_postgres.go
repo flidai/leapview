@@ -489,6 +489,9 @@ const qualificationNativePostgresEntrypointScript = `set -eu
 mkdir -p /tmp/leapview-postgres-tls
 cp /run/secrets/leapview-postgres-ca.pem /tmp/leapview-postgres-tls/ca.pem
 mkdir -p /var/lib/leapview/home
+# Compose populated the state volume with the application's non-root owner.
+# The root sidecar must not leave a newly created home owned by root.
+chown "$(stat -c '%u:%g' /var/lib/leapview)" /var/lib/leapview/home
 cp /run/secrets/leapview-postgres-ca.pem /var/lib/leapview/home/postgres-root.crt
 chmod 0644 /var/lib/leapview/home/postgres-root.crt
 cp /run/secrets/leapview-postgres-server.pem /tmp/leapview-postgres-tls/server.pem

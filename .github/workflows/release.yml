@@ -498,7 +498,12 @@ jobs:
             test "${LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH:-}" = "$supply"
           '
 
-      - name: Run installed-candidate journey
+      - name: Run installed-candidate journey with absolute performance checks
+        env:
+          # Preserve this journey's existing absolute performance coverage.
+          # Comparative performance requires the separately reviewed image pair.
+          QUALIFICATION_PERFORMANCE_MODE: bootstrap
+          QUALIFICATION_PERFORMANCE_BASELINE: ''
         run: |
           cd "$PACKAGE_ROOT"
           args=(qualify installed-candidate --bundle "$PACKAGE_ROOT" --evidence-dir "$RUNNER_TEMP/installed-candidate-evidence" --multi-node-process)

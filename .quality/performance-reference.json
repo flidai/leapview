@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "workload": "olist-evaluation",
+  "architecture": "amd64",
+  "commit": "e704f88068696c9fe1136a51c22b088663976f31",
+  "image": "ghcr.io/flidai/leapview@sha256:83a74d52b5a74ccd3b33d10b168fd9869de39051f135e7152383ad9ab3aa5d4f",
+  "qualificationRun": "https://github.com/flidai/leapview/actions/runs/34200609603",
+  "method": "Remeasure this fixed main image with the current qualification protocol on the candidate runner before comparison. Changing the reference requires independent review of this file and retained calibration evidence. The prior successful image qualification establishes provenance; it does not establish variance for the new protocol."
+}

@@ -1,0 +1,602 @@
+{
+  "version": 1,
+  "metadata": {
+    "artifact": "production browser JavaScript bundles, including shared chunks and externally loaded Datastar/MapLibre runtime files",
+    "generator": "scripts/build_assets.ts",
+    "evidencePath": ".tmp/frontend-bundle-evidence.json",
+    "calibration": {
+      "baseCommit": "e704f88068696c9fe1136a51c22b088663976f31",
+      "sourceInputDigest": "d69cc8f07e1dcf0bdd26af31e7a39b3cc2fc58ccfad98f9e90cdead3967d3573",
+      "harnessInputDigest": "017e837d358f80265afbefee82005d7341c0106ef9b7ad6e573a3999330cfb37",
+      "capturedAt": "2026-09-08T12:19:43+02:00",
+      "environment": {
+        "host": "codex-netcup",
+        "os": "Debian GNU/Linux 13 (trixie) 13.6",
+        "kernel": "6.12.105+deb13-amd64",
+        "platform": "linux",
+        "architecture": "x64",
+        "cpu": {
+          "model": "QEMU Virtual CPU version 2.5+",
+          "logicalCPUs": 16,
+          "sockets": 16,
+          "coresPerSocket": 1,
+          "threadsPerCore": 1
+        }
+      },
+      "toolchain": {
+        "bunVersion": "1.3.14",
+        "nodeVersion": "v24.3.0",
+        "packageManager": "bun@1.3.14",
+        "lockfilePath": "bun.lock",
+        "lockfileSha256": "ef842b88f7e7ab22495d84c69ca4fe76acb1e9248144195a1fe5a472b87638fa"
+      },
+      "method": "The original 18 logical-entry calibration captured at 2026-09-08T11:20:57+02:00 was retained. Added-scope measurements were captured at 2026-09-08T12:19:43+02:00. On the clean e704f88068696c9fe1136a51c22b088663976f31 source baseline, three repeated pinned-Bun measurements of only the newly covered tracked static files were identical: static/login-background-loader.js (1404 raw/567 gzip) and static/theme.js (4019 raw/1284 gzip), adding 5423 raw/1851 gzip bytes to the aggregate; no existing entry ceiling was recalibrated. The source-input digest is SHA-256 over sorted repository-relative paths and bytes for package.json, bun.lock, static/app.input.css, the shipped standalone/runtime files, the production build/generator scripts, and every file under web, so untracked imports are covered and archive builds do not require Git. The evidence harness records its source digest separately from the baseline commit and records harnessInputDigest 017e837d358f80265afbefee82005d7341c0106ef9b7ad6e573a3999330cfb37 over the evidence/build identity and file-accounting scripts. It also records the verified Git revision when available (or a validated BUILD_REVISION argument, or explicit unavailable status), Bun runtime version, Bun Node-compatibility version, platform, architecture, package-manager pin, and current lockfile digest. Platform and architecture remain recorded audit identity rather than byte-budget compatibility gates: alternate targets must still use pinned Bun, pass current-source/lockfile checks, and reproduce every raw/gzip file total under these unchanged ceilings. Limits are observed clean-baseline maxima, with a 0% relative ratchet because all three added-scope measurements matched.",
+      "buildCommand": "bun run build",
+      "cleanBuilds": 3,
+      "measurements": [
+        {
+          "entries": {
+            "admin-page": {
+              "rawBytes": 6792451,
+              "gzipBytes": 1317801
+            },
+            "app-shell": {
+              "rawBytes": 140645,
+              "gzipBytes": 34392
+            },
+            "asset-lineage-graph": {
+              "rawBytes": 924716,
+              "gzipBytes": 189044
+            },
+            "catalog-page": {
+              "rawBytes": 555161,
+              "gzipBytes": 120175
+            },
+            "chat-page": {
+              "rawBytes": 6988964,
+              "gzipBytes": 1398220
+            },
+            "command": {
+              "rawBytes": 4081,
+              "gzipBytes": 1813
+            },
+            "dashboard-builder": {
+              "rawBytes": 5780641,
+              "gzipBytes": 1116846
+            },
+            "dashboard-page": {
+              "rawBytes": 7635051,
+              "gzipBytes": 1529715
+            },
+            "data-explorer": {
+              "rawBytes": 7038035,
+              "gzipBytes": 1407525
+            },
+            "datastar-inspector": {
+              "rawBytes": 83360,
+              "gzipBytes": 22601
+            },
+            "datastar-runtime": {
+              "rawBytes": 34083,
+              "gzipBytes": 13388
+            },
+            "login-page": {
+              "rawBytes": 70907,
+              "gzipBytes": 19750
+            },
+            "login-background-loader": {
+              "rawBytes": 1404,
+              "gzipBytes": 567
+            },
+            "maplibre-gl-worker": {
+              "rawBytes": 486248,
+              "gzipBytes": 141393
+            },
+            "monaco-editor-worker": {
+              "rawBytes": 654883,
+              "gzipBytes": 140485
+            },
+            "project-page": {
+              "rawBytes": 1915814,
+              "gzipBytes": 409934
+            },
+            "semantic-model-graph": {
+              "rawBytes": 960298,
+              "gzipBytes": 196633
+            },
+            "topology-background": {
+              "rawBytes": 826257,
+              "gzipBytes": 181856
+            },
+            "theme": {
+              "rawBytes": 4019,
+              "gzipBytes": 1284
+            },
+            "url-sync": {
+              "rawBytes": 2796,
+              "gzipBytes": 984
+            }
+          },
+          "aggregate": {
+            "rawBytes": 15934947,
+            "gzipBytes": 3183940
+          }
+        },
+        {
+          "entries": {
+            "admin-page": {
+              "rawBytes": 6792451,
+              "gzipBytes": 1317801
+            },
+            "app-shell": {
+              "rawBytes": 140645,
+              "gzipBytes": 34392
+            },
+            "asset-lineage-graph": {
+              "rawBytes": 924716,
+              "gzipBytes": 189044
+            },
+            "catalog-page": {
+              "rawBytes": 555161,
+              "gzipBytes": 120175
+            },
+            "chat-page": {
+              "rawBytes": 6988964,
+              "gzipBytes": 1398220
+            },
+            "command": {
+              "rawBytes": 4081,
+              "gzipBytes": 1813
+            },
+            "dashboard-builder": {
+              "rawBytes": 5780641,
+              "gzipBytes": 1116846
+            },
+            "dashboard-page": {
+              "rawBytes": 7635051,
+              "gzipBytes": 1529715
+            },
+            "data-explorer": {
+              "rawBytes": 7038035,
+              "gzipBytes": 1407525
+            },
+            "datastar-inspector": {
+              "rawBytes": 83360,
+              "gzipBytes": 22601
+            },
+            "datastar-runtime": {
+              "rawBytes": 34083,
+              "gzipBytes": 13388
+            },
+            "login-page": {
+              "rawBytes": 70907,
+              "gzipBytes": 19750
+            },
+            "login-background-loader": {
+              "rawBytes": 1404,
+              "gzipBytes": 567
+            },
+            "maplibre-gl-worker": {
+              "rawBytes": 486248,
+              "gzipBytes": 141393
+            },
+            "monaco-editor-worker": {
+              "rawBytes": 654883,
+              "gzipBytes": 140485
+            },
+            "project-page": {
+              "rawBytes": 1915814,
+              "gzipBytes": 409934
+            },
+            "semantic-model-graph": {
+              "rawBytes": 960298,
+              "gzipBytes": 196633
+            },
+            "topology-background": {
+              "rawBytes": 826257,
+              "gzipBytes": 181856
+            },
+            "theme": {
+              "rawBytes": 4019,
+              "gzipBytes": 1284
+            },
+            "url-sync": {
+              "rawBytes": 2796,
+              "gzipBytes": 984
+            }
+          },
+          "aggregate": {
+            "rawBytes": 15934947,
+            "gzipBytes": 3183940
+          }
+        },
+        {
+          "entries": {
+            "admin-page": {
+              "rawBytes": 6792451,
+              "gzipBytes": 1317801
+            },
+            "app-shell": {
+              "rawBytes": 140645,
+              "gzipBytes": 34392
+            },
+            "asset-lineage-graph": {
+              "rawBytes": 924716,
+              "gzipBytes": 189044
+            },
+            "catalog-page": {
+              "rawBytes": 555161,
+              "gzipBytes": 120175
+            },
+            "chat-page": {
+              "rawBytes": 6988964,
+              "gzipBytes": 1398220
+            },
+            "command": {
+              "rawBytes": 4081,
+              "gzipBytes": 1813
+            },
+            "dashboard-builder": {
+              "rawBytes": 5780641,
+              "gzipBytes": 1116846
+            },
+            "dashboard-page": {
+              "rawBytes": 7635051,
+              "gzipBytes": 1529715
+            },
+            "data-explorer": {
+              "rawBytes": 7038035,
+              "gzipBytes": 1407525
+            },
+            "datastar-inspector": {
+              "rawBytes": 83360,
+              "gzipBytes": 22601
+            },
+            "datastar-runtime": {
+              "rawBytes": 34083,
+              "gzipBytes": 13388
+            },
+            "login-page": {
+              "rawBytes": 70907,
+              "gzipBytes": 19750
+            },
+            "login-background-loader": {
+              "rawBytes": 1404,
+              "gzipBytes": 567
+            },
+            "maplibre-gl-worker": {
+              "rawBytes": 486248,
+              "gzipBytes": 141393
+            },
+            "monaco-editor-worker": {
+              "rawBytes": 654883,
+              "gzipBytes": 140485
+            },
+            "project-page": {
+              "rawBytes": 1915814,
+              "gzipBytes": 409934
+            },
+            "semantic-model-graph": {
+              "rawBytes": 960298,
+              "gzipBytes": 196633
+            },
+            "topology-background": {
+              "rawBytes": 826257,
+              "gzipBytes": 181856
+            },
+            "theme": {
+              "rawBytes": 4019,
+              "gzipBytes": 1284
+            },
+            "url-sync": {
+              "rawBytes": 2796,
+              "gzipBytes": 984
+            }
+          },
+          "aggregate": {
+            "rawBytes": 15934947,
+            "gzipBytes": 3183940
+          }
+        }
+      ]
+    }
+  },
+  "budgets": {
+    "entries": {
+      "admin-page": {
+        "baseline": {
+          "rawBytes": 6792451,
+          "gzipBytes": 1317801
+        },
+        "max": {
+          "rawBytes": 6792451,
+          "gzipBytes": 1317801
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "app-shell": {
+        "baseline": {
+          "rawBytes": 140645,
+          "gzipBytes": 34392
+        },
+        "max": {
+          "rawBytes": 140645,
+          "gzipBytes": 34392
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "asset-lineage-graph": {
+        "baseline": {
+          "rawBytes": 924716,
+          "gzipBytes": 189044
+        },
+        "max": {
+          "rawBytes": 924716,
+          "gzipBytes": 189044
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "catalog-page": {
+        "baseline": {
+          "rawBytes": 555161,
+          "gzipBytes": 120175
+        },
+        "max": {
+          "rawBytes": 555161,
+          "gzipBytes": 120175
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "chat-page": {
+        "baseline": {
+          "rawBytes": 6988964,
+          "gzipBytes": 1398220
+        },
+        "max": {
+          "rawBytes": 6988964,
+          "gzipBytes": 1398220
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "command": {
+        "baseline": {
+          "rawBytes": 4081,
+          "gzipBytes": 1813
+        },
+        "max": {
+          "rawBytes": 4081,
+          "gzipBytes": 1813
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "dashboard-builder": {
+        "baseline": {
+          "rawBytes": 5780641,
+          "gzipBytes": 1116846
+        },
+        "max": {
+          "rawBytes": 5780641,
+          "gzipBytes": 1116846
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "dashboard-page": {
+        "baseline": {
+          "rawBytes": 7635051,
+          "gzipBytes": 1529715
+        },
+        "max": {
+          "rawBytes": 7635051,
+          "gzipBytes": 1529715
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "data-explorer": {
+        "baseline": {
+          "rawBytes": 7038035,
+          "gzipBytes": 1407525
+        },
+        "max": {
+          "rawBytes": 7038035,
+          "gzipBytes": 1407525
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "datastar-inspector": {
+        "baseline": {
+          "rawBytes": 83360,
+          "gzipBytes": 22601
+        },
+        "max": {
+          "rawBytes": 83360,
+          "gzipBytes": 22601
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "datastar-runtime": {
+        "baseline": {
+          "rawBytes": 34083,
+          "gzipBytes": 13388
+        },
+        "max": {
+          "rawBytes": 34083,
+          "gzipBytes": 13388
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "login-page": {
+        "baseline": {
+          "rawBytes": 70907,
+          "gzipBytes": 19750
+        },
+        "max": {
+          "rawBytes": 70907,
+          "gzipBytes": 19750
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "login-background-loader": {
+        "baseline": {
+          "rawBytes": 1404,
+          "gzipBytes": 567
+        },
+        "max": {
+          "rawBytes": 1404,
+          "gzipBytes": 567
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "maplibre-gl-worker": {
+        "baseline": {
+          "rawBytes": 486248,
+          "gzipBytes": 141393
+        },
+        "max": {
+          "rawBytes": 486248,
+          "gzipBytes": 141393
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "monaco-editor-worker": {
+        "baseline": {
+          "rawBytes": 654883,
+          "gzipBytes": 140485
+        },
+        "max": {
+          "rawBytes": 654883,
+          "gzipBytes": 140485
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "project-page": {
+        "baseline": {
+          "rawBytes": 1915814,
+          "gzipBytes": 409934
+        },
+        "max": {
+          "rawBytes": 1915814,
+          "gzipBytes": 409934
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "semantic-model-graph": {
+        "baseline": {
+          "rawBytes": 960298,
+          "gzipBytes": 196633
+        },
+        "max": {
+          "rawBytes": 960298,
+          "gzipBytes": 196633
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "topology-background": {
+        "baseline": {
+          "rawBytes": 826257,
+          "gzipBytes": 181856
+        },
+        "max": {
+          "rawBytes": 826257,
+          "gzipBytes": 181856
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "theme": {
+        "baseline": {
+          "rawBytes": 4019,
+          "gzipBytes": 1284
+        },
+        "max": {
+          "rawBytes": 4019,
+          "gzipBytes": 1284
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "url-sync": {
+        "baseline": {
+          "rawBytes": 2796,
+          "gzipBytes": 984
+        },
+        "max": {
+          "rawBytes": 2796,
+          "gzipBytes": 984
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      }
+    },
+    "aggregate": {
+      "baseline": {
+        "rawBytes": 15934947,
+        "gzipBytes": 3183940
+      },
+      "max": {
+        "rawBytes": 15934947,
+        "gzipBytes": 3183940
+      },
+      "maxIncreasePercent": {
+        "rawBytes": 0,
+        "gzipBytes": 0
+      }
+    }
+  }
+}

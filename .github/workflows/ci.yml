@@ -13,6 +13,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  performance-baseline-review:
+    name: Performance baseline review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Verify independent review of changed performance governance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REVISION: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # Use the base branch's guard once installed. A candidate cannot
+          # authorize its baseline by changing the checker in the same PR.
+          guard=scripts/performance_baseline_review.mjs
+          if [[ -n "$BASE_REVISION" ]] && git cat-file -e "$BASE_REVISION:$guard" 2>/dev/null; then
+            git show "$BASE_REVISION:$guard" > "$RUNNER_TEMP/performance-baseline-review.mjs"
+            guard="$RUNNER_TEMP/performance-baseline-review.mjs"
+          fi
+          node "$guard"
+
   apigen-validation:
     name: APIGen tests (PR)
     if: >-
@@ -280,10 +307,14 @@ jobs:
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]
+    needs: [performance-baseline-review, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Require performance governance review
+        env:
+          PERFORMANCE_REVIEW_RESULT: ${{ needs.performance-baseline-review.result }}
+        run: test "$PERFORMANCE_REVIEW_RESULT" = success
       - name: Require GitHub-hosted validation
         env:
           APIGEN_RESULT: ${{ needs.apigen-validation.result }}
