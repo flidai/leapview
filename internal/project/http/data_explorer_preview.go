@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
@@ -61,21 +62,51 @@ func normalizeDataExplorerCommand(command projectsignals.DataExplorerCommand) pr
 	if command.Mode == nil || strings.TrimSpace(*command.Mode) == "" {
 		command.Mode = projectsignals.Pointer("browse")
 	}
+	if action := strings.ToLower(strings.TrimSpace(projectsignals.ValueOrZero(command.Action))); action != "" {
+		if action != "configure" && action != "run" && action != "stop" {
+			command.Action = projectsignals.Pointer("configure")
+		} else {
+			command.Action = projectsignals.Pointer(action)
+		}
+	}
 	if command.Explore != nil {
 		command.Explore.Spec = normalizeExplorationSpec(command.Explore.Spec)
+		if action := strings.ToLower(strings.TrimSpace(projectsignals.ValueOrZero(command.Explore.Action))); action != "" {
+			if action != "configure" && action != "run" && action != "stop" {
+				command.Explore.Action = projectsignals.Pointer("configure")
+			} else {
+				command.Explore.Action = projectsignals.Pointer(action)
+			}
+		}
 	}
 	return command
 }
 
-func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand) projectsignals.DataPreviewSignal {
+func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand) (preview projectsignals.DataPreviewSignal) {
 	command = normalizeDataExplorerCommand(command)
 	columns := explorerPreviewColumns(object)
 	command.Sort = dataExplorerSortForObjectColumns(command.Sort, columns)
-	preview := projectsignals.DataPreviewSignal{
+	preview = projectsignals.DataPreviewSignal{
 		Columns: columns, Blocks: emptyDataExplorerBlocks(command), ChunkSize: command.Count,
 		RowHeight: dataExplorerRowHeight, ResetVersion: command.ResetVersion, Sort: command.Sort,
-		TotalRowLabel: object.RowCountLabel,
+		TotalRowLabel: object.RowCountLabel, Loading: true, Stale: false,
 	}
+	defer func() {
+		preview.Loading = false
+		if errors.Is(ctx.Err(), context.Canceled) {
+			// User cancellation is a terminal stale result, not a query failure.
+			// Leave Error empty so clients do not present an intentional stop as
+			// an execution error.
+			preview.Error = nil
+			preview.ProgressPercent = nil
+			preview.Stale = true
+			return
+		}
+		if preview.Error == nil {
+			progress := float64(100)
+			preview.ProgressPercent = &progress
+		}
+	}()
 	if executor == nil {
 		preview.Error = projectsignals.Pointer("data preview execution is unavailable")
 		return preview
@@ -92,10 +123,18 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 		}
 		result, err := executor.ExecuteDataQuery(ctx, query)
 		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+				preview.Stale = true
+				return preview
+			}
 			preview.Error = projectsignals.Pointer(err.Error())
 			return preview
 		}
 		if strings.TrimSpace(result.Error) != "" {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				preview.Stale = true
+				return preview
+			}
 			preview.Error = projectsignals.Pointer(result.Error)
 			return preview
 		}
@@ -245,24 +284,37 @@ func dataExplorerRows(rows []dataquery.Row) []map[string]any {
 	return out
 }
 
-func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, command projectsignals.DataExploreCommand, fields []projectsignals.DataExploreFieldSignal, model *semanticmodel.Model) (projectsignals.DataExploreCommand, projectsignals.DataExploreResultSignal) {
+func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, command projectsignals.DataExploreCommand, fields []projectsignals.DataExploreFieldSignal, model *semanticmodel.Model, compiledModels ...*semanticquery.CompiledModel) (projectsignals.DataExploreCommand, projectsignals.DataExploreResultSignal) {
+	var compiled *semanticquery.CompiledModel
+	if len(compiledModels) > 0 {
+		compiled = compiledModels[0]
+	}
 	spec := normalizeExplorationSpec(command.Spec)
 	resultSignal := projectsignals.DataExploreResultSignal{
 		Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}, RequestSeq: command.RequestSeq,
 	}
 	command.Spec = spec
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return command, resultSignal
+	}
 	if !explorationSpecIsEmpty(spec) {
 		if err := exploration.ValidateShape(&spec); err != nil {
 			resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
 			return command, resultSignal
 		}
 	}
-	if spec.Pivot != nil {
-		// Pivot changes the result shape and cannot be represented by the
-		// existing aggregate executor. Do not silently execute the non-pivot
-		// query in its place, including for a pivot-only selection.
-		resultSignal.Error = projectsignals.Pointer("pivot exploration execution is not supported")
+	if err := validateDataExplorerExecutionWindow(spec); err != nil {
+		resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
 		return command, resultSignal
+	}
+	if spec.Pivot != nil {
+		// An empty pivot is not an executable query. Keep this explicit error for
+		// malformed incremental state; populated pivots are lowered to one
+		// governed aggregate below and retain their row/column grain.
+		if len(spec.Pivot.Rows) == 0 || len(spec.Pivot.Columns) == 0 || len(spec.Pivot.Metrics) == 0 {
+			resultSignal.Error = projectsignals.Pointer("pivot exploration execution is not supported")
+			return command, resultSignal
+		}
 	}
 	state := dataExploreStateFromSpec(spec)
 	fieldByID := make(map[string]projectsignals.DataExploreFieldSignal, len(fields))
@@ -284,6 +336,10 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 			return command, resultSignal
 		}
 	}
+	if err := validateExplorerFilterDatasets(spec, fieldByID, compiled); err != nil {
+		resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
+		return command, resultSignal
+	}
 	if len(state.Dimensions) == 0 && len(state.Metrics) == 0 && spec.Time == nil {
 		return command, resultSignal
 	}
@@ -298,6 +354,7 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		resultSignal.Error = projectsignals.Pointer("semantic exploration target is incomplete")
 		return command, resultSignal
 	}
+	effectiveLimit := explorerEffectiveLimit(spec)
 	aliases := explorerSpecQueryAliases(spec)
 	dimensions := make([]dataquery.Field, 0, len(spec.Dimensions))
 	timeDecoratesDimension := false
@@ -320,8 +377,17 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		resultSignal.Error = projectsignals.Pointer(err.Error())
 		return command, resultSignal
 	}
-	sortSpec := make([]dataquery.Sort, 0, len(spec.Sort))
-	for _, sortSignal := range spec.Sort {
+	sortSignals := spec.Sort
+	if spec.Pivot != nil {
+		// A pivot's row/column/metric selection is its complete query scope;
+		// never inherit a stale top-level sort for a field outside that scope.
+		sortSignals = nil
+		if spec.Pivot.Sort != nil {
+			sortSignals = *spec.Pivot.Sort
+		}
+	}
+	sortSpec := make([]dataquery.Sort, 0, len(sortSignals))
+	for _, sortSignal := range sortSignals {
 		sortSpec = append(sortSpec, dataquery.Sort{Field: sortSignal.Field, Direction: string(sortSignal.Direction)})
 	}
 	// A metric with multiple physical roots is not owned by the selected
@@ -331,8 +397,11 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	if clearTarget {
 		queryTarget = ""
 	}
-	query := dataquery.SemanticAggregate(modelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(spec.Limit)+1)
-	if spec.Time != nil && !timeDecoratesDimension {
+	query := dataquery.SemanticAggregate(modelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(effectiveLimit)+1)
+	if spec.Time != nil && !timeDecoratesDimension && spec.Pivot == nil {
+		// A pivot owns its complete grouping axis. Keep an authored time range
+		// in filters, but do not add DataQuery.Time as a hidden extra grouping
+		// dimension outside pivot rows/columns.
 		query.Time = dataquery.Time{Field: spec.Time.Field, Grain: string(spec.Time.Grain), Alias: projectsignals.ValueOrZero(spec.Time.Alias)}
 	}
 	query = query.WithMetadata(dataquery.Metadata{
@@ -341,65 +410,42 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	})
 	executed, err := executor.ExecuteDataQuery(ctx, query)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+			return command, resultSignal
+		}
 		resultSignal.Error = projectsignals.Pointer(err.Error())
 		return command, resultSignal
 	}
 	if strings.TrimSpace(executed.Error) != "" {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return command, resultSignal
+		}
 		resultSignal.Error = projectsignals.Pointer(executed.Error)
 		return command, resultSignal
 	}
 	rows := executed.Rows
-	truncated := int64(len(rows)) > int64(spec.Limit)
+	truncated := int64(len(rows)) > effectiveLimit
 	if truncated {
-		rows = rows[:spec.Limit]
+		rows = rows[:effectiveLimit]
+	}
+	var pivotTotals *projectsignals.DataExplorePivotTotalsSignal
+	var totalsDurationMS int64
+	var totalsWarnings []string
+	if !truncated {
+		pivotTotals, totalsDurationMS, totalsWarnings = dataExplorerExecutePivotTotals(ctx, executor, spec, query)
 	}
 	labels := explorerResultLabels(fields, aliases)
 	columns := make([]projectsignals.DataPreviewColumnSignal, 0, len(executed.Columns))
 	for _, column := range executed.Columns {
 		columns = append(columns, projectsignals.DataPreviewColumnSignal{Key: column.Name, Label: firstExplorerNonEmpty(labels[column.Name], column.Name)})
 	}
+	resultWarnings := append([]string(nil), executed.Warnings...)
+	resultWarnings = append(resultWarnings, totalsWarnings...)
 	return command, projectsignals.DataExploreResultSignal{
 		Columns: columns, Rows: dataExplorerRows(rows), SQL: projectsignals.Optional(executed.SQL), Plan: projectsignals.Optional(executed.PlanText),
-		DurationMS: executed.DurationMS, RowsReturned: int64(len(rows)), Truncated: truncated,
-		Warnings: append([]string(nil), executed.Warnings...), RequestSeq: command.RequestSeq,
+		DurationMS: executed.DurationMS + totalsDurationMS, RowsReturned: int64(len(rows)), Truncated: truncated,
+		Warnings: resultWarnings, PivotTotals: pivotTotals, RequestSeq: command.RequestSeq,
 	}
-}
-
-func explorerSpecQueryAliases(spec exploration.ExplorationSpec) map[string]string {
-	fields := make([]string, 0, len(spec.Dimensions)+len(spec.Metrics)+1)
-	aliases := make(map[string]string, len(fields))
-	dimensionFields := make(map[string]struct{}, len(spec.Dimensions))
-	for _, dimension := range spec.Dimensions {
-		fields = append(fields, dimension.Field)
-		dimensionFields[dimension.Field] = struct{}{}
-		if alias := strings.TrimSpace(projectsignals.ValueOrZero(dimension.Alias)); alias != "" {
-			aliases[dimension.Field] = alias
-		}
-	}
-	for _, metric := range spec.Metrics {
-		fields = append(fields, metric.Field)
-		if alias := strings.TrimSpace(projectsignals.ValueOrZero(metric.Alias)); alias != "" {
-			aliases[metric.Field] = alias
-		}
-	}
-	if spec.Time != nil {
-		if _, exists := dimensionFields[spec.Time.Field]; !exists {
-			fields = append(fields, spec.Time.Field)
-		}
-		if alias := strings.TrimSpace(projectsignals.ValueOrZero(spec.Time.Alias)); alias != "" {
-			// A time selection may decorate an existing dimension. Preserve an
-			// explicit dimension alias; otherwise the time alias is the merged
-			// output alias for that one dimension.
-			if _, exists := aliases[spec.Time.Field]; !exists {
-				aliases[spec.Time.Field] = alias
-			}
-		}
-	}
-	derived := explorerQueryAliases(fields, nil)
-	for field, alias := range aliases {
-		derived[field] = alias
-	}
-	return derived
 }
 
 func lowerExplorationFilters(spec exploration.ExplorationSpec, fields map[string]projectsignals.DataExploreFieldSignal) ([]dataquery.Filter, error) {
@@ -633,6 +679,23 @@ func validateExplorerProjectedSpec(spec exploration.ExplorationSpec, fields map[
 			return err
 		}
 	}
+	if spec.Pivot != nil {
+		for index, dimension := range spec.Pivot.Rows {
+			if err := validate(dimension.Field, "dimension", fmt.Sprintf("pivot row %d", index+1)); err != nil {
+				return err
+			}
+		}
+		for index, dimension := range spec.Pivot.Columns {
+			if err := validate(dimension.Field, "dimension", fmt.Sprintf("pivot column %d", index+1)); err != nil {
+				return err
+			}
+		}
+		for index, metric := range spec.Pivot.Metrics {
+			if err := validate(metric.Field, "metric", fmt.Sprintf("pivot metric %d", index+1)); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -652,6 +715,18 @@ func explorationSpecSortAliases(spec exploration.ExplorationSpec) map[string]str
 	for _, metric := range spec.Metrics {
 		if metric.Alias != nil && strings.TrimSpace(*metric.Alias) != "" {
 			selected[*metric.Alias] = struct{}{}
+		}
+	}
+	if spec.Pivot != nil {
+		for _, dimension := range append(append([]exploration.ExplorationDimensionRef(nil), spec.Pivot.Rows...), spec.Pivot.Columns...) {
+			if dimension.Alias != nil && strings.TrimSpace(*dimension.Alias) != "" {
+				selected[*dimension.Alias] = struct{}{}
+			}
+		}
+		for _, metric := range spec.Pivot.Metrics {
+			if metric.Alias != nil && strings.TrimSpace(*metric.Alias) != "" {
+				selected[*metric.Alias] = struct{}{}
+			}
 		}
 	}
 	return selected

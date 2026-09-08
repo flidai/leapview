@@ -97,8 +97,8 @@ func TestAPIGenSavedExplorationUISignalContracts(t *testing.T) {
 	if err := json.Unmarshal(content, &document); err != nil {
 		t.Fatalf("decode UI signal contract IR: %v", err)
 	}
-	if len(document.Contracts) != 134 {
-		t.Fatalf("UI signal IR contracts = %d, want 134", len(document.Contracts))
+	if len(document.Contracts) != 135 {
+		t.Fatalf("UI signal IR contracts = %d, want 135", len(document.Contracts))
 	}
 	wantRoles := map[string]string{
 		"SavedExplorationCommandSignal":   "command",

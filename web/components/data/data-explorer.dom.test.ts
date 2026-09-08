@@ -3,7 +3,6 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
-
 let server: Server
 let baseURL = ''
 let browser: Browser
@@ -43,9 +42,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  if (!server?.listening) return
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve())
+    server.closeIdleConnections()
+  })
 }, 15_000)
-
 test('data explorer renders object browser and emits preview commands', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -417,6 +419,196 @@ test('data explorer prompts for a selection when objects are available', async (
   }
 })
 
+test('data explorer emits configure, run, stop, and fresh rerun commands', async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    const lifecycle = await page.evaluate(async () => {
+      const element = document.createElement('lv-data-explorer') as any
+      const object = {
+        key: 'model:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columnCount: 2,
+        columns: [{ key: 'status', label: 'Status', type: 'string' }, { key: 'revenue', label: 'Revenue', type: 'decimal' }],
+      }
+      const exploreCommand = {
+        spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 },
+        requestSeq: 3, resetVersion: 3, columnWidths: {}, action: 'configure',
+      }
+      const fields = [
+        { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
+        { id: 'revenue', label: 'Revenue', kind: 'metric', datasetId: 'orders', type: 'decimal', compatible: true, selected: false },
+      ]
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [object], selectedKey: object.key, selectedObject: object,
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, loading: false, stale: false, resetVersion: 0, blocks: {}, sort: {} },
+          command: { mode: 'explore', objectKey: object.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 3, resetVersion: 3, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
+          explore: {
+            command: exploreCommand, semanticModels: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 2, entities: [] }] }],
+            datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 2, entities: [] }], fields,
+            selectedSemanticModel: { id: 'sales', title: 'Sales', datasets: [] }, selectedDataset: { id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 2, entities: [] },
+            result: { columns: [{ key: 'status', label: 'Status' }], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 3, truncated: false, warnings: [] },
+            status: { loading: false, stale: false, requestSeq: 3, state: 'success' },
+          }, warnings: [],
+        },
+      })
+      const commands: any[] = []
+      element.addEventListener('lv-data-explorer-command', (event: CustomEvent) => commands.push(event.detail))
+      document.body.append(element)
+      for (let index = 0; index < 10; index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const root = element.shadowRoot!
+      const metric = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('Revenue'))!
+      metric.click()
+      await new Promise((resolve) => setTimeout(resolve, 380))
+      const configure = commands.at(-1)
+      const runButton = Array.from(root.querySelectorAll<HTMLButtonElement>('.query-actions .text-button')).find((button) => button.textContent?.includes('Run'))!
+      const hasRunAfterConfigure = Boolean(runButton)
+      const hasStopAfterConfigure = Boolean(root.querySelector('.query-actions .text-button')) && Array.from(root.querySelectorAll<HTMLButtonElement>('.query-actions .text-button')).some((button) => button.textContent?.includes('Stop'))
+      runButton.click()
+      await element.updateComplete
+      const run = commands.at(-1)
+      const stopButton = Array.from(root.querySelectorAll<HTMLButtonElement>('.query-actions .text-button')).find((button) => button.textContent?.includes('Stop'))!
+      stopButton.click()
+      await element.updateComplete
+      const stop = commands.at(-1)
+      const rerunButton = Array.from(root.querySelectorAll<HTMLButtonElement>('.query-actions .text-button')).find((button) => button.textContent?.includes('Run'))!
+      rerunButton.click()
+      await element.updateComplete
+      const rerun = commands.at(-1)
+      // Hydrate the command as a real Run response before editing again. The
+      // outer lifecycle action must not leak into the following configure.
+      mergePatch({ dataExplorer: { command: { action: 'run', requestSeq: rerun?.explore?.requestSeq }, explore: { command: { action: 'run', requestSeq: rerun?.explore?.requestSeq } } } })
+      await element.updateComplete
+      const metricAfterRun = Array.from(element.shadowRoot!.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('Revenue'))!
+      metricAfterRun.click()
+      await new Promise((resolve) => setTimeout(resolve, 380))
+      const configureAfterRunResponse = commands.at(-1)
+      return {
+        configure: { action: configure?.action, nestedAction: configure?.explore?.action },
+        hasRunAfterConfigure,
+        hasStopAfterConfigure,
+        clientIDs: commands.map((command) => command.clientId),
+        run: { action: run?.action, nestedAction: run?.explore?.action, requestSeq: run?.explore?.requestSeq, runId: run?.runId },
+        stop: { action: stop?.action, nestedAction: stop?.explore?.action, requestSeq: stop?.explore?.requestSeq, runId: stop?.runId },
+        rerun: { action: rerun?.action, requestSeq: rerun?.explore?.requestSeq, runId: rerun?.runId },
+        configureAfterRunResponse: { action: configureAfterRunResponse?.action, nestedAction: configureAfterRunResponse?.explore?.action },
+      }
+    })
+    expect(lifecycle.configure).toEqual({ action: 'configure', nestedAction: 'configure' })
+    expect(lifecycle.hasRunAfterConfigure).toBe(true)
+    expect(lifecycle.hasStopAfterConfigure).toBe(false)
+    expect(lifecycle.clientIDs.length).toBe(5)
+    expect(lifecycle.clientIDs.every((clientID: unknown) => typeof clientID === 'string' && clientID.length > 0)).toBe(true)
+    expect(new Set(lifecycle.clientIDs).size).toBe(1)
+    expect(lifecycle.run.action).toBe('run')
+    expect(lifecycle.run.nestedAction).toBe('run')
+    expect(lifecycle.run.requestSeq).toBe(5)
+    expect(lifecycle.run.runId).toBeTruthy()
+    expect(lifecycle.stop).toEqual({ action: 'stop', nestedAction: 'stop', requestSeq: 5, runId: lifecycle.run.runId })
+    expect(lifecycle.rerun.action).toBe('run')
+    expect(lifecycle.rerun.requestSeq).toBe(6)
+    expect(lifecycle.rerun.runId).not.toBe(lifecycle.run.runId)
+    expect(lifecycle.configureAfterRunResponse).toEqual({ action: 'configure', nestedAction: 'configure' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('remounted explorer advances filter suggestion sequence for the same client', async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const originalSessionStorage = Object.getOwnPropertyDescriptor(window, 'sessionStorage')
+      // Exercise the embedded/private-browsing path where browser storage is
+      // unavailable. The tab-level fallback must still survive a remount.
+      Object.defineProperty(window, 'sessionStorage', { configurable: true, get: () => { throw new Error('storage unavailable') } })
+      const object = {
+        key: 'model:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columnCount: 1,
+        columns: [{ key: 'status', label: 'Status', type: 'string' }],
+      }
+      const exploreCommand = {
+        action: 'configure',
+        spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 },
+        requestSeq: 2, resetVersion: 2, columnWidths: {},
+      }
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [object], selectedKey: object.key, selectedObject: object,
+          command: { action: 'configure', mode: 'explore', objectKey: object.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 2, resetVersion: 2, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
+          explore: {
+            command: exploreCommand,
+            semanticModels: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }] }],
+            datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }],
+            fields: [{ id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true }],
+            selectedSemanticModel: { id: 'sales', title: 'Sales', datasets: [] },
+            selectedDataset: { id: 'orders', title: 'Orders', fieldCount: 1, entities: [] },
+            result: { columns: [{ key: 'status', label: 'Status' }], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 2, truncated: false, warnings: [] },
+            status: { loading: false, stale: true, requestSeq: 2, state: 'stale' },
+          },
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, loading: false, stale: false, resetVersion: 0, blocks: {}, sort: {} },
+          warnings: [],
+        },
+      })
+      const mount = () => {
+        const explorer = document.createElement('lv-data-explorer') as any
+        const commands: any[] = []
+        explorer.addEventListener('lv-data-explorer-command', (event: CustomEvent) => commands.push(event.detail))
+        document.body.append(explorer)
+        return { explorer, commands }
+      }
+      const waitForSuggestion = async (commands: any[]) => {
+        for (let index = 0; index < 10; index += 1) {
+          const suggestion = commands.find((command) => command.explore?.filterSuggestions)
+          if (suggestion) return suggestion
+          await new Promise((resolve) => setTimeout(resolve, 40))
+        }
+        return undefined
+      }
+      const first = mount()
+      for (let index = 0; index < 10; index += 1) {
+        await first.explorer.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const firstControls = first.explorer.shadowRoot!.querySelector('lv-data-explorer-query-controls') as any
+      await firstControls.updateComplete
+      firstControls.shadowRoot!.querySelector<HTMLButtonElement>('.field-action')!.click()
+      const firstSuggestion = await waitForSuggestion(first.commands)
+      first.explorer.remove()
+      const second = mount()
+      for (let index = 0; index < 10; index += 1) {
+        await second.explorer.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const secondControls = second.explorer.shadowRoot!.querySelector('lv-data-explorer-query-controls') as any
+      await secondControls.updateComplete
+      secondControls.shadowRoot!.querySelector<HTMLButtonElement>('.field-action')!.click()
+      const secondSuggestion = await waitForSuggestion(second.commands)
+      const result = {
+        firstClientID: firstSuggestion?.clientId,
+        secondClientID: secondSuggestion?.clientId,
+        firstRequestSeq: firstSuggestion?.explore?.filterSuggestions?.suggestionRequestSeq,
+        secondRequestSeq: secondSuggestion?.explore?.filterSuggestions?.suggestionRequestSeq,
+      }
+      if (originalSessionStorage) Object.defineProperty(window, 'sessionStorage', originalSessionStorage)
+      return result
+    })
+    expect(state.firstClientID).toBeTruthy()
+    expect(state.secondClientID).toBe(state.firstClientID)
+    expect(state.secondRequestSeq).toBeGreaterThan(state.firstRequestSeq)
+  } finally {
+    await page.close()
+  }
+})
+
 test('data explorer tolerates a partially hydrated legacy exploration command', async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
   try {
@@ -451,232 +643,74 @@ test('data explorer tolerates a partially hydrated legacy exploration command', 
   }
 })
 
-test('data explorer builds a governed semantic exploration and filter command', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+test('related physical filter uses the active exploration dataset scope', async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-data-explorer') && customElements.get('lv-data-explore-table'))
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
 
-    const state = await page.evaluate(async () => {
+    const filter = await page.evaluate(async () => {
       const element = document.createElement('lv-data-explorer') as any
-      const pageSignal = {
-        kind: 'data', title: 'Data Explorer', description: 'Inspect or explore data.', tabs: [],
+      const object = {
+        key: 'model:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model',
+        semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columnCount: 1,
+        columns: [{ key: 'status', label: 'Status', type: 'string' }],
       }
+      const dataset = { id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 1, entities: [] }
       const exploreCommand = {
-        spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [{ field: 'revenue' }],
-          filters: [], sort: [{ field: 'revenue', direction: 'desc' }], limit: 100 },
+        spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 },
         requestSeq: 1, resetVersion: 1, columnWidths: {},
       }
-      const selectedObject = {
-        key: 'model:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'orders',
-        description: 'One row per order.', grain: 'order_id', columnCount: 2, rowCountLabel: '10',
-        columns: [
-          { key: 'order_id', label: 'Order ID', type: 'string' },
-          { key: 'status', label: 'Status', type: 'string' },
-          { key: 'order_status', label: 'Order status', type: 'string' },
-        ],
-      }
-      const customersObject = {
-        key: 'model:model:sales.customers', resourceId: 'model:sales.customers', layer: 'model', semanticModelId: 'sales', datasetId: 'customers', title: 'customers',
-        columnCount: 2, rowCountLabel: '10', columns: [
-          { key: 'customer_id', label: 'Customer ID', type: 'string' },
-          { key: 'state', label: 'State', type: 'string' },
-        ],
-      }
-      const itemsObject = {
-        key: 'model:model:sales.items', resourceId: 'model:sales.items', layer: 'model', semanticModelId: 'sales', datasetId: 'items', title: 'items',
-        columnCount: 1, rowCountLabel: '10', columns: [{ key: 'sku', label: 'SKU', type: 'string' }],
-      }
-      const dataExplorer = {
-        objects: [selectedObject, customersObject, itemsObject], selectedKey: selectedObject.key, selectedObject, preview: {
-          columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, totalRowLabel: 'Unknown', sort: {},
-        },
-        command: { mode: 'explore', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
-        explore: {
-          command: exploreCommand,
-          semanticModels: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] }],
-          datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }],
-          selectedSemanticModel: { id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] },
-          selectedDataset: { id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] },
-          fields: [
-            { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: false },
-            { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
-            { id: 'order_status', label: 'Order status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: false },
-            { id: 'customers.customer_id', label: 'Customer ID', kind: 'dimension', datasetId: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
-            { id: 'customers.state', label: 'State', kind: 'dimension', datasetId: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
-            { id: 'items.sku', label: 'SKU', kind: 'dimension', datasetId: 'items', type: 'string', compatible: false, compatibilityReason: 'Not available from Orders because no grain-preserving relationship path reaches Items.', selected: false },
-            { id: 'revenue', label: 'Revenue', kind: 'metric', datasetId: 'orders', type: 'sum', compatible: true, selected: true },
-          ],
-          result: {
-            columns: [{ key: 'status', label: 'Status' }, { key: 'revenue', label: 'Revenue', type: 'decimal' }],
-            rows: [{ status: 'delivered', revenue: 1200 }], rowsReturned: 1, durationMs: 8, requestSeq: 1,
-            sql: 'SELECT status, SUM(revenue)', plan: 'orders aggregate', truncated: false, warnings: [],
-          },
-        }, warnings: [],
-      }
+      const fields = [
+        { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
+        { id: 'customers.state', label: 'State', kind: 'dimension', datasetId: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
+      ]
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ page: pageSignal, dataExplorer })
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [object], selectedKey: object.key, selectedObject: object,
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
+          command: { mode: 'explore', objectKey: object.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 1, resetVersion: 1, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
+          explore: {
+            command: exploreCommand,
+            semanticModels: [{ id: 'sales', title: 'Sales', datasets: [dataset] }],
+            datasets: [dataset], selectedSemanticModel: { id: 'sales', title: 'Sales', datasets: [dataset] }, selectedDataset: dataset,
+            fields,
+            result: { columns: [{ key: 'status', label: 'Status' }], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 1, truncated: false, warnings: [] },
+          },
+          warnings: [],
+        },
+      })
       const commands: any[] = []
       element.addEventListener('lv-data-explorer-command', (event: CustomEvent) => commands.push(event.detail))
       document.body.append(element)
-      for (let index = 0; index < 20 && !element.shadowRoot?.querySelector('.field-button'); index += 1) {
+      for (let index = 0; index < 20 && !element.shadowRoot?.querySelector('lv-data-explorer-query-controls'); index += 1) {
         await element.updateComplete
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
-
-      const root = element.shadowRoot
-      const customersTable = Array.from(root.querySelectorAll<HTMLElement>('.object-button')).find((button) => button.textContent?.includes('customers'))!
-      customersTable.click()
-      await element.updateComplete
-      const tableSelectionCommand = commands.at(-1)?.explore
-      const orderID = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('Order ID'))
-      if (!orderID) throw new Error(`Order ID field was not rendered: ${root.textContent}`)
-      orderID.click()
-      await element.updateComplete
-      await new Promise((resolve) => setTimeout(resolve, 380))
-
-      const statusRow = Array.from(root.querySelectorAll<HTMLElement>('.column-item')).find((row) => row.textContent?.includes('Status'))
-      const filterButton = statusRow?.querySelector<HTMLButtonElement>('.field-action')
-      if (!filterButton) throw new Error(`Status filter button was not rendered: ${root.textContent}`)
+      const controls = element.shadowRoot!.querySelector('lv-data-explorer-query-controls') as any
+      await controls.updateComplete
+      const controlRoot = controls.shadowRoot!
+      const stateField = Array.from(controlRoot.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('State'))!
+      const filterButton = stateField.parentElement?.querySelector<HTMLButtonElement>('.field-action')
+      if (!filterButton) throw new Error(`related field filter button was not rendered: ${controlRoot.textContent}`)
       filterButton.click()
       await element.updateComplete
-      const filterInput = root.querySelector<HTMLInputElement>('.filter-editor label:nth-child(3) input')!
-      filterInput.value = 'delivered'
+      await controls.updateComplete
+      const filterInput = controls.shadowRoot!.querySelector<HTMLInputElement>('.filter-editor label:nth-child(3) input')!
+      filterInput.value = 'CA'
       filterInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-      const applyButton = Array.from(root.querySelectorAll<HTMLButtonElement>('.filter-editor .text-button')).find((button) => button.textContent?.trim() === 'Apply')
-      if (!applyButton) throw new Error(`Apply filter button was not rendered: ${root.textContent}`)
+      await element.updateComplete
+      await controls.updateComplete
+      const applyButton = Array.from(controls.shadowRoot!.querySelectorAll<HTMLButtonElement>('.filter-editor .text-button')).find((button) => button.textContent?.trim() === 'Apply')
+      if (!applyButton) throw new Error(`related filter apply button was not rendered: ${controls.shadowRoot!.textContent}`)
       applyButton.click()
-      await element.updateComplete
       await new Promise((resolve) => setTimeout(resolve, 380))
-      const physicalFilter = commands.at(-1)?.explore?.spec?.filters?.at(-1)
-
-      const semanticRow = Array.from(root.querySelectorAll<HTMLElement>('.column-item')).find((row) => row.textContent?.includes('Order status'))
-      const semanticFilterButton = semanticRow?.querySelector<HTMLButtonElement>('.field-action')
-      if (!semanticFilterButton) throw new Error(`Conformed dimension filter button was not rendered: ${root.textContent}`)
-      semanticFilterButton.click()
-      await element.updateComplete
-      const semanticFilterInput = root.querySelector<HTMLInputElement>('.filter-editor label:nth-child(3) input')!
-      semanticFilterInput.value = 'paid'
-      semanticFilterInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-      const semanticApplyButton = Array.from(root.querySelectorAll<HTMLButtonElement>('.filter-editor .text-button')).find((button) => button.textContent?.trim() === 'Apply')
-      if (!semanticApplyButton) throw new Error(`Apply conformed filter button was not rendered: ${root.textContent}`)
-      semanticApplyButton.click()
-      await element.updateComplete
-      await new Promise((resolve) => setTimeout(resolve, 380))
-      const semanticFilter = commands.at(-1)?.explore?.spec?.filters?.find((filter: any) => filter.field === 'order_status')
-
-      const table = root.querySelector('lv-data-explore-table') as any
-      await table.updateComplete
-      const exploreRequestSeqBeforeWidth = table.command.requestSeq
-      table.dispatchEvent(new CustomEvent('lv-data-explore-table-command', {
-        bubbles: true, composed: true, detail: { columnWidths: { revenue: 240 } },
-      }))
-      await element.updateComplete
-      const nestedWidthCommand = commands.at(-1)
-      const windowedTable = table.shadowRoot.querySelector('lv-windowed-table')
-      windowedTable.dispatchEvent(new CustomEvent('lv-windowed-table-request', {
-        bubbles: true, composed: true, detail: { start: 0, sort: { key: 'status', direction: 'asc' } },
-      }))
-      await element.updateComplete
-      await new Promise((resolve) => setTimeout(resolve, 380))
-      const derivedSortCommand = commands.at(-1)
-      table.command = { ...table.command, spec: { ...table.command.spec, sort: [{ field: 'orders.status', direction: 'asc' }] } }
-      await table.updateComplete
-      const tableSortPayload = table.shadowRoot.querySelector('lv-windowed-table')?.table?.sort
-      const stateField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('State'))!
-      const skuField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('SKU'))!
-      skuField.click()
-      const initialState = {
-        modes: Array.from(root.querySelectorAll('.mode-button')).map((button) => ({ text: button.textContent?.trim(), pressed: button.getAttribute('aria-pressed') })),
-        hasBreadcrumb: Boolean(root.querySelector('[aria-label="Breadcrumb"]')),
-        resourceTables: root.querySelector('.resource-group')?.textContent?.replace(/\s+/g, ' ').trim(),
-        chips: Array.from(root.querySelectorAll('.selection-shelf .chip')).map((chip) => chip.textContent?.replace(/\s+/g, ' ').trim()),
-        grain: root.querySelector('.result-meta')?.textContent?.replace(/\s+/g, ' ').trim(),
-        tableRows: table.result.rows,
-        relatedField: { disabled: stateField.disabled, text: stateField.textContent?.replace(/\s+/g, ' ').trim(), title: stateField.title },
-      }
-      const unavailableField = { disabled: skuField.disabled, text: skuField.textContent?.replace(/\s+/g, ' ').trim(), title: skuField.title }
-
-      const customerCommand = {
-        ...exploreCommand, spec: { ...exploreCommand.spec, datasetId: 'customers', dimensions: [{ field: 'customers.state' }], metrics: [], sort: [] }, requestSeq: 100, resetVersion: 100,
-      }
-      const customerExplorer = {
-        ...dataExplorer,
-        selectedKey: customersObject.key,
-        selectedObject: customersObject,
-        command: { ...dataExplorer.command, objectKey: customersObject.key, explore: customerCommand },
-        explore: {
-          ...dataExplorer.explore,
-          command: customerCommand,
-          selectedDataset: { id: 'customers', title: 'Customers', grainEntity: 'customer_id', grainFields: ['customer_id'], fieldCount: 1, entities: [] },
-          fields: [
-            { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Order ID and change grain from Customers to Orders.', selected: false },
-            { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Status and change grain from Customers to Orders.', selected: false },
-            { id: 'customers.state', label: 'State', kind: 'dimension', datasetId: 'customers', type: 'string', compatible: true, selected: true },
-            { id: 'items.sku', label: 'SKU', kind: 'dimension', datasetId: 'items', type: 'string', compatible: false, compatibilityReason: 'No safe base supports this field with the selection.', selected: false },
-          ],
-          result: { columns: [{ key: 'state', label: 'State' }], rows: [{ state: 'SP' }], rowsReturned: 1, durationMs: 2, requestSeq: 100, truncated: false, warnings: [] },
-        },
-      }
-      mergePatch({ dataExplorer: customerExplorer })
-      for (let index = 0; index < 10; index += 1) {
-        await element.updateComplete
-        await new Promise((resolve) => requestAnimationFrame(resolve))
-      }
-      const rebaseField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('Status'))!
-      rebaseField.click()
-      await element.updateComplete
-      await new Promise((resolve) => setTimeout(resolve, 380))
-      const rebaseCommand = commands.at(-1)?.explore
-      return {
-        ...initialState,
-        physicalFilter,
-        semanticFilter,
-        unavailableField,
-        rebaseField: { disabled: rebaseField.disabled, text: rebaseField.textContent?.replace(/\s+/g, ' ').trim(), title: rebaseField.title },
-        rebaseCommand,
-        tableSelectionCommand,
-        nestedWidthCommand,
-        exploreRequestSeqBeforeWidth,
-        derivedSortCommand,
-        tableSortPayload,
-        commands,
-      }
+      return commands.flatMap((command) => command.explore?.spec?.filters ?? []).find((candidate: any) => candidate.field === 'customers.state')
     })
 
-    expect(state.modes).toEqual([])
-    expect(state.hasBreadcrumb).toBe(false)
-    expect(state.resourceTables).toContain('orders')
-    expect(state.chips.join(' ')).toContain('Order ID')
-    expect(state.chips.join(' ')).toContain('Revenue')
-    expect(state.grain).toContain('Grain: order_id')
-    expect(state.tableRows).toEqual([{ status: 'delivered', revenue: 1200 }])
-    expect(state.physicalFilter).toMatchObject({ field: 'orders.status', datasetId: 'orders' })
-    expect(state.semanticFilter).toMatchObject({ field: 'order_status' })
-    expect(state.semanticFilter).not.toHaveProperty('datasetId')
-    expect(state.relatedField.disabled).toBe(false)
-    expect(state.relatedField.text).toContain('related')
-    expect(state.relatedField.title).toContain('orders_customers')
-    expect(state.unavailableField.disabled).toBe(true)
-    expect(state.unavailableField.text).toContain('unavailable')
-    expect(state.unavailableField.title).toContain('no grain-preserving relationship path')
-    expect(state.rebaseField.disabled).toBe(false)
-    expect(state.rebaseField.text).toContain('changes grain')
-    expect(state.rebaseField.title).toContain('change grain from Customers to Orders')
-    expect(state.rebaseCommand.spec.datasetId).toBe('customers')
-    expect(state.rebaseCommand.spec.dimensions.map((field: any) => field.field)).toEqual(['customers.state', 'orders.status'])
-    expect(state.tableSelectionCommand.spec.datasetId).toBe('customers')
-    expect(state.tableSelectionCommand.spec.dimensions.map((field: any) => field.field)).toEqual(['customers.customer_id', 'customers.state'])
-    expect(state.tableSelectionCommand.spec.metrics).toEqual([])
-    expect(state.nestedWidthCommand.explore.columnWidths).toEqual({ revenue: 240 })
-    expect(state.nestedWidthCommand.columnWidths).toEqual({})
-    expect(state.nestedWidthCommand.explore.requestSeq).toBe(state.exploreRequestSeqBeforeWidth)
-    expect(state.nestedWidthCommand.requestSeq).toBe(0)
-    expect(state.derivedSortCommand.explore.spec.sort).toEqual([{ field: 'orders.status', direction: 'asc' }])
-    expect(state.tableSortPayload).toEqual({ key: 'status', column: 'status', direction: 'asc' })
-    expect(state.commands.some((command) => command.explore?.spec?.dimensions?.some((field: any) => field.field === 'items.sku'))).toBe(false)
-    expect(state.commands.some((command) => command.mode === 'explore' && command.explore?.spec?.dimensions?.some((field: any) => field.field === 'orders.order_id'))).toBe(true)
-    expect(state.commands.some((command) => command.explore?.spec?.filters?.some((filter: any) => filter.field === 'orders.status' && filter.expression?.value?.value === 'delivered'))).toBe(true)
+    expect(filter).toMatchObject({ field: 'customers.state', datasetId: 'orders' })
   } finally {
     await page.close()
   }
@@ -745,17 +779,65 @@ test('data preview and semantic query failures expose retry and reset actions', 
       const exploreAlert = failure.textContent!.replace(/\s+/g, ' ').trim()
       const exploreButtons = Array.from(failure.querySelectorAll<HTMLButtonElement>('button'))
       exploreButtons[0].click()
-      exploreButtons[1].click()
       await explorer.updateComplete
-      return { previewAlert, previewCommands, exploreAlert, exploreCommands }
+      const resetButton = explorer.shadowRoot!.querySelector<HTMLButtonElement>('.result-failure button:last-of-type')!
+      resetButton.click()
+      await explorer.updateComplete
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      return {
+        previewAlert,
+        previewCommands,
+        exploreAlert,
+        exploreCommands,
+        retryRequestSeq: exploreCommands[0]?.explore?.requestSeq,
+        resetRequestSeq: exploreCommands[1]?.explore?.requestSeq,
+      }
     })
 
     expect(state.previewAlert).toContain('Preview timed out.')
     expect(state.previewCommands[0]).toMatchObject({ objectKey: 'orders', requestSeq: 8, resetVersion: 2 })
     expect(state.previewCommands[1]).toMatchObject({ objectKey: 'orders', offset: 0, start: 0, block: 'all', requestSeq: 8, resetVersion: 3, sort: {} })
     expect(state.exploreAlert).toContain('Query service is unavailable.')
+    expect(state.exploreCommands).toHaveLength(2)
     expect(state.exploreCommands[0].explore.spec).toMatchObject({ modelId: 'sales', datasetId: 'orders' })
+    expect(state.exploreCommands[0]).toMatchObject({ action: 'run', explore: { action: 'run' } })
+    expect(state.exploreCommands[1]).toMatchObject({ action: 'configure', explore: { action: 'configure' } })
+    expect(state.resetRequestSeq).toBeGreaterThan(state.retryRequestSeq)
     expect(state.exploreCommands[1].explore.spec).toMatchObject({ dimensions: [], metrics: [], filters: [], sort: [] })
+  } finally {
+    await page.close()
+  }
+})
+
+test('query controls explain and disable unsupported relative time ranges', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer-query-controls'))
+
+    const state = await page.evaluate(async () => {
+      const controls = document.createElement('lv-data-explorer-query-controls') as any
+      controls.command = {
+        spec: {
+          schemaVersion: 1, modelId: 'sales', datasetId: 'orders',
+          dimensions: [], metrics: [], filters: [], sort: [], limit: 100,
+          time: { field: 'orders.created_at', grain: 'day', range: { kind: 'relative', direction: 'previous', count: 3, unit: 'month', includeCurrent: true, anchor: 'current_time' } },
+        },
+        requestSeq: 1, resetVersion: 1, columnWidths: {},
+      }
+      controls.fields = [{ id: 'orders.created_at', label: 'Created at', kind: 'dimension', datasetId: 'orders', type: 'date', compatible: true, selected: false }]
+      document.body.append(controls)
+      await controls.updateComplete
+      const root = controls.shadowRoot!
+      const range = root.querySelector<HTMLSelectElement>('select[aria-label="Time range"]')!
+      return {
+        relativeDisabled: range.querySelector<HTMLOptionElement>('option[value="relative"]')?.disabled,
+        message: root.querySelector<HTMLElement>('[role="alert"]')?.textContent,
+      }
+    })
+
+    expect(state.relativeDisabled).toBe(true)
+    expect(state.message).toContain('Relative time ranges are not supported yet')
   } finally {
     await page.close()
   }
@@ -895,6 +977,54 @@ test('non-embedded explorer keeps the selected saved deep link during URL update
     })
     expect(new URL(url).searchParams.get('saved')).toBe('exploration:active')
     expect(new URL(url).searchParams.get('object')).toContain('customers')
+  } finally {
+    await page.close()
+  }
+})
+
+test('saved metadata patches do not replace an in-flight optimistic query URL', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/explore?saved=exploration%3Aactive`)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    const url = await page.evaluate(async () => {
+      const spec = { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 }
+      const object = {
+        key: 'model:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columnCount: 1,
+        columns: [{ key: 'status', label: 'Status', type: 'string' }],
+      }
+      const exploreCommand = { spec, requestSeq: 1, resetVersion: 1, columnWidths: {} }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        dataExplorer: {
+          objects: [object], selectedKey: object.key, selectedObject: object,
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
+          command: { mode: 'explore', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 1, resetVersion: 1, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
+          explore: { command: exploreCommand, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 1, truncated: false, warnings: [] } }, warnings: [],
+        },
+        savedExplorations: {
+          enabled: true, list: { items: [], includeArchived: false, selectedId: 'exploration:active' },
+          current: { id: 'exploration:active', title: 'Active', slug: 'active', visibility: 'private', status: 'active', semanticModelId: 'sales', revision: { revisionId: 'revision:1', number: 1, contentHash: 'sha256:' + 'a'.repeat(64) }, detached: false, spec },
+          command: { action: 'create' }, save: { state: 'saved' },
+        },
+      })
+      const explorer = document.querySelector('lv-data-explorer') as any
+      for (let index = 0; index < 20 && !explorer.shadowRoot?.querySelector('.field-button'); index += 1) {
+        await explorer.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      // This follows the real edit path: emitExplore records an optimistic
+      // command and updates the canonical URL before the response arrives.
+      explorer.emitExplore({ dimensions: [{ field: 'orders.status' }] }, undefined, undefined, true)
+      const optimisticURL = window.location.href
+      // A concurrent save-state/list patch must not restore the stale server
+      // command while the optimistic explorer request remains unresolved.
+      mergePatch({ savedExplorations: { enabled: true, list: { items: [], includeArchived: false, selectedId: 'exploration:active' }, command: { action: 'create' }, save: { state: 'saving' } } })
+      await explorer.updateComplete
+      return { optimisticURL, currentURL: window.location.href }
+    })
+    expect(new URL(url.currentURL).searchParams.get('state')).toContain('orders.status')
+    expect(url.currentURL).toBe(url.optimisticURL)
   } finally {
     await page.close()
   }

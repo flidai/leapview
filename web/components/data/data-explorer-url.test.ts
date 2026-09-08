@@ -78,6 +78,8 @@ test('archived saved selection carries explicit archived-list scope', () => {
 
 test('filter editor preserves typed scalar values and fails closed', () => {
   expect(makeExplorationFilter('orders.count', 'greater_than', ['10'], 'number')?.expression).toEqual({ kind: 'comparison', operator: 'greater_than', value: { kind: 'decimal', value: '10' } })
+  expect(makeExplorationFilter('orders.count', 'less_than', ['10'], 'number')?.expression).toEqual({ kind: 'comparison', operator: 'less_than', value: { kind: 'decimal', value: '10' } })
+  expect(makeExplorationFilter('orders.created_on', 'less_than', ['2024-03-01'], 'date')?.expression).toEqual({ kind: 'comparison', operator: 'less_than', value: { kind: 'date', value: '2024-03-01' } })
   expect(makeExplorationFilter('orders.active', 'equals', ['true'], 'boolean')?.expression).toEqual({ kind: 'comparison', operator: 'equals', value: { kind: 'boolean', value: true } })
   expect(makeExplorationFilter('orders.amount', 'equals', ['0.5'], 'number')?.expression).toEqual({ kind: 'comparison', operator: 'equals', value: { kind: 'decimal', value: '0.5' } })
   expect(makeExplorationFilter('orders.amount', 'equals', ['-0.5'], 'number')?.expression).toEqual({ kind: 'comparison', operator: 'equals', value: { kind: 'decimal', value: '-0.5' } })
@@ -97,6 +99,9 @@ test('filter editor preserves typed scalar values and fails closed', () => {
 test('filter editor scopes physical dimensions but leaves conformed dimensions unscoped', () => {
   const physical = makeExplorationFilter({ id: 'orders.status', kind: 'dimension', datasetId: 'orders' }, 'equals', ['paid'], 'string')
   expect(physical).toMatchObject({ field: 'orders.status', datasetId: 'orders' })
+
+  const related = makeExplorationFilter({ id: 'customers.state', kind: 'dimension', datasetId: 'customers' }, 'equals', ['CA'], 'string', 'orders')
+  expect(related).toMatchObject({ field: 'customers.state', datasetId: 'orders' })
 
   const conformed = makeExplorationFilter({ id: 'order_status', kind: 'dimension', datasetId: 'orders' }, 'equals', ['paid'], 'string')
   expect(conformed).toMatchObject({ field: 'order_status', expression: { kind: 'comparison' } })

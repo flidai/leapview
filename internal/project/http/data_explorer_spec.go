@@ -51,6 +51,16 @@ func defaultExplorationSpec() exploration.ExplorationSpec {
 	}
 }
 
+// explorerEffectiveLimit is the governed row budget for an exploration
+// result. A configured pivot window owns the materialized pivot budget; the
+// top-level limit remains the default for every other result shape.
+func explorerEffectiveLimit(spec exploration.ExplorationSpec) int64 {
+	if spec.Pivot != nil && spec.Pivot.Window != nil && spec.Pivot.Window.Limit > 0 {
+		return int64(spec.Pivot.Window.Limit)
+	}
+	return int64(spec.Limit)
+}
+
 func normalizeExplorationSpec(spec exploration.ExplorationSpec) exploration.ExplorationSpec {
 	if !explorationSpecCanDefault(spec) {
 		return spec
@@ -121,11 +131,33 @@ func dataExploreStateFromSpec(spec exploration.ExplorationSpec) dataExploreState
 	if spec.DatasetID != nil && strings.TrimSpace(*spec.DatasetID) != "" {
 		state.DatasetID = spec.DatasetID
 	}
-	for _, dimension := range spec.Dimensions {
-		state.Dimensions = append(state.Dimensions, dimension.Field)
-	}
-	for _, metric := range spec.Metrics {
-		state.Metrics = append(state.Metrics, metric.Field)
+	if spec.Pivot != nil {
+		// Pivot owns its row/column/metric selection. Project it into the
+		// execution state while retaining the authored pivot object itself.
+		for _, dimension := range spec.Pivot.Rows {
+			state.Dimensions = append(state.Dimensions, dimension.Field)
+		}
+		for _, dimension := range spec.Pivot.Columns {
+			state.Dimensions = append(state.Dimensions, dimension.Field)
+		}
+		for _, metric := range spec.Pivot.Metrics {
+			state.Metrics = append(state.Metrics, metric.Field)
+		}
+		// Pivot owns its ordering as well. Do not inherit a stale top-level
+		// sort, which may refer to a field outside the pivot projection.
+		state.Sort = state.Sort[:0]
+		if spec.Pivot.Sort != nil {
+			for _, sorting := range *spec.Pivot.Sort {
+				state.Sort = append(state.Sort, dataExploreSort{Field: sorting.Field, Direction: string(sorting.Direction)})
+			}
+		}
+	} else {
+		for _, dimension := range spec.Dimensions {
+			state.Dimensions = append(state.Dimensions, dimension.Field)
+		}
+		for _, metric := range spec.Metrics {
+			state.Metrics = append(state.Metrics, metric.Field)
+		}
 	}
 	for _, filter := range spec.Filters {
 		item := dataExploreFilter{Field: filter.Field, Dataset: filter.DatasetID}
@@ -190,6 +222,14 @@ func explorationSpecWithState(spec exploration.ExplorationSpec, state dataExplor
 	for _, dimension := range spec.Dimensions {
 		oldDimensions[dimension.Field] = dimension
 	}
+	if spec.Pivot != nil {
+		for _, dimension := range spec.Pivot.Rows {
+			oldDimensions[dimension.Field] = dimension
+		}
+		for _, dimension := range spec.Pivot.Columns {
+			oldDimensions[dimension.Field] = dimension
+		}
+	}
 	spec.Dimensions = make([]exploration.ExplorationDimensionRef, 0, len(state.Dimensions))
 	for _, field := range state.Dimensions {
 		if dimension, ok := oldDimensions[field]; ok {
@@ -201,6 +241,11 @@ func explorationSpecWithState(spec exploration.ExplorationSpec, state dataExplor
 	oldMetrics := make(map[string]exploration.ExplorationMetricRef, len(spec.Metrics))
 	for _, metric := range spec.Metrics {
 		oldMetrics[metric.Field] = metric
+	}
+	if spec.Pivot != nil {
+		for _, metric := range spec.Pivot.Metrics {
+			oldMetrics[metric.Field] = metric
+		}
 	}
 	spec.Metrics = make([]exploration.ExplorationMetricRef, 0, len(state.Metrics))
 	for _, field := range state.Metrics {
