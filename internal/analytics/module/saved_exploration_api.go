@@ -27,8 +27,11 @@ import (
 // Actor, IDs, fingerprints, and evidence are all derived here or below the
 // transport boundary; none are accepted from request bodies.
 type SavedExplorationAPIGenConfig struct {
-	Service          SavedExplorationService
-	CurrentPrincipal func(*http.Request) (string, bool)
+	Service SavedExplorationService
+	// ExportAuditRecorder records export preparation, not network delivery.
+	// Query execution can succeed while encoding is rejected by bounds/cancellation.
+	ExportAuditRecorder QueryAuditRecorder
+	CurrentPrincipal    func(*http.Request) (string, bool)
 	// ReplayContext installs the canonical authenticated principal (and any
 	// credential attenuation) before the read-only replay authorization runs.
 	// The public protocol invokes replay authorization before APIGen's normal

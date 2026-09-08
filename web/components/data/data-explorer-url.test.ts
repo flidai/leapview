@@ -1,8 +1,9 @@
 import { expect, test } from 'bun:test'
 import type { ExplorationSpec } from '../../generated/exploration'
-import type { DataExplorerCommand } from '../../generated/signals'
+import type { DataExplorerCommand, SavedExplorationStateSignal } from '../../generated/signals'
+import { copyExplorationLink, SavedExplorationTracker } from './data-explorer-saved'
 import { explorationResultKeyForSort, explorationSortFieldForResult, explorationSpecFor, makeExplorationFilter, removeExplorationField, toggleExplorationField } from './data-explorer-spec'
-import { dataExplorerURL, updateDataExplorerURL } from './data-explorer-url'
+import { absoluteDataExplorerURL, dataExplorerExportURL, dataExplorerURL, updateDataExplorerURL } from './data-explorer-url'
 
 const originalWindow = globalThis.window
 
@@ -62,6 +63,30 @@ test('exploration URL deterministically includes durable query state only', () =
 
 test('browse URL preserves only the selected object', () => {
   expect(dataExplorerURL({ mode: 'browse', objectKey: 'model:orders' } as DataExplorerCommand)).toBe('/explore?object=model%3Aorders')
+})
+
+test('export URL reuses canonical current query state and format', () => {
+  const command: DataExplorerCommand = {
+    mode: 'explore',
+    explore: { spec: { schemaVersion: 1, modelId: 'semantic:sales', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 } },
+  }
+  const exported = new URL(dataExplorerExportURL(command, 'parquet'), 'https://example.test')
+  expect(exported.pathname).toBe('/explore/export')
+  expect(exported.searchParams.get('v')).toBe('2')
+  expect(exported.searchParams.get('mode')).toBe('explore')
+  expect(exported.searchParams.get('format')).toBe('parquet')
+  expect(JSON.parse(exported.searchParams.get('state')!)).toMatchObject({ modelId: 'semantic:sales', schemaVersion: 1 })
+})
+
+test('shared explorer URLs are absolute in the browser', () => {
+  const fakeWindow = { location: { origin: 'https://insights.example.test' } }
+  Object.defineProperty(globalThis, 'window', { value: fakeWindow, configurable: true })
+  try {
+    expect(absoluteDataExplorerURL('/explore?object=orders')).toBe('https://insights.example.test/explore?object=orders')
+    expect(absoluteDataExplorerURL('https://other.example.test/explore')).toBe('https://other.example.test/explore')
+  } finally {
+    Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true })
+  }
 })
 
 test('saved selection survives durable explorer URL updates', () => {
@@ -200,5 +225,71 @@ test('durable explorer edits push while canonicalization replaces and unchanged 
     expect(calls[1]).toMatchObject({ mode: 'replace', url: '/explore?v=2&mode=explore&state=%7B%22datasetId%22%3A%22customers%22%2C%22dimensions%22%3A%5B%7B%22field%22%3A%22customers.state%22%7D%5D%2C%22filters%22%3A%5B%5D%2C%22limit%22%3A100%2C%22metrics%22%3A%5B%5D%2C%22modelId%22%3A%22sales%22%2C%22schemaVersion%22%3A1%2C%22sort%22%3A%5B%5D%7D' })
   } finally {
     Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true })
+  }
+})
+
+test('saved tracker reports a detached optimistic working query once per fingerprint', () => {
+  const spec: ExplorationSpec = {
+    schemaVersion: 1, modelId: 'semantic:sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100,
+  }
+  const state: SavedExplorationStateSignal = {
+    enabled: true,
+    list: { items: [], includeArchived: false, selectedId: 'exploration:sales' },
+    current: {
+      id: 'exploration:sales', title: 'Sales', slug: 'sales', visibility: 'organization', status: 'active', semanticModelId: 'semantic:sales',
+      revision: { revisionId: 'revision:1', number: 1, contentHash: 'sha256:' + 'a'.repeat(64) }, detached: true, spec,
+    },
+    command: { action: 'create' }, save: { state: 'saved' },
+  }
+  const events: string[] = []
+  const tracker = new SavedExplorationTracker({
+    onBaselineChanged: (current) => events.push(`baseline:${current?.id ?? 'none'}`),
+    onDirty: () => events.push('dirty'),
+  })
+  const workingSpec = { ...spec, limit: 25 }
+  tracker.observe(state, spec)
+  tracker.observe(state, workingSpec)
+  tracker.observe(state, workingSpec)
+
+  expect(events).toEqual(['baseline:exploration:sales', 'dirty'])
+})
+
+test('saved tracker resets the optimistic baseline when the selected version changes', () => {
+  const spec: ExplorationSpec = {
+    schemaVersion: 1, modelId: 'semantic:sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100,
+  }
+  const state: SavedExplorationStateSignal = {
+    enabled: true,
+    list: { items: [], includeArchived: false, selectedId: 'exploration:sales' },
+    current: {
+      id: 'exploration:sales', title: 'Sales', slug: 'sales', visibility: 'organization', status: 'active', semanticModelId: 'semantic:sales',
+      revision: { revisionId: 'revision:1', number: 1, contentHash: 'sha256:' + 'a'.repeat(64) }, detached: true, spec,
+    },
+    command: { action: 'create' }, save: { state: 'saved' },
+  }
+  const baselines: string[] = []
+  const tracker = new SavedExplorationTracker({
+    onBaselineChanged: (current) => baselines.push(current?.revision.revisionId ?? 'none'),
+    onDirty: () => undefined,
+  })
+  const next = { ...state, current: { ...state.current!, revision: { ...state.current!.revision, revisionId: 'revision:2', number: 2 } } }
+  tracker.observe(state, spec)
+  tracker.observe(next, spec)
+
+  expect(baselines).toEqual(['revision:1', 'revision:2'])
+})
+
+test('copying an explorer link writes the absolute share URL', async () => {
+  const originalNavigator = globalThis.navigator
+  let copied = ''
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { clipboard: { writeText: async (value: string) => { copied = value } } },
+  })
+  try {
+    await copyExplorationLink('https://insights.example.test/explore?saved=exploration%3Asales')
+    expect(copied).toBe('https://insights.example.test/explore?saved=exploration%3Asales')
+  } finally {
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: originalNavigator })
   }
 })

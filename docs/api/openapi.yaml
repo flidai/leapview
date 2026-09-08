@@ -56025,6 +56025,338 @@ paths:
           type: project
         ui:
           action_id: saved-exploration.create
+  /api/v1/projects/{project}/saved-explorations/url-export:
+    post:
+      operationId: exportSavedExplorationURL
+      summary: Export canonical URL exploration state
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          headers:
+            cache-control:
+              required: true
+              schema:
+                type: string
+                enum:
+                  - no-store
+            content-disposition:
+              required: true
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+              example: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Saved Explorations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedExplorationURLExportRequest'
+            example:
+              spec:
+                datasetId: example
+                dimensions:
+                  - alias: example
+                    field: example
+                    grain: second
+                filters:
+                  - datasetId: example
+                    field: example
+                limit: 1
+                metrics:
+                  - alias: example
+                    field: example
+                modelId: example
+                pivot:
+                  columns:
+                    - alias: example
+                      field: example
+                      grain: second
+                  metrics:
+                    - alias: example
+                      field: example
+                  rows:
+                    - alias: example
+                      field: example
+                      grain: second
+                  sort:
+                    - direction: asc
+                      field: example
+                  totals:
+                    columns: true
+                    grand: true
+                    rows: true
+                  window:
+                    limit: 1
+                    offset: 1
+                schemaVersion: 1
+                sort:
+                  - direction: asc
+                    field: example
+                table:
+                  columns:
+                    - field: example
+                      label: example
+                      width: 1
+                  density: compact
+                  rowHeight: 1
+                  showHeader: true
+                  striped: true
+                time:
+                  alias: example
+                  field: example
+                  grain: second
+      x-apigen-operation-kind: query
   /api/v1/projects/{project}/saved-explorations/{exploration}:
     get:
       operationId: getSavedExploration
@@ -57608,6 +57940,303 @@ paths:
           type: project
         ui:
           action_id: saved-exploration.duplicate
+  /api/v1/projects/{project}/saved-explorations/{exploration}/export:
+    post:
+      operationId: exportSavedExploration
+      summary: Export a saved exploration revision
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: exploration
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          headers:
+            cache-control:
+              required: true
+              schema:
+                type: string
+                enum:
+                  - no-store
+            content-disposition:
+              required: true
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+              example: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Saved Explorations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedExplorationExportRequest'
+            example:
+              format: csv
+              maxBytes: 1
+              maxRows: 1
+      x-apigen-operation-kind: query
   /api/v1/projects/{project}/targets/{target}/connection-bindings:
     get:
       operationId: listTargetConnectionBindings
@@ -91547,6 +92176,31 @@ components:
         slug: example
         title: example
         visibility: private
+    SavedExplorationExportFormat:
+      type: string
+      enum:
+        - csv
+        - parquet
+      example: csv
+    SavedExplorationExportRequest:
+      type: object
+      required:
+        - format
+      properties:
+        format:
+          $ref: '#/components/schemas/SavedExplorationExportFormat'
+        maxRows:
+          type: integer
+          format: int32
+          example: 1
+        maxBytes:
+          type: integer
+          format: int64
+          example: 1
+      example:
+        format: csv
+        maxBytes: 1
+        maxRows: 1
     SavedExplorationListResponse:
       type: object
       required:
@@ -91897,6 +92551,69 @@ components:
         title: example
         updatedAt: "2026-01-02T15:04:05Z"
         visibility: private
+    SavedExplorationURLExportRequest:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/SavedExplorationExportRequest'
+      required:
+        - spec
+      properties:
+        spec:
+          $ref: '#/components/schemas/ExplorationSpec'
+      example:
+        spec:
+          datasetId: example
+          dimensions:
+            - alias: example
+              field: example
+              grain: second
+          filters:
+            - datasetId: example
+              field: example
+          limit: 1
+          metrics:
+            - alias: example
+              field: example
+          modelId: example
+          pivot:
+            columns:
+              - alias: example
+                field: example
+                grain: second
+            metrics:
+              - alias: example
+                field: example
+            rows:
+              - alias: example
+                field: example
+                grain: second
+            sort:
+              - direction: asc
+                field: example
+            totals:
+              columns: true
+              grand: true
+              rows: true
+            window:
+              limit: 1
+              offset: 1
+          schemaVersion: 1
+          sort:
+            - direction: asc
+              field: example
+          table:
+            columns:
+              - field: example
+                label: example
+                width: 1
+            density: compact
+            rowHeight: 1
+            showHeader: true
+            striped: true
+          time:
+            alias: example
+            field: example
+            grain: second
     SavedExplorationVisibility:
       type: string
       enum:

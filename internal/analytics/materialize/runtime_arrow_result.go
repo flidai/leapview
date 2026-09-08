@@ -385,17 +385,11 @@ func decodeArrowQueryResult(request dataquery.Query, lease *arrowresult.Lease, m
 			delete(row, transportTotalColumn)
 		}
 	}
-	columns := make([]string, 0)
-	if schema := lease.Schema(); schema != nil && !countOnly {
-		for _, field := range schema.Fields() {
-			if field.Name != transportTotalColumn {
-				columns = append(columns, field.Name)
-			}
-		}
-	}
 	result := summary
 	result.SQL = metadata.SQL
-	result.Columns = dataquery.ColumnsFromNames(columns)
+	if !countOnly {
+		result.Columns = dataQueryColumnsFromArrowSchema(lease.Schema(), transportTotalColumn)
+	}
 	result.Rows = make([]dataquery.Row, len(rows))
 	for index := range rows {
 		result.Rows[index] = dataquery.Row(rows[index])

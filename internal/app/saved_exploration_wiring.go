@@ -79,6 +79,7 @@ func configureSavedExploration(inputs savedExplorationWiringInputs) (savedExplor
 	// that cannot complete a durable command.
 	if inputs.projectBrowser != nil && savedService != nil && inputs.analyticsModule != nil {
 		inputs.projectBrowser.SavedExplorations = savedService
+		inputs.projectBrowser.ExplorationExportAuditRecorder = inputs.analyticsModule.QueryAuditRecorder()
 		bindings := inputs.analyticsModule.SavedExplorationUICommandBindings()
 		inputs.projectBrowser.SavedExplorationCommands = projecthttp.SavedExplorationCommandBindings{
 			Create: bindings.Create, Update: bindings.Update, Duplicate: bindings.Duplicate, Archive: bindings.Archive,
@@ -101,9 +102,10 @@ func configureSavedExploration(inputs savedExplorationWiringInputs) (savedExplor
 	return savedExplorationWiringResult{accessModule: accessModule, savedExplorationService: savedService}, nil
 }
 
-func savedExplorationAPIGenConfig(service analyticsmodule.SavedExplorationService, accessModule *accessmodule.Module, auth *accessmodule.Auth) analyticsmodule.SavedExplorationAPIGenConfig {
+func savedExplorationAPIGenConfig(service analyticsmodule.SavedExplorationService, accessModule *accessmodule.Module, auth *accessmodule.Auth, exportAuditRecorder analyticsmodule.QueryAuditRecorder) analyticsmodule.SavedExplorationAPIGenConfig {
 	return analyticsmodule.SavedExplorationAPIGenConfig{
-		Service: service,
+		Service:             service,
+		ExportAuditRecorder: exportAuditRecorder,
 		CurrentPrincipal: func(r *http.Request) (string, bool) {
 			if accessModule == nil {
 				return "", false

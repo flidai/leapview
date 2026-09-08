@@ -3,6 +3,13 @@ import { canonicalExplorationSpec, explorationSpecFor } from './data-explorer-sp
 
 export type DataExplorerHistoryMode = 'push' | 'replace'
 
+/** Resolves an explorer path to the absolute URL that should be shared. */
+export function absoluteDataExplorerURL(path: string): string {
+  if (/^[a-z][a-z\d+.-]*:/i.test(path)) return path
+  if (typeof window === 'undefined' || !window.location?.origin) return path
+  return new URL(path, window.location.origin).toString()
+}
+
 export function dataExplorerURL(command: DataExplorerCommand, savedID?: string, includeArchived = false): string {
   const mode = command.mode === 'explore' ? 'explore' : 'browse'
   const objectKey = command.objectKey || ''
@@ -19,6 +26,16 @@ export function dataExplorerURL(command: DataExplorerCommand, savedID?: string, 
     params.set('object', objectKey)
   }
   return params.toString() ? `/explore?${params.toString()}` : '/explore'
+}
+
+/** Returns a live download link for the canonical authored explorer state. */
+export function dataExplorerExportURL(command: DataExplorerCommand, format: 'csv' | 'parquet'): string {
+  const current = dataExplorerURL(command)
+  const queryStart = current.indexOf('?')
+  const query = queryStart >= 0 ? current.slice(queryStart + 1) : ''
+  const params = new URLSearchParams(query)
+  params.set('format', format)
+  return `/explore/export?${params.toString()}`
 }
 
 /**

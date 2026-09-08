@@ -1075,7 +1075,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return principal.ID, ok
 			},
 		},
-		SavedExplorations: savedExplorationAPIGenConfig(runtime.savedExplorationService, routes.accessModule, platform.auth),
+		SavedExplorations: savedExplorationAPIGenConfig(runtime.savedExplorationService, routes.accessModule, platform.auth, func() analyticsmodule.QueryAuditRecorder {
+			if runtime.analyticsModule == nil {
+				return nil
+			}
+			return runtime.analyticsModule.QueryAuditRecorder()
+		}()),
 	}
 	if routes.deploymentModule == nil {
 		config := moduleWorkflow.deploymentConfig

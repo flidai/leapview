@@ -78,6 +78,37 @@ model SavedExplorationDuplicateRequest {
   visibility?: SavedExplorationVisibility;
 }
 
+enum SavedExplorationExportFormat {
+  csv;
+  parquet;
+}
+
+// Export limits are caller-visible but bounded by the server's independent
+// result budget. The authored exploration spec and revision token remain
+// separate from transport options so no alternate query schema is introduced.
+model SavedExplorationExportRequest {
+  format: SavedExplorationExportFormat;
+  maxRows?: int32;
+  maxBytes?: int64;
+}
+
+// URL exports carry the same canonical v2 state emitted by the Data Explorer
+// URL helper. The server validates this state against the active generation;
+// it is never resolved as another principal's saved working copy.
+model SavedExplorationURLExportRequest extends SavedExplorationExportRequest {
+  spec: LeapViewExploration.ExplorationSpec;
+}
+
+model SavedExplorationExportResponse {
+  ...OkResponse;
+  @header contentType: string;
+  @header contentDisposition: string;
+  @header cacheControl: "no-store";
+  @body body: bytes;
+}
+
+alias ExportSavedExplorationOK = SavedExplorationExportResponse;
+
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model SavedExplorationMutationAuditPayload {
   @apigen.auditInternal
@@ -210,4 +241,22 @@ interface SavedExplorations {
   @apigen.command(#{ auditAction: "saved_exploration.archived" })
   @apigen.ui("saved-exploration.archive")
   archiveSavedExploration(@path @apigen.target project: ResourceId, @path exploration: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("If-Match") ifMatch: string): ArchiveSavedExplorationOK | CommonErrors;
+
+  @summary("Export a saved exploration revision")
+  @route("/{exploration}/export")
+  @post
+  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.query
+  @apigen.failsWith(SavedExplorationNotFoundFailure)
+  @apigen.failsWith(SavedExplorationPreconditionFailure)
+  @apigen.failsWith(SavedExplorationUnavailableFailure)
+  exportSavedExploration(@path project: ResourceId, @path exploration: ResourceId, @header("If-Match") ifMatch: string, @body body: SavedExplorationExportRequest): ExportSavedExplorationOK | CommonErrors;
+
+  @summary("Export canonical URL exploration state")
+  @route("/url-export")
+  @post
+  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.query
+  @apigen.failsWith(SavedExplorationUnavailableFailure)
+  exportSavedExplorationURL(@path @apigen.target project: ResourceId, @body body: SavedExplorationURLExportRequest): ExportSavedExplorationOK | CommonErrors;
 }
