@@ -247,6 +247,31 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	if got, want := count, 83; got != want {
 		t.Fatalf("examples = %d, want %d", got, want)
 	}
+	boxplots := artifact.Documents["visuals/boxplot"]
+	if got, want := len(boxplots), 3; got != want {
+		t.Fatalf("boxplot examples = %d, want %d", got, want)
+	}
+	for _, payload := range boxplots {
+		state, ok := payload.DataState.Value.(*visualizationir.InlineVisualizationDataState)
+		if !ok || len(state.Datasets) != 1 || !slices.Equal(state.Datasets[0].Columns, []string{"label", "min", "q1", "median", "q3", "max"}) {
+			t.Fatalf("%s boxplot dataset shape = %#v, want label/min/q1/median/q3/max", payload.VisualID, payload.DataState.Value)
+		}
+		if len(state.Datasets[0].Rows) == 0 {
+			t.Fatalf("%s boxplot dataset has no rows", payload.VisualID)
+		}
+		for _, row := range state.Datasets[0].Rows {
+			if len(row) != 6 {
+				t.Fatalf("%s boxplot row = %#v, want six complete statistics", payload.VisualID, row)
+			}
+			for index := 1; index < len(row); index++ {
+				if _, ok := exactDecimalEnvelopeNumber(row[index]); !ok {
+					if _, ok := exactEnvelopeNumber(row[index]); !ok {
+						t.Fatalf("%s boxplot statistic %d = %#v, want finite numeric value", payload.VisualID, index, row[index])
+					}
+				}
+			}
+		}
+	}
 	if got, want := len(artifact.Showcase), 26; got != want {
 		t.Fatalf("showcase examples = %d, want %d", got, want)
 	}

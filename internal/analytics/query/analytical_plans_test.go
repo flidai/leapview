@@ -3,6 +3,7 @@ package query
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
 	"testing"
 
@@ -97,6 +98,46 @@ func TestPlanDistributionExecutesQuantilesAndWhiskerOutlierPolicy(t *testing.T) 
 	}
 }
 
+func TestPlanDistributionExecutesCanonicalAndArbitraryQuantilesWithStableColumns(t *testing.T) {
+	db := analyticalTestDB(t, "INSERT INTO model.orders VALUES (1, 1.0), (2, 2.0), (3, 3.0), (4, 4.0), (5, 5.0)")
+	planner := mustNewCompiledPlanner(t, testModel())
+
+	tests := []struct {
+		name      string
+		quantiles []float64
+		columns   []string
+		values    []float64
+	}{
+		{name: "canonical quartiles", quantiles: []float64{0.25, 0.5, 0.75}, columns: []string{"label", "min", "q1", "median", "q3", "max"}, values: []float64{1, 2, 3, 4, 5}},
+		{name: "arbitrary quantiles", quantiles: []float64{0.25, 0.3}, columns: []string{"label", "min", "q0", "q1", "max"}, values: []float64{1, 2, 2.19, 5}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan, err := planner.PlanDistribution(RawValueRequest{Dataset: "orders", Metric: Field{Field: "revenue"}}, nil, 0, DistributionOptions{Quantiles: test.quantiles, Outliers: "include", Approximation: "exact"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, columns := executeAnalyticalRowsWithColumns(t, db, plan)
+			if len(columns) != len(test.columns) {
+				t.Fatalf("result columns = %#v, want %#v", columns, test.columns)
+			}
+			for index, column := range test.columns {
+				if columns[index] != column {
+					t.Fatalf("result column %d = %q, want %q (all=%#v)", index, columns[index], column, columns)
+				}
+			}
+			if len(rows) != 1 || rows[0][0] != "all" {
+				t.Fatalf("distribution rows = %#v, want one all-population row", rows)
+			}
+			for index, want := range test.values {
+				if got := analyticalNumber(t, rows[0][index+1]); math.Abs(got-want) > 0.000001 {
+					t.Fatalf("statistic %s = %v, want %v (row=%#v)", test.columns[index+1], got, want, rows[0])
+				}
+			}
+		})
+	}
+}
+
 func TestPlanHistogramPreservesGovernedFiltersAndMasks(t *testing.T) {
 	db := analyticalTestDB(t, "INSERT INTO model.orders VALUES (1, 1.0), (2, 2.0), (3, 3.0), (4, 4.0)")
 	planner := mustNewCompiledPlanner(t, testModel())
@@ -153,11 +194,25 @@ func analyticalTestDB(t *testing.T, insert string) *sql.DB {
 
 func executeAnalyticalRows(t *testing.T, db *sql.DB, plan Plan) [][]any {
 	t.Helper()
+	rows, _ := executeAnalyticalRowsWithColumns(t, db, plan)
+	return rows
+}
+
+func executeAnalyticalRowsWithColumns(t *testing.T, db *sql.DB, plan Plan) ([][]any, []string) {
+	t.Helper()
 	result, err := db.Query(plan.SQL, plan.Args...)
 	if err != nil {
 		t.Fatalf("execute analytical plan: %v\n%s", err, plan.SQL)
 	}
 	defer result.Close()
+	columnTypes, err := result.ColumnTypes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns := make([]string, len(columnTypes))
+	for index, column := range columnTypes {
+		columns[index] = column.Name()
+	}
 	rows := [][]any{}
 	for result.Next() {
 		values := make([]any, len(plan.Columns))
@@ -173,5 +228,5 @@ func executeAnalyticalRows(t *testing.T, db *sql.DB, plan Plan) [][]any {
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
 	}
-	return rows
+	return rows, columns
 }

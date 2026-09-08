@@ -406,7 +406,7 @@ func (r *duckRenderer) renderDistributionEnvelope(rawName string, n AnalyticalEn
 	}
 	value := quoteName(n.Value)
 	columns := n.DistributionColumns
-	if len(columns) != len(quantiles)+2 {
+	if len(columns) != len(quantiles)+3 {
 		columns = append([]string{"label", "min"}, make([]string, len(quantiles))...)
 		for index := range quantiles {
 			columns[index+2] = fmt.Sprintf("q%d", index)

@@ -2686,17 +2686,6 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
           const canvases = Array.from(host.shadowRoot?.querySelectorAll<HTMLCanvasElement>('canvas') ?? [])
           const table = renderer?.querySelector<HTMLElement>('lv-report-table')
           const bounds = renderer?.getBoundingClientRect()
-          const expectsColoredMarks = (() => {
-            const envelope = host.envelope
-            if (envelope?.spec?.mark !== 'boxplot' || envelope.dataState?.kind !== 'inline') return true
-            const fields = envelope.spec.y ?? []
-            const dataset = envelope.dataState.datasets?.find((candidate) => candidate.id === fields[0]?.dataset)
-            const indices = fields.map((field) => dataset?.columns.indexOf(field.field) ?? -1)
-            return Boolean(dataset?.rows.some((row) => indices.every((index) => {
-              const value = row[index]
-              return index >= 0 && value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
-            })))
-          })()
           let sampledPixels = 0
           let coloredPixels = 0
           for (const canvas of canvases) {
@@ -2726,7 +2715,6 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
             canvasHeight: Math.max(0, ...canvases.map((canvas) => canvas.height)),
             sampledPixels,
             coloredPixels,
-            expectsColoredMarks,
             mapFrame: host.shadowRoot?.querySelectorAll('.maplibregl-map .maplibregl-canvas').length ?? 0,
             tableText: table?.shadowRoot?.textContent?.replace(/\s+/g, ' ').trim().length ?? 0,
             rendererText: renderer?.textContent?.replace(/\s+/g, ' ').trim().length ?? 0,
@@ -2750,9 +2738,7 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
             expect(metric.mapFrame, `${theme}/${metric.visualID} MapLibre frame`).toBe(1)
           } else {
             expect(metric.sampledPixels, `${theme}/${metric.visualID} painted pixels`).toBeGreaterThan(10)
-            if (metric.expectsColoredMarks) {
-              expect(metric.coloredPixels, `${theme}/${metric.visualID} visible data marks`).toBeGreaterThan(0)
-            }
+            expect(metric.coloredPixels, `${theme}/${metric.visualID} visible data marks`).toBeGreaterThan(0)
           }
         }
       }
