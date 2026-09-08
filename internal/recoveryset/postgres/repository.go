@@ -61,6 +61,9 @@ func (r *Repository) Configured() bool { return r != nil && r.db != nil }
 // same set ID are exact and idempotent; any identity or metadata drift is a
 // conflict and never appends child evidence to the existing row.
 func (r *Repository) Create(ctx context.Context, set recoveryset.RecoverySet) (recoveryset.RecoverySet, error) {
+	if set.SchemaVersion != recoveryset.SchemaVersion {
+		return recoveryset.RecoverySet{}, recoveryset.ErrInvalid
+	}
 	if r == nil || r.db == nil {
 		return recoveryset.RecoverySet{}, recoveryset.ErrInvalid
 	}
@@ -107,6 +110,9 @@ func (r *Repository) Create(ctx context.Context, set recoveryset.RecoverySet) (r
 
 // CreateTx composes frontier creation with another control-plane mutation.
 func (r *Repository) CreateTx(ctx context.Context, tx Tx, set recoveryset.RecoverySet) (recoveryset.RecoverySet, error) {
+	if set.SchemaVersion != recoveryset.SchemaVersion {
+		return recoveryset.RecoverySet{}, recoveryset.ErrInvalid
+	}
 	if tx == nil {
 		return recoveryset.RecoverySet{}, recoveryset.ErrInvalid
 	}

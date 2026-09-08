@@ -250,7 +250,9 @@ var CapabilityDependencies = map[string]map[string]bool{
 	"refresh":       {"access": true, "servingstate": true, "manageddata": true, "analytics": true, "runtimehost": true, "workload": true},
 	"runtimehost":   {"manageddata": true, "servingstate": true},
 	"lineage":       {"project": true},
-	"recoveryset":   {"analytics": true},
+	// Recovery evidence consumes the managed-data inventory contract, never
+	// its persistence adapter. Managed-data does not depend on recovery.
+	"recoveryset":   {"analytics": true, "manageddata": true},
 	"workload":      {},
 	"semanticvalue": {},
 	"platform":      {},
