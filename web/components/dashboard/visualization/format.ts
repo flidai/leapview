@@ -18,13 +18,20 @@ export function formatValue(locale: string, format: VisualizationFormat, value: 
   if (!data) throw new Error(`unsupported visualization locale ${JSON.stringify(locale)}`)
   if (value === null || value === undefined) return '—'
   switch (format.kind) {
-    case 'number': return number(data, value, format.minimumFractionDigits ?? 0, format.maximumFractionDigits ?? 3)
+    case 'number': {
+      const [minimum, maximum] = fractionDigits(format.minimumFractionDigits, format.maximumFractionDigits, 0, 3)
+      return number(data, value, minimum, maximum)
+    }
     case 'currency': {
       const symbol = data.currencies[format.currency]
       if (!symbol) throw new Error(`unsupported visualization currency ${JSON.stringify(format.currency)}`)
-      return symbol + data.currencySpace + number(data, value, format.minimumFractionDigits ?? 2, format.maximumFractionDigits ?? 2)
+      const [minimum, maximum] = fractionDigits(format.minimumFractionDigits, format.maximumFractionDigits, 2, 2)
+      return symbol + data.currencySpace + number(data, value, minimum, maximum)
     }
-    case 'percent': return number(data, typeof value === 'string' ? decimalShift(value, 2) : numeric(value) * 100, format.minimumFractionDigits ?? 0, format.maximumFractionDigits ?? 1, '%')
+    case 'percent': {
+      const [minimum, maximum] = fractionDigits(format.minimumFractionDigits, format.maximumFractionDigits, 0, 1)
+      return number(data, typeof value === 'string' ? decimalShift(value, 2) : numeric(value) * 100, minimum, maximum, '%')
+    }
     case 'compact': {
       const numericValue = typeof value === 'string' ? undefined : numeric(value), absolute = typeof value === 'string' ? decimalMagnitude(value) : Math.abs(numericValue!)
       const [scale, suffix] = absolute >= 1e9 ? [1e9, 'B'] : absolute >= 1e6 ? [1e6, 'M'] : absolute >= 1e3 ? [1e3, 'K'] : [1, '']
@@ -41,6 +48,18 @@ export function formatValue(locale: string, format: VisualizationFormat, value: 
       return format.timeStyle && !format.dateStyle ? value.slice(11, 19) : value.slice(0, 10)
     }
   }
+}
+
+function fractionDigits(
+  minimum: number | undefined,
+  maximum: number | undefined,
+  defaultMinimum: number,
+  defaultMaximum: number,
+): [number, number] {
+  if (minimum === undefined && maximum === undefined) return [defaultMinimum, defaultMaximum]
+  if (minimum === undefined) return [maximum!, maximum!]
+  if (maximum === undefined) return [minimum, minimum]
+  return [minimum, maximum]
 }
 
 function isCanonicalDate(value: string): boolean {
