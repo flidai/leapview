@@ -63,6 +63,101 @@ test('ECharts translates semantic axes and decision context from the current fra
   expect(empty.series[0].markArea).toBeUndefined()
 })
 
+test('ECharts omits non-positive resolved references only on log axes', () => {
+  const envelope = cartesianFixture() as any
+  envelope.spec.axes = [axisConfiguration('x', 'log'), axisConfiguration('primary_y', 'log')]
+  envelope.spec.x = { dataset: 'primary', field: 'x_numeric' }
+  envelope.spec.datasets[0].fields.push(
+    { id: 'x_numeric', role: 'dimension', dataType: 'decimal', nullable: false, label: 'x numeric' },
+    { id: 'zero', role: 'metric', dataType: 'decimal', nullable: true, label: 'zero' },
+    { id: 'negative', role: 'metric', dataType: 'decimal', nullable: true, label: 'negative' },
+    { id: 'tiny_positive', role: 'metric', dataType: 'decimal', nullable: true, label: 'tiny positive' },
+    { id: 'missing', role: 'metric', dataType: 'decimal', nullable: true, label: 'missing' },
+  )
+  envelope.dataState.datasets[0].columns.push('zero', 'negative', 'tiny_positive', 'missing', 'x_numeric')
+  envelope.dataState.datasets[0].rows = [
+    ['A', 1, '0.0000000000000000000', '-2', '0.0000000000000000001', null, 10],
+    ['B', 2, '0.0000000000000000000', '-3', '0.0000000000000000001', null, 20],
+  ]
+  envelope.spec.referenceLines = [
+    { id: 'number-zero', axis: 'primary_y', value: { kind: 'number', value: 0 }, label: 'zero', tone: 'neutral' },
+    { id: 'number-negative', axis: 'primary_y', value: { kind: 'number', value: -1 }, label: 'negative', tone: 'neutral' },
+    { id: 'number-positive', axis: 'primary_y', value: { kind: 'number', value: 1000000 }, label: 'positive out of domain', tone: 'success' },
+    { id: 'field-zero', axis: 'primary_y', value: { kind: 'field', field: { dataset: 'primary', field: 'zero' }, reducer: 'maximum' }, label: 'field zero', tone: 'neutral' },
+    { id: 'field-negative', axis: 'primary_y', value: { kind: 'field', field: { dataset: 'primary', field: 'negative' }, reducer: 'minimum' }, label: 'field negative', tone: 'neutral' },
+    { id: 'field-tiny-positive', axis: 'primary_y', value: { kind: 'field', field: { dataset: 'primary', field: 'tiny_positive' }, reducer: 'maximum' }, label: 'exact positive', tone: 'success' },
+    { id: 'field-missing', axis: 'primary_y', value: { kind: 'field', field: { dataset: 'primary', field: 'missing' }, reducer: 'first' }, label: 'missing', tone: 'neutral' },
+  ]
+  envelope.spec.eventAnnotations = [
+    { id: 'event-zero', axis: 'x', value: { kind: 'number', value: 0 }, label: 'zero event', tone: 'neutral' },
+    { id: 'event-negative', axis: 'x', value: { kind: 'field', field: { dataset: 'primary', field: 'negative' }, reducer: 'minimum' }, label: 'negative event', tone: 'neutral' },
+    { id: 'event-positive', axis: 'x', value: { kind: 'field', field: { dataset: 'primary', field: 'tiny_positive' }, reducer: 'maximum' }, label: 'positive event', tone: 'success' },
+  ]
+  envelope.spec.referenceBands = [
+    { id: 'valid', axis: 'primary_y', from: { kind: 'field', field: { dataset: 'primary', field: 'tiny_positive' }, reducer: 'minimum' }, to: { kind: 'number', value: 2 }, label: 'valid', tone: 'neutral' },
+    { id: 'zero-endpoint', axis: 'primary_y', from: { kind: 'number', value: 0 }, to: { kind: 'number', value: 2 }, label: 'zero endpoint', tone: 'neutral' },
+    { id: 'negative-endpoint', axis: 'primary_y', from: { kind: 'number', value: -1 }, to: { kind: 'number', value: 2 }, label: 'negative endpoint', tone: 'neutral' },
+    { id: 'missing-endpoint', axis: 'primary_y', from: { kind: 'field', field: { dataset: 'primary', field: 'missing' }, reducer: 'first' }, to: { kind: 'number', value: 2 }, label: 'missing endpoint', tone: 'neutral' },
+  ]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].markLine.data.map((item: any) => item.id)).toEqual([
+    'reference-line:number-positive',
+    'reference-line:field-tiny-positive',
+    'event-annotation:event-positive',
+  ])
+  expect(option.series[0].markLine.data[1].yAxis).toBe('0.0000000000000000001')
+  expect(option.series[0].markArea.data.map((items: any[]) => items[0].id)).toEqual(['reference-band:valid'])
+
+  const linear = cartesianFixture() as any
+  linear.spec.axes = [axisConfiguration('primary_y', 'linear')]
+  linear.spec.referenceLines = [{ id: 'linear-negative', axis: 'primary_y', value: { kind: 'number', value: -1 }, label: 'negative', tone: 'neutral' }]
+  expect((echartsOption(linear, defaultRendererContext) as any).series[0].markLine.data.map((item: any) => item.id)).toEqual(['reference-line:linear-negative'])
+})
+
+test('ECharts applies the log reference guard across point, horizontal, and secondary axes', () => {
+  const point = pointTitledAxisFixture() as any
+  point.spec.axes.find((axis: any) => axis.id === 'primary_y').scale = 'log'
+  point.spec.referenceLines = [
+    { id: 'point-negative', axis: 'primary_y', value: { kind: 'number', value: -1 }, label: 'negative', tone: 'neutral' },
+    { id: 'point-positive', axis: 'primary_y', value: { kind: 'number', value: 2 }, label: 'positive', tone: 'success' },
+  ]
+  expect((echartsOption(point, defaultRendererContext) as any).series[0].markLine.data.map((item: any) => item.id)).toEqual(['reference-line:point-positive'])
+
+  const horizontal = cartesianFixture() as any
+  horizontal.spec.presentation.orientation = 'horizontal'
+  horizontal.spec.axes = [axisConfiguration('primary_y', 'log')]
+  horizontal.spec.referenceLines = [
+    { id: 'horizontal-negative', axis: 'primary_y', value: { kind: 'number', value: -1 }, label: 'negative', tone: 'neutral' },
+    { id: 'horizontal-positive', axis: 'primary_y', value: { kind: 'number', value: 2 }, label: 'positive', tone: 'success' },
+  ]
+  const horizontalLine = (echartsOption(horizontal, defaultRendererContext) as any).series[0].markLine.data
+  expect(horizontalLine.map((item: any) => item.id)).toEqual(['reference-line:horizontal-positive'])
+  expect(horizontalLine[0].xAxis).toBe(2)
+
+  const combo = comboTitledAxisFixture() as any
+  combo.spec.axes.find((axis: any) => axis.id === 'secondary_y').scale = 'log'
+  combo.spec.referenceLines = [
+    { id: 'secondary-negative', axis: 'secondary_y', value: { kind: 'number', value: -1 }, label: 'negative', tone: 'neutral' },
+    { id: 'secondary-positive', axis: 'secondary_y', value: { kind: 'number', value: 2 }, label: 'positive', tone: 'success' },
+  ]
+  const comboOption = echartsOption(combo, defaultRendererContext) as any
+  expect(comboOption.series[1].markLine.data.map((item: any) => item.id)).toEqual(['reference-line:secondary-positive'])
+  expect(comboOption.series[1].markLine.data[0].yAxis).toBe(2)
+})
+
+test('ECharts keeps authored braces literal and preserves unnamed mark-line values', () => {
+  const envelope = cartesianFixture() as any
+  envelope.spec.referenceLines = [
+    { id: 'literal', axis: 'primary_y', value: { kind: 'number', value: 7 }, label: 'Target {value}', tone: 'success' },
+    { id: 'unnamed', axis: 'primary_y', value: { kind: 'number', value: 8 }, tone: 'neutral' },
+  ]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const formatter = option.series[0].markLine.label.formatter
+  expect(formatter({ name: 'Target {value}', value: 7 })).toBe('Target {value}')
+  expect(formatter({ name: '', value: 8 })).toBe('8')
+})
+
 test('ECharts authored axis titles stay visible on centered physical axes in desktop and compact layouts', () => {
   const vertical = titledAxisFixture()
   const horizontal = structuredClone(vertical) as any
@@ -255,6 +350,13 @@ function svgTitlePosition(text: string): { x: number; y: number } {
   const numbers = transform.match(/(?:matrix|translate)\(([^)]+)\)/)?.[1]?.split(/[ ,]+/).map(Number) ?? []
   if (transform.startsWith('matrix')) return { x: numbers[4] ?? Number.NaN, y: numbers[5] ?? Number.NaN }
   return { x: numbers[0] ?? Number.NaN, y: numbers[1] ?? Number.NaN }
+}
+
+function axisConfiguration(id: 'x' | 'primary_y' | 'secondary_y', scale: 'linear' | 'log'): Record<string, unknown> {
+  return {
+    id, type: 'automatic', inversion: 'automatic', ticks: 'automatic', grid: 'automatic',
+    labelRotation: 'automatic', dateUnit: 'automatic', scale, zero: 'automatic', tickDensity: 'automatic',
+  }
 }
 
 function cartesianFixture(): VisualizationEnvelope {

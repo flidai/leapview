@@ -288,10 +288,18 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
     if (axisID === 'x') return horizontal ? 'yAxis' : 'xAxis'
     return horizontal ? 'xAxis' : 'yAxis'
   }
+  const usesLogScale = (axisID: 'x' | 'primary_y' | 'secondary_y'): boolean => {
+    // Prefer the translated axis type so this follows the effective physical
+    // axis after horizontal and secondary-axis translation.
+    const physical = coordinate(axisID)
+    const index = axisID === 'secondary_y' ? 1 : 0
+    const translated = axisOptionAt(option, physical, index)
+    return translated?.type === 'log' || spec.axes?.some((axis) => axis.id === axisID && axis.scale === 'log') === true
+  }
   const markLines = [
     ...(spec.referenceLines ?? []).flatMap((line) => {
       const value = resolveReferenceValue(envelope, line.value)
-      if (value === undefined) return []
+      if (value === undefined || !referenceValueAllowedOnAxis(value, usesLogScale(line.axis))) return []
       return [{
         axis: line.axis,
         data: { id: `reference-line:${line.id}`, name: line.label ?? '', [coordinate(line.axis)]: value, lineStyle: { color: toneColor(line.tone, context) } },
@@ -299,7 +307,7 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
     }),
     ...(spec.eventAnnotations ?? []).flatMap((annotation) => {
       const value = resolveReferenceValue(envelope, annotation.value)
-      if (value === undefined) return []
+      if (value === undefined || !referenceValueAllowedOnAxis(value, usesLogScale(annotation.axis))) return []
       return [{
         axis: annotation.axis,
         data: { id: `event-annotation:${annotation.id}`, name: annotation.label, [coordinate(annotation.axis)]: value, lineStyle: { color: toneColor(annotation.tone, context) } },
@@ -309,7 +317,8 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
   const markAreas = (spec.referenceBands ?? []).flatMap((band) => {
     const from = resolveReferenceValue(envelope, band.from)
     const to = resolveReferenceValue(envelope, band.to)
-    if (from === undefined || to === undefined) return []
+    const logAxis = usesLogScale(band.axis)
+    if (from === undefined || to === undefined || !referenceValueAllowedOnAxis(from, logAxis) || !referenceValueAllowedOnAxis(to, logAxis)) return []
     const key = coordinate(band.axis)
     return [{ axis: band.axis, data: [
       { id: `reference-band:${band.id}`, name: band.label ?? '', [key]: from, itemStyle: { color: toneColor(band.tone, context), opacity: 0.12 } },
@@ -329,7 +338,14 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
     const areas = markAreas.filter((item) => (item.axis === 'secondary_y') === secondary).map((item) => item.data)
     if (lines.length > 0) owner.markLine = {
       symbol: ['none', 'none'],
-      label: { show: true, position: 'insideEndTop', formatter: (params: { name?: string }) => params.name ?? '' },
+      label: {
+        show: true,
+        position: 'insideEndTop',
+        // A function keeps authored braces literal (ECharts string
+        // formatters treat `{value}` as a template). Preserve the native
+        // numeric/text value for an intentionally unnamed reference.
+        formatter: (params: { name?: string; value?: unknown }) => params.name || String(params.value ?? ''),
+      },
       data: lines,
     }
     if (areas.length > 0) owner.markArea = { silent: true, data: areas }
@@ -355,6 +371,20 @@ function axisAt(option: EChartsTranslation, key: 'xAxis' | 'yAxis', index: numbe
   const secondary = structuredClone(current)
   option[key] = [current, secondary]
   return secondary
+}
+
+function axisOptionAt(option: EChartsTranslation, key: 'xAxis' | 'yAxis', index: number): EChartsTranslation | undefined {
+  const current = option[key]
+  if (Array.isArray(current)) return current[index]
+  return index === 0 ? current : undefined
+}
+
+function referenceValueAllowedOnAxis(value: string | number, logScale: boolean): boolean {
+  if (!logScale) return true
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0
+  const decimal = parseDecimal(value)
+  if (!decimal || decimal.negative) return false
+  return decimal.integer !== '0' || /[1-9]/.test(decimal.fraction)
 }
 
 function applyTickDensity(axisOption: EChartsTranslation, density: 'automatic' | 'sparse' | 'normal' | 'dense'): void {
