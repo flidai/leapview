@@ -23,6 +23,10 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
+// QueryAuditRecorder exposes query/export audit recording through the analytics
+// capability surface, keeping composition independent of its implementation.
+type QueryAuditRecorder = queryaudit.Recorder
+
 // SavedExplorationAPIGenConfig is the feature-owned boundary between the
 // generated REST transport and the saved-exploration application service.
 // Actor, IDs, fingerprints, and evidence are all derived here or below the
@@ -32,7 +36,7 @@ type SavedExplorationAPIGenConfig struct {
 	// ExportAuditRecorder records the delivery outcome separately from the
 	// governed query event. Query execution can succeed while encoding or
 	// sending is rejected by export bounds/cancellation.
-	ExportAuditRecorder queryaudit.Recorder
+	ExportAuditRecorder QueryAuditRecorder
 	CurrentPrincipal    func(*http.Request) (string, bool)
 	// ReplayContext installs the canonical authenticated principal (and any
 	// credential attenuation) before the read-only replay authorization runs.
