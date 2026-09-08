@@ -17,7 +17,17 @@ func validateCanonicalCartesianPresentationApplicability(variant *document.Carte
 		}
 		return nil
 	}
-	// Labels, label position, display units, and axes use common paths.
+	// Label policy, label position, display units, and axes use common paths.
+	// ECharts does not render series labels for financial marks, so accepting
+	// authored label controls there would silently discard user intent.
+	if err := optionSupported("labels", variant.Labels != nil,
+		visualType != document.DashboardVisualTypeCandlestick && visualType != document.DashboardVisualTypeBoxplot); err != nil {
+		return err
+	}
+	if err := optionSupported("labelPosition", variant.LabelPosition != nil,
+		visualType != document.DashboardVisualTypeCandlestick && visualType != document.DashboardVisualTypeBoxplot); err != nil {
+		return err
+	}
 	if err := optionSupported("legend", variant.Legend != nil,
 		visualType == document.DashboardVisualTypeLine ||
 			visualType == document.DashboardVisualTypeArea ||

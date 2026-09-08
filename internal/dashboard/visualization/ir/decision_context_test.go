@@ -382,6 +382,50 @@ func TestValidateSpecGainLossColorsAreCandlestickOnly(t *testing.T) {
 	}
 }
 
+func TestValidateSpecFinancialLabelsAreHiddenOnly(t *testing.T) {
+	base := VisualizationSpecBase{
+		Kind: "cartesian", Title: "Financial",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "date", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Date"},
+			{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Value"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 10, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "Financial", Description: "Financial"}, Interactions: []VisualizationInteraction{},
+	}
+	newSpec := func(mark VisualizationCartesianMark, density VisualizationLabelDensity, position *VisualizationLabelPosition) VisualizationSpec {
+		return VisualizationSpec{Value: &CartesianVisualizationSpec{
+			VisualizationSpecBase: base, Kind: "cartesian", Mark: mark,
+			X: VisualizationFieldRef{Dataset: "primary", Field: "date"}, Y: []VisualizationFieldRef{{Dataset: "primary", Field: "value"}},
+			Presentation: CartesianVisualizationPresentation{
+				VisualizationPresentation: VisualizationPresentation{Legend: VisualizationLegendPositionHidden, LabelPolicy: VisualizationLabelPolicy{Density: density, Priority: []VisualizationLabelPriority{}, MaxCharacters: 24, MinimumSpacing: 0, TooltipFallback: true}},
+				LabelPosition:             position,
+			},
+		}}
+	}
+	for _, mark := range []VisualizationCartesianMark{VisualizationCartesianMarkCandlestick, VisualizationCartesianMarkBoxplot} {
+		t.Run(string(mark)+"/hidden", func(t *testing.T) {
+			if err := ValidateSpec(newSpec(mark, VisualizationLabelDensityHidden, nil)); err != nil {
+				t.Fatalf("hidden financial labels rejected: %v", err)
+			}
+		})
+		for _, density := range []VisualizationLabelDensity{VisualizationLabelDensityAutomatic, VisualizationLabelDensityDense, VisualizationLabelDensityAlways} {
+			t.Run(string(mark)+"/"+string(density), func(t *testing.T) {
+				err := ValidateSpec(newSpec(mark, density, nil))
+				if err == nil || !strings.Contains(err.Error(), "spec.presentation.labelPolicy") {
+					t.Fatalf("error = %v, want path-bearing label policy diagnostic", err)
+				}
+			})
+		}
+		t.Run(string(mark)+"/labelPosition", func(t *testing.T) {
+			position := VisualizationLabelPositionInside
+			err := ValidateSpec(newSpec(mark, VisualizationLabelDensityHidden, &position))
+			if err == nil || !strings.Contains(err.Error(), "spec.presentation.labelPosition") {
+				t.Fatalf("error = %v, want path-bearing label position diagnostic", err)
+			}
+		})
+	}
+}
+
 func TestValidateSpecUsesComboAxisOwnersForContext(t *testing.T) {
 	t.Parallel()
 

@@ -10,7 +10,6 @@ export function financialOption(
   context: RendererContext,
   axes: EChartsTranslation,
   dataZoom: EChartsTranslation[] | undefined,
-  labels: EChartsTranslation,
 ): EChartsTranslation | undefined {
   const spec = envelope.spec
   if (spec.kind !== 'cartesian' || spec.mark !== 'candlestick') return undefined
@@ -52,7 +51,6 @@ export function financialOption(
       ...(precisionSensitive ? { large: false } : {}),
       itemStyle: { color: gain, color0: loss, borderColor: gain, borderColor0: loss, borderColorDoji: neutral },
       tooltip: { formatter: tooltipFormatterForRow(envelope, context, { fallbackRefs: [spec.x, ...spec.y] }) },
-      ...labels,
     }],
   }
 }

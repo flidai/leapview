@@ -341,6 +341,7 @@ test('ECharts translation emits one multi-value financial series', () => {
   const option = echartsOption(envelope) as any
   expect(option.series).toHaveLength(1)
   expect(option.xAxis.data).toEqual(['Jan'])
+  expect(option.series[0].label).toBeUndefined()
   expect(option.series[0].encode).toBeUndefined()
   expect(option.series[0].data).toEqual([{
     name: 'Jan', value: [1, 2, 0, 3], __lv_dataset: 'primary', __lv_row_index: 0,

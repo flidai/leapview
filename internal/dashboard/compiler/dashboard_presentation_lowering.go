@@ -37,6 +37,9 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if err != nil {
 			return nil, err
 		}
+		if visualType == document.DashboardVisualTypeCandlestick || visualType == document.DashboardVisualTypeBoxplot {
+			base.LabelPolicy = hiddenCanonicalLabelPolicy()
+		}
 		out := visualizationir.CartesianVisualizationPresentation{VisualizationPresentation: base}
 		if variant.Smooth != nil {
 			out.Smooth = *variant.Smooth
@@ -981,6 +984,10 @@ func validatePresentationText(value, path string, allowEmpty bool) error {
 
 func defaultCanonicalLabelPolicy() visualizationir.VisualizationLabelPolicy {
 	return visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityAutomatic, Priority: []visualizationir.VisualizationLabelPriority{visualizationir.VisualizationLabelPrioritySelected, visualizationir.VisualizationLabelPriorityAnomaly, visualizationir.VisualizationLabelPriorityThreshold}, MaxCharacters: 24, MinimumSpacing: 6, TooltipFallback: true}
+}
+
+func hiddenCanonicalLabelPolicy() visualizationir.VisualizationLabelPolicy {
+	return visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityHidden, Priority: []visualizationir.VisualizationLabelPriority{}, MaxCharacters: 24, MinimumSpacing: 0, TooltipFallback: true}
 }
 
 func lowerLabelPolicy(value document.DashboardLabelPolicy) (visualizationir.VisualizationLabelPolicy, error) {

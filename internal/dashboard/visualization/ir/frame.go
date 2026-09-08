@@ -837,6 +837,14 @@ func validateLabelPolicy(spec VisualizationSpec) error {
 	switch value := spec.Value.(type) {
 	case *CartesianVisualizationSpec:
 		policy = value.Presentation.LabelPolicy
+		if value.Mark == VisualizationCartesianMarkCandlestick || value.Mark == VisualizationCartesianMarkBoxplot {
+			if policy.Density != VisualizationLabelDensityHidden {
+				return fmt.Errorf("spec.presentation.labelPolicy is not supported for cartesian mark %q", value.Mark)
+			}
+			if value.Presentation.LabelPosition != nil {
+				return fmt.Errorf("spec.presentation.labelPosition is not supported for cartesian mark %q", value.Mark)
+			}
+		}
 	case *PointVisualizationSpec:
 		policy = value.Presentation.LabelPolicy
 	case *ProportionalVisualizationSpec:

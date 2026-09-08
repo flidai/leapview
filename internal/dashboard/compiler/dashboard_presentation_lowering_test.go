@@ -91,6 +91,24 @@ func TestLowerCanonicalCandlestickPresentationPreservesGainLossColors(t *testing
 	}
 }
 
+func TestLowerCanonicalFinancialPresentationUsesHiddenLabelDefault(t *testing.T) {
+	for _, visualType := range []document.DashboardVisualType{document.DashboardVisualTypeCandlestick, document.DashboardVisualTypeBoxplot} {
+		t.Run(string(visualType), func(t *testing.T) {
+			lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian"}}, visualType)
+			if err != nil {
+				t.Fatalf("lower financial presentation: %v", err)
+			}
+			got := lowered.(visualizationir.CartesianVisualizationPresentation)
+			if got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityHidden || len(got.LabelPolicy.Priority) != 0 || got.LabelPolicy.MaxCharacters != 24 || got.LabelPolicy.MinimumSpacing != 0 || !got.LabelPolicy.TooltipFallback {
+				t.Fatalf("financial label policy = %#v, want explicit hidden default", got.LabelPolicy)
+			}
+			if got.LabelPosition != nil {
+				t.Fatalf("financial label position = %#v, want unset", got.LabelPosition)
+			}
+		})
+	}
+}
+
 func TestLowerCanonicalPointPresentationPreservesOverplotAndLabels(t *testing.T) {
 	legend := document.DashboardLegendPositionRight
 	labels := document.DashboardLabelPolicy{Density: document.DashboardLabelDensityAutomatic}

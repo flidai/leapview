@@ -736,6 +736,7 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect(boxplot.xAxis.axisLabel).toMatchObject({ interval: 0, rotate: 0 })
   expect(boxplot.series[0].itemStyle).toEqual({ color: 'rgba(0, 110, 219, 0.24)', borderColor: defaultRendererContext.colors.data[0], borderWidth: 2 })
   expect(boxplot.series[0].emphasis.itemStyle.color).toBe('rgba(0, 110, 219, 0.4)')
+  expect(boxplot.series[0].label).toBeUndefined()
 
   const orderedBoxplot = cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']) as any
   orderedBoxplot.spec.presentation.dataZoom = false

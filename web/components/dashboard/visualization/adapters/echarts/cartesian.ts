@@ -69,7 +69,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     }
   }
   if (spec.mark === 'candlestick') {
-    return financialOption(envelope, context, axes, dataZoom, chartLabel(envelope, spec.y[0], spec, context))!
+    return financialOption(envelope, context, axes, dataZoom)!
   }
   if (spec.mark === 'boxplot') {
     const dataset = inlineDataset(envelope, spec.x.dataset)
@@ -96,7 +96,6 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
         data,
         itemStyle: { color: colorWithAlpha(primary, 0.24), borderColor: primary, borderWidth: 2 },
         emphasis: { itemStyle: { color: colorWithAlpha(primary, 0.4) } },
-        ...chartLabel(envelope, spec.y[0], spec, context),
       }],
     }
   }

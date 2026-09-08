@@ -116,7 +116,7 @@ presentation:
 
 ## Per-mark presentation
 
-Cartesian marks all support the common `labels`, `labelPosition`, `displayUnits`, and `axes` fields. Mark-specific fields are scoped to the renderer paths that consume them:
+Cartesian marks support the common `labels`, `labelPosition`, `displayUnits`, and `axes` fields where the renderer consumes those channels. Candlestick and boxplot do not render data labels, so `labels` and `labelPosition` are rejected for those marks. Mark-specific fields are scoped to the renderer paths that consume them:
 
 | Mark | Mark-specific presentation fields |
 | --- | --- |
