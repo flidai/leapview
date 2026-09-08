@@ -1,3 +1,4 @@
+import { activeBaselineFromEvidence } from './frontend_bundle_active_baseline'
 import {
   type BundleBudget,
   type BytePair,
@@ -64,6 +65,7 @@ export function applyReviewedFrontendBundleBudgetProposal(
   proposalValue: unknown,
   proposalPath = 'proposal',
 ): FrontendBundleBudgetPolicy {
+  validateFrontendBundlePolicy(policy)
   const proposal = record(proposalValue, proposalPath)
   keys(proposal, ['version', 'kind', 'reason', 'evidence', 'requestedBudgets', 'review'], proposalPath)
   if (proposal.version !== 1 || proposal.kind !== 'frontend-bundle-budget-increase-proposal') fail(`${proposalPath}.kind`, 'unsupported proposal format')
@@ -86,7 +88,17 @@ export function applyReviewedFrontendBundleBudgetProposal(
 
   const requestedBudgets = record(proposal.requestedBudgets, `${proposalPath}.requestedBudgets`)
   keys(requestedBudgets, ['entries', 'aggregate'], `${proposalPath}.requestedBudgets`)
-  const requestedPolicy = validateFrontendBundlePolicy({ ...policy, budgets: requestedBudgets }, `${proposalPath}.requestedBudgets`)
+  const decision = {
+    kind: 'reviewed-increase' as const,
+    reason: proposal.reason as string,
+    reviewer: review.reviewer as string,
+    reviewedAt: review.reviewedAt as string,
+  }
+  const requestedPolicy = validateFrontendBundlePolicy({
+    ...policy,
+    metadata: { ...policy.metadata, activeBaseline: activeBaselineFromEvidence(candidate, decision) },
+    budgets: requestedBudgets,
+  }, `${proposalPath}.requestedBudgets`)
   exactEntrySet(Object.keys(requestedPolicy.budgets.entries).sort(), policyEntryNames, `${proposalPath}.requestedBudgets.entries`)
 
   const assertCandidateBudget = (name: string, requested: BundleBudget, current: BundleBudget, candidateBytes: BytePair): void => {
@@ -107,5 +119,12 @@ export function applyReviewedFrontendBundleBudgetProposal(
     rawBytes: evidence.aggregate.rawBytes,
     gzipBytes: evidence.aggregate.gzipBytes,
   })
-  return { ...policy, budgets: requestedPolicy.budgets }
+  return {
+    ...policy,
+    metadata: {
+      ...policy.metadata,
+      activeBaseline: activeBaselineFromEvidence(candidate, decision),
+    },
+    budgets: requestedPolicy.budgets,
+  }
 }

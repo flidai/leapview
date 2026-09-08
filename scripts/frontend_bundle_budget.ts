@@ -1,4 +1,10 @@
 import { dirname, isAbsolute } from 'node:path'
+import {
+  type FrontendBundleActiveBaseline,
+  type FrontendBundleBaselineDecision,
+  activeBaselineFromEvidence,
+  validateActiveBaseline,
+} from './frontend_bundle_active_baseline'
 import { applyReviewedFrontendBundleBudgetProposal } from './frontend_bundle_budget_proposal'
 import { verifyFrontendBundleFiles } from './frontend_bundle_files'
 import {
@@ -53,10 +59,11 @@ export type FrontendBundleBudgetPolicy = {
     artifact: string
     generator: 'scripts/build_assets.ts'
     evidencePath: string
+    activeBaseline: FrontendBundleActiveBaseline
     calibration: {
-    baseCommit: string
-    sourceInputDigest: string
-    harnessInputDigest: string
+      baseCommit: string
+      sourceInputDigest: string
+      harnessInputDigest: string
       capturedAt: string
       environment: {
         host: string
@@ -368,7 +375,7 @@ export function validateFrontendBundlePolicy(value: unknown, path = FRONTEND_BUN
   if (object.version !== 1) fail(`${path}.version`, 'must be 1')
 
   const metadata = requireRecord(object.metadata, `${path}.metadata`)
-  requireKeys(metadata, ['artifact', 'generator', 'evidencePath', 'calibration'], `${path}.metadata`)
+  requireKeys(metadata, ['artifact', 'generator', 'evidencePath', 'activeBaseline', 'calibration'], `${path}.metadata`)
   if (metadata.generator !== 'scripts/build_assets.ts') {
     fail(`${path}.metadata.generator`, 'must identify scripts/build_assets.ts')
   }
@@ -381,6 +388,7 @@ export function validateFrontendBundlePolicy(value: unknown, path = FRONTEND_BUN
     entries[name] = parseBudget(budget, `${path}.budgets.entries.${name}`)
   }
   if (Object.keys(entries).length === 0) fail(`${path}.budgets.entries`, 'must contain at least one logical entry')
+  const aggregate = parseBudget(budgets.aggregate, `${path}.budgets.aggregate`)
 
   return {
     version: 1,
@@ -388,11 +396,15 @@ export function validateFrontendBundlePolicy(value: unknown, path = FRONTEND_BUN
       artifact: requireString(metadata.artifact, `${path}.metadata.artifact`),
       generator: 'scripts/build_assets.ts',
       evidencePath: requireString(metadata.evidencePath, `${path}.metadata.evidencePath`),
+      activeBaseline: validateActiveBaseline(metadata.activeBaseline, `${path}.metadata.activeBaseline`, validateFrontendBundleEvidence, {
+        entries,
+        aggregate,
+      }),
       calibration: parseCalibration(metadata.calibration, `${path}.metadata.calibration`),
     },
     budgets: {
       entries,
-      aggregate: parseBudget(budgets.aggregate, `${path}.budgets.aggregate`),
+      aggregate,
     },
   }
 }
@@ -405,6 +417,10 @@ export function validateFrontendBundleEvidence(value: unknown, path = FRONTEND_B
   const identity = parseBuildIdentity(object.identity, `${path}.identity`)
   const entries = parseEntries(object.entries, `${path}.entries`, true) as Record<string, BundleMeasurement>
   const aggregate = parseMeasurement(object.aggregate, `${path}.aggregate`, true) as BundleMeasurement
+  const expectedAggregateFiles = [...new Set(Object.values(entries).flatMap((measurement) => measurement.files))].sort()
+  if (JSON.stringify(aggregate.files) !== JSON.stringify(expectedAggregateFiles)) {
+    fail(`${path}.aggregate.files`, `must equal the sorted union of logical-entry files (expected ${expectedAggregateFiles.join(', ')})`)
+  }
   return { version: 1, generatedBy: 'scripts/build_assets.ts', identity, entries, aggregate }
 }
 
@@ -485,6 +501,7 @@ export function tightenFrontendBundlePolicy(
   policy: FrontendBundleBudgetPolicy,
   evidence: FrontendBundleEvidence,
 ): FrontendBundleBudgetPolicy {
+  validateFrontendBundlePolicy(policy)
   const violations = compareFrontendBundleEvidence(policy, evidence)
   for (const name of [...Object.keys(policy.budgets.entries), 'aggregate']) {
     const measured = name === 'aggregate' ? evidence.aggregate : evidence.entries[name]
@@ -510,8 +527,18 @@ export function tightenFrontendBundlePolicy(
   }
   const entries: Record<string, BundleBudget> = {}
   for (const name of Object.keys(policy.budgets.entries)) entries[name] = measurement(name)
+  const decision: FrontendBundleBaselineDecision = {
+    kind: 'tightening',
+    reason: 'Current clean-build evidence passed the existing budget and tightened the active baseline.',
+    reviewer: null,
+    reviewedAt: null,
+  }
   return {
     ...policy,
+    metadata: {
+      ...policy.metadata,
+      activeBaseline: activeBaselineFromEvidence(evidence, decision),
+    },
     budgets: { entries, aggregate: measurement('aggregate') },
   }
 }

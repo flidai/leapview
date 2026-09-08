@@ -83,6 +83,16 @@ Retain before/after evidence, identify the added behavior and alternatives, and
 obtain independent review before applying it. A proposal's requested limits must
 match its measured candidate; it cannot introduce arbitrary extra headroom.
 
+The policy embeds the active baseline's complete validated bundle evidence, a
+canonical evidence SHA-256, and a decision audit. The initial record uses the
+verified 57b0ae997 normal report and is explicitly pending GitHub review; its
+local reviewer fields are audit context, not approval authority. Tightening or
+applying a reviewed increase replaces the active evidence and budgets together,
+while the historical calibration remains unchanged. Policy loading rejects a
+missing, malformed, hash-mismatched, or byte-mismatched active baseline. The
+current-head GitHub review guard remains the approval authority; this embedded
+record does not by itself claim tamper-resistant governance.
+
 ## Review and delivery
 
 The required `CI gate` includes performance baseline review. Changes to a

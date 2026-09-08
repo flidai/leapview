@@ -12,6 +12,7 @@ import {
   validateFrontendBundlePolicy,
 } from './frontend_bundle_budget'
 import { verifyFrontendBundleStaticCoverage } from './frontend_bundle_files'
+import { frontendBundleEvidenceSha256 } from './frontend_bundle_active_baseline'
 import { applyReviewedFrontendBundleBudgetProposal } from './frontend_bundle_budget_proposal'
 import { currentGitRevision, frontendCommitIdentity, frontendSourceInputDigest } from './frontend_bundle_identity'
 
@@ -40,6 +41,19 @@ function policy(overrides: Partial<FrontendBundleBudgetPolicy['budgets']['entrie
       artifact: 'test production bundles',
       generator: 'scripts/build_assets.ts',
       evidencePath: '.tmp/frontend-bundle-evidence.json',
+      activeBaseline: (() => {
+        const activeEvidence = evidence()
+        return {
+          evidence: activeEvidence,
+          evidenceSha256: frontendBundleEvidenceSha256(activeEvidence),
+          decision: {
+            kind: 'initial' as const,
+            reason: 'Initial test baseline; pending GitHub review (not human-approved).',
+            reviewer: null,
+            reviewedAt: null,
+          },
+        }
+      })(),
       calibration: {
         baseCommit: 'e704f88068696c9fe1136a51c22b088663976f31',
         sourceInputDigest: 'd69cc8f07e1dcf0bdd26af31e7a39b3cc2fc58ccfad98f9e90cdead3967d3573',
@@ -263,6 +277,49 @@ test('requires strict calibration commit, timestamp, environment, and toolchain 
   })).toThrow('greater than or equal to the baseline')
 })
 
+test('requires an intact active baseline with attributable evidence identity', () => {
+  const parsed = validateFrontendBundlePolicy(policy())
+  expect(parsed.metadata.activeBaseline.evidence.identity.commit).toBe(currentCommit)
+  expect(parsed.metadata.activeBaseline.evidenceSha256).toBe(frontendBundleEvidenceSha256(parsed.metadata.activeBaseline.evidence))
+  expect(() => validateFrontendBundlePolicy({
+    ...policy(),
+    metadata: { ...policy().metadata, activeBaseline: undefined },
+  })).toThrow('metadata.activeBaseline: expected an object')
+  expect(() => validateFrontendBundlePolicy({
+    ...policy(),
+    metadata: {
+      ...policy().metadata,
+      activeBaseline: { ...policy().metadata.activeBaseline, evidenceSha256: '0'.repeat(64) },
+    },
+  })).toThrow('does not match canonical embedded evidence')
+  const unattributedEvidence = {
+    ...policy().metadata.activeBaseline.evidence,
+    identity: { ...policy().metadata.activeBaseline.evidence.identity, commit: null, commitSource: 'unavailable' as const },
+  }
+  expect(() => validateFrontendBundlePolicy({
+    ...policy(),
+    metadata: {
+      ...policy().metadata,
+      activeBaseline: {
+        ...policy().metadata.activeBaseline,
+        evidence: unattributedEvidence,
+        evidenceSha256: frontendBundleEvidenceSha256(unattributedEvidence),
+      },
+    },
+  })).toThrow('active baseline requires an attributable commit SHA')
+  expect(() => validateFrontendBundlePolicy({
+    ...policy(),
+    budgets: {
+      ...policy().budgets,
+      entries: { app: { ...policy().budgets.entries.app, baseline: pair(101) } },
+    },
+  })).toThrow('does not match policy baseline 101')
+  expect(() => validateFrontendBundlePolicy({
+    ...policy(),
+    budgets: { ...policy().budgets, aggregate: { ...policy().budgets.aggregate, baseline: pair(101) } },
+  })).toThrow('evidence.aggregate.rawBytes: does not match policy baseline 101')
+})
+
 test('ordinary update refuses a budget increase and tightens only on passing evidence', () => {
   expect(() => tightenFrontendBundlePolicy(policy(), evidence({ rawBytes: 121, gzipBytes: 100 })))
     .toThrow('frontend bundle budget update refused')
@@ -298,6 +355,31 @@ test('reviewed proposal requires approval, RFC3339 review date, exact entries, a
     ...proposal,
     requestedBudgets: { ...proposal.requestedBudgets, aggregate: { ...proposal.requestedBudgets.aggregate, maxIncreasePercent: pair(6, 5) } },
   })).toThrow('must remain unchanged from the current policy')
+})
+
+test('tightening and reviewed increases persist active evidence, identity, audit, and reload', () => {
+  const tightenedEvidence = evidence({ rawBytes: 99, gzipBytes: 99 })
+  const tightened = tightenFrontendBundlePolicy(policy(), tightenedEvidence)
+  const reloadedTightening = validateFrontendBundlePolicy(JSON.parse(JSON.stringify(tightened)))
+  expect(reloadedTightening.metadata.activeBaseline.evidence).toEqual(tightenedEvidence)
+  expect(reloadedTightening.metadata.activeBaseline.decision).toEqual({
+    kind: 'tightening',
+    reason: 'Current clean-build evidence passed the existing budget and tightened the active baseline.',
+    reviewer: null,
+    reviewedAt: null,
+  })
+
+  const candidate = evidence({ rawBytes: 130, gzipBytes: 130 })
+  const applied = applyReviewedFrontendBundleBudgetProposal(policy(), candidate, increaseProposal(candidate))
+  const reloadedIncrease = validateFrontendBundlePolicy(JSON.parse(JSON.stringify(applied)))
+  expect(reloadedIncrease.metadata.activeBaseline.evidence).toEqual(candidate)
+  expect(reloadedIncrease.metadata.activeBaseline.evidenceSha256).toBe(frontendBundleEvidenceSha256(candidate))
+  expect(reloadedIncrease.metadata.activeBaseline.decision).toEqual({
+    kind: 'reviewed-increase',
+    reason: 'intentional reviewed test increase',
+    reviewer: 'reviewer@example.test',
+    reviewedAt: '2026-09-08T11:20:57+02:00',
+  })
 })
 
 test('the file-level checker fails closed when preparation did not generate evidence', async () => {
