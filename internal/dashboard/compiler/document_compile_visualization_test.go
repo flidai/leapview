@@ -8,6 +8,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/document"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	configschema "github.com/flidai/leapview/internal/project/schema"
 )
 
 func TestCanonicalVisualizationSpecAcceptsPointColorScaleKinds(t *testing.T) {
@@ -127,6 +128,76 @@ func TestCompileVisualsSupportsDynamicCategorySeriesIntent(t *testing.T) {
 	}
 	if spec.Presentation.SeriesIntent == nil || len(*spec.Presentation.SeriesIntent) != 1 || (*spec.Presentation.SeriesIntent)[0].Value != "category-omitted-at-compile-time" {
 		t.Fatalf("dynamic category-series intent = %#v", spec.Presentation.SeriesIntent)
+	}
+}
+
+func TestCompileAuthoredCandlestickColorsFromJSONAndYAML(t *testing.T) {
+	contents := map[string]string{
+		"json": `{"apiVersion":"leapview.dev/v1","kind":"Dashboard","metadata":{"id":"dashboard:ohlc","name":"ohlc"},"spec":{"semanticModel":"sales","filters":[],"visuals":{"market":{"type":"candlestick","query":{"type":"aggregate","dimensions":["purchaseDate"],"metrics":["open","close","low","high"]},"presentation":{"type":"cartesian","gainColor":"data_2","lossColor":"warning"}}},"pages":[]}}`,
+		"yaml": `apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata:
+  id: dashboard:ohlc
+  name: ohlc
+spec:
+  semanticModel: sales
+  filters: []
+  visuals:
+    market:
+      type: candlestick
+      query:
+        type: aggregate
+        dimensions:
+          - purchaseDate
+        metrics:
+          - open
+          - close
+          - low
+          - high
+      presentation:
+        type: cartesian
+        gainColor: data_2
+        lossColor: warning
+  pages: []
+`,
+	}
+
+	model := dashboardQueryTestModel()
+	baseMetric := model.Metrics["revenue"]
+	for _, name := range []string{"open", "close", "low", "high"} {
+		model.Metrics[name] = baseMetric
+	}
+	for format, content := range contents {
+		t.Run(format, func(t *testing.T) {
+			var authored document.DashboardDocument
+			if err := configschema.DecodeResource(configschema.KindDashboard, "candlestick."+format, []byte(content), &authored); err != nil {
+				t.Fatalf("decode authored dashboard: %v", err)
+			}
+			compiled, err := (dashboardCompileContext{model: model, modelID: "sales"}).compileVisuals(authored.Spec.Visuals)
+			if err != nil {
+				t.Fatalf("compile authored dashboard: %v", err)
+			}
+			definition, ok := compiled["market"]
+			if !ok {
+				t.Fatal("compiled dashboard omitted market visual")
+			}
+			if definition.Query.ResultShape != visualizationdefinition.ResultOHLC {
+				t.Fatalf("result shape = %q, want %q", definition.Query.ResultShape, visualizationdefinition.ResultOHLC)
+			}
+			spec, ok := definition.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+			if !ok {
+				t.Fatalf("compiled spec type = %T", definition.Spec.Value)
+			}
+			if spec.Mark != visualizationir.VisualizationCartesianMarkCandlestick {
+				t.Fatalf("compiled mark = %q, want candlestick", spec.Mark)
+			}
+			if spec.Presentation.GainColor == nil || *spec.Presentation.GainColor != visualizationir.VisualizationColorIntentData2 {
+				t.Fatalf("compiled gain color = %#v, want data_2", spec.Presentation.GainColor)
+			}
+			if spec.Presentation.LossColor == nil || *spec.Presentation.LossColor != visualizationir.VisualizationColorIntentWarning {
+				t.Fatalf("compiled loss color = %#v, want warning", spec.Presentation.LossColor)
+			}
+		})
 	}
 }
 
