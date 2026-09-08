@@ -403,6 +403,8 @@ geographic/tiled frames remain renderer-owned and do not expose host data action
 unless a renderer-owned accessible route is added. Renderer adapters remain
 responsible for their own canvas/table semantics, supported zoom or roam defaults,
 and preserving an explicitly enabled view state across compatible data updates.
+Clipboard and CSV serialization prefixes potentially executable spreadsheet formula
+strings in string cells and headers, while preserving numeric values and delimiters.
 The host announces status, data, and selection changes only when the
 specification's `accessibility.announceChanges` policy allows it.
 
