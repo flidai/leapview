@@ -171,11 +171,9 @@ func normalizeURLHost(value string) (string, error) {
 			return "", err
 		}
 		zoneName := inner[zone+1:]
-		// url.Parse may leave the RFC 6874 delimiter escaped in Host, while
-		// Hostname exposes it decoded. Normalize both spellings to one %25.
-		if strings.HasPrefix(zoneName, "25") {
-			zoneName = zoneName[2:]
-		}
+		// url.Parse has already decoded the RFC 6874 delimiter in Host. A
+		// leading "25" here is therefore literal zone-name content, not an
+		// extra delimiter escape to strip.
 		if zoneName == "" || strings.ContainsRune(zoneName, '%') {
 			return "", errors.New("authoritative definition URL has an invalid IPv6 zone")
 		}

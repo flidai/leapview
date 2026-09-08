@@ -242,6 +242,9 @@ func resolveSQLReferences(query duckdbsql.Query, resolver ReferenceResolver) (*s
 	if err != nil {
 		return nil, err
 	}
+	if err := resolveImplicitSQLQualifiers(query, refs); err != nil {
+		return nil, err
+	}
 	return refs, nil
 }
 

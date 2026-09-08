@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/analytics/modelsql"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/semanticvalue"
@@ -424,8 +425,8 @@ func validProjectionIdentifier(value string) bool {
 	if value == "" || !isASCIIIdentifierStart(value[0]) {
 		return false
 	}
-	for _, character := range value[1:] {
-		if !isASCIIIdentifierContinue(byte(character)) {
+	for index := 1; index < len(value); index++ {
+		if !isASCIIIdentifierContinue(value[index]) {
 			return false
 		}
 	}
@@ -436,8 +437,9 @@ func validProjectionName(value string) bool {
 	if value == "" || !isASCIIIdentifierStart(value[0]) {
 		return false
 	}
-	for _, character := range value[1:] {
-		if character != '_' && character != '-' && character != '.' && !isASCIIIdentifierContinue(byte(character)) {
+	for index := 1; index < len(value); index++ {
+		character := value[index]
+		if character != '_' && character != '-' && character != '.' && !isASCIIIdentifierContinue(character) {
 			return false
 		}
 	}
@@ -453,23 +455,7 @@ func isASCIIIdentifierContinue(value byte) bool {
 }
 
 func validateSQLAst(value string) error {
-	var document struct {
-		Statements json.RawMessage `json:"statements"`
-	}
-	if err := json.Unmarshal([]byte(value), &document); err != nil {
-		return err
-	}
-	if len(document.Statements) == 0 || bytes.Equal(document.Statements, []byte("null")) {
-		return errors.New("statements are required")
-	}
-	var statements []json.RawMessage
-	if err := json.Unmarshal(document.Statements, &statements); err != nil {
-		return errors.New("statements must be an array")
-	}
-	if len(statements) == 0 {
-		return errors.New("statements must not be empty")
-	}
-	return nil
+	return modelsql.ValidateCanonicalProjection(value)
 }
 
 func validSemanticFieldReference(value string) bool {

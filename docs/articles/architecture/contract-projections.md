@@ -62,8 +62,16 @@ are materialized consistently with the existing runtime.
 
 Model SQL is represented by an allowlisted projection of the existing parsed
 SQL representation, not raw SQL text or DuckDB's raw parser JSON. Unsupported
-SQL constructs fail closed. Execution SQL and existing execution digests are
-unchanged.
+SQL constructs fail closed. Publication decoding and digesting validate every
+nested AST node against the same closed representation and require its exact
+deterministic encoding. Implicit relation qualifiers resolve through query
+scope to stable resource identities; explicit aliases and CTE names retain
+their query-local meaning, and ambiguous qualifiers fail closed. Execution
+SQL and existing execution digests are unchanged.
+
+Projection identifiers use the generated contracts' ASCII character rules.
+URL normalization preserves distinct IPv6 zone identifiers, including zone
+names that begin with `25`; percent decoding is not applied a second time.
 
 Tests cover canonical bytes and digests, input sealing, malformed inputs,
 projection coverage, and an independent JavaScript serialization corpus.
