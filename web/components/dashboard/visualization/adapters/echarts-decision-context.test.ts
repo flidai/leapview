@@ -1,8 +1,9 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
-import { echartsOption } from './echarts'
+import { echartsOption, responsiveEChartsPatch } from './echarts'
 
 test('ECharts translates semantic axes and decision context from the current frame', () => {
   const envelope = cartesianFixture() as any
@@ -60,6 +61,139 @@ test('ECharts translates semantic axes and decision context from the current fra
   expect(empty.series[0].markLine.data.map((item: any) => item.id)).toEqual(['reference-line:target', 'event-annotation:launch'])
   expect(empty.series[0].markArea).toBeUndefined()
 })
+
+test('ECharts authored axis titles stay visible on centered physical axes in desktop and compact layouts', () => {
+  const vertical = titledAxisFixture()
+  const horizontal = structuredClone(vertical) as any
+  horizontal.spec.presentation.orientation = 'horizontal'
+  horizontal.spec.axes[0].title = 'Month axis'
+  horizontal.spec.axes[0].inversion = 'inverted'
+  horizontal.spec.axes[1].inversion = 'inverted'
+  const combo = comboTitledAxisFixture()
+  const point = pointTitledAxisFixture()
+
+  for (const [kind, envelope] of [['vertical', vertical], ['horizontal-inverted', horizontal], ['combo-secondary', combo], ['point', point]] as const) {
+    for (const [layout, width, height] of [['desktop', 640, 360], ['compact', 320, 240]] as const) {
+      const source = echartsOption(envelope, defaultRendererContext) as Record<string, any>
+      const option = { ...source, ...responsiveEChartsPatch(source, width, height) }
+      const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+      try {
+        chart.setOption(option)
+        const svg = chart.renderToSVGString()
+        const renderedText = chart.getZr().storage.getDisplayList()
+          .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string')
+        const controls = ['legend', 'dataZoom'].flatMap((mainType) => componentBounds(chart, mainType))
+        for (const title of envelope.spec.axes!.flatMap((axis: any) => axis.title ? [axis.title] : [])) {
+          const text = svgTitle(svg, title)
+          expect(text, `${kind} ${layout} should render ${title}`).toBeDefined()
+          const position = svgTitlePosition(text!)
+          expect(position.x, `${kind} ${layout} ${title} x`).toBeGreaterThan(0)
+          expect(position.x, `${kind} ${layout} ${title} x`).toBeLessThan(width)
+          expect(position.y, `${kind} ${layout} ${title} y`).toBeGreaterThan(0)
+          expect(position.y, `${kind} ${layout} ${title} y`).toBeLessThan(height)
+          const titleElements = renderedText.filter((item: any) => item.style.text === title)
+          expect(titleElements, `${kind} ${layout} should have one rendered ${title} title`).toHaveLength(1)
+          const titleBounds = globalTextBounds(titleElements[0])
+          expect(titleBounds.x, `${kind} ${layout} ${title} left bound`).toBeGreaterThanOrEqual(0)
+          expect(titleBounds.y, `${kind} ${layout} ${title} top bound`).toBeGreaterThanOrEqual(0)
+          expect(titleBounds.x + titleBounds.width, `${kind} ${layout} ${title} right bound`).toBeLessThanOrEqual(width)
+          expect(titleBounds.y + titleBounds.height, `${kind} ${layout} ${title} bottom bound`).toBeLessThanOrEqual(height)
+          for (const control of controls) {
+            expect(rectanglesOverlap(titleBounds, control.bounds), `${kind} ${layout} ${title} overlaps ${control.mainType}`).toBeFalse()
+          }
+          for (const item of renderedText.filter((candidate: any) => candidate.style.text !== title)) {
+            const otherBounds = globalTextBounds(item)
+            expect(rectanglesOverlap(titleBounds, otherBounds), `${kind} ${layout} ${title} overlaps ${item.style.text}`).toBeFalse()
+          }
+        }
+      } finally {
+        chart.dispose()
+      }
+    }
+  }
+})
+
+function titledAxisFixture(): VisualizationEnvelope {
+  const envelope = cartesianFixture() as any
+  envelope.spec.axes = [
+    { id: 'x', title: 'Revenue after discounts (USD)', type: 'automatic', inversion: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic', scale: 'automatic', zero: 'automatic', tickDensity: 'automatic' },
+    { id: 'primary_y', title: 'Revenue axis', type: 'automatic', inversion: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic', scale: 'automatic', zero: 'automatic', tickDensity: 'automatic' },
+  ]
+  return envelope
+}
+
+function comboTitledAxisFixture(): VisualizationEnvelope {
+  const envelope = titledAxisFixture() as any
+  envelope.spec.mark = 'combo'
+  envelope.spec.y = [envelope.spec.y[0], { dataset: 'primary', field: 'orders' }]
+  envelope.spec.datasets[0].fields.push({ id: 'orders', role: 'metric', dataType: 'integer', nullable: false, label: 'Orders' })
+  envelope.dataState.datasets[0].columns.push('orders')
+  envelope.dataState.datasets[0].rows = envelope.dataState.datasets[0].rows.map((row: unknown[]) => [...row, 2])
+  envelope.spec.presentation.comboSeries = [
+    { seriesValue: 'value', mark: 'line', axis: 'primary' },
+    { seriesValue: 'orders', mark: 'column', axis: 'secondary' },
+  ]
+  envelope.spec.axes.push({ id: 'secondary_y', title: 'Orders axis', type: 'automatic', inversion: 'inverted', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic', scale: 'automatic', zero: 'automatic', tickDensity: 'automatic' })
+  return envelope
+}
+
+function pointTitledAxisFixture(): VisualizationEnvelope {
+  const envelope = cartesianFixture() as any
+  envelope.spec.kind = 'point'
+  envelope.spec.title = 'points'
+  envelope.spec.datasets[0].fields = [
+    { id: 'x', role: 'metric', dataType: 'decimal', nullable: false, label: 'X' },
+    { id: 'y', role: 'metric', dataType: 'decimal', nullable: false, label: 'Y' },
+  ]
+  envelope.spec.x = { dataset: 'primary', field: 'x' }
+  envelope.spec.y = { dataset: 'primary', field: 'y' }
+  envelope.spec.axes = [
+    { id: 'x', title: 'X axis', type: 'automatic', inversion: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic', scale: 'automatic', zero: 'automatic', tickDensity: 'automatic' },
+    { id: 'primary_y', title: 'Y axis', type: 'automatic', inversion: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic', scale: 'automatic', zero: 'automatic', tickDensity: 'automatic' },
+  ]
+  envelope.spec.presentation = { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, overplot: 'show_all', opacity: 1, largeMode: 'never', largeThreshold: 1000, brush: [] }
+  envelope.dataState.datasets[0].columns = ['x', 'y']
+  envelope.dataState.datasets[0].rows = [[1, 2], [2, 4]]
+  return envelope
+}
+
+function globalTextBounds(item: any): { x: number; y: number; width: number; height: number } {
+  const bounds = item.getBoundingRect().clone()
+  const transform = item.getComputedTransform?.() ?? item.transform
+  if (transform) bounds.applyTransform(transform)
+  return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+}
+
+function componentBounds(chart: echarts.EChartsType, mainType: string): Array<{ mainType: string; bounds: { x: number; y: number; width: number; height: number } }> {
+  const model = (chart as any).getModel?.()
+  return model?.findComponents({ mainType }).flatMap((component: any) => {
+    const group = (chart as any).getViewOfComponentModel(component)?.group
+    if (!group) return []
+    const bounds = group.getBoundingRect().clone()
+    const transform = group.getComputedTransform?.() ?? group.transform
+    if (transform) bounds.applyTransform(transform)
+    return [{ mainType, bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height } }]
+  }) ?? []
+}
+
+function rectanglesOverlap(left: { x: number; y: number; width: number; height: number }, right: { x: number; y: number; width: number; height: number }): boolean {
+  return left.x < right.x + right.width && left.x + left.width > right.x && left.y < right.y + right.height && left.y + left.height > right.y
+}
+
+function svgTitle(svg: string, title: string): string | undefined {
+  const marker = `>${title}</text>`
+  const end = svg.indexOf(marker)
+  if (end < 0) return undefined
+  const start = svg.lastIndexOf('<text', end)
+  return start < 0 ? undefined : svg.slice(start, end + marker.length)
+}
+
+function svgTitlePosition(text: string): { x: number; y: number } {
+  const transform = text.match(/transform="([^"]+)"/)?.[1] ?? ''
+  const numbers = transform.match(/(?:matrix|translate)\(([^)]+)\)/)?.[1]?.split(/[ ,]+/).map(Number) ?? []
+  if (transform.startsWith('matrix')) return { x: numbers[4] ?? Number.NaN, y: numbers[5] ?? Number.NaN }
+  return { x: numbers[0] ?? Number.NaN, y: numbers[1] ?? Number.NaN }
+}
 
 function cartesianFixture(): VisualizationEnvelope {
   return {

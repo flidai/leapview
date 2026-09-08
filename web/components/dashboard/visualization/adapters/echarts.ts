@@ -32,14 +32,16 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
   const bottomLegend = compact && hasBottomLegend(option.legend)
   const slider = compact && hasSliderDataZoom(option.dataZoom)
-  const compactBottom = 12 + (bottomLegend ? 28 : 0) + (slider ? 42 : 0)
+  const centeredXAxisName = hasCenteredAxisName(option.xAxis)
+  const compactBottom = Math.max(12 + (bottomLegend ? 28 : 0) + (slider ? 42 : 0), centeredXAxisName ? 20 : 0)
+  const centeredYAxisName = hasCenteredAxisName(option.yAxis)
   const grid = grids.map((value: Record<string, any>) => {
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
     return {
       ...source,
       ...(compact ? {
-        left: compactInset(source.left, 8),
-        right: compactInset(source.right, 8),
+        left: compactInset(source.left, centeredYAxisName ? 24 : 8),
+        right: compactInset(source.right, centeredYAxisName ? 24 : 8),
         top: compactInset(source.top, 10),
         bottom: compactBottomInset(source.bottom, compactBottom),
       } : {}),
@@ -49,6 +51,14 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   if (option.legend !== undefined) patch.legend = compact ? compactLegend(option.legend) : option.legend
   if (option.dataZoom !== undefined) patch.dataZoom = compact ? compactDataZoom(option.dataZoom, bottomLegend) : option.dataZoom
   return patch
+}
+
+function hasCenteredAxisName(value: unknown): boolean {
+  const axes = Array.isArray(value) ? value : [value]
+  return axes.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
+    && (entry as Record<string, unknown>).nameLocation === 'middle'
+    && typeof (entry as Record<string, unknown>).name === 'string'
+    && (entry as Record<string, unknown>).name !== '')
 }
 
 function compactInset(value: unknown, fallback: number): unknown {

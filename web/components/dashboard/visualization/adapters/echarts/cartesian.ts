@@ -26,6 +26,9 @@ import {
 
 type ReferenceValue = NonNullable<CartesianSpec['referenceLines']>[number]['value']
 
+const authoredAxisNameGap = 25
+const centeredAxisNameGridInset = 24
+
 export function cartesianOption(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): EChartsTranslation {
   return applyDecisionContext(envelope, context, cartesianBaseOption(envelope, context, categoryColors))
 }
@@ -260,7 +263,17 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
     const target = axisAt(option, physical, index)
     if (!target) continue
     const title = [authored.title, authored.unit ? `(${authored.unit})` : ''].filter(Boolean).join(' ')
-    if (title) target.name = title
+    if (title) {
+      // ECharts' default `end` placement puts a vertical Y name above the
+      // plot and a horizontal X name at the far edge. Both are clipped by
+      // our compact grid and become misleadingly absent. Center authored
+      // names on their physical axis so the existing legend/dataZoom insets
+      // continue to reserve the surrounding space.
+      target.name = title
+      target.nameLocation = 'middle'
+      target.nameGap = authoredAxisNameGap
+      reserveCenteredAxisNameGrid(option, physical === 'yAxis' ? 'sides' : 'bottom', centeredAxisNameGridInset)
+    }
     if (authored.scale === 'log') target.type = 'log'
     else if (authored.scale === 'linear') target.type = 'value'
     if (authored.minimum !== undefined) target.min = authored.minimum
@@ -318,6 +331,19 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
     if (areas.length > 0) owner.markArea = { silent: true, data: areas }
   }
   return option
+}
+
+function reserveCenteredAxisNameGrid(option: EChartsTranslation, edge: 'sides' | 'bottom', inset: number): void {
+  const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
+  for (const grid of grids) {
+    if (!grid || typeof grid !== 'object' || Array.isArray(grid)) continue
+    if (edge === 'sides') {
+      grid.left = typeof grid.left === 'number' ? Math.max(grid.left, inset) : inset
+      grid.right = typeof grid.right === 'number' ? Math.max(grid.right, inset) : inset
+    } else {
+      grid.bottom = typeof grid.bottom === 'number' ? Math.max(grid.bottom, 20) : 20
+    }
+  }
 }
 
 function axisAt(option: EChartsTranslation, key: 'xAxis' | 'yAxis', index: number): EChartsTranslation | undefined {
