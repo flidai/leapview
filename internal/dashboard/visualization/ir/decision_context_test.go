@@ -426,7 +426,7 @@ func TestValidateSpecFinancialLabelPolicyCompatibility(t *testing.T) {
 			mutate func(*VisualizationLabelPolicy)
 		}{
 			{name: "historical automatic changed priority", mutate: func(policy *VisualizationLabelPolicy) {
-				policy.Priority[0] = VisualizationLabelPriorityThreshold
+				policy.Priority[0], policy.Priority[2] = policy.Priority[2], policy.Priority[0]
 			}},
 			{name: "historical automatic changed spacing", mutate: func(policy *VisualizationLabelPolicy) {
 				policy.MinimumSpacing = 7
