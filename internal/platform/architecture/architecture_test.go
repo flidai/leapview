@@ -3660,7 +3660,7 @@ func TestGitHubHostedWorkflowsUseEphemeralRunnersAndBoundedCaches(t *testing.T) 
 	for _, want := range []string{
 		"actions/setup-go@",
 		"go-version-file: go.mod",
-		"cache: true",
+		"cache: false",
 		"actions/setup-node@",
 		`node-version: "24"`,
 		"oven-sh/setup-bun@",
