@@ -195,7 +195,13 @@ Row-level mark stroke variation is not part of the rendering contract; use
 
 Decision-context field references use stable dataset and field identities. Gradient domains, rule order, null/default outcomes, series order, colors, scale domains, zero policies, units, and tick density are explicit in the compiled IR. Bound titles, subtitles, descriptions, summaries, reference values, and accessibility text recompute when filters or data revisions change and use authored fallbacks when governed data is empty.
 
+Reference lines, bands, and events on a numeric value X axis require numeric values or numeric field reducers. Text values remain valid on category axes; date/time axes retain their temporal values. Incompatible value-axis references fail compilation at the authored value path.
+
 Deleted fields, unknown datasets, incompatible reducers, unsupported mark/feature combinations, and unsafe formatting intents are deployment errors with the binding path in the diagnostic. Authorization remains part of governed query execution; an unauthorized or failed context query produces the visual’s normal error state and does not reveal a hidden value through metadata or a renderer message.
+
+## Accessible visual data
+
+Inline charts offer **Show data**, **Copy data**, and **Export CSV** for a bounded preview of up to 100 rows. Multi-dataset visuals, including KPI comparison, goal, and trend data, identify each dataset explicitly and keep its fields separate; rows are not joined across datasets. The row limit applies across all datasets in declared order. The preview and action notices report omitted rows and partial or truncated source data. Server-backed tables and tiled maps use their own data-access surfaces instead of these inline actions.
 
 ## Change over time
 
