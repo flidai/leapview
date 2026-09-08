@@ -238,6 +238,14 @@ audit evidence records exact failures and commands; a complete CI retry needs
 restored runner storage capacity. This limitation does not claim a new audit
 defect or promote broader activation readiness.
 
+The subsequent [FAI-649 readiness audit](semantic-access-activation-readiness.md)
+records storage recovery and another normal CI attempt (exit 201, 7m08s), which
+failed in an unchanged site browser test before external-service/final generated
+gates. Its unchanged isolated site retry passed 51/51. Full CI remains open;
+the 55/45/2 matrix and FAI-648 IMPLEMENTED / PARTIAL disposition are unchanged.
+STR-08/ENF-06 are FAI-649-owned deliverables, not circular prerequisites to their
+own implementation; independent FAI-616/648 qualification still blocks readiness.
+
 ## Requirement matrix
 
 | Requirement | Status | Owner | Implementation | Test evidence | Remaining limitation |

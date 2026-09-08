@@ -273,12 +273,16 @@ the remaining provider/consumer, activation, or DataPolicy
 cutover boundaries. Reader/writer rollback limitations are recorded in the
 [policy-evidence specification](semantic-access-policy-evidence.md).
 
-The same matrix records the subsequent durable semantic-audit slice as
-LIF-06 PARTIAL: qualified consumers hand redacted existing-evaluator decisions
-to the Access canonical audit store before disclosure, and PostgreSQL retained
-replay verifies the existing intent digest. This is separate from publication
-evidence and does not constitute a new approval, hash, or identity authority.
-Exhaustive consumer/provider and production activation evidence remains open.
+The subsequent [audit-closure evidence](semantic-access-audit-qualification.md)
+qualifies LIF-06 as PASS: reviewed consumers hand redacted existing-evaluator
+decisions to the Access canonical audit store before disclosure, and PostgreSQL
+retained replay verifies the existing intent digest and exact expected event
+binding. This is separate from publication evidence and does not constitute a
+new approval, hash, or identity authority. Broader consumer/provider and
+production activation evidence remains open. The
+[FAI-649 readiness audit](semantic-access-activation-readiness.md) records the
+unchanged 55 PASS / 45 PARTIAL / 2 FAIL matrix, CI recovery attempts and remaining
+upstream/activation ownership; it does not start FAI-649 or qualify FAI-632.
 
 The FAI-622 boundary classifies and preserves contract evidence. FAI-662 closes
 the projector, manifest, and database integrity gaps without changing the
