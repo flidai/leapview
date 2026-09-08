@@ -43,3 +43,21 @@ for (const workflow of ['ci', 'merge-validation', 'nightly']) {
       .toBe(true)
   })
 }
+
+for (const workflow of ['ci', 'merge-validation']) {
+  test(`${workflow} retains the core-shard bundle evidence on every outcome`, () => {
+    const config = parse(readFileSync(`.github/workflows/${workflow}.yml`, 'utf8'))
+    const job = config.jobs['frontend-validation']
+    const upload = job.steps.find((step: any) => step.name === 'Upload frontend bundle evidence')
+    expect(upload).toBeDefined()
+    expect(upload.if).toBe("${{ always() && matrix.shard == 'core' }}")
+    expect(upload.uses).toBe('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a')
+    expect(upload.with).toEqual({
+      name: 'frontend-bundle-evidence-${{ github.run_id }}-${{ github.run_attempt }}',
+      path: '.tmp/frontend-bundle-evidence.json',
+      'include-hidden-files': true,
+      'retention-days': 90,
+      'if-no-files-found': 'error',
+    })
+  })
+}

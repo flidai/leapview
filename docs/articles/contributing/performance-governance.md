@@ -93,6 +93,10 @@ missing, malformed, hash-mismatched, or byte-mismatched active baseline. The
 current-head GitHub review guard remains the approval authority; this embedded
 record does not by itself claim tamper-resistant governance.
 
+The PR and merge-validation core shards retain the exact structured evidence as
+a 90-day artifact named with the workflow run and attempt, including failed
+validation outcomes; a missing evidence file fails the upload step.
+
 ## Review and delivery
 
 The required `CI gate` includes performance baseline review. Changes to a
