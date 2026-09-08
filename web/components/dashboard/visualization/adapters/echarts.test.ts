@@ -982,7 +982,8 @@ test('ECharts proportional legends keep raw item names while formatting display 
   envelope.dataState.datasets[0].rows = [['—', 1], [null, 2], ['null', 3]]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.legend.data).toEqual([{ name: '—' }, { name: 'null [null:]' }, { name: 'null [string:null]' }])
-  expect(option.legend.formatter('null [null:]')).toBe('—')
+  expect(option.legend.formatter('—')).toBe('— [string:—]')
+  expect(option.legend.formatter('null [null:]')).toBe('— [null:]')
   expect(option.legend.formatter('null [string:null]')).toBe('null')
   expect(legendSelectionCommand(envelope, '—')).toMatchObject({ mappings: [{ value: '—' }] })
   expect(legendSelectionCommand(envelope, 'null [null:]')).toBeUndefined()
