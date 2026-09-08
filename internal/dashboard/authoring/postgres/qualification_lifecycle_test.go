@@ -1,9 +1,8 @@
-package authoring_test
+package postgres
 
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,11 +11,9 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
-	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
@@ -25,28 +22,32 @@ const (
 	qualificationProject = graph.ResourceID("project:sales")
 	qualificationModel   = graph.ResourceID("model:sales")
 	qualificationActor   = "actor"
+	qualificationOwner   = "018f4f2e-0000-7000-0000-000000000601"
 )
 
 // TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchive
 // is intentionally a real persistence qualification: the service uses the
-// SQLite repository, while preview uses one instrumented active-runtime fake.
+// PostgreSQL repository, while preview uses one instrumented active-runtime fake.
 func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchive(t *testing.T) {
-	ctx := t.Context()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "qualification.db"))
+	db := authoringDB(t)
+	repository, err := New(testDBTX{db}, &authoringAudit{}, authoringEvents{}, &authoringFence{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO principals (id, email, display_name) VALUES ('owner', 'owner@example.test', 'Owner')`); err != nil {
-		t.Fatal(err)
-	}
-
-	repository := authoringsqlite.NewRepository(store.SQLDB())
+	ctx := t.Context()
 	compiler := &qualificationCompiler{}
 	ids := qualificationIDs{
 		dashboards: []authoring.DashboardID{"dashboard:source", "dashboard:copy"},
-		drafts:     []authoring.DraftID{"draft:source", "draft:copy"},
-		revisions:  []authoring.RevisionID{"revision:source-1", "revision:source-2", "revision:copy-1", "revision:copy-2"},
+		drafts: []authoring.DraftID{
+			"018f4f2e-0000-7000-8000-000000000701",
+			"018f4f2e-0000-7000-8000-000000000702",
+		},
+		revisions: []authoring.RevisionID{
+			"018f4f2e-0000-7000-8000-000000000711",
+			"018f4f2e-0000-7000-8000-000000000712",
+			"018f4f2e-0000-7000-8000-000000000713",
+			"018f4f2e-0000-7000-8000-000000000714",
+		},
 	}
 	service, err := authoringservice.NewService(authoringservice.Options{
 		Repository: repository,
@@ -67,8 +68,8 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 		t.Fatal(err)
 	}
 
-	created, err := service.Create(ctx, authoringservice.CreateRequest{
-		ProjectID: qualificationProject, ActorID: qualificationActor, OwnerPrincipalID: "owner",
+	created, err := service.Create(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000721"), "dashboard_authoring.draft_created"), authoringservice.CreateRequest{
+		ProjectID: qualificationProject, ActorID: qualificationActor, OwnerPrincipalID: qualificationOwner,
 		Title: "Sales", Slug: "sales", SemanticModel: qualificationModel,
 		Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-source",
 	})
@@ -82,8 +83,8 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 	// Seed one governed visual through the trusted document replacement command;
 	// subsequent browser-shaped edits remain narrow typed commands.
 	sourceDocument := qualificationDocument(created.Lifecycle.ID.String(), "sales", "Sales")
-	sourceEdit, err := service.Execute(ctx, qualificationProject, authoring.Command{
-		ID: "source-document", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID,
+	sourceEdit, err := service.Execute(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000722"), "dashboard_authoring.draft_edited"), qualificationProject, authoring.Command{
+		ID: "018f4f2e-0000-7000-8000-000000000732", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID,
 		ExpectedRevision: created.Revision, Provenance: qualificationProvenance("source-document"),
 		ReplaceDocument: &authoring.ReplaceDocumentPayload{Document: sourceDocument},
 	})
@@ -94,8 +95,8 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 		t.Fatalf("source edit revision = %#v, want number 2", sourceEdit.Revision)
 	}
 
-	sourcePublished, err := service.Execute(ctx, qualificationProject, authoring.Command{
-		ID: "source-publish", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID,
+	sourcePublished, err := service.Execute(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000723"), "dashboard_authoring.published"), qualificationProject, authoring.Command{
+		ID: "018f4f2e-0000-7000-8000-000000000733", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID,
 		ExpectedRevision: sourceEdit.Revision, Provenance: qualificationProvenance("source-publish"),
 		Publish: &authoring.PublishPayload{},
 	})
@@ -108,9 +109,9 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 
 	// Fork copies the retained published revision into a fresh private draft;
 	// it must not alter the source lifecycle or its revision history.
-	copied, err := service.Fork(ctx, authoringservice.ForkRequest{
+	copied, err := service.Fork(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000724"), "dashboard_authoring.draft_created"), authoringservice.ForkRequest{
 		ProjectID: qualificationProject, SourceDashboardID: created.Lifecycle.ID,
-		ActorID: qualificationActor, OwnerPrincipalID: "owner", Title: "Sales Copy", Slug: "sales-copy",
+		ActorID: qualificationActor, OwnerPrincipalID: qualificationOwner, Title: "Sales Copy", Slug: "sales-copy",
 		Origin: authoring.OriginUI, IdempotencyKey: "fork-copy",
 	})
 	if err != nil {
@@ -139,8 +140,8 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 	// Two simulated tabs both read copy revision 1. The first commits a
 	// placement-only edit; the second must fail CAS without adding a revision.
 	tabRevision := copied.Revision
-	moved, err := service.Execute(ctx, qualificationProject, authoring.Command{
-		ID: "copy-placement", DashboardID: copied.Lifecycle.ID, DraftID: copied.Lifecycle.Draft.ID,
+	moved, err := service.Execute(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000725"), "dashboard_authoring.draft_edited"), qualificationProject, authoring.Command{
+		ID: "018f4f2e-0000-7000-8000-000000000735", DashboardID: copied.Lifecycle.ID, DraftID: copied.Lifecycle.Draft.ID,
 		ExpectedRevision: tabRevision, Provenance: qualificationProvenance("copy-placement"),
 		SetPlacements: &authoring.SetPlacementsPayload{PageID: "overview", Placements: []authoring.PlacementUpdate{{
 			ComponentID: "orders-card", Placement: document.DashboardPlacement{Column: 2, Row: 1, ColumnSpan: 6, RowSpan: 4},
@@ -153,7 +154,7 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 		t.Fatalf("placement revision = %#v, previous=%#v", moved.Revision, tabRevision)
 	}
 	if _, err := service.Execute(ctx, qualificationProject, authoring.Command{
-		ID: "copy-stale-tab", DashboardID: copied.Lifecycle.ID, DraftID: copied.Lifecycle.Draft.ID,
+		ID: "018f4f2e-0000-7000-8000-000000000736", DashboardID: copied.Lifecycle.ID, DraftID: copied.Lifecycle.Draft.ID,
 		ExpectedRevision: tabRevision, Provenance: qualificationProvenance("copy-stale-tab"),
 		RenamePage: &authoring.RenamePagePayload{PageID: "overview", Title: "Stale tab"},
 	}); !errors.Is(err, authoring.ErrStaleRevision) {
@@ -191,8 +192,8 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 		t.Fatalf("preview result/query metrics = %#v/%d", previewResult, runtime.queryCalls)
 	}
 
-	published, err := service.Execute(ctx, qualificationProject, authoring.Command{
-		ID: "copy-publish", DashboardID: copied.Lifecycle.ID, DraftID: copied.Lifecycle.Draft.ID,
+	published, err := service.Execute(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000726"), "dashboard_authoring.published"), qualificationProject, authoring.Command{
+		ID: "018f4f2e-0000-7000-8000-000000000737", DashboardID: copied.Lifecycle.ID, DraftID: copied.Lifecycle.Draft.ID,
 		ExpectedRevision: moved.Revision, Provenance: qualificationProvenance("copy-publish"),
 		Publish: &authoring.PublishPayload{},
 	})
@@ -207,8 +208,8 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 		t.Fatalf("stored copy compilation = %#v (%v)", storedCompilation, err)
 	}
 
-	archived, err := service.Execute(ctx, qualificationProject, authoring.Command{
-		ID: "copy-archive", DashboardID: copied.Lifecycle.ID,
+	archived, err := service.Execute(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000727"), "dashboard_authoring.archived"), qualificationProject, authoring.Command{
+		ID: "018f4f2e-0000-7000-8000-000000000738", DashboardID: copied.Lifecycle.ID,
 		ExpectedRevision: published.Revision, Provenance: qualificationProvenance("copy-archive"),
 		Archive: &authoring.ArchivePayload{},
 	})
