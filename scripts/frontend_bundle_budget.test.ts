@@ -467,11 +467,12 @@ test('includes tsconfig.json in the source input digest', () => {
 
     const originalDigest = frontendSourceInputDigest(fixture)
     writeFileSync(join(fixture, 'scripts/frontend_bundle_options.ts'), 'fixture build options changed')
-    expect(frontendSourceInputDigest(fixture)).not.toBe(originalDigest)
+    const optionsDigest = frontendSourceInputDigest(fixture)
+    expect(optionsDigest).not.toBe(originalDigest)
 
     writeFileSync(join(fixture, 'tsconfig.json'), '{"compilerOptions":{"strict":true}}')
 
-    expect(frontendSourceInputDigest(fixture)).not.toBe(originalDigest)
+    expect(frontendSourceInputDigest(fixture)).not.toBe(optionsDigest)
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }
