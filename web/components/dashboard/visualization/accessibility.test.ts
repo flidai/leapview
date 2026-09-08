@@ -121,6 +121,27 @@ test('accessible field keys remain unique when dataset and field IDs contain dot
   ])
 })
 
+test('accessible multi-dataset preview applies one global row budget', () => {
+  const input = fixture(Array.from({ length: 60 }, (_, index) => [`Primary ${index}`, index]))
+  input.spec.datasets.push({ ...input.spec.datasets[0]!, id: 'comparison' })
+  if (input.dataState.kind !== 'inline') throw new Error('Expected inline fixture')
+  input.dataState.datasets.push({
+    ...input.dataState.datasets[0]!, id: 'comparison',
+    rows: Array.from({ length: 60 }, (_, index) => [`Comparison ${index}`, index]),
+  })
+  const data = accessibleVisualizationData(input, defaultRendererContext, 70.8)
+  expect(data.rows).toHaveLength(70)
+  expect(data.totalRows).toBe(120)
+  expect(data.truncated).toBe(true)
+  expect(data.rows[59]).toMatchObject({ __dataset: 'primary', '["primary","label"]': 'Primary 59' })
+  expect(data.rows[60]).toMatchObject({ __dataset: 'comparison', '["comparison","label"]': 'Comparison 0' })
+  expect(data.rows[69]).toMatchObject({ __dataset: 'comparison', '["comparison","label"]': 'Comparison 9' })
+  const exported = visualDataToDelimited(data, ',')
+  expect(exported.split('\n')).toHaveLength(71)
+  expect(exported).toContain('Comparison 9')
+  expect(exported).not.toContain('Comparison 10')
+})
+
 test('accessible multi-dataset preview retains secondary rows when primary is empty', () => {
   const input = fixture([]) as any
   input.spec.datasets = [
