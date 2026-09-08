@@ -40,3 +40,8 @@ func WithQueryAuthorization(metrics queryruntime.Metrics, config QueryAuthorizat
 		AuditRecorder:         config.AuditRecorder,
 	})
 }
+
+// IsQueryDenied reports whether a governed dashboard query was rejected by
+// canonical capability policy. Composition uses this façade instead of
+// importing the dashboard authorization implementation package.
+func IsQueryDenied(err error) bool { return queryauthz.IsDenied(err) }
