@@ -789,9 +789,13 @@ func buildApplicationSurfaces(
 	if reader, ok := any(servingStateRepo).(projecthttp.AssetVersionsReader); ok {
 		projectAssetVersions = reader
 	}
+	var projectActiveServingState projecthttp.ActiveServingStateReader
+	if reader, ok := any(servingStateRepo).(projecthttp.ActiveServingStateReader); ok {
+		projectActiveServingState = reader
+	}
 	var dashboardAppearances projecthttp.DashboardAppearanceStore
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
+		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardAppearances, DashboardCatalog: capabilities.Authoring,

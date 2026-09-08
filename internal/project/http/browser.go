@@ -51,6 +51,14 @@ type AssetVersionsReader interface {
 	AssetVersions(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID) ([]servingstate.AssetVersion, error)
 }
 
+// ActiveServingStateReader supplies the deployment timestamp used by
+// discovery rows for repository-managed dashboards. Those dashboards do not
+// have an instance authoring revision, so their active serving generation is
+// the canonical source for when the displayed configuration was updated.
+type ActiveServingStateReader interface {
+	ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
+}
+
 // AssetRefreshStateReader adapts the refresh capability's presentation state
 // without coupling refresh persistence to project UI rendering.
 type AssetRefreshStateReader interface {
@@ -151,6 +159,7 @@ type CreatorCommandInvocation struct {
 type BrowserHandler struct {
 	Graph                    GraphReader
 	AssetVersions            AssetVersionsReader
+	ActiveServingState       ActiveServingStateReader
 	RefreshState             AssetRefreshStateReader
 	PhysicalCatalog          PhysicalCatalogReader
 	SourceSchemas            SourceSchemaReader
@@ -1433,6 +1442,7 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 	for _, item := range catalog.Dashboards {
 		appearanceByID[item.ID] = item.Appearance
 	}
+	managedUpdatedAt := h.activeServingStateUpdatedAt(r.Context(), projectID)
 	options.Dashboards = make([]projectui.CatalogDashboardItem, 0, len(result.Items))
 	for _, item := range result.Items {
 		status := dashboardCatalogStatus(item)
@@ -1455,6 +1465,9 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 			}
 		}
 		updatedAt := ""
+		if item.Source == dashboardauthoringcatalog.SourceProject {
+			updatedAt = managedUpdatedAt
+		}
 		if item.Revision != nil && !item.Revision.CreatedAt.IsZero() {
 			updatedAt = item.Revision.CreatedAt.UTC().Format(time.RFC3339)
 		}
@@ -1467,6 +1480,17 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 		})
 	}
 	return catalog, options, nil
+}
+
+func (h *BrowserHandler) activeServingStateUpdatedAt(ctx context.Context, projectID projectgraph.ResourceID) string {
+	if h == nil || h.ActiveServingState == nil {
+		return ""
+	}
+	state, _, err := h.ActiveServingState.ActiveArtifact(ctx, projectID, servingstate.Environment(h.Environment))
+	if err != nil || state.ProjectID != projectID {
+		return ""
+	}
+	return browserFirstNonEmpty(strings.TrimSpace(state.ActivatedAt), strings.TrimSpace(state.CreatedAt))
 }
 
 func dashboardCatalogStatus(item dashboardauthoringcatalog.Dashboard) string {

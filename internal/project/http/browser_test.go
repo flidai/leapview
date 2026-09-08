@@ -105,6 +105,10 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 	popularityCount := 0
 	h := &BrowserHandler{
 		DashboardCatalog: reader,
+		ActiveServingState: browserActiveServingStateStub{state: servingstate.State{
+			ProjectID: "project:test", Environment: "dev", ActivatedAt: now.Add(-time.Hour).Format(time.RFC3339),
+		}},
+		Environment: "dev",
 		DashboardPopularity: func(_ context.Context, dashboardCount int) (map[string]string, error) {
 			popularityCount = dashboardCount
 			return map[string]string{"dashboard:managed": "high"}, nil
@@ -124,7 +128,7 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 	if mine.CatalogScope != "mine" || mine.Status != "private_draft" || mine.Href != wantMineHref || mine.Owner != "You" || mine.UpdatedAt != now.Format(time.RFC3339) {
 		t.Fatalf("mine = %#v", mine)
 	}
-	if managed.CatalogScope != "managed" || managed.Owner != "analytics" || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" || managed.Popularity != "high" {
+	if managed.CatalogScope != "managed" || managed.Owner != "analytics" || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" || managed.Popularity != "high" || managed.UpdatedAt != now.Add(-time.Hour).Format(time.RFC3339) {
 		t.Fatalf("managed = %#v", managed)
 	}
 	if pending.CatalogScope != "mine" || pending.Status != "unpublished_changes" || pending.Href != "/dashboards/dashboard:pending" {
@@ -135,6 +139,40 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 	}
 	if len(reader.requests) != 1 || reader.requests[0].ActorID != "alice" || reader.requests[0].ProjectID != "project:test" {
 		t.Fatalf("catalog requests = %#v", reader.requests)
+	}
+}
+
+type browserActiveServingStateStub struct {
+	state servingstate.State
+	err   error
+}
+
+func (s browserActiveServingStateStub) ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
+	return s.state, servingstate.Artifact{}, s.err
+}
+
+func TestActiveServingStateUpdatedAtIsBestEffort(t *testing.T) {
+	projectID := projectgraph.ResourceID("project:test")
+	createdAt := "2026-09-01T10:00:00Z"
+	activatedAt := "2026-09-01T11:00:00Z"
+	tests := []struct {
+		name   string
+		reader ActiveServingStateReader
+		want   string
+	}{
+		{name: "activation is canonical", reader: browserActiveServingStateStub{state: servingstate.State{ProjectID: projectID, CreatedAt: createdAt, ActivatedAt: activatedAt}}, want: activatedAt},
+		{name: "creation is the fallback", reader: browserActiveServingStateStub{state: servingstate.State{ProjectID: projectID, CreatedAt: createdAt}}, want: createdAt},
+		{name: "lookup failure does not block discovery", reader: browserActiveServingStateStub{err: errors.New("unavailable")}},
+		{name: "scope mismatch is ignored", reader: browserActiveServingStateStub{state: servingstate.State{ProjectID: "project:other", ActivatedAt: activatedAt}}},
+		{name: "missing reader is supported"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := &BrowserHandler{ActiveServingState: test.reader, Environment: "dev"}
+			if got := h.activeServingStateUpdatedAt(t.Context(), projectID); got != test.want {
+				t.Fatalf("active serving state updated at = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
