@@ -109,7 +109,7 @@ func TestPlanDistributionExecutesCanonicalAndArbitraryQuantilesWithStableColumns
 		values    []float64
 	}{
 		{name: "canonical quartiles", quantiles: []float64{0.25, 0.5, 0.75}, columns: []string{"label", "min", "q1", "median", "q3", "max"}, values: []float64{1, 2, 3, 4, 5}},
-		{name: "arbitrary quantiles", quantiles: []float64{0.25, 0.3}, columns: []string{"label", "min", "q0", "q1", "max"}, values: []float64{1, 2, 2.19, 5}},
+		{name: "arbitrary quantiles", quantiles: []float64{0.125, 0.375}, columns: []string{"label", "min", "q0", "q1", "max"}, values: []float64{1, 1.5, 2.5, 5}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
