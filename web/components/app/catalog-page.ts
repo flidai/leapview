@@ -18,6 +18,7 @@ type CatalogSort = 'recommended' | 'recent' | 'popular' | 'updated' | 'name'
 
 const catalogFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
 const catalogRecentsStorageKey = 'leapview.dashboard-catalog.recents.v1'
+const unrankedPopularityLabel = 'Not ranked — popularity is based on distinct viewers, not opens; at least 3 viewers and a top-30% rank over 30 days are required.'
 
 class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @property({ attribute: 'create-draft-href' }) createDraftHref = ''
@@ -372,7 +373,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
               lastOpened: lastOpenedAt || '',
             },
             columnTitles: {
-              popularity: dashboard.popularity ? popularityLabel(dashboard.popularity) : 'No popularity data yet',
+              popularity: dashboard.popularity ? popularityLabel(dashboard.popularity) : unrankedPopularityLabel,
               status: dashboardStatusDescription(dashboard.status),
               updated: formatExactTime(dashboard.updatedAt || dashboard.lastRefreshedAt),
               lastOpened: formatExactTime(lastOpenedAt),
@@ -481,7 +482,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             <dt>Updated</dt><dd>${formatExactTime(updated) || '—'}</dd>
             <dt>Last opened</dt><dd>${formatExactTime(this.recentDashboardIDs[dashboard.id]) || '—'}</dd>
             <dt>Pages</dt><dd>${dashboard.pageCount}</dd>
-            <dt>Popularity</dt><dd>${dashboard.popularity ? popularityPercentile(dashboard.popularity) : 'Not enough data'}</dd>
+            <dt>Popularity</dt><dd>${dashboard.popularity ? popularityPercentile(dashboard.popularity) : unrankedPopularityLabel}</dd>
             <dt>Source</dt><dd>${dashboard.catalogScope === 'managed' ? 'Managed by Analytics' : 'Created in LeapView'}</dd>
           </dl>
         </div>
