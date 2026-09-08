@@ -25,7 +25,7 @@ The URL-backed API accepts the canonical `ExplorationSpec` in `POST /api/v1/proj
 
 Exports default to at most 10,000 rows and 32 MiB, with the same independent row and byte bounds applied during query retention and encoding. CSV preserves typed scalar text and prefixes spreadsheet-formula values (including values beginning with tab, carriage return, or newline). Files are sent only after a complete, successful, bounded result is encoded.
 
-## Recover from a rejected export
+## Troubleshooting rejected exports
 
 - A stale `If-Match` revision returns a precondition failure. Reload the saved exploration and use the returned complete `ETag` value as `If-Match`; never substitute a revision number alone.
 - A permission or private-resource failure is returned without source metadata. Ask an administrator for the appropriate viewer/model-use grant rather than forwarding the URL as authorization.

@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronRight, Columns3, Database, Eye, Filter, Play, Plus, RotateCcw, Search, Server, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
+import { ChevronRight, Columns3, Database, Filter, Play, Plus, RotateCcw, Search, Sigma, Square, SquareCheckBig, X } from 'lucide'
 import type {
   AgentReferenceSignal,
   DataExploreCommand,
@@ -53,6 +53,7 @@ import { DataExplorerClientState } from './data-explorer-client'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import { filterObjects, objectColumnMatchesSearch } from './data-explorer-search'
 import { groupObjectsBySemanticModel, type ResourceGroup } from './data-explorer-groups'
+import { iconForLayer, label, layerLabel } from './data-explorer-object-labels'
 import {
   emptySavedExplorations,
   renderSavedExplorations,
@@ -2018,37 +2019,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.closeFilter()
     window.location.reload()
   }
-}
-
-function iconForLayer(layer: string): any {
-  switch (layer) {
-    case 'source':
-      return Server
-    case 'semantic_view':
-      return Eye
-    case 'model':
-      return Table2
-    default:
-      return Database
-  }
-}
-
-function layerLabel(layer: string): string {
-  switch (layer) {
-    case 'source':
-      return 'Source'
-    case 'model':
-      return 'Model'
-    case 'semantic_view':
-      return 'Semantic view'
-    default:
-      return label(layer)
-  }
-}
-
-function label(value: unknown): string {
-  if (value == null || value === '') return '-'
-  return String(value)
 }
 
 if (!customElements.get('lv-data-explorer')) customElements.define('lv-data-explorer', DataExplorerPage)
