@@ -490,12 +490,19 @@ model VisualizationLegendItem {
   `label`?: string;
 }
 
+/**
+ * Numeric display format. With no fraction bounds, values use 0..3 digits.
+ * A one-sided bound preserves that default on the unconstrained side unless
+ * it would make the range invalid: a maximum below the default minimum lowers
+ * the minimum, and a minimum above the default maximum raises the maximum.
+ */
 model NumberVisualizationFormat extends VisualizationFormat {
   `kind`: "number";
   `minimumFractionDigits`?: int32;
   `maximumFractionDigits`?: int32;
 }
 
+/** Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule. */
 model CurrencyVisualizationFormat extends VisualizationFormat {
   `kind`: "currency";
   `currency`: string;
@@ -503,6 +510,7 @@ model CurrencyVisualizationFormat extends VisualizationFormat {
   `maximumFractionDigits`?: int32;
 }
 
+/** Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule. */
 model PercentVisualizationFormat extends VisualizationFormat {
   `kind`: "percent";
   `minimumFractionDigits`?: int32;

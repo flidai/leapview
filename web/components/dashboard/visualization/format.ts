@@ -57,8 +57,8 @@ function fractionDigits(
   defaultMaximum: number,
 ): [number, number] {
   if (minimum === undefined && maximum === undefined) return [defaultMinimum, defaultMaximum]
-  if (minimum === undefined) return [maximum!, maximum!]
-  if (maximum === undefined) return [minimum, minimum]
+  if (minimum === undefined) return [Math.min(defaultMinimum, maximum!), maximum!]
+  if (maximum === undefined) return [minimum, Math.max(defaultMaximum, minimum)]
   return [minimum, maximum]
 }
 

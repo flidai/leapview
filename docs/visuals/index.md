@@ -33,6 +33,14 @@ presentation:
 
 Fixed units remain fixed even when the current filtered values are smaller or larger. Use them when comparable visuals must retain the same scale; otherwise prefer `auto`. Label visibility is a separate explicit choice and is never inferred from number formatting.
 
+Numeric, currency, and percent formats accept optional `minimumFractionDigits` and
+`maximumFractionDigits` bounds. With neither bound, number uses `0..3` digits,
+currency uses `2..2`, and percent uses `0..1`. A one-sided bound preserves the
+format's default on the other side when valid; if it would invert the range, the
+default is adapted to the explicit bound. For example, number `maximumFractionDigits: 6`
+keeps a minimum of `0`, while currency `maximumFractionDigits: 0` resolves to
+`0..0`. Explicit pairs must remain ordered and within `0..12`.
+
 Axes are renderer-neutral and may also declare `type` (`automatic`, `category`,
 `value`, or `time`), `minimum`/`maximum`, `zero`, and `inversion` (`normal` or
 `inverted`). Numeric bounds, zero policies, log/linear scales, and number
