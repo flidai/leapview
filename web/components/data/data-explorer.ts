@@ -52,6 +52,7 @@ import { dataExplorerURL } from './data-explorer-url'
 import { DataExplorerClientState } from './data-explorer-client'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import { filterObjects, objectColumnMatchesSearch } from './data-explorer-search'
+import { groupObjectsBySemanticModel, type ResourceGroup } from './data-explorer-groups'
 import {
   emptySavedExplorations,
   renderSavedExplorations,
@@ -98,12 +99,6 @@ const emptyExplorer: DataExplorerSignal = {
   },
   command: { mode: 'browse', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: emptyDataExploreCommand },
   warnings: [],
-}
-
-type ResourceGroup = {
-  id: string
-  title: string
-  objects: DataExplorerObjectSignal[]
 }
 
 type ExplorerColumn = { key: string, label?: string }
@@ -2002,20 +1997,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.closeFilter()
     window.location.reload()
   }
-}
-
-function groupObjectsBySemanticModel(objects: DataExplorerObjectSignal[], semanticModels: DataExploreSignal['semanticModels'] = []): ResourceGroup[] {
-  const groups = new Map<string, ResourceGroup>()
-  const modelTitles = new Map(semanticModels.map((model) => [model.id, model.title]))
-  for (const object of objects) {
-    if (object.layer === 'source') continue
-    const id = object.semanticModelId || object.layer
-    if (!groups.has(id)) {
-      groups.set(id, { id, title: modelTitles.get(id) || object.semanticModelId || 'Data objects', objects: [] })
-    }
-    groups.get(id)!.objects.push(object)
-  }
-  return Array.from(groups.values()).filter((group) => group.objects.length > 0)
 }
 
 function iconForLayer(layer: string): any {
