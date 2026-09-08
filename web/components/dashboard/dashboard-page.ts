@@ -1323,9 +1323,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const selections = this.optimisticSelections ?? this.interactionSelections
     const spatialSelections = this.optimisticSpatialSelections ?? this.spatialSelections
     const spatialSelection = [...spatialSelections].reverse().find((selection) => selection.visualID === visual.visualID)
-    const highlights = this.optimisticSelections !== null || this.optimisticSpatialSelections !== null
-      ? visualizationHighlightStates(visual, visualMap, selections, spatialSelections)
-      : visual.highlights
+    const highlights = visualizationHighlightStates(visual, visualMap, selections, spatialSelections)
     return {
       ...visual,
       selection: visualizationSelectionEntries(visual, selections),

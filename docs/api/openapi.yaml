@@ -67410,7 +67410,8 @@ components:
         description:
           type: string
           example: example
-      description: Narrow browser-builder metadata edits; broader metadata remains API-only.
+      description: Narrow browser-builder metadata edits; broader metadata remains
+        API-only.
       example:
         description: example
         title: example
@@ -70735,7 +70736,8 @@ components:
           type: boolean
           description: Whether cartesian/value axes are rendered for this visual.
           example: true
-      description: Renderer-neutral presentation policies; renderer options are intentionally absent.
+      description: Renderer-neutral presentation policies; renderer options are intentionally
+        absent.
       example:
         axisVisible: true
         conditionalFormatting:
@@ -71716,7 +71718,8 @@ components:
           example: example
         titleVisible:
           type: boolean
-          description: Controls whether the authored title is shown in the visual frame.
+          description: Controls whether the authored title is shown in the visual
+            frame.
           example: true
         subtitle:
           type: string
@@ -86770,7 +86773,8 @@ components:
           example: example
         titleVisible:
           type: boolean
-          description: False hides the visual-frame title without removing its accessible name.
+          description: False hides the visual-frame title without removing its accessible
+            name.
           example: true
         subtitle:
           type: string
