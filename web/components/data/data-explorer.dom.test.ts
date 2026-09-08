@@ -920,7 +920,7 @@ test('saved exploration handoff keeps explicit targets, active authored spec, an
         savedExplorations: {
           enabled: true,
           list: { items: [], includeArchived: false, selectedId: 'exploration:active' },
-          current: { id: 'exploration:active', title: 'Active', slug: 'active', visibility: 'private', status: 'active', semanticModelId: 'model:active', revision, detached: true, spec: { ...spec, modelId: 'model:baseline' } },
+          current: { id: 'exploration:active', title: 'Active', slug: 'active', visibility: 'organization', status: 'active', semanticModelId: 'model:active', revision, detached: true, spec: { ...spec, modelId: 'model:baseline' } },
           command: { action: 'create' }, save: { state: 'saved' },
         },
       })
@@ -932,15 +932,37 @@ test('saved exploration handoff keeps explicit targets, active authored spec, an
         await element.updateComplete
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
+      const currentQueryLink = element.shadowRoot.querySelector<HTMLAnchorElement>('a[aria-label="Open current exploration query link"]')!
+      const latestSavedLink = element.shadowRoot.querySelector<HTMLAnchorElement>('a[aria-label="Open latest saved version"]')!
+      const visibility = element.shadowRoot.querySelector<HTMLSelectElement>('select[aria-label="Saved exploration visibility"]')!
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('clipboard permission denied') } } })
+      element.shadowRoot.querySelector<HTMLButtonElement>('button[aria-label="Copy current exploration query link"]')!.click()
+      for (let index = 0; index < 20 && !element.shadowRoot?.querySelector('[role="status"].saved-exploration-share-status'); index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const copyStatus = element.shadowRoot.querySelector<HTMLElement>('[role="status"].saved-exploration-share-status')
+      const copyFallback = element.shadowRoot.querySelector<HTMLAnchorElement>('.saved-exploration-share-fallback')
+      const links = {
+        current: currentQueryLink.getAttribute('href'),
+        latest: latestSavedLink.getAttribute('href'),
+        latestLabel: latestSavedLink.textContent?.trim(),
+      }
       const buttons = () => Array.from(element.shadowRoot.querySelectorAll<HTMLButtonElement>('.saved-exploration-actions button, .saved-exploration-current button'))
+      const currentQueryName = element.shadowRoot.querySelector<HTMLInputElement>('input[aria-label="Current query name"]')!
+      currentQueryName.value = 'Working query'
+      currentQueryName.dispatchEvent(new Event('input', { bubbles: true }))
+      buttons().find((button) => button.textContent?.trim() === 'Save as current query')?.click()
       buttons().find((button) => button.textContent?.trim() === 'Save')?.click()
       const duplicateInput = element.shadowRoot.querySelector<HTMLInputElement>('input[aria-label="Duplicate saved exploration name"]')!
+      visibility.value = 'private'
+      visibility.dispatchEvent(new Event('change', { bubbles: true }))
       duplicateInput.value = 'Second copy'
       duplicateInput.dispatchEvent(new Event('input', { bubbles: true }))
-      buttons().find((button) => button.textContent?.trim() === 'Duplicate')?.click()
+      buttons().find((button) => button.textContent?.trim() === 'Duplicate saved version')?.click()
       duplicateInput.value = 'Third copy'
       duplicateInput.dispatchEvent(new Event('input', { bubbles: true }))
-      buttons().find((button) => button.textContent?.trim() === 'Duplicate')?.click()
+      buttons().find((button) => button.textContent?.trim() === 'Duplicate saved version')?.click()
       await element.updateComplete
       mergePatch({ savedExplorations: {
         enabled: true,
@@ -949,17 +971,66 @@ test('saved exploration handoff keeps explicit targets, active authored spec, an
         command: { action: 'create' }, save: { state: 'saved' },
       } })
       await element.updateComplete
+      const archivedButtons = Array.from(element.shadowRoot.querySelectorAll<HTMLButtonElement>('.saved-exploration-current button')).map((button) => button.textContent?.trim())
+      const archivedReadOnly = element.shadowRoot.textContent?.includes('Read-only archived copy') ?? false
+      mergePatch({ savedExplorations: {
+        enabled: true,
+        list: { items: [], includeArchived: false, selectedId: 'exploration:private' },
+        current: { id: 'exploration:private', title: 'Private', slug: 'private', visibility: 'private', status: 'active', semanticModelId: 'model:active', revision, detached: true, spec },
+        command: { action: 'create' }, save: { state: 'saved' },
+      } })
+      for (let index = 0; index < 20 && element.shadowRoot?.querySelector<HTMLSelectElement>('select[aria-label="Saved exploration visibility"]')?.value !== 'private'; index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const switchedVisibility = element.shadowRoot.querySelector<HTMLSelectElement>('select[aria-label="Saved exploration visibility"]')?.value
+      mergePatch({ savedExplorations: {
+        enabled: true,
+        list: { items: [], includeArchived: false },
+        current: null,
+        command: { action: 'create' }, save: { state: 'saved' },
+      } })
+      for (let index = 0; index < 20 && !element.shadowRoot?.querySelector('input[aria-label="Saved exploration name"]'); index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const createVisibility = element.shadowRoot.querySelector<HTMLSelectElement>('select[aria-label="Saved exploration visibility"]')!
+      createVisibility.value = 'organization'
+      createVisibility.dispatchEvent(new Event('change', { bubbles: true }))
+      Array.from(element.shadowRoot.querySelectorAll<HTMLButtonElement>('.saved-exploration-actions button')).find((button) => button.textContent?.trim() === 'Save current')?.click()
       return {
         commands,
-        archivedButtons: Array.from(element.shadowRoot.querySelectorAll<HTMLButtonElement>('.saved-exploration-current button')).map((button) => button.textContent?.trim()),
-        archivedReadOnly: element.shadowRoot.textContent?.includes('Read-only archived copy') ?? false,
+        links,
+        copy: {
+          status: copyStatus?.textContent?.trim(),
+          role: copyStatus?.getAttribute('role'),
+          fallback: copyFallback?.getAttribute('href'),
+        },
+        switchedVisibility,
+        createCommand: commands[commands.length - 1],
+        archivedButtons,
+        archivedReadOnly,
       }
     })
-    expect(state.commands[0]).toMatchObject({ action: 'update', explorationId: 'exploration:active', spec: { modelId: 'model:active' }, expectedRevision: { revisionId: 'revision:1' } })
-    expect(state.commands[1]).toMatchObject({ action: 'duplicate', sourceExplorationId: 'exploration:active', title: 'Second copy', expectedSourceRevision: { revisionId: 'revision:1' } })
-    expect(state.commands[2]).toMatchObject({ action: 'duplicate', sourceExplorationId: 'exploration:active', title: 'Third copy', expectedSourceRevision: { revisionId: 'revision:1' } })
-    expect(state.commands[1]).not.toHaveProperty('slug')
+    expect(state.commands[0]).toMatchObject({ action: 'create', title: 'Working query', visibility: 'private', spec: { modelId: 'model:active' } })
+    expect(state.commands[0]).not.toHaveProperty('explorationId')
+    expect(state.commands[0]).not.toHaveProperty('sourceExplorationId')
+    expect(state.commands[1]).toMatchObject({ action: 'update', explorationId: 'exploration:active', visibility: 'organization', spec: { modelId: 'model:active' }, expectedRevision: { revisionId: 'revision:1' } })
+    expect(state.commands[2]).toMatchObject({ action: 'duplicate', sourceExplorationId: 'exploration:active', title: 'Second copy', visibility: 'organization', expectedSourceRevision: { revisionId: 'revision:1' } })
+    expect(state.commands[3]).toMatchObject({ action: 'duplicate', sourceExplorationId: 'exploration:active', title: 'Third copy', visibility: 'organization', expectedSourceRevision: { revisionId: 'revision:1' } })
     expect(state.commands[2]).not.toHaveProperty('slug')
+    expect(state.commands[3]).not.toHaveProperty('slug')
+    expect(state.links.current).toContain('/explore?v=2&mode=explore&state=')
+    expect(new URL(state.links.current!, 'http://127.0.0.1').searchParams.get('saved')).toBeNull()
+    expect(state.links.latestLabel).toBe('Latest saved version')
+    expect(new URL(state.links.latest!, 'http://127.0.0.1').searchParams.get('saved')).toBe('exploration:active')
+    expect(new URL(state.links.latest!, 'http://127.0.0.1').searchParams.get('object')).toBeNull()
+    expect(new URL(state.links.latest!, 'http://127.0.0.1').searchParams.has('revision')).toBe(false)
+    expect(state.copy.status).toBe('Copy failed. Open the link directly below.')
+    expect(state.copy.role).toBe('status')
+    expect(state.copy.fallback).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/explore\?v=2&mode=explore&state=/)
+    expect(state.switchedVisibility).toBe('private')
+    expect(state.createCommand).toMatchObject({ action: 'create', visibility: 'organization', spec: { modelId: 'model:active' } })
     expect(state.archivedButtons).not.toContain('Save')
     expect(state.archivedReadOnly).toBe(true)
   } finally {

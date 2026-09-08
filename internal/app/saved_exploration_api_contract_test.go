@@ -42,6 +42,12 @@ func TestSavedExplorationEndpointShapesAreExplicitlyCovered(t *testing.T) {
 		"/api/v1/projects/{project}/saved-explorations/{exploration}/archive": {
 			"POST": "archiveSavedExploration",
 		},
+		"/api/v1/projects/{project}/saved-explorations/{exploration}/export": {
+			"POST": "exportSavedExploration",
+		},
+		"/api/v1/projects/{project}/saved-explorations/url-export": {
+			"POST": "exportSavedExplorationURL",
+		},
 	}
 	for path, methods := range shapes {
 		for method, operationID := range methods {

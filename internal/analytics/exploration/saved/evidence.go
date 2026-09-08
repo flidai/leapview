@@ -14,6 +14,7 @@ const (
 	MaxIdempotencyKeyLength = 200
 	MaxRequestIDLength      = 256
 	MaxCorrelationIDLength  = 256
+	MaxOperationLength      = 128
 	MaxAdminReasonLength    = 500
 	MutationEvidenceVersion = 1
 

@@ -1,7 +1,7 @@
 import { css, html, nothing } from 'lit'
 import type { DataExplorerCommand, SavedExplorationCommandSignal, SavedExplorationStateSignal } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
-import { dataExplorerURL, updateDataExplorerURL, type DataExplorerHistoryMode } from './data-explorer-url'
+import { absoluteDataExplorerURL, dataExplorerExportURL, dataExplorerURL, updateDataExplorerURL, type DataExplorerHistoryMode } from './data-explorer-url'
 
 export const emptySavedExplorations: SavedExplorationStateSignal = {
   enabled: false,
@@ -79,12 +79,40 @@ export const savedExplorationStyles = css`
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
   }
+
+  .saved-exploration-sharing {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--base-size-8);
+    font: var(--lv-type-caption);
+  }
+
+  .saved-exploration-sharing-copy {
+    color: var(--lv-fg-muted);
+  }
+
+  .saved-exploration-sharing-group {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--base-size-6);
+  }
+
+  .saved-exploration-sharing a {
+    color: var(--lv-fg-default);
+  }
+
+  .saved-exploration-share-status {
+    color: var(--lv-fg-muted);
+  }
 `
 
-type SavedExplorationCurrent = NonNullable<SavedExplorationStateSignal['current']>
+export type SavedExplorationVisibility = 'private' | 'organization'
+export type SavedExplorationCurrent = NonNullable<SavedExplorationStateSignal['current']>
 
 export type SavedExplorationTrackerCallbacks = {
-  onBaselineChanged(): void
+  onBaselineChanged(current?: SavedExplorationCurrent): void
   onDirty(): void
 }
 
@@ -97,12 +125,12 @@ export class SavedExplorationTracker {
   observe(state: SavedExplorationStateSignal, currentSpec?: ExplorationSpec): void {
     const current = state.current
     const currentBaseline = current
-      ? `${current.id}\u0000${current.revision.revisionId}\u0000${JSON.stringify(current.spec ?? null)}`
+      ? `${current.id}\u0000${current.revision.revisionId}\u0000${current.visibility}\u0000${JSON.stringify(current.spec ?? null)}`
       : ''
     if (currentBaseline !== this.dirtyBaseline) {
       this.dirtyBaseline = currentBaseline
       this.dirtyFingerprint = ''
-      this.callbacks.onBaselineChanged()
+      this.callbacks.onBaselineChanged(current)
     }
     if (!current?.detached || current.status !== 'active' || !current.spec || !currentSpec) return
     const fingerprint = JSON.stringify(currentSpec)
@@ -116,11 +144,19 @@ export class SavedExplorationTracker {
 export type SavedExplorationViewOptions = {
   savedTitle(): string
   savedDuplicateTitle(): string
+  savedVisibility(): SavedExplorationVisibility
+  currentSavedVisibility(current: SavedExplorationCurrent): SavedExplorationVisibility
   activeSpec(): ExplorationSpec
   onSavedTitleInput(value: string): void
   onDuplicateTitleInput(value: string): void
+  onSavedVisibilityInput(value: SavedExplorationVisibility): void
+  onCurrentSavedVisibilityInput(value: SavedExplorationVisibility): void
   onCommand(command: SavedExplorationCommandSignal): void
   onReopen(current: SavedExplorationCurrent): void
+  onShare?(url: string): void | Promise<void>
+  shareStatus?(): string
+  shareFallbackURL?(): string
+  onShareStatus?(message: string, fallbackURL?: string): void
 }
 
 export function synchronizeSavedExplorationURL(
@@ -141,11 +177,42 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
   const items = state.list?.items ?? []
   const unavailable = state.save?.state === 'error'
   if (!state.enabled) return nothing
+  const activeCommand = { mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand
+  const shareURL = dataExplorerURL(activeCommand)
+  const latestSavedURL = current ? dataExplorerURL({ mode: 'browse' } as DataExplorerCommand, current.id, current.status === 'archived') : ''
+  const hasCanonicalState = Boolean(options.activeSpec().modelId?.trim())
+  const shareStatus = options.shareStatus?.() ?? ''
+  const shareFallbackURL = options.shareFallbackURL?.() ?? ''
   return html`
     <section class="saved-explorations" aria-label="Saved explorations">
       <div class="saved-explorations-header">
         <span class="saved-explorations-title">Saved explorations</span>
         <span class="saved-exploration-status" role=${unavailable ? 'alert' : nothing}>${state.save?.message ?? state.save?.state ?? 'saved'}</span>
+      </div>
+      <div class="saved-exploration-sharing" aria-label="Exploration sharing and downloads">
+        ${hasCanonicalState ? html`
+          <span class="saved-exploration-sharing-group">
+            <span class="saved-exploration-sharing-copy">Current query link · includes unpublished changes</span>
+            <a href=${shareURL} aria-label="Open current exploration query link">Share current query</a>
+            <button type="button" class="text-button" aria-label="Copy current exploration query link" @click=${() => void shareExplorationLink(shareURL, options)}>Copy link</button>
+          </span>
+        ` : html`<span class="saved-exploration-sharing-copy">Select a semantic model to enable current-query sharing and downloads.</span>`}
+        ${current ? html`
+          <span class="saved-exploration-sharing-group">
+            <span class="saved-exploration-sharing-copy">Latest saved version · viewer access required</span>
+            <a href=${latestSavedURL} aria-label="Open latest saved version">Latest saved version</a>
+            <button type="button" class="text-button" aria-label="Copy latest saved version link" @click=${() => void shareExplorationLink(latestSavedURL, options)}>Copy link</button>
+          </span>
+        ` : nothing}
+        <span class="saved-exploration-sharing-copy">Shared links rerun live data under recipient access and do not grant permission.</span>
+        ${shareStatus ? html`
+          <span class="saved-exploration-share-status" role="status" aria-live="polite">${shareStatus}</span>
+          ${shareFallbackURL ? html`<a href=${shareFallbackURL} class="saved-exploration-share-fallback">Open link directly</a>` : nothing}
+        ` : nothing}
+        ${hasCanonicalState ? html`
+          <a href=${dataExplorerExportURL(activeCommand, 'csv')}>Download CSV (current query)</a>
+          <a href=${dataExplorerExportURL(activeCommand, 'parquet')}>Download Parquet (current query)</a>
+        ` : nothing}
       </div>
       <div class="saved-exploration-list">
         ${items.map((item) => html`<a class="saved-exploration-item" href=${dataExplorerURL({ mode: 'browse' } as DataExplorerCommand, item.id, item.status === 'archived')}>${item.title}</a>`)}
@@ -158,27 +225,79 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
           </div>
           <div class="saved-exploration-actions">
             <input type="text" aria-label="Duplicate saved exploration name" placeholder="Copy name (optional)" .value=${options.savedDuplicateTitle()} @input=${(event: Event) => options.onDuplicateTitleInput((event.target as HTMLInputElement).value)} />
+            ${current.status === 'active' && current.detached ? savedVisibilitySelect(options.currentSavedVisibility(current), options.onCurrentSavedVisibilityInput) : nothing}
             ${current.detached
               ? current.status === 'active'
                 ? html`<button type="button" class="text-button" @click=${() => saveSavedExploration(current, options)}>Save</button>`
                 : html`<span class="saved-exploration-status">Read-only archived copy</span>`
               : html`<button type="button" class="text-button" @click=${() => options.onReopen(current)}>Reopen</button>`}
-            <button type="button" class="text-button" @click=${() => duplicateSavedExploration(current, options)}>Duplicate</button>
+            ${hasCanonicalState ? html`
+              <input type="text" aria-label="Current query name" placeholder="Name current query (optional)" .value=${options.savedTitle()} @input=${(event: Event) => options.onSavedTitleInput((event.target as HTMLInputElement).value)} />
+              <button type="button" class="text-button" @click=${() => saveCurrentQuery(options)}>Save as current query</button>
+            ` : nothing}
+            <button type="button" class="text-button" @click=${() => duplicateSavedExploration(current, options)}>Duplicate saved version</button>
             ${current.status === 'active' ? html`<button type="button" class="text-button" @click=${() => archiveSavedExploration(current, options)}>Archive</button>` : nothing}
           </div>
         </div>
-      ` : html`<div class="saved-exploration-actions"><input type="text" aria-label="Saved exploration name" placeholder="Name this exploration" .value=${options.savedTitle()} @input=${(event: Event) => options.onSavedTitleInput((event.target as HTMLInputElement).value)} /><button type="button" class="text-button" @click=${() => createSavedExploration(options)}>Save current</button></div>`}
+      ` : html`<div class="saved-exploration-actions"><input type="text" aria-label="Saved exploration name" placeholder="Name this exploration" .value=${options.savedTitle()} @input=${(event: Event) => options.onSavedTitleInput((event.target as HTMLInputElement).value)} />${savedVisibilitySelect(options.savedVisibility(), options.onSavedVisibilityInput)}<button type="button" class="text-button" @click=${() => createSavedExploration(options)}>Save current</button></div>`}
     </section>
   `
+}
+
+export async function copyExplorationLink(url: string): Promise<void> {
+  const absoluteURL = absoluteDataExplorerURL(url)
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(absoluteURL)
+    return
+  }
+  if (typeof document === 'undefined') throw new Error('Clipboard is unavailable')
+  const input = document.createElement('textarea')
+  input.value = absoluteURL
+  input.setAttribute('readonly', '')
+  input.style.position = 'fixed'
+  input.style.opacity = '0'
+  document.body.appendChild(input)
+  let copied = false
+  try {
+    input.select()
+    copied = document.execCommand('copy')
+  } finally {
+    input.remove()
+  }
+  if (!copied) throw new Error('Clipboard copy was rejected')
+}
+
+async function shareExplorationLink(url: string, options: SavedExplorationViewOptions): Promise<void> {
+  const absoluteURL = absoluteDataExplorerURL(url)
+  try {
+    if (options.onShare) await options.onShare(absoluteURL)
+    else await copyExplorationLink(url)
+    options.onShareStatus?.('Link copied.', '')
+  } catch {
+    options.onShareStatus?.('Copy failed. Open the link directly below.', absoluteURL)
+  }
+}
+
+function savedVisibilitySelect(
+  value: SavedExplorationVisibility,
+  onChange: (value: SavedExplorationVisibility) => void,
+) {
+  return html`<label>Visibility <select aria-label="Saved exploration visibility" .value=${value} @change=${(event: Event) => onChange((event.target as HTMLSelectElement).value as SavedExplorationVisibility)}><option value="private">Personal</option><option value="organization">Organization</option></select></label>`
 }
 
 function saveSavedExploration(current: SavedExplorationCurrent, options: SavedExplorationViewOptions): void {
   const activeSpec = options.activeSpec()
   const spec = activeSpec.modelId?.trim() ? activeSpec : (current.spec ?? activeSpec)
-  options.onCommand({ action: 'update', explorationId: current.id, title: current.title, slug: current.slug, visibility: current.visibility, spec, expectedRevision: current.revision })
+  options.onCommand({ action: 'update', explorationId: current.id, title: current.title, slug: current.slug, visibility: options.currentSavedVisibility(current), spec, expectedRevision: current.revision })
 }
 
 function createSavedExploration(options: SavedExplorationViewOptions): void {
+  const activeSpec = options.activeSpec()
+  const title = options.savedTitle().trim() || `Exploration · ${activeSpec.modelId || 'untitled'}`
+  options.onCommand({ action: 'create', title, visibility: options.savedVisibility(), spec: activeSpec })
+}
+
+function saveCurrentQuery(options: SavedExplorationViewOptions): void {
   const activeSpec = options.activeSpec()
   const title = options.savedTitle().trim() || `Exploration · ${activeSpec.modelId || 'untitled'}`
   options.onCommand({ action: 'create', title, visibility: 'private', spec: activeSpec })

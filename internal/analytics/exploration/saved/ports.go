@@ -713,34 +713,6 @@ type ReopenResult struct {
 	Spec      canonical.ExplorationSpec `json:"spec"`
 }
 
-// ExecuteRequest identifies the current revision to execute for one actor.
-// Request and correlation IDs are copied into the governed query metadata by
-// the application service; they are not part of the authored payload.
-type ExecuteRequest struct {
-	ProjectID     projectgraph.ResourceID
-	ID            ExplorationID
-	ActorID       string
-	RequestID     string
-	CorrelationID string
-}
-
-func (input ExecuteRequest) Validate() error {
-	if err := (ReadRequest{ProjectID: input.ProjectID, ID: input.ID, ActorID: input.ActorID}).Validate(); err != nil {
-		return err
-	}
-	if input.RequestID != "" {
-		if err := validateBoundedText(input.RequestID, MaxRequestIDLength, "execute request id"); err != nil {
-			return err
-		}
-	}
-	if input.CorrelationID != "" {
-		if err := validateBoundedText(input.CorrelationID, MaxCorrelationIDLength, "execute correlation id"); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // ExecutionEvidence binds a result to the exact active serving lease and
 // immutable authored revision that produced it. It deliberately carries no
 // creator credential or frozen result data.

@@ -49,6 +49,8 @@ import {
   emptySavedExplorations,
   renderSavedExplorations,
   SavedExplorationTracker,
+  type SavedExplorationCurrent,
+  type SavedExplorationVisibility,
   savedExplorationStyles,
   synchronizeSavedExplorationURL,
   updateSavedExplorationURL,
@@ -108,6 +110,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private exploreVisibleColumns: string[] = []
   @state() private savedTitle = ''
   @state() private savedDuplicateTitle = ''
+  @state() private savedVisibility: SavedExplorationVisibility = 'private'
+  @state() private savedVisibilityOverride: SavedExplorationVisibility | undefined
+  @state() private savedShareStatus = ''
+  @state() private savedShareFallbackURL = ''
   private lastSearch = ''
   private expandedGroupIDs = new Set<string>()
   private exploreTimer = 0
@@ -121,7 +127,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private readonly queryController = new DataExplorerQueryController()
   private readonly selectionController = new DataExplorerSelectionController()
   private readonly savedExplorationTracker = new SavedExplorationTracker({
-    onBaselineChanged: () => this.savedDuplicateTitle = '',
+    onBaselineChanged: (current) => {
+      this.savedDuplicateTitle = ''
+      this.savedVisibilityOverride = current ? (current.visibility === 'organization' ? 'organization' : 'private') : undefined
+      this.savedShareStatus = ''
+      this.savedShareFallbackURL = ''
+    },
     onDirty: () => this.dispatchEvent(new CustomEvent('lv-saved-exploration-dirty', { bubbles: true, composed: true })),
   })
 
@@ -1150,9 +1161,19 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         ${renderSavedExplorations(savedExplorations, {
           savedTitle: () => this.savedTitle,
           savedDuplicateTitle: () => this.savedDuplicateTitle,
+          savedVisibility: () => this.savedVisibility,
+          currentSavedVisibility: (current: SavedExplorationCurrent) => this.savedVisibilityOverride ?? (current.visibility === 'organization' ? 'organization' : 'private'),
           activeSpec: () => this.optimisticExplore?.spec ?? this.dataExplorer.explore?.command?.spec ?? emptyExplorer.explore.command.spec,
           onSavedTitleInput: (value) => this.savedTitle = value,
           onDuplicateTitleInput: (value) => this.savedDuplicateTitle = value,
+          onSavedVisibilityInput: (value) => this.savedVisibility = value,
+          onCurrentSavedVisibilityInput: (value) => this.savedVisibilityOverride = value,
+          shareStatus: () => this.savedShareStatus,
+          shareFallbackURL: () => this.savedShareFallbackURL,
+          onShareStatus: (message, fallbackURL = '') => {
+            this.savedShareStatus = message
+            this.savedShareFallbackURL = fallbackURL
+          },
           onCommand: (command) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-command', { bubbles: true, composed: true, detail: command })),
           onReopen: (current) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
             bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },

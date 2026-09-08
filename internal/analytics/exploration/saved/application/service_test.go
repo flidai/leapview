@@ -339,6 +339,88 @@ func TestUpdateTargetModelAuthorizationPrecedesTargetProjection(t *testing.T) {
 	}
 }
 
+func TestExecuteSpecAuthorizesBeforeModelProjection(t *testing.T) {
+	provider := &testProvider{}
+	authorizer := &testAuthorizer{deny: true, denyErr: saved.ErrUnauthorized}
+	executor := &testExecutor{}
+	service := mustService(t, &testRepository{}, provider, authorizer, executor)
+	_, err := service.ExecuteSpec(t.Context(), saved.ExecuteSpecRequest{
+		ProjectID: "project:sales", ActorID: "other", Spec: testSpec(),
+	})
+	if !errors.Is(err, saved.ErrUnauthorized) {
+		t.Fatalf("denied URL execution error = %v, want unauthorized", err)
+	}
+	if provider.projections != 0 {
+		t.Fatalf("model projections = %d, want authorization before projection", provider.projections)
+	}
+	if len(authorizer.requests) != 1 || authorizer.requests[0].Action != AuthorizationActionExecute {
+		t.Fatalf("authorization requests = %#v, want one execute request", authorizer.requests)
+	}
+}
+
+func TestExecuteSpecAuthorizesBeforeCanonicalShapeValidation(t *testing.T) {
+	provider := &testProvider{}
+	authorizer := &testAuthorizer{deny: true, denyErr: saved.ErrUnauthorized}
+	service := mustService(t, &testRepository{}, provider, authorizer, &testExecutor{})
+	spec := testSpec()
+	spec.SchemaVersion = 99
+	_, err := service.ExecuteSpec(t.Context(), saved.ExecuteSpecRequest{
+		ProjectID: "project:sales", ActorID: "other", Spec: spec,
+	})
+	if !errors.Is(err, saved.ErrUnauthorized) {
+		t.Fatalf("denied malformed URL execution error = %v, want unauthorized", err)
+	}
+	if provider.projections != 0 {
+		t.Fatalf("model projections = %d, want authorization before shape validation", provider.projections)
+	}
+	if len(authorizer.requests) != 1 || authorizer.requests[0].SemanticModelID != projectgraph.ResourceID(spec.ModelID) {
+		t.Fatalf("authorization requests = %#v, want one target-model request", authorizer.requests)
+	}
+}
+
+func TestExecuteSpecDoesNotReadSavedWorkingCopies(t *testing.T) {
+	provider := &testProvider{}
+	executor := &testExecutor{}
+	repo := &testRepository{}
+	service := mustService(t, repo, provider, &testAuthorizer{}, executor)
+	result, err := service.ExecuteSpec(t.Context(), saved.ExecuteSpecRequest{
+		ProjectID: "project:sales", ActorID: "owner", Spec: testSpec(),
+	})
+	if err != nil {
+		t.Fatalf("URL execution error = %v", err)
+	}
+	if result.Query.Operation != "saved_exploration_url_execute" || executor.actor != "owner" {
+		t.Fatalf("execution metadata/actor = %#v/%q", result.Query, executor.actor)
+	}
+	if repo.lifecycleReads != 0 || repo.revisionReads != 0 {
+		t.Fatalf("URL execution read durable working copy: lifecycle=%d revision=%d", repo.lifecycleReads, repo.revisionReads)
+	}
+}
+
+func TestExecuteRejectsStaleExpectedRevisionBeforePayloadRead(t *testing.T) {
+	repo := seededRepository(t)
+	provider := &testProvider{}
+	authorizer := &testAuthorizer{}
+	executor := &testExecutor{}
+	service := mustService(t, repo, provider, authorizer, executor)
+	stale := repo.revision.Token()
+	stale.RevisionID = "revision-stale"
+	stale.Number++
+	_, err := service.Execute(t.Context(), saved.ExecuteRequest{
+		ProjectID: repo.lifecycle.ProjectID, ID: repo.lifecycle.ID, ActorID: "owner", ExpectedRevision: stale,
+		Operation: "saved_exploration_export",
+	})
+	if !errors.Is(err, saved.ErrStaleRevision) {
+		t.Fatalf("stale export execution error = %v, want stale revision", err)
+	}
+	if repo.revisionReads != 0 || executor.lease != nil {
+		t.Fatalf("stale export read/executed payload: revisionReads=%d executorLease=%v", repo.revisionReads, executor.lease)
+	}
+	if len(authorizer.requests) != 1 || authorizer.requests[0].Action != AuthorizationActionExecute {
+		t.Fatalf("stale export authorization requests = %#v, want one execute authorization", authorizer.requests)
+	}
+}
+
 func TestRestrictedExistingResourceIsNotReadableOrListed(t *testing.T) {
 	repo := seededRepository(t)
 	repo.lifecycle.Visibility = saved.VisibilityRestricted
