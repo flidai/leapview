@@ -1,5 +1,5 @@
-import type { VisualizationDataState, VisualizationEnvelope, VisualizationGeographicLayer, VisualizationGeometryAsset, VisualizationMapStyleAsset } from '../../../../generated/visualization'
-import { Map as MapLibre, NavigationControl, type GeoJSONSource, type Map as MapLibreMap, type MapMouseEvent, type MapOptions, type VectorTileSource } from 'maplibre-gl'
+import type { VisualizationEnvelope, VisualizationGeographicLayer, VisualizationGeometryAsset } from '../../../../generated/visualization'
+import { Map as MapLibre, NavigationControl, type GeoJSONSource, type Map as MapLibreMap, type MapMouseEvent, type VectorTileSource } from 'maplibre-gl'
 import type { FeatureCollection } from 'geojson'
 import type { OptimisticInteractionCommand } from '../../interaction-selection'
 import { interactionOptions } from '../interaction-command'
@@ -16,6 +16,7 @@ import { applyTiledPrecisionLayerVisibility, emitMapObservation, installWebGLRec
 import { MapSpatialSelectionControl } from './maplibre/spatial-selection-control'
 import { combineMapFilters, formatMapRangeValue, mapValueFilteredEnvelope, mapValueFilterExpression, mapValueRange, mapValueRangePercent, withMapValueSelection, type MapValueRange } from './maplibre/value-range'
 import { coordinateReferenceGrid, fitMapToGeographicData, fitMapToSpatialExtent, resetMapToHome, type MapHomeCamera } from './maplibre/viewport'
+import { isLabelDensityOnlyChange, mapBasemapIdentity, mapClickCanRefineCamera, mapPointerOptions, shouldPreserveCameraOnSpecUpdate } from './maplibre/update-policy'
 
 export { loadMapStyleAsset, sameOriginGeometryURL, verifyGeometryDigest } from './maplibre/assets'
 export { applyBasemapTheme, applyDataLabelTheme, basemapBoundaryLayer, basemapLayer, basemapThemeKey, concreteCSSColor, createBasemapThemeScheduler, effectiveMapTheme, mapDataLabelColors, mapThemeColors } from './maplibre/basemap'
@@ -26,6 +27,7 @@ export { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interact
 export { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries } from './maplibre/overlays'
 export { applyTiledPrecisionLayerVisibility, installWebGLRecovery, removeRendererFrame, setMapStyleAndWait, tiledPrecisionLayerFamily, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, waitForMapIdle, waitForMapRender } from './maplibre/lifecycle'
 export { coordinateReferenceGrid, fitMapToGeographicData, resetMapToHome } from './maplibre/viewport'
+export { mapBasemapIdentity, mapClickCanRefineCamera, mapPointerOptions } from './maplibre/update-policy'
 
 export const mapAccessibleTableStyle = 'position:absolute;z-index:3;left:10px;bottom:50px;max-width:min(520px,calc(100% - 20px));max-height:55%;overflow:auto;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary);box-shadow:0 1px 3px rgba(31,35,40,.12)'
 
@@ -82,32 +84,6 @@ export function vectorTileTemplateURL(template: string, base: string): string {
     .replaceAll('%7By%7D', '{y}')
 }
 
-export function mapClickCanRefineCamera(envelope: VisualizationEnvelope): boolean {
-	if (envelope.spec.kind !== 'geographic') return false
-	return envelope.spec.presentation.roam
-		&& envelope.spec.presentation.camera.mode !== 'fixed'
-		&& envelope.spec.interactions.length === 0
-		&& envelope.spec.spatialInteractions.length === 0
-}
-
-function shouldPreserveCameraOnSpecUpdate(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {
-	if (previous.spec.kind !== 'geographic' || next.spec.kind !== 'geographic') return false
-	const camera = next.spec.presentation.camera
-	if (camera.mode === 'fixed' || camera.mode === 'preserve') return camera.mode === 'preserve'
-	const previousCamera = previous.spec.presentation.camera
-	return previousCamera.mode === camera.mode
-		&& previousCamera.padding === camera.padding
-		&& previousCamera.minimumZoom === camera.minimumZoom
-		&& previousCamera.maximumZoom === camera.maximumZoom
-		&& sameOptionalNumberArray(previousCamera.center, camera.center)
-		&& previousCamera.zoom === camera.zoom
-}
-
-function sameOptionalNumberArray(left: readonly number[] | undefined, right: readonly number[] | undefined): boolean {
-	if (left === undefined || right === undefined) return left === right
-	return left.length === right.length && left.every((value, index) => value === right[index])
-}
-
 function isPlaceholderTileURL(value: string): boolean {
   return value.includes('/tiles/unavailable/') || value.includes('/tiles/documentation/')
 }
@@ -158,48 +134,6 @@ export function setRendererFramePresented(frame: RendererFramePresentationTarget
   frame.style.visibility = presented ? 'visible' : 'hidden'
   if (presented) frame.removeAttribute('aria-hidden')
   else frame.setAttribute('aria-hidden', 'true')
-}
-
-export function mapPointerOptions(envelope: VisualizationEnvelope): Pick<MapOptions, 'interactive' | 'scrollZoom' | 'boxZoom' | 'dragRotate' | 'dragPan' | 'keyboard' | 'doubleClickZoom' | 'touchZoomRotate' | 'touchPitch'> {
-  const roam = envelope.spec.kind === 'geographic' ? envelope.spec.presentation.roam : false
-  const selectable = envelope.spec.kind === 'geographic' && (envelope.spec.interactions.some((candidate) => candidate.kind === 'select') || envelope.spec.spatialInteractions.length > 0)
-  return {
-    interactive: roam || selectable,
-    scrollZoom: roam,
-    boxZoom: roam,
-    dragRotate: roam,
-    dragPan: roam,
-    keyboard: roam,
-    doubleClickZoom: roam,
-    touchZoomRotate: roam,
-    touchPitch: roam,
-  }
-}
-
-export function mapBasemapIdentity(asset: VisualizationMapStyleAsset | undefined): string {
-  if (!asset) return 'blank'
-  return [asset.id, asset.styleUrl, asset.styleDigest, asset.archiveUrl, asset.archiveDigest, asset.glyphsUrl, asset.spriteUrl].join('\u0000')
-}
-
-function comparableDataState(state: VisualizationDataState): unknown {
-  const { specRevision: _specRevision, ...withoutSpecRevision } = state
-  if (state.kind !== 'inline') return withoutSpecRevision
-  return {
-    ...withoutSpecRevision,
-    datasets: state.datasets.map(({ specRevision: _datasetSpecRevision, ...dataset }) => dataset),
-  }
-}
-
-function dataStateEquivalent(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {
-  if (previous.dataRevision !== next.dataRevision) return false
-  return JSON.stringify(comparableDataState(previous.dataState)) === JSON.stringify(comparableDataState(next.dataState))
-}
-
-function isLabelDensityOnlyChange(previous: VisualizationEnvelope | undefined, next: VisualizationEnvelope): boolean {
-  if (!previous || previous.spec.kind !== 'geographic' || next.spec.kind !== 'geographic') return false
-  const { labelDensity: _previousDensity, ...previousPresentation } = previous.spec.presentation
-  const { labelDensity: _nextDensity, ...nextPresentation } = next.spec.presentation
-  return dataStateEquivalent(previous, next) && JSON.stringify({ ...previous.spec, presentation: previousPresentation }) === JSON.stringify({ ...next.spec, presentation: nextPresentation })
 }
 
 export function mapSelectionControlAvailable(envelope: VisualizationEnvelope): boolean {
