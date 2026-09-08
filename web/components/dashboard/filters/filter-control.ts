@@ -17,6 +17,8 @@ import {
 } from '../visualization/layout'
 import { lucideIcon } from '../../shared/lucide-icons'
 import { toggleAnchoredPopover } from '../../shared/anchored-popover'
+import { formatDisplayDate } from './date-picker'
+import type { DatePickerInputDetail, DashboardDatePicker } from './date-picker'
 
 export type FilterMutationDetail = {
   bindingKey: string
@@ -538,31 +540,61 @@ export class DashboardFilterLeaf extends LitElement {
     return html`<div class="range">
       <label>
         <span class="field-label">${type === 'number' ? 'Minimum' : 'Start'}</span>
-        <input
-          type=${type}
-          aria-label=${type === 'number' ? 'Minimum' : 'Start date'}
-          placeholder=${type === 'number' ? 'No minimum' : 'No start date'}
-          step=${type === 'number' && this.definition?.valueKind === 'decimal' ? 'any' : nothing}
-          aria-invalid=${String(invalid)}
-          aria-describedby=${invalid ? 'range-error' : nothing}
-          .value=${draft.lower}
-          @input=${this.onRangeInput}
-          @keydown=${this.onRangeKeyDown}
-        >
+        ${type === 'date' ? html`
+          <lv-date-picker
+            .value=${draft.lower}
+            label="Start date"
+            placeholder="No start date"
+            .weekStart=${this.definition?.weekStart || 'monday'}
+            .error=${invalid ? this.rangeError : ''}
+            ?invalid=${invalid}
+            ?disabled=${!this.binding?.readerEditable}
+            @lv-date-input=${this.onRangeDateInput}
+            @lv-date-escape=${this.onRangeEscape}
+            @keydown=${this.onRangeKeyDown}
+          ></lv-date-picker>
+        ` : html`
+          <input
+            type="number"
+            aria-label="Minimum"
+            placeholder="No minimum"
+            step=${this.definition?.valueKind === 'decimal' ? 'any' : nothing}
+            aria-invalid=${String(invalid)}
+            aria-describedby=${invalid ? 'range-error' : nothing}
+            .value=${draft.lower}
+            @input=${this.onRangeInput}
+            @keydown=${this.onRangeKeyDown}
+          >
+        `}
       </label>
       <label>
         <span class="field-label">${type === 'number' ? 'Maximum' : 'End'}</span>
-        <input
-          type=${type}
-          aria-label=${type === 'number' ? 'Maximum' : 'End date'}
-          placeholder=${type === 'number' ? 'No maximum' : 'No end date'}
-          step=${type === 'number' && this.definition?.valueKind === 'decimal' ? 'any' : nothing}
-          aria-invalid=${String(invalid)}
-          aria-describedby=${invalid ? 'range-error' : nothing}
-          .value=${draft.upper}
-          @input=${this.onRangeInput}
-          @keydown=${this.onRangeKeyDown}
-        >
+        ${type === 'date' ? html`
+          <lv-date-picker
+            .value=${draft.upper}
+            label="End date"
+            placeholder="No end date"
+            .weekStart=${this.definition?.weekStart || 'monday'}
+            .error=${invalid ? this.rangeError : ''}
+            ?invalid=${invalid}
+            ?disabled=${!this.binding?.readerEditable}
+            @lv-date-input=${this.onRangeDateInput}
+            @lv-date-escape=${this.onRangeEscape}
+            @keydown=${this.onRangeKeyDown}
+          ></lv-date-picker>
+        ` : html`
+          <input
+            type="number"
+            aria-label="Maximum"
+            placeholder="No maximum"
+            step=${this.definition?.valueKind === 'decimal' ? 'any' : nothing}
+            aria-invalid=${String(invalid)}
+            aria-describedby=${invalid ? 'range-error' : nothing}
+            .value=${draft.upper}
+            @input=${this.onRangeInput}
+            @keydown=${this.onRangeKeyDown}
+          >
+        `}
       </label>
       ${invalid ? html`<p class="range-error" id="range-error" role="alert">${this.rangeError}</p>` : nothing}
     </div>`
@@ -612,6 +644,23 @@ export class DashboardFilterLeaf extends LitElement {
     this.rangeError = rangeValidationMessage(lower, upper, this.definition?.valueKind)
   }
 
+  private onRangeDateInput = (event: CustomEvent<DatePickerInputDetail>) => {
+    const pickers = [...this.renderRoot.querySelectorAll<DashboardDatePicker>('.range lv-date-picker')]
+    const changed = event.currentTarget as DashboardDatePicker
+    const changedIndex = pickers.indexOf(changed)
+    if (changedIndex < 0) return
+    const values = pickers.map(picker => picker.value)
+    values[changedIndex] = event.detail.value
+    const [lower = '', upper = ''] = values
+    this.rangeDraft = {
+      lower,
+      upper,
+      baseExpression: this.rangeDraft?.baseExpression ?? expressionKey(this.expression),
+      dirty: true,
+    }
+    this.rangeError = rangeValidationMessage(lower, upper, this.definition?.valueKind)
+  }
+
   private onRangeKeyDown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
       event.preventDefault()
@@ -621,6 +670,10 @@ export class DashboardFilterLeaf extends LitElement {
     if (event.key !== 'Enter') return
     event.preventDefault()
     this.commitRangeDraft()
+  }
+
+  private onRangeEscape = () => {
+    this.discardRangeDraft()
   }
 
   private onFilterFocusOut = (event: FocusEvent) => {
@@ -1104,11 +1157,11 @@ export function expressionSummary(expression: DashboardFilterExpression): string
     case 'set':
       return `${expression.values.length} selected`
     case 'comparison':
-      return `${comparisonOperatorSymbol(expression.operator)} ${String(expression.value.value)}`
+      return `${comparisonOperatorSymbol(expression.operator)} ${displayFilterValue(expression.value)}`
     case 'range':
-      if (expression.lower && !expression.upper) return `≥ ${String(expression.lower.value.value)}`
-      if (!expression.lower && expression.upper) return `≤ ${String(expression.upper.value.value)}`
-      return `${expression.lower ? String(expression.lower.value.value) : '…'} – ${expression.upper ? String(expression.upper.value.value) : '…'}`
+      if (expression.lower && !expression.upper) return `≥ ${displayFilterValue(expression.lower.value)}`
+      if (!expression.lower && expression.upper) return `≤ ${displayFilterValue(expression.upper.value)}`
+      return `${expression.lower ? displayFilterValue(expression.lower.value) : '…'} – ${expression.upper ? displayFilterValue(expression.upper.value) : '…'}`
     case 'relative_period':
       return `${expression.direction} ${expression.count} ${expression.unit}`
   }
@@ -1127,6 +1180,14 @@ function comparisonOperatorSymbol(operator: Extract<DashboardFilterExpression, {
     case 'starts_with': return 'starts with'
     case 'ends_with': return 'ends with'
   }
+}
+
+function displayFilterValue(value: DashboardFilterValue): string {
+  const raw = String(value.value)
+  if (value.kind === 'date' || value.kind === 'timestamp') {
+    return formatDisplayDate(raw.slice(0, 10)) || raw
+  }
+  return raw
 }
 
 if (!customElements.get('lv-filter-leaf')) customElements.define('lv-filter-leaf', DashboardFilterLeaf)

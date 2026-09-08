@@ -2532,7 +2532,7 @@ test('filter summaries remain explicit without a layout-shifting update indicato
   }
 })
 
-test('date-range slicers rearrange at contract boundaries without removing either input', async () => {
+test('date-range slicers rearrange at contract boundaries without removing either custom control', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -2566,7 +2566,7 @@ test('date-range slicers rearrange at contract boundaries without removing eithe
       const snapshot = () => ({
         variant: leaf.dataset.layoutVariant,
         fit: leaf.dataset.layoutFit,
-        inputs: leaf.shadowRoot.querySelectorAll('.range input[type="date"]').length,
+        controls: leaf.shadowRoot.querySelectorAll('.range lv-date-picker').length,
         columns: getComputedStyle(leaf.shadowRoot.querySelector('.range')).gridTemplateColumns,
       })
       const inline = snapshot()
@@ -2582,10 +2582,10 @@ test('date-range slicers rearrange at contract boundaries without removing eithe
 
     expect(result.inline.variant).toBe('inline')
     expect(result.inline.fit).toBe('fit')
-    expect(result.inline.inputs).toBe(2)
+    expect(result.inline.controls).toBe(2)
     expect(result.inline.columns.split(' ')).toHaveLength(2)
-    expect(result.stacked).toMatchObject({ variant: 'stacked', fit: 'fit', inputs: 2, columns: '240px' })
-    expect(result.invalid).toMatchObject({ variant: 'stacked', fit: 'too-small', inputs: 2 })
+    expect(result.stacked).toMatchObject({ variant: 'stacked', fit: 'fit', controls: 2, columns: '240px' })
+    expect(result.invalid).toMatchObject({ variant: 'stacked', fit: 'too-small', controls: 2 })
   } finally {
     await page.close()
   }
