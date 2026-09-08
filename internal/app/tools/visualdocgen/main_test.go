@@ -421,6 +421,11 @@ func assertCuratedShowcaseExamples(t *testing.T, artifact visualExamplesArtifact
 	if !hasRise || !hasFall {
 		t.Fatalf("showcase candlestick must include rising and falling periods: %#v", candlestickRows)
 	}
+	candlestickPayload := first("candlestick", "market_candlestick")
+	candlestick, ok := candlestickPayload.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	if !ok || candlestick.Presentation.GainColor == nil || *candlestick.Presentation.GainColor != visualizationir.VisualizationColorIntentData2 || candlestick.Presentation.LossColor == nil || *candlestick.Presentation.LossColor != visualizationir.VisualizationColorIntentWarning {
+		t.Fatalf("showcase candlestick colors were not retained by compilation: %#v", candlestickPayload.Spec.Value)
+	}
 
 	comboPayload := first("combo", "revenue_orders_combo")
 	combo, ok := comboPayload.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
