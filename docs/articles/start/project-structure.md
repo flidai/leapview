@@ -29,7 +29,7 @@ leapview validate --project dashboards
 leapview plan dashboards
 ```
 
-There is no authored `kind: Project` manifest or include registry. Groups, role bindings, grants, and dashboard publications are instance control-plane state managed through authenticated UI and API surfaces. `DataPolicy` remains a transitional compatibility input under `access/` until the semantic access contract completes qualification.
+There is no authored `kind: Project` manifest or include registry. Groups, role bindings, grants, and dashboard publications are instance control-plane state, not analytics source. Use the supported authenticated administration surfaces; the current API lists roles and supports grant mutations, but does not expose role-assignment mutations. `DataPolicy` remains a transitional compatibility input under `access/` until the semantic access contract completes qualification.
 
 ## Resource layers
 

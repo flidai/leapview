@@ -1,5 +1,13 @@
 # FAI-649 pre-activation readiness audit
 
+For the current supported-boundary interpretation, see the
+[FAI-648 acceptance boundary](semantic-access-acceptance-boundary.md).
+The historical CI failures below were superseded by successful canonical hosted
+[run 34191713543](https://github.com/flidai/leapview/actions/runs/34191713543)
+at `661213b26965db83b9ede1f0b50351207632b7fc`. They are not current CI blockers.
+That success does not qualify production composition or complete the partial
+normative requirements. The following dated audit is retained as history.
+
 Evidence-only review on 2026-09-07, resumed 2026-09-08, of `ganesh/fai-648-audit-closure` at
 `7ae7153ece3ab9667eb075a134f344ae5bff8647`, stacked above
 `ganesh/fai-648-gap-closure`. No activation, authorization, DataPolicy,

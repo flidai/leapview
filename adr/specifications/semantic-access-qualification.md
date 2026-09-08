@@ -1,5 +1,11 @@
 # ADR-0017 semantic-access qualification matrix
 
+Current acceptance interpretation: [FAI-648 acceptance boundary](semantic-access-acceptance-boundary.md)
+defines positively exercised building blocks, excluded production capabilities,
+control ownership, and the evidence FAI-649 must consume. It does not enable
+production or narrow the normative requirements below. Counts remain
+**55 PASS / 45 PARTIAL / 2 FAIL**; STR-08 and ENF-06 remain cutover-owned.
+
 Audit-closure layer on `ganesh/fai-648-audit-closure`, based on
 `ganesh/fai-648-gap-closure` at
 `5662faf99946f654877b9ad9eaaa15f7f8ad6bfd` (2026-09-07).

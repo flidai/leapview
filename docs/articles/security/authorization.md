@@ -12,7 +12,7 @@ Review the effective privilege result rather than assuming a direct binding is t
 
 ## Project roles
 
-Project role bindings apply reusable privilege sets such as viewer, member, editor, contributor, deployer, admin, or owner. Create groups and bindings through authenticated administration UI or API workflows, and bind a stable group wherever access follows team membership.
+Project role bindings apply reusable privilege sets such as viewer, member, editor, contributor, deployer, admin, or owner. Access owns their durable instance-qualified state. The current API lists roles but does not expose role-assignment mutation, and the administration UI displays assignments without a mutation command. Do not author role bindings in analytics YAML. Supported group administration and explicit grant APIs remain separate from role-assignment writes.
 
 Roles express common responsibilities. Owners and grant managers should be rare; routine project deployment should use a dedicated deployer identity rather than an owner token.
 

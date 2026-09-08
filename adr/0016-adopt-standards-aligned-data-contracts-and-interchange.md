@@ -338,6 +338,12 @@ authorization meaning of group membership, and SAML/OIDC does not publish a
 dashboard. Role mappings, explicit grants, sharing, and publication therefore
 remain LeapView API operations even when identity is fully automated.
 
+Implementation qualification: this describes the control-plane direction, not
+proof that every mutation already has a public endpoint. The current instance
+API lists roles and supports grant CRUD; role-assignment mutation exists in the
+Access/PostgreSQL domain but is not exposed as a public API or admin command.
+See the [FAI-648 acceptance boundary](specifications/semantic-access-acceptance-boundary.md).
+
 A repository deployment never deletes, replaces, or implicitly widens
 control-plane state. References from control-plane grants or publications to
 source-managed resources use stable resource IDs and are revalidated against a
@@ -807,8 +813,11 @@ qualified.
   no longer expose Project identity in their generated response contracts.
   Project-shaped deployment, release, managed-data, and delivery routes remain
   legitimate operational target scopes, not authored Project resources.
-  Any remaining control API work is limited to the role-assignment mutation
-  surface and does not change the completed PostgreSQL live authority boundary.
+  Public role-assignment mutation is not exposed. That is not a missing
+  authority/removal requirement under FAI-616: the PostgreSQL live authority
+  exists, and adding a new mutation API requires separate explicit acceptance.
+  The [acceptance boundary](specifications/semantic-access-acceptance-boundary.md)
+  distinguishes supported reads/grant writes from unexposed domain methods.
 - **IMPLEMENTED, qualification incomplete (FAI-617/FAI-663):** identity fixtures prove candidate-wide cross-kind ID uniqueness, stable
   instance-qualified authored identities across source-root and file moves,
   kind-change rejection, tombstone non-reuse, rollback identity, and durable

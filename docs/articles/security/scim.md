@@ -46,7 +46,7 @@ This separation means:
 - OIDC group claims do not compete with SCIM membership;
 - service principals remain managed through the LeapView access API.
 
-The administration API therefore exposes SCIM profiles, groups, and memberships as read-only resources. Profile edits, group deletion, and membership changes must be made in the directory, while LeapView role bindings and grants remain writable.
+The administration API therefore exposes SCIM profiles, groups, and memberships as read-only resources. Profile edits, group deletion, and membership changes must be made in the directory. LeapView grants have an instance control-plane mutation API; role assignments are durable Access-owned state but do not currently have a public mutation API or administration command.
 
 Prefer binding stable directory groups to roles. Avoid granting every synchronized employee a default project merely because they exist in the tenant.
 
