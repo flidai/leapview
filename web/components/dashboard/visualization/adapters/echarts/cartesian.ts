@@ -149,8 +149,8 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       primaryAxis.axisLabel = { ...primaryAxis.axisLabel, hideOverlap: true }
     }
     return {
-      dataset: split.datasets, grid: cartesianGrid(spec), ...legendDecoration(spec.presentation.legend, context, split.scrollLegend, spec.presentation, split.series.map((item) => ({ value: String(item.name), name: String(item.name) }))), xAxis: axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x'),
-      yAxis: horizontal ? axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x') : secondary ? [primaryAxis, axis(envelope, spec.y[0]!, axisType(envelope, spec.y[0]!, 'value'), context, 'secondary_y', spec.y)] : primaryAxis,
+      dataset: split.datasets, grid: cartesianGrid(spec), ...legendDecoration(spec.presentation.legend, context, split.scrollLegend, spec.presentation, split.series.map((item) => ({ value: String(item.name), name: String(item.name) }))), xAxis: split.categoryAxis,
+      yAxis: horizontal ? split.categoryAxis : secondary ? [primaryAxis, axis(envelope, spec.y[0]!, axisType(envelope, spec.y[0]!, 'value'), context, 'secondary_y', spec.y)] : primaryAxis,
       ...(horizontal ? { xAxis: secondary ? [primaryAxis, axis(envelope, spec.y[0]!, axisType(envelope, spec.y[0]!, 'value'), context, 'secondary_y', spec.y)] : primaryAxis } : {}),
       dataZoom, series: [...split.series, ...interactionHitSeries(envelope, spec, split.series)],
     }
@@ -485,7 +485,7 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
   }
 }
 
-function splitCartesianSeries(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): { datasets: EChartsTranslation[]; series: EChartsTranslation[]; scrollLegend: boolean } | undefined {
+function splitCartesianSeries(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): { datasets: EChartsTranslation[]; series: EChartsTranslation[]; scrollLegend: boolean; categoryAxis: EChartsTranslation } | undefined {
   const spec = envelope.spec
   if (spec.kind !== 'cartesian' || !spec.series || spec.y.length !== 1 || envelope.dataState.kind !== 'inline') return undefined
   const horizontal = cartesianIsHorizontal(spec)
@@ -558,7 +558,34 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
       item.labelLayout = { hideOverlap: true }
     }
   }
-  return { datasets, series, scrollLegend: values.length > 4 }
+
+  // Split-series datasets arrive in governed seriesIntent order. Without an
+  // explicit category domain ECharts collects categories in that arrival
+  // order, which can make an authoritative query order appear to backtrack
+  // on the category axis. Keep the first-seen source order for categorical X
+  // values; time/value axes and nullish domains retain their native handling.
+  const categoryAxis = axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x')
+  const categoryDomain = sourceCategoryDomain(dataset, spec.x.field)
+  if (categoryAxis.type === 'category' && categoryDomain) categoryAxis.data = categoryDomain
+  return { datasets, series, scrollLegend: values.length > 4, categoryAxis }
+}
+
+function sourceCategoryDomain(dataset: NonNullable<ReturnType<typeof inlineDataset>>, fieldID: string): Array<{ value: unknown }> | undefined {
+  const index = dataset.columns.indexOf(fieldID)
+  if (index < 0) return undefined
+  const values = dataset.rows.map((row) => row[index])
+  // ECharts' explicit axis data cannot represent a null category without
+  // converting it to an object label, so leave nullish domains implicit.
+  if (values.some((value) => value === null || value === undefined)) return undefined
+  const seen = new Set<string>()
+  const domain: Array<{ value: unknown }> = []
+  for (const value of values) {
+    const identity = categoryIdentity(value)
+    if (seen.has(identity)) continue
+    seen.add(identity)
+    domain.push({ value })
+  }
+  return domain
 }
 
 function normalizedSeriesSources(

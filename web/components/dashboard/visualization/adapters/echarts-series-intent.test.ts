@@ -5,6 +5,7 @@ import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
 import { echartsOption, interactionCommandForRow } from './echarts'
 import { CategoryColorRegistry } from './echarts/category-colors'
+import visualDocumentation from '../../../../../docs/visuals/examples.gen.json'
 
 test('ECharts normalizes stacks and preserves series order and color identity across filters', () => {
   const envelope = cartesianSeriesFixture() as any
@@ -58,6 +59,65 @@ test('ECharts normalizes stacks and preserves series order and color identity ac
   delete filtered.spec.presentation.seriesIntent
   const automaticFiltered = echartsOption(filtered, defaultRendererContext, categoryColors) as any
   expect(automaticFiltered.series[0].itemStyle.color).toBe(automaticProcessing)
+})
+
+test('ECharts split series keep the generated source category domain in both orientations', () => {
+  const source = (visualDocumentation as any).documents['visuals/line'].find((candidate: any) => candidate.visualID === 'revenue_line_status')
+  if (!source) throw new Error('generated revenue_line_status fixture is missing')
+  const expected = Array.from({ length: 12 }, (_, index) => `2025-${String(index + 1).padStart(2, '0')}`)
+
+  for (const horizontal of [false, true]) {
+    const envelope = structuredClone(source) as any
+    if (horizontal) envelope.spec.presentation.orientation = 'horizontal'
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 800, height: 400 })
+    try {
+      chart.setOption(option)
+      chart.renderToSVGString()
+      const model = chart.getModel()
+      const categoryAxis = model.getComponent(horizontal ? 'yAxis' : 'xAxis').axis
+      expect(categoryAxis.scale.getOrdinalMeta().categories, horizontal ? 'horizontal category domain' : 'vertical category domain').toEqual(expected)
+      for (let index = 0; index < model.getSeriesCount(); index++) {
+        const data = model.getSeriesByIndex(index).getData() as any
+        const points = Array.from(data._layout?.points ?? []) as number[]
+        const positions = points.filter((_, pointIndex) => pointIndex % 2 === (horizontal ? 1 : 0))
+        const direction = Math.sign((positions.at(-1) ?? 0) - (positions[0] ?? 0)) || 1
+        expect(positions.every((position, positionIndex) => positionIndex === 0 || (position - positions[positionIndex - 1]!) * direction >= -0.001), `${horizontal ? 'horizontal' : 'vertical'} ${model.getSeriesByIndex(index).name} geometry`).toBe(true)
+      }
+    } finally {
+      chart.dispose()
+    }
+  }
+})
+
+test('ECharts split category domains preserve authored row order and typed/null identities', () => {
+  const envelope = cartesianSeriesFixture() as any
+  envelope.dataState.datasets[0].rows = [
+    ['B', 1, 10], ['A', '1', 20], ['B', '1', 30], ['C', null, 40],
+  ]
+  envelope.spec.presentation.seriesIntent = [{ value: '1', order: 0 }, { value: '(null)', order: 1 }]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.xAxis.data).toEqual([{ value: 'B' }, { value: 'A' }, { value: 'C' }])
+  expect(option.series.filter((series: any) => series.datasetId).map((series: any) => series.name)).toEqual(['1 [string:1]', '(null)', '1 [number:1]'])
+
+  const nullCategory = structuredClone(envelope) as any
+  nullCategory.dataState.datasets[0].rows = [['B', 1, 10], [null, '1', 20]]
+  expect((echartsOption(nullCategory, defaultRendererContext) as any).xAxis.data).toBeUndefined()
+
+  const numeric = structuredClone(envelope) as any
+  numeric.dataState.datasets[0].rows = [[1, '1', 10], ['1', '1', 20], [2, null, 30]]
+  numeric.spec.datasets[0].fields[0].dataType = 'integer'
+  numeric.spec.presentation.seriesIntent = undefined
+  const numericOption = echartsOption(numeric, defaultRendererContext) as any
+  expect(numericOption.xAxis.data).toEqual([{ value: 1 }, { value: '1' }, { value: 2 }])
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    chart.setOption(numericOption)
+    chart.renderToSVGString()
+    expect(chart.getModel().getComponent('xAxis').axis.scale.getOrdinalMeta().categories).toEqual([1, '1', 2])
+  } finally {
+    chart.dispose()
+  }
 })
 
 test('ECharts uses governed static colors for category series and their legends', () => {
