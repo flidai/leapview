@@ -98,3 +98,29 @@ func successfulResults(jobs Jobs) map[string]string {
 	}
 	return results
 }
+
+func TestPRGateRequiresPlannerAndSelectedLanes(t *testing.T) {
+	p := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "M", Paths: []string{"README.md"}}})
+	if p.PR == nil {
+		t.Fatal("missing current PR schema")
+	}
+	results := map[string]string{"prepare": "success"}
+	for name, on := range p.PR.Effective.Selected() {
+		results[name] = "skipped"
+		if on {
+			results[name] = "success"
+		}
+	}
+	if !EvaluatePlanGate(p, results).OK {
+		t.Fatal("intentional skips rejected")
+	}
+	results["prepare"] = "failure"
+	if EvaluatePlanGate(p, results).OK {
+		t.Fatal("planner failure accepted")
+	}
+	results["prepare"] = "success"
+	results["docs-validation"] = "skipped"
+	if EvaluatePlanGate(p, results).OK {
+		t.Fatal("selected skip accepted")
+	}
+}

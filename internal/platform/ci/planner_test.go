@@ -354,3 +354,43 @@ func TestParseNameStatusZRejectsMalformedInput(t *testing.T) {
 		t.Fatal("expected malformed rename to fail")
 	}
 }
+
+func TestCurrentPRSelection(t *testing.T) {
+	for _, tt := range []struct {
+		path              string
+		required, skipped []string
+	}{
+		{"internal/access/sqlite/session.go", []string{"go-packages-validation", "go-application-validation", "postgres-isolation-validation", "dbt-warehouse-boundary-validation", "spatial-tile-benchmarks"}, []string{"apigen-validation", "frontend-validation"}},
+		{"web/components/chat/chat-page.ts", []string{"frontend-validation"}, []string{"go-application-validation", "postgres-isolation-validation"}},
+		{"docs/articles/start/installation.md", []string{"docs-validation", "frontend-validation"}, []string{"go-application-validation", "spatial-tile-benchmarks"}},
+		{"api/signals/main.tsp", []string{"apigen-validation", "go-packages-validation", "go-application-validation", "frontend-validation", "docs-validation"}, nil},
+		{"pkg/apigen/typespec/src/index.ts", []string{"apigen-validation", "go-application-validation", "frontend-validation"}, nil},
+		{"internal/runtimehost/manager.go", []string{"go-application-validation", "frontend-validation"}, nil},
+		{"mystery/new-format", []string{"apigen-validation", "go-application-validation", "frontend-validation", "docs-validation"}, nil},
+	} {
+		t.Run(tt.path, func(t *testing.T) {
+			p := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "M", Paths: []string{tt.path}}})
+			if p.PR == nil {
+				t.Fatal("missing current PR schema")
+			}
+			selected := p.PR.Effective.Selected()
+			for _, name := range tt.required {
+				if !selected[name] {
+					t.Errorf("missing %s", name)
+				}
+			}
+			for _, name := range tt.skipped {
+				if selected[name] {
+					t.Errorf("unrelated %s", name)
+				}
+			}
+		})
+	}
+}
+
+func TestPRRenameDeleteAndSharedBrowserConsumers(t *testing.T) {
+	p := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "R100", Paths: []string{"internal/access/sqlite/deleted_test.go", "docs/articles/moved.md"}}, {Status: "D", Paths: []string{"web/components/shared/datastar-runtime.ts"}}})
+	if !p.PR.Effective.GoApplication || !p.PR.Effective.Docs || !reflect.DeepEqual(p.PR.Effective.Frontend, FullPRJobs().Frontend) {
+		t.Fatalf("lost dependency union: %+v", p.PR)
+	}
+}

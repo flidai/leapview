@@ -21,7 +21,11 @@ for (const workflow of ['ci', 'merge-validation', 'nightly']) {
   test(`${workflow} requires all isolated frontend shards with the existing watchdog bound`, () => {
     const config = parse(readFileSync(`.github/workflows/${workflow}.yml`, 'utf8'))
     const job = config.jobs['frontend-validation']
-    expect(job.strategy.matrix.shard).toEqual(shards)
+    if (workflow === 'ci') {
+ expect(job.strategy.matrix).toBe("${{ fromJSON(needs.prepare.outputs.frontend_matrix) }}")
+ expect(job.needs).toEqual(["prepare"])
+ expect(job.if).toBe("needs.prepare.outputs.frontend_validation == 'true'")
+ } else { expect(job.strategy.matrix.shard).toEqual(shards) }
     expect(job.strategy['fail-fast']).toBe(false)
     expect(job['continue-on-error']).toBeUndefined()
     expect(job.steps.find((step: any) => step.name === 'Run frontend validation').run)

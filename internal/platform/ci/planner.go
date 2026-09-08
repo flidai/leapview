@@ -10,7 +10,8 @@ import (
 	"strings"
 )
 
-const PlanVersion = 1
+const PlanVersion = 1 // Historical artifact schema.
+const PRPlanVersion = 2
 
 type Change struct {
 	Status string   `json:"status"`
@@ -45,6 +46,7 @@ type Jobs struct {
 
 type Plan struct {
 	Version   int      `json:"version"`
+	PR        *PRPlan  `json:"pr,omitempty"`
 	Reason    string   `json:"reason"`
 	Audit     bool     `json:"audit"`
 	Changes   []Change `json:"changes"`
@@ -52,8 +54,12 @@ type Plan struct {
 	Effective Jobs     `json:"effective"`
 }
 
-func PlanChanges(input Input, changes []Change) Plan {
-	plan := Plan{
+func PlanChanges(input Input, changes []Change) (plan Plan) {
+	defer func() {
+		plan.Version = PRPlanVersion
+		plan.PR = &PRPlan{Nominal: currentPRJobs(plan.Nominal), Effective: currentPRJobs(plan.Effective)}
+	}()
+	plan = Plan{
 		Version: PlanVersion,
 		Changes: changes,
 	}
@@ -257,13 +263,16 @@ func classifyPath(changedPath string, jobs *Jobs, reasons map[string]struct{}) s
 	if strings.HasPrefix(changedPath, "scripts/") {
 		if isFrontendTest(changedPath) {
 			jobs.FrontendPrepare = true
-			jobs.Frontend = unionStrings(jobs.Frontend, []string{"core"})
+			classifySharedFrontend(jobs)
 			reasons["frontend tests"] = struct{}{}
 			return ""
 		}
 		return "cross-cutting build or contract input"
 	}
 	if isGoPath(changedPath) {
+		if !strings.HasSuffix(changedPath, "_test.go") && (strings.HasPrefix(changedPath, "internal/runtimehost/") || strings.HasPrefix(changedPath, "internal/app/") || strings.HasPrefix(changedPath, "pkg/") || strings.Contains(changedPath, "/ui/") || strings.Contains(changedPath, "/http/") || strings.HasPrefix(changedPath, "internal/dashboard/runtime/")) {
+			jobs.UIRouteQA = true
+		}
 		if strings.HasSuffix(changedPath, "_test.go") {
 			jobs.Prepare = true
 			if path.Dir(changedPath) == "internal/app" {
@@ -289,12 +298,12 @@ func classifyPath(changedPath string, jobs *Jobs, reasons map[string]struct{}) s
 
 func isCrossCutting(changedPath string) bool {
 	switch changedPath {
-	case "Taskfile.yml", "go.mod", "go.sum", "package.json", "bun.lock", "sqlc.yaml",
+	case "Dockerfile", "Dockerfile.site", "Taskfile.yml", "go.mod", "go.sum", "package.json", "bun.lock", "sqlc.yaml",
 		".dockerignore", ".gitignore", ".env.example", "VERSION",
 		"tsconfig.json", "tsconfig.app.json", "tsconfig.contracts.json":
 		return true
 	}
-	return strings.HasPrefix(changedPath, ".github/workflows/") ||
+	return strings.HasPrefix(changedPath, "pkg/apigen/") || strings.Contains(changedPath, "/contracts/") || strings.HasPrefix(changedPath, ".github/workflows/") ||
 		strings.HasPrefix(changedPath, "api/") ||
 		strings.HasPrefix(changedPath, "internal/agent/contracts/generate/") ||
 		strings.HasPrefix(changedPath, "internal/app/tools/") ||
