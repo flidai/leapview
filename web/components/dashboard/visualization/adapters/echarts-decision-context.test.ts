@@ -66,6 +66,7 @@ test('ECharts translates semantic axes and decision context from the current fra
 test('ECharts omits non-positive resolved references only on log axes', () => {
   const envelope = cartesianFixture() as any
   envelope.spec.axes = [axisConfiguration('x', 'log'), axisConfiguration('primary_y', 'log')]
+  envelope.spec.axes[0].type = 'value'
   envelope.spec.x = { dataset: 'primary', field: 'x_numeric' }
   envelope.spec.datasets[0].fields.push(
     { id: 'x_numeric', role: 'dimension', dataType: 'decimal', nullable: false, label: 'x numeric' },
