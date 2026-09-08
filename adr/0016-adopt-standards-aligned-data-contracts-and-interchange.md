@@ -220,7 +220,7 @@ belong in LeapView's data-engineering source contract.
 | Pipeline | Argo CronWorkflow and dbt ancestor selection | Keep the ADR-0014 approach. The scheduling sub-contract already copies pinned Argo field names and behavior where meanings match, while selection, candidate identity, evidence, and publication remain LeapView-owned. A whole Argo workflow would expose containers, scripts, secrets, and infrastructure. |
 | Dashboard and nested visuals | Perses open dashboard specification and Vega-Lite | Retain the governed BI document. Perses is observability- and plugin-oriented, while Vega-Lite permits data loading, transformations, and expression behavior that would bypass the semantic query boundary. Both are useful migration or visualization references, not native authority. |
 | Group | SCIM 2.0 Group, SAML/OIDC claims, and dashboard product team APIs | Remove from analytics YAML. LeapView's SCIM service owns provisioned users and groups; SAML/OIDC or the admin API supplies group and attribute mappings. SCIM deliberately leaves authorization meaning to the service provider. |
-| RoleBinding and Grant | Product RBAC APIs, SAML/OIDC role mapping, Terraform providers, Kubernetes RBAC, OpenFGA, and Cedar | Remove from analytics YAML. Keep LeapView's closed capabilities and authorization engine, but manage assignments through the control-plane UI/API or a future IaC provider. Repository deployment must not replace live role or grant state. |
+| RoleBinding and Grant | Product RBAC APIs, SAML/OIDC role mapping, Terraform providers, Kubernetes RBAC, OpenFGA, and Cedar | Remove from analytics YAML. Keep LeapView's closed capabilities and authorization engine. Assignments belong to the control plane; supported APIs expose grant mutations, while public role-assignment mutation is currently unexposed. A future IaC provider is not current support. Repository deployment must not replace live role or grant state. |
 | DataPolicy | Looker access filters/grants, Lightdash user-attribute filters, Rill metrics-view security, Cedar, and database row/column policies | Target state: remove the standalone, subject-bound resource. SemanticModel is the only authored policy target; ADR-0017 defines its Looker-aligned `accessGrants`, `requiredAccessGrants`, and `accessFilters`. Attribute values and assignments remain in the control plane. Standalone `DataPolicy` remains a transitional exception until FAI-648/649 complete that cutover. |
 | DashboardPublication | Grafana dashboard/folder permissions, Looker content access, W3C CSP `frame-ancestors`, and product sharing APIs | Remove from analytics YAML. Publication, sharing state, embed origins, URLs, and revision activation are environment-specific security and lifecycle state managed through UI/API. Headless automation uses a service principal and API or a future IaC provider. |
 
@@ -325,9 +325,10 @@ authorization.
 
 ### Control-plane state is not analytics source
 
-Group, role, grant, sharing, and publication changes are durable audited
-control-plane mutations. The UI and the same generated OpenAPI surface support
-them. Service principals provide headless automation, and a future Terraform or
+Group, role, grant, sharing, and publication changes belong to durable audited
+control-plane authority. UI and generated OpenAPI operations expose supported
+mutations; role-assignment mutation is currently unexposed. Service principals
+provide headless automation, and a future Terraform or
 OpenTofu provider may offer declarative reconciliation without adding those
 objects to analytics YAML.
 
@@ -336,7 +337,8 @@ is the authentication and claims boundary. Neither standard defines LeapView's
 complete authorization or publication lifecycle: SCIM does not define the
 authorization meaning of group membership, and SAML/OIDC does not publish a
 dashboard. Role mappings, explicit grants, sharing, and publication therefore
-remain LeapView API operations even when identity is fully automated.
+remain LeapView control-plane responsibilities even when identity is fully
+automated; this does not imply every operation has an exposed API today.
 
 Implementation qualification: this describes the control-plane direction, not
 proof that every mutation already has a public endpoint. The current instance

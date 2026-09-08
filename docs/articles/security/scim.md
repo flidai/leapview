@@ -36,7 +36,7 @@ Directory profile changes should update mutable metadata without changing the pr
 
 ## Separate provisioning and authorization
 
-Use the directory as the source of truth for enterprise group membership. Use LeapView role bindings, grants, and policies as the source of product authorization.
+Use the directory as the source of truth for enterprise group membership. Existing LeapView role bindings, grants, and policies remain the source of product authorization; provisioning does not create role assignments.
 
 This separation means:
 
@@ -48,7 +48,7 @@ This separation means:
 
 The administration API therefore exposes SCIM profiles, groups, and memberships as read-only resources. Profile edits, group deletion, and membership changes must be made in the directory. LeapView grants have an instance control-plane mutation API; role assignments are durable Access-owned state but do not currently have a public mutation API or administration command.
 
-Prefer binding stable directory groups to roles. Avoid granting every synchronized employee a default project merely because they exist in the tenant.
+When reviewing existing role assignments, prefer stable directory groups over one-off user bindings. This is review guidance, not a currently exposed role-assignment creation workflow. Avoid granting every synchronized employee a default project merely because they exist in the tenant.
 
 ## Rotate the token
 
