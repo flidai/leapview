@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -91,16 +92,19 @@ func TestLowerCanonicalCartesianPresentationRejectsInapplicableOptions(t *testin
 }
 
 func TestLowerCanonicalCartesianPresentationAllowsHeatmapDataZoom(t *testing.T) {
-	dataZoom := true
-	lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
-		Type: "cartesian", DataZoom: &dataZoom,
-	}}, document.DashboardVisualTypeHeatmap)
-	if err != nil {
-		t.Fatalf("heatmap data zoom rejected: %v", err)
-	}
-	presentation, ok := lowered.(visualizationir.CartesianVisualizationPresentation)
-	if !ok || !presentation.DataZoom {
-		t.Fatalf("lowered heatmap presentation = %#v, want dataZoom=true", lowered)
+	for _, dataZoom := range []bool{false, true} {
+		t.Run(fmt.Sprintf("%t", dataZoom), func(t *testing.T) {
+			lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+				Type: "cartesian", DataZoom: &dataZoom,
+			}}, document.DashboardVisualTypeHeatmap)
+			if err != nil {
+				t.Fatalf("heatmap data zoom=%t rejected: %v", dataZoom, err)
+			}
+			presentation, ok := lowered.(visualizationir.CartesianVisualizationPresentation)
+			if !ok || presentation.DataZoom != dataZoom {
+				t.Fatalf("lowered heatmap presentation = %#v, want dataZoom=%t", lowered, dataZoom)
+			}
+		})
 	}
 }
 

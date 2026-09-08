@@ -67,19 +67,9 @@ func validateCanonicalCartesianPresentationApplicability(variant *document.Carte
 			visualType == document.DashboardVisualTypeCombo); err != nil {
 		return err
 	}
-	dataZoomSupported := visualType == document.DashboardVisualTypeLine ||
-		visualType == document.DashboardVisualTypeArea ||
-		visualType == document.DashboardVisualTypeBar ||
-		visualType == document.DashboardVisualTypeColumn ||
-		visualType == document.DashboardVisualTypeCombo ||
-		visualType == document.DashboardVisualTypeWaterfall ||
-		visualType == document.DashboardVisualTypeHeatmap ||
-		visualType == document.DashboardVisualTypeHistogram ||
-		visualType == document.DashboardVisualTypeCandlestick ||
-		visualType == document.DashboardVisualTypeBoxplot
-	if err := optionSupported("dataZoom", variant.DataZoom != nil, dataZoomSupported); err != nil {
-		return err
-	}
+	// Every current Cartesian mark has a renderer-owned data-zoom channel,
+	// including heatmaps. The closed presentation union keeps this option out
+	// of non-Cartesian families.
 	comboLineArea := visualType != document.DashboardVisualTypeCombo || variant.Series == nil
 	if visualType == document.DashboardVisualTypeCombo && variant.Series != nil {
 		// Keep the existing combo-series diagnostics authoritative when the
