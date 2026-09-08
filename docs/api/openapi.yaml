@@ -62483,10 +62483,12 @@ components:
               value: example
         gainColor:
           $ref: '#/components/schemas/VisualizationColorIntent'
-          description: Candlestick gain/loss colors; omitted values use the active
-            theme success/danger colors.
+          description: Candlestick gain color; omitted values use the active theme
+            success color.
         lossColor:
           $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick loss color; omitted values use the active theme
+            danger color.
         axes:
           type: array
           items:
@@ -62668,10 +62670,12 @@ components:
               value: example
         gainColor:
           $ref: '#/components/schemas/VisualizationColorIntent'
-          description: Candlestick gain/loss intents; omitted values use theme success/danger
-            colors.
+          description: Candlestick gain intent; omitted values use the theme success
+            color.
         lossColor:
           $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick loss intent; omitted values use the theme danger
+            color.
       example:
         area: true
         comboSeries:

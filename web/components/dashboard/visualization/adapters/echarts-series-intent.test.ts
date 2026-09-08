@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
@@ -363,12 +364,75 @@ test('ECharts candlestick colors use authored intents and a neutral equal-value 
   } as VisualizationEnvelope
 
   const option = echartsOption(envelope, defaultRendererContext) as any
-  const color = option.series[0].itemStyle.color
-  expect(color({ value: [1, 2, 0, 3] })).toBe(defaultRendererContext.colors.data[1])
-  expect(color({ value: [2, 1, 0, 3] })).toBe(defaultRendererContext.colors.attention)
-  expect(color({ value: [2, 2, 1, 3] })).toBe(defaultRendererContext.colors.muted)
+  expect(option.series[0].itemStyle).toEqual({
+    color: defaultRendererContext.colors.data[1],
+    color0: defaultRendererContext.colors.attention,
+    borderColor: defaultRendererContext.colors.data[1],
+    borderColor0: defaultRendererContext.colors.attention,
+    borderColorDoji: defaultRendererContext.colors.muted,
+  })
+  expect(option.series[0].data[0].itemStyle).toBeUndefined()
+  expect(option.series[0].data[1].itemStyle).toBeUndefined()
+  expect(option.series[0].data[2].itemStyle).toEqual({
+    color: defaultRendererContext.colors.muted,
+    color0: defaultRendererContext.colors.muted,
+    borderColor: defaultRendererContext.colors.muted,
+    borderColor0: defaultRendererContext.colors.muted,
+  })
   expect(option.series[0].data.map((row: any) => row.__lv_row_index)).toEqual([0, 1, 2])
-  expect((echartsOption(envelope, { ...defaultRendererContext, theme: 'dark', colors: { ...defaultRendererContext.colors, data: ['#111111', '#222222'], attention: '#aaaaaa', muted: '#bbbbbb' } }) as any).series[0].itemStyle.color({ value: [1, 2, 0, 3] })).toBe('#222222')
+  expect((echartsOption(envelope, { ...defaultRendererContext, theme: 'dark', colors: { ...defaultRendererContext.colors, data: ['#111111', '#222222'], attention: '#aaaaaa', muted: '#bbbbbb' } }) as any).series[0].itemStyle).toEqual({
+    color: '#222222', color0: '#aaaaaa', borderColor: '#222222', borderColor0: '#aaaaaa', borderColorDoji: '#bbbbbb',
+  })
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    chart.setOption(option)
+    const paths = [...chart.renderToSVGString().matchAll(/<path\b[^>]*>/g)].map((match) => match[0])
+    expect(paths.some((path) => path.includes(`fill=\"${defaultRendererContext.colors.data[1]}\"`) && path.includes(`stroke=\"${defaultRendererContext.colors.data[1]}\"`))).toBe(true)
+    expect(paths.some((path) => path.includes(`fill=\"${defaultRendererContext.colors.attention}\"`) && path.includes(`stroke=\"${defaultRendererContext.colors.attention}\"`))).toBe(true)
+    expect(paths.some((path) => path.includes(`fill=\"${defaultRendererContext.colors.muted}\"`) && path.includes(`stroke=\"${defaultRendererContext.colors.muted}\"`))).toBe(true)
+  } finally {
+    chart.dispose()
+  }
+})
+
+test('ECharts renders candlestick colors in large mode, including equal-value neutral strokes', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'ohlc-large-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    spec: {
+      kind: 'cartesian', title: 'OHLC', mark: 'candlestick',
+      datasets: [{ id: 'primary', fields: ['label', 'open', 'close', 'low', 'high'].map((id, index) => ({ id, role: index ? 'metric' : 'dimension', dataType: index ? 'decimal' : 'string', nullable: false, label: id })) }],
+      dataBudget: { maxRows: 1000, requiredCompleteness: 'complete' }, accessibility: { title: 'OHLC', description: 'OHLC' }, interactions: [],
+      x: { dataset: 'primary', field: 'label' }, y: ['open', 'close', 'low', 'high'].map((field) => ({ dataset: 'primary', field })),
+      presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: false, dataZoom: false, area: false, step: false, gainColor: 'success', lossColor: 'danger' },
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [
+      { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['label', 'open', 'close', 'low', 'high'], rows: Array.from({ length: 601 }, (_, index) => {
+        if (index === 0) return [String(index), 1, 2, 0, 3]
+        if (index === 1) return [String(index), 2, 1, 0, 3]
+        if (index === 2 || index === 600) return [String(index), 2, 2, 1, 3]
+        if (index === 3) return [String(index), null, null, null, null]
+        return [String(index), 1, 2, 0, 3]
+      }), completeness: 'complete' },
+    ] },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].data).toHaveLength(601)
+  expect(option.series[0].data[3]).toMatchObject({ value: [null, null, null, null], __lv_row_index: 3 })
+  expect(option.series[0].data[3].itemStyle).toBeUndefined()
+  expect(option.series[0].data[600].itemStyle.color).toBe(defaultRendererContext.colors.muted)
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 1200, height: 320 })
+  try {
+    chart.setOption(option)
+    const svg = chart.renderToSVGString()
+    const paths = [...svg.matchAll(/<path\b[^>]*>/g)].map((match) => match[0])
+    expect(paths.some((path) => path.includes(`stroke=\"${defaultRendererContext.colors.success}\"`))).toBe(true)
+    expect(paths.some((path) => path.includes(`stroke=\"${defaultRendererContext.colors.danger}\"`))).toBe(true)
+    expect(paths.some((path) => path.includes(`stroke=\"${defaultRendererContext.colors.muted}\"`))).toBe(true)
+  } finally {
+    chart.dispose()
+  }
 })
 
 function cartesianFixture(mark: string, columns = ['label', 'value']): VisualizationEnvelope {

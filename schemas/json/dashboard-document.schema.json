@@ -95,7 +95,7 @@
         },
         "gainColor": {
           "$ref": "#/$defs/VisualizationColorIntent",
-          "description": "Candlestick gain/loss colors; omitted values use the active theme success/danger colors."
+          "description": "Candlestick gain color; omitted values use the active theme success color."
         },
         "labelPosition": {
           "$ref": "#/$defs/DashboardLabelPosition"
@@ -116,7 +116,8 @@
           "type": "string"
         },
         "lossColor": {
-          "$ref": "#/$defs/VisualizationColorIntent"
+          "$ref": "#/$defs/VisualizationColorIntent",
+          "description": "Candlestick loss color; omitted values use the active theme danger color."
         },
         "orientation": {
           "$ref": "#/$defs/DashboardOrientation"

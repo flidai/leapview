@@ -152,9 +152,9 @@ are rejected by the closed dashboard schema.
 
 | Family | Supported controls |
 | --- | --- |
-| Hierarchy | `legend`, `labels`; mark-scoped `orientation`, `initialDepth`, `roam`, `layout`, `breadcrumb`, `nodeGap`, `curveness`, `focus` as described above |
+| Hierarchy | `labels`; mark-scoped `orientation`, `initialDepth`, `roam`, `layout`, `breadcrumb`, `nodeGap`, `curveness`, `focus` as described above |
 | Proportional | `legend`, `labels`, `displayUnits`; pie/donut `rose`, `labelPosition`, `outerRadius`; donut `centerLabel`, `innerRadius`; funnel `orientation`, `labelPosition`, `align`, `sort` |
-| Polar | `legend`, `labels`, `displayUnits`; radar `area`, `maximum`; gauge `minimum`, `maximum`, `target`, `showPointer`, `progressWidth`, `thresholds` |
+| Polar | `labels`, `displayUnits`; radar `legend`, `area`, `maximum`; gauge `minimum`, `maximum`, `target`, `showPointer`, `progressWidth`, `thresholds` |
 
 Candlestick gain/loss colors are renderer-neutral color intents. Omitted values
 use the active theme's `success` and `danger` colors; equal open/close values

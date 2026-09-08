@@ -7191,6 +7191,25 @@
                         },
                         "type": "array"
                       },
+                      "gainColor": {
+                        "enum": [
+                          "accent",
+                          "neutral",
+                          "ink",
+                          "success",
+                          "warning",
+                          "danger",
+                          "data_1",
+                          "data_2",
+                          "data_3",
+                          "data_4",
+                          "data_5",
+                          "data_6",
+                          "data_7",
+                          "data_8"
+                        ],
+                        "type": "string"
+                      },
                       "labelPosition": {
                         "enum": [
                           "automatic",
@@ -7268,6 +7287,25 @@
                         "type": "array"
                       },
                       "legendTitle": {
+                        "type": "string"
+                      },
+                      "lossColor": {
+                        "enum": [
+                          "accent",
+                          "neutral",
+                          "ink",
+                          "success",
+                          "warning",
+                          "danger",
+                          "data_1",
+                          "data_2",
+                          "data_3",
+                          "data_4",
+                          "data_5",
+                          "data_6",
+                          "data_7",
+                          "data_8"
+                        ],
                         "type": "string"
                       },
                       "orientation": {

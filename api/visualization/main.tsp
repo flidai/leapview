@@ -799,8 +799,9 @@ model CartesianVisualizationPresentation extends VisualizationPresentation {
   `comboSeries`?: VisualizationComboSeries[];
   `stacking`?: VisualizationStackingMode;
   `seriesIntent`?: VisualizationSeriesIntent[];
-  /** Candlestick gain/loss intents; omitted values use theme success/danger colors. */
+  /** Candlestick gain intent; omitted values use the theme success color. */
   `gainColor`?: VisualizationColorIntent;
+  /** Candlestick loss intent; omitted values use the theme danger color. */
   `lossColor`?: VisualizationColorIntent;
 }
 
