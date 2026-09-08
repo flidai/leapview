@@ -178,6 +178,16 @@ const packageVerification = {
   startup: "trusted-shell-ready",
 };
 
+test("checked-in release policy matches the desktop package", async () => {
+  const actualPolicy = JSON.parse(
+    await readFile(new URL("../release-policy.json", import.meta.url), "utf8"),
+  );
+  const actualPackage = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  );
+  assert.doesNotThrow(() => validateReleasePolicy(actualPolicy, actualPackage));
+});
+
 test("release policy pins the supported Electron line and packaging contract", () => {
   assert.doesNotThrow(() => validateReleasePolicy(policy, packageDocument));
 
