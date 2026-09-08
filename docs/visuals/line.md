@@ -209,13 +209,15 @@ visuals:
 
 Use a named context dataset when a title or description must be recomputed from the same active semantic filters as the chart. Context queries are compiled with the visual and delivered in the typed visualization envelope.
 
+Here the context query summarizes the first status separately; it does not filter the revenue line to that status. Its metadata is labeled as context, independently of the fixed reference target.
+
 {{< visual id="revenue_line_context" >}}
 
 ```yaml visual-example=revenue_line_context
 visuals:
   revenue_line_context:
     title: Revenue trend
-    subtitle: Current filtered scope
+    subtitle: Total revenue with separate status context
     type: line
     datasets:
       context:
@@ -224,7 +226,7 @@ visuals:
         - status
         metrics:
         - metric: revenue
-          alias: target
+          alias: context_revenue
         sort:
         - field: status
           direction: asc
@@ -234,15 +236,15 @@ visuals:
         dataset: context
         field: status
         reducer: first
-        prefix: "Revenue — "
+        prefix: "Revenue — context status: "
         fallback: Revenue trend
       description:
         dataset: context
-        field: target
+        field: context_revenue
         reducer: mean
-        prefix: "Current target is "
+        prefix: "Context revenue is "
         suffix: " USD."
-        fallback: Current target is unavailable.
+        fallback: Context revenue is unavailable.
     presentation:
       type: cartesian
       axes:
