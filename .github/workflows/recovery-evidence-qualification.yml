@@ -1,0 +1,65 @@
+name: Recovery evidence qualification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/recovery-evidence-qualification.yml'
+      - 'internal/manageddata/**'
+      - 'internal/recoveryset/**'
+      - 'go.mod'
+      - 'go.sum'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recovery-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evidence-qualification:
+    name: PostgreSQL and MinIO evidence qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up the pinned CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: 'false'
+      - name: Prepare generated contracts
+        run: task generate
+      - name: Qualify recovery evidence against disposable providers
+        env:
+          LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: 'true'
+        run: >-
+          go test -race -tags='duckdb_arrow fai520qualification'
+          ./internal/manageddata/storage/s3
+          ./internal/recoveryset/postgres
+          ./internal/recoveryset/observationstore
+          -run '^(TestFAI520|TestProviderObservation)'
+          -count=2 -timeout=15m -v
+      - name: Verify generated snapshots
+        run: task generated:check
+
+  full-validation:
+    name: Recovery candidate full validation
+    needs: evidence-qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Set up the pinned CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: 'true'
+          terraform: 'true'
+      - name: Prepare generated and embedded assets
+        run: task ci:prepare
+      - name: Run the existing full-validation extras
+        run: task ci:full:extras

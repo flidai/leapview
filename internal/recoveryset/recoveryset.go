@@ -107,6 +107,9 @@ type ValidationEvidenceEnvelope struct {
 // NewValidationEvidenceEnvelope constructs evidence from the exact frontier
 // and validation attempt. It never consults mutable/latest rows.
 func NewValidationEvidenceEnvelope(set RecoverySet, attemptID string) (ValidationEvidenceEnvelope, error) {
+	if set.SchemaVersion != SchemaVersion {
+		return ValidationEvidenceEnvelope{}, fmt.Errorf("%w: v1 validation cannot consume another frontier version", ErrInvalid)
+	}
 	normalized, err := set.Normalize()
 	if err != nil {
 		return ValidationEvidenceEnvelope{}, err
@@ -342,6 +345,9 @@ func validationRemoteObjectRoot(uri string) bool {
 // attempt. The comparison includes every cluster point/root identity and all
 // serving relation digests; it performs no provider I/O.
 func (e ValidationEvidenceEnvelope) ValidateFor(set RecoverySet, attemptID string) error {
+	if set.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("%w: v1 validation cannot consume another frontier version", ErrInvalid)
+	}
 	e.normalize()
 	if err := e.Validate(); err != nil {
 		return err
@@ -502,9 +508,10 @@ type RecoverySet struct {
 	// immutable validation attempt. It is empty while a set is prepared, and
 	// publication must set it atomically after proving the attempt has passed
 	// and carries matching evidence.
-	PublishedValidationAttemptID string    `json:"published_validation_attempt_id,omitempty"`
-	CreatedBy                    string    `json:"created_by"`
-	CreatedAt                    time.Time `json:"created_at"`
+	PublishedValidationAttemptID string           `json:"published_validation_attempt_id,omitempty"`
+	CreatedBy                    string           `json:"created_by"`
+	CreatedAt                    time.Time        `json:"created_at"`
+	ManagedEvidence              *ManagedEvidence `json:"managed_evidence,omitempty"`
 }
 
 var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -640,8 +647,8 @@ func (s RecoverySet) Validate() error {
 	if !canonicalUUID(s.ID) {
 		return fmt.Errorf("%w: id must be a UUID", ErrInvalid)
 	}
-	if s.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("%w: unsupported schema version %d", ErrInvalid, s.SchemaVersion)
+	if err := s.validateEvidenceVersion(); err != nil {
+		return err
 	}
 	if len(s.ClusterPoints) != 2 {
 		return fmt.Errorf("%w: exactly two cluster recovery points are required", ErrInvalid)
@@ -893,63 +900,6 @@ func digest(value, label string) error {
 func canonicalUUID(value string) bool {
 	u, err := uuid.Parse(value)
 	return err == nil && u.String() == value
-}
-
-// Normalize returns a validated copy with child rows in their persistence
-// order. Callers should normalize before insertion or equality comparison.
-func (s RecoverySet) Normalize() (RecoverySet, error) {
-	if err := s.Validate(); err != nil {
-		return RecoverySet{}, err
-	}
-	// PostgreSQL timestamptz stores microsecond precision; canonicalize before
-	// hashing/insertion so exact replay does not differ on sub-microsecond
-	// caller clock values.
-	s.CreatedAt = s.CreatedAt.UTC().Truncate(time.Microsecond)
-	s.sortChildren()
-	return s, nil
-}
-
-func (s *RecoverySet) sortChildren() {
-	s.ClusterPoints = s.CanonicalPoints()
-	s.ObjectRoots = append([]ObjectRoot(nil), s.ObjectRoots...)
-	sort.Slice(s.ObjectRoots, func(i, j int) bool {
-		a, b := s.ObjectRoots[i], s.ObjectRoots[j]
-		if a.Kind != b.Kind {
-			return a.Kind < b.Kind
-		}
-		if a.URI != b.URI {
-			return a.URI < b.URI
-		}
-		return a.VersionID < b.VersionID
-	})
-}
-
-// CanonicalJSON and Digest provide a stable evidence identity for audit and
-// idempotent replay. Child collections are sorted before encoding.
-func (s RecoverySet) CanonicalJSON() ([]byte, error) {
-	n, err := s.Normalize()
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(n)
-}
-
-func (s RecoverySet) Digest() (string, error) {
-	// Digest covers only the immutable frontier projection. Publication status,
-	// fence, audit actor, and creation metadata remain separate record fields.
-	n := s
-	n.Status, n.FrontierDigest, n.PublishedValidationAttemptID = StatusPrepared, "", ""
-	if err := n.Validate(); err != nil {
-		return "", err
-	}
-	n.FenceEpoch, n.AuditIdentity, n.CreatedBy, n.CreatedAt = 0, "", "", time.Time{}
-	n.sortChildren()
-	b, err := json.Marshal(n)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(b)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 // CanonicalPoints returns points in stable role order for persistence and

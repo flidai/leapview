@@ -168,6 +168,10 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/recovery-evidence-qualification.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
   - path: .github/workflows/release.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
