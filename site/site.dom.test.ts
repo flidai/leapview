@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, expect as expectLocator, type Browser } from '@playwright/test'
 
 const sitePort = 20000 + (process.pid % 10000)
 const baseURL = `http://127.0.0.1:${sitePort}`
@@ -1659,10 +1659,17 @@ test('documentation articles provide a readable, navigable reference experience'
     expect(page.url()).toBe(`${baseURL}/docs/guides/build/dashboard`)
     const resultCount = await search.locator('.status').innerText()
     expect(resultCount).toMatch(/^[1-9]\d* results$/)
-    await searchInput.fill('no-document-can-match-this-query-9f83c1')
-    const emptyStatus = search.locator('.status')
-    await page.waitForFunction(() => document.querySelector('lv-site-search')?.shadowRoot?.querySelector('.status')?.textContent?.startsWith('No results'))
-    expect(await emptyStatus.innerText()).toBe('No results for “no-document-can-match-this-query-9f83c1”.')
+    const emptyQuery = 'no-document-can-match-this-query-9f83c1'
+    const emptyResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url())
+      return url.pathname === '/docs/search/active' && url.searchParams.get('datastar')?.includes(emptyQuery) === true
+    })
+    await searchInput.fill(emptyQuery)
+    // Finish this query's response before asserting its rendered terminal state:
+    // a transient "No results" prefix does not prove the request has settled.
+    expect(await (await emptyResponse).finished()).toBeNull()
+    const emptyStatus = search.locator('.results[aria-busy="false"] .status')
+    await expectLocator(emptyStatus).toHaveText(`No results for “${emptyQuery}”.`)
     expect(await emptyStatus.getAttribute('role')).toBe('status')
     await search.getByRole('button', { name: 'Close search' }).click()
     await page.keyboard.press('/')
