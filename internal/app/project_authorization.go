@@ -39,6 +39,35 @@ func authoringDevelopmentBypass(ctx context.Context, principalID string) bool {
 	return ok && principal.DevBypass && principal.ID == strings.TrimSpace(principalID)
 }
 
+func authorizeAuthoringResource(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	resource access.ResourceRef,
+	capability access.Capability,
+) (bool, error) {
+	if authoringDevelopmentBypass(ctx, principalID) {
+		return true, nil
+	}
+	return authorizeProjectResources(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, capability)
+}
+
+func authorizeAuthoringProject(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	capability access.Capability,
+) (bool, error) {
+	if authoringDevelopmentBypass(ctx, principalID) {
+		return true, nil
+	}
+	return authorizeProjectRole(ctx, accessModule, runtimeHost, principalID, projectID, capability)
+}
+
 // bootstrapAwareConnectionAuthorization permits managed-data handlers to
 // consume the opaque request marker emitted by the APIGen bootstrap guard.
 // The marker is accepted only while the durable serving-state repository has

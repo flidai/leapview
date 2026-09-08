@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
+import { repeat } from 'lit/directives/repeat.js'
 import {
   ArrowUpDown,
   Bot,
@@ -990,7 +991,7 @@ class EntityList extends LitElement {
               </thead>
               ${this.groupBy
                 ? this.groupedItems(items).map((group) => this.renderGroup(group, columns))
-                : html`<tbody>${items.map((item) => this.renderItem(item, columns))}</tbody>`}
+                : html`<tbody>${repeat(items, (item) => item.id, (item) => this.renderItem(item, columns))}</tbody>`}
             </table>
             <p class="entity-list-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>
           </div>
@@ -1080,7 +1081,7 @@ class EntityList extends LitElement {
             </button>
           </th>
         </tr>
-        ${collapsed ? '' : group.items.map((item) => this.renderItem(item, columns))}
+        ${collapsed ? '' : repeat(group.items, (item) => `${group.key}:${item.id}`, (item) => this.renderItem(item, columns))}
       </tbody>
     `
   }

@@ -34,6 +34,29 @@ func TestAuthoringDevelopmentBypassIsRequestLocalAndIdentityBound(t *testing.T) 
 	}
 }
 
+func TestAuthoringAuthorizationPreservesDevelopmentBypass(t *testing.T) {
+	ctx := accessmodule.WithPrincipal(context.Background(), accessmodule.Principal{ID: "dev", DevBypass: true})
+	resource, err := access.NewResourceRef("dashboard:visual-showcase", projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceAllowed, err := authorizeAuthoringResource(ctx, nil, nil, "dev", "project:demo", resource, access.CapabilityResourceRead)
+	if err != nil || !resourceAllowed {
+		t.Fatalf("resource authorization = (%v, %v), want (true, nil)", resourceAllowed, err)
+	}
+	projectAllowed, err := authorizeAuthoringProject(ctx, nil, nil, "dev", "project:demo", access.CapabilityResourceEdit)
+	if err != nil || !projectAllowed {
+		t.Fatalf("project authorization = (%v, %v), want (true, nil)", projectAllowed, err)
+	}
+
+	if _, err := authorizeAuthoringResource(ctx, nil, nil, "other", "project:demo", resource, access.CapabilityResourceRead); err == nil {
+		t.Fatal("resource authorization accepted a development principal under another actor identity")
+	}
+	if _, err := authorizeAuthoringProject(ctx, nil, nil, "other", "project:demo", access.CapabilityResourceEdit); err == nil {
+		t.Fatal("project authorization accepted a development principal under another actor identity")
+	}
+}
+
 func TestProjectAuthoringGuardRoutesManageToDashboardManageAuthorization(t *testing.T) {
 	authorizer := &repositoryDashboardAuthorizerFake{}
 	guarded := protectProjectAuthoringResource(

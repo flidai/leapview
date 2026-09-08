@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	nethttp "net/http"
 	"net/url"
 	"strings"
@@ -476,13 +477,7 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeAuthoringError(w, r, err)
 		return
 	}
-	privilege := access.CapabilityResourceEdit
-	if action, actionErr := command.RequiredAction(); actionErr == nil && (action == authoring.AuthorizationActionPublish || action == authoring.AuthorizationActionArchive) {
-		privilege = access.CapabilityResourcePublish
-		if action == authoring.AuthorizationActionArchive {
-			privilege = access.CapabilityResourceManage
-		}
-	}
+	privilege := authoringCommandCapability(command)
 	var result authoringservice.Result
 	err = executeAuthoringMutation(r, "executeDashboardAuthoringCommand", projectID.String(), key, actor, command.DashboardID.String(), command.DraftID.String(), origin, privilege, h.RecordAudit, nil, func(ctx context.Context) error {
 		var mutationErr error
@@ -1104,11 +1099,25 @@ type authoringAuditTarget struct {
 }
 
 func executeAuthoringMutation(r *nethttp.Request, operationID, project, key, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, legacyRecorder func(context.Context, access.AuditEventInput) error, target *authoringAuditTarget, mutate func(context.Context) error) error {
+	return executeAuthoringMutationForSurface(r, apigencommand.SurfaceAPI, operationID, project, key, actor, dashboardID, draftID, origin, capability, legacyRecorder, target, mutate)
+}
+
+// executeAuthoringUIMutation applies the same generated command contract and
+// transaction-bound audit intent as the headless API, while requiring the
+// operation to be explicitly exposed to the browser UI by TypeSpec.
+func executeAuthoringUIMutation(r *nethttp.Request, operationID, project, key, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, target *authoringAuditTarget, mutate func(context.Context) error) error {
+	err := executeAuthoringMutationForSurface(r, apigencommand.SurfaceUI, operationID, project, key, actor, dashboardID, draftID, origin, capability, nil, target, mutate)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "dashboard authoring UI mutation failed", "operation", operationID, "dashboard", dashboardID, "draft", draftID, "error", err)
+	}
+	return err
+}
+
+func executeAuthoringMutationForSurface(r *nethttp.Request, invocation apigencommand.Surface, operationID, project, key, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, legacyRecorder func(context.Context, access.AuditEventInput) error, target *authoringAuditTarget, mutate func(context.Context) error) error {
 	executor, err := apigencommand.NewExecutor(dashboardgen.GetAPIGenCommandRuntimeContract, nil)
 	if err != nil {
 		return err
 	}
-	invocation := apigencommand.SurfaceAPI
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
 	execution := apigencommand.Execution{Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
@@ -1158,6 +1167,19 @@ func executeAuthoringMutation(r *nethttp.Request, operationID, project, key, act
 	default:
 		return fmt.Errorf("unknown dashboard authoring command %q", operationID)
 	}
+}
+
+func authoringCommandCapability(command authoring.Command) access.Capability {
+	capability := access.CapabilityResourceEdit
+	if action, err := command.RequiredAction(); err == nil {
+		switch action {
+		case authoring.AuthorizationActionPublish:
+			capability = access.CapabilityResourcePublish
+		case authoring.AuthorizationActionArchive:
+			capability = access.CapabilityResourceManage
+		}
+	}
+	return capability
 }
 
 func buildAuthoringAuditIntent(contract apigencommand.Contract, project, idempotencyKey, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, requestID, correlationID string) (access.AuditIntent, error) {

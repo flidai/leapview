@@ -570,9 +570,9 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		return fail(err)
 	}
 	authoring, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{Persistence: graph.DashboardPersistence, AuthorizeResource: func(ctx context.Context, principal string, project projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
-		return authorizeProjectResources(ctx, accessBundle.Module, runtimeHost, principal, project, []access.ResourceRef{resource}, capability)
+		return authorizeAuthoringResource(ctx, accessBundle.Module, runtimeHost, principal, project, resource, capability)
 	}, AuthorizeProjectCapability: func(ctx context.Context, principal string, project projectgraph.ResourceID, capability access.Capability) (bool, error) {
-		return authorizeProjectRole(ctx, accessBundle.Module, runtimeHost, principal, project, capability)
+		return authorizeAuthoringProject(ctx, accessBundle.Module, runtimeHost, principal, project, capability)
 	}, AcquireRuntime: runtimeHost.Acquire})
 	if err != nil {
 		return fail(err)

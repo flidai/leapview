@@ -84,7 +84,7 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 	// subsequent browser-shaped edits remain narrow typed commands.
 	sourceDocument := qualificationDocument(created.Lifecycle.ID.String(), "sales", "Sales")
 	sourceEdit, err := service.Execute(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000722"), "dashboard_authoring.draft_edited"), qualificationProject, authoring.Command{
-		ID: "018f4f2e-0000-7000-8000-000000000732", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID,
+		ID: "018f4f2e-0000-7000-8000-000000000722", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID,
 		ExpectedRevision: created.Revision, Provenance: qualificationProvenance("source-document"),
 		ReplaceDocument: &authoring.ReplaceDocumentPayload{Document: sourceDocument},
 	})
@@ -96,7 +96,7 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 	}
 
 	sourcePublished, err := service.Execute(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000723"), "dashboard_authoring.published"), qualificationProject, authoring.Command{
-		ID: "018f4f2e-0000-7000-8000-000000000733", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID,
+		ID: "018f4f2e-0000-7000-8000-000000000723", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID,
 		ExpectedRevision: sourceEdit.Revision, Provenance: qualificationProvenance("source-publish"),
 		Publish: &authoring.PublishPayload{},
 	})
@@ -141,7 +141,7 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 	// placement-only edit; the second must fail CAS without adding a revision.
 	tabRevision := copied.Revision
 	moved, err := service.Execute(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000725"), "dashboard_authoring.draft_edited"), qualificationProject, authoring.Command{
-		ID: "018f4f2e-0000-7000-8000-000000000735", DashboardID: copied.Lifecycle.ID, DraftID: copied.Lifecycle.Draft.ID,
+		ID: "018f4f2e-0000-7000-8000-000000000725", DashboardID: copied.Lifecycle.ID, DraftID: copied.Lifecycle.Draft.ID,
 		ExpectedRevision: tabRevision, Provenance: qualificationProvenance("copy-placement"),
 		SetPlacements: &authoring.SetPlacementsPayload{PageID: "overview", Placements: []authoring.PlacementUpdate{{
 			ComponentID: "orders-card", Placement: document.DashboardPlacement{Column: 2, Row: 1, ColumnSpan: 6, RowSpan: 4},
@@ -193,7 +193,7 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 	}
 
 	published, err := service.Execute(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000726"), "dashboard_authoring.published"), qualificationProject, authoring.Command{
-		ID: "018f4f2e-0000-7000-8000-000000000737", DashboardID: copied.Lifecycle.ID, DraftID: copied.Lifecycle.Draft.ID,
+		ID: "018f4f2e-0000-7000-8000-000000000726", DashboardID: copied.Lifecycle.ID, DraftID: copied.Lifecycle.Draft.ID,
 		ExpectedRevision: moved.Revision, Provenance: qualificationProvenance("copy-publish"),
 		Publish: &authoring.PublishPayload{},
 	})
@@ -209,7 +209,7 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 	}
 
 	archived, err := service.Execute(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000000727"), "dashboard_authoring.archived"), qualificationProject, authoring.Command{
-		ID: "018f4f2e-0000-7000-8000-000000000738", DashboardID: copied.Lifecycle.ID,
+		ID: "018f4f2e-0000-7000-8000-000000000727", DashboardID: copied.Lifecycle.ID,
 		ExpectedRevision: published.Revision, Provenance: qualificationProvenance("copy-archive"),
 		Archive: &authoring.ArchivePayload{},
 	})

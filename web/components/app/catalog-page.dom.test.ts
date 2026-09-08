@@ -424,6 +424,34 @@ test('dashboard tabs expose favorites and owned dashboards without hiding either
   }
 })
 
+test('recording a recent dashboard does not retarget the activated link during reordering', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => localStorage.removeItem('leapview.dashboard-catalog.recents.v1'))
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page') && customElements.get('lv-entity-list'))
+    const target = page.locator('a[href="/dashboards/inventory-risk"]')
+    let focused = false
+    for (let count = 0; count < 40; count++) {
+      await page.keyboard.press('Tab')
+      focused = await target.evaluate((element) => {
+        let active: Element | null = element.ownerDocument.activeElement
+        while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+        return active === element
+      })
+      if (focused) break
+    }
+    expect(focused).toBe(true)
+    await Promise.all([
+      page.waitForURL((url) => url.pathname !== '/'),
+      page.keyboard.press('Enter'),
+    ])
+    expect(new URL(page.url()).pathname).toBe('/dashboards/inventory-risk')
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard favorites use resource ids when catalog ids are qualified', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

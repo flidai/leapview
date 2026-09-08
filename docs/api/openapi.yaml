@@ -26061,6 +26061,8 @@ paths:
               title: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -26088,6 +26090,8 @@ paths:
         target:
           parameter: project
           type: project
+        ui:
+          action_id: dashboard.builder.create
   /api/v1/projects/{project}/authoring/forks:
     post:
       operationId: forkDashboardAuthoringDraft
@@ -26456,6 +26460,8 @@ paths:
               title: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -26483,6 +26489,8 @@ paths:
         target:
           parameter: project
           type: project
+        ui:
+          action_id: dashboard.builder.fork
   /api/v1/projects/{project}/authoring/sources/{kind}/{dashboard}/export:
     get:
       operationId: exportDashboardAuthoringSource

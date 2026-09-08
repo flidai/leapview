@@ -811,6 +811,7 @@ interface DashboardAuthoring {
   @route("/drafts")
   @post
   @apigen.authz(#{ mode: "authenticated" })
+  @apigen.ui("dashboard.builder.create")
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_created", guarantee: "transactional", failures: #[] })
   createDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @body body: DashboardAuthoringCreateRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
 
@@ -826,6 +827,7 @@ interface DashboardAuthoring {
   @route("/forks")
   @post
   @apigen.authz(#{ mode: "authenticated" })
+  @apigen.ui("dashboard.builder.fork")
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_forked", guarantee: "transactional", failures: #[] })
   forkDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @body body: DashboardAuthoringForkRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
 

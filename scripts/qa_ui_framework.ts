@@ -2,6 +2,11 @@ import { mkdir, readFile, rm } from 'node:fs/promises'
 
 const portFile = '.tmp/dev-server.port'
 const qaHome = '.tmp/qa-ui-framework/home'
+const qaPostgresEnv = {
+  LEAPVIEW_POSTGRES_PROJECT_SUFFIX: '-qa-ui-framework',
+  LEAPVIEW_POSTGRES_TEST_MODE: '1',
+  LEAPVIEW_POSTGRES_DEV_ENV_FILE: `${qaHome}/postgres-dev.env`,
+}
 const managedServerReadyAttempts = 1800
 let startedServer = false
 let cleanedUp = false
@@ -59,6 +64,7 @@ async function resolveBaseURL(): Promise<string> {
   startedServer = true
   await prepareManagedHome()
   devTask = spawn(['task', 'dev'], {
+    ...qaPostgresEnv,
     LEAPVIEW_DEV_LOG_LINES: '0',
     LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts),
     LEAPVIEW_DEV_SKIP_PUBLISH: '1',
@@ -77,8 +83,13 @@ async function resolveBaseURL(): Promise<string> {
 }
 
 async function prepareManagedHome(): Promise<void> {
+  await destroyManagedPostgres()
   await removeManagedHome()
   await mkdir(qaHome, { recursive: true })
+}
+
+async function destroyManagedPostgres(): Promise<void> {
+  await run(['./scripts/postgres-dev.sh', 'destroy'], qaPostgresEnv)
 }
 
 async function removeManagedHome(): Promise<void> {
@@ -92,7 +103,7 @@ async function deployManagedProject(): Promise<void> {
   let lastError: unknown
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await run(command)
+      await run(command, qaPostgresEnv)
       return
     } catch (error) {
       lastError = error
@@ -105,7 +116,14 @@ async function deployManagedProject(): Promise<void> {
 async function waitForManagedServer(): Promise<string> {
   for (let attempt = 0; attempt < managedServerReadyAttempts; attempt++) {
     const baseURL = await managedBaseURL()
-    if (baseURL && await reachable(baseURL)) return baseURL
+    if (baseURL) {
+      // The application root intentionally remains unavailable until a
+      // project has been published. Probe process health first so the QA
+      // harness can perform that initial publication instead of deadlocking
+      // while it waits for the publication it owns.
+      const healthURL = new URL('/healthz', baseURL).toString()
+      if (await reachable(healthURL)) return baseURL
+    }
     if (devTaskExitCode !== null) {
       throw new Error(`task dev exited before the managed server became reachable with status ${devTaskExitCode}`)
     }
@@ -163,7 +181,11 @@ async function cleanup(): Promise<void> {
         devTask.kill()
       }
     }
-    await removeManagedHome()
+    try {
+      await destroyManagedPostgres()
+    } finally {
+      await removeManagedHome()
+    }
   }
 }
 

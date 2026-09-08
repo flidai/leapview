@@ -130,9 +130,19 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 	actor := h.currentActor(r)
-	result, err := creator.Create(r.Context(), authoringservice.CreateRequest{
-		ProjectID: project, ActorID: actor, Title: strings.TrimSpace(r.FormValue("title")), Slug: strings.TrimSpace(r.FormValue("slug")),
-		SemanticModel: semanticModel, Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: idempotencyKey,
+	var result authoringservice.Result
+	target := authoringAuditTarget{}
+	err = executeAuthoringUIMutation(r, "createDashboardAuthoringDraft", project.String(), idempotencyKey, actor, "", "", authoring.OriginUI, access.CapabilityResourceEdit, &target, func(ctx context.Context) error {
+		var mutationErr error
+		result, mutationErr = creator.Create(ctx, authoringservice.CreateRequest{
+			ProjectID: project, ActorID: actor, Title: strings.TrimSpace(r.FormValue("title")), Slug: strings.TrimSpace(r.FormValue("slug")),
+			SemanticModel: semanticModel, Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: idempotencyKey,
+		})
+		if mutationErr == nil {
+			target.dashboardID = result.Lifecycle.ID.String()
+			target.draftID = draftIDFromLifecycle(result.Lifecycle)
+		}
+		return mutationErr
 	})
 	if err != nil {
 		writeBuilderError(w, r, err)
@@ -243,10 +253,21 @@ func (h Handler) DashboardDraftFork(w nethttp.ResponseWriter, r *nethttp.Request
 		writeBuilderError(w, r, err)
 		return
 	}
-	result, err := creator.Fork(r.Context(), sourceadapter.ForkRequest{
-		Source:          sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: project, DashboardID: authoring.DashboardID(dashboardID)},
-		TargetProjectID: project, ActorID: h.currentActor(r), Title: strings.TrimSpace(r.FormValue("title")), Slug: strings.TrimSpace(r.FormValue("slug")),
-		Origin: authoring.OriginUI, IdempotencyKey: idempotencyKey,
+	actor := h.currentActor(r)
+	var result authoringservice.Result
+	target := authoringAuditTarget{}
+	err = executeAuthoringUIMutation(r, "forkDashboardAuthoringDraft", project.String(), idempotencyKey, actor, "", "", authoring.OriginUI, access.CapabilityResourceEdit, &target, func(ctx context.Context) error {
+		var mutationErr error
+		result, mutationErr = creator.Fork(ctx, sourceadapter.ForkRequest{
+			Source:          sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: project, DashboardID: authoring.DashboardID(dashboardID)},
+			TargetProjectID: project, ActorID: actor, Title: strings.TrimSpace(r.FormValue("title")), Slug: strings.TrimSpace(r.FormValue("slug")),
+			Origin: authoring.OriginUI, IdempotencyKey: idempotencyKey,
+		})
+		if mutationErr == nil {
+			target.dashboardID = result.Lifecycle.ID.String()
+			target.draftID = draftIDFromLifecycle(result.Lifecycle)
+		}
+		return mutationErr
 	})
 	if err != nil {
 		writeBuilderError(w, r, err)
@@ -265,8 +286,19 @@ func (h Handler) DashboardDraftFork(w nethttp.ResponseWriter, r *nethttp.Request
 
 func browserFormRequestID(r *nethttp.Request) (string, error) {
 	value := strings.TrimSpace(r.FormValue("idempotencyKey"))
+	if !canonicalUUIDv7(value) {
+		return "", fmt.Errorf("%w: idempotencyKey must be a canonical UUIDv7", authoring.ErrInvalidPayload)
+	}
+	return value, nil
+}
+
+func browserCommandIdempotencyKey(r *nethttp.Request, fallback string) (string, error) {
+	value := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if value == "" {
-		return "", fmt.Errorf("%w: idempotencyKey is required", authoring.ErrInvalidPayload)
+		value = strings.TrimSpace(fallback)
+	}
+	if !canonicalUUIDv7(value) {
+		return "", fmt.Errorf("%w: Idempotency-Key must be a canonical UUIDv7", authoring.ErrInvalidPayload)
 	}
 	return value, nil
 }
@@ -317,7 +349,10 @@ func (h Handler) DashboardArchive(w nethttp.ResponseWriter, r *nethttp.Request) 
 		Provenance:       authoring.Provenance{Origin: authoring.OriginUI, ActorID: actorID},
 		Archive:          &authoring.ArchivePayload{},
 	}
-	if _, err := h.Authoring.Execute(r.Context(), project, command); err != nil {
+	if err := executeAuthoringUIMutation(r, "executeDashboardAuthoringCommand", project.String(), requestID, actorID, command.DashboardID.String(), command.DraftID.String(), authoring.OriginUI, access.CapabilityResourceManage, nil, func(ctx context.Context) error {
+		_, mutationErr := h.Authoring.Execute(ctx, project, command)
+		return mutationErr
+	}); err != nil {
 		writeBuilderError(w, r, err)
 		return
 	}
@@ -429,11 +464,23 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 		return
 	}
-	if command.IsBuilderIntent() {
-		_, err = h.Authoring.ExecuteIntent(r.Context(), application.IntentRequest{ProjectID: project, ActorID: actorID, Command: command})
-	} else {
-		_, err = h.Authoring.Execute(r.Context(), project, command)
+	idempotencyKey, err := browserCommandIdempotencyKey(r, command.ID.String())
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
 	}
+	// The durable command row, domain event, and audit row share the
+	// idempotency identity. X-Request-ID remains a distinct transport
+	// correlation value, matching the headless authoring API contract.
+	command.ID = authoring.CommandID(idempotencyKey)
+	err = executeAuthoringUIMutation(r, "executeDashboardAuthoringCommand", project.String(), idempotencyKey, actorID, command.DashboardID.String(), command.DraftID.String(), authoring.OriginUI, authoringCommandCapability(command), nil, func(ctx context.Context) error {
+		if command.IsBuilderIntent() {
+			_, mutationErr := h.Authoring.ExecuteIntent(ctx, application.IntentRequest{ProjectID: project, ActorID: actorID, Command: command})
+			return mutationErr
+		}
+		_, mutationErr := h.Authoring.Execute(ctx, project, command)
+		return mutationErr
+	})
 	if err != nil {
 		writeBuilderError(w, r, err)
 		return

@@ -348,7 +348,7 @@ check_isolation() {
 }
 
 usage() {
-  echo "Usage: $0 up|down|status|env|check"
+  echo "Usage: $0 up|down|destroy|status|env|check"
 }
 
 case "${1:-}" in
@@ -364,6 +364,13 @@ case "${1:-}" in
     ;;
   down)
     compose down
+    ;;
+  destroy)
+    # Reserved for disposable QA topologies. The explicit action name and
+    # worktree-scoped Compose project keep ordinary development shutdowns
+    # durable while allowing hermetic browser runs to remove their database.
+    compose down --volumes --remove-orphans
+    rm -f "$ENV_FILE"
     ;;
   status)
     compose ps

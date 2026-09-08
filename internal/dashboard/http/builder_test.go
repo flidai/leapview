@@ -57,7 +57,11 @@ type builderAuthoringFake struct {
 	forkRequest      sourceadapter.ForkRequest
 	draftRead        application.DraftRead
 	draftRequest     application.DraftRequest
+	auditIntent      access.AuditIntent
+	auditIntentFound bool
 }
+
+const browserTestRequestID = "01890f3e-4c00-7000-8000-000000000001"
 
 type semanticCatalogMetrics struct{ fakeMetrics }
 
@@ -69,21 +73,29 @@ func (f *builderAuthoringFake) Builder(_ context.Context, request builderview.Re
 	f.builderReq = request
 	return f.builder, f.err
 }
-func (f *builderAuthoringFake) Execute(_ context.Context, _ projectgraph.ResourceID, command authoring.Command) (authoringservice.Result, error) {
+func (f *builderAuthoringFake) captureAuditIntent(ctx context.Context) {
+	f.auditIntent, f.auditIntentFound = authoring.AuditIntentFromContext(ctx)
+}
+
+func (f *builderAuthoringFake) Execute(ctx context.Context, _ projectgraph.ResourceID, command authoring.Command) (authoringservice.Result, error) {
+	f.captureAuditIntent(ctx)
 	f.executeCalls++
 	f.executed = command
 	return authoringservice.Result{Revision: command.ExpectedRevision}, f.err
 }
-func (f *builderAuthoringFake) ExecuteIntent(_ context.Context, request application.IntentRequest) (authoringservice.Result, error) {
+func (f *builderAuthoringFake) ExecuteIntent(ctx context.Context, request application.IntentRequest) (authoringservice.Result, error) {
+	f.captureAuditIntent(ctx)
 	f.intentCalls++
 	f.executed = request.Command
 	return authoringservice.Result{Revision: request.Command.ExpectedRevision}, f.err
 }
-func (f *builderAuthoringFake) Create(_ context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
+func (f *builderAuthoringFake) Create(ctx context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
+	f.captureAuditIntent(ctx)
 	f.createRequest = request
 	return f.createResult, f.err
 }
-func (f *builderAuthoringFake) Fork(_ context.Context, request sourceadapter.ForkRequest) (authoringservice.Result, error) {
+func (f *builderAuthoringFake) Fork(ctx context.Context, request sourceadapter.ForkRequest) (authoringservice.Result, error) {
+	f.captureAuditIntent(ctx)
 	f.forkRequest = request
 	return f.forkResult, f.err
 }
@@ -120,17 +132,17 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	if getFork.Code != nethttp.StatusOK || !strings.Contains(getFork.Body.String(), `action="/dashboards/revenue/fork"`) || !formContainsUUIDv7(getFork.Body.String(), "idempotencyKey") {
 		t.Fatalf("fork page = %d %s", getFork.Code, getFork.Body.String())
 	}
-	create := httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=sales-model&slug=sales&idempotencyKey=create-form-1"))
+	create := httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=sales-model&slug=sales&idempotencyKey="+browserTestRequestID))
 	create.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	createRec := httptest.NewRecorder()
 	handler.DashboardDraftCreate(createRec, create)
 	if createRec.Code != nethttp.StatusSeeOther || createRec.Header().Get("Location") != "/dashboards/dashboard-created/edit?draft=draft-created" {
 		t.Fatalf("create redirect = %d %q", createRec.Code, createRec.Header().Get("Location"))
 	}
-	if fake.createRequest.SemanticModel != "sales-model" || fake.createRequest.IdempotencyKey != "create-form-1" || fake.createRequest.Origin != authoring.OriginUI {
+	if fake.createRequest.SemanticModel != "sales-model" || fake.createRequest.IdempotencyKey != browserTestRequestID || fake.createRequest.Origin != authoring.OriginUI || !fake.auditIntentFound || fake.auditIntent.Operation != "createDashboardAuthoringDraft" {
 		t.Fatalf("create request = %#v", fake.createRequest)
 	}
-	fork := httptest.NewRequest(nethttp.MethodPost, "/dashboards/revenue/fork", strings.NewReader("title=Sales%20copy&slug=sales-copy&idempotencyKey=fork-form-1"))
+	fork := httptest.NewRequest(nethttp.MethodPost, "/dashboards/revenue/fork", strings.NewReader("title=Sales%20copy&slug=sales-copy&idempotencyKey="+browserTestRequestID))
 	fork.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	fork = withBuilderURLParams(fork, "sales", "revenue")
 	forkRec := httptest.NewRecorder()
@@ -138,7 +150,7 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	if forkRec.Code != nethttp.StatusSeeOther || forkRec.Header().Get("Location") != "/dashboards/dashboard-forked/edit?draft=draft-created" {
 		t.Fatalf("fork redirect = %d %q", forkRec.Code, forkRec.Header().Get("Location"))
 	}
-	if fake.forkRequest.Source.Kind != sourceadapter.SourceProject || fake.forkRequest.Source.DashboardID != "revenue" || fake.forkRequest.IdempotencyKey != "fork-form-1" {
+	if fake.forkRequest.Source.Kind != sourceadapter.SourceProject || fake.forkRequest.Source.DashboardID != "revenue" || fake.forkRequest.IdempotencyKey != browserTestRequestID || !fake.auditIntentFound || fake.auditIntent.Operation != "forkDashboardAuthoringDraft" {
 		t.Fatalf("fork request = %#v", fake.forkRequest)
 	}
 }
@@ -150,7 +162,7 @@ func TestDashboardArchiveResolvesTheCurrentDraftAndRedirectsToCatalog(t *testing
 		Revision:  authoring.Revision{DashboardID: result.Lifecycle.ID, ID: result.Revision.RevisionID, Number: result.Revision.Number, ContentHash: result.Revision.ContentHash},
 	}}
 	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
-	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/dashboard-owned/archive", strings.NewReader("idempotencyKey=archive-form-1"))
+	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/dashboard-owned/archive", strings.NewReader("idempotencyKey="+browserTestRequestID))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request = withBuilderURLParams(request, "sales", "dashboard-owned")
 	recorder := httptest.NewRecorder()
@@ -163,7 +175,7 @@ func TestDashboardArchiveResolvesTheCurrentDraftAndRedirectsToCatalog(t *testing
 	if fake.draftRequest.DashboardID != "dashboard-owned" || fake.draftRequest.ActorID != "principal-1" {
 		t.Fatalf("draft request = %#v", fake.draftRequest)
 	}
-	if fake.executed.ID != "archive-form-1" || fake.executed.Archive == nil || fake.executed.DraftID != "draft-created" || fake.executed.ExpectedRevision != result.Revision {
+	if fake.executed.ID != authoring.CommandID(browserTestRequestID) || fake.executed.Archive == nil || fake.executed.DraftID != "draft-created" || fake.executed.ExpectedRevision != result.Revision || !fake.auditIntentFound || fake.auditIntent.Capability != access.CapabilityResourceManage {
 		t.Fatalf("archive command = %#v", fake.executed)
 	}
 }
@@ -202,7 +214,7 @@ func TestDashboardDraftCreateRejectsADataModelOutsideThePicker(t *testing.T) {
 		ProjectID:          "sales",
 		CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" },
 	}
-	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=semantic%3Aunknown&idempotencyKey=create-form-unknown"))
+	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=semantic%3Aunknown&idempotencyKey="+browserTestRequestID))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
 	handler.DashboardDraftCreate(recorder, request)
@@ -238,8 +250,8 @@ func TestDashboardDraftCreateAndForkAuthorizationFailuresRenderBrowserRecovery(t
 	fake := &builderAuthoringFake{err: access.ErrForbidden}
 	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
 	for name, request := range map[string]*nethttp.Request{
-		"create": httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=sales-model&idempotencyKey=create-denied")),
-		"fork":   withBuilderURLParams(httptest.NewRequest(nethttp.MethodPost, "/dashboards/revenue/fork", strings.NewReader("title=Sales%20copy&idempotencyKey=fork-denied")), "sales", "revenue"),
+		"create": httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=sales-model&idempotencyKey="+browserTestRequestID)),
+		"fork":   withBuilderURLParams(httptest.NewRequest(nethttp.MethodPost, "/dashboards/revenue/fork", strings.NewReader("title=Sales%20copy&idempotencyKey="+browserTestRequestID)), "sales", "revenue"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			request.Header.Set("Accept", "text/html")
@@ -296,7 +308,7 @@ func TestDashboardBuilderCommandPreservesIdempotencyFallbackWithGeneratedRequest
 			"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64), "action": "publish",
 		}})
 		req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
-		req.Header.Set("Idempotency-Key", "builder-retry-1")
+		req.Header.Set("Idempotency-Key", browserTestRequestID)
 		rec := httptest.NewRecorder()
 
 		correlated.ServeHTTP(rec, req)
@@ -304,7 +316,7 @@ func TestDashboardBuilderCommandPreservesIdempotencyFallbackWithGeneratedRequest
 		if rec.Code != nethttp.StatusOK {
 			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 		}
-		if fake.executed.ID != "builder-retry-1" {
+		if fake.executed.ID != authoring.CommandID(browserTestRequestID) {
 			t.Fatalf("command ID = %q, want stable Idempotency-Key fallback", fake.executed.ID)
 		}
 		got := rec.Header().Get("X-Request-ID")
@@ -765,7 +777,9 @@ func (f *builderAuthoringFake) ExportDraftYAML(_ context.Context, request source
 
 func builderRequest(method, path string, body any) *nethttp.Request {
 	encoded, _ := json.Marshal(body)
-	return httptest.NewRequest(method, path, bytes.NewReader(encoded))
+	request := httptest.NewRequest(method, path, bytes.NewReader(encoded))
+	request.Header.Set("Idempotency-Key", browserTestRequestID)
+	return request
 }
 
 func withBuilderURLParams(r *nethttp.Request, workspace, dashboard string) *nethttp.Request {
@@ -791,7 +805,7 @@ func TestDashboardBuilderCommandTranslatesPublishWithExactRevision(t *testing.T)
 	if rec.Code != nethttp.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if fake.executed.ID != "command-1" || fake.executed.DraftID != "draft-1" || fake.executed.ExpectedRevision.Number != 7 || fake.executed.Publish == nil {
+	if fake.executed.ID != authoring.CommandID(browserTestRequestID) || fake.executed.DraftID != "draft-1" || fake.executed.ExpectedRevision.Number != 7 || fake.executed.Publish == nil {
 		t.Fatalf("translated command = %#v", fake.executed)
 	}
 	if fake.executed.Provenance.Origin != authoring.OriginUI || fake.executed.Provenance.ActorID != "principal-1" {
@@ -812,7 +826,7 @@ func TestDashboardBuilderCommandArchivesAndRedirectsToCatalog(t *testing.T) {
 	req.Header.Set("X-Request-ID", "archive-1")
 	recorder := httptest.NewRecorder()
 	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
-	if recorder.Code != nethttp.StatusOK || fake.executed.Archive == nil || fake.executed.ID != "archive-1" {
+	if recorder.Code != nethttp.StatusOK || fake.executed.Archive == nil || fake.executed.ID != authoring.CommandID(browserTestRequestID) {
 		t.Fatalf("archive response = %d command=%#v body=%s", recorder.Code, fake.executed, recorder.Body.String())
 	}
 	body := recorder.Body.String()
