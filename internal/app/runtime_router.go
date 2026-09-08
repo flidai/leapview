@@ -523,7 +523,7 @@ func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capab
 	if capabilities.AgentPersistence == nil {
 		return errors.New("production runtime composition requires native agent persistence")
 	}
-	if capabilities.SavedExplorationService == nil {
+	if savedExplorationNil(capabilities.SavedExplorationService) {
 		return errors.New("production runtime composition requires a native saved exploration service")
 	}
 	if data.RefreshPersistence == nil {

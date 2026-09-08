@@ -174,3 +174,22 @@ integration is ready for a local merge commit and stable CI, not yet for a
 green-PR claim. The staged diff's sole whitespace warning is an existing blank
 EOF line in incoming main's `internal/platform/ci/ci-health-audit.md`; that
 unrelated generated audit document was preserved unchanged.
+
+## Stable CI findings and follow-up
+
+- The first stable run exposed a missing closing brace in the merged browser
+  command helper. The reviewed fix preserves UUIDv7 command identities and
+  explorer tab headers; three focused tests and the browser bundle build pass.
+- The next run was terminated with exit 143 before completion, without a
+  reported test failure. It is not counted as a successful CI run. Validation
+  was restarted in a tracked background process with an explicit exit marker.
+- That run exposed stale merged route-inventory and legacy SQLite-tail
+  expectations, plus a production dependency fixture missing the new required
+  saved service. The route delta was reviewed for ownership/authentication
+  before updating its digest; no route or authorization requirement was removed.
+- Legacy SQLite remains at migration 095; native saved persistence lives in
+  PostgreSQL migration 003. The sequence/restart tests now check that intended
+  split and pass. The production fixture retains all earlier dependency checks,
+  and the saved-service gate additionally rejects typed-nil interfaces.
+- All focused fixes pass. Complete CI, frontend suites and exact-head remote
+  checks remain outstanding; no PR or main merge has occurred.
