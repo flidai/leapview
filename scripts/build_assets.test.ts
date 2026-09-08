@@ -2,6 +2,7 @@ import { afterEach, expect, test } from 'bun:test'
 import { productionMinify } from './frontend_bundle_options'
 import type { FrontendBundleEvidence } from './frontend_bundle_budget'
 import { verifyFrontendBundleFiles } from './frontend_bundle_files'
+import { pathToFileURL } from 'node:url'
 
 const outputDirectory = '.tmp/production-topology-build-test'
 const minifyOutputDirectory = '.tmp/production-whitespace-minify-test'
@@ -13,6 +14,7 @@ afterEach(async () => {
 })
 
 test('production minification removes formatting without renaming or transforming syntax', async () => {
+  expect(productionMinify).toEqual({ whitespace: true, syntax: false, identifiers: false })
   const entrypoint = `${minifyOutputDirectory}/entry.ts`
   await Bun.write(entrypoint, `/*! @license whitespace-only fixture */
 export function preserveReadableIdentifier(value: number) {
@@ -50,6 +52,9 @@ export function preserveReadableIdentifier(value: number) {
   expect(minifiedText).toContain('const preserveThisConst=')
   expect(minifiedText).toContain('return preserveThisConst')
   expect(codeWithoutLicense).not.toMatch(/\r?\n/)
+
+  const emittedModule = await import(`${pathToFileURL(`${minifyOutputDirectory}/minified/entry.js`).href}?fixture=${Date.now()}`)
+  expect(emittedModule.preserveReadableIdentifier(4)).toBe(5)
 })
 
 test('production topology JavaScript has no external CDN dependencies', async () => {
