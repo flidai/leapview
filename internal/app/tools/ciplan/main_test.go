@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	ciadapter "github.com/flidai/leapview/internal/app/tools/ciadapter"
 	platformci "github.com/flidai/leapview/internal/platform/ci"
 )
 
@@ -79,8 +81,8 @@ func TestCumulativeStackPlanAndGate(t *testing.T) {
 	if err := runPlan(args); err != nil {
 		t.Fatal(err)
 	}
-	var plan platformci.Plan
-	if err := readJSON("ci-plan.json", &plan); err != nil {
+	plan, err := readPlan("ci-plan.json")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if plan.PR.Base != base || plan.PR.Head != head || !plan.PR.Effective.GoApplication || !plan.PR.Effective.Docs {
@@ -88,9 +90,9 @@ func TestCumulativeStackPlanAndGate(t *testing.T) {
 	}
 	results := map[string]string{"prepare": "success"}
 	for name, on := range plan.PR.Effective.Selected() {
-		results[name] = "skipped"
+		results[ciadapter.WorkflowJobID(name)] = "skipped"
 		if on {
-			results[name] = "success"
+			results[ciadapter.WorkflowJobID(name)] = "success"
 		}
 	}
 	saveResults := func() { data, _ := json.Marshal(results); write("results.json", string(data)) }
@@ -123,7 +125,8 @@ func TestCumulativeStackPlanAndGate(t *testing.T) {
 		t.Fatal("unexpected deferral passed")
 	}
 
-	if err := readJSON("ci-plan.json", &plan); err != nil {
+	plan, err = readPlan("ci-plan.json")
+	if err != nil {
 		t.Fatal(err)
 	}
 	for name := range results {
@@ -166,5 +169,146 @@ func TestCurrentOutputsMatchSelectedFrontendMatrix(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("missing output %s", want)
 		}
+	}
+}
+
+func TestWarehouseBoundaryUsesHistoricalWorkflowOutputID(t *testing.T) {
+	t.Parallel()
+
+	plan := platformci.PlanChanges(platformci.Input{Event: "pull_request", PullRequestNumber: 1}, []platformci.Change{{Status: "M", Paths: []string{"internal/analytics/query/planner.go"}}})
+	if plan.PR == nil || !plan.PR.Effective.Warehouse {
+		t.Fatalf("warehouse boundary was not selected: %+v", plan.PR)
+	}
+	output := filepath.Join(t.TempDir(), "github-output")
+	if err := os.WriteFile(output, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeGitHubOutputs(output, plan); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "dbt_warehouse_boundary_validation=true") {
+		t.Fatalf("legacy workflow output missing:\n%s", data)
+	}
+
+	plan.PR.Head, plan.PR.RunID, plan.PR.Attempt = "candidate", "42", "1"
+	artifact, err := ciadapter.MarshalPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(artifact), `"dbt": true`) {
+		t.Fatalf("artifact did not preserve the v2 wire field:\n%s", artifact)
+	}
+	planPath := filepath.Join(t.TempDir(), "ci-plan.json")
+	if err := os.WriteFile(planPath, artifact, 0600); err != nil {
+		t.Fatal(err)
+	}
+	results := map[string]string{"prepare": "success"}
+	for name, selected := range plan.PR.Effective.Selected() {
+		wireName := ciadapter.WorkflowJobID(name)
+		if selected {
+			results[wireName] = "success"
+		} else {
+			results[wireName] = "skipped"
+		}
+	}
+	resultsPath := filepath.Join(t.TempDir(), "results.json")
+	resultData, err := json.Marshal(results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resultsPath, resultData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	matrix := prFrontendMatrix(plan)
+	args := []string{"--plan", planPath, "--results", resultsPath, "--expected-head", "candidate", "--expected-run-id", "42", "--expected-attempt", "1", "--frontend-matrix", matrix}
+	if err := runGate(args); err != nil {
+		t.Fatalf("historical wire artifact rejected: %v", err)
+	}
+	neutralArtifact := bytes.Replace(artifact, []byte(`"dbt": true`), []byte(`"warehouse": true`), 1)
+	if err := os.WriteFile(planPath, neutralArtifact, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGate(args); err == nil {
+		t.Fatal("neutral plan field was accepted at the wire boundary")
+	}
+	if err := os.WriteFile(planPath, artifact, 0600); err != nil {
+		t.Fatal(err)
+	}
+	results[ciadapter.WorkflowJobID("warehouse-validation")] = "skipped"
+	resultData, err = json.Marshal(results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resultsPath, resultData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGate(args); err == nil {
+		t.Fatal("selected warehouse lane accepted a skipped result")
+	} else if !strings.Contains(err.Error(), "dbt-warehouse-boundary-validation") {
+		t.Fatalf("gate diagnostic lost the workflow lane name: %v", err)
+	}
+}
+
+func TestGateRejectsNeutralAndWireResultCollision(t *testing.T) {
+	t.Parallel()
+
+	plan := platformci.PlanChanges(platformci.Input{Event: "pull_request", PullRequestNumber: 1}, []platformci.Change{{Status: "M", Paths: []string{"internal/analytics/query/planner.go"}}})
+	plan.PR.Head, plan.PR.RunID, plan.PR.Attempt = "candidate", "42", "1"
+	artifact, err := ciadapter.MarshalPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	planPath, resultsPath := filepath.Join(dir, "ci-plan.json"), filepath.Join(dir, "results.json")
+	if err := os.WriteFile(planPath, artifact, 0600); err != nil {
+		t.Fatal(err)
+	}
+	results := map[string]string{"prepare": "success"}
+	for name, selected := range plan.PR.Effective.Selected() {
+		wireName := ciadapter.WorkflowJobID(name)
+		if selected {
+			results[wireName] = "success"
+		} else {
+			results[wireName] = "skipped"
+		}
+	}
+	resultData, err := json.Marshal(results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resultsPath, resultData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--plan", planPath, "--results", resultsPath, "--expected-head", "candidate", "--expected-run-id", "42", "--expected-attempt", "1", "--frontend-matrix", prFrontendMatrix(plan)}
+	if err := runGate(args); err != nil {
+		t.Fatalf("valid workflow results rejected: %v", err)
+	}
+	wireName := ciadapter.WorkflowJobID("warehouse-validation")
+	delete(results, wireName)
+	results["warehouse-validation"] = "success"
+	resultData, err = json.Marshal(results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resultsPath, resultData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGate(args); err == nil {
+		t.Fatal("neutral workflow result alias was accepted")
+	}
+	results[wireName] = "success"
+	resultData, err = json.Marshal(results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resultsPath, resultData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGate(args); err == nil {
+		t.Fatal("neutral/wire alias collision was accepted")
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	ciadapter "github.com/flidai/leapview/internal/app/tools/ciadapter"
 	platformci "github.com/flidai/leapview/internal/platform/ci"
 )
 
@@ -87,7 +88,7 @@ func run() error {
 		return err
 	}
 	report := platformci.AnalyzeHealth(runs)
-	reportJSON, err := json.MarshalIndent(report, "", "  ")
+	reportJSON, err := marshalHealthReport(report)
 	if err != nil {
 		return err
 	}
@@ -416,17 +417,7 @@ func decodePlanArchive(data []byte) (platformci.Plan, error) {
 			return platformci.Plan{}, err
 		}
 		defer reader.Close()
-		var plan platformci.Plan
-		decoder := json.NewDecoder(reader)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&plan); err != nil {
-			return platformci.Plan{}, err
-		}
-		var trailing any
-		if err := decoder.Decode(&trailing); err != io.EOF {
-			return platformci.Plan{}, errors.New("ci-plan.json contains trailing data")
-		}
-		return plan, nil
+		return ciadapter.DecodePlan(reader)
 	}
 	return platformci.Plan{}, errors.New("ci-plan.json missing from artifact")
 }
@@ -447,7 +438,9 @@ func jobResults(jobs []githubJob) map[string]string {
 	return results
 }
 
-func normalizedJobName(name string) string { return platformci.HealthJobName(name) }
+func normalizedJobName(name string) string {
+	return ciadapter.HealthJobName(name)
+}
 
 func combineConclusion(current, next string) string {
 	rank := func(value string) int {
@@ -507,7 +500,7 @@ func renderMarkdown(report platformci.HealthReport, days int) string {
 	sort.Strings(names)
 	for _, name := range names {
 		m := report.Selection[name]
-		fmt.Fprintf(&output, "| %s | %d | %.1f%% |\n", markdownCell(name), m.Selected, m.Percent)
+		fmt.Fprintf(&output, "| %s | %d | %.1f%% |\n", markdownCell(ciadapter.WorkflowJobID(name)), m.Selected, m.Percent)
 	}
 	if report.PlannedRuns == 0 {
 		output.WriteString("\nN/A — no supported planning evidence.\n")
@@ -520,12 +513,12 @@ func renderMarkdown(report platformci.HealthReport, days int) string {
 	sort.Strings(names)
 	for _, name := range names {
 		m := report.Jobs[name]
-		fmt.Fprintf(&output, "| %s | %d | %d | %d | %d |\n", markdownCell(name), m.Expected, m.Executed, m.Skipped, m.Unknown)
+		fmt.Fprintf(&output, "| %s | %d | %d | %d | %d |\n", markdownCell(ciadapter.WorkflowJobID(name)), m.Expected, m.Executed, m.Skipped, m.Unknown)
 	}
 	if len(report.Alerts) > 0 {
 		output.WriteString("\n## Alerts\n\n")
 		for _, alert := range report.Alerts {
-			fmt.Fprintf(&output, "- %s\n", alert)
+			fmt.Fprintf(&output, "- %s\n", wireJobText(alert))
 		}
 	} else {
 		output.WriteString("\nNo measured thresholds exceeded. Audit coverage and sample counts are reported above.\n")

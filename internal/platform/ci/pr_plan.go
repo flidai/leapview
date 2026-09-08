@@ -27,7 +27,7 @@ type PRJobs struct {
 	GoApplication bool     `json:"go_application"`
 	Frontend      []string `json:"frontend"`
 	Postgres      bool     `json:"postgres"`
-	DBT           bool     `json:"dbt"`
+	Warehouse     bool     `json:"warehouse"`
 	Spatial       bool     `json:"spatial"`
 	Docs          bool     `json:"docs"`
 }
@@ -36,7 +36,7 @@ func (j PRJobs) Selected() map[string]bool {
 	return map[string]bool{
 		"apigen-validation": j.APIGen, "go-packages-validation": j.GoPackages,
 		"go-application-validation": j.GoApplication, "frontend-validation": len(j.Frontend) > 0,
-		"postgres-isolation-validation": j.Postgres, "dbt-warehouse-boundary-validation": j.DBT,
+		"postgres-isolation-validation": j.Postgres, "warehouse-validation": j.Warehouse,
 		"spatial-tile-benchmarks": j.Spatial, "docs-validation": j.Docs,
 	}
 }
@@ -48,7 +48,7 @@ func currentPRJobs(j Jobs) PRJobs {
 	// Any backend selection includes the external-service inventory in the app
 	// lane: a package-only test change may add a PostgreSQL harness consumer.
 	backend := len(j.GoMatrix) > 0 || j.DeploymentContracts || (j.ProductionImage && len(j.Frontend) == 0)
-	result := PRJobs{GoPackages: backend, GoApplication: backend, Postgres: backend, DBT: backend, Spatial: backend, Docs: j.Docs || j.SiteImage, Frontend: append([]string(nil), j.Frontend...)}
+	result := PRJobs{GoPackages: backend, GoApplication: backend, Postgres: backend, Warehouse: backend, Spatial: backend, Docs: j.Docs || j.SiteImage, Frontend: append([]string(nil), j.Frontend...)}
 	// Browser source is shared across feature boundaries; preserve all frontend
 	// consumers until an import graph can safely narrow production changes.
 	if j.UIRouteQA || (j.ProductionImage && len(j.Frontend) > 0) {
@@ -62,7 +62,7 @@ func currentPRJobs(j Jobs) PRJobs {
 }
 
 func FullPRJobs() PRJobs {
-	return PRJobs{APIGen: true, GoPackages: true, GoApplication: true, Frontend: append([]string(nil), frontendShards...), Postgres: true, DBT: true, Spatial: true, Docs: true}
+	return PRJobs{APIGen: true, GoPackages: true, GoApplication: true, Frontend: append([]string(nil), frontendShards...), Postgres: true, Warehouse: true, Spatial: true, Docs: true}
 }
 
 func (j PRJobs) ExpectedJobs() []string {

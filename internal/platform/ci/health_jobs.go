@@ -20,7 +20,7 @@ var healthLanes = []healthLane{
 	{"go-application-validation", []string{"Go application tests"}, []string{"ci.yml", "merge-validation.yml", "nightly.yml"}},
 	{"postgres-isolation-validation", []string{"PostgreSQL topology isolation"}, []string{"ci.yml"}},
 	{"spatial-tile-benchmarks", []string{"Spatial tile benchmarks"}, []string{"ci.yml"}},
-	{"dbt-warehouse-boundary-validation", []string{"dbt physical contract"}, []string{"ci.yml"}},
+	{"warehouse-validation", []string{"Warehouse physical contract"}, []string{"ci.yml"}},
 	{"full-validation", []string{"Full merge validation", "Full nightly validation"}, []string{"merge-validation.yml", "nightly.yml"}},
 	{"security-validation", []string{"Nightly dependency security"}, []string{"nightly.yml"}},
 	{"dependency-evidence-refresh", []string{"JavaScript dependency evidence refresh"}, []string{"nightly.yml"}},

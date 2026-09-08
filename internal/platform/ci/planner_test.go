@@ -1,7 +1,9 @@
 package ci
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -360,7 +362,7 @@ func TestCurrentPRSelection(t *testing.T) {
 		path              string
 		required, skipped []string
 	}{
-		{"internal/access/sqlite/session.go", []string{"go-packages-validation", "go-application-validation", "postgres-isolation-validation", "dbt-warehouse-boundary-validation", "spatial-tile-benchmarks"}, []string{"apigen-validation", "frontend-validation"}},
+		{"internal/access/sqlite/session.go", []string{"go-packages-validation", "go-application-validation", "postgres-isolation-validation", "warehouse-validation", "spatial-tile-benchmarks"}, []string{"apigen-validation", "frontend-validation"}},
 		{"web/components/chat/chat-page.ts", []string{"frontend-validation"}, []string{"go-application-validation", "postgres-isolation-validation"}},
 		{"docs/articles/start/installation.md", []string{"docs-validation", "frontend-validation"}, []string{"go-application-validation", "spatial-tile-benchmarks"}},
 		{"api/signals/main.tsp", []string{"apigen-validation", "go-packages-validation", "go-application-validation", "frontend-validation", "docs-validation"}, nil},
@@ -390,7 +392,78 @@ func TestCurrentPRSelection(t *testing.T) {
 
 func TestPRRenameDeleteAndSharedBrowserConsumers(t *testing.T) {
 	p := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "R100", Paths: []string{"internal/access/sqlite/deleted_test.go", "docs/articles/moved.md"}}, {Status: "D", Paths: []string{"web/components/shared/datastar-runtime.ts"}}})
-	if !p.PR.Effective.GoApplication || !p.PR.Effective.Docs || !reflect.DeepEqual(p.PR.Effective.Frontend, FullPRJobs().Frontend) {
+	if !p.PR.Effective.GoApplication || !p.PR.Effective.Warehouse || !p.PR.Effective.Docs || !reflect.DeepEqual(p.PR.Effective.Frontend, FullPRJobs().Frontend) {
 		t.Fatalf("lost dependency union: %+v", p.PR)
+	}
+}
+
+func TestWarehouseSelectionCoversBoundaryGeneratedAndUnknownInputs(t *testing.T) {
+	tests := []struct {
+		name    string
+		changes []Change
+	}{
+		{
+			name:    "boundary example",
+			changes: []Change{{Status: "M", Paths: []string{"examples/dbt-warehouse-boundary/dbt/dbt_project.yml"}}},
+		},
+		{
+			name:    "boundary script",
+			changes: []Change{{Status: "M", Paths: []string{"scripts/dbt-warehouse-boundary.sh"}}},
+		},
+		{
+			name: "boundary rename",
+			changes: []Change{{Status: "R100", Paths: []string{
+				"examples/dbt-warehouse-boundary/dbt/models/marts/fct_orders.sql",
+				"examples/dbt-warehouse-boundary/dbt/models/marts/fct_orders_renamed.sql",
+			}}},
+		},
+		{
+			name:    "boundary delete",
+			changes: []Change{{Status: "D", Paths: []string{"examples/dbt-warehouse-boundary/dbt/models/marts/fct_orders.sql"}}},
+		},
+		{
+			name:    "generated contract",
+			changes: []Change{{Status: "M", Paths: []string{"api/signals/main.tsp"}}},
+		},
+		{
+			name:    "shared runtime",
+			changes: []Change{{Status: "M", Paths: []string{"internal/runtimehost/manager.go"}}},
+		},
+		{
+			name:    "unknown input",
+			changes: []Change{{Status: "M", Paths: []string{"unknown/new-format"}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, tt.changes)
+			if plan.PR == nil || !plan.PR.Effective.Warehouse {
+				t.Fatalf("warehouse lane was not selected: %+v", plan.PR)
+			}
+		})
+	}
+}
+
+func TestPlanJSONRoundTripsNeutralWarehouseSelection(t *testing.T) {
+	plan := Plan{
+		Version: PRPlanVersion,
+		PR: &PRPlan{
+			Nominal:   PRJobs{Warehouse: true},
+			Effective: PRJobs{Warehouse: true},
+		},
+	}
+	data, err := plan.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"warehouse": true`) {
+		t.Fatalf("neutral JSON omitted warehouse selection: %s", data)
+	}
+	var got Plan
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, plan) {
+		t.Fatalf("JSON round trip = %#v, want %#v", got, plan)
 	}
 }

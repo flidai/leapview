@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	ciadapter "github.com/flidai/leapview/internal/app/tools/ciadapter"
 	platformci "github.com/flidai/leapview/internal/platform/ci"
 )
 
@@ -110,7 +111,7 @@ func runPlan(args []string) error {
 	if err := platformci.ValidatePRPlan(plan); err != nil {
 		return err
 	}
-	planJSON, err := plan.JSON()
+	planJSON, err := ciadapter.MarshalPlan(plan)
 	if err != nil {
 		return err
 	}
@@ -147,13 +148,17 @@ func runGate(args []string) error {
 	if *resultsPath == "" {
 		return errors.New("--results is required")
 	}
-	var plan platformci.Plan
-	if err := readJSON(*planPath, &plan); err != nil {
+	plan, err := readPlan(*planPath)
+	if err != nil {
 		return fmt.Errorf("read plan: %w", err)
 	}
 	results := map[string]string{}
 	if err := readJSON(*resultsPath, &results); err != nil {
 		return fmt.Errorf("read results: %w", err)
+	}
+	results, err = ciadapter.InternalResults(results)
+	if err != nil {
+		return fmt.Errorf("normalize results: %w", err)
 	}
 	if err := platformci.ValidatePRPlan(plan); err != nil {
 		return err
@@ -181,7 +186,7 @@ func runGate(args []string) error {
 	if len(report.AuditMisses) > 0 {
 		message += "\nselection audit misses: " + strings.Join(report.AuditMisses, ", ")
 	}
-	return errors.New(message)
+	return errors.New(ciadapter.WorkflowText(message))
 }
 
 func resolveCommit(ref string) (string, error) {
@@ -216,7 +221,8 @@ func writeGitHubOutputs(filename string, plan platformci.Plan) error {
 	}
 	if plan.PR != nil {
 		for _, name := range sortedJobNames(selected) {
-			if _, err := fmt.Fprintf(file, "%s=%t\n", strings.ReplaceAll(name, "-", "_"), selected[name]); err != nil {
+			workflowName := ciadapter.WorkflowJobID(name)
+			if _, err := fmt.Fprintf(file, "%s=%t\n", strings.ReplaceAll(workflowName, "-", "_"), selected[name]); err != nil {
 				return err
 			}
 		}
@@ -286,9 +292,9 @@ func appendSummary(filename string, plan platformci.Plan) error {
 	var run, skip []string
 	for _, name := range sortedJobNames(selected) {
 		if selected[name] {
-			run = append(run, name)
+			run = append(run, ciadapter.WorkflowJobID(name))
 		} else {
-			skip = append(skip, name)
+			skip = append(skip, ciadapter.WorkflowJobID(name))
 		}
 	}
 	_, err = fmt.Fprintf(file,
@@ -311,11 +317,31 @@ func appendGateSummary(filename string, report platformci.GateReport) error {
 		_, err = fmt.Fprintln(file, "## CI gate\n\nAll selected jobs passed.")
 		return err
 	}
-	_, err = fmt.Fprintf(file, "## CI gate\n\n- %s\n", strings.Join(report.Problems, "\n- "))
+	problems := make([]string, len(report.Problems))
+	for i, problem := range report.Problems {
+		problems[i] = wireJobText(problem)
+	}
+	_, err = fmt.Fprintf(file, "## CI gate\n\n- %s\n", strings.Join(problems, "\n- "))
 	if err == nil && len(report.AuditMisses) > 0 {
-		_, err = fmt.Fprintf(file, "\n**Selection audit misses:** %s\n", strings.Join(report.AuditMisses, ", "))
+		misses := make([]string, len(report.AuditMisses))
+		for i, miss := range report.AuditMisses {
+			misses[i] = ciadapter.WorkflowJobID(miss)
+		}
+		_, err = fmt.Fprintf(file, "\n**Selection audit misses:** %s\n", strings.Join(misses, ", "))
 	}
 	return err
+}
+
+func readPlan(filename string) (platformci.Plan, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return platformci.Plan{}, err
+	}
+	return ciadapter.DecodePlan(bytes.NewReader(data))
+}
+
+func wireJobText(value string) string {
+	return ciadapter.WorkflowText(value)
 }
 
 func readJSON(filename string, destination any) error {

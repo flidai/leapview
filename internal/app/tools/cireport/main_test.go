@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	ciadapter "github.com/flidai/leapview/internal/app/tools/ciadapter"
 	platformci "github.com/flidai/leapview/internal/platform/ci"
 )
 
@@ -91,12 +92,63 @@ func TestModernLaneNames(t *testing.T) {
 		"APIGen tests (PR)": "apigen-validation", "Go package tests (merge queue)": "go-packages-validation",
 		"Go application tests (nightly)": "go-application-validation", "Frontend tests (PR, site)": "frontend-validation/site",
 		"PostgreSQL topology isolation (PR)": "postgres-isolation-validation", "Spatial tile benchmarks (PR)": "spatial-tile-benchmarks",
-		"dbt physical contract (PR)": "dbt-warehouse-boundary-validation", "Full merge validation": "full-validation",
+		"dbt physical contract (PR)": "warehouse-validation", "Full merge validation": "full-validation",
 		"Nightly dependency security": "security-validation", "JavaScript dependency evidence refresh": "dependency-evidence-refresh",
 	} {
 		if got := normalizedJobName(name); got != want {
 			t.Errorf("%s = %s, want %s", name, got, want)
 		}
+	}
+}
+
+func TestMarshalHealthReportPreservesHistoricalPlanAndLaneIDs(t *testing.T) {
+	t.Parallel()
+
+	plan := platformci.PlanChanges(platformci.Input{Event: "pull_request", PullRequestNumber: 1}, []platformci.Change{{Status: "M", Paths: []string{"internal/analytics/query/planner.go"}}})
+	plan.PR.Head, plan.PR.RunID, plan.PR.Attempt = "candidate", "42", "1"
+	results := map[string]string{"prepare": "success"}
+	for name, selected := range plan.PR.Effective.Selected() {
+		if selected {
+			results[name] = "success"
+		} else {
+			results[name] = "skipped"
+		}
+	}
+	run := platformci.HealthRun{
+		ID: 42, Workflow: "ci.yml", Event: "pull_request", Attempt: 1,
+		Conclusion: "success", DurationSeconds: 1, QueueSeconds: 1,
+		Plan: plan, Results: results,
+	}
+	report := platformci.AnalyzeHealth([]platformci.HealthRun{run})
+	report.Alerts = []string{"warehouse-validation: expected success"}
+	report.Runs[0].Problems = []string{"warehouse-validation: expected success"}
+	data, err := marshalHealthReport(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"dbt": true`) {
+		t.Fatalf("embedded plan lost historical field:\n%s", text)
+	}
+	if strings.Contains(text, `"warehouse"`) {
+		t.Fatalf("neutral plan field leaked into report:\n%s", text)
+	}
+	if strings.Contains(text, "warehouse-validation") {
+		t.Fatalf("neutral lane ID leaked into report:\n%s", text)
+	}
+	legacyID := ciadapter.WorkflowJobID("warehouse-validation")
+	if !strings.Contains(text, `"`+legacyID+`"`) {
+		t.Fatalf("historical lane ID missing from report:\n%s", text)
+	}
+	markdown := renderMarkdown(report, 7)
+	if !strings.Contains(markdown, legacyID) {
+		t.Fatalf("historical lane ID missing from Markdown:\n%s", markdown)
+	}
+	if strings.Contains(markdown, "warehouse-validation") {
+		t.Fatalf("neutral lane ID leaked into Markdown:\n%s", markdown)
+	}
+	if !strings.Contains(markdown, legacyID+": expected success") {
+		t.Fatalf("historical lane ID missing from Markdown diagnostics:\n%s", markdown)
 	}
 }
 
@@ -325,7 +377,7 @@ func TestHostedTestedMergeCandidateProvenance(t *testing.T) {
 				t.Fatal(err)
 			}
 			run.Workflow = "ci.yml"
-			data, _ := json.Marshal(plan)
+			data, _ := ciadapter.MarshalPlan(plan)
 			var archive bytes.Buffer
 			writer := zip.NewWriter(&archive)
 			file, _ := writer.Create("ci-plan.json")

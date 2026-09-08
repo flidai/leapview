@@ -181,6 +181,13 @@ diffs, shared contracts, generators, APIGen, build inputs and manual dispatch ru
 the complete PR tier. `ci:full` and the deterministic one-in-five PR audit remain.
 Label changes trigger replanning.
 
+The core uses a neutral warehouse validation lane. The command-side `ciadapter`
+package owns the explicit legacy workflow binding and version-2 artifact field.
+Both `ciplan` and `cireport` translate at that boundary, preserving existing
+workflow outputs, artifact provenance, gate results and reporting identifiers.
+The adapter does not make selection decisions. Architecture tests keep CI tooling
+out of the application runtime dependency graph.
+
 PR flow: `prepare` (planner only) -> selected validation jobs -> always-present
 `CI gate`. Security gate continues independently without changes. No merge or
 nightly workflow is modified. Selected jobs still use full preparation and all

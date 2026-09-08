@@ -1,5 +1,73 @@
 # Hosted #520 remediation measurement
 
+## Publication and validation update — 2026-09-08
+
+The remediation is now published in
+[PR #537 — CI: remove merge validation dependency barrier](https://github.com/flidai/leapview/pull/537).
+
+| Item | Current value |
+|---|---|
+| Branch | `ganesh/ci-health-520-remediation` |
+| Last observed hosted PR commit | `63d4421053c75447438962511b64dec6c83e51c1` |
+| PR CI exposing the boundary failure | [34204761966](https://github.com/flidai/leapview/actions/runs/34204761966), attempt 1, `pull_request` |
+| Tested PR merge SHA | `b0a699243cdaabe90433bf1d22369f1a228f685b` |
+| Plan | Version 2; all lanes selected for cross-cutting CI inputs; planner succeeded |
+| Security / native PR proof | Security gate and Electron gate passed |
+| Required CI gate | Failed after all PR lanes completed; Go package validation is the sole failed validation lane |
+| Approving review | Not yet recorded; user is arranging it manually |
+| Merge queue entered | No; protections and the requested approval prerequisite have not been bypassed |
+| First eligible merge candidate SHA / run / date | Unavailable |
+| Measured after-remediation merge duration / p95 | Unavailable |
+
+The initial workspace was detached at `3b201d716`. A new branch was created and
+fast-forwarded to current main without rewriting history. Existing work was
+published in separate commits for reporting/selection (`7180ea302`), the merge
+barrier removal (`74a9a6944`), and audit/measurement documentation (`77c96e318`).
+GitHub MCP was disconnected, so authenticated `gh` supplied the GitHub integration.
+
+The first [PR run 34204071795](https://github.com/flidai/leapview/actions/runs/34204071795)
+exposed a reporting compatibility issue: GitHub's run metadata uses the source
+head SHA, while the plan records the tested PR merge SHA. With explicit user
+authorization, the separate reporting-only commit `63d442105` verifies the merge
+commit's parents against the run's recorded PR head/base. It preserves exact-SHA
+matching for merge-group runs, rejects stale run/attempt provenance, and leaves
+unavailable evidence untrusted. Its regression tests and a read-only report over
+the actual hosted artifact passed. Planner selection and workflow execution were
+not changed by that fix.
+
+### Hosted blocker and local boundary correction
+
+[Go package job 101991986188](https://github.com/flidai/leapview/actions/runs/34204761966/job/101991986188)
+failed in `TestDBTWarehouseBoundaryDoesNotEnterLeapViewRuntime` at 08:39:54 UTC.
+The architecture guard classifies `DBT` and dbt lane-name literals in
+`internal/platform/ci/pr_plan.go` and `health_jobs.go` as product runtime code.
+Only the `ciplan` and `cireport` command packages import that CI package.
+
+The failure reproduces locally. The authorized correction replaces the planner's
+vendor-specific concepts with a neutral warehouse validation lane. Existing
+workflow identifiers and version-2 artifact fields remain integration contracts;
+the architecture guard remains unchanged. No failed validation is skipped or
+disabled. The application lane and all other validation lanes passed; the required
+CI gate correctly failed on the package lane.
+
+Local boundary-fix validation: planner, adapter and CLI race tests passed;
+the complete architecture suite passed with 84.1% coverage (82.9% floor).
+Frontend contracts passed (4 tests, 25 assertions), as did quality budgets,
+exception checks, all critical-package coverage floors, documentation catalog
+validation and seven Mermaid diagrams. Neither runtime binary depends on the
+planner or adapter. `task ci` reached required PostgreSQL conformance and failed
+because this environment cannot access `/var/run/docker.sock`; that check remains
+mandatory and needs hosted validation.
+
+Next action: publish the boundary refactor, wait for the required gates and the manually arranged approving review, then use the normal merge queue
+with the expected head SHA. Only after an eligible
+`merge_group` run finishes can this report name the actual critical path or compare
+its first observed duration with the supplied 44m40s pre-remediation p95. One
+observation will not establish a new p95. No additional optimization is proposed
+or implemented during this operational validation.
+
+## Initial eligibility audit (before publication)
+
 Checked: **2026-09-08, approximately 07:54 UTC**.
 Status: **awaiting an eligible hosted run; impact cannot yet be measured**.
 
