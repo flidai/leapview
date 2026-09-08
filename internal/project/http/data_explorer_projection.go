@@ -339,6 +339,7 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command dataEx
 				}
 			}
 			out = append(out, projectsignals.DataExploreFieldSignal{
+				Availability: projectsignals.Optional(explorerFieldAvailability(compatible, len(path) > 0, rebaseDatasetID != "")), AvailabilityReason: projectsignals.Optional(reason),
 				ID: id, Label: firstExplorerNonEmpty(dimension.Label, explorerLabel(fieldName)), Kind: "dimension", DatasetID: tableName,
 				Description: projectsignals.Optional(dimension.Description), Type: projectsignals.Optional(fieldType), Selected: selectedDimensions[id],
 				Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RelationshipPath: projectsignals.OptionalSlice(path),
@@ -378,6 +379,7 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command dataEx
 			reason = "Not available from " + explorerLabel(baseTable) + " because no compiled binding reaches this semantic dimension."
 		}
 		out = append(out, projectsignals.DataExploreFieldSignal{
+			Availability: projectsignals.Optional(explorerFieldAvailability(compatible, len(path) > 0, false)), AvailabilityReason: projectsignals.Optional(reason),
 			ID: name, Label: firstExplorerNonEmpty(authored.Label, explorerLabel(name)), Kind: "dimension", DatasetID: datasetID,
 			Description: projectsignals.Optional(authored.Description), Type: projectsignals.Optional(fieldType), Selected: selectedDimensions[name],
 			Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RelationshipPath: projectsignals.OptionalSlice(path),
@@ -412,6 +414,7 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command dataEx
 			}
 		}
 		out = append(out, projectsignals.DataExploreFieldSignal{
+			Availability: projectsignals.Optional(explorerFieldAvailability(compatible, false, rebaseDatasetID != "")), AvailabilityReason: projectsignals.Optional(reason),
 			ID: name, Label: firstExplorerNonEmpty(metric.Label, explorerLabel(name)), Kind: "metric", DatasetID: datasetID,
 			Description: projectsignals.Optional(metric.Description), Type: projectsignals.Optional(firstExplorerNonEmpty(metric.Aggregation, metric.Type)), Selected: selectedMetrics[name],
 			Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RebaseDatasetID: projectsignals.Optional(rebaseDatasetID),
@@ -434,6 +437,19 @@ func explorerFieldCompatibility(model *semanticmodel.Model, baseTable, table str
 		ids = append(ids, relationship.ID)
 	}
 	return true, "", ids
+}
+
+func explorerFieldAvailability(compatible, related, changesGrain bool) string {
+	if changesGrain {
+		return "changes_grain"
+	}
+	if !compatible {
+		return "unavailable"
+	}
+	if related {
+		return "related"
+	}
+	return "available"
 }
 
 func resolveExplorerBase(model *semanticmodel.Model, currentBase string, command dataExploreState, compiled *semanticquery.CompiledModel) (string, bool) {

@@ -1,11 +1,14 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
@@ -126,5 +129,78 @@ func TestDataExploreCommandFromQueryRoundTripsDurableState(t *testing.T) {
 	}
 	if command.RequestSeq != 0 || command.ResetVersion != 0 {
 		t.Fatalf("runtime state leaked into URL command: %#v", command)
+	}
+}
+
+func TestDataExplorerStopHydratesCatalogBeforeReturningCancelledState(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	clientID := "tab-stop-regression"
+	runID := "explore-run-stop-regression"
+	datasetID := "orders"
+	command := projectsignals.DataExplorerCommand{
+		Action:   projectsignals.Optional("stop"),
+		ClientID: projectsignals.Optional(clientID),
+		RunID:    projectsignals.Optional(runID),
+		Mode:     projectsignals.Optional("explore"),
+		Explore: &projectsignals.DataExploreCommand{
+			Action:     projectsignals.Optional("stop"),
+			Spec:       exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID, Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
+			RequestSeq: 4,
+		},
+		RequestSeq: 4,
+	}
+	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", nil)
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	page, explorer, ok := h.dataExplorerSignalsForCommand(httptest.NewRecorder(), request, command)
+	if !ok {
+		t.Fatal("stop command failed to hydrate state")
+	}
+	if page.Context.ObjectCount == 0 || len(explorer.Objects) == 0 || len(explorer.Explore.Fields) == 0 {
+		t.Fatalf("stop command returned incomplete explorer state: page=%#v explorer=%#v", page, explorer)
+	}
+	if explorer.Explore.Status.State != "cancelled" {
+		t.Fatalf("stop status = %#v, want cancelled", explorer.Explore.Status)
+	}
+	if explorer.Explore.Result.RequestSeq != 0 || len(explorer.Explore.Result.Rows) != 0 {
+		t.Fatalf("stop result = %#v, want no process-local replay", explorer.Explore.Result)
+	}
+	if executor.calls != 0 {
+		t.Fatalf("stop command executed %d analytical queries", executor.calls)
+	}
+}
+
+func TestDataExplorerStopEndpointHydratesCatalogAndDoesNotExecute(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	clientID := "tab-stop-endpoint-regression"
+	datasetID := "orders"
+	command := projectsignals.DataExplorerCommand{
+		Action:     projectsignals.Optional("stop"),
+		ClientID:   projectsignals.Optional(clientID),
+		Mode:       projectsignals.Optional("explore"),
+		RequestSeq: 4,
+		Explore: &projectsignals.DataExploreCommand{
+			Action:     projectsignals.Optional("stop"),
+			Spec:       exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID, Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
+			RequestSeq: 4,
+		},
+	}
+	payload, err := json.Marshal(struct {
+		Command projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
+	}{Command: command})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", bytes.NewReader(payload))
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	recorder := httptest.NewRecorder()
+	h.DataExplorerCommand(recorder, request)
+	if recorder.Code != stdhttp.StatusOK {
+		t.Fatalf("stop endpoint status = %d, want 200: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "cancelled") || !strings.Contains(recorder.Body.String(), "orders.status") {
+		t.Fatalf("stop endpoint patch = %s, want cancelled hydrated state", recorder.Body.String())
+	}
+	if executor.calls != 0 {
+		t.Fatalf("stop endpoint executed %d analytical queries", executor.calls)
 	}
 }

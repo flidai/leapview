@@ -45,10 +45,19 @@ func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhtt
 		stdhttp.Error(w, "data explorer command payload is required", stdhttp.StatusBadRequest)
 		return
 	}
+	if !h.hasDataExplorerClientIdentity(r, signals.Command) {
+		stdhttp.Error(w, "data explorer client identity is required", stdhttp.StatusBadRequest)
+		return
+	}
 	page, explorer, ok := h.dataExplorerSignalsForCommand(w, r, signals.Command)
 	if !ok {
 		return
 	}
+	unlock, current := h.dataExplorerResponseLease(r, explorer.Command)
+	if !current {
+		return
+	}
+	defer unlock()
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
 		"page": page, "dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
 	})
@@ -74,6 +83,10 @@ func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *s
 		stdhttp.Error(w, "data explorer command payload is required", stdhttp.StatusBadRequest)
 		return
 	}
+	if !h.hasDataExplorerClientIdentity(r, signals.Command) {
+		stdhttp.Error(w, "data explorer client identity is required", stdhttp.StatusBadRequest)
+		return
+	}
 	_, explorer, asset, ok := h.dataExplorerSignalsForAssetCommand(w, r, chi.URLParam(r, "asset"), signals.Command)
 	if !ok {
 		return
@@ -82,6 +95,11 @@ func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *s
 		stdhttp.NotFound(w, r)
 		return
 	}
+	unlock, current := h.dataExplorerResponseLease(r, explorer.Command)
+	if !current {
+		return
+	}
+	defer unlock()
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
 		"dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
 	})
