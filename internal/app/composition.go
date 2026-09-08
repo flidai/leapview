@@ -82,6 +82,9 @@ func readClaimedProject(repository deploymentmodule.ProjectClaimReader, environm
 		if err != nil {
 			return "", false, fmt.Errorf("read claimed project: %w", err)
 		}
+		if err := claim.Validate(); err != nil {
+			return "", false, fmt.Errorf("invalid durable project claim: %w", err)
+		}
 		if claim.Environment != environment {
 			return "", false, fmt.Errorf("claimed project environment %q does not match configured environment %q", claim.Environment, environment)
 		}
