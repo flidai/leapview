@@ -2,6 +2,11 @@ import { chromium } from 'playwright'
 import { readFile, writeFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import process from 'node:process'
+import {
+  resourceMetricSnapshot,
+  summarizeResourcePhase,
+  summarizeResourceSamples,
+} from './performance-resources.mjs'
 
 const baseURL = process.env.QUALIFICATION_URL || 'https://localhost'
 const projectID = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
@@ -43,12 +48,12 @@ async function runColdSample(path) {
     metricSamples.push(await metricSnapshot())
     await writeJSON(path, {
       durationMs: round(performance.now() - startedAt),
-      resources: coldResourceDelta(metricSamples),
+      resources: summarizeResourcePhase(metricSamples),
       failures,
     })
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error))
-    await writeJSON(path, { durationMs: 0, resources: emptyResourceDelta(), failures })
+    await writeJSON(path, { durationMs: 0, resources: { metricSnapshots: [] }, failures })
     throw error
   } finally {
     await context.close()
@@ -245,8 +250,8 @@ async function runWorkload(path) {
     await browser.close()
   }
 
-  const coldResources = coldResults.map((result) => result.resources)
-  const resources = summarizeResources(metricSamples, coldResources)
+  const coldMetricSnapshots = coldResults.map((result) => result.resources?.metricSnapshots)
+  const resources = summarizeResourceSamples(metricSamples, coldMetricSnapshots)
   await writeJSON(path, {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -376,12 +381,7 @@ async function metricSnapshot() {
   if (!metricsToken) throw new Error('QUALIFICATION_METRICS_TOKEN is required')
   const body = await requestMetrics()
   const values = parsePrometheusMetrics(body)
-  return {
-    cpuSeconds: metric(values, 'process_cpu_seconds_total'),
-    residentMemoryBytes: metric(values, 'process_resident_memory_bytes'),
-    goroutines: metric(values, 'go_goroutines'),
-    openConnections: metric(values, 'leapview_duckdb_connections_open'),
-  }
+  return resourceMetricSnapshot(values)
 }
 
 function requestMetrics() {
@@ -413,44 +413,6 @@ function requestMetrics() {
     operation.on('error', reject)
     operation.end()
   })
-}
-
-function metric(values, name) {
-  const samples = values[name] || []
-  if (samples.length === 0) throw new Error(`metrics omitted ${name}`)
-  return Math.max(...samples)
-}
-
-function summarizeResources(samples, coldResources) {
-  if (samples.length === 0) throw new Error('performance workload captured no resource samples')
-  const first = samples[0]
-  const last = samples.at(-1)
-  const coldCPU = coldResources.reduce((sum, sample) => sum + sample.cpuSeconds, 0)
-  return {
-    peakResidentMemoryBytes: Math.max(
-      ...samples.map((sample) => sample.residentMemoryBytes),
-      ...coldResources.map((sample) => sample.peakResidentMemoryBytes),
-    ),
-    cpuSeconds: round(coldCPU + Math.max(0, last.cpuSeconds - first.cpuSeconds)),
-    temporaryDiskGrowthBytes: 0,
-    goroutinesBefore: first.goroutines,
-    goroutinesAfter: last.goroutines,
-    peakOpenConnections: Math.max(...samples.map((sample) => sample.openConnections)),
-    metricSamples: samples.length,
-  }
-}
-
-function coldResourceDelta(samples) {
-  const before = samples[0]
-  const after = samples.at(-1)
-  return {
-    cpuSeconds: round(Math.max(0, after.cpuSeconds - before.cpuSeconds)),
-    peakResidentMemoryBytes: Math.max(...samples.map((sample) => sample.residentMemoryBytes)),
-  }
-}
-
-function emptyResourceDelta() {
-  return { cpuSeconds: 0, peakResidentMemoryBytes: 0 }
 }
 
 async function readCredentials() {

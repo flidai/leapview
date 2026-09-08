@@ -2459,7 +2459,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"go run ./internal/app/tools/schemadocgen",
 		"go run ./internal/app/tools/openapidocgen",
 		"go run ./internal/app/tools/docsitegen",
-		"FROM oven/bun:1.4.2@sha256:",
+		"FROM oven/bun:1.3.14@sha256:",
 		"COPY --from=go-deps /usr/local/go/bin/gofmt /usr/local/bin/gofmt",
 		"COPY --from=sourcegen /src/api/gen ./api/gen",
 		"COPY --from=sourcegen /src/api/visualization ./api/visualization",
@@ -2944,6 +2944,8 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Go application tests (PR)",
 		"frontend-validation:",
 		"name: Frontend tests (PR, ${{ matrix.shard }})",
+		"performance-baseline-review:",
+		"name: Performance baseline review",
 		"postgres-isolation-validation:",
 		"name: PostgreSQL topology isolation (PR)",
 		"spatial-tile-benchmarks:",
@@ -2958,7 +2960,8 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
-		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]",
+		"needs: [performance-baseline-review, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]",
+		"PERFORMANCE_REVIEW_RESULT: ${{ needs.performance-baseline-review.result }}",
 		"APIGEN_RESULT: ${{ needs.apigen-validation.result }}",
 		"GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}",
 		"GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}",
@@ -2973,10 +2976,31 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		}
 	}
 	apigenCI := workflowJobBlock(t, text, "apigen-validation")
+	performanceReviewCI := workflowJobBlock(t, text, "performance-baseline-review")
 	goPackagesCI := workflowJobBlock(t, text, "go-packages-validation")
 	goApplicationCI := workflowJobBlock(t, text, "go-application-validation")
 	frontendCI := workflowJobBlock(t, text, "frontend-validation")
 	postgresIsolationCI := workflowJobBlock(t, text, "postgres-isolation-validation")
+	for _, want := range []string{
+		"pull-requests: read",
+		"BASE_REVISION: ${{ github.event.pull_request.base.sha }}",
+		"git show \"$BASE_REVISION:$guard\"",
+		"node \"$guard\"",
+	} {
+		if !strings.Contains(performanceReviewCI, want) {
+			t.Fatalf("performance baseline review is missing enforcement fragment %q", want)
+		}
+	}
+	ciGateCI := workflowJobBlock(t, text, "ci-gate")
+	for _, want := range []string{
+		"Require performance governance review",
+		"PERFORMANCE_REVIEW_RESULT: ${{ needs.performance-baseline-review.result }}",
+		"test \"$PERFORMANCE_REVIEW_RESULT\" = success",
+	} {
+		if !strings.Contains(ciGateCI, want) {
+			t.Fatalf("CI gate is missing performance enforcement fragment %q", want)
+		}
+	}
 	for _, want := range []string{
 		"name: Frontend tests (PR, ${{ matrix.shard }})",
 		"fail-fast: false",
@@ -3115,7 +3139,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Qualify production image",
 		"needs: build-production-image",
 		"uses: ./.github/actions/setup-ci",
-		"task image:qualify:production IMAGE=\"${immutable_image}\"",
+		"task image:qualify:performance IMAGE=\"${immutable_image}\"",
 	} {
 		if !strings.Contains(artifactText, want) {
 			t.Fatalf("main artifact workflow missing %q", want)
@@ -3226,15 +3250,26 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"scripts/postgres-conformance-tests.sh list",
 		"grep -Fvx -f",
 		"--shard-count 4",
+		"image:qualify:performance:",
+		"node scripts/qualify_performance_pair.mjs",
 		"image:qualify:production:",
-		"TMPDIR={{.ROOT_DIR}}/.tmp/qualification/tmp",
-		"go run ./cmd/leapviewctl qualify image",
-		"--require-immutable",
 		"image:qualify:site:",
 		"go run ./cmd/leapviewctl qualify site-image",
 	} {
 		if !strings.Contains(taskText, want) {
 			t.Fatalf("Taskfile missing vulnerability gate fragment %q", want)
+		}
+	}
+	performancePair, err := os.ReadFile(filepath.Join(root, "scripts", "qualify_performance_pair.mjs"))
+	if err != nil {
+		t.Fatalf("read performance pair orchestrator: %v", err)
+	}
+	for _, want := range []string{
+		"'qualify', 'image', '--image', reference.image, '--require-immutable'",
+		"'qualify', 'image', '--image', candidate, '--require-immutable'",
+	} {
+		if !strings.Contains(string(performancePair), want) {
+			t.Fatalf("paired qualification must preserve immutable image admission: missing %q", want)
 		}
 	}
 	var packageManifest struct {

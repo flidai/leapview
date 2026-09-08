@@ -500,7 +500,7 @@ func TestDBTWarehouseBoundaryCIJobUsesTheTieredWorkflow(t *testing.T) {
 	for _, want := range []string{
 		"dbt-warehouse-boundary-validation:",
 		"name: dbt physical contract (PR)",
-		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]",
+		"needs: [performance-baseline-review, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]",
 		"DBT_WAREHOUSE_RESULT: ${{ needs.dbt-warehouse-boundary-validation.result }}",
 	} {
 		if !strings.Contains(text, want) {

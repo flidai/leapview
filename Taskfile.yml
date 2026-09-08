@@ -304,6 +304,7 @@ tasks:
     cmds:
       - node --test scripts/ci_watchdog.test.mjs
       - node --test scripts/performance_baseline_review.test.mjs scripts/qualify_performance_pair.test.mjs
+      - node --test deploy/compose/qualification/performance-resources.test.mjs
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_bundle_budget.test.ts
       # ci:prepare already produced this evidence; checking it here avoids a

@@ -74,6 +74,14 @@ type qualificationDurationSummary struct {
 	Max     float64 `json:"max"`
 }
 
+type qualificationPerformanceMetricSnapshot struct {
+	ProcessStartTimeSeconds float64 `json:"processStartTimeSeconds"`
+	CPUSeconds              float64 `json:"cpuSeconds"`
+	ResidentMemoryBytes     int64   `json:"residentMemoryBytes"`
+	Goroutines              int64   `json:"goroutines"`
+	OpenConnections         int64   `json:"openConnections"`
+}
+
 type qualificationPerformanceToolchain struct {
 	BrowserImage string `json:"browserImage"`
 	Node         string `json:"node"`
@@ -115,15 +123,17 @@ type qualificationPerformanceReport struct {
 		Failures   []string `json:"failures"`
 	} `json:"reliability"`
 	Resources struct {
-		PeakResidentMemoryBytes  int64   `json:"peakResidentMemoryBytes"`
-		CPUSeconds               float64 `json:"cpuSeconds"`
-		MetricSamples            int64   `json:"metricSamples"`
-		TemporaryDiskBeforeBytes int64   `json:"temporaryDiskBeforeBytes"`
-		TemporaryDiskAfterBytes  int64   `json:"temporaryDiskAfterBytes"`
-		TemporaryDiskGrowthBytes int64   `json:"temporaryDiskGrowthBytes"`
-		GoroutinesBefore         int64   `json:"goroutinesBefore"`
-		GoroutinesAfter          int64   `json:"goroutinesAfter"`
-		PeakOpenConnections      int64   `json:"peakOpenConnections"`
+		PeakResidentMemoryBytes  int64                                      `json:"peakResidentMemoryBytes"`
+		CPUSeconds               float64                                    `json:"cpuSeconds"`
+		MetricSamples            int64                                      `json:"metricSamples"`
+		MetricSnapshots          []qualificationPerformanceMetricSnapshot   `json:"metricSnapshots"`
+		ColdMetricSnapshots      [][]qualificationPerformanceMetricSnapshot `json:"coldMetricSnapshots"`
+		TemporaryDiskBeforeBytes int64                                      `json:"temporaryDiskBeforeBytes"`
+		TemporaryDiskAfterBytes  int64                                      `json:"temporaryDiskAfterBytes"`
+		TemporaryDiskGrowthBytes int64                                      `json:"temporaryDiskGrowthBytes"`
+		GoroutinesBefore         int64                                      `json:"goroutinesBefore"`
+		GoroutinesAfter          int64                                      `json:"goroutinesAfter"`
+		PeakOpenConnections      int64                                      `json:"peakOpenConnections"`
 	} `json:"resources"`
 	Samples     json.RawMessage `json:"samples,omitempty"`
 	Concurrency json.RawMessage `json:"concurrency,omitempty"`
@@ -201,10 +211,13 @@ func (r *qualificationPerformanceReport) UnmarshalJSON(data []byte) error {
 			r.fieldPresence["reliability."+field] = true
 		}
 	}
-	for _, field := range []string{"peakResidentMemoryBytes", "cpuSeconds", "metricSamples", "temporaryDiskBeforeBytes", "temporaryDiskAfterBytes", "temporaryDiskGrowthBytes", "goroutinesBefore", "goroutinesAfter", "peakOpenConnections"} {
+	for _, field := range []string{"peakResidentMemoryBytes", "cpuSeconds", "metricSamples", "metricSnapshots", "coldMetricSnapshots", "temporaryDiskBeforeBytes", "temporaryDiskAfterBytes", "temporaryDiskGrowthBytes", "goroutinesBefore", "goroutinesAfter", "peakOpenConnections"} {
 		if qualificationJSONFieldPresent(nested("resources"), field) {
 			r.fieldPresence["resources."+field] = true
 		}
+	}
+	if err := qualificationValidateRawResourceEvidence(nested("resources")); err != nil {
+		return err
 	}
 	for _, field := range []string{"runtime", "cpuModel", "kernel", "logicalCPUs", "memoryBytes", "effectiveCPULimit", "effectiveMemoryLimitBytes", "dataset"} {
 		if qualificationJSONFieldPresent(nested("environment"), field) {
@@ -406,7 +419,7 @@ func validateQualificationPerformanceEvidence(report qualificationPerformanceRep
 			failures = append(failures, "reliability."+field+" is missing")
 		}
 	}
-	for _, field := range []string{"peakResidentMemoryBytes", "cpuSeconds", "metricSamples", "temporaryDiskBeforeBytes", "temporaryDiskAfterBytes", "temporaryDiskGrowthBytes", "goroutinesBefore", "goroutinesAfter", "peakOpenConnections"} {
+	for _, field := range []string{"peakResidentMemoryBytes", "cpuSeconds", "metricSamples", "metricSnapshots", "coldMetricSnapshots", "temporaryDiskBeforeBytes", "temporaryDiskAfterBytes", "temporaryDiskGrowthBytes", "goroutinesBefore", "goroutinesAfter", "peakOpenConnections"} {
 		if !report.fieldPresence["resources."+field] {
 			failures = append(failures, "resources."+field+" is missing")
 		}
@@ -438,6 +451,7 @@ func validateQualificationPerformanceEvidence(report qualificationPerformanceRep
 	if expectedGrowth := max(0, resources.TemporaryDiskAfterBytes-resources.TemporaryDiskBeforeBytes); resources.TemporaryDiskGrowthBytes != expectedGrowth {
 		failures = append(failures, "temporary disk growth does not match before/after measurements")
 	}
+	failures = append(failures, validateQualificationPerformanceResourceEvidence(report, policy)...)
 	var samples map[string][]float64
 	if len(report.Samples) == 0 || json.Unmarshal(report.Samples, &samples) != nil {
 		failures = append(failures, "raw latency samples are required and must be an object")

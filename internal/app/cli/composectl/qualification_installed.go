@@ -882,6 +882,7 @@ func (c *Controller) startQualificationPerformanceBrowser(
 		"package.json",
 		"browser.mjs",
 		"performance.mjs",
+		"performance-resources.mjs",
 		"performance-policy.json",
 	} {
 		if _, err := browser.CopyTo(
@@ -1116,7 +1117,7 @@ func (c *Controller) runQualificationPerformance(
 		return fmt.Errorf("installed performance package digest is missing or malformed")
 	}
 	harnessOutput, err := c.qualificationContainers.Existing(browserContainer).Exec(
-		ctx, nil, "sha256sum", "/work/browser.mjs", "/work/performance.mjs",
+		ctx, nil, "sha256sum", "/work/browser.mjs", "/work/performance.mjs", "/work/performance-resources.mjs",
 	)
 	if err != nil {
 		return qualificationContainerOperationError(
@@ -1137,7 +1138,7 @@ func (c *Controller) runQualificationPerformance(
 		}
 		harnessDigests = append(harnessDigests, digest)
 	}
-	if len(harnessDigests) != 2 {
+	if len(harnessDigests) != 3 {
 		return fmt.Errorf("performance harness digest is incomplete")
 	}
 	harnessDigest := qualificationDigest([]byte(strings.Join(harnessDigests, "\n")))

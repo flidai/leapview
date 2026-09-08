@@ -12,6 +12,19 @@ test('changing evidence or enforcement requires review; unrelated work does not'
   assert.equal(requiresPerformanceReview(['web/components/shared/button.ts']), false)
 })
 
+test('build inputs, benchmark dependencies and every enforcement entry point require review', () => {
+  for (const path of [
+    'package.json', 'bun.lock', 'tsconfig.json',
+    'scripts/build_maplibre_worker.ts', 'scripts/generate_lucide_icon_catalog.ts',
+    'scripts/generate_visualization_validator.ts', 'deploy/compose/qualification/browser.mjs',
+    'deploy/compose/qualification/package.json', 'deploy/compose/qualification/package-lock.json',
+    '.github/actions/oci-admission/action.yml', '.github/workflows/merge-validation.yml',
+    '.github/workflows/nightly.yml',
+  ]) {
+    assert.equal(requiresPerformanceReview([path]), true, path)
+  }
+})
+
 test('only an independent human collaborator approval of the current head counts', () => {
   assert.equal(hasIndependentApproval(pull, [approval]), true)
   for (const invalid of [

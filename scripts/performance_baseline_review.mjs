@@ -8,10 +8,16 @@ import { pathToFileURL } from 'node:url'
 export function requiresPerformanceReview(paths) {
   return paths.some((path) =>
     /^\.quality\/(frontend-bundle|performance-)/.test(path) ||
-    /^deploy\/compose\/qualification\/performance/.test(path) ||
+    /^deploy\/compose\/qualification\/(performance|browser\.mjs$|package(?:-lock)?\.json$)/.test(path) ||
     /^internal\/app\/cli\/composectl\/qualification/.test(path) ||
     /^scripts\/(frontend_bundle|performance_baseline|qualify_performance)/.test(path) ||
-    ['Taskfile.yml', 'Dockerfile', 'scripts/build_assets.ts', '.github/workflows/ci.yml', '.github/workflows/artifacts.yml', '.github/workflows/release.yml', '.github/workflows/installed-candidate.yml', '.github/actions/setup-ci/action.yml'].includes(path))
+    ['Taskfile.yml', 'Dockerfile', 'package.json', 'bun.lock', 'tsconfig.json',
+      'scripts/build_assets.ts', 'scripts/build_maplibre_worker.ts',
+      'scripts/generate_lucide_icon_catalog.ts', 'scripts/generate_visualization_validator.ts',
+      '.github/workflows/ci.yml', '.github/workflows/artifacts.yml', '.github/workflows/release.yml',
+      '.github/workflows/installed-candidate.yml', '.github/workflows/merge-validation.yml',
+      '.github/workflows/nightly.yml', '.github/actions/setup-ci/action.yml',
+      '.github/actions/oci-admission/action.yml'].includes(path))
 }
 
 export function hasIndependentApproval(pull, reviews) {

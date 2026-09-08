@@ -69,6 +69,156 @@ func qualificationJSONFieldPresent(fields map[string]json.RawMessage, field stri
 	return ok && strings.TrimSpace(string(raw)) != "null"
 }
 
+func qualificationValidateRawResourceEvidence(resources map[string]json.RawMessage) error {
+	if raw, ok := resources["metricSnapshots"]; ok && qualificationJSONFieldPresent(resources, "metricSnapshots") {
+		if err := qualificationValidateRawMetricSnapshots(raw); err != nil {
+			return fmt.Errorf("resources.metricSnapshots: %w", err)
+		}
+	}
+	if raw, ok := resources["coldMetricSnapshots"]; ok && qualificationJSONFieldPresent(resources, "coldMetricSnapshots") {
+		var phases []json.RawMessage
+		if err := json.Unmarshal(raw, &phases); err != nil {
+			return fmt.Errorf("resources.coldMetricSnapshots: %w", err)
+		}
+		for index, phase := range phases {
+			if err := qualificationValidateRawMetricSnapshots(phase); err != nil {
+				return fmt.Errorf("resources.coldMetricSnapshots[%d]: %w", index, err)
+			}
+		}
+	}
+	return nil
+}
+
+func qualificationValidateRawMetricSnapshots(raw json.RawMessage) error {
+	var snapshots []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &snapshots); err != nil {
+		return err
+	}
+	for index, snapshot := range snapshots {
+		for _, field := range []string{"processStartTimeSeconds", "cpuSeconds", "residentMemoryBytes", "goroutines", "openConnections"} {
+			if !qualificationJSONFieldPresent(snapshot, field) {
+				return fmt.Errorf("snapshot %d field %s is missing or null", index, field)
+			}
+		}
+		var processStart, cpu float64
+		if err := json.Unmarshal(snapshot["processStartTimeSeconds"], &processStart); err != nil {
+			return fmt.Errorf("snapshot %d processStartTimeSeconds is not numeric", index)
+		}
+		if err := json.Unmarshal(snapshot["cpuSeconds"], &cpu); err != nil {
+			return fmt.Errorf("snapshot %d cpuSeconds is not numeric", index)
+		}
+		for _, field := range []string{"residentMemoryBytes", "goroutines", "openConnections"} {
+			var value int64
+			if err := json.Unmarshal(snapshot[field], &value); err != nil {
+				return fmt.Errorf("snapshot %d %s is not an integer", index, field)
+			}
+		}
+	}
+	return nil
+}
+
+func validateQualificationPerformanceResourceEvidence(report qualificationPerformanceReport, policy qualificationPerformancePolicy) []string {
+	var failures []string
+	warm := report.Resources.MetricSnapshots
+	cold := report.Resources.ColdMetricSnapshots
+	if len(warm) != qualificationPerformanceMetricSamples {
+		failures = append(failures, fmt.Sprintf("resource metric snapshots %d does not match %d", len(warm), qualificationPerformanceMetricSamples))
+	}
+	if len(cold) != policy.Assumptions.Samples.ColdDashboardLoads {
+		failures = append(failures, fmt.Sprintf("cold resource phases %d does not match %d", len(cold), policy.Assumptions.Samples.ColdDashboardLoads))
+	}
+	valid := len(warm) == qualificationPerformanceMetricSamples && len(cold) == policy.Assumptions.Samples.ColdDashboardLoads
+	if valid {
+		if phaseFailures := validateQualificationPerformanceResourcePhase(warm, qualificationPerformanceMetricSamples); len(phaseFailures) > 0 {
+			failures = append(failures, "warm resource samples: "+strings.Join(phaseFailures, ", "))
+			valid = false
+		}
+		for index, phase := range cold {
+			if phaseFailures := validateQualificationPerformanceResourcePhase(phase, 2); len(phaseFailures) > 0 {
+				failures = append(failures, fmt.Sprintf("cold resource samples %d: %s", index, strings.Join(phaseFailures, ", ")))
+				valid = false
+			}
+		}
+	}
+	if !valid {
+		return failures
+	}
+	want := qualificationPerformanceResourceSummaryFromSamples(warm, cold)
+	if report.Resources.CPUSeconds != want.CPUSeconds {
+		failures = append(failures, fmt.Sprintf("resource CPU summary %v does not match raw samples %v", report.Resources.CPUSeconds, want.CPUSeconds))
+	}
+	if report.Resources.PeakResidentMemoryBytes != want.PeakResidentMemoryBytes {
+		failures = append(failures, fmt.Sprintf("resource resident-memory summary %d does not match raw samples %d", report.Resources.PeakResidentMemoryBytes, want.PeakResidentMemoryBytes))
+	}
+	if report.Resources.GoroutinesBefore != want.GoroutinesBefore || report.Resources.GoroutinesAfter != want.GoroutinesAfter {
+		failures = append(failures, "resource goroutine summary does not match raw samples")
+	}
+	if report.Resources.PeakOpenConnections != want.PeakOpenConnections {
+		failures = append(failures, fmt.Sprintf("resource connection summary %d does not match raw samples %d", report.Resources.PeakOpenConnections, want.PeakOpenConnections))
+	}
+	return failures
+}
+
+type qualificationPerformanceResourceSummary struct {
+	CPUSeconds              float64
+	PeakResidentMemoryBytes int64
+	GoroutinesBefore        int64
+	GoroutinesAfter         int64
+	PeakOpenConnections     int64
+}
+
+func qualificationPerformanceResourceSummaryFromSamples(warm []qualificationPerformanceMetricSnapshot, cold [][]qualificationPerformanceMetricSnapshot) qualificationPerformanceResourceSummary {
+	allSamples := append(append([]qualificationPerformanceMetricSnapshot(nil), warm...), flattenQualificationPerformanceResourceSamples(cold)...)
+	cpuSeconds := warm[len(warm)-1].CPUSeconds - warm[0].CPUSeconds
+	for _, phase := range cold {
+		cpuSeconds += phase[len(phase)-1].CPUSeconds - phase[0].CPUSeconds
+	}
+	result := qualificationPerformanceResourceSummary{
+		CPUSeconds:       roundQualificationFloat(cpuSeconds),
+		GoroutinesBefore: warm[0].Goroutines,
+		GoroutinesAfter:  warm[len(warm)-1].Goroutines,
+	}
+	for _, sample := range allSamples {
+		result.PeakResidentMemoryBytes = max(result.PeakResidentMemoryBytes, sample.ResidentMemoryBytes)
+		result.PeakOpenConnections = max(result.PeakOpenConnections, sample.OpenConnections)
+	}
+	return result
+}
+
+func flattenQualificationPerformanceResourceSamples(phases [][]qualificationPerformanceMetricSnapshot) []qualificationPerformanceMetricSnapshot {
+	var result []qualificationPerformanceMetricSnapshot
+	for _, phase := range phases {
+		result = append(result, phase...)
+	}
+	return result
+}
+
+func validateQualificationPerformanceResourcePhase(samples []qualificationPerformanceMetricSnapshot, expectedCount int) []string {
+	var failures []string
+	if len(samples) != expectedCount {
+		return []string{fmt.Sprintf("snapshot count %d does not match %d", len(samples), expectedCount)}
+	}
+	processStart := samples[0].ProcessStartTimeSeconds
+	previousCPU := -1.0
+	for index, sample := range samples {
+		if !qualificationFiniteNonNegative(sample.ProcessStartTimeSeconds) || sample.ProcessStartTimeSeconds <= 0 {
+			failures = append(failures, fmt.Sprintf("snapshot %d process identity is not finite and positive", index))
+		} else if sample.ProcessStartTimeSeconds != processStart {
+			failures = append(failures, fmt.Sprintf("snapshot %d changed process identity", index))
+		}
+		if !qualificationFiniteNonNegative(sample.CPUSeconds) {
+			failures = append(failures, fmt.Sprintf("snapshot %d CPU counter is not finite and non-negative", index))
+		} else if previousCPU >= 0 && sample.CPUSeconds < previousCPU {
+			failures = append(failures, fmt.Sprintf("snapshot %d CPU counter fell", index))
+		}
+		if sample.ResidentMemoryBytes < 0 || sample.Goroutines < 0 || sample.OpenConnections < 0 {
+			failures = append(failures, fmt.Sprintf("snapshot %d integer gauge is negative", index))
+		}
+		previousCPU = sample.CPUSeconds
+	}
+	return failures
+}
+
 // qualificationFixtureManifestDigest canonicalizes sha256sum output from the
 // bundled evaluation project and data roots. The path is part of the digest so
 // replacing or moving a file cannot leave the fixture identity unchanged.

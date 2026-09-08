@@ -1,4 +1,7 @@
 import { afterEach, expect, test } from 'bun:test'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import {
   checkFrontendBundleBudget,
   compareFrontendBundleEvidence,
@@ -195,6 +198,38 @@ test('rejects stale source evidence but permits a changed calibrated revision wi
     },
   }
   expect(compareFrontendBundleEvidence(changedRevisionPolicy, evidence({ rawBytes: 99, gzipBytes: 99 }))).toEqual([])
+})
+
+test('includes tsconfig.json in the source input digest', () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'frontend-source-digest-'))
+  try {
+    const fixtureFiles = {
+      'package.json': '{}',
+      'bun.lock': 'fixture lockfile',
+      'tsconfig.json': '{}',
+      'static/app.input.css': 'fixture css',
+      'static/login-background-loader.js': 'fixture loader',
+      'static/theme.js': 'fixture theme',
+      'static/vendor/datastar-1.0.2.js': 'fixture runtime',
+      'scripts/build_assets.ts': 'fixture build',
+      'scripts/build_maplibre_worker.ts': 'fixture worker',
+      'scripts/generate_lucide_icon_catalog.ts': 'fixture icons',
+      'scripts/generate_visualization_validator.ts': 'fixture validator',
+    }
+    for (const [relativePath, contents] of Object.entries(fixtureFiles)) {
+      const path = join(fixture, relativePath)
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, contents)
+    }
+    mkdirSync(join(fixture, 'web'))
+
+    const originalDigest = frontendSourceInputDigest(fixture)
+    writeFileSync(join(fixture, 'tsconfig.json'), '{"compilerOptions":{"strict":true}}')
+
+    expect(frontendSourceInputDigest(fixture)).not.toBe(originalDigest)
+  } finally {
+    rmSync(fixture, { recursive: true, force: true })
+  }
 })
 
 test('accepts an alternate recorded architecture when exact bytes remain within budget', () => {

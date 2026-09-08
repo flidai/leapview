@@ -17,6 +17,7 @@ const COMMIT_SHA = /^[0-9a-f]{40}$/
 const SOURCE_ROOTS = [
   'package.json',
   'bun.lock',
+  'tsconfig.json',
   'static/app.input.css',
   'static/login-background-loader.js',
   'static/theme.js',

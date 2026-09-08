@@ -268,6 +268,115 @@ func TestFinalizeQualificationPerformanceReportRejectsMissingResourceMetricSampl
 	}
 }
 
+func TestFinalizeQualificationPerformanceReportRejectsMissingRawResources(t *testing.T) {
+	t.Setenv("QUALIFICATION_PERFORMANCE_MODE", qualificationPerformanceModeBootstrap)
+	policy := validQualificationPerformancePolicy()
+	path := writeCompleteQualificationPerformanceReport(t, policy, "sha256:"+strings.Repeat("a", 64))
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(contents, &root); err != nil {
+		t.Fatal(err)
+	}
+	var resources map[string]json.RawMessage
+	if err := json.Unmarshal(root["resources"], &resources); err != nil {
+		t.Fatal(err)
+	}
+	delete(resources, "metricSnapshots")
+	root["resources"], _ = json.Marshal(resources)
+	contents, _ = json.Marshal(root)
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := finalizeQualificationPerformanceReport(path, policy, 100, 100, completePerformanceEnvironment(policy), "image", "amd64", "", completePerformanceMetadata()); err == nil || !strings.Contains(err.Error(), "resources.metricSnapshots is missing") {
+		t.Fatalf("missing raw resource error = %v", err)
+	}
+}
+
+func TestFinalizeQualificationPerformanceReportRejectsMalformedRawResourceGauge(t *testing.T) {
+	policy := validQualificationPerformancePolicy()
+	path := writeCompleteQualificationPerformanceReport(t, policy, "sha256:"+strings.Repeat("a", 64))
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(contents, &root); err != nil {
+		t.Fatal(err)
+	}
+	var resources map[string]json.RawMessage
+	if err := json.Unmarshal(root["resources"], &resources); err != nil {
+		t.Fatal(err)
+	}
+	var snapshots []map[string]json.RawMessage
+	if err := json.Unmarshal(resources["metricSnapshots"], &snapshots); err != nil {
+		t.Fatal(err)
+	}
+	snapshots[0]["residentMemoryBytes"] = json.RawMessage(`1.5`)
+	resources["metricSnapshots"], _ = json.Marshal(snapshots)
+	root["resources"], _ = json.Marshal(resources)
+	contents, _ = json.Marshal(root)
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := finalizeQualificationPerformanceReport(path, policy, 100, 100, completePerformanceEnvironment(policy), "image", "amd64", "", completePerformanceMetadata()); err == nil {
+		t.Fatal("malformed raw resource gauge was accepted")
+	}
+}
+
+func TestFinalizeQualificationPerformanceReportRejectsResetRawCPU(t *testing.T) {
+	t.Setenv("QUALIFICATION_PERFORMANCE_MODE", qualificationPerformanceModeBootstrap)
+	policy := validQualificationPerformancePolicy()
+	path := writeCompleteQualificationPerformanceReport(t, policy, "sha256:"+strings.Repeat("a", 64))
+	var report qualificationPerformanceReport
+	if err := readQualificationJSON(path, &report); err != nil {
+		t.Fatal(err)
+	}
+	report.Resources.MetricSnapshots[2].CPUSeconds = 0.5
+	if err := writeQualificationJSON(path, report); err != nil {
+		t.Fatal(err)
+	}
+	if err := finalizeQualificationPerformanceReport(path, policy, 100, 100, completePerformanceEnvironment(policy), "image", "amd64", "", completePerformanceMetadata()); err == nil || !strings.Contains(err.Error(), "CPU counter fell") {
+		t.Fatalf("reset raw CPU error = %v", err)
+	}
+}
+
+func TestFinalizeQualificationPerformanceReportRejectsRawResourceSummaryMismatch(t *testing.T) {
+	t.Setenv("QUALIFICATION_PERFORMANCE_MODE", qualificationPerformanceModeBootstrap)
+	policy := validQualificationPerformancePolicy()
+	path := writeCompleteQualificationPerformanceReport(t, policy, "sha256:"+strings.Repeat("a", 64))
+	var report qualificationPerformanceReport
+	if err := readQualificationJSON(path, &report); err != nil {
+		t.Fatal(err)
+	}
+	report.Resources.CPUSeconds++
+	if err := writeQualificationJSON(path, report); err != nil {
+		t.Fatal(err)
+	}
+	if err := finalizeQualificationPerformanceReport(path, policy, 100, 100, completePerformanceEnvironment(policy), "image", "amd64", "", completePerformanceMetadata()); err == nil || !strings.Contains(err.Error(), "resource CPU summary") {
+		t.Fatalf("raw resource summary error = %v", err)
+	}
+}
+
+func TestFinalizeQualificationPerformanceReportRejectsChangedRawProcess(t *testing.T) {
+	t.Setenv("QUALIFICATION_PERFORMANCE_MODE", qualificationPerformanceModeBootstrap)
+	policy := validQualificationPerformancePolicy()
+	path := writeCompleteQualificationPerformanceReport(t, policy, "sha256:"+strings.Repeat("a", 64))
+	var report qualificationPerformanceReport
+	if err := readQualificationJSON(path, &report); err != nil {
+		t.Fatal(err)
+	}
+	report.Resources.ColdMetricSnapshots[0][1].ProcessStartTimeSeconds++
+	if err := writeQualificationJSON(path, report); err != nil {
+		t.Fatal(err)
+	}
+	if err := finalizeQualificationPerformanceReport(path, policy, 100, 100, completePerformanceEnvironment(policy), "image", "amd64", "", completePerformanceMetadata()); err == nil || !strings.Contains(err.Error(), "changed process identity") {
+		t.Fatalf("changed raw process error = %v", err)
+	}
+}
+
 func TestFinalizeQualificationPerformanceReportRejectsTamperedRawLatency(t *testing.T) {
 	t.Setenv("QUALIFICATION_PERFORMANCE_MODE", qualificationPerformanceModeBootstrap)
 	policy := validQualificationPerformancePolicy()
@@ -504,7 +613,7 @@ func completePerformanceFieldPresence(report qualificationPerformanceReport) map
 	for _, field := range []string{"requests", "operations", "errors", "failures"} {
 		presence["reliability."+field] = true
 	}
-	for _, field := range []string{"peakResidentMemoryBytes", "cpuSeconds", "metricSamples", "temporaryDiskBeforeBytes", "temporaryDiskAfterBytes", "temporaryDiskGrowthBytes", "goroutinesBefore", "goroutinesAfter", "peakOpenConnections"} {
+	for _, field := range []string{"peakResidentMemoryBytes", "cpuSeconds", "metricSamples", "metricSnapshots", "coldMetricSnapshots", "temporaryDiskBeforeBytes", "temporaryDiskAfterBytes", "temporaryDiskGrowthBytes", "goroutinesBefore", "goroutinesAfter", "peakOpenConnections"} {
 		presence["resources."+field] = true
 	}
 	for _, field := range []string{"runtime", "cpuModel", "kernel", "logicalCPUs", "memoryBytes", "effectiveCPULimit", "effectiveMemoryLimitBytes", "dataset"} {
@@ -533,8 +642,25 @@ func completeQualificationPerformanceReport(policy qualificationPerformancePolic
 	report.Reliability.Requests = qualificationPerformanceExpectedRequests(policy)
 	report.Reliability.Failures = []string{}
 	report.Resources.PeakResidentMemoryBytes = 512
-	report.Resources.CPUSeconds = 1
+	report.Resources.CPUSeconds = 7 + 0.1*float64(policy.Assumptions.Samples.ColdDashboardLoads)
 	report.Resources.MetricSamples = qualificationPerformanceMetricSamples
+	report.Resources.MetricSnapshots = make([]qualificationPerformanceMetricSnapshot, qualificationPerformanceMetricSamples)
+	for index := range report.Resources.MetricSnapshots {
+		report.Resources.MetricSnapshots[index] = qualificationPerformanceMetricSnapshot{
+			ProcessStartTimeSeconds: 100,
+			CPUSeconds:              float64(index + 1),
+			ResidentMemoryBytes:     512,
+			Goroutines:              1,
+			OpenConnections:         1,
+		}
+	}
+	report.Resources.ColdMetricSnapshots = make([][]qualificationPerformanceMetricSnapshot, policy.Assumptions.Samples.ColdDashboardLoads)
+	for index := range report.Resources.ColdMetricSnapshots {
+		report.Resources.ColdMetricSnapshots[index] = []qualificationPerformanceMetricSnapshot{
+			{ProcessStartTimeSeconds: float64(101 + index), CPUSeconds: 0, ResidentMemoryBytes: 512, Goroutines: 1, OpenConnections: 1},
+			{ProcessStartTimeSeconds: float64(101 + index), CPUSeconds: 0.1, ResidentMemoryBytes: 512, Goroutines: 1, OpenConnections: 1},
+		}
+	}
 	report.Resources.TemporaryDiskBeforeBytes = 100
 	report.Resources.TemporaryDiskAfterBytes = 100
 	report.Resources.TemporaryDiskGrowthBytes = 0

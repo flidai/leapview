@@ -7,6 +7,11 @@ and memory regressions. The expensive immutable-image qualification measures
 query, refresh, delivery, visualization and process resources. Passing the first
 level does not substitute for the second.
 
+Resource evidence retains the raw cold and warm checkpoint snapshots. A changed
+process identity, falling CPU counter, missing measurement or summary that does
+not match those snapshots makes qualification fail; it is not zero consumption.
+Observed RSS and connection maxima cover checkpoints, not a continuous trace.
+
 ## Reference and candidate measurements
 
 `.quality/performance-reference.json` pins a main-branch image by platform digest,

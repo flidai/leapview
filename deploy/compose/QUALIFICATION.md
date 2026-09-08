@@ -23,7 +23,8 @@ Install Docker Engine with the Compose plugin, `curl`, `jq`, `openssl`, and
 `sha256sum`. From the extracted archive:
 
 ```sh
-./leapviewctl qualify installed-candidate --multi-node-process
+QUALIFICATION_PERFORMANCE_MODE=bootstrap QUALIFICATION_PERFORMANCE_BASELINE= \
+  ./leapviewctl qualify installed-candidate --multi-node-process
 ```
 
 The controller uses only files in the archive plus public container registries. It
@@ -32,19 +33,33 @@ temporary file, emits a bounded `qualification-evidence` directory, and removes
 containers, volumes, and credentials on exit. Do not upload any other files
 from the working directory.
 
-From a source checkout, CI and local image qualification run the same authoring
-journey against the already-built production image:
+This explicit bootstrap invocation checks absolute budgets only; it does not
+provide relative qualification. For a compatible reviewed baseline, select
+`compare` and set `QUALIFICATION_PERFORMANCE_BASELINE` as described below.
+
+From a clean source checkout, build an attributable local development image and
+run the same authoring journey with absolute performance checks. Do not label a
+dirty source tree clean merely to pass qualification:
 
 ```sh
-go build -o .tmp/leapviewctl-qualification ./cmd/leapviewctl
-LEAPVIEWCTL_ROOT="$PWD/deploy/compose" \
+test -z "$(git status --porcelain)"
+qualification_revision=$(git rev-parse HEAD)
+qualification_build_time=$(git show -s --format=%cI HEAD)
+docker build --build-arg BUILD_REVISION="$qualification_revision" \
+  --build-arg BUILD_TIME="$qualification_build_time" --build-arg BUILD_DIRTY=false \
+  --tag leapview:ci .
+go build -tags=duckdb_arrow -o .tmp/leapviewctl-qualification ./cmd/leapviewctl
+LEAPVIEWCTL_ROOT="$PWD/deploy/compose" QUALIFICATION_PERFORMANCE_MODE=bootstrap \
+  QUALIFICATION_PERFORMANCE_BASELINE= \
   ./.tmp/leapviewctl-qualification qualify image --image leapview:ci
 ```
 
 The controller pushes the local image through an isolated registry, deploys its
 immutable digest with the production Compose bundle, and writes
 `qualification-evidence/authoring-ci/authoring-report.json`. Both trusted and
-fork pull-request production-image jobs run this gate.
+fork pull-request production-image jobs run this gate. Full relative image
+qualification instead uses `task image:qualify:performance IMAGE=ghcr.io/flidai/leapview@sha256:...`
+against the reviewed reference; bootstrap success is not a substitute.
 
 ## Performance policy
 
@@ -72,6 +87,10 @@ These are release gates, not claims that every host will produce identical
 timings. Future candidates must still satisfy the absolute ceilings and also
 fail comparison when a p95 is at least 50 ms slower and more than 25% above the
 accepted baseline. The report records the runner CPU model, kernel, host and effective application limits, memory, architecture, runtime, dataset size, raw samples, p50, p95, maxima, policy, immutable image and runtime commit, fixture and policy digests, installed toolchain, harness digest (the exact browser and performance scripts), sample protocol, runner identity, baseline identity, and failures. Process resources are sampled at the eight workload checkpoints reported by `metricSamples`; RSS and open-connection maxima are observed checkpoints, not a continuous-process trace.
+The report retains the raw eight warm metric snapshots and two snapshots for
+each cold restart. Each phase must retain one process identity and a
+non-decreasing CPU counter; Go recomputes CPU, RSS, goroutine, and connection
+summaries from those snapshots before applying budgets.
 
 Reliability `operations` is the fixed count of measured workload actions and must
 match the policy; `requests` may be higher because refresh-status polling is also
