@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "4fcaa8d049da4e4aaa4f930c39684e471deb1c5cfa0bbd7efc669a7b61ab4a4d"
+	const expectedRouteContractDigest = "3a9db047a40157cde8d9be72407e3b7e8163f60c5c93a3d4aa534254501457be"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -173,7 +173,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.Contains(path, "/dashboards/") || strings.Contains(path, "/commands/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_READ"
-	case path == "/explore" || path == "/explore/command" || path == "/explore/saved/{exploration}" || path == "/explore/saved/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
+	case path == "/explore" || path == "/explore/export" || path == "/explore/command" || path == "/explore/saved/{exploration}" || path == "/explore/saved/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
 		authenticated.owner = "project"
 		authenticated.privilege = "RESOURCE_USE"
 	case path == "/pipelines/command":
@@ -303,6 +303,7 @@ GET /dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /embed/dashboards/{publicId}
 GET /embed/dashboards/{publicId}/pages/{page}
 GET /explore
+GET /explore/export
 GET /explore/saved/{exploration}
 GET /favicon.ico
 GET /healthz
