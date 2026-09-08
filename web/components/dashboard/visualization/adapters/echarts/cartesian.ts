@@ -495,6 +495,9 @@ function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][n
       ? { textBorderColor: 'rgba(0, 0, 0, 0.55)', textBorderWidth: 2 }
       : { textBorderColor: 'rgba(255, 255, 255, 0.45)', textBorderWidth: 1 })
   }
+  if (spec.mark === 'bar' && horizontal && automatic) {
+    translated.labelLayout = constrainEChartsLabelToDataRect(translated.labelLayout, spec.presentation.labelPolicy.minimumSpacing)
+  }
   return translated
 }
 
@@ -502,12 +505,16 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
   const bottomLegend = spec.presentation.legend === 'bottom'
   const titleInset = spec.presentation.legendTitle === undefined ? 0 : 24
   const sideInset = spec.presentation.legendTitle === undefined ? 0 : 72
+  const titlelessHorizontalBar = cartesianIsHorizontal(spec)
+    && spec.mark === 'bar'
+    && !(spec.axes ?? []).some((candidate) => candidate.title || candidate.unit)
   return {
     left: 12 + (spec.presentation.legend === 'left' ? sideInset : 0),
     right: 16 + (spec.presentation.legend === 'right' ? sideInset : 0),
     top: (spec.presentation.legend === 'top' ? 44 : 16) + (spec.presentation.legend === 'top' ? titleInset : 0),
     bottom: 16 + (bottomLegend ? 28 : 0) + (spec.presentation.dataZoom === true ? 42 : 0) + (bottomLegend ? titleInset : 0),
-    containLabel: true,
+    containLabel: !titlelessHorizontalBar,
+    ...(titlelessHorizontalBar ? { outerBoundsMode: 'same', outerBoundsContain: 'all' } : {}),
   }
 }
 

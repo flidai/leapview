@@ -264,6 +264,52 @@ test('ECharts keeps generated currency axis and decision-context labels inside t
   }
 })
 
+test('ECharts keeps generated compact horizontal bar ticks and automatic labels inside their geometry', () => {
+  const generated = generatedBarStatusFixture()
+  const contexts = [
+    defaultRendererContext,
+    { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, foreground: '#f0f6fc', muted: '#8b949e', grid: '#30363d', surface: '#0d1117' } },
+  ]
+
+  for (const context of contexts) {
+    const source = echartsOption(generated, context) as Record<string, any>
+    expect(source.grid).toMatchObject({ containLabel: false, outerBoundsMode: 'same', outerBoundsContain: 'all' })
+    const option = { ...source, ...responsiveEChartsPatch(source, 358, 411) }
+    const barSeries = option.series.find((candidate: any) => candidate.type === 'bar')
+    expect(barSeries.label.position).toBe('insideRight')
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 358, height: 411 })
+    try {
+      chart.setOption(option)
+      chart.renderToSVGString()
+      const textElements = chart.getZr().storage.getDisplayList()
+        .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string')
+      for (const item of textElements) {
+        const bounds = globalTextBounds(item)
+        expect(bounds.x, `${context.theme} ${item.style.text} left bound`).toBeGreaterThanOrEqual(0)
+        expect(bounds.y, `${context.theme} ${item.style.text} top bound`).toBeGreaterThanOrEqual(0)
+        expect(bounds.x + bounds.width, `${context.theme} ${item.style.text} right bound`).toBeLessThanOrEqual(358)
+        expect(bounds.y + bounds.height, `${context.theme} ${item.style.text} bottom bound`).toBeLessThanOrEqual(411)
+      }
+      const maxTick = textElements.find((item: any) => item.style.text === '$1,500')
+      expect(maxTick, `${context.theme} should render the maximum currency tick`).toBeDefined()
+      expect(globalTextBounds(maxTick).x + globalTextBounds(maxTick).width).toBeLessThanOrEqual(358)
+      expect(textElements.some((item: any) => item.style.text === '$842')).toBe(true)
+      expect(textElements.some((item: any) => item.style.text === '$556')).toBe(true)
+      expect(textElements.some((item: any) => item.style.text === '$128')).toBe(false)
+      expect(textElements.some((item: any) => item.style.text === '$58')).toBe(false)
+    } finally {
+      chart.dispose()
+    }
+
+    const outside = structuredClone(generated) as any
+    outside.spec.presentation.labelPosition = 'outside'
+    const outsideOption = echartsOption(outside, context) as Record<string, any>
+    const outsideBar = outsideOption.series.find((candidate: any) => candidate.type === 'bar')
+    expect(outsideBar.label.position).toBe('right')
+    expect(outsideBar.labelLayout({ rect: { width: 8, height: 40 }, labelRect: { width: 28, height: 13 } })).not.toHaveProperty('width')
+  }
+})
+
 function titledAxisFixture(): VisualizationEnvelope {
   const envelope = cartesianFixture() as any
   envelope.spec.axes = [
@@ -312,6 +358,13 @@ function generatedRevenueLineContextFixture(): VisualizationEnvelope {
   const document = (visualDocumentation as any).documents['visuals/line']
   const envelope = document.find((candidate: any) => candidate.visualID === 'revenue_line_context')
   if (!envelope) throw new Error('generated revenue_line_context fixture is missing')
+  return structuredClone(envelope) as VisualizationEnvelope
+}
+
+function generatedBarStatusFixture(): VisualizationEnvelope {
+  const document = (visualDocumentation as any).documents['visuals/bar']
+  const envelope = document.find((candidate: any) => candidate.visualID === 'categories_by_status_bar')
+  if (!envelope) throw new Error('generated categories_by_status_bar fixture is missing')
   return structuredClone(envelope) as VisualizationEnvelope
 }
 
