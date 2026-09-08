@@ -121,9 +121,10 @@ type CatalogPageSignal struct {
 }
 
 type ChatArtifactSignal struct {
-	ID      string  `json:"id" yaml:"id"`
-	Type    string  `json:"type" yaml:"type"`
-	Summary *string `json:"summary,omitempty" yaml:"summary,omitempty"`
+	ID          string                       `json:"id" yaml:"id"`
+	Type        string                       `json:"type" yaml:"type"`
+	Summary     *string                      `json:"summary,omitempty" yaml:"summary,omitempty"`
+	Exploration *exploration.ExplorationSpec `json:"exploration,omitempty" yaml:"exploration,omitempty"`
 }
 
 type ChatConversationSummary struct {
@@ -958,6 +959,13 @@ type DashboardNullCheckExpression struct {
 	Operator string `json:"operator" yaml:"operator"`
 }
 
+type DashboardPagePlacement struct {
+	Col     int64 `json:"col" yaml:"col"`
+	ColSpan int64 `json:"colSpan" yaml:"colSpan"`
+	Row     int64 `json:"row" yaml:"row"`
+	RowSpan int64 `json:"rowSpan" yaml:"rowSpan"`
+}
+
 type DashboardRangeExpression struct {
 	DashboardFilterExpressionBase
 	Kind  string                `json:"kind" yaml:"kind"`
@@ -1166,6 +1174,51 @@ type DataExplorerContextSignal struct {
 	ProjectTitle *string `json:"projectTitle,omitempty" yaml:"projectTitle,omitempty"`
 }
 
+type DataExplorerDashboardAppendCommandSignal struct {
+	DashboardID     string                      `json:"dashboardId" yaml:"dashboardId"`
+	PageID          string                      `json:"pageId" yaml:"pageId"`
+	RevisionToken   string                      `json:"revisionToken" yaml:"revisionToken"`
+	PlacementChoice string                      `json:"placementChoice" yaml:"placementChoice"`
+	Spec            exploration.ExplorationSpec `json:"spec" yaml:"spec"`
+}
+
+type DataExplorerDashboardAppendEnvelope struct {
+	AddExplorationToDashboard DataExplorerDashboardAppendCommandSignal `json:"addExplorationToDashboard" yaml:"addExplorationToDashboard"`
+}
+
+type DataExplorerDashboardForkTargetSignal struct {
+	ID       string `json:"id" yaml:"id"`
+	Title    string `json:"title" yaml:"title"`
+	ForkHref string `json:"forkHref" yaml:"forkHref"`
+}
+
+type DataExplorerDashboardPageSignal struct {
+	ID        string                 `json:"id" yaml:"id"`
+	Title     string                 `json:"title" yaml:"title"`
+	Placement DashboardPagePlacement `json:"placement" yaml:"placement"`
+}
+
+type DataExplorerDashboardSelectTargetCommandSignal struct {
+	DashboardID string `json:"dashboardId" yaml:"dashboardId"`
+}
+
+type DataExplorerDashboardSignal struct {
+	Enabled     bool                                     `json:"enabled" yaml:"enabled"`
+	Targets     []DataExplorerDashboardTargetSignal      `json:"targets" yaml:"targets"`
+	ForkTargets *[]DataExplorerDashboardForkTargetSignal `json:"forkTargets,omitempty" yaml:"forkTargets,omitempty"`
+	State       *string                                  `json:"state,omitempty" yaml:"state,omitempty"`
+	Message     *string                                  `json:"message,omitempty" yaml:"message,omitempty"`
+}
+
+type DataExplorerDashboardTargetSignal struct {
+	ID              string                             `json:"id" yaml:"id"`
+	Title           string                             `json:"title" yaml:"title"`
+	SemanticModelID string                             `json:"semanticModelId" yaml:"semanticModelId"`
+	DraftID         *string                            `json:"draftId,omitempty" yaml:"draftId,omitempty"`
+	RevisionToken   *string                            `json:"revisionToken,omitempty" yaml:"revisionToken,omitempty"`
+	Pages           *[]DataExplorerDashboardPageSignal `json:"pages,omitempty" yaml:"pages,omitempty"`
+}
+
 type DataExplorerObjectSignal struct {
 	AssetID         *string                    `json:"assetId,omitempty" yaml:"assetId,omitempty"`
 	ColumnCount     int64                      `json:"columnCount" yaml:"columnCount"`
@@ -1184,16 +1237,17 @@ type DataExplorerObjectSignal struct {
 }
 
 type DataExplorerPageEnvelope struct {
-	Agent                ChatSignal                                       `json:"agent" yaml:"agent"`
-	AgentContext         AgentContextSignal                               `json:"agentContext" yaml:"agentContext"`
-	AgentReferenceSearch AgentReferenceSearchSignal                       `json:"agentReferenceSearch" yaml:"agentReferenceSearch"`
-	AgentVisuals         map[string]visualizationir.VisualizationEnvelope `json:"agentVisuals" yaml:"agentVisuals"`
-	Chrome               ChromeSignal                                     `json:"chrome" yaml:"chrome"`
-	DataExplorer         DataExplorerSignal                               `json:"dataExplorer" yaml:"dataExplorer"`
-	Page                 DataExplorerPageSignal                           `json:"page" yaml:"page"`
-	Runtime              RouteRuntimeSignal                               `json:"runtime" yaml:"runtime"`
-	SavedExplorations    SavedExplorationStateSignal                      `json:"savedExplorations" yaml:"savedExplorations"`
-	Status               DashboardStatus                                  `json:"status" yaml:"status"`
+	Agent                 ChatSignal                                       `json:"agent" yaml:"agent"`
+	AgentContext          AgentContextSignal                               `json:"agentContext" yaml:"agentContext"`
+	AgentReferenceSearch  AgentReferenceSearchSignal                       `json:"agentReferenceSearch" yaml:"agentReferenceSearch"`
+	AgentVisuals          map[string]visualizationir.VisualizationEnvelope `json:"agentVisuals" yaml:"agentVisuals"`
+	Chrome                ChromeSignal                                     `json:"chrome" yaml:"chrome"`
+	DataExplorer          DataExplorerSignal                               `json:"dataExplorer" yaml:"dataExplorer"`
+	DataExplorerDashboard DataExplorerDashboardSignal                      `json:"dataExplorerDashboard" yaml:"dataExplorerDashboard"`
+	Page                  DataExplorerPageSignal                           `json:"page" yaml:"page"`
+	Runtime               RouteRuntimeSignal                               `json:"runtime" yaml:"runtime"`
+	SavedExplorations     SavedExplorationStateSignal                      `json:"savedExplorations" yaml:"savedExplorations"`
+	Status                DashboardStatus                                  `json:"status" yaml:"status"`
 }
 
 type DataExplorerPageSignal struct {

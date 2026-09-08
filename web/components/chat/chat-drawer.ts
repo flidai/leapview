@@ -15,6 +15,7 @@ import { lucideIcon } from '../shared/lucide-icons'
 import { agentIcon } from './agent-icon'
 import './chat-composer'
 import './chat-thread'
+import { exploreContextHref } from './explore-context'
 import {
   type ChatReferencesChangeDetail,
   defaultAgentReferenceLimit,
@@ -269,6 +270,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   render() {
     const agent = this.agent
 		const context = this.context
+		const explorationHref = exploreContextHref(context)
 		const currentFilters = this.dashboardFilters
 		const controls = Object.values(currentFilters.appliedControls ?? {})
 			.filter((control) => control.expression.kind !== 'unfiltered').length
@@ -299,6 +301,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
               <span class="context-separator" aria-hidden="true">·</span>
               <span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>
             </div>
+            ${explorationHref ? html`<a class="context-explore" href=${explorationHref}>Explore this context</a>` : null}
             ${this.referenceLimitMessage ? html`
               <div class="reference-limit-status" data-reference-limit-status role="status" aria-live="polite">${this.referenceLimitMessage}</div>
             ` : null}

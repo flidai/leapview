@@ -31,7 +31,7 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Create: h.SavedExplorationCommands.Create, Update: h.SavedExplorationCommands.Update,
 		Duplicate: h.SavedExplorationCommands.Duplicate, Archive: h.SavedExplorationCommands.Archive,
 	}
-	writeDocument(w, projectui.DataExplorerPageWithSavedExplorations(catalog, page, explorer, savedState, h.csrf(r), h.layout(r)))
+	writeDocument(w, projectui.DataExplorerPageWithSavedExplorationsAndDashboard(catalog, page, explorer, savedState, h.dashboardBootstrap(r, explorer.Explore.Command.Spec.ModelID), h.csrf(r), h.layout(r)))
 }
 
 func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -58,8 +58,13 @@ func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhtt
 		return
 	}
 	defer unlock()
+	// Keep the agent's explore link coupled to the same canonical, authorized
+	// projection as the command response.  This must be emitted only after the
+	// response lease check so a late query cannot replace a newer context.
+	context := projectui.DataExplorerAgentContext(page, explorer)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
 		"page": page, "dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
+		"agentContext": context,
 	})
 }
 
@@ -127,7 +132,8 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				Create: h.SavedExplorationCommands.Create, Update: h.SavedExplorationCommands.Update,
 				Duplicate: h.SavedExplorationCommands.Duplicate, Archive: h.SavedExplorationCommands.Archive,
 			}
-			patch = projectui.DataExplorerBootstrapSignalsWithSavedExplorations(h.navigationCatalog(r), page, explorer, savedState, h.layout(r))
+			catalog := h.navigationCatalog(r)
+			patch = projectui.DataExplorerBootstrapSignalsWithSavedExplorationsAndDashboard(catalog, page, explorer, savedState, h.dashboardBootstrap(r, explorer.Explore.Command.Spec.ModelID), h.layout(r))
 		} else if surface == "asset" {
 			if assetPatch, ok := h.assetBootstrap(w, r); ok {
 				patch = assetPatch

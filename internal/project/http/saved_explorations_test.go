@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -541,5 +542,36 @@ func TestSavedExplorationReopenLeavesIncompatibleWorkingCopiesUnexecuted(t *test
 	h.SavedExplorationReopen(archivedResponse, reopenRequest("exploration:archived"))
 	if archivedResponse.Code != http.StatusOK || query.calls != 0 {
 		t.Fatalf("archived reopen status=%d query calls=%d body=%q, want no execution", archivedResponse.Code, query.calls, archivedResponse.Body.String())
+	}
+}
+
+func TestSavedExplorationNavigationRedirectsToAuthorizedCanonicalState(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	lifecycle := saved.Lifecycle{
+		ProjectID: "project:test", ID: "exploration:orders", OwnerPrincipalID: "principal:test",
+		Title: "Orders", Slug: "orders", Visibility: saved.VisibilityPrivate, SemanticModelID: "semantic:sales", Status: saved.StatusActive,
+		CreatedAt: now, UpdatedAt: now, CurrentRevision: saved.RevisionMetadata{ID: "revision:orders", Number: 3, ContentHash: "sha256:" + strings.Repeat("a", 64), CreatedAt: now, CreatedBy: "principal:test"},
+	}
+	spec := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{reopen: saved.ReopenResult{Lifecycle: lifecycle, Spec: spec}},
+		ResolveProjectID:  func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+	}
+	route := chi.NewRouteContext()
+	route.URLParams.Add("exploration", "exploration:orders")
+	request := httptest.NewRequest(http.MethodGet, "/explore/saved/exploration:orders?navigation=true", nil)
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
+	response := httptest.NewRecorder()
+	h.SavedExplorationReopen(response, request)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("navigation status=%d body=%q, want redirect", response.Code, response.Body.String())
+	}
+	location, err := url.Parse(response.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if location.Path != "/explore" || location.Query().Get("saved") != "exploration:orders" || location.Query().Get("mode") != "explore" || location.Query().Get("state") == "" {
+		t.Fatalf("canonical navigation location=%q, want saved identity and state", response.Header().Get("Location"))
 	}
 }

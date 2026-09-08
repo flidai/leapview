@@ -25,8 +25,9 @@ type IntentRequest struct {
 
 // ExecuteIntent is the single application mutation entrypoint for bounded
 // dashboard-builder intents. It delegates persistence to the transactional
-// authoring service and performs active semantic-model validation only for an
-// AssignField intent. No authored document is accepted from a transport.
+// authoring service and performs active semantic-model validation for field
+// assignment and exploration append intents. No authored document is accepted
+// from a transport.
 func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) (authoringservice.Result, error) {
 	if err := a.validate(); err != nil {
 		return authoringservice.Result{}, err
@@ -50,6 +51,11 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 		field := request.Command.AssignField
 		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
 			return a.validateAssignedField(ctx, project, request.Command, lifecycle, field)
+		}
+	} else if request.Command.AppendExplorationVisual != nil {
+		payload := request.Command.AppendExplorationVisual
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			return a.validateAppendExploration(ctx, project, request.Command, lifecycle, payload)
 		}
 	}
 	return a.authoring.ExecuteValidated(ctx, project, request.Command, validator)

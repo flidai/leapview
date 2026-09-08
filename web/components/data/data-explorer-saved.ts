@@ -1,7 +1,7 @@
 import { css, html, nothing } from 'lit'
 import type { DataExplorerCommand, SavedExplorationCommandSignal, SavedExplorationStateSignal } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
-import { absoluteDataExplorerURL, dataExplorerExportURL, dataExplorerURL, updateDataExplorerURL, type DataExplorerHistoryMode } from './data-explorer-url'
+import { absoluteDataExplorerURL, dataExplorerExportURL, dataExplorerURL, savedExplorationURL, updateDataExplorerURL, type DataExplorerHistoryMode } from './data-explorer-url'
 
 export const emptySavedExplorations: SavedExplorationStateSignal = {
   enabled: false,
@@ -179,7 +179,7 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
   if (!state.enabled) return nothing
   const activeCommand = { mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand
   const shareURL = dataExplorerURL(activeCommand)
-  const latestSavedURL = current ? dataExplorerURL({ mode: 'browse' } as DataExplorerCommand, current.id, current.status === 'archived') : ''
+  const latestSavedURL = current ? savedExplorationURL(current.id, current.status === 'archived') : ''
   const hasCanonicalState = Boolean(options.activeSpec().modelId?.trim())
   const shareStatus = options.shareStatus?.() ?? ''
   const shareFallbackURL = options.shareFallbackURL?.() ?? ''
@@ -215,7 +215,7 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
         ` : nothing}
       </div>
       <div class="saved-exploration-list">
-        ${items.map((item) => html`<a class="saved-exploration-item" href=${dataExplorerURL({ mode: 'browse' } as DataExplorerCommand, item.id, item.status === 'archived')}>${item.title}</a>`)}
+        ${items.map((item) => html`<a class="saved-exploration-item" href=${savedExplorationURL(item.id, item.status === 'archived')}>${item.title}</a>`)}
       </div>
       ${unavailable ? nothing : current ? html`
         <div class="saved-exploration-current">

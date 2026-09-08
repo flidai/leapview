@@ -99,38 +99,57 @@ func TestAPIGenSavedExplorationUISignalContracts(t *testing.T) {
 	if err := json.Unmarshal(content, &document); err != nil {
 		t.Fatalf("decode UI signal contract IR: %v", err)
 	}
-	if len(document.Contracts) != 135 {
-		t.Fatalf("UI signal IR contracts = %d, want 135", len(document.Contracts))
+	wantContracts := map[string]struct {
+		kind, role, surface string
+	}{
+		"SavedExplorationCommandSignal":   {kind: "ui-signal", role: "command", surface: "saved_explorations"},
+		"SavedExplorationCurrentSignal":   {kind: "ui-signal", role: "signal", surface: "saved_explorations"},
+		"SavedExplorationListItemSignal":  {kind: "ui-signal", role: "signal", surface: "saved_explorations"},
+		"SavedExplorationListSignal":      {kind: "ui-signal", role: "signal", surface: "saved_explorations"},
+		"SavedExplorationRevisionSignal":  {kind: "ui-signal", role: "signal", surface: "saved_explorations"},
+		"SavedExplorationSaveStateSignal": {kind: "ui-signal", role: "signal", surface: "saved_explorations"},
+		"SavedExplorationStateSignal":     {kind: "ui-signal", role: "signal", surface: "saved_explorations"},
+		"DataExplorerDashboardPageSignal": {kind: "ui-signal", role: "signal", surface: "data"},
+		"DataExplorerDashboardTargetSignal": {
+			kind: "ui-signal", role: "signal", surface: "data",
+		},
+		"DataExplorerDashboardForkTargetSignal": {
+			kind: "ui-signal", role: "signal", surface: "data",
+		},
+		"DataExplorerDashboardSignal": {kind: "ui-signal", role: "signal", surface: "data"},
+		"DataExplorerDashboardSelectTargetCommandSignal": {
+			kind: "ui-command", role: "command", surface: "data_dashboard",
+		},
+		"DataExplorerDashboardAppendCommandSignal": {
+			kind: "ui-command", role: "command", surface: "data_dashboard",
+		},
+		"DataExplorerDashboardAppendEnvelope": {
+			kind: "ui-envelope", role: "envelope", surface: "data_dashboard",
+		},
 	}
-	wantRoles := map[string]string{
-		"SavedExplorationCommandSignal":   "command",
-		"SavedExplorationCurrentSignal":   "signal",
-		"SavedExplorationListItemSignal":  "signal",
-		"SavedExplorationListSignal":      "signal",
-		"SavedExplorationRevisionSignal":  "signal",
-		"SavedExplorationSaveStateSignal": "signal",
-		"SavedExplorationStateSignal":     "signal",
-	}
-	found := make(map[string]bool, len(wantRoles))
+	found := make(map[string]bool, len(wantContracts))
 	for _, contract := range document.Contracts {
-		role, ok := wantRoles[contract.Name]
+		want, ok := wantContracts[contract.Name]
 		if !ok {
 			continue
 		}
+		if found[contract.Name] {
+			t.Errorf("UI signal IR emits duplicate contract %s", contract.Name)
+		}
 		found[contract.Name] = true
-		if contract.Kind != "ui-signal" {
-			t.Errorf("%s kind = %q, want ui-signal", contract.Name, contract.Kind)
+		if contract.Kind != want.kind {
+			t.Errorf("%s kind = %q, want %s", contract.Name, contract.Kind, want.kind)
 		}
-		if contract.Extensions["x-leapview-contract-role"] != role {
-			t.Errorf("%s contract role = %v, want %q", contract.Name, contract.Extensions["x-leapview-contract-role"], role)
+		if contract.Extensions["x-leapview-contract-role"] != want.role {
+			t.Errorf("%s contract role = %v, want %q", contract.Name, contract.Extensions["x-leapview-contract-role"], want.role)
 		}
-		if contract.Extensions["x-leapview-surface"] != "saved_explorations" {
-			t.Errorf("%s surface = %v, want saved_explorations", contract.Name, contract.Extensions["x-leapview-surface"])
+		if contract.Extensions["x-leapview-surface"] != want.surface {
+			t.Errorf("%s surface = %v, want %s", contract.Name, contract.Extensions["x-leapview-surface"], want.surface)
 		}
 	}
-	for name := range wantRoles {
+	for name := range wantContracts {
 		if !found[name] {
-			t.Errorf("UI signals do not emit saved-exploration contract %s", name)
+			t.Errorf("UI signals do not emit required contract %s", name)
 		}
 	}
 }

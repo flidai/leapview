@@ -9,6 +9,7 @@ import type {
   DataExploreResultSignal,
   DataExploreSignal,
   DataExplorerCommand,
+  DataExplorerDashboardSignal,
   DataExplorerObjectSignal,
   DataExplorerPageSignal,
   DataExplorerSignal,
@@ -49,11 +50,12 @@ import {
   explorationSpecFor,
 } from './data-explorer-spec'
 import { dataExplorerURL } from './data-explorer-url'
+import { exploreReturnLink } from './explore-return'
+import { iconForLayer, label } from './data-explorer-object-labels'
 import { DataExplorerClientState } from './data-explorer-client'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import { filterObjects, objectColumnMatchesSearch } from './data-explorer-search'
 import { groupObjectsBySemanticModel, type ResourceGroup } from './data-explorer-groups'
-import { iconForLayer, label, layerLabel } from './data-explorer-object-labels'
 import {
   emptySavedExplorations,
   renderSavedExplorations,
@@ -69,6 +71,7 @@ import './preview-table'
 import './explore-table'
 import './data-explorer-query-controls'
 import './data-explorer-results'
+import './data-explorer-dashboard-picker'
 import { type ExplorationInteractionMode } from './data-explorer-drill'
 import { handleDataExploreInteraction, handleDataExploreWindowRequest } from './data-explorer-window'
 
@@ -228,6 +231,19 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       display: flex;
       align-items: center;
       gap: var(--base-size-8);
+    }
+
+    .return-link {
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .return-link:hover,
+    .return-link:focus-visible {
+      color: var(--lv-fg-default);
+      text-decoration: underline;
     }
 
     .mode-switch {
@@ -1136,6 +1152,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     return this.signal<SavedExplorationStateSignal>('savedExplorations', emptySavedExplorations)
   }
 
+  get dashboardAuthoring(): DataExplorerDashboardSignal {
+    return this.signal<DataExplorerDashboardSignal>('dataExplorerDashboard', { enabled: false, targets: [] })
+  }
+
   render() {
     const page = this.page
     const explorer = this.dataExplorer ?? emptyExplorer
@@ -1150,11 +1170,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const columns = semanticActive ? [] : this.headerColumns(explorer, false)
     const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
     const savedExplorations = this.savedExplorations
+    const returnLink = exploreReturnLink()
     return html`
       <section class=${`route${semanticActive ? ' semantic' : ''}${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
         <header class="header">
           <h1>${page?.title ?? 'Data Explorer'}</h1>
           <div class="header-actions">
+            ${returnLink ? html`<a class="return-link" href=${returnLink.href}>${returnLink.label}</a>` : nothing}
             <div class="mode-switch" role="group" aria-label="Data view">
               <button type="button" class="mode-switch-button mode-button" aria-pressed=${String(!semanticActive)} @click=${() => this.setMode('browse', selected)}>Rows</button>
               <button type="button" class="mode-switch-button mode-button" aria-pressed=${String(semanticActive)} @click=${() => this.setMode('explore', selected)}>Analyze</button>
@@ -1815,6 +1837,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const explore = exploreSignal ?? emptyExplorer.explore
     const command = this.optimisticExplore ?? explore.command
     const spec = explorationSpecFor(command)
+    const dashboardAuthoring = this.dashboardAuthoring
     const selectedSemanticModel = (explore.semanticModels ?? []).find((model) => model.id === spec.modelId) ?? explore.selectedSemanticModel
     const datasets = selectedSemanticModel?.datasets ?? explore.datasets ?? []
     const selectedDataset = datasets.find((dataset) => dataset.id === spec.datasetId) ?? explore.selectedDataset
@@ -1845,6 +1868,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                     ? html`<button type="button" class="text-button" title="Stop the pending exploration" @click=${() => this.stopExplore(command)}>${lucideIcon(X, { size: 14 })} Stop</button>`
                     : html`<button type="button" class="text-button" title=${runDisabled ? runValidation.join(' ') : 'Run exploration'} ?disabled=${runDisabled} @click=${() => this.runExplore(command)}>${lucideIcon(Play, { size: 14 })} Run</button>`}
                   <button type="button" class="icon-button" title="Return to all table columns" aria-label="Return to all table columns" @click=${() => this.selectObject(object)}>${lucideIcon(RotateCcw, { size: 16 })}</button>
+                  <lv-data-explorer-dashboard-picker .state=${dashboardAuthoring} .spec=${spec}></lv-data-explorer-dashboard-picker>
                 </div>
               </div>
               <div class="query-row">
@@ -1942,35 +1966,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     if (path.some((target) => target instanceof HTMLElement && target.classList.contains('object-expand'))) return
     event.preventDefault()
     if (!selected || this.dataExplorer.command?.mode === 'explore' || this.optimisticExplore) this.selectObject(object)
-  }
-
-  private renderSchema(object: DataExplorerObjectSignal, columns: NonNullable<DataExplorerObjectSignal['columns']>) {
-    return html`
-      <section class="schema-view" aria-label="Schema">
-        <dl class="metadata-grid">
-          <div class="metadata-card"><dt>Data layer</dt><dd>${layerLabel(object.layer)}</dd></div>
-          <div class="metadata-card"><dt>Project generation</dt><dd>${label(this.page?.context?.projectId)} · ${label(this.page?.context?.generationId)}</dd></div>
-          <div class="metadata-card"><dt>Semantic Model</dt><dd>${label(object.semanticModelId)}</dd></div>
-          <div class="metadata-card"><dt>Grain</dt><dd>${object.grain ? label(object.grain) : 'Not declared'}</dd></div>
-          ${object.description ? html`<div class="metadata-card"><dt>Description</dt><dd>${object.description}</dd></div>` : nothing}
-        </dl>
-        <table class="schema-table">
-          <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Key</th><th>Default</th><th>Description</th></tr></thead>
-          <tbody>
-            ${columns.map((column) => html`
-              <tr>
-                <td><code>${column.label || column.key}</code>${column.label !== column.key ? html`<div class="schema-muted">${column.key}</div>` : nothing}</td>
-                <td><code>${column.type || '—'}</code></td>
-                <td>${column.nullable === undefined ? 'Unknown' : column.nullable ? 'Yes' : 'No'}</td>
-                <td>${column.primaryKey ? 'Primary key' : '—'}</td>
-                <td><code>${column.defaultValue || '—'}</code></td>
-                <td class=${column.description ? '' : 'schema-muted'}>${column.description || 'No description'}</td>
-              </tr>
-            `)}
-          </tbody>
-        </table>
-      </section>
-    `
   }
 
   private emitCommand(partial: Partial<DataExplorerCommand>) {

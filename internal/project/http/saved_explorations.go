@@ -109,6 +109,10 @@ func (h *BrowserHandler) SavedExplorationReopen(w stdhttp.ResponseWriter, r *std
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("navigation")), "true") {
+		h.savedExplorationNavigation(w, r)
+		return
+	}
 	principal, ok := h.currentPrincipal(r)
 	if !ok || strings.TrimSpace(principal.ID) == "" {
 		stdhttp.NotFound(w, r)
@@ -154,6 +158,7 @@ func (h *BrowserHandler) SavedExplorationReopen(w stdhttp.ResponseWriter, r *std
 	}
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
 		"page": page, "dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
+		"agentContext":      projectui.DataExplorerAgentContext(page, explorer),
 		"savedExplorations": state,
 	})
 }

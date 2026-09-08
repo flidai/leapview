@@ -25,6 +25,41 @@ The URL-backed API accepts the canonical `ExplorationSpec` in `POST /api/v1/proj
 
 Exports default to at most 10,000 rows and 32 MiB, with the same independent row and byte bounds applied during query retention and encoding. The canonical authored query still caps `limit` at 1,000; the export ceiling never raises that query limit. CSV preserves typed scalar text and prefixes spreadsheet-formula values (including values beginning with tab, carriage return, or newline). Files are sent only after a complete, successful, bounded result is encoded.
 
+## Dashboard handoff
+
+**Add to dashboard** copies the current exploration into an authorized editable
+dashboard draft using the same semantic model. Choose the dashboard, page, and
+half- or full-width placement. The server selects a non-overlapping position and
+checks the current draft revision; it does not silently overwrite a concurrent
+edit. Refresh the target after a revision conflict before trying again.
+
+The new tile is an independent native dashboard visual, not a live link to the
+saved exploration definition. Editing the exploration later does not change the
+tile. Its queries still run against live data under each dashboard viewer's
+permissions. Review and publish the draft through the normal dashboard workflow;
+adding a tile does not automatically publish, commit to Git, or merge a branch.
+
+Project/YAML dashboards first require an explicit editable copy. The copy link
+opens the existing fork workflow in another tab so the current unsaved
+exploration remains available. After creating a compatible copy, use **Refresh
+targets** and select it. The original project dashboard is unchanged.
+
+**Explore from here** reconstructs a published dashboard component's governed
+query, display settings, and applied controls. Unsaved control edits are not
+included. Fixed predicates remain fixed; only the matching editable control's
+default is replaced. Unsupported mappings fail with an incompatibility message
+instead of producing a different query. Model, saved-content, and authorized
+chat-context entry links also open canonical live explorations; they never
+derive queries from transcript text or stored result rows.
+
+Compatible chat visual artifacts carry their original canonical query alongside
+the existing visualization envelope. **Explore visual** reruns that query under
+the current viewer's access, with a return link to its conversation. Older or
+unsupported artifacts still render but do not offer this action; their query is
+never guessed from chart values. Conversation return links also use the normal
+authenticated chat route. Explorer chat context follows the latest accepted
+query state, including when a saved exploration is reopened.
+
 ## Troubleshooting rejected exports
 
 - A stale `If-Match` revision returns a precondition failure. Reload the saved exploration and use the returned complete `ETag` value as `If-Match`; never substitute a revision number alone.

@@ -3,7 +3,7 @@ import type { ExplorationSpec } from '../../generated/exploration'
 import type { DataExplorerCommand, SavedExplorationStateSignal } from '../../generated/signals'
 import { copyExplorationLink, SavedExplorationTracker } from './data-explorer-saved'
 import { explorationResultKeyForSort, explorationSortFieldForResult, explorationSpecFor, makeExplorationFilter, removeExplorationField, toggleExplorationField } from './data-explorer-spec'
-import { absoluteDataExplorerURL, dataExplorerExportURL, dataExplorerURL, updateDataExplorerURL } from './data-explorer-url'
+import { absoluteDataExplorerURL, dataExplorerExportURL, dataExplorerReturnContextFromSearch, dataExplorerURL, savedExplorationURL, updateDataExplorerURL } from './data-explorer-url'
 
 const originalWindow = globalThis.window
 
@@ -65,6 +65,38 @@ test('browse URL preserves only the selected object', () => {
   expect(dataExplorerURL({ mode: 'browse', objectKey: 'model:orders' } as DataExplorerCommand)).toBe('/explore?object=model%3Aorders')
 })
 
+test('exploration URL carries only a validated closed chat return context', () => {
+  const command: DataExplorerCommand = {
+    mode: 'explore',
+    explore: { spec: { schemaVersion: 1, modelId: 'semantic:sales', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 } },
+  }
+  const url = new URL(dataExplorerURL(command, undefined, false, { surface: 'chat', conversationId: 'conversation:sales' }), 'https://example.test')
+  expect(url.pathname).toBe('/explore')
+  expect(url.searchParams.get('returnSurface')).toBe('chat')
+  expect(url.searchParams.get('returnConversation')).toBe('conversation:sales')
+  expect(dataExplorerURL(command, undefined, false, { surface: 'chat', conversationId: 'https://evil.example' })).toBe('/explore?v=2&mode=explore&state=%7B%22dimensions%22%3A%5B%5D%2C%22filters%22%3A%5B%5D%2C%22limit%22%3A100%2C%22metrics%22%3A%5B%5D%2C%22modelId%22%3A%22semantic%3Asales%22%2C%22schemaVersion%22%3A1%2C%22sort%22%3A%5B%5D%7D')
+})
+
+test('return context parser accepts only the three closed route surfaces', () => {
+  expect(dataExplorerReturnContextFromSearch('?returnSurface=chat&returnConversation=conversation%3Asales')).toEqual({ surface: 'chat', conversationId: 'conversation:sales' })
+  expect(dataExplorerReturnContextFromSearch('?returnSurface=dashboard&returnDashboard=dashboard%3Asales&returnPage=overview')).toEqual({ surface: 'dashboard', dashboardId: 'dashboard:sales', pageId: 'overview' })
+  expect(dataExplorerReturnContextFromSearch('?returnSurface=model&returnAsset=model%3Aorders&returnSection=data')).toEqual({ surface: 'model', asset: 'model:orders', section: 'data' })
+  expect(dataExplorerReturnContextFromSearch('?returnSurface=model&returnAsset=orders&returnSection=data')).toEqual({ surface: 'model', asset: 'orders', section: 'data' })
+  expect(dataExplorerReturnContextFromSearch('?returnSurface=chat&returnConversation=%2Fadmin')).toBeUndefined()
+  expect(dataExplorerReturnContextFromSearch('?returnSurface=chat&returnSurface=model&returnConversation=conversation%3Asales')).toBeUndefined()
+  expect(dataExplorerReturnContextFromSearch('?returnSurface=chat&returnConversation=conversation%3Asales&returnConversation=conversation%3Aother')).toBeUndefined()
+  expect(dataExplorerReturnContextFromSearch('?returnSurface=redirect&returnURL=https%3A%2F%2Fevil.example')).toBeUndefined()
+})
+
+test('model return context preserves a bare physical resource ID', () => {
+  const command = { mode: 'browse', objectKey: 'model:orders' } as DataExplorerCommand
+  const url = new URL(dataExplorerURL(command, undefined, false, { surface: 'model', asset: 'orders', section: 'data' }), 'https://example.test')
+  expect(url.searchParams.get('object')).toBe('model:orders')
+  expect(url.searchParams.get('returnSurface')).toBe('model')
+  expect(url.searchParams.get('returnAsset')).toBe('orders')
+  expect(url.searchParams.get('returnSection')).toBe('data')
+})
+
 test('export URL reuses canonical current query state and format', () => {
   const command: DataExplorerCommand = {
     mode: 'explore',
@@ -99,6 +131,11 @@ test('archived saved selection carries explicit archived-list scope', () => {
   const command = { mode: 'browse', objectKey: 'model:orders' } as DataExplorerCommand
   expect(dataExplorerURL(command, 'exploration:archived', true)).toBe('/explore?saved=exploration%3Aarchived&includeArchived=true&object=model%3Aorders')
   expect(dataExplorerURL(command, 'exploration:active')).toBe('/explore?saved=exploration%3Aactive&object=model%3Aorders')
+})
+
+test('saved navigation resolves to an authorized canonical revision first', () => {
+  expect(savedExplorationURL('exploration:orders')).toBe('/explore/saved/exploration%3Aorders?navigation=true')
+  expect(savedExplorationURL('exploration:archived', true)).toBe('/explore/saved/exploration%3Aarchived?navigation=true&includeArchived=true')
 })
 
 test('filter editor preserves typed scalar values and fails closed', () => {
@@ -225,6 +262,70 @@ test('durable explorer edits push while canonicalization replaces and unchanged 
     expect(calls[1]).toMatchObject({ mode: 'replace', url: '/explore?v=2&mode=explore&state=%7B%22datasetId%22%3A%22customers%22%2C%22dimensions%22%3A%5B%7B%22field%22%3A%22customers.state%22%7D%5D%2C%22filters%22%3A%5B%5D%2C%22limit%22%3A100%2C%22metrics%22%3A%5B%5D%2C%22modelId%22%3A%22sales%22%2C%22schemaVersion%22%3A1%2C%22sort%22%3A%5B%5D%7D' })
   } finally {
     Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true })
+  }
+})
+
+test('query and save URL updates preserve only the validated closed return context', () => {
+  const originalSearch = '?v=2&mode=explore&returnSurface=chat&returnConversation=conversation%3Asales&returnURL=https%3A%2F%2Fevil.example'
+  const fakeWindow = {
+    location: { pathname: '/explore', search: originalSearch },
+    history: {
+      state: { stream: 'explorer' },
+      pushState: (_state: unknown, _title: string, url: string) => { fakeWindow.location.search = new URL(url, 'https://example.test').search },
+      replaceState: (_state: unknown, _title: string, url: string) => { fakeWindow.location.search = new URL(url, 'https://example.test').search },
+    },
+  }
+  Object.defineProperty(globalThis, 'window', { value: fakeWindow, configurable: true })
+  try {
+    const command = {
+      mode: 'explore',
+      explore: { spec: { schemaVersion: 1, modelId: 'semantic:sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 } },
+    } as DataExplorerCommand
+    const afterQuery = updateDataExplorerURL(command, 'push')
+    const query = new URL(afterQuery, 'https://example.test')
+    expect(query.searchParams.get('returnSurface')).toBe('chat')
+    expect(query.searchParams.get('returnConversation')).toBe('conversation:sales')
+    expect(query.searchParams.has('returnURL')).toBe(false)
+    expect(query.searchParams.get('state')).toContain('orders.status')
+
+    const afterSave = updateDataExplorerURL({ ...command, explore: { ...command.explore!, spec: { ...command.explore!.spec, limit: 25 } } }, 'replace', 'exploration:sales')
+    const saved = new URL(afterSave, 'https://example.test')
+    expect(saved.searchParams.get('saved')).toBe('exploration:sales')
+    expect(saved.searchParams.get('returnSurface')).toBe('chat')
+    expect(saved.searchParams.get('returnConversation')).toBe('conversation:sales')
+    expect(saved.searchParams.get('state')).toContain('"limit":25')
+  } finally {
+    Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true })
+  }
+})
+
+test('history updates preserve validated dashboard and model return contexts', () => {
+  const command = {
+    mode: 'explore',
+    explore: { spec: { schemaVersion: 1, modelId: 'semantic:sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 } },
+  } as DataExplorerCommand
+  const cases = [
+    ['?returnSurface=dashboard&returnDashboard=dashboard%3Asales&returnPage=overview', { returnSurface: 'dashboard', returnDashboard: 'dashboard:sales', returnPage: 'overview' }],
+    ['?returnSurface=model&returnAsset=model%3Aorders&returnSection=data', { returnSurface: 'model', returnAsset: 'model:orders', returnSection: 'data' }],
+    ['?returnSurface=model&returnAsset=orders&returnSection=data', { returnSurface: 'model', returnAsset: 'orders', returnSection: 'data' }],
+  ] as const
+  const original = globalThis.window
+  try {
+    for (const [search, expected] of cases) {
+      const fakeWindow = {
+        location: { pathname: '/explore', search },
+        history: {
+          state: null,
+          pushState: () => {},
+          replaceState: () => {},
+        },
+      }
+      Object.defineProperty(globalThis, 'window', { value: fakeWindow, configurable: true })
+      const next = new URL(updateDataExplorerURL(command, 'replace'), 'https://example.test').searchParams
+      for (const [key, value] of Object.entries(expected)) expect(next.get(key)).toBe(value)
+    }
+  } finally {
+    Object.defineProperty(globalThis, 'window', { value: original, configurable: true })
   }
 })
 

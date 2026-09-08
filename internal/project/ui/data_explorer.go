@@ -43,6 +43,18 @@ type DataExplorerSavedExplorationCommandBindings struct {
 	Archive   uicommand.Binding
 }
 
+// DataExplorerDashboardBootstrap is the safe target list and generated
+// command binding used by the explicit Add to dashboard workflow.
+type DataExplorerDashboardBootstrap struct {
+	Enabled     bool
+	Targets     []uisignals.DataExplorerDashboardTargetSignal
+	ForkTargets []uisignals.DataExplorerDashboardForkTargetSignal
+	Command     uicommand.Binding
+	Path        string
+	State       string
+	Message     string
+}
+
 // DefaultDataExplorerSavedExplorationState keeps the generated envelope
 // truthful on legacy data-explorer paths where saved-exploration persistence
 // is not composed. Required fields remain valid while enabled gates the UI.
@@ -79,14 +91,18 @@ func DataExplorerPage(catalog catalog.Catalog, page uisignals.DataExplorerPageSi
 }
 
 func DataExplorerPageWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, csrfToken string, providers ...webpage.Provider) g.Node {
-	return dataExplorerPageWithAgentAndSaved(page, explorer, agent, commands, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(false)}, csrfToken, providers...)
+	return dataExplorerPageWithAgentAndSaved(page, explorer, agent, commands, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(false)}, DataExplorerDashboardBootstrap{}, csrfToken, providers...)
 }
 
-func DataExplorerPageWithSavedExplorations(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
-	return dataExplorerPageWithAgentAndSaved(page, explorer, DataExplorerAgentBootstrap{}, DataExplorerAgentCommandBindings{}, saved, csrfToken, providers...)
+func DataExplorerPageWithSavedExplorations(catalog catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
+	return DataExplorerPageWithSavedExplorationsAndDashboard(catalog, page, explorer, saved, DataExplorerDashboardBootstrap{}, csrfToken, providers...)
 }
 
-func dataExplorerPageWithAgentAndSaved(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, saved DataExplorerSavedExplorationBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
+func DataExplorerPageWithSavedExplorationsAndDashboard(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, dashboardBootstrap DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
+	return dataExplorerPageWithAgentAndSaved(page, explorer, DataExplorerAgentBootstrap{}, DataExplorerAgentCommandBindings{}, saved, dashboardBootstrap, csrfToken, providers...)
+}
+
+func dataExplorerPageWithAgentAndSaved(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
 	saved.State = normalizeDataExplorerSavedExplorationState(saved.State, saved.Enabled)
 	layout := webpage.Resolve(firstProvider(providers), webpage.Context{Active: "data-explorer", PageTitle: page.Title})
 	explorerUpdatesURL := dataExplorerUpdatesURLWithOptions(explorer.Command, uisignals.ValueOrZero(saved.State.List.SelectedID), savedExplorationSelectionIncludesArchived(saved.State))
@@ -101,17 +117,41 @@ func dataExplorerPageWithAgentAndSaved(page uisignals.DataExplorerPageSignal, ex
 		contentAttrs = append(contentAttrs, g.Attr("data-on:lv-saved-exploration-dirty", "$savedExplorations.save = {state: 'dirty'}"))
 		contentAttrs = append(contentAttrs, g.Attr("data-on:lv-saved-exploration-reopen", uiactions.GetPathExpression("'/explore/saved/' + encodeURIComponent(evt.detail.explorationId) + (evt.detail.includeArchived ? '?includeArchived=true' : '')", "page", "dataExplorer", "savedExplorations")))
 	}
+	// Authoring requests use document-level action bridges with distinct DOM
+	// owners. The explorer host owns query run/stop requests; keeping these
+	// mutations on separate elements prevents an append failure from being
+	// interpreted as a query failure when both requests overlap.
+	dashboardTargetAction := g.El("span",
+		g.Attr("hidden", ""),
+		g.Attr("data-lv-dashboard-action", "target"),
+		g.Attr("data-on:lv-data-explorer-dashboard-target__document", "$dataExplorerDashboardTarget = evt.detail; "+uiactions.GetPathExpression("'/explore/dashboard-target/' + encodeURIComponent(evt.detail.dashboardId)", "dataExplorerDashboard")),
+	)
+	dashboardRefreshAction := g.El("span",
+		g.Attr("hidden", ""),
+		g.Attr("data-lv-dashboard-action", "refresh"),
+		g.Attr("data-on:lv-data-explorer-dashboard-refresh__document", "$dataExplorerDashboardRefresh = evt.detail; "+uiactions.GetPathExpression("'/explore/dashboard-targets?model=' + encodeURIComponent(evt.detail.modelId)", "dataExplorerDashboard")),
+	)
+	dashboardAppendAction := g.El("span",
+		g.Attr("hidden", ""),
+		g.Attr("data-lv-dashboard-action", "append"),
+		g.Attr("data-on:lv-data-explorer-add-to-dashboard__document", "$addExplorationToDashboard = evt.detail; "+uiactions.CommandPost(dashboard.Command, dashboard.Path, "addExplorationToDashboard")),
+	)
 	return webpage.Render(layout, webpage.Spec{
 		Title: page.Title, CSRFToken: csrfToken, Scripts: []string{"/static/data-explorer.js"},
 		UpdatesURL: explorerUpdatesURL,
-		Content: g.El("lv-data-explorer",
-			g.Attr("slot", "page"),
-			g.Attr("data-indicator", "agentTurnPending"),
-			g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPost("/explore/command")),
-			g.Attr("data-on:lv-chat-submit", agentTurn),
-			g.Attr("data-on:lv-chat-restore", agentRestore),
-			g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
-		),
+		Content: g.Group{
+			g.El("lv-data-explorer",
+				g.Attr("slot", "page"),
+				g.Attr("data-indicator", "agentTurnPending"),
+				g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPost("/explore/command")),
+				g.Attr("data-on:lv-chat-submit", agentTurn),
+				g.Attr("data-on:lv-chat-restore", agentRestore),
+				g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
+			),
+			dashboardTargetAction,
+			dashboardRefreshAction,
+			dashboardAppendAction,
+		},
 		ContentAttrs: append(contentAttrs,
 			g.Attr("data-on:lv-chat-reference-search__debounce.200ms", "$agentReferenceSearch.query = evt.detail.query; $agentReferenceSearch.requestId = evt.detail.requestId; "+uiactions.Get("/chats/references/search", "agentReferenceSearch", "agentContext")),
 		),
@@ -191,14 +231,18 @@ func DataExplorerBootstrapSignals(catalog catalog.Catalog, page uisignals.DataEx
 }
 
 func DataExplorerBootstrapSignalsWithAgent(catalog catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, providers ...webpage.Provider) map[string]any {
-	return dataExplorerBootstrapSignalsWithSaved(catalog, page, explorer, agent, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(false)}, providers...)
+	return dataExplorerBootstrapSignalsWithSaved(catalog, page, explorer, agent, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(false)}, DataExplorerDashboardBootstrap{}, providers...)
 }
 
 func DataExplorerBootstrapSignalsWithSavedExplorations(catalog catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, providers ...webpage.Provider) map[string]any {
-	return dataExplorerBootstrapSignalsWithSaved(catalog, page, explorer, DataExplorerAgentBootstrap{}, saved, providers...)
+	return DataExplorerBootstrapSignalsWithSavedExplorationsAndDashboard(catalog, page, explorer, saved, DataExplorerDashboardBootstrap{}, providers...)
 }
 
-func dataExplorerBootstrapSignalsWithSaved(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, saved DataExplorerSavedExplorationBootstrap, providers ...webpage.Provider) map[string]any {
+func DataExplorerBootstrapSignalsWithSavedExplorationsAndDashboard(catalog catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, providers ...webpage.Provider) map[string]any {
+	return dataExplorerBootstrapSignalsWithSaved(catalog, page, explorer, DataExplorerAgentBootstrap{}, saved, dashboard, providers...)
+}
+
+func dataExplorerBootstrapSignalsWithSaved(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, saved DataExplorerSavedExplorationBootstrap, dashboardBootstrap DataExplorerDashboardBootstrap, providers ...webpage.Provider) map[string]any {
 	layout := webpage.Resolve(firstProvider(providers), webpage.Context{Active: "data-explorer", PageTitle: page.Title})
 	context := DataExplorerAgentContext(page, explorer)
 	if agent.Agent == nil {
@@ -224,6 +268,17 @@ func dataExplorerBootstrapSignalsWithSaved(_ catalog.Catalog, page uisignals.Dat
 	}
 	saved.State = normalizeDataExplorerSavedExplorationState(saved.State, saved.Enabled)
 	state["savedExplorations"] = saved.State
+	dashboardState := uisignals.DataExplorerDashboardSignal{Enabled: dashboardBootstrap.Enabled, Targets: dashboardBootstrap.Targets}
+	if dashboardBootstrap.State != "" {
+		dashboardState.State = &dashboardBootstrap.State
+	}
+	if dashboardBootstrap.Message != "" {
+		dashboardState.Message = &dashboardBootstrap.Message
+	}
+	if dashboardBootstrap.ForkTargets != nil {
+		dashboardState.ForkTargets = &dashboardBootstrap.ForkTargets
+	}
+	state["dataExplorerDashboard"] = dashboardState
 	return webpage.WithSignal(layout, state)
 }
 

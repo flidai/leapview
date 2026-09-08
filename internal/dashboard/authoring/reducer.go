@@ -140,6 +140,8 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
 	case *AddVisualPayload:
 		return addCanonicalVisual(value, *patch)
+	case *AppendExplorationVisualPayload:
+		return appendCanonicalExplorationVisual(value, *patch)
 	case *AssignFieldPayload:
 		return assignCanonicalField(value, *patch)
 	case *UpsertPagePayload:
