@@ -64,6 +64,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Data revisions and activation](/docs/guides/data/revisions): Understand revision identity and atomic activation.
 - [Materialization and refresh](/docs/guides/data/refresh): Refresh model materializations without disrupting active queries.
 - [Storage and recovery](/docs/guides/data/storage-recovery): Operate local or object-backed analytical storage safely.
+- [Recovery evidence manifests](/docs/guides/data/recovery-evidence-manifest): Understand qualified manifest capture, boundary binding, and immutable evidence retention.
 - [Data troubleshooting](/docs/guides/data/troubleshooting): Diagnose planning, upload, revision, and refresh failures.
 
 ### Deploy and operate
