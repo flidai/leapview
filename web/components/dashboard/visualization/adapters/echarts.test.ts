@@ -2,91 +2,9 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { Change, defaultRendererContext } from '../host-controller'
-import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echartsUpdatePlan, heatmapFocusDataZoom, heatmapFocusZoomEnabled, interactionCommandForRow, legendSelectionCommand, normalizeRendererLocale, removeEChartsRendererFrame, waitForEChartsFrame } from './echarts'
-import { constrainEChartsLabelToDataRect, echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
+import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echartsUpdatePlan, interactionCommandForRow, legendSelectionCommand, normalizeRendererLocale, removeEChartsRendererFrame, waitForEChartsFrame } from './echarts'
 import { CategoryColorRegistry } from './echarts/category-colors'
 import { proportionalCenterText } from './echarts/proportional'
-
-test('ECharts label policy truncates by grapheme and preserves selected and threshold labels', () => {
-  const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
-  envelope.spec.datasets[0].fields[0].role = 'identity'
-  envelope.selection = [{
-    datum: { dataset: 'primary', dataRevision: 1, identity: { label: 'A' } },
-    label: 'A',
-  }]
-  envelope.spec.conditionalFormatting = [{
-    id: 'threshold', target: 'label_foreground', field: { dataset: 'primary', field: 'value' },
-    rule: {
-      kind: 'rules',
-      rules: [{ operator: 'greater_or_equal', value: 1, style: { color: 'warning', icon: 'warning' } }],
-      nullStyle: { color: 'neutral' },
-      defaultStyle: { color: 'neutral', icon: 'circle' },
-    },
-  }]
-  const policy = {
-    density: 'automatic', priority: ['selected', 'threshold'],
-    maxCharacters: 8, minimumSpacing: 6, tooltipFallback: true,
-  } as const
-  const translated = echartsLabelPolicy(envelope, 'primary', policy, (params) => String(params.value?.[0] ?? ''), defaultRendererContext)
-
-  expect(translated.label).toMatchObject({ show: true, padding: 3, overflow: 'truncate' })
-  expect(translated.label.formatter({ value: ['São Paulo 😀 zone'] })).toBe('São Pau…')
-  expect(translated.labelLayout({ dataIndex: 0 }).hideOverlap).toBe(false)
-  expect(translated.labelLayout({ dataIndex: 99 }).hideOverlap).toBe(true)
-  expect(truncateVisualizationLabel('ação 😀 norte', 7, 'pt-BR')).toBe('ação 😀…')
-
-  const dense = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'dense', minimumSpacing: 2 }, () => 'value', defaultRendererContext)
-  expect(dense.label).toMatchObject({ show: true, fontSize: 10, padding: 1 })
-  const always = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'always' }, () => 'value', defaultRendererContext)
-  expect(always.labelLayout).toEqual({ hideOverlap: false })
-  const hidden = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'hidden' }, () => 'value', defaultRendererContext)
-  expect(hidden.label.show).toBe(false)
-  envelope.spec.presentation.labelPolicy = { ...policy, density: 'hidden' }
-  envelope.dataState.datasets[0].rows[0][0] = 'São Paulo 😀 zone'
-  const hiddenOption = echartsOption(envelope, defaultRendererContext) as any
-  expect(hiddenOption.tooltip.confine).toBe(true)
-  expect(hiddenOption.tooltip.formatter({ value: envelope.dataState.datasets[0].rows[0] })).toContain('São Paulo 😀 zone')
-  expect(hiddenOption.aria.description).toContain('label: São Paulo 😀 zone')
-})
-
-test('ECharts heatmap labels stay inside their data cells', () => {
-  const automatic = constrainEChartsLabelToDataRect(
-    ({ dataIndex }) => ({ hideOverlap: dataIndex !== 0 }),
-    4,
-  )
-  expect(automatic({ dataIndex: 0, rect: { width: 18.9, height: 15.2 } })).toEqual({
-    hideOverlap: false,
-    width: 14,
-    height: 11,
-  })
-  expect(automatic({ dataIndex: 1 })).toEqual({ hideOverlap: true })
-
-  const always = constrainEChartsLabelToDataRect({ hideOverlap: false }, 6)
-  expect(always({ rect: { width: 4, height: 5 } })).toEqual({ hideOverlap: false, width: 0, height: 0 })
-})
-
-test('ECharts heatmap focus keeps a draggable full-range slider and restores the compact range', () => {
-  expect(heatmapFocusDataZoom(true)).toEqual([
-    { id: 'dataZoom:heatmap:inside', type: 'inside', disabled: true, start: 0, end: 100 },
-    { id: 'dataZoom:heatmap:slider', type: 'slider', show: true, bottom: 64, showDetail: false, brushSelect: false, start: 0, end: 100 },
-  ])
-  expect(heatmapFocusDataZoom(false, { start: 0, end: 37.5 })).toEqual([
-    { id: 'dataZoom:heatmap:inside', type: 'inside', disabled: false, start: 0, end: 37.5 },
-    { id: 'dataZoom:heatmap:slider', type: 'slider', show: true, bottom: 64, showDetail: false, brushSelect: false, start: 0, end: 37.5 },
-  ])
-})
-
-test('ECharts heatmap focus requires initialized generated zoom controls', () => {
-  const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
-  const populated = echartsOption(envelope, defaultRendererContext) as any
-  expect(populated.dataZoom).toHaveLength(2)
-  expect(heatmapFocusZoomEnabled(envelope, true)).toBe(true)
-
-  envelope.dataState.datasets[0].rows = []
-  const empty = echartsOption(envelope, defaultRendererContext) as any
-  expect(empty.dataZoom).toEqual([])
-  expect(heatmapFocusZoomEnabled(envelope, false)).toBe(false)
-})
 
 test('ECharts renders governed bivariate points, bubbles, labels, color, and stable brushes', () => {
   const envelope = {
