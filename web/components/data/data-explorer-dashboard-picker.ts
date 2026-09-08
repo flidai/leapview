@@ -49,20 +49,25 @@ export class DataExplorerDashboardPicker extends LitElement {
   static styles = css`
     :host { display: inline-block; }
     .text-button, .close-button, .primary-button { cursor: pointer; }
-    .text-button { border: 0; background: transparent; color: var(--lv-fg-muted, #667085); padding: 0.25rem; }
-    .text-button:hover, .text-button:focus-visible { color: var(--lv-fg-default, #101828); text-decoration: underline; }
-    .add-dashboard-panel { display: grid; gap: 0.5rem; margin-top: 0.5rem; min-width: 18rem; padding: 0.75rem; border: 1px solid var(--lv-border-default, #d0d5dd); border-radius: 0.5rem; background: var(--lv-bg-default, #fff); }
-    label { display: grid; gap: 0.2rem; font-size: 0.8rem; }
-    select { min-height: 2rem; }
-    .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
-    .panel-header strong { font-size: 0.85rem; }
-    .close-button { border: 0; background: transparent; color: var(--lv-fg-muted, #667085); font-size: 1.1rem; }
-    .dashboard-add-help, .dashboard-fork-help { margin: 0; color: var(--lv-fg-muted, #667085); font-size: 0.78rem; line-height: 1.35; }
-    .dashboard-fork-help { display: grid; gap: 0.25rem; }
-    .dashboard-fork-help a { color: var(--lv-fg-link, #175cd3); }
-    .status { margin: 0; font-size: 0.8rem; }
-    .status.error { color: var(--lv-fg-danger, #b42318); }
-    .primary-button { border: 0; border-radius: 0.35rem; padding: 0.45rem 0.7rem; background: var(--lv-bg-accent, #175cd3); color: white; }
+    .text-button { min-height: var(--lv-button-height-sm); border: var(--lv-border-transparent); border-radius: var(--lv-button-radius); background: var(--lv-button-invisible-bg-rest); color: var(--lv-button-invisible-fg-rest); padding: 0 var(--lv-button-padding-inline-sm); font: var(--lv-type-body-compact); }
+    .text-button:hover:not(:disabled), .text-button:focus-visible { background: var(--lv-button-invisible-bg-hover); color: var(--lv-fg-default); text-decoration: underline; }
+    .text-button:focus-visible, .close-button:focus-visible, .primary-button:focus-visible { outline: var(--focus-outline); outline-offset: var(--outline-offset-focus); }
+    .text-button:disabled, .close-button:disabled { color: var(--lv-button-fg-disabled); cursor: not-allowed; }
+    .add-dashboard-panel { display: grid; gap: var(--base-size-8); margin-top: var(--base-size-8); min-width: 18rem; padding: var(--base-size-12); border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); }
+    label { display: grid; gap: var(--base-size-2); font: var(--lv-type-caption); }
+    select { min-height: var(--lv-control-medium); }
+    .panel-header { display: flex; align-items: center; justify-content: space-between; gap: var(--base-size-12); }
+    .panel-header strong { font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-semibold); }
+    .close-button { min-height: var(--lv-button-height-sm); min-width: var(--lv-button-height-sm); border: var(--lv-border-transparent); border-radius: var(--lv-button-radius); background: var(--lv-button-invisible-bg-rest); color: var(--lv-button-invisible-fg-rest); font: var(--lv-type-body-large); }
+    .close-button:hover:not(:disabled) { background: var(--lv-button-invisible-bg-hover); color: var(--lv-fg-default); }
+    .dashboard-add-help, .dashboard-fork-help { margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .dashboard-fork-help { display: grid; gap: var(--base-size-4); }
+    .dashboard-fork-help a { color: var(--lv-fg-link); }
+    .status { margin: 0; font: var(--lv-type-caption); }
+    .status.error { color: var(--lv-fg-danger); }
+    .primary-button { min-height: var(--lv-button-height); border: var(--lv-button-accent-border-rest); border-radius: var(--lv-button-radius); padding: 0 var(--lv-button-padding-inline); background: var(--lv-button-accent-bg-rest); color: var(--lv-button-accent-fg-rest); font: var(--lv-type-body-compact); }
+    .primary-button:hover:not(:disabled) { border-color: var(--lv-button-accent-border-hover); background: var(--lv-button-accent-bg-hover); }
+    .primary-button:disabled { border-color: var(--lv-button-accent-border-disabled); background: var(--lv-button-accent-bg-disabled); color: var(--lv-button-accent-fg-disabled); cursor: not-allowed; }
   `
 
   override connectedCallback(): void {

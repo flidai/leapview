@@ -235,7 +235,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
     .return-link {
       color: var(--lv-fg-muted);
-      font-size: var(--lv-font-size-100, 0.875rem);
+      font: var(--lv-type-caption);
       text-decoration: none;
       white-space: nowrap;
     }
