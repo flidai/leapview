@@ -158,6 +158,11 @@ func assertSavedMonthlyCSV(t *testing.T, body []byte) {
 
 func assertSavedMonthlyParquet(t *testing.T, body []byte) {
 	t.Helper()
+	assertSavedMonthlyParquetValues(t, body, "US")
+}
+
+func assertSavedMonthlyParquetValues(t *testing.T, body []byte, wantState string) {
+	t.Helper()
 	table, err := pqarrow.ReadTable(t.Context(), bytes.NewReader(body), nil, pqarrow.ArrowReadProperties{}, memory.DefaultAllocator)
 	if err != nil {
 		t.Fatalf("decode monthly Parquet: %v", err)
@@ -175,8 +180,8 @@ func assertSavedMonthlyParquet(t *testing.T, body []byte) {
 		t.Fatalf("monthly Parquet month values = %#v, want January/February timestamp values", table.Column(0).Data().Chunk(0))
 	}
 	states, ok := table.Column(1).Data().Chunk(0).(*array.String)
-	if !ok || states.Value(0) != "US" || states.Value(1) != "US" {
-		t.Fatalf("monthly Parquet state values = %#v, want US/US", table.Column(1).Data().Chunk(0))
+	if !ok || states.Value(0) != wantState || states.Value(1) != wantState {
+		t.Fatalf("monthly Parquet state values = %#v, want %s/%s", table.Column(1).Data().Chunk(0), wantState, wantState)
 	}
 	revenue, ok := table.Column(2).Data().Chunk(0).(*array.Decimal128)
 	revenueType, revenueTypeOK := table.Schema().Field(2).Type.(*arrow.Decimal128Type)
@@ -388,4 +393,14 @@ func (r *savedMonthlyRepository) GetRevision(_ context.Context, input saved.Revi
 		return saved.Revision{}, saved.ErrNotFound
 	}
 	return r.revision.Clone(), nil
+}
+
+func (r *savedMonthlyRepository) ListPage(_ context.Context, input saved.ListInput) (saved.ListPage, error) {
+	if r.lifecycle.ID == "" || r.lifecycle.ProjectID != input.ProjectID {
+		return saved.ListPage{}, nil
+	}
+	if !input.IncludeArchived && r.lifecycle.Status == saved.StatusArchived {
+		return saved.ListPage{}, nil
+	}
+	return saved.ListPage{Items: []saved.Lifecycle{r.lifecycle}}, nil
 }
