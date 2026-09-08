@@ -7886,6 +7886,7 @@
                                           "type": "object"
                                         }
                                       ],
+                                      "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
                                       "properties": {
                                         "kind": {
                                           "enum": [
@@ -7920,6 +7921,7 @@
                                           "type": "object"
                                         }
                                       ],
+                                      "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
                                       "properties": {
                                         "currency": {
                                           "type": "string"
@@ -7958,6 +7960,7 @@
                                           "type": "object"
                                         }
                                       ],
+                                      "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
                                       "properties": {
                                         "kind": {
                                           "enum": [
@@ -9600,6 +9603,7 @@
                                           "type": "object"
                                         }
                                       ],
+                                      "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
                                       "properties": {
                                         "kind": {
                                           "enum": [
@@ -9634,6 +9638,7 @@
                                           "type": "object"
                                         }
                                       ],
+                                      "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
                                       "properties": {
                                         "currency": {
                                           "type": "string"
@@ -9672,6 +9677,7 @@
                                           "type": "object"
                                         }
                                       ],
+                                      "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
                                       "properties": {
                                         "kind": {
                                           "enum": [
@@ -10537,6 +10543,7 @@
                                           "type": "object"
                                         }
                                       ],
+                                      "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
                                       "properties": {
                                         "kind": {
                                           "enum": [
@@ -10571,6 +10578,7 @@
                                           "type": "object"
                                         }
                                       ],
+                                      "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
                                       "properties": {
                                         "currency": {
                                           "type": "string"
@@ -10609,6 +10617,7 @@
                                           "type": "object"
                                         }
                                       ],
+                                      "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
                                       "properties": {
                                         "kind": {
                                           "enum": [
@@ -12781,6 +12790,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [
@@ -12815,6 +12825,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "currency": {
                                                             "type": "string"
@@ -12853,6 +12864,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [
@@ -13021,6 +13033,9 @@
                                       "type": "integer"
                                     },
                                     "radius": {
+                                      "description": "Approximate CSS-pixel clustering target for tiled maps. The server uses a\nglobally aligned grid with max(1, floor(256 / radius)) cells per tile;\nradii 129–512 therefore share one cell per tile. This does not promise\npixel-identical cluster membership between inline and tiled data.",
+                                      "maximum": 512,
+                                      "minimum": 1,
                                       "type": "integer"
                                     },
                                     "showCount": {
@@ -13191,6 +13206,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [
@@ -13225,6 +13241,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "currency": {
                                                             "type": "string"
@@ -13263,6 +13280,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [
@@ -13560,6 +13578,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [
@@ -13594,6 +13613,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "currency": {
                                                             "type": "string"
@@ -13632,6 +13652,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [
@@ -13908,6 +13929,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [
@@ -13942,6 +13964,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "currency": {
                                                             "type": "string"
@@ -13980,6 +14003,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [
@@ -14266,6 +14290,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [
@@ -14300,6 +14325,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "currency": {
                                                             "type": "string"
@@ -14338,6 +14364,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [
@@ -14624,6 +14651,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [
@@ -14658,6 +14686,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "currency": {
                                                             "type": "string"
@@ -14696,6 +14725,7 @@
                                                             "type": "object"
                                                           }
                                                         ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
                                                         "properties": {
                                                           "kind": {
                                                             "enum": [

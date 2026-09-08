@@ -62917,6 +62917,8 @@ components:
           type: integer
           format: int32
           example: 1
+      description: Currency display format; the default fraction range is 2..2. One-sided
+        bounds follow the numeric format rule.
       example:
         currency: example
         kind: example
@@ -75835,6 +75837,11 @@ components:
           type: integer
           format: int32
           example: 1
+      description: |-
+        Numeric display format. With no fraction bounds, values use 0..3 digits.
+        A one-sided bound preserves that default on the unconstrained side unless
+        it would make the range invalid: a maximum below the default minimum lowers
+        the minimum, and a minimum above the default maximum raises the maximum.
       example:
         kind: example
         maximumFractionDigits: 1
@@ -75901,6 +75908,8 @@ components:
           type: integer
           format: int32
           example: 1
+      description: Percent display format; the default fraction range is 0..1. One-sided
+        bounds follow the numeric format rule.
       example:
         kind: example
         maximumFractionDigits: 1

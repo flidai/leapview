@@ -242,6 +242,7 @@
           "$ref": "#/$defs/VisualizationFormatBase"
         }
       ],
+      "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
       "properties": {
         "currency": {
           "type": "string"
@@ -3317,6 +3318,7 @@
           "$ref": "#/$defs/VisualizationFormatBase"
         }
       ],
+      "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
       "properties": {
         "kind": {
           "enum": [
@@ -3365,6 +3367,7 @@
           "$ref": "#/$defs/VisualizationFormatBase"
         }
       ],
+      "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
       "properties": {
         "kind": {
           "enum": [
