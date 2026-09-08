@@ -27,6 +27,7 @@ const currentSourceDigest = frontendSourceInputDigest()
 const currentCommit = currentGitRevision()
 const writerModes = ['update', 'propose', 'apply'] as const
 const repositoryRoot = process.cwd()
+const budgetScriptPath = join(import.meta.dir, 'frontend_bundle_budget.ts')
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => Bun.file(path).delete()))
@@ -73,7 +74,7 @@ function removeLinkedWorktree(worktree: { parent: string; root: string }): void 
 function runBudgetCli(arguments_: string[], cwd: string): { status: number | null; output: string } {
   const environment = { ...process.env }
   delete environment.BUILD_REVISION
-  const result = spawnSync(process.execPath, [join(repositoryRoot, 'scripts/frontend_bundle_budget.ts'), ...arguments_], {
+  const result = spawnSync(process.execPath, [budgetScriptPath, ...arguments_], {
     cwd,
     env: environment,
     encoding: 'utf8',
@@ -81,18 +82,25 @@ function runBudgetCli(arguments_: string[], cwd: string): { status: number | nul
   return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` }
 }
 
-function cliFixture(): { root: string; policyPath: string; evidencePath: string } {
+function cliFixture(worktreeRoot: string): { root: string; policyPath: string; evidencePath: string } {
   const root = mkdtempSync(join(tmpdir(), 'frontend-budget-cli-'))
   const files = ['login-background-loader.js', 'theme.js', 'vendor/datastar-1.0.2.js']
   const measurement = files.reduce((total, file) => {
-    const bytes = readFileSync(join(repositoryRoot, 'static', file))
+    const bytes = readFileSync(join(worktreeRoot, 'static', file))
     return {
       files,
       rawBytes: total.rawBytes + bytes.byteLength,
       gzipBytes: total.gzipBytes + Bun.gzipSync(bytes).byteLength,
     }
   }, { files, rawBytes: 0, gzipBytes: 0 })
-  const cliEvidence: FrontendBundleEvidence = evidence(measurement)
+  const baseEvidence = evidence(measurement)
+  const cliEvidence: FrontendBundleEvidence = {
+    ...baseEvidence,
+    identity: {
+      ...baseEvidence.identity,
+      sourceInputDigest: frontendSourceInputDigest(worktreeRoot),
+    },
+  }
   const basePolicy = policy()
   const budget = (bytes: { rawBytes: number; gzipBytes: number }) => ({
     baseline: { rawBytes: bytes.rawBytes, gzipBytes: bytes.gzipBytes },
@@ -358,8 +366,8 @@ test('writer modes reject a recorded commit that differs from real HEAD', () => 
 })
 
 test('the CLI guards every writer mode while check remains usable with dirty input', () => {
-  const fixture = cliFixture()
   const worktree = linkedWorktree()
+  const fixture = cliFixture(worktree.root)
   const dirtyPath = join(worktree.root, `frontend-budget-cli-dirty-${process.pid}`)
   const proposalPath = join(fixture.root, 'proposal.json')
   writeFileSync(dirtyPath, 'nonignored fixture output\n')
@@ -372,12 +380,14 @@ test('the CLI guards every writer mode while check remains usable with dirty inp
     ]
     for (const command of writerCommands) {
       const result = runBudgetCli([...command, '--policy', fixture.policyPath, '--evidence', fixture.evidencePath], worktree.root)
-      expect(result.status).not.toBe(0)
-      expect(result.output).toContain('clean nonignored working tree')
+      if (result.status === 0 || !result.output.includes('clean nonignored working tree')) {
+        throw new Error(`writer command ${command.join(' ')} unexpectedly completed (exit ${result.status}); CLI output:\n${result.output}`)
+      }
     }
     const check = runBudgetCli(['--policy', fixture.policyPath, '--evidence', fixture.evidencePath], worktree.root)
-    expect(check.status).toBe(0)
-    expect(check.output).toContain('frontend bundle budget passed')
+    if (check.status !== 0 || !check.output.includes('frontend bundle budget passed')) {
+      throw new Error(`check command unexpectedly failed (exit ${check.status}); CLI output:\n${check.output}`)
+    }
   } finally {
     rmSync(dirtyPath, { force: true })
     removeLinkedWorktree(worktree)
@@ -386,8 +396,8 @@ test('the CLI guards every writer mode while check remains usable with dirty inp
 })
 
 test('the CLI writer accepts ignored temporary output in a linked worktree', () => {
-  const fixture = cliFixture()
   const worktree = linkedWorktree()
+  const fixture = cliFixture(worktree.root)
   const temporaryDirectory = join(worktree.root, '.tmp')
   const hadTemporaryDirectory = existsSync(temporaryDirectory)
   const ignoredPath = join(temporaryDirectory, `frontend-budget-cli-ignored-${process.pid}`)
@@ -397,7 +407,7 @@ test('the CLI writer accepts ignored temporary output in a linked worktree', () 
     const status = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: worktree.root, encoding: 'utf8' })
     expect(status).toBe('')
     const result = runBudgetCli(['--update', '--policy', fixture.policyPath, '--evidence', fixture.evidencePath], worktree.root)
-    expect(result.status).toBe(0)
+    if (result.status !== 0) throw new Error(`ignored-output writer unexpectedly failed (exit ${result.status}); CLI output:\n${result.output}`)
   } finally {
     rmSync(ignoredPath, { force: true })
     if (!hadTemporaryDirectory) rmSync(temporaryDirectory, { recursive: true, force: true })
