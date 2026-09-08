@@ -4,6 +4,7 @@ import * as echarts from 'echarts'
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
 import { echartsOption, responsiveEChartsPatch } from './echarts'
+import visualDocumentation from '../../../../../docs/visuals/examples.gen.json'
 
 test('ECharts translates semantic axes and decision context from the current frame', () => {
   const envelope = cartesianFixture() as any
@@ -113,6 +114,60 @@ test('ECharts authored axis titles stay visible on centered physical axes in des
   }
 })
 
+test('ECharts keeps generated currency axis and decision-context labels inside the compact plot', () => {
+  const generated = generatedRevenueLineContextFixture()
+  const horizontal = structuredClone(generated) as any
+  horizontal.spec.presentation.orientation = 'horizontal'
+  horizontal.spec.axes[0].inversion = 'inverted'
+  const variants = [['vertical', generated], ['horizontal-inverted', horizontal]] as const
+  const contexts = [
+    defaultRendererContext,
+    { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, foreground: '#f0f6fc', muted: '#8b949e', grid: '#30363d', surface: '#0d1117' } },
+  ]
+
+  for (const [kind, envelope] of variants) {
+    for (const context of contexts) {
+      for (const [layout, width] of [['desktop', 800], ['compact', 358]] as const) {
+        const source = echartsOption(envelope, context) as Record<string, any>
+        const option = { ...source, ...responsiveEChartsPatch(source, width, 413) }
+        const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height: 413 })
+        try {
+          chart.setOption(option)
+          chart.renderToSVGString()
+          const textElements = chart.getZr().storage.getDisplayList()
+            .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string')
+          const titleElement = textElements.find((item: any) => {
+            if (item.style.text !== 'Revenue') return false
+            const bounds = globalTextBounds(item)
+            return kind === 'vertical' ? bounds.height > bounds.width : bounds.y + bounds.height <= 413 - Number(option.grid.bottom)
+          })
+          expect(titleElement, `${kind} ${layout} should render the Revenue axis title`).toBeDefined()
+          const titleBounds = globalTextBounds(titleElement)
+          expect(titleBounds.x, `${kind} ${layout} Revenue title left bound`).toBeGreaterThanOrEqual(0)
+          expect(titleBounds.y, `${kind} ${layout} Revenue title top bound`).toBeGreaterThanOrEqual(0)
+          expect(titleBounds.x + titleBounds.width, `${kind} ${layout} Revenue title right bound`).toBeLessThanOrEqual(width)
+          expect(titleBounds.y + titleBounds.height, `${kind} ${layout} Revenue title bottom bound`).toBeLessThanOrEqual(413)
+          for (const item of textElements.filter((candidate: any) => candidate !== titleElement && candidate.style.text !== 'Revenue')) {
+            expect(rectanglesOverlap(titleBounds, globalTextBounds(item)), `${kind} ${layout} Revenue title overlaps ${item.style.text}`).toBeFalse()
+          }
+
+          for (const label of ['Target', 'Fiscal year']) {
+            const labelElement = textElements.find((item: any) => item.style.text === label)
+            expect(labelElement, `${kind} ${layout} should render ${label}`).toBeDefined()
+            const labelBounds = globalTextBounds(labelElement)
+            expect(labelBounds.x, `${kind} ${layout} ${label} left bound`).toBeGreaterThanOrEqual(Number(option.grid.left))
+            expect(labelBounds.y, `${kind} ${layout} ${label} top bound`).toBeGreaterThanOrEqual(Number(option.grid.top))
+            expect(labelBounds.x + labelBounds.width, `${kind} ${layout} ${label} right bound`).toBeLessThanOrEqual(width - Number(option.grid.right))
+            expect(labelBounds.y + labelBounds.height, `${kind} ${layout} ${label} bottom bound`).toBeLessThanOrEqual(413 - Number(option.grid.bottom))
+          }
+        } finally {
+          chart.dispose()
+        }
+      }
+    }
+  }
+})
+
 function titledAxisFixture(): VisualizationEnvelope {
   const envelope = cartesianFixture() as any
   envelope.spec.axes = [
@@ -155,6 +210,13 @@ function pointTitledAxisFixture(): VisualizationEnvelope {
   envelope.dataState.datasets[0].columns = ['x', 'y']
   envelope.dataState.datasets[0].rows = [[1, 2], [2, 4]]
   return envelope
+}
+
+function generatedRevenueLineContextFixture(): VisualizationEnvelope {
+  const document = (visualDocumentation as any).documents['visuals/line']
+  const envelope = document.find((candidate: any) => candidate.visualID === 'revenue_line_context')
+  if (!envelope) throw new Error('generated revenue_line_context fixture is missing')
+  return structuredClone(envelope) as VisualizationEnvelope
 }
 
 function globalTextBounds(item: any): { x: number; y: number; width: number; height: number } {

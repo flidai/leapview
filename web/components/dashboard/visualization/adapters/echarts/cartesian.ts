@@ -27,7 +27,6 @@ import {
 type ReferenceValue = NonNullable<CartesianSpec['referenceLines']>[number]['value']
 
 const authoredAxisNameGap = 25
-const centeredAxisNameGridInset = 24
 
 export function cartesianOption(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): EChartsTranslation {
   return applyDecisionContext(envelope, context, cartesianBaseOption(envelope, context, categoryColors))
@@ -272,7 +271,8 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
       target.name = title
       target.nameLocation = 'middle'
       target.nameGap = authoredAxisNameGap
-      reserveCenteredAxisNameGrid(option, physical === 'yAxis' ? 'sides' : 'bottom', centeredAxisNameGridInset)
+      target.nameMoveOverlap = true
+      useAuthoredAxisNameLayout(option)
     }
     if (authored.scale === 'log') target.type = 'log'
     else if (authored.scale === 'linear') target.type = 'value'
@@ -327,22 +327,23 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
     if (!owner) continue
     const lines = markLines.filter((item) => (item.axis === 'secondary_y') === secondary).map((item) => item.data)
     const areas = markAreas.filter((item) => (item.axis === 'secondary_y') === secondary).map((item) => item.data)
-    if (lines.length > 0) owner.markLine = { symbol: ['none', 'none'], data: lines }
+    if (lines.length > 0) owner.markLine = {
+      symbol: ['none', 'none'],
+      label: { show: true, position: 'insideEndTop', formatter: (params: { name?: string }) => params.name ?? '' },
+      data: lines,
+    }
     if (areas.length > 0) owner.markArea = { silent: true, data: areas }
   }
   return option
 }
 
-function reserveCenteredAxisNameGrid(option: EChartsTranslation, edge: 'sides' | 'bottom', inset: number): void {
+function useAuthoredAxisNameLayout(option: EChartsTranslation): void {
   const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
   for (const grid of grids) {
     if (!grid || typeof grid !== 'object' || Array.isArray(grid)) continue
-    if (edge === 'sides') {
-      grid.left = typeof grid.left === 'number' ? Math.max(grid.left, inset) : inset
-      grid.right = typeof grid.right === 'number' ? Math.max(grid.right, inset) : inset
-    } else {
-      grid.bottom = typeof grid.bottom === 'number' ? Math.max(grid.bottom, 20) : 20
-    }
+    grid.containLabel = false
+    grid.outerBoundsMode = 'same'
+    grid.outerBoundsContain = 'all'
   }
 }
 
