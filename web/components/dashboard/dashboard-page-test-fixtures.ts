@@ -47,17 +47,28 @@ export function testDocument(): string {
     filterContract: {
       applicationMode: 'immediate',
       definitions: {
+        purchase_date: {
+          id: 'purchase_date', label: 'Purchase date', field: 'sales_orders.purchase_date', valueKind: 'date',
+          predicates: [{ kind: 'range', operators: [] }],
+          options: { kind: 'none', limit: 0, values: [] },
+          timezone: 'UTC', calendar: 'gregorian', weekStart: 'monday',
+        },
         state: {
-          id: 'state', label: 'State', field: 'orders.state', valueKind: 'string',
+          id: 'state', label: 'State', field: 'sales_orders.state', valueKind: 'string',
           predicates: [{ kind: 'set', operators: ['in'] }],
           options: { kind: 'distinct', limit: 50, values: [] },
           timezone: 'UTC', calendar: 'gregorian', weekStart: 'monday',
         },
       },
       bindings: {
+        fb_purchase_date: {
+          key: 'fb_purchase_date', id: 'purchase_date', filter: 'purchase_date', scope: 'report',
+          default: { kind: 'unfiltered' }, selectionMode: 'multiple', maxSelectedValues: 0,
+          readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+        },
         fb_state: {
           key: 'fb_state', id: 'state', filter: 'state', scope: 'page', pageID: 'overview',
-          default: { kind: 'unfiltered' }, selectionMode: 'multiple', maxSelectedValues: 0,
+          default: { kind: 'unfiltered' }, selectionMode: 'multiple', maxSelectedValues: 50,
           readerEditable: true, paneVisible: true, paneOrder: 0, targets: ['overview/orders-chart'],
           optionDependencies: [],
         },

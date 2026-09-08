@@ -20,6 +20,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
+	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
@@ -834,6 +835,26 @@ func TestCompileGraphShowcase(t *testing.T) {
 		}
 	}
 	showcase := project.Manifest.DashboardDefinitions["dashboard:visual-showcase"]
+	wantHeatmapTargets := []string{
+		"chart-heatmap/category-status-heatmap",
+		"chart-heatmap/category-status-heatmap-labels",
+		"chart-heatmap/state-status-heatmap",
+	}
+	for _, filterID := range []string{"purchase_date", "state"} {
+		binding, ok := showcase.FilterBindings[filterID]
+		if !ok {
+			t.Fatalf("compiled showcase omitted %s filter binding", filterID)
+		}
+		got := make([]string, 0, len(wantHeatmapTargets))
+		for _, target := range binding.Targets {
+			if strings.HasPrefix(target, "chart-heatmap/") {
+				got = append(got, target)
+			}
+		}
+		if !reflect.DeepEqual(got, wantHeatmapTargets) {
+			t.Fatalf("compiled %s heatmap targets = %#v, want %#v", filterID, got, wantHeatmapTargets)
+		}
+	}
 	categories, ok := showcase.Visualizations["categories"]
 	if !ok {
 		t.Fatal("compiled showcase omitted categories visual")
@@ -864,6 +885,59 @@ func TestCompileGraphShowcase(t *testing.T) {
 	}
 	if got := formattedMatrixBase.DataBudget.MaxRows; got != 5000 {
 		t.Fatalf("compiled formatted matrix maxRows = %d, want 5000", got)
+	}
+}
+
+func TestCompileProjectGraphExecutiveSalesFilterControls(t *testing.T) {
+	project, err := LoadSourceRoot(filepath.Join("..", "..", "..", "dashboards"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboard, ok := project.Manifest.DashboardDefinitions["dashboard:executive-sales"]
+	if !ok {
+		t.Fatal("compiled project omitted Executive Sales dashboard")
+	}
+	definition, ok := dashboard.FilterDefinitions["state"]
+	if !ok {
+		t.Fatal("compiled Executive Sales omitted state filter definition")
+	}
+	if definition.Field != "state" || definition.Dataset != "sales_orders" {
+		t.Fatalf("compiled state filter field/dataset = %q/%q, want state/sales_orders", definition.Field, definition.Dataset)
+	}
+	if definition.Options.Kind != dashboardfilter.OptionSourceDistinct || definition.Options.Limit != 50 {
+		t.Fatalf("compiled state filter options = %#v, want distinct limit 50", definition.Options)
+	}
+	binding, ok := dashboard.FilterBindings["state"]
+	if !ok {
+		t.Fatal("compiled Executive Sales omitted state filter binding")
+	}
+	if binding.Selection.Mode != dashboardfilter.SelectionMultiple || binding.Selection.MaxSelectedValues != 50 {
+		t.Fatalf("compiled state filter selection = %#v, want multi-select limit 50", binding.Selection)
+	}
+	purchaseDate, ok := dashboard.FilterDefinitions["purchase_date"]
+	if !ok {
+		t.Fatal("compiled Executive Sales omitted purchase_date filter definition")
+	}
+	if purchaseDate.Field != "purchase_date" || purchaseDate.ValueKind != dashboardfilter.ValueDate {
+		t.Fatalf("compiled purchase_date field/kind = %q/%q, want purchase_date/date", purchaseDate.Field, purchaseDate.ValueKind)
+	}
+	if len(purchaseDate.Predicates) != 1 || purchaseDate.Predicates[0].Kind != dashboardfilter.ExpressionRange {
+		t.Fatalf("compiled purchase_date predicates = %#v, want one range predicate", purchaseDate.Predicates)
+	}
+	purchaseBinding, ok := dashboard.FilterBindings["purchase_date"]
+	if !ok || purchaseBinding.Default.Kind != dashboardfilter.ExpressionUnfiltered {
+		t.Fatalf("compiled purchase_date default = %#v, want unfiltered", purchaseBinding.Default)
+	}
+	dateRangeSlicer := false
+	for _, page := range dashboard.Pages {
+		for _, visual := range page.Visuals {
+			if visual.ID == "purchase-date-filter" && visual.Kind == "slicer" && visual.Presentation.Style == dashboardfilter.PresentationDateRange {
+				dateRangeSlicer = true
+			}
+		}
+	}
+	if !dateRangeSlicer {
+		t.Fatal("compiled Executive Sales purchase_date slicer is not a date range")
 	}
 }
 

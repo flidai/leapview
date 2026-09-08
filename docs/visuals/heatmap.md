@@ -29,6 +29,14 @@ visuals:
       limit: 120
     presentation:
       type: cartesian
+      displayUnits: none
+      dataZoom: true
+      labels:
+        density: dense
+        priority: [selected, anomaly, threshold]
+        maxCharacters: 12
+        minimumSpacing: 2
+        tooltipFallback: true
 ```
 
 ## Alternate dimensions
@@ -55,6 +63,14 @@ visuals:
       limit: 120
     presentation:
       type: cartesian
+      displayUnits: none
+      dataZoom: true
+      labels:
+        density: dense
+        priority: [selected, anomaly, threshold]
+        maxCharacters: 12
+        minimumSpacing: 2
+        tooltipFallback: true
 ```
 
 ## Cell labels
@@ -70,11 +86,13 @@ visuals:
     type: heatmap
     presentation:
       type: cartesian
+      displayUnits: none
+      dataZoom: true
       labels:
-        density: automatic
+        density: dense
         priority: [selected, anomaly, threshold]
         maxCharacters: 12
-        minimumSpacing: 4
+        minimumSpacing: 2
         tooltipFallback: true
     query:
       type: aggregate
