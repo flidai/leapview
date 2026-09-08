@@ -756,58 +756,34 @@ test('dashboard titles use regular emphasis and popularity has a dedicated hover
   }
 })
 
-test('catalog discovery keeps source, sorting, and filters in one compact toolbar', async () => {
+test('catalog omits deferred filter and recommendation controls for v1', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ page: {
-        ...element.page,
-        dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({
-          ...dashboard,
-          status: index === 3 ? 'private_draft' : dashboard.status,
-        })),
-      } })
       await element.updateComplete
       const root = element.shadowRoot
       const list = root.querySelector('lv-entity-list') as any
       await list.updateComplete
-      const filter = root.querySelector('.catalog-filter') as HTMLDetailsElement
-      filter.open = true
-      await element.updateComplete
-      const model = root.querySelector('[aria-label="Filter by data model"]') as HTMLSelectElement
-      model.value = 'operations'
-      model.dispatchEvent(new Event('change', { bubbles: true }))
-      await element.updateComplete
-      await list.updateComplete
       return {
-        controls: Array.from(root.querySelectorAll('.catalog-discovery-control')).map((control: Element) => control.getAttribute('aria-label') ?? control.textContent?.trim()),
-        models: Array.from(model.options).map((option) => option.textContent?.trim()),
-        visible: Array.from(list.querySelectorAll('.entity-list-title')).map((title: Element) => title.textContent?.trim()),
-        activeFilters: root.querySelector('.catalog-filter-count')?.textContent?.trim(),
-        dataModels: Array.from(list.querySelectorAll('.entity-list-cell:first-of-type')).map((model: Element) => model.textContent?.trim()),
-        popularity: Array.from(list.querySelectorAll('.entity-list-popularity')).map((badge: Element) => badge.getAttribute('aria-label')),
-        hasRedundantFavoritesFilter: Array.from(root.querySelectorAll('.catalog-filter-check')).some((label: Element) => label.textContent?.includes('Favorites only')),
+        hasFilter: Boolean(root.querySelector('[aria-label="Filter dashboards"]')),
+        hasSort: Boolean(root.querySelector('[aria-label="Sort dashboards"]')),
+        searchPlaceholder: list.getAttribute('search-placeholder'),
       }
     })
 
     expect(state).toEqual({
-      controls: ['Filter dashboards', 'Sort dashboards'],
-      models: ['All data models', 'Customers', 'Inventory', 'Olist', 'Operations'],
-      visible: ['Operations Health'],
-      activeFilters: '1',
-      dataModels: ['Operations'],
-      popularity: ['Medium popularity — top 20% in the last 30 days'],
-      hasRedundantFavoritesFilter: false,
+      hasFilter: false,
+      hasSort: false,
+      searchPlaceholder: 'Search dashboards',
     })
   } finally {
     await page.close()
   }
 })
 
-test('dashboard favorites persist and rank first while recently viewed remains a sort choice', async () => {
+test('dashboard favorites persist and rank first while dashboard opens are recorded', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -831,19 +807,15 @@ test('dashboard favorites persist and rank first while recently viewed remains a
       const operations = list.querySelector('a[data-item-id="operations-health"]') as HTMLAnchorElement
       operations.addEventListener('click', (event) => event.preventDefault(), { once: true })
       operations.click()
-      const sort = element.shadowRoot.querySelector('[aria-label="Sort dashboards"]') as HTMLSelectElement
-      sort.value = 'recent'
-      sort.dispatchEvent(new Event('change', { bubbles: true }))
-      await element.updateComplete
-      await list.updateComplete
-      return { favoriteLabels, ranked, pressed, storedFavorites, recent: titles() }
+      const storedRecents = JSON.parse(localStorage.getItem('leapview.dashboard-catalog.recents.v1') ?? '{}')
+      return { favoriteLabels, ranked, pressed, storedFavorites, storedRecents }
     })
 
     expect(state.favoriteLabels).toContain('Add Inventory Risk to favorites')
     expect(state.ranked[0]).toBe('Inventory Risk')
     expect(state.pressed).toBe('true')
     expect(state.storedFavorites).toContain('inventory-risk')
-    expect(state.recent[0]).toBe('Operations Health')
+    expect(state.storedRecents['operations-health']).toEqual(expect.any(String))
   } finally {
     await page.close()
   }
