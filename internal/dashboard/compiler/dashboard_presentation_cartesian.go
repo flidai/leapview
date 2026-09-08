@@ -67,7 +67,17 @@ func validateCanonicalCartesianPresentationApplicability(variant *document.Carte
 			visualType == document.DashboardVisualTypeCombo); err != nil {
 		return err
 	}
-	if err := optionSupported("dataZoom", variant.DataZoom != nil, visualType != document.DashboardVisualTypeHeatmap); err != nil {
+	dataZoomSupported := visualType == document.DashboardVisualTypeLine ||
+		visualType == document.DashboardVisualTypeArea ||
+		visualType == document.DashboardVisualTypeBar ||
+		visualType == document.DashboardVisualTypeColumn ||
+		visualType == document.DashboardVisualTypeCombo ||
+		visualType == document.DashboardVisualTypeWaterfall ||
+		visualType == document.DashboardVisualTypeHeatmap ||
+		visualType == document.DashboardVisualTypeHistogram ||
+		visualType == document.DashboardVisualTypeCandlestick ||
+		visualType == document.DashboardVisualTypeBoxplot
+	if err := optionSupported("dataZoom", variant.DataZoom != nil, dataZoomSupported); err != nil {
 		return err
 	}
 	comboLineArea := visualType != document.DashboardVisualTypeCombo || variant.Series == nil

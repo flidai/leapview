@@ -59,7 +59,6 @@ func TestLowerCanonicalCartesianPresentationRejectsInapplicableOptions(t *testin
 		{name: "orientation on histogram", visualType: document.DashboardVisualTypeHistogram, set: func(value *document.CartesianDashboardPresentation) { value.Orientation = &orientation }, want: "presentation.orientation"},
 		{name: "orientation on candlestick", visualType: document.DashboardVisualTypeCandlestick, set: func(value *document.CartesianDashboardPresentation) { value.Orientation = &orientation }, want: "presentation.orientation"},
 		{name: "orientation on boxplot", visualType: document.DashboardVisualTypeBoxplot, set: func(value *document.CartesianDashboardPresentation) { value.Orientation = &orientation }, want: "presentation.orientation"},
-		{name: "data zoom on heatmap", visualType: document.DashboardVisualTypeHeatmap, set: func(value *document.CartesianDashboardPresentation) { value.DataZoom = &falseValue }, want: "presentation.dataZoom"},
 		{name: "show symbols on heatmap", visualType: document.DashboardVisualTypeHeatmap, set: func(value *document.CartesianDashboardPresentation) { value.ShowSymbols = &falseValue }, want: "presentation.showSymbols"},
 		{name: "smooth on heatmap", visualType: document.DashboardVisualTypeHeatmap, set: func(value *document.CartesianDashboardPresentation) { value.Smooth = &falseValue }, want: "presentation.smooth"},
 		{name: "step on heatmap", visualType: document.DashboardVisualTypeHeatmap, set: func(value *document.CartesianDashboardPresentation) { value.Step = &falseValue }, want: "presentation.step"},
@@ -86,6 +85,39 @@ func TestLowerCanonicalCartesianPresentationRejectsInapplicableOptions(t *testin
 			want := test.want + " is not supported for " + string(test.visualType) + " visuals"
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalCartesianPresentationAllowsHeatmapDataZoom(t *testing.T) {
+	dataZoom := true
+	lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+		Type: "cartesian", DataZoom: &dataZoom,
+	}}, document.DashboardVisualTypeHeatmap)
+	if err != nil {
+		t.Fatalf("heatmap data zoom rejected: %v", err)
+	}
+	presentation, ok := lowered.(visualizationir.CartesianVisualizationPresentation)
+	if !ok || !presentation.DataZoom {
+		t.Fatalf("lowered heatmap presentation = %#v, want dataZoom=true", lowered)
+	}
+}
+
+func TestLowerCanonicalCartesianPresentationRejectsDataZoomAcrossFamilies(t *testing.T) {
+	dataZoom := true
+	for _, visualType := range []document.DashboardVisualType{
+		document.DashboardVisualTypePie,
+		document.DashboardVisualTypeScatter,
+		document.DashboardVisualTypeMap,
+	} {
+		t.Run(string(visualType), func(t *testing.T) {
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+				Type: "cartesian", DataZoom: &dataZoom,
+			}}, visualType)
+			want := "visual type \"" + string(visualType) + "\" requires "
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %v, want cross-family presentation rejection containing %q", err, want)
 			}
 		})
 	}

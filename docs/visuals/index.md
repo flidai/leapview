@@ -134,7 +134,7 @@ Cartesian marks support the common `labels`, `labelPosition`, `displayUnits`, an
 | Column | `legend`, `stacking`, `orientation`, `dataZoom`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations` |
 | Combo | `legend`, `stacking`, `orientation`, `dataZoom`, `series`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations`; conditional line controls (`showSymbols`, `smooth`, `step`, `symbolSize`) apply with the default line series or when a configured series is line or area |
 | Waterfall | `dataZoom`, `referenceLines`, `referenceBands`, `eventAnnotations` |
-| Heatmap | No additional mark-specific fields |
+| Heatmap | `dataZoom` |
 | Histogram | `dataZoom` |
 | Candlestick | `legend`, `dataZoom`, `gainColor`, `lossColor` (legend title is supported; legend item overrides are not) |
 | Boxplot | `dataZoom` |
