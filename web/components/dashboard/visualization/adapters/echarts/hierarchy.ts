@@ -23,13 +23,15 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
     const targetIndex = spec.target ? columns.indexOf(spec.target.field) : -1
     const valueIndex = spec.value ? columns.indexOf(spec.value.field) : -1
     const links = (dataset?.rows ?? []).flatMap((row, rowIndex) => {
-      const sourceLabel = sourceIndex >= 0 ? String(row[sourceIndex] ?? '').trim() : ''
-      const targetLabel = targetIndex >= 0 ? String(row[targetIndex] ?? '').trim() : ''
+      const sourceValue = sourceIndex >= 0 ? row[sourceIndex] : undefined
+      const targetValue = targetIndex >= 0 ? row[targetIndex] : undefined
+      const sourceLabel = String(sourceValue ?? '').trim()
+      const targetLabel = String(targetValue ?? '').trim()
       const value = valueIndex >= 0 ? Number(row[valueIndex]) : 1
       if (!sourceLabel || !targetLabel || !Number.isFinite(value) || value <= 0) return []
       return [{
-        source: spec.mark === 'sankey' ? `source:${sourceLabel}` : sourceLabel,
-        target: spec.mark === 'sankey' ? `target:${targetLabel}` : targetLabel,
+        source: spec.mark === 'sankey' ? `source:${categoryIdentity(sourceValue)}` : categoryIdentity(sourceValue),
+        target: spec.mark === 'sankey' ? `target:${categoryIdentity(targetValue)}` : categoryIdentity(targetValue),
         sourceLabel, targetLabel, value,
         __lv_dataset: dataset?.id ?? 'primary', __lv_row_index: rowIndex,
       }]
@@ -38,7 +40,7 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
     const nodes = spec.mark === 'sankey'
       ? [...new Map(links.flatMap((link) => [[link.source, link.sourceLabel], [link.target, link.targetLabel]])).entries()].map(([name, displayName]) => ({ name, displayName }))
       : graphCircular
-        ? [...new Set(links.flatMap((link) => [link.source, link.target]))].map((name) => ({ name }))
+        ? [...new Map(links.flatMap((link) => [[link.source, link.sourceLabel], [link.target, link.targetLabel]])).entries()].map(([name, displayName]) => ({ name, displayName }))
         : layeredGraphNodes(links)
     const series: EChartsTranslation = {
       id: `series:hierarchy:${spec.mark}`, type: spec.mark, data: nodes, links,
@@ -157,27 +159,47 @@ export function hierarchyData(envelope: VisualizationEnvelope): HierarchyNode[] 
   const valueIndex = spec.value ? dataset.columns.indexOf(spec.value.field) : -1
   const byID = new Map<string, HierarchyNode>()
   const parentByID = new Map<string, string | undefined>()
-  for (let rowIndex = 0; rowIndex < dataset.rows.length; rowIndex++) {
-    const row = dataset.rows[rowIndex]!
-    const rawNode = row[nodeIndex]
-    const name = rawNode === null || rawNode === undefined ? '—' : String(rawNode)
-    const rawParent = parentIndex >= 0 ? row[parentIndex] : undefined
-    const parent = rawParent !== null && rawParent !== undefined && rawParent !== '' ? hierarchyPathIdentity(rawParent) : undefined
-    const identity = categoryIdentity(rawNode)
+  const pending = dataset.rows.map((row, rowIndex) => ({
+    row,
+    rowIndex,
+    rawNode: row[nodeIndex],
+    rawParent: parentIndex >= 0 ? row[parentIndex] : undefined,
+  }))
+  const addNode = (entry: typeof pending[number], parent: string | undefined) => {
+    const identity = categoryIdentity(entry.rawNode)
     const id = parent ? `${parent}\u001f${escapeSegment(identity)}` : escapeSegment(identity)
     if (byID.has(id)) throw new Error(`duplicate hierarchy node ${JSON.stringify(id)}`)
-    byID.set(id, { name, value: valueIndex >= 0 ? row[valueIndex] : undefined, __lv_dataset: dataset.id, __lv_row_index: rowIndex })
+    const name = entry.rawNode === null || entry.rawNode === undefined ? '—' : String(entry.rawNode)
+    byID.set(id, { name, value: valueIndex >= 0 ? entry.row[valueIndex] : undefined, __lv_dataset: dataset.id, __lv_row_index: entry.rowIndex })
     parentByID.set(id, parent)
   }
-  const roots: HierarchyNode[] = []
+  const roots = pending.filter(({ rawParent }) => rawParent === null || rawParent === undefined || rawParent === '')
+  for (const entry of roots) addNode(entry, undefined)
+  let unresolved = pending.filter(({ rawParent }) => rawParent !== null && rawParent !== undefined && rawParent !== '')
+  while (unresolved.length > 0) {
+    const next: typeof unresolved = []
+    let added = 0
+    for (const entry of unresolved) {
+      const parent = hierarchyPathIdentity(entry.rawParent).find((candidate) => byID.has(candidate))
+      if (!parent) { next.push(entry); continue }
+      addNode(entry, parent)
+      added++
+    }
+    if (added === 0) {
+      const entry = next[0]!
+      throw new Error(`hierarchy node ${JSON.stringify(categoryIdentity(entry.rawNode))} references missing parent ${JSON.stringify(hierarchyPathIdentity(entry.rawParent))}`)
+    }
+    unresolved = next
+  }
+  const result: HierarchyNode[] = []
   for (const [id, node] of byID) {
     const parentID = parentByID.get(id)
-    if (!parentID) { roots.push(node); continue }
+    if (!parentID) { result.push(node); continue }
     const parent = byID.get(parentID)
     if (!parent) throw new Error(`hierarchy node ${JSON.stringify(id)} references missing parent ${JSON.stringify(parentID)}`)
     ;(parent.children ??= []).push(node)
   }
-  return roots
+  return result
 }
 
 export function hierarchyTooltipValue(envelope: VisualizationEnvelope, node: HierarchyNode, context: RendererContext): string {
@@ -187,23 +209,41 @@ export function hierarchyTooltipValue(envelope: VisualizationEnvelope, node: Hie
 
 function escapeSegment(value: string): string { return value.replaceAll('\u001f', '\u001f\u001f') }
 
-function hierarchyPathIdentity(value: unknown): string {
-  if (typeof value === 'string' && value.includes('\u001f')) {
-    return value.split('\u001f').map((segment) => categoryIdentity(segment)).join('\u001f')
+function hierarchyPathIdentity(value: unknown): string[] {
+  const direct = escapeSegment(categoryIdentity(value))
+  if (typeof value !== 'string' || !value.includes('\u001f')) return [direct]
+  const segments: string[] = []
+  let segment = ''
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]
+    if (character !== '\u001f') {
+      segment += character
+      continue
+    }
+    if (value[index + 1] === '\u001f') {
+      segment += '\u001f'
+      index++
+    } else {
+      segments.push(segment)
+      segment = ''
+    }
   }
-  return categoryIdentity(value)
+  segments.push(segment)
+  const parsed = segments.map((candidate) => categoryIdentity(candidate))
+  return parsed.length > 1 ? [direct, parsed.reduce((path, identity) => path ? `${path}\u001f${escapeSegment(identity)}` : escapeSegment(identity), '')] : [direct]
 }
 
-function layeredGraphNodes(links: readonly { source: string; target: string }[]) {
+function layeredGraphNodes(links: readonly { source: string; target: string; sourceLabel: string; targetLabel: string }[]) {
   const sources = [...new Set(links.map((link) => link.source))]
   const targets = [...new Set(links.map((link) => link.target))]
+  const labels = new Map(links.flatMap((link) => [[link.source, link.sourceLabel], [link.target, link.targetLabel]]))
   const sourceSet = new Set(sources)
   const targetSet = new Set(targets)
   const sourceOnly = sources.filter((name) => !targetSet.has(name))
   const targetOnly = targets.filter((name) => !sourceSet.has(name))
   const shared = sources.filter((name) => targetSet.has(name))
   const column = (names: readonly string[], x: number, position: 'left' | 'right' | 'top', align: 'left' | 'right' | 'center') => names.map((name, index) => ({
-    name,
+    name, displayName: labels.get(name) ?? name,
     x,
     y: names.length === 1 ? 50 : (index / (names.length - 1)) * 100,
     label: { position, align },

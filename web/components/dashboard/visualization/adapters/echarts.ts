@@ -3,13 +3,13 @@ import type { ECharts, EChartsOption } from 'echarts'
 import { Change, defaultRendererContext, normalizeRendererLocale, type RendererAdapter, type RendererContext, type RendererHandle } from '../host-controller'
 import { clearInteractionCommand, interactionCommandForRow } from '../interaction-command'
 import { projectVisualizationHighlights } from '../highlight'
-import { baseOption, formatField } from './echarts/common'
-import { CategoryColorRegistry, categoryColorRegistryFor } from './echarts/category-colors'
+import { baseOption } from './echarts/common'
+import { CategoryColorRegistry, categoryColorRegistryFor, categoryIdentity } from './echarts/category-colors'
 import { cartesianOption } from './echarts/cartesian'
 import { hierarchyOption } from './echarts/hierarchy'
 import { polarOption } from './echarts/polar'
 import { pointCategoryRowIndexes, pointOption } from './echarts/point'
-import { proportionalCenterText, proportionalOption } from './echarts/proportional'
+import { proportionalCategories, proportionalCenterText, proportionalOption } from './echarts/proportional'
 
 export { interactionCommandForRow, normalizeRendererLocale }
 
@@ -359,9 +359,45 @@ export function preservesEChartsViewState(previous: VisualizationEnvelope, next:
   const nextMark = 'mark' in next.spec ? next.spec.mark : undefined
   if (previous.spec.kind !== next.spec.kind || previousMark !== nextMark) return false
   if (echartsNavigationChannelSignature(previous.spec) !== echartsNavigationChannelSignature(next.spec)) return false
+  if (echartsNavigationPresentationSignature(previous.spec) !== echartsNavigationPresentationSignature(next.spec)) return false
   const oldNavigation = echartsNavigationDefaults(previous)
   const nextNavigation = echartsNavigationDefaults(next)
   return oldNavigation.dataZoom && nextNavigation.dataZoom || oldNavigation.roam && nextNavigation.roam
+}
+
+/**
+ * Navigation state is meaningful only while the chart's camera has the same
+ * semantic coordinate system.  Keep this separate from the renderer option:
+ * legend/label styling can change without invalidating a user's zoom, while an
+ * axis domain, orientation, or hierarchy layout change cannot.
+ */
+function echartsNavigationPresentationSignature(spec: VisualizationEnvelope['spec']): string {
+  switch (spec.kind) {
+    case 'cartesian':
+      return JSON.stringify({
+        displayUnits: spec.presentation.displayUnits,
+        orientation: spec.presentation.orientation,
+        stacked: spec.presentation.stacked,
+        stacking: spec.presentation.stacking,
+        comboSeries: spec.presentation.comboSeries,
+        axes: [...(spec.axes ?? [])]
+          .sort((left, right) => left.id.localeCompare(right.id))
+          .map((axis) => [
+            axis.id, axis.type, axis.scale, axis.zero, axis.inversion,
+            axis.minimum, axis.maximum, axis.unit, axis.displayUnits, axis.dateUnit,
+          ]),
+      })
+    case 'hierarchy':
+      return JSON.stringify({
+        orientation: spec.presentation.orientation,
+        layout: spec.presentation.layout,
+        initialDepth: spec.presentation.initialDepth,
+        nodeGap: spec.presentation.nodeGap,
+        curveness: spec.presentation.curveness,
+      })
+    default:
+      return ''
+  }
 }
 
 function echartsNavigationChannelSignature(spec: VisualizationEnvelope['spec']): string {
@@ -401,10 +437,11 @@ export function legendSelectionCommand(envelope: VisualizationEnvelope, category
   const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === ref.dataset)
   const categoryIndex = dataset?.columns.indexOf(ref.field) ?? -1
   if (!dataset || categoryIndex < 0) return undefined
-  const rawMatches = dataset.rows.filter((candidate) => String(candidate[categoryIndex]) === categoryName)
-  const formattedMatches = dataset.rows.filter((candidate) => formatField(envelope, ref, candidate[categoryIndex], context) === categoryName)
-  const matches = rawMatches.length === 1 ? rawMatches : rawMatches.length === 0 && formattedMatches.length === 1 ? formattedMatches : []
-  const row = matches[0]
+  const values = dataset.rows.map((candidate) => candidate[categoryIndex])
+  const categories = proportionalCategories(values, envelope, ref, context)
+  const matches = categories.filter((candidate) => candidate.name === categoryName || candidate.rawName === categoryName || candidate.label === categoryName)
+  if (matches.length !== 1) return undefined
+  const row = dataset.rows.find((candidate) => categoryIdentity(candidate[categoryIndex]) === matches[0]!.identity)
   return row ? interactionCommandForRow(envelope, dataset.id, row) : undefined
 }
 

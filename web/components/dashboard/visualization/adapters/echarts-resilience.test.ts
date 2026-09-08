@@ -65,7 +65,28 @@ test('ECharts view-state preservation requires a compatible mark and enabled nav
   expect(preservesEChartsViewState(current, { ...structuredClone(current), spec: { ...current.spec, mark: 'bar' } } as any)).toBe(false)
   expect(preservesEChartsViewState(current, { ...structuredClone(current), spec: { ...current.spec, x: { dataset: 'primary', field: 'other' } } } as any)).toBe(false)
   expect(preservesEChartsViewState(current, { ...structuredClone(current), spec: { ...current.spec, y: [{ dataset: 'other', field: 'value' }] } } as any)).toBe(false)
+  expect(preservesEChartsViewState(current, { ...structuredClone(current), spec: { ...current.spec, presentation: { ...current.spec.presentation, orientation: 'horizontal' } } } as any)).toBe(false)
+  expect(preservesEChartsViewState(current, { ...structuredClone(current), spec: { ...current.spec, axes: [{ id: 'primary_y', type: 'value', scale: 'log', zero: 'exclude', inversion: 'normal', tickDensity: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic' }] } } as any)).toBe(false)
   expect(preservesEChartsViewState(current, cartesian(false))).toBe(false)
+})
+
+test('ECharts hierarchy view-state preservation rejects camera layout changes', () => {
+  const current = cartesian(false) as any
+  current.spec = {
+    kind: 'hierarchy', title: 'Tree', mark: 'tree', datasets: current.spec.datasets,
+    dataBudget: current.spec.dataBudget, accessibility: current.spec.accessibility, interactions: [],
+    node: { dataset: 'primary', field: 'label' }, parent: { dataset: 'primary', field: 'label' },
+    presentation: { ...current.spec.presentation, orientation: 'vertical', initialDepth: 1, roam: true, layout: 'standard' },
+  }
+  expect(preservesEChartsViewState(current, structuredClone(current))).toBe(true)
+  for (const presentation of [
+    { ...current.spec.presentation, orientation: 'horizontal' },
+    { ...current.spec.presentation, initialDepth: 2 },
+    { ...current.spec.presentation, layout: 'circular' },
+    { ...current.spec.presentation, nodeGap: 24 },
+  ]) {
+    expect(preservesEChartsViewState(current, { ...structuredClone(current), spec: { ...current.spec, presentation } })).toBe(false)
+  }
 })
 
 test('ECharts handle reapplies compact layout after updates and restores desktop margins', () => {

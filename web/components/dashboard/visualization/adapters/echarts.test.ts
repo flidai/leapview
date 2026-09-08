@@ -565,6 +565,16 @@ test('ECharts network links retain source-row selection while aggregate nodes st
   expect(option.series[0].data[0].__lv_dataset).toBeUndefined()
 })
 
+test('ECharts network node identities keep numeric and string endpoints distinct', () => {
+  const envelope = networkFixture('graph') as any
+  envelope.dataState.datasets[0].rows = [[1, '1', 4], ['1', 1, 3]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].links.map((link: any) => [link.source, link.target])).toEqual([
+    ['number:1', 'string:1'], ['string:1', 'number:1'],
+  ])
+  expect(option.series[0].data.map((node: any) => node.name)).toEqual(['number:1', 'string:1'])
+})
+
 test('ECharts incremental plans commit data synchronously, preserve interaction state, and do not resend data for context changes', () => {
   const option = {
     dataset: { id: 'dataset:primary', source: [['month', 'value'], ['Jan', 10]] },
@@ -758,14 +768,14 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   const graph = echartsOption(networkFixture('graph'), defaultRendererContext) as any
   expect(graph.series[0]).toMatchObject({ id: 'series:hierarchy:graph', type: 'graph', layout: 'circular', roam: true, left: '8%', right: '8%', top: '8%', bottom: '8%', symbolSize: 16, center: ['50%', '52%'], zoom: 0.76, label: { position: 'right', distance: 8, fontSize: 13 }, labelLayout: { moveOverlap: 'shiftY' }, itemStyle: { borderColor: defaultRendererContext.colors.surface, borderWidth: 2 }, lineStyle: { curveness: 0.3 }, emphasis: { focus: 'adjacency' } })
   expect(graph.series[0]).not.toHaveProperty('force')
-  expect(graph.series[0].links[0]).toMatchObject({ source: 'A', target: 'B', __lv_dataset: 'primary', __lv_row_index: 0 })
+  expect(graph.series[0].links[0]).toMatchObject({ source: 'string:A', target: 'string:B', __lv_dataset: 'primary', __lv_row_index: 0 })
   const layeredGraphEnvelope = networkFixture('graph') as any
   layeredGraphEnvelope.spec.presentation.layout = 'standard'
   const layeredGraph = echartsOption(layeredGraphEnvelope, defaultRendererContext) as any
   expect(layeredGraph.series[0]).toMatchObject({ layout: 'none', left: '30%', right: '30%', top: '12%', bottom: '12%' })
   expect(layeredGraph.series[0].data).toEqual([
-    { name: 'A', x: 0, y: 50, label: { position: 'left', align: 'right' } },
-    { name: 'B', x: 100, y: 50, label: { position: 'right', align: 'left' } },
+    { name: 'string:A', displayName: 'A', x: 0, y: 50, label: { position: 'left', align: 'right' } },
+    { name: 'string:B', displayName: 'B', x: 100, y: 50, label: { position: 'right', align: 'left' } },
   ])
   const sankeyEnvelope = networkFixture('sankey') as any
   sankeyEnvelope.spec.presentation.orientation = 'horizontal'
@@ -774,8 +784,8 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   expect(sankey.series[0]).toMatchObject({ id: 'series:hierarchy:sankey', type: 'sankey', orient: 'horizontal', nodeGap: 18 })
   expect(sankey.series[0].lineStyle).toMatchObject({ color: 'gradient', opacity: 0.45, curveness: 0.3 })
   expect(sankey.series[0]).toMatchObject({ left: '4%', right: '30%', top: '8%', bottom: '8%', label: { width: 96 } })
-  expect(sankey.series[0].links).toEqual([{ source: 'source:Same', target: 'target:Same', sourceLabel: 'Same', targetLabel: 'Same', value: 4, __lv_dataset: 'primary', __lv_row_index: 0 }])
-  expect(sankey.series[0].data).toEqual([{ name: 'source:Same', displayName: 'Same' }, { name: 'target:Same', displayName: 'Same' }])
+  expect(sankey.series[0].links).toEqual([{ source: 'source:string:Same', target: 'target:string:Same', sourceLabel: 'Same', targetLabel: 'Same', value: 4, __lv_dataset: 'primary', __lv_row_index: 0 }])
+  expect(sankey.series[0].data).toEqual([{ name: 'source:string:Same', displayName: 'Same' }, { name: 'target:string:Same', displayName: 'Same' }])
   expect(sankey.series[0].label.formatter({ data: sankey.series[0].data[0] })).toBe('Same')
   expect(sankey.series[0].tooltip.formatter({ data: sankey.series[0].links[0] })).toBe('Same → Same: 4')
 
@@ -971,10 +981,30 @@ test('ECharts proportional legends keep raw item names while formatting display 
   }]
   envelope.dataState.datasets[0].rows = [['—', 1], [null, 2], ['null', 3]]
   const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.legend.data).toEqual([{ name: '—' }, { name: 'null' }])
-  expect(option.legend.formatter('null')).toBe('null')
+  expect(option.legend.data).toEqual([{ name: '—' }, { name: 'null [null:]' }, { name: 'null [string:null]' }])
+  expect(option.legend.formatter('null [null:]')).toBe('—')
+  expect(option.legend.formatter('null [string:null]')).toBe('null')
   expect(legendSelectionCommand(envelope, '—')).toMatchObject({ mappings: [{ value: '—' }] })
-  expect(legendSelectionCommand(envelope, 'null')).toBeUndefined()
+  expect(legendSelectionCommand(envelope, 'null [null:]')).toBeUndefined()
+  expect(legendSelectionCommand(envelope, 'null [string:null]')).toMatchObject({ mappings: [{ value: 'null' }] })
+})
+
+test('ECharts proportional legends preserve numeric and string category identities', () => {
+  const envelope = proportionalFixture('pie') as any
+  envelope.spec.datasets[0].fields[0] = { ...envelope.spec.datasets[0].fields[0], role: 'identity', dataType: 'string', nullable: true }
+  envelope.spec.interactions = [{
+    id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{
+      source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetDatasetID: 'orders',
+    }],
+  }]
+  envelope.dataState.datasets[0].rows = [[1, 1], ['1', 2]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.legend.data).toEqual([{ name: '1 [number:1]' }, { name: '1 [string:1]' }])
+  expect(option.series[0].data.map((entry: any) => [entry.name, entry.value[0]])).toEqual([
+    ['1 [number:1]', 1], ['1 [string:1]', '1'],
+  ])
+  expect(legendSelectionCommand(envelope, '1 [number:1]')).toMatchObject({ mappings: [{ value: 1 }] })
+  expect(legendSelectionCommand(envelope, '1 [string:1]')).toMatchObject({ mappings: [{ value: '1' }] })
 })
 
 test('ECharts wraps a hierarchy forest so every tree root is rendered', () => {
@@ -1008,6 +1038,14 @@ test('ECharts scopes repeated hierarchy labels to their compiled parent path', (
       { name: 'Electronics', value: 5, __lv_dataset: 'primary', __lv_row_index: 1, children: [{ name: 'BA', value: 1, __lv_dataset: 'primary', __lv_row_index: 3, children: [{ name: 'delivered', value: 1, __lv_dataset: 'primary', __lv_row_index: 5 }] }] },
     ],
   }])
+})
+
+test('ECharts hierarchy treats a raw unit-separator node as one typed identity', () => {
+  const envelope = hierarchyFixture('tree') as any
+  const raw = 'A\u001fB'
+  envelope.dataState.datasets[0].rows = [[raw, null, 10], ['child', raw, 4]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].data[0]).toMatchObject({ name: raw, children: [{ name: 'child' }] })
 })
 
 test('ECharts leaves absent proportional geometry fields to renderer defaults', () => {
