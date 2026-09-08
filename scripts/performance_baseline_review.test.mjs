@@ -14,7 +14,7 @@ test('changing evidence or enforcement requires review; unrelated work does not'
 
 test('build inputs, benchmark dependencies and every enforcement entry point require review', () => {
   for (const path of [
-    'package.json', 'bun.lock', 'tsconfig.json', 'scripts/frontend_ci_contract.test.ts',
+    'package.json', 'bun.lock', 'tsconfig.json', 'scripts/frontend_ci_contract.test.ts', 'scripts/frontend_bundle_options.ts',
     'scripts/build_maplibre_worker.ts', 'scripts/generate_lucide_icon_catalog.ts',
     'scripts/generate_visualization_validator.ts', 'deploy/compose/qualification/browser.mjs',
     'deploy/compose/qualification/package.json', 'deploy/compose/qualification/package-lock.json',

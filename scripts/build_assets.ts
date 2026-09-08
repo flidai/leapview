@@ -6,6 +6,7 @@ import {
   frontendPackageManager,
   frontendSourceInputDigest,
 } from './frontend_bundle_identity'
+import { productionMinify } from './frontend_bundle_options'
 import { posix } from 'node:path'
 
 type BuildOptions = Parameters<typeof Bun.build>[0]
@@ -113,6 +114,7 @@ const builds: AssetBuild[] = [
       target: 'browser',
       format: 'esm',
       splitting: true,
+      minify: productionMinify,
       metafile: true,
       define: { 'process.env.NODE_ENV': '"production"' },
       external: externalModules,

@@ -453,6 +453,7 @@ test('includes tsconfig.json in the source input digest', () => {
       'static/theme.js': 'fixture theme',
       'static/vendor/datastar-1.0.2.js': 'fixture runtime',
       'scripts/build_assets.ts': 'fixture build',
+      'scripts/frontend_bundle_options.ts': 'fixture build options',
       'scripts/build_maplibre_worker.ts': 'fixture worker',
       'scripts/generate_lucide_icon_catalog.ts': 'fixture icons',
       'scripts/generate_visualization_validator.ts': 'fixture validator',
@@ -465,6 +466,9 @@ test('includes tsconfig.json in the source input digest', () => {
     mkdirSync(join(fixture, 'web'))
 
     const originalDigest = frontendSourceInputDigest(fixture)
+    writeFileSync(join(fixture, 'scripts/frontend_bundle_options.ts'), 'fixture build options changed')
+    expect(frontendSourceInputDigest(fixture)).not.toBe(originalDigest)
+
     writeFileSync(join(fixture, 'tsconfig.json'), '{"compilerOptions":{"strict":true}}')
 
     expect(frontendSourceInputDigest(fixture)).not.toBe(originalDigest)

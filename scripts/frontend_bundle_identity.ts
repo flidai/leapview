@@ -27,6 +27,7 @@ const SOURCE_ROOTS = [
   'static/theme.js',
   'static/vendor/datastar-1.0.2.js',
   'scripts/build_assets.ts',
+  'scripts/frontend_bundle_options.ts',
   'scripts/build_maplibre_worker.ts',
   'scripts/generate_lucide_icon_catalog.ts',
   'scripts/generate_visualization_validator.ts',
