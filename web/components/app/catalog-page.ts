@@ -352,6 +352,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
             iconTreatment: 'framed' as const,
+            badges: this.catalogScope === 'mine' ? undefined : dashboardDiscoveryStatusBadges(dashboard.status),
             actions: [{ label: `More actions for ${dashboard.title}`, action: 'open-dashboard-menu', icon: 'more' as const }],
             columns: {
               dataModel: semanticModelTitle(dashboard.semanticModel),
@@ -409,13 +410,12 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       ]
     }
     return [
-      { id: 'name', label: 'Dashboard', width: '29%' },
-      { id: 'dataModel', label: 'Data model', width: '12%' },
-      { id: 'owner', label: 'Owner', width: '8%', render: 'person-avatar' as const },
-      { id: 'popularity', label: 'Popularity', width: '9%', render: 'popularity' as const },
-      { id: 'status', label: 'Status', width: '16%', render: 'quiet-status' as const },
-      { id: 'updated', label: 'Updated', width: '9%', render: 'datetime' as const },
-      { id: 'lastOpened', label: 'Last opened', width: '12%', render: 'datetime' as const },
+      { id: 'name', label: 'Dashboard', width: '36%' },
+      { id: 'dataModel', label: 'Data model', width: '15%' },
+      { id: 'owner', label: 'Owner', width: '9%', render: 'person-avatar' as const },
+      { id: 'popularity', label: 'Popularity', width: '10%', render: 'popularity' as const },
+      { id: 'updated', label: 'Updated', width: '11%', render: 'datetime' as const },
+      { id: 'lastOpened', label: 'Last opened', width: '14%', render: 'datetime' as const },
       { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
     ]
   }
@@ -910,6 +910,14 @@ function dashboardStatusDescription(value: CatalogPageSignal['dashboards'][numbe
     case 'private_draft': return 'Private draft — only visible to you until published'
     case 'unpublished_changes': return 'Unpublished changes — the published version remains live'
     default: return 'Published — visible to permitted viewers'
+  }
+}
+
+function dashboardDiscoveryStatusBadges(value: CatalogPageSignal['dashboards'][number]['status']) {
+  switch (value) {
+    case 'private_draft': return [{ icon: 'draft' as const, label: dashboardStatusDescription(value), text: 'Draft' }]
+    case 'unpublished_changes': return [{ icon: 'changes' as const, label: dashboardStatusDescription(value), text: 'Changes' }]
+    default: return []
   }
 }
 

@@ -316,10 +316,10 @@ for (const viewport of [
           dataModels: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
           owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.querySelector('.entity-list-person-avatar')?.getAttribute('aria-label') ?? '—'),
           ownerAvatars: rows.map((row) => Boolean(row.querySelectorAll('.entity-list-cell')[1]?.querySelector('lv-user-avatar'))),
-          statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim()),
-          updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.querySelector('.entity-list-datetime-value')?.textContent?.trim() ?? '—'),
-          updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.querySelector('.entity-list-datetime')?.getAttribute('aria-label') ?? ''),
-          lastOpened: rows.map((row) => row.querySelectorAll('.entity-list-cell')[5]?.querySelector('.entity-list-datetime-value')?.textContent?.trim() ?? '—'),
+          statuses: rows.map((row) => row.querySelector('.entity-list-status')?.textContent?.trim() ?? ''),
+          updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.querySelector('.entity-list-datetime-value')?.textContent?.trim() ?? '—'),
+          updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.querySelector('.entity-list-datetime')?.getAttribute('aria-label') ?? ''),
+          lastOpened: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.querySelector('.entity-list-datetime-value')?.textContent?.trim() ?? '—'),
           listBackground: getComputedStyle(list).backgroundColor,
           hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
           popularityLabels: rows.map((row) => row.querySelector('.entity-list-popularity')?.getAttribute('aria-label') ?? ''),
@@ -352,10 +352,10 @@ for (const viewport of [
         hrefs: ['/dashboards/executive-sales', '/dashboards/operations-health', '/dashboards/inventory-risk', '/dashboards/customer-detail'],
         titles: ['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'],
         descriptionCount: 0,
-        headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Status', 'Updated', 'Last opened', 'Actions'],
+        headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Updated', 'Last opened', 'Actions'],
         dataModels: ['Olist', 'Operations', 'Inventory', 'Customers'],
         owners: ['Analytics', 'Operations', 'Supply chain', '—'],
-        statuses: ['Published', 'Published', 'Published', 'Published'],
+        statuses: ['', '', '', ''],
         updated: ['Aug 12', 'Aug 11', 'Aug 10', '—'],
         updatedTitles: [expect.stringContaining('Aug 12, 2026'), expect.stringContaining('Aug 11, 2026'), expect.stringContaining('Aug 10, 2026'), ''],
         lastOpened: ['—', '—', '—', '—'],
@@ -631,7 +631,7 @@ test('data model is a dedicated sortable column instead of dashboard subtitle me
     })
 
     expect(state).toEqual({
-      headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Status', 'Updated', 'Last opened', 'Actions'],
+      headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Updated', 'Last opened', 'Actions'],
       models: ['Olist', 'Operations', 'Inventory', 'Customers'],
       subtitles: ['', '', '', ''],
       sortable: true,
@@ -744,7 +744,7 @@ test('dashboard titles use regular emphasis and popularity has a dedicated hover
     })
 
     expect(state).toEqual({
-      headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Status', 'Updated', 'Last opened', 'Actions'],
+      headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Updated', 'Last opened', 'Actions'],
       titleWeight: '400',
       firstLabel: 'High popularity — top 10% in the last 30 days',
       firstTooltip: 'High popularity — top 10% in the last 30 days',
@@ -901,19 +901,28 @@ test('date columns reveal exact localized date and time on hover and focus', asy
   }
 })
 
-test('dashboard lifecycle statuses use distinct semantic icons and tones', async () => {
+test('dashboard lifecycle status is implicit in discovery views and explicit in My dashboards', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      const statuses = ['published', 'private_draft', 'unpublished_changes', 'published']
-      mergePatch({ page: { ...element.page, dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({ ...dashboard, status: statuses[index] })) } })
+      const lifecycleStatuses = ['published', 'private_draft', 'unpublished_changes', 'published']
+      mergePatch({ page: { ...element.page, dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({ ...dashboard, catalogScope: 'mine', owner: 'You', status: lifecycleStatuses[index] })) } })
       await element.updateComplete
       const list = element.shadowRoot.querySelector('lv-entity-list') as any
       await list.updateComplete
-      return Array.from(list.querySelectorAll('.entity-list-status')).map((status: Element) => ({
+      const discoveryHeaders = Array.from(list.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
+      const discoveryBadges = Array.from(list.querySelectorAll('.entity-list-title-row .entity-list-badge')).map((badge: Element) => ({
+        label: badge.textContent?.trim(),
+        title: badge.getAttribute('title'),
+      }))
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
+      await element.updateComplete
+      await list.updateComplete
+      const mineHeaders = Array.from(list.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
+      const statusPresentations = Array.from(list.querySelectorAll('.entity-list-status')).map((status: Element) => ({
         className: status.className,
         label: status.textContent?.trim(),
         icon: status.querySelector('.entity-list-status-icon')?.innerHTML,
@@ -921,22 +930,30 @@ test('dashboard lifecycle statuses use distinct semantic icons and tones', async
         fontWeight: getComputedStyle(status).fontWeight,
         title: status.closest('td')?.getAttribute('title'),
       }))
+      return { discoveryHeaders, discoveryBadges, mineHeaders, statuses: statusPresentations, mineBadges: list.querySelectorAll('.entity-list-title-row .entity-list-badge').length }
     })
 
-    expect(state.map(({ label, className }) => ({ label, className }))).toEqual([
+    expect(state.discoveryHeaders).toEqual(['Dashboard', 'Data model', 'Owner', 'Popularity', 'Updated', 'Last opened', 'Actions'])
+    expect(state.discoveryBadges).toEqual([
+      { label: 'Draft', title: 'Private draft — only visible to you until published' },
+      { label: 'Changes', title: 'Unpublished changes — the published version remains live' },
+    ])
+    expect(state.mineHeaders).toEqual(['Dashboard', 'Data model', 'Popularity', 'Status', 'Updated', 'Last opened', 'Actions'])
+    expect(state.mineBadges).toBe(0)
+    expect(state.statuses.map(({ label, className }) => ({ label, className }))).toEqual([
       { label: 'Published', className: 'entity-list-status is-success is-quiet' },
       { label: 'Draft', className: 'entity-list-status is-muted is-quiet' },
       { label: 'Changes pending', className: 'entity-list-status is-attention is-quiet' },
       { label: 'Published', className: 'entity-list-status is-success is-quiet' },
     ])
-    expect(state.every(({ fontWeight }) => fontWeight === '400')).toBe(true)
-    expect(state.every(({ iconWidth }) => iconWidth === 14)).toBe(true)
-    expect(state[1].title).toContain('Private draft')
-    expect(state[2].title).toContain('Unpublished changes')
-    expect(state[1].icon).toContain('cx="12" cy="16" r="1"')
-    expect(state[2].icon).toContain('M14.364 13.634')
-    expect(state[0].icon).not.toEqual(state[1].icon)
-    expect(state[1].icon).not.toEqual(state[2].icon)
+    expect(state.statuses.every(({ fontWeight }) => fontWeight === '400')).toBe(true)
+    expect(state.statuses.every(({ iconWidth }) => iconWidth === 14)).toBe(true)
+    expect(state.statuses[1].title).toContain('Private draft')
+    expect(state.statuses[2].title).toContain('Unpublished changes')
+    expect(state.statuses[1].icon).toContain('cx="12" cy="16" r="1"')
+    expect(state.statuses[2].icon).toContain('M14.364 13.634')
+    expect(state.statuses[0].icon).not.toEqual(state.statuses[1].icon)
+    expect(state.statuses[1].icon).not.toEqual(state.statuses[2].icon)
   } finally {
     await page.close()
   }
@@ -989,7 +1006,8 @@ test('CSV export uses compact displayed dates instead of internal sort keys', as
     })
 
     expect(csv).toContain('"Analytics"')
-    expect(csv).toContain('"Published"')
+    expect(csv).not.toContain('"Status"')
+    expect(csv).not.toContain('"Published"')
     expect(csv).toContain('"Aug 12"')
     expect(csv).not.toContain('2026-08-12T09:42:00Z')
   } finally {

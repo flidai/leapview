@@ -74,7 +74,7 @@ export type EntityListRowAction = {
 }
 
 export type EntityListBadge = {
-  icon: 'popularity'
+  icon: 'popularity' | 'draft' | 'changes'
   label: string
   level?: 'low' | 'medium' | 'high'
   text?: string
@@ -611,6 +611,9 @@ const entityListStyles = `
   .entity-list-badge-popularity.is-high svg path:nth-child(3) {
     stroke: var(--display-blue-fgColor);
   }
+
+  .entity-list-badge-draft { color: var(--lv-fg-muted); }
+  .entity-list-badge-changes { color: var(--lv-fg-attention, var(--display-yellow-fgColor)); }
 
   .entity-list-badge-empty {
     display: inline-block;
@@ -1385,6 +1388,8 @@ class EntityList extends LitElement {
 function badgeIcon(type: EntityListBadge['icon']): IconNode {
   switch (type) {
     case 'popularity': return ChartNoAxesColumnIncreasing
+    case 'draft': return LockKeyhole
+    case 'changes': return FilePenLine
   }
 }
 
