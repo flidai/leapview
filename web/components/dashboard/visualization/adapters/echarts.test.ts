@@ -1044,9 +1044,29 @@ test('ECharts scopes repeated hierarchy labels to their compiled parent path', (
 test('ECharts hierarchy treats a raw unit-separator node as one typed identity', () => {
   const envelope = hierarchyFixture('tree') as any
   const raw = 'A\u001fB'
-  envelope.dataState.datasets[0].rows = [[raw, null, 10], ['child', raw, 4]]
+  // Go emits the escaped canonical identity as the child's parent.  The raw
+  // display value itself is not a canonical parent path.
+  const canonicalRoot = 'A\u001f\u001fB'
+  envelope.dataState.datasets[0].rows = [[raw, null, 10], ['child', canonicalRoot, 4]]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series[0].data[0]).toMatchObject({ name: raw, children: [{ name: 'child' }] })
+})
+
+test('ECharts hierarchy resolves canonical paths before typed root labels', () => {
+  const envelope = hierarchyFixture('tree') as any
+  const separator = '\u001f'
+  envelope.dataState.datasets[0].rows = [
+    [`A${separator}B`, null, 10],
+    ['A', null, 9],
+    ['B', 'A', 8],
+    ['child', `A${separator}B`, 7],
+  ]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const roots = option.series[0].data[0].children
+  expect(roots[0]).toMatchObject({ name: `A${separator}B` })
+  expect(roots[0].children).toBeUndefined()
+  expect(roots[1]).toMatchObject({ name: 'A', children: [{ name: 'B', children: [{ name: 'child' }] }] })
 })
 
 test('ECharts leaves absent proportional geometry fields to renderer defaults', () => {

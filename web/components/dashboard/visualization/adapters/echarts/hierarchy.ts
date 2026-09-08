@@ -210,8 +210,7 @@ export function hierarchyTooltipValue(envelope: VisualizationEnvelope, node: Hie
 function escapeSegment(value: string): string { return value.replaceAll('\u001f', '\u001f\u001f') }
 
 function hierarchyPathIdentity(value: unknown): string[] {
-  const direct = escapeSegment(categoryIdentity(value))
-  if (typeof value !== 'string' || !value.includes('\u001f')) return [direct]
+  if (typeof value !== 'string' || !value.includes('\u001f')) return [categoryIdentity(value)]
   const segments: string[] = []
   let segment = ''
   for (let index = 0; index < value.length; index++) {
@@ -229,8 +228,14 @@ function hierarchyPathIdentity(value: unknown): string[] {
     }
   }
   segments.push(segment)
-  const parsed = segments.map((candidate) => categoryIdentity(candidate))
-  return parsed.length > 1 ? [direct, parsed.reduce((path, identity) => path ? `${path}\u001f${escapeSegment(identity)}` : escapeSegment(identity), '')] : [direct]
+  // Go's HierarchyNodeIdentity receives the already canonical parent path and
+  // escapes only the newly appended display segment.  Mirror that contract
+  // here so an escaped single-segment parent remains distinct from a nested
+  // path whose separator is literal (for example A\u001fB).
+  const canonical = segments
+    .map((candidate) => escapeSegment(categoryIdentity(candidate)))
+    .reduce((path, identity) => path ? `${path}\u001f${identity}` : identity, '')
+  return [canonical]
 }
 
 function layeredGraphNodes(links: readonly { source: string; target: string; sourceLabel: string; targetLabel: string }[]) {
