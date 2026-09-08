@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -47,7 +48,7 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 		t.Fatalf("walk routes: %v", err)
 	}
 	sort.Strings(got)
-	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /search", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /dashboards/{asset}/appearance"}
+	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "GET /explore/saved/{exploration}", "POST /explore/command", "POST /explore/saved/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /search", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /dashboards/{asset}/appearance"}
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("routes = %v, want %v", got, want)
@@ -58,6 +59,43 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 				t.Fatalf("legacy route %q was mounted", legacy)
 			}
 		}
+	}
+}
+
+func TestMountedSavedExplorationCommandUsesGeneratedBrowserExecutor(t *testing.T) {
+	router := chi.NewRouter()
+	executed := false
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{createErr: errors.New("injected browser failure")},
+		SavedExplorationCommands: SavedExplorationCommandBindings{
+			Create: analyticsgen.GenUIActionCreateSavedExploration(),
+		},
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:      func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+		Authenticate:     func(next stdhttp.Handler) stdhttp.Handler { return next },
+		MutationMiddleware: func(next stdhttp.Handler) stdhttp.Handler {
+			return next
+		},
+		BeginSavedExplorationCommand: func(ctx context.Context, _ SavedExplorationCommandInvocation) (context.Context, error) {
+			return ctx, nil
+		},
+		ExecuteSavedExplorationCommand: func(ctx context.Context, _ SavedExplorationCommandInvocation, transaction func(context.Context) error) error {
+			executed = true
+			return transaction(ctx)
+		},
+	}
+	h.MountAuthenticated(router)
+	body := `{"savedExplorations":{"command":{"action":"create","title":"Orders","slug":"orders","visibility":"private","spec":{"schemaVersion":1,"modelId":"model:orders","datasetId":"orders","dimensions":[],"metrics":[],"filters":[],"sort":[],"limit":100}}}}`
+	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/saved/command", strings.NewReader(body))
+	request.Header.Set("X-Request-ID", "browser-command-1")
+	request.Header.Set("X-LeapView-Operation-ID", analyticsgen.GenUIActionCreateSavedExploration().OperationID())
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != stdhttp.StatusOK || !executed {
+		t.Fatalf("mounted saved command status=%d executed=%v body=%q", response.Code, executed, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "Saved exploration saved.") {
+		t.Fatalf("failed mounted mutation emitted success: %q", response.Body.String())
 	}
 }
 

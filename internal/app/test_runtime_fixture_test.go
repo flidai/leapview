@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -206,11 +207,12 @@ func (f testRuntimeFactory) Prepare(_ context.Context, input runtimehost.Runtime
 	if err != nil {
 		return nil, err
 	}
-	return testPreparedRuntime{authorization: authorization, snapshotID: input.State.DuckLakeSnapshotID}, nil
+	return testPreparedRuntime{authorization: authorization, identity: identity, snapshotID: input.State.DuckLakeSnapshotID}, nil
 }
 
 type testPreparedRuntime struct {
 	authorization accesssnapshot.AuthorizationSnapshot
+	identity      projectgraph.ServingIdentity
 	snapshotID    int64
 }
 
@@ -218,7 +220,19 @@ func (r testPreparedRuntime) Close() error { return nil }
 func (r testPreparedRuntime) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
 	return r.authorization
 }
-func (r testPreparedRuntime) DuckLakeSnapshotID() int64 { return r.snapshotID }
+func (r testPreparedRuntime) DuckLakeSnapshotID() int64              { return r.snapshotID }
+func (r testPreparedRuntime) Identity() projectgraph.ServingIdentity { return r.identity }
+
+// SemanticModelProjection keeps the assembled app fixture on the same
+// runtime-owned model seam used by saved-exploration mutations. The
+// projection is detached per call, so a test cannot accidentally mutate the
+// immutable fixture generation through an API request.
+func (r testPreparedRuntime) SemanticModelProjection(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	if modelID != "test" {
+		return nil, false
+	}
+	return testSemanticModel(), true
+}
 
 type testRuntimeAuthorizationInstaller struct{}
 

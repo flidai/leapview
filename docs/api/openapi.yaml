@@ -36,6 +36,9 @@ tags:
     description: Anonymous public dashboard publication lifecycle.
   - name: Managed Data
     description: Project-global managed-data revisions and uploads.
+  - name: Saved Explorations
+    description: Durable authored exploration identities, revisions, lifecycle, and
+      governed execution.
 paths:
   /api/v1/access/device-authorizations/approval:
     post:
@@ -55266,6 +55269,2345 @@ paths:
         mode: privilege
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
+  /api/v1/projects/{project}/saved-explorations:
+    get:
+      operationId: listSavedExplorations
+      summary: List saved explorations
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: includeArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
+          example: true
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+          example: 1
+          explode: false
+        - name: pageToken
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          example: example
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedExplorationListResponse'
+              example:
+                items:
+                  - archivedAt: "2026-01-02T15:04:05Z"
+                    createdAt: "2026-01-02T15:04:05Z"
+                    id: example
+                    ownerPrincipalId: example
+                    revision:
+                      contentHash: example
+                      number: 1
+                      revisionId: example
+                    semanticModelId: example
+                    slug: example
+                    status: active
+                    title: example
+                    updatedAt: "2026-01-02T15:04:05Z"
+                    visibility: private
+                page:
+                  nextCursor: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Saved Explorations
+      x-apigen-operation-kind: query
+    post:
+      operationId: createSavedExploration
+      summary: Create a saved exploration
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created
+            as a result.
+          headers:
+            ETag:
+              required: true
+              schema:
+                type: string
+            location:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedExplorationResponse'
+              example:
+                spec:
+                  datasetId: example
+                  dimensions:
+                    - alias: example
+                      field: example
+                      grain: second
+                  filters:
+                    - datasetId: example
+                      field: example
+                  limit: 1
+                  metrics:
+                    - alias: example
+                      field: example
+                  modelId: example
+                  pivot:
+                    columns:
+                      - alias: example
+                        field: example
+                        grain: second
+                    metrics:
+                      - alias: example
+                        field: example
+                    rows:
+                      - alias: example
+                        field: example
+                        grain: second
+                    sort:
+                      - direction: asc
+                        field: example
+                    totals:
+                      columns: true
+                      grand: true
+                      rows: true
+                    window:
+                      limit: 1
+                      offset: 1
+                  schemaVersion: 1
+                  sort:
+                    - direction: asc
+                      field: example
+                  table:
+                    columns:
+                      - field: example
+                        label: example
+                        width: 1
+                    density: compact
+                    rowHeight: 1
+                    showHeader: true
+                    striped: true
+                  time:
+                    alias: example
+                    field: example
+                    grain: second
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Saved Explorations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedExplorationCreateRequest'
+            example:
+              slug: example
+              spec:
+                datasetId: example
+                dimensions:
+                  - alias: example
+                    field: example
+                    grain: second
+                filters:
+                  - datasetId: example
+                    field: example
+                limit: 1
+                metrics:
+                  - alias: example
+                    field: example
+                modelId: example
+                pivot:
+                  columns:
+                    - alias: example
+                      field: example
+                      grain: second
+                  metrics:
+                    - alias: example
+                      field: example
+                  rows:
+                    - alias: example
+                      field: example
+                      grain: second
+                  sort:
+                    - direction: asc
+                      field: example
+                  totals:
+                    columns: true
+                    grand: true
+                    rows: true
+                  window:
+                    limit: 1
+                    offset: 1
+                schemaVersion: 1
+                sort:
+                  - direction: asc
+                    field: example
+                table:
+                  columns:
+                    - field: example
+                      label: example
+                      width: 1
+                  density: compact
+                  rowHeight: 1
+                  showHeader: true
+                  striped: true
+                time:
+                  alias: example
+                  field: example
+                  grain: second
+              title: example
+              visibility: private
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: action
+                sensitivity: internal
+              - name: actorId
+                sensitivity: internal
+              - name: adminOverride
+                sensitivity: internal
+              - name: adminReason
+                sensitivity: internal
+              - name: appliedRevision
+                sensitivity: internal
+              - name: correlationId
+                sensitivity: internal
+              - name: fingerprint
+                sensitivity: internal
+              - name: idempotencyKey
+                sensitivity: internal
+              - name: mutationEvidenceVersion
+                sensitivity: internal
+              - name: occurredAt
+                sensitivity: internal
+              - name: requestId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: SavedExplorationMutationAuditPayload
+            schema_version: 1
+          required: true
+          success_action: saved_exploration.created
+        authz_mode: authenticated
+        failures:
+          - code: SAVED_EXPLORATION_CONFLICT
+            kind: conflict
+            public_detail: The saved exploration conflicts with its current state.
+            status_code: 409
+          - code: INVALID_SAVED_EXPLORATION
+            kind: invalid
+            public_detail: The saved-exploration request is invalid.
+            status_code: 422
+          - code: SAVED_EXPLORATION_NOT_FOUND
+            kind: not_found
+            public_detail: Saved exploration not found.
+            status_code: 404
+          - code: SAVED_EXPLORATION_UNAVAILABLE
+            kind: unavailable
+            public_detail: Saved-exploration service is unavailable.
+            status_code: 503
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: project
+          type: project
+        ui:
+          action_id: saved-exploration.create
+  /api/v1/projects/{project}/saved-explorations/{exploration}:
+    get:
+      operationId: getSavedExploration
+      summary: Get a saved exploration working copy
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: exploration
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          headers:
+            ETag:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedExplorationResponse'
+              example:
+                spec:
+                  datasetId: example
+                  dimensions:
+                    - alias: example
+                      field: example
+                      grain: second
+                  filters:
+                    - datasetId: example
+                      field: example
+                  limit: 1
+                  metrics:
+                    - alias: example
+                      field: example
+                  modelId: example
+                  pivot:
+                    columns:
+                      - alias: example
+                        field: example
+                        grain: second
+                    metrics:
+                      - alias: example
+                        field: example
+                    rows:
+                      - alias: example
+                        field: example
+                        grain: second
+                    sort:
+                      - direction: asc
+                        field: example
+                    totals:
+                      columns: true
+                      grand: true
+                      rows: true
+                    window:
+                      limit: 1
+                      offset: 1
+                  schemaVersion: 1
+                  sort:
+                    - direction: asc
+                      field: example
+                  table:
+                    columns:
+                      - field: example
+                        label: example
+                        width: 1
+                    density: compact
+                    rowHeight: 1
+                    showHeader: true
+                    striped: true
+                  time:
+                    alias: example
+                    field: example
+                    grain: second
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Saved Explorations
+      x-apigen-operation-kind: query
+    patch:
+      operationId: updateSavedExploration
+      summary: Update a saved exploration
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: exploration
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          headers:
+            ETag:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedExplorationResponse'
+              example:
+                spec:
+                  datasetId: example
+                  dimensions:
+                    - alias: example
+                      field: example
+                      grain: second
+                  filters:
+                    - datasetId: example
+                      field: example
+                  limit: 1
+                  metrics:
+                    - alias: example
+                      field: example
+                  modelId: example
+                  pivot:
+                    columns:
+                      - alias: example
+                        field: example
+                        grain: second
+                    metrics:
+                      - alias: example
+                        field: example
+                    rows:
+                      - alias: example
+                        field: example
+                        grain: second
+                    sort:
+                      - direction: asc
+                        field: example
+                    totals:
+                      columns: true
+                      grand: true
+                      rows: true
+                    window:
+                      limit: 1
+                      offset: 1
+                  schemaVersion: 1
+                  sort:
+                    - direction: asc
+                      field: example
+                  table:
+                    columns:
+                      - field: example
+                        label: example
+                        width: 1
+                    density: compact
+                    rowHeight: 1
+                    showHeader: true
+                    striped: true
+                  time:
+                    alias: example
+                    field: example
+                    grain: second
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Saved Explorations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedExplorationPatchRequest'
+            example:
+              slug: example
+              spec:
+                datasetId: example
+                dimensions:
+                  - alias: example
+                    field: example
+                    grain: second
+                filters:
+                  - datasetId: example
+                    field: example
+                limit: 1
+                metrics:
+                  - alias: example
+                    field: example
+                modelId: example
+                pivot:
+                  columns:
+                    - alias: example
+                      field: example
+                      grain: second
+                  metrics:
+                    - alias: example
+                      field: example
+                  rows:
+                    - alias: example
+                      field: example
+                      grain: second
+                  sort:
+                    - direction: asc
+                      field: example
+                  totals:
+                    columns: true
+                    grand: true
+                    rows: true
+                  window:
+                    limit: 1
+                    offset: 1
+                schemaVersion: 1
+                sort:
+                  - direction: asc
+                    field: example
+                table:
+                  columns:
+                    - field: example
+                      label: example
+                      width: 1
+                  density: compact
+                  rowHeight: 1
+                  showHeader: true
+                  striped: true
+                time:
+                  alias: example
+                  field: example
+                  grain: second
+              title: example
+              visibility: private
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: action
+                sensitivity: internal
+              - name: actorId
+                sensitivity: internal
+              - name: adminOverride
+                sensitivity: internal
+              - name: adminReason
+                sensitivity: internal
+              - name: appliedRevision
+                sensitivity: internal
+              - name: correlationId
+                sensitivity: internal
+              - name: fingerprint
+                sensitivity: internal
+              - name: idempotencyKey
+                sensitivity: internal
+              - name: mutationEvidenceVersion
+                sensitivity: internal
+              - name: occurredAt
+                sensitivity: internal
+              - name: requestId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: SavedExplorationMutationAuditPayload
+            schema_version: 1
+          required: true
+          success_action: saved_exploration.updated
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SAVED_EXPLORATION_CONFLICT
+            kind: conflict
+            public_detail: The saved exploration conflicts with its current state.
+            status_code: 409
+          - code: INVALID_SAVED_EXPLORATION
+            kind: invalid
+            public_detail: The saved-exploration request is invalid.
+            status_code: 422
+          - code: SAVED_EXPLORATION_NOT_FOUND
+            kind: not_found
+            public_detail: Saved exploration not found.
+            status_code: 404
+          - code: SAVED_EXPLORATION_PRECONDITION_FAILED
+            kind: precondition
+            public_detail: The saved exploration changed before this request was applied.
+            status_code: 412
+          - code: SAVED_EXPLORATION_UNAVAILABLE
+            kind: unavailable
+            public_detail: Saved-exploration service is unavailable.
+            status_code: 503
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: project
+          type: project
+        ui:
+          action_id: saved-exploration.update
+  /api/v1/projects/{project}/saved-explorations/{exploration}/archive:
+    post:
+      operationId: archiveSavedExploration
+      summary: Archive a saved exploration
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: exploration
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          headers:
+            ETag:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedExplorationSummaryResponse'
+              example:
+                archivedAt: "2026-01-02T15:04:05Z"
+                createdAt: "2026-01-02T15:04:05Z"
+                id: example
+                ownerPrincipalId: example
+                revision:
+                  contentHash: example
+                  number: 1
+                  revisionId: example
+                semanticModelId: example
+                slug: example
+                status: active
+                title: example
+                updatedAt: "2026-01-02T15:04:05Z"
+                visibility: private
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Saved Explorations
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: action
+                sensitivity: internal
+              - name: actorId
+                sensitivity: internal
+              - name: adminOverride
+                sensitivity: internal
+              - name: adminReason
+                sensitivity: internal
+              - name: appliedRevision
+                sensitivity: internal
+              - name: correlationId
+                sensitivity: internal
+              - name: fingerprint
+                sensitivity: internal
+              - name: idempotencyKey
+                sensitivity: internal
+              - name: mutationEvidenceVersion
+                sensitivity: internal
+              - name: occurredAt
+                sensitivity: internal
+              - name: requestId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: SavedExplorationMutationAuditPayload
+            schema_version: 1
+          required: true
+          success_action: saved_exploration.archived
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SAVED_EXPLORATION_CONFLICT
+            kind: conflict
+            public_detail: The saved exploration conflicts with its current state.
+            status_code: 409
+          - code: INVALID_SAVED_EXPLORATION
+            kind: invalid
+            public_detail: The saved-exploration request is invalid.
+            status_code: 422
+          - code: SAVED_EXPLORATION_NOT_FOUND
+            kind: not_found
+            public_detail: Saved exploration not found.
+            status_code: 404
+          - code: SAVED_EXPLORATION_PRECONDITION_FAILED
+            kind: precondition
+            public_detail: The saved exploration changed before this request was applied.
+            status_code: 412
+          - code: SAVED_EXPLORATION_UNAVAILABLE
+            kind: unavailable
+            public_detail: Saved-exploration service is unavailable.
+            status_code: 503
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: project
+          type: project
+        ui:
+          action_id: saved-exploration.archive
+  /api/v1/projects/{project}/saved-explorations/{exploration}/duplicate:
+    post:
+      operationId: duplicateSavedExploration
+      summary: Duplicate a saved exploration
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: exploration
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created
+            as a result.
+          headers:
+            ETag:
+              required: true
+              schema:
+                type: string
+            location:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedExplorationResponse'
+              example:
+                spec:
+                  datasetId: example
+                  dimensions:
+                    - alias: example
+                      field: example
+                      grain: second
+                  filters:
+                    - datasetId: example
+                      field: example
+                  limit: 1
+                  metrics:
+                    - alias: example
+                      field: example
+                  modelId: example
+                  pivot:
+                    columns:
+                      - alias: example
+                        field: example
+                        grain: second
+                    metrics:
+                      - alias: example
+                        field: example
+                    rows:
+                      - alias: example
+                        field: example
+                        grain: second
+                    sort:
+                      - direction: asc
+                        field: example
+                    totals:
+                      columns: true
+                      grand: true
+                      rows: true
+                    window:
+                      limit: 1
+                      offset: 1
+                  schemaVersion: 1
+                  sort:
+                    - direction: asc
+                      field: example
+                  table:
+                    columns:
+                      - field: example
+                        label: example
+                        width: 1
+                    density: compact
+                    rowHeight: 1
+                    showHeader: true
+                    striped: true
+                  time:
+                    alias: example
+                    field: example
+                    grain: second
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Saved Explorations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedExplorationDuplicateRequest'
+            example:
+              slug: example
+              title: example
+              visibility: private
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: action
+                sensitivity: internal
+              - name: actorId
+                sensitivity: internal
+              - name: adminOverride
+                sensitivity: internal
+              - name: adminReason
+                sensitivity: internal
+              - name: appliedRevision
+                sensitivity: internal
+              - name: correlationId
+                sensitivity: internal
+              - name: fingerprint
+                sensitivity: internal
+              - name: idempotencyKey
+                sensitivity: internal
+              - name: mutationEvidenceVersion
+                sensitivity: internal
+              - name: occurredAt
+                sensitivity: internal
+              - name: requestId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: SavedExplorationMutationAuditPayload
+            schema_version: 1
+          required: true
+          success_action: saved_exploration.duplicated
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SAVED_EXPLORATION_CONFLICT
+            kind: conflict
+            public_detail: The saved exploration conflicts with its current state.
+            status_code: 409
+          - code: INVALID_SAVED_EXPLORATION
+            kind: invalid
+            public_detail: The saved-exploration request is invalid.
+            status_code: 422
+          - code: SAVED_EXPLORATION_NOT_FOUND
+            kind: not_found
+            public_detail: Saved exploration not found.
+            status_code: 404
+          - code: SAVED_EXPLORATION_PRECONDITION_FAILED
+            kind: precondition
+            public_detail: The saved exploration changed before this request was applied.
+            status_code: 412
+          - code: SAVED_EXPLORATION_UNAVAILABLE
+            kind: unavailable
+            public_detail: Saved-exploration service is unavailable.
+            status_code: 503
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: project
+          type: project
+        ui:
+          action_id: saved-exploration.duplicate
   /api/v1/projects/{project}/targets/{target}/connection-bindings:
     get:
       operationId: listTargetConnectionBindings
@@ -68628,6 +70970,30 @@ components:
         lastUsedAt: "2026-01-02T15:04:05Z"
         name: example
         revokedAt: "2026-01-02T15:04:05Z"
+    AbsoluteExplorationTimeRange:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationTimeRangeBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - absolute
+          example: example
+        lower:
+          $ref: '#/components/schemas/ExplorationTimeBound'
+        upper:
+          $ref: '#/components/schemas/ExplorationTimeBound'
+      description: Absolute bounds may be open on either side, but at least one is
+        required by validation.
+      example:
+        kind: example
+        lower:
+          inclusive: true
+        upper:
+          inclusive: true
     AgentCommandAuditPayload:
       type: object
       required:
@@ -69637,6 +72003,25 @@ components:
       example:
         type: example
         value: true
+    BooleanExplorationFilterValue:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterValueBase'
+      required:
+        - kind
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - boolean
+          example: example
+        value:
+          type: boolean
+          example: true
+      example:
+        kind: example
+        value: true
     CandidateArtifactRequest:
       type: object
       required:
@@ -70297,6 +72682,48 @@ components:
         step: true
         symbolSize: 1
         type: example
+    CartesianExplorationVisualization:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationConfigBase'
+      required:
+        - kind
+        - mark
+      properties:
+        kind:
+          type: string
+          enum:
+            - cartesian
+          example: example
+        mark:
+          $ref: '#/components/schemas/ExplorationVisualizationCartesianMark'
+        x:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        'y':
+          type: array
+          items:
+            $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+          example:
+            - field: example
+        series:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        smooth:
+          type: boolean
+          example: true
+        showSymbols:
+          type: boolean
+          example: true
+      example:
+        kind: example
+        mark: line
+        series:
+          field: example
+        showSymbols: true
+        smooth: true
+        x:
+          field: example
+        'y':
+          - field: example
     CartesianVisualizationPresentation:
       type: object
       allOf:
@@ -70558,6 +72985,39 @@ components:
       example:
         operator: isNull
         type: example
+    ComparisonExplorationFilterExpression:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterExpressionBase'
+      required:
+        - kind
+        - operator
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - comparison
+          example: example
+        operator:
+          type: string
+          enum:
+            - equals
+            - not_equals
+            - contains
+            - not_contains
+            - starts_with
+            - ends_with
+            - greater_than
+            - greater_than_or_equal
+            - less_than
+            - less_than_or_equal
+          example: example
+        value:
+          $ref: '#/components/schemas/ExplorationFilterValue'
+      example:
+        kind: example
+        operator: example
     CurrencyVisualizationFormat:
       type: object
       allOf:
@@ -79117,6 +81577,46 @@ components:
       example:
         type: example
         value: "2026-01-02"
+    DateExplorationFilterValue:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterValueBase'
+      required:
+        - kind
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - date
+          example: example
+        value:
+          type: string
+          format: date
+          example: "2026-01-02"
+      example:
+        kind: example
+        value: "2026-01-02"
+    DateExplorationTemporalValue:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationTemporalValueBase'
+      required:
+        - kind
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - date
+          example: example
+        value:
+          type: string
+          format: date
+          example: "2026-01-02"
+      example:
+        kind: example
+        value: "2026-01-02"
     DateRangeDashboardFilterControl:
       type: object
       allOf:
@@ -79150,6 +81650,28 @@ components:
           example: example
       example:
         type: example
+        value: example
+    DecimalExplorationFilterValue:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterValueBase'
+      required:
+        - kind
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - decimal
+          example: example
+        value:
+          type: string
+          minLength: 1
+          pattern: ^-?(0|[1-9][0-9]*)(\.[0-9]+)?$
+          description: Canonical decimal representation.
+          example: example
+      example:
+        kind: example
         value: example
     DeliveryAuditStatus:
       type: string
@@ -81548,6 +84070,1047 @@ components:
             subjectType: example
         resourceId: example
         resourceKind: project
+    ExplorationCompactVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - compact
+          example: example
+        maximumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        kind: example
+        maximumFractionDigits: 1
+    ExplorationCurrencyVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+        - currency
+      properties:
+        kind:
+          type: string
+          enum:
+            - currency
+          example: example
+        currency:
+          type: string
+          example: example
+        minimumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+        maximumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        currency: example
+        kind: example
+        maximumFractionDigits: 1
+        minimumFractionDigits: 1
+    ExplorationDimensionRef:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]*$
+          example: example
+        alias:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        grain:
+          $ref: '#/components/schemas/ExplorationTimeGrain'
+      description: A dimension selection may carry its own time grain and output alias.
+      example:
+        alias: example
+        field: example
+        grain: second
+    ExplorationDurationVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+        - unit
+      properties:
+        kind:
+          type: string
+          enum:
+            - duration
+          example: example
+        unit:
+          type: string
+          example: example
+      example:
+        kind: example
+        unit: example
+    ExplorationFilter:
+      type: object
+      required:
+        - field
+        - expression
+      properties:
+        field:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]*$
+          example: example
+        datasetId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        expression:
+          $ref: '#/components/schemas/ExplorationFilterExpression'
+      description: A typed semantic predicate, optionally scoped to a participating
+        dataset.
+      example:
+        datasetId: example
+        field: example
+    ExplorationFilterBound:
+      type: object
+      required:
+        - value
+        - inclusive
+      properties:
+        value:
+          $ref: '#/components/schemas/ExplorationFilterValue'
+        inclusive:
+          type: boolean
+          example: true
+      example:
+        inclusive: true
+    ExplorationFilterExpression:
+      oneOf:
+        - $ref: '#/components/schemas/UnfilteredExplorationFilterExpression'
+        - $ref: '#/components/schemas/NullCheckExplorationFilterExpression'
+        - $ref: '#/components/schemas/SetExplorationFilterExpression'
+        - $ref: '#/components/schemas/ComparisonExplorationFilterExpression'
+        - $ref: '#/components/schemas/RangeExplorationFilterExpression'
+        - $ref: '#/components/schemas/RelativePeriodExplorationFilterExpression'
+      discriminator:
+        propertyName: kind
+        mapping:
+          comparison: '#/components/schemas/ComparisonExplorationFilterExpression'
+          null_check: '#/components/schemas/NullCheckExplorationFilterExpression'
+          range: '#/components/schemas/RangeExplorationFilterExpression'
+          relative_period: '#/components/schemas/RelativePeriodExplorationFilterExpression'
+          set: '#/components/schemas/SetExplorationFilterExpression'
+          unfiltered: '#/components/schemas/UnfilteredExplorationFilterExpression'
+    ExplorationFilterExpressionBase:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          example: example
+      example:
+        kind: example
+    ExplorationFilterValue:
+      oneOf:
+        - $ref: '#/components/schemas/StringExplorationFilterValue'
+        - $ref: '#/components/schemas/BooleanExplorationFilterValue'
+        - $ref: '#/components/schemas/IntegerExplorationFilterValue'
+        - $ref: '#/components/schemas/DecimalExplorationFilterValue'
+        - $ref: '#/components/schemas/DateExplorationFilterValue'
+        - $ref: '#/components/schemas/TimestampExplorationFilterValue'
+      discriminator:
+        propertyName: kind
+        mapping:
+          boolean: '#/components/schemas/BooleanExplorationFilterValue'
+          date: '#/components/schemas/DateExplorationFilterValue'
+          decimal: '#/components/schemas/DecimalExplorationFilterValue'
+          integer: '#/components/schemas/IntegerExplorationFilterValue'
+          string: '#/components/schemas/StringExplorationFilterValue'
+          timestamp: '#/components/schemas/TimestampExplorationFilterValue'
+    ExplorationFilterValueBase:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          example: example
+      description: Typed scalar values prevent URL, agent, and execution layers from
+        guessing types.
+      example:
+        kind: example
+    ExplorationGeographicLayerKind:
+      type: string
+      enum:
+        - choropleth
+        - point
+        - heat
+        - density
+        - reference
+        - path
+      example: choropleth
+    ExplorationKPIPresentation:
+      type: object
+      properties:
+        mode:
+          $ref: '#/components/schemas/ExplorationVisualizationKPIMode'
+        delta:
+          $ref: '#/components/schemas/ExplorationVisualizationKPIDeltaMode'
+        favorableDirection:
+          $ref: '#/components/schemas/ExplorationVisualizationKPIDirection'
+        missingComparison:
+          $ref: '#/components/schemas/ExplorationVisualizationKPIMissingComparison'
+        ranges:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExplorationVisualizationKPIQualitativeRange'
+          example:
+            - label: example
+              maximum: 1
+              minimum: 1
+              tone: neutral
+        displayUnits:
+          $ref: '#/components/schemas/ExplorationVisualizationDisplayUnits'
+        note:
+          type: string
+          example: example
+        tone:
+          $ref: '#/components/schemas/ExplorationVisualizationTone'
+        thresholds:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExplorationVisualizationThreshold'
+          example:
+            - tone: neutral
+              value: 1
+      description: Optional authored KPI presentation; omitted properties retain renderer
+        defaults.
+      example:
+        delta: absolute
+        displayUnits: auto
+        favorableDirection: increase
+        missingComparison: show_unavailable
+        mode: compact
+        note: example
+        ranges:
+          - label: example
+            maximum: 1
+            minimum: 1
+            tone: neutral
+        thresholds:
+          - tone: neutral
+            value: 1
+        tone: neutral
+    ExplorationKPITrend:
+      type: object
+      required:
+        - category
+        - value
+      properties:
+        category:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        value:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+      example:
+        category:
+          field: example
+        value:
+          field: example
+    ExplorationMetricRef:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]*$
+          example: example
+        alias:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+      description: A metric selection may carry an output alias.
+      example:
+        alias: example
+        field: example
+    ExplorationNumberVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - number
+          example: example
+        minimumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+        maximumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        kind: example
+        maximumFractionDigits: 1
+        minimumFractionDigits: 1
+    ExplorationPercentVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - percent
+          example: example
+        minimumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+        maximumFractionDigits:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        kind: example
+        maximumFractionDigits: 1
+        minimumFractionDigits: 1
+    ExplorationPivotConfig:
+      type: object
+      required:
+        - rows
+        - columns
+        - metrics
+      properties:
+        rows:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationDimensionRef'
+          example:
+            - alias: example
+              field: example
+              grain: second
+        columns:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationDimensionRef'
+          example:
+            - alias: example
+              field: example
+              grain: second
+        metrics:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationMetricRef'
+          example:
+            - alias: example
+              field: example
+        sort:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationSort'
+          example:
+            - direction: asc
+              field: example
+        totals:
+          $ref: '#/components/schemas/ExplorationPivotTotals'
+        window:
+          $ref: '#/components/schemas/ExplorationPivotWindow'
+      description: Pivot query shape authored independently of renderer output state.
+      example:
+        columns:
+          - alias: example
+            field: example
+            grain: second
+        metrics:
+          - alias: example
+            field: example
+        rows:
+          - alias: example
+            field: example
+            grain: second
+        sort:
+          - direction: asc
+            field: example
+        totals:
+          columns: true
+          grand: true
+          rows: true
+        window:
+          limit: 1
+          offset: 1
+    ExplorationPivotTotals:
+      type: object
+      properties:
+        rows:
+          type: boolean
+          example: true
+        columns:
+          type: boolean
+          example: true
+        grand:
+          type: boolean
+          example: true
+      example:
+        columns: true
+        grand: true
+        rows: true
+    ExplorationPivotWindow:
+      type: object
+      required:
+        - limit
+      properties:
+        offset:
+          type: integer
+          format: int32
+          minimum: 0
+          example: 1
+        limit:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 1000
+          example: 1
+      example:
+        limit: 1
+        offset: 1
+    ExplorationRelativeAnchor:
+      type: string
+      enum:
+        - current_time
+        - first_available
+        - last_available
+        - fixed
+      example: current_time
+    ExplorationRelativeDirection:
+      type: string
+      enum:
+        - previous
+        - current
+        - next
+      example: previous
+    ExplorationRelativeUnit:
+      type: string
+      enum:
+        - minute
+        - hour
+        - day
+        - week
+        - month
+        - quarter
+        - year
+      example: minute
+    ExplorationSort:
+      type: object
+      required:
+        - field
+        - direction
+      properties:
+        field:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]*$
+          example: example
+        direction:
+          $ref: '#/components/schemas/ExplorationSortDirection'
+      description: Ordered multi-sort over a selected semantic field or authored alias.
+      example:
+        direction: asc
+        field: example
+    ExplorationSortDirection:
+      type: string
+      enum:
+        - asc
+        - desc
+      example: asc
+    ExplorationSpec:
+      type: object
+      required:
+        - schemaVersion
+        - modelId
+        - dimensions
+        - metrics
+        - filters
+        - sort
+        - limit
+      properties:
+        schemaVersion:
+          type: integer
+          enum:
+            - 1
+          example: 1
+        modelId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        datasetId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        dimensions:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationDimensionRef'
+          example:
+            - alias: example
+              field: example
+              grain: second
+        metrics:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationMetricRef'
+          example:
+            - alias: example
+              field: example
+        filters:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationFilter'
+          example:
+            - datasetId: example
+              field: example
+        time:
+          $ref: '#/components/schemas/ExplorationTimeSelection'
+        sort:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationSort'
+          example:
+            - direction: asc
+              field: example
+        limit:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 1000
+          example: 1
+        pivot:
+          $ref: '#/components/schemas/ExplorationPivotConfig'
+        table:
+          $ref: '#/components/schemas/ExplorationTableDisplayConfig'
+        visualization:
+          $ref: '#/components/schemas/ExplorationVisualizationConfig'
+      description: |-
+        Complete authored exploration state. This is deliberately not a
+        VisualizationSpec or VisualizationEnvelope: it contains no compiled field
+        schema, renderer ID, data revision/state, selection, rows, or diagnostics.
+      example:
+        datasetId: example
+        dimensions:
+          - alias: example
+            field: example
+            grain: second
+        filters:
+          - datasetId: example
+            field: example
+        limit: 1
+        metrics:
+          - alias: example
+            field: example
+        modelId: example
+        pivot:
+          columns:
+            - alias: example
+              field: example
+              grain: second
+          metrics:
+            - alias: example
+              field: example
+          rows:
+            - alias: example
+              field: example
+              grain: second
+          sort:
+            - direction: asc
+              field: example
+          totals:
+            columns: true
+            grand: true
+            rows: true
+          window:
+            limit: 1
+            offset: 1
+        schemaVersion: 1
+        sort:
+          - direction: asc
+            field: example
+        table:
+          columns:
+            - field: example
+              label: example
+              width: 1
+          density: compact
+          rowHeight: 1
+          showHeader: true
+          striped: true
+        time:
+          alias: example
+          field: example
+          grain: second
+    ExplorationTableColumn:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]*$
+          example: example
+        label:
+          type: string
+          example: example
+        width:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 2000
+          example: 1
+        format:
+          $ref: '#/components/schemas/ExplorationVisualizationFormat'
+      example:
+        field: example
+        label: example
+        width: 1
+    ExplorationTableDensity:
+      type: string
+      enum:
+        - compact
+        - comfortable
+      example: compact
+    ExplorationTableDisplayConfig:
+      type: object
+      properties:
+        columns:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationTableColumn'
+          example:
+            - field: example
+              label: example
+              width: 1
+        density:
+          $ref: '#/components/schemas/ExplorationTableDensity'
+        striped:
+          type: boolean
+          example: true
+        showHeader:
+          type: boolean
+          example: true
+        rowHeight:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 2000
+          example: 1
+      description: Durable table preferences; rows, loading state, and result data
+        are excluded.
+      example:
+        columns:
+          - field: example
+            label: example
+            width: 1
+        density: compact
+        rowHeight: 1
+        showHeader: true
+        striped: true
+    ExplorationTemporalValue:
+      oneOf:
+        - $ref: '#/components/schemas/DateExplorationTemporalValue'
+        - $ref: '#/components/schemas/TimestampExplorationTemporalValue'
+      discriminator:
+        propertyName: kind
+        mapping:
+          date: '#/components/schemas/DateExplorationTemporalValue'
+          timestamp: '#/components/schemas/TimestampExplorationTemporalValue'
+    ExplorationTemporalValueBase:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          example: example
+      example:
+        kind: example
+    ExplorationTemporalVisualizationFormat:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationFormatBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - temporal
+          example: example
+        dateStyle:
+          type: string
+          example: example
+        timeStyle:
+          type: string
+          example: example
+      example:
+        dateStyle: example
+        kind: example
+        timeStyle: example
+    ExplorationTimeBound:
+      type: object
+      required:
+        - value
+        - inclusive
+      properties:
+        value:
+          $ref: '#/components/schemas/ExplorationTemporalValue'
+        inclusive:
+          type: boolean
+          example: true
+      example:
+        inclusive: true
+    ExplorationTimeGrain:
+      type: string
+      enum:
+        - second
+        - minute
+        - hour
+        - day
+        - week
+        - month
+        - quarter
+        - year
+      description: The supported authored calendar grains.
+      example: second
+    ExplorationTimeRange:
+      oneOf:
+        - $ref: '#/components/schemas/AbsoluteExplorationTimeRange'
+        - $ref: '#/components/schemas/RelativeExplorationTimeRange'
+      discriminator:
+        propertyName: kind
+        mapping:
+          absolute: '#/components/schemas/AbsoluteExplorationTimeRange'
+          relative: '#/components/schemas/RelativeExplorationTimeRange'
+    ExplorationTimeRangeBase:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          example: example
+      example:
+        kind: example
+    ExplorationTimeSelection:
+      type: object
+      required:
+        - field
+        - grain
+      properties:
+        field:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]*$
+          example: example
+        grain:
+          $ref: '#/components/schemas/ExplorationTimeGrain'
+        alias:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        range:
+          $ref: '#/components/schemas/ExplorationTimeRange'
+      example:
+        alias: example
+        field: example
+        grain: second
+    ExplorationVisualizationCartesianMark:
+      type: string
+      enum:
+        - line
+        - area
+        - bar
+        - column
+        - histogram
+        - combo
+        - waterfall
+        - candlestick
+        - boxplot
+        - heatmap
+      example: line
+    ExplorationVisualizationConfig:
+      oneOf:
+        - $ref: '#/components/schemas/CartesianExplorationVisualization'
+        - $ref: '#/components/schemas/PointExplorationVisualization'
+        - $ref: '#/components/schemas/ProportionalExplorationVisualization'
+        - $ref: '#/components/schemas/HierarchyExplorationVisualization'
+        - $ref: '#/components/schemas/PolarExplorationVisualization'
+        - $ref: '#/components/schemas/TableExplorationVisualization'
+        - $ref: '#/components/schemas/MatrixExplorationVisualization'
+        - $ref: '#/components/schemas/PivotExplorationVisualization'
+        - $ref: '#/components/schemas/KPIExplorationVisualization'
+        - $ref: '#/components/schemas/GeographicExplorationVisualization'
+      discriminator:
+        propertyName: kind
+        mapping:
+          cartesian: '#/components/schemas/CartesianExplorationVisualization'
+          geographic: '#/components/schemas/GeographicExplorationVisualization'
+          hierarchy: '#/components/schemas/HierarchyExplorationVisualization'
+          kpi: '#/components/schemas/KPIExplorationVisualization'
+          matrix: '#/components/schemas/MatrixExplorationVisualization'
+          pivot: '#/components/schemas/PivotExplorationVisualization'
+          point: '#/components/schemas/PointExplorationVisualization'
+          polar: '#/components/schemas/PolarExplorationVisualization'
+          proportional: '#/components/schemas/ProportionalExplorationVisualization'
+          table: '#/components/schemas/TableExplorationVisualization'
+    ExplorationVisualizationConfigBase:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+        subtitle:
+          type: string
+          example: example
+        legend:
+          $ref: '#/components/schemas/ExplorationVisualizationLegendPosition'
+        displayUnits:
+          $ref: '#/components/schemas/ExplorationVisualizationDisplayUnits'
+        orientation:
+          $ref: '#/components/schemas/ExplorationVisualizationOrientation'
+        stacking:
+          $ref: '#/components/schemas/ExplorationVisualizationStackingMode'
+      example:
+        displayUnits: auto
+        kind: example
+        legend: hidden
+        orientation: horizontal
+        stacking: none
+        subtitle: example
+        title: example
+    ExplorationVisualizationDisplayUnits:
+      type: string
+      enum:
+        - auto
+        - none
+        - thousands
+        - millions
+        - billions
+        - trillions
+      example: auto
+    ExplorationVisualizationFieldRef:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]*$
+          example: example
+        format:
+          $ref: '#/components/schemas/ExplorationVisualizationFormat'
+      description: Authored visualization bindings use semantic IDs or authored aliases,
+        never result data.
+      example:
+        field: example
+    ExplorationVisualizationFormat:
+      oneOf:
+        - $ref: '#/components/schemas/ExplorationNumberVisualizationFormat'
+        - $ref: '#/components/schemas/ExplorationCurrencyVisualizationFormat'
+        - $ref: '#/components/schemas/ExplorationPercentVisualizationFormat'
+        - $ref: '#/components/schemas/ExplorationCompactVisualizationFormat'
+        - $ref: '#/components/schemas/ExplorationDurationVisualizationFormat'
+        - $ref: '#/components/schemas/ExplorationTemporalVisualizationFormat'
+      discriminator:
+        propertyName: kind
+        mapping:
+          compact: '#/components/schemas/ExplorationCompactVisualizationFormat'
+          currency: '#/components/schemas/ExplorationCurrencyVisualizationFormat'
+          duration: '#/components/schemas/ExplorationDurationVisualizationFormat'
+          number: '#/components/schemas/ExplorationNumberVisualizationFormat'
+          percent: '#/components/schemas/ExplorationPercentVisualizationFormat'
+          temporal: '#/components/schemas/ExplorationTemporalVisualizationFormat'
+    ExplorationVisualizationFormatBase:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          example: example
+      description: |-
+        Authored visualization formats are kept local so this contract has no
+        dependency on a compiled renderer or dashboard-owned IR package.
+      example:
+        kind: example
+    ExplorationVisualizationHierarchyMark:
+      type: string
+      enum:
+        - treemap
+        - sunburst
+        - tree
+        - sankey
+        - graph
+      example: treemap
+    ExplorationVisualizationKPIDeltaMode:
+      type: string
+      enum:
+        - absolute
+        - relative
+      example: absolute
+    ExplorationVisualizationKPIDirection:
+      type: string
+      enum:
+        - increase
+        - decrease
+        - neutral
+      example: increase
+    ExplorationVisualizationKPIMissingComparison:
+      type: string
+      enum:
+        - show_unavailable
+        - hide
+      example: show_unavailable
+    ExplorationVisualizationKPIMode:
+      type: string
+      enum:
+        - compact
+        - bullet
+        - progress
+      example: compact
+    ExplorationVisualizationKPIQualitativeRange:
+      type: object
+      required:
+        - label
+        - tone
+      properties:
+        minimum:
+          type: number
+          format: double
+          example: 1
+        maximum:
+          type: number
+          format: double
+          example: 1
+        label:
+          type: string
+          example: example
+        tone:
+          $ref: '#/components/schemas/ExplorationVisualizationTone'
+      example:
+        label: example
+        maximum: 1
+        minimum: 1
+        tone: neutral
+    ExplorationVisualizationLegendPosition:
+      type: string
+      enum:
+        - hidden
+        - top
+        - right
+        - bottom
+        - left
+      example: hidden
+    ExplorationVisualizationOrientation:
+      type: string
+      enum:
+        - horizontal
+        - vertical
+      example: horizontal
+    ExplorationVisualizationPolarMark:
+      type: string
+      enum:
+        - radar
+        - gauge
+      example: radar
+    ExplorationVisualizationProportionalMark:
+      type: string
+      enum:
+        - pie
+        - donut
+        - funnel
+      example: pie
+    ExplorationVisualizationStackingMode:
+      type: string
+      enum:
+        - none
+        - normal
+        - percent
+      example: none
+    ExplorationVisualizationThreshold:
+      type: object
+      required:
+        - value
+        - tone
+      properties:
+        value:
+          type: number
+          format: double
+          example: 1
+        tone:
+          $ref: '#/components/schemas/ExplorationVisualizationTone'
+      example:
+        tone: neutral
+        value: 1
+    ExplorationVisualizationTone:
+      type: string
+      enum:
+        - neutral
+        - ink
+        - success
+        - warning
+        - danger
+      example: neutral
     FieldDashboardReferenceValue:
       type: object
       allOf:
@@ -81723,6 +85286,42 @@ components:
         roam: true
         theme: auto
         type: example
+    GeographicExplorationVisualization:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationConfigBase'
+      required:
+        - kind
+        - layer
+        - latitude
+        - longitude
+      properties:
+        kind:
+          type: string
+          enum:
+            - geographic
+          example: example
+        layer:
+          $ref: '#/components/schemas/ExplorationGeographicLayerKind'
+        latitude:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        longitude:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        color:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        size:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+      example:
+        color:
+          field: example
+        kind: example
+        latitude:
+          field: example
+        layer: choropleth
+        longitude:
+          field: example
+        size:
+          field: example
     GeographicVisualizationPresentation:
       type: object
       allOf:
@@ -82405,6 +86004,37 @@ components:
         orientation: horizontal
         roam: true
         type: example
+    HierarchyExplorationVisualization:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationConfigBase'
+      required:
+        - kind
+        - mark
+        - node
+      properties:
+        kind:
+          type: string
+          enum:
+            - hierarchy
+          example: example
+        mark:
+          $ref: '#/components/schemas/ExplorationVisualizationHierarchyMark'
+        node:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        parent:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        value:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+      example:
+        kind: example
+        mark: treemap
+        node:
+          field: example
+        parent:
+          field: example
+        value:
+          field: example
     HierarchyVisualizationPresentation:
       type: object
       allOf:
@@ -82637,6 +86267,28 @@ components:
       example:
         type: example
         value: example
+    IntegerExplorationFilterValue:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterValueBase'
+      required:
+        - kind
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - integer
+          example: example
+        value:
+          type: string
+          minLength: 1
+          pattern: ^(0|-?[1-9][0-9]*)$
+          description: Precision-safe integer representation.
+          example: example
+      example:
+        kind: example
+        value: example
     KPIDashboardPresentation:
       type: object
       allOf:
@@ -82717,6 +86369,58 @@ components:
           dataset: example
           value: example
         type: example
+    KPIExplorationVisualization:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationConfigBase'
+      required:
+        - kind
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - kpi
+          example: example
+        value:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        comparison:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        goal:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        trend:
+          $ref: '#/components/schemas/ExplorationKPITrend'
+        presentation:
+          $ref: '#/components/schemas/ExplorationKPIPresentation'
+      example:
+        comparison:
+          field: example
+        goal:
+          field: example
+        kind: example
+        presentation:
+          delta: absolute
+          displayUnits: auto
+          favorableDirection: increase
+          missingComparison: show_unavailable
+          mode: compact
+          note: example
+          ranges:
+            - label: example
+              maximum: 1
+              minimum: 1
+              tone: neutral
+          thresholds:
+            - tone: neutral
+              value: 1
+          tone: neutral
+        trend:
+          category:
+            field: example
+          value:
+            field: example
+        value:
+          field: example
     KPIVisualizationPresentation:
       type: object
       required:
@@ -83762,6 +87466,50 @@ components:
         - failed
         - expired
       example: open
+    MatrixExplorationVisualization:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationConfigBase'
+      required:
+        - kind
+        - rows
+        - columns
+        - metrics
+      properties:
+        kind:
+          type: string
+          enum:
+            - matrix
+          example: example
+        rows:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+          example:
+            - field: example
+        columns:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+          example:
+            - field: example
+        metrics:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+          example:
+            - field: example
+      example:
+        columns:
+          - field: example
+        kind: example
+        metrics:
+          - field: example
+        rows:
+          - field: example
     MatrixVisualizationSpec:
       type: object
       allOf:
@@ -83913,6 +87661,28 @@ components:
       example:
         operator: isNull
         type: example
+    NullCheckExplorationFilterExpression:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterExpressionBase'
+      required:
+        - kind
+        - operator
+      properties:
+        kind:
+          type: string
+          enum:
+            - null_check
+          example: example
+        operator:
+          type: string
+          enum:
+            - is_null
+            - is_not_null
+          example: example
+      example:
+        kind: example
+        operator: example
     NumberDashboardReferenceValue:
       type: object
       allOf:
@@ -84079,6 +87849,50 @@ components:
         window:
           limit: 1
           offset: 1
+    PivotExplorationVisualization:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationConfigBase'
+      required:
+        - kind
+        - rows
+        - columns
+        - metrics
+      properties:
+        kind:
+          type: string
+          enum:
+            - pivot
+          example: example
+        rows:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+          example:
+            - field: example
+        columns:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+          example:
+            - field: example
+        metrics:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+          example:
+            - field: example
+      example:
+        columns:
+          - field: example
+        kind: example
+        metrics:
+          - field: example
+        rows:
+          - field: example
     PivotVisualizationSpec:
       type: object
       allOf:
@@ -84403,6 +88217,53 @@ components:
         maximumPixels: 1
         minimum: 1
         minimumPixels: 1
+    PointExplorationVisualization:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationConfigBase'
+      required:
+        - kind
+        - mark
+        - x
+        - 'y'
+      properties:
+        kind:
+          type: string
+          enum:
+            - point
+          example: example
+        mark:
+          type: string
+          enum:
+            - point
+          example: example
+        x:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        'y':
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        size:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        color:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        identity:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+          example:
+            - field: example
+      example:
+        color:
+          field: example
+        identity:
+          - field: example
+        kind: example
+        mark: example
+        size:
+          field: example
+        x:
+          field: example
+        'y':
+          field: example
     PointVisualizationColorScale:
       type: object
       required:
@@ -84715,6 +88576,37 @@ components:
           - tone: neutral
             value: 1
         type: example
+    PolarExplorationVisualization:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationConfigBase'
+      required:
+        - kind
+        - mark
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - polar
+          example: example
+        mark:
+          $ref: '#/components/schemas/ExplorationVisualizationPolarMark'
+        category:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        value:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        series:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+      example:
+        category:
+          field: example
+        kind: example
+        mark: radar
+        series:
+          field: example
+        value:
+          field: example
     PolarVisualizationPresentation:
       type: object
       allOf:
@@ -85656,6 +89548,38 @@ components:
         rose: true
         sort: ascending
         type: example
+    ProportionalExplorationVisualization:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationConfigBase'
+      required:
+        - kind
+        - mark
+        - category
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - proportional
+          example: example
+        mark:
+          $ref: '#/components/schemas/ExplorationVisualizationProportionalMark'
+        category:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        value:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+        series:
+          $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+      example:
+        category:
+          field: example
+        kind: example
+        mark: pie
+        series:
+          field: example
+        value:
+          field: example
     ProportionalVisualizationPresentation:
       type: object
       allOf:
@@ -86099,6 +90023,28 @@ components:
         type: example
         upper:
           inclusive: true
+    RangeExplorationFilterExpression:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterExpressionBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - range
+          example: example
+        lower:
+          $ref: '#/components/schemas/ExplorationFilterBound'
+        upper:
+          $ref: '#/components/schemas/ExplorationFilterBound'
+      example:
+        kind: example
+        lower:
+          inclusive: true
+        upper:
+          inclusive: true
     RecordsDashboardQuery:
       type: object
       allOf:
@@ -86426,6 +90372,46 @@ components:
         environment: example
         generationId: example
         projectId: example
+    RelativeExplorationTimeRange:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationTimeRangeBase'
+      required:
+        - kind
+        - direction
+        - count
+        - unit
+        - includeCurrent
+        - anchor
+      properties:
+        kind:
+          type: string
+          enum:
+            - relative
+          example: example
+        direction:
+          $ref: '#/components/schemas/ExplorationRelativeDirection'
+        count:
+          type: integer
+          format: int32
+          minimum: 1
+          example: 1
+        unit:
+          $ref: '#/components/schemas/ExplorationRelativeUnit'
+        includeCurrent:
+          type: boolean
+          example: true
+        anchor:
+          $ref: '#/components/schemas/ExplorationRelativeAnchor'
+        anchorValue:
+          $ref: '#/components/schemas/ExplorationTemporalValue'
+      example:
+        anchor: current_time
+        count: 1
+        direction: previous
+        includeCurrent: true
+        kind: example
+        unit: minute
     RelativePeriodDashboardFilterControl:
       type: object
       allOf:
@@ -86478,6 +90464,46 @@ components:
         direction: previous
         includeCurrent: true
         type: example
+        unit: minute
+    RelativePeriodExplorationFilterExpression:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterExpressionBase'
+      required:
+        - kind
+        - direction
+        - count
+        - unit
+        - includeCurrent
+        - anchor
+      properties:
+        kind:
+          type: string
+          enum:
+            - relative_period
+          example: example
+        direction:
+          $ref: '#/components/schemas/ExplorationRelativeDirection'
+        count:
+          type: integer
+          format: int32
+          minimum: 1
+          example: 1
+        unit:
+          $ref: '#/components/schemas/ExplorationRelativeUnit'
+        includeCurrent:
+          type: boolean
+          example: true
+        anchor:
+          $ref: '#/components/schemas/ExplorationRelativeAnchor'
+        anchorValue:
+          $ref: '#/components/schemas/ExplorationFilterValue'
+      example:
+        anchor: current_time
+        count: 1
+        direction: previous
+        includeCurrent: true
+        kind: example
         unit: minute
     ReleaseArtifactResponse:
       type: object
@@ -87432,6 +91458,451 @@ components:
               color: accent
               icon: circle
             value: 1
+    SavedExplorationCreateRequest:
+      type: object
+      required:
+        - title
+        - visibility
+        - spec
+      properties:
+        title:
+          type: string
+          example: example
+        slug:
+          type: string
+          example: example
+        visibility:
+          $ref: '#/components/schemas/SavedExplorationVisibility'
+        spec:
+          $ref: '#/components/schemas/ExplorationSpec'
+      example:
+        slug: example
+        spec:
+          datasetId: example
+          dimensions:
+            - alias: example
+              field: example
+              grain: second
+          filters:
+            - datasetId: example
+              field: example
+          limit: 1
+          metrics:
+            - alias: example
+              field: example
+          modelId: example
+          pivot:
+            columns:
+              - alias: example
+                field: example
+                grain: second
+            metrics:
+              - alias: example
+                field: example
+            rows:
+              - alias: example
+                field: example
+                grain: second
+            sort:
+              - direction: asc
+                field: example
+            totals:
+              columns: true
+              grand: true
+              rows: true
+            window:
+              limit: 1
+              offset: 1
+          schemaVersion: 1
+          sort:
+            - direction: asc
+              field: example
+          table:
+            columns:
+              - field: example
+                label: example
+                width: 1
+            density: compact
+            rowHeight: 1
+            showHeader: true
+            striped: true
+          time:
+            alias: example
+            field: example
+            grain: second
+        title: example
+        visibility: private
+    SavedExplorationDuplicateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          example: example
+        slug:
+          type: string
+          example: example
+        visibility:
+          $ref: '#/components/schemas/SavedExplorationVisibility'
+      example:
+        slug: example
+        title: example
+        visibility: private
+    SavedExplorationListResponse:
+      type: object
+      required:
+        - items
+        - page
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SavedExplorationSummaryResponse'
+          example:
+            - archivedAt: "2026-01-02T15:04:05Z"
+              createdAt: "2026-01-02T15:04:05Z"
+              id: example
+              ownerPrincipalId: example
+              revision:
+                contentHash: example
+                number: 1
+                revisionId: example
+              semanticModelId: example
+              slug: example
+              status: active
+              title: example
+              updatedAt: "2026-01-02T15:04:05Z"
+              visibility: private
+        page:
+          $ref: '#/components/schemas/PageInfo'
+      example:
+        items:
+          - archivedAt: "2026-01-02T15:04:05Z"
+            createdAt: "2026-01-02T15:04:05Z"
+            id: example
+            ownerPrincipalId: example
+            revision:
+              contentHash: example
+              number: 1
+              revisionId: example
+            semanticModelId: example
+            slug: example
+            status: active
+            title: example
+            updatedAt: "2026-01-02T15:04:05Z"
+            visibility: private
+        page:
+          nextCursor: example
+    SavedExplorationMutationAuditPayload:
+      type: object
+      required:
+        - mutationEvidenceVersion
+        - actorId
+        - action
+        - idempotencyKey
+        - fingerprint
+        - requestId
+        - correlationId
+        - adminOverride
+        - adminReason
+        - occurredAt
+        - appliedRevision
+      properties:
+        mutationEvidenceVersion:
+          type: integer
+          format: int64
+          example: 1
+        actorId:
+          type: string
+          example: example
+        action:
+          type: string
+          example: example
+        idempotencyKey:
+          type: string
+          example: example
+        fingerprint:
+          type: string
+          example: example
+        requestId:
+          type: string
+          example: example
+        correlationId:
+          type: string
+          example: example
+        adminOverride:
+          type: boolean
+          example: true
+        adminReason:
+          type: string
+          example: example
+        occurredAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        appliedRevision:
+          $ref: '#/components/schemas/SavedExplorationRevisionToken'
+      example:
+        action: example
+        actorId: example
+        adminOverride: true
+        adminReason: example
+        appliedRevision:
+          contentHash: example
+          number: 1
+          revisionId: example
+        correlationId: example
+        fingerprint: example
+        idempotencyKey: example
+        mutationEvidenceVersion: 1
+        occurredAt: "2026-01-02T15:04:05Z"
+        requestId: example
+    SavedExplorationPatchRequest:
+      type: object
+      required:
+        - title
+        - slug
+        - visibility
+        - spec
+      properties:
+        title:
+          type: string
+          example: example
+        slug:
+          type: string
+          example: example
+        visibility:
+          $ref: '#/components/schemas/SavedExplorationVisibility'
+        spec:
+          $ref: '#/components/schemas/ExplorationSpec'
+      example:
+        slug: example
+        spec:
+          datasetId: example
+          dimensions:
+            - alias: example
+              field: example
+              grain: second
+          filters:
+            - datasetId: example
+              field: example
+          limit: 1
+          metrics:
+            - alias: example
+              field: example
+          modelId: example
+          pivot:
+            columns:
+              - alias: example
+                field: example
+                grain: second
+            metrics:
+              - alias: example
+                field: example
+            rows:
+              - alias: example
+                field: example
+                grain: second
+            sort:
+              - direction: asc
+                field: example
+            totals:
+              columns: true
+              grand: true
+              rows: true
+            window:
+              limit: 1
+              offset: 1
+          schemaVersion: 1
+          sort:
+            - direction: asc
+              field: example
+          table:
+            columns:
+              - field: example
+                label: example
+                width: 1
+            density: compact
+            rowHeight: 1
+            showHeader: true
+            striped: true
+          time:
+            alias: example
+            field: example
+            grain: second
+        title: example
+        visibility: private
+    SavedExplorationResponse:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/SavedExplorationSummaryResponse'
+      required:
+        - spec
+      properties:
+        spec:
+          $ref: '#/components/schemas/ExplorationSpec'
+      description: |-
+        GET is the reopen operation: it returns a detached, editable authored
+        working copy and the exact source revision token used by PATCH.
+      example:
+        spec:
+          datasetId: example
+          dimensions:
+            - alias: example
+              field: example
+              grain: second
+          filters:
+            - datasetId: example
+              field: example
+          limit: 1
+          metrics:
+            - alias: example
+              field: example
+          modelId: example
+          pivot:
+            columns:
+              - alias: example
+                field: example
+                grain: second
+            metrics:
+              - alias: example
+                field: example
+            rows:
+              - alias: example
+                field: example
+                grain: second
+            sort:
+              - direction: asc
+                field: example
+            totals:
+              columns: true
+              grand: true
+              rows: true
+            window:
+              limit: 1
+              offset: 1
+          schemaVersion: 1
+          sort:
+            - direction: asc
+              field: example
+          table:
+            columns:
+              - field: example
+                label: example
+                width: 1
+            density: compact
+            rowHeight: 1
+            showHeader: true
+            striped: true
+          time:
+            alias: example
+            field: example
+            grain: second
+    SavedExplorationRevisionToken:
+      type: object
+      required:
+        - revisionId
+        - number
+        - contentHash
+      properties:
+        revisionId:
+          type: string
+          example: example
+        number:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 1
+        contentHash:
+          type: string
+          example: example
+      description: |-
+        The immutable revision identity returned by saved-exploration reads. The
+        complete token is also the value accepted in If-Match for mutations; it is
+        never inferred from a title, slug, or payload hash alone.
+      example:
+        contentHash: example
+        number: 1
+        revisionId: example
+    SavedExplorationStatus:
+      type: string
+      enum:
+        - active
+        - archived
+      example: active
+    SavedExplorationSummaryResponse:
+      type: object
+      required:
+        - id
+        - ownerPrincipalId
+        - title
+        - slug
+        - visibility
+        - semanticModelId
+        - status
+        - createdAt
+        - updatedAt
+        - revision
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        ownerPrincipalId:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+        slug:
+          type: string
+          example: example
+        visibility:
+          $ref: '#/components/schemas/SavedExplorationVisibility'
+        semanticModelId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        status:
+          $ref: '#/components/schemas/SavedExplorationStatus'
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        archivedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        revision:
+          $ref: '#/components/schemas/SavedExplorationRevisionToken'
+      example:
+        archivedAt: "2026-01-02T15:04:05Z"
+        createdAt: "2026-01-02T15:04:05Z"
+        id: example
+        ownerPrincipalId: example
+        revision:
+          contentHash: example
+          number: 1
+          revisionId: example
+        semanticModelId: example
+        slug: example
+        status: active
+        title: example
+        updatedAt: "2026-01-02T15:04:05Z"
+        visibility: private
+    SavedExplorationVisibility:
+      type: string
+      enum:
+        - private
+        - organization
+      example: private
     SearchKind:
       type: string
       enum:
@@ -90065,6 +94536,37 @@ components:
         operator: isNull
         type: example
         values: []
+    SetExplorationFilterExpression:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterExpressionBase'
+      required:
+        - kind
+        - operator
+        - values
+      properties:
+        kind:
+          type: string
+          enum:
+            - set
+          example: example
+        operator:
+          type: string
+          enum:
+            - in
+            - not_in
+          example: example
+        values:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationFilterValue'
+          example: []
+      example:
+        kind: example
+        operator: example
+        values: []
     SingleSelectDashboardFilterControl:
       type: object
       allOf:
@@ -90325,6 +94827,25 @@ components:
       example:
         type: example
         value: example
+    StringExplorationFilterValue:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterValueBase'
+      required:
+        - kind
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - string
+          example: example
+        value:
+          type: string
+          example: example
+      example:
+        kind: example
+        value: example
     TableBackgroundScaleFormattingRule:
       type: object
       allOf:
@@ -90443,6 +94964,30 @@ components:
         kind: example
         maximum: 1
         minimum: 1
+    TableExplorationVisualization:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationVisualizationConfigBase'
+      required:
+        - kind
+        - columns
+      properties:
+        kind:
+          type: string
+          enum:
+            - table
+          example: example
+        columns:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExplorationVisualizationFieldRef'
+          example:
+            - field: example
+      example:
+        columns:
+          - field: example
+        kind: example
     TableTextColorFormattingRule:
       type: object
       allOf:
@@ -91265,6 +95810,46 @@ components:
       example:
         type: example
         value: "2026-01-02T15:04:05Z"
+    TimestampExplorationFilterValue:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterValueBase'
+      required:
+        - kind
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - timestamp
+          example: example
+        value:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+      example:
+        kind: example
+        value: "2026-01-02T15:04:05Z"
+    TimestampExplorationTemporalValue:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationTemporalValueBase'
+      required:
+        - kind
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - timestamp
+          example: example
+        value:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+      example:
+        kind: example
+        value: "2026-01-02T15:04:05Z"
     UnfilteredDashboardFilterExpression:
       type: object
       allOf:
@@ -91279,6 +95864,20 @@ components:
           example: example
       example:
         type: example
+    UnfilteredExplorationFilterExpression:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ExplorationFilterExpressionBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - unfiltered
+          example: example
+      example:
+        kind: example
     UploadProtocol:
       type: string
       enum:

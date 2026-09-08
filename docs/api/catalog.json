@@ -77,6 +77,11 @@
       "slug": "managed-data",
       "title": "Managed Data",
       "summary": "Project-global managed-data revisions and uploads."
+    },
+    {
+      "slug": "saved-explorations",
+      "title": "Saved Explorations",
+      "summary": "Durable authored exploration identities, revisions, lifecycle, and governed execution."
     }
   ]
 }

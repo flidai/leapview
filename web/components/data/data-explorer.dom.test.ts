@@ -851,6 +851,122 @@ test('non-embedded explorer reloads the selected Back/Forward entries exactly on
   }
 })
 
+test('non-embedded explorer keeps the selected saved deep link during URL updates', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/explore?saved=exploration%3Aactive`)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    const url = await page.evaluate(async () => {
+      const object = (table: string) => ({
+        key: `model:model:sales.${table}`,
+        resourceId: `model:sales.${table}`,
+        layer: 'model', semanticModelId: 'sales', datasetId: table, title: table, columnCount: 1,
+        columns: [{ key: 'status', label: 'Status', type: 'string' }],
+      })
+      const orders = object('orders')
+      const customers = object('customers')
+      const exploreCommand = {
+        spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 },
+        requestSeq: 0, resetVersion: 0, columnWidths: {},
+      }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        dataExplorer: {
+          objects: [orders, customers], selectedKey: orders.key, selectedObject: orders,
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, blocks: {}, sort: {} },
+          command: { mode: 'browse', objectKey: orders.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
+          explore: {
+            command: exploreCommand, semanticModels: [], datasets: [], fields: [],
+            result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
+          }, warnings: [],
+        },
+        savedExplorations: {
+          enabled: true, list: { items: [], includeArchived: false, selectedId: 'exploration:active' },
+          command: { action: 'create' }, save: { state: 'saved' },
+        },
+      })
+      const explorer = document.querySelector('lv-data-explorer') as any
+      for (let index = 0; index < 20 && explorer.shadowRoot?.querySelectorAll('.object-button').length !== 2; index += 1) {
+        await explorer.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      Array.from(explorer.shadowRoot.querySelectorAll<HTMLButtonElement>('.object-button')).find((button) => button.textContent?.includes('customers'))?.click()
+      return window.location.href
+    })
+    expect(new URL(url).searchParams.get('saved')).toBe('exploration:active')
+    expect(new URL(url).searchParams.get('object')).toContain('customers')
+  } finally {
+    await page.close()
+  }
+})
+
+test('saved exploration handoff keeps explicit targets, active authored spec, and archived copies read-only', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    const state = await page.evaluate(async () => {
+      const spec = { schemaVersion: 1, modelId: 'model:active', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 }
+      const revision = { revisionId: 'revision:1', number: 1, contentHash: 'sha256:' + 'a'.repeat(64) }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        dataExplorer: {
+          objects: [], selectedKey: '',
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
+          command: { mode: 'explore', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: { spec, requestSeq: 0, resetVersion: 0, columnWidths: {} } },
+          explore: { command: { spec, requestSeq: 0, resetVersion: 0, columnWidths: {} }, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } },
+          warnings: [],
+        },
+        savedExplorations: {
+          enabled: true,
+          list: { items: [], includeArchived: false, selectedId: 'exploration:active' },
+          current: { id: 'exploration:active', title: 'Active', slug: 'active', visibility: 'private', status: 'active', semanticModelId: 'model:active', revision, detached: true, spec: { ...spec, modelId: 'model:baseline' } },
+          command: { action: 'create' }, save: { state: 'saved' },
+        },
+      })
+      const element = document.createElement('lv-data-explorer') as any
+      const commands: any[] = []
+      element.addEventListener('lv-saved-exploration-command', (event: CustomEvent) => commands.push(event.detail))
+      document.body.append(element)
+      for (let index = 0; index < 20 && !element.shadowRoot?.querySelector('input[aria-label="Duplicate saved exploration name"]'); index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const buttons = () => Array.from(element.shadowRoot.querySelectorAll<HTMLButtonElement>('.saved-exploration-actions button, .saved-exploration-current button'))
+      buttons().find((button) => button.textContent?.trim() === 'Save')?.click()
+      const duplicateInput = element.shadowRoot.querySelector<HTMLInputElement>('input[aria-label="Duplicate saved exploration name"]')!
+      duplicateInput.value = 'Second copy'
+      duplicateInput.dispatchEvent(new Event('input', { bubbles: true }))
+      buttons().find((button) => button.textContent?.trim() === 'Duplicate')?.click()
+      duplicateInput.value = 'Third copy'
+      duplicateInput.dispatchEvent(new Event('input', { bubbles: true }))
+      buttons().find((button) => button.textContent?.trim() === 'Duplicate')?.click()
+      await element.updateComplete
+      mergePatch({ savedExplorations: {
+        enabled: true,
+        list: { items: [], includeArchived: true, selectedId: 'exploration:archived' },
+        current: { id: 'exploration:archived', title: 'Archived', slug: 'archived', visibility: 'private', status: 'archived', semanticModelId: 'model:active', revision, detached: true, spec },
+        command: { action: 'create' }, save: { state: 'saved' },
+      } })
+      await element.updateComplete
+      return {
+        commands,
+        archivedButtons: Array.from(element.shadowRoot.querySelectorAll<HTMLButtonElement>('.saved-exploration-current button')).map((button) => button.textContent?.trim()),
+        archivedReadOnly: element.shadowRoot.textContent?.includes('Read-only archived copy') ?? false,
+      }
+    })
+    expect(state.commands[0]).toMatchObject({ action: 'update', explorationId: 'exploration:active', spec: { modelId: 'model:active' }, expectedRevision: { revisionId: 'revision:1' } })
+    expect(state.commands[1]).toMatchObject({ action: 'duplicate', sourceExplorationId: 'exploration:active', title: 'Second copy', expectedSourceRevision: { revisionId: 'revision:1' } })
+    expect(state.commands[2]).toMatchObject({ action: 'duplicate', sourceExplorationId: 'exploration:active', title: 'Third copy', expectedSourceRevision: { revisionId: 'revision:1' } })
+    expect(state.commands[1]).not.toHaveProperty('slug')
+    expect(state.commands[2]).not.toHaveProperty('slug')
+    expect(state.archivedButtons).not.toContain('Save')
+    expect(state.archivedReadOnly).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(withExplorer = false) {
   return `
     <!doctype html>
