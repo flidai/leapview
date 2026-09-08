@@ -281,9 +281,10 @@ test('ECharts keeps generated compact horizontal bar ticks and automatic labels 
     try {
       chart.setOption(option)
       chart.renderToSVGString()
-      const textElements = chart.getZr().storage.getDisplayList()
+      const displayList = chart.getZr().storage.getDisplayList()
+      const textElements = displayList
         .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string')
-      const barsWithLabels = chart.getZr().storage.getDisplayList()
+      const barsWithLabels = displayList
         .filter((item: any) => item.type === 'rect' && typeof item.getTextContent?.()?.style?.text === 'string')
       expect(barsWithLabels.length, `${context.theme} should retain rendered bar labels`).toBeGreaterThan(10)
       for (const bar of barsWithLabels) {
@@ -299,6 +300,14 @@ test('ECharts keeps generated compact horizontal bar ticks and automatic labels 
       }
       const narrowBars = barsWithLabels.filter((bar: any) => ['$128', '$58'].includes(bar.getTextContent().style.text))
       expect(narrowBars.length, `${context.theme} should retain both narrow first-stack labels`).toBe(2)
+      for (const bar of narrowBars) {
+        const label = bar.getTextContent()
+        expect(label.ignore, `${context.theme} ${label.style.text} should not be hidden`).toBe(false)
+        expect(textElements.find((item: any) => item.parent === label), `${context.theme} ${label.style.text} should retain a rendered text child`).toBeDefined()
+      }
+      const beautyLabel = narrowBars.find((bar: any) => bar.getTextContent().style.text === '$128')?.getTextContent()
+      const beautyText = textElements.find((item: any) => item.parent === beautyLabel)
+      expect(beautyText?.style.text, `${context.theme} Beauty should render a truncated label`).toContain('…')
       expect(textElements.some((item: any) => String(item.style.text).includes('…')), `${context.theme} should truncate at least one narrow bar label`).toBe(true)
       for (const item of textElements) {
         const bounds = globalTextBounds(item)
