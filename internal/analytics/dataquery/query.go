@@ -183,6 +183,38 @@ type ColumnMask struct {
 
 type Column struct {
 	Name string
+	// Type carries optional result value metadata that cannot be recovered
+	// safely from decoded Go values alone. An empty Kind means the producer did
+	// not provide a logical type; analytical Arrow producers populate supported
+	// primitive, decimal, date, and timestamp kinds for typed exports.
+	Type ColumnType `json:"-"`
+}
+
+type ColumnTypeKind string
+
+const (
+	ColumnTypeBoolean   ColumnTypeKind = "boolean"
+	ColumnTypeInteger   ColumnTypeKind = "integer"
+	ColumnTypeUnsigned  ColumnTypeKind = "unsigned"
+	ColumnTypeFloat     ColumnTypeKind = "float"
+	ColumnTypeString    ColumnTypeKind = "string"
+	ColumnTypeDecimal   ColumnTypeKind = "decimal"
+	ColumnTypeDate      ColumnTypeKind = "date"
+	ColumnTypeTimestamp ColumnTypeKind = "timestamp"
+)
+
+// ColumnType is deliberately independent of any analytical engine package.
+// BitWidth applies to integer, unsigned, and float values. Precision and Scale
+// apply to decimal values; Unit and TimeZone apply to dates/timestamps.
+// Producers must leave unsupported metadata empty rather than guessing from a
+// decoded row value.
+type ColumnType struct {
+	Kind      ColumnTypeKind
+	BitWidth  int32
+	Precision int32
+	Scale     int32
+	Unit      string
+	TimeZone  string
 }
 
 type Row map[string]any

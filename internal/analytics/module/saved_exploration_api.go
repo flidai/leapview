@@ -18,7 +18,6 @@ import (
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	saved "github.com/flidai/leapview/internal/analytics/exploration/saved"
 	savedapplication "github.com/flidai/leapview/internal/analytics/exploration/saved/application"
-	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -29,10 +28,9 @@ import (
 // transport boundary; none are accepted from request bodies.
 type SavedExplorationAPIGenConfig struct {
 	Service SavedExplorationService
-	// ExportAuditRecorder records the delivery outcome separately from the
-	// governed query event. Query execution can succeed while encoding or
-	// sending is rejected by export bounds/cancellation.
-	ExportAuditRecorder queryaudit.Recorder
+	// ExportAuditRecorder records export preparation, not network delivery.
+	// Query execution can succeed while encoding is rejected by bounds/cancellation.
+	ExportAuditRecorder QueryAuditRecorder
 	CurrentPrincipal    func(*http.Request) (string, bool)
 	// ReplayContext installs the canonical authenticated principal (and any
 	// credential attenuation) before the read-only replay authorization runs.

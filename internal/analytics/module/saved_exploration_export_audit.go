@@ -7,11 +7,15 @@ import (
 	"fmt"
 	"time"
 
+	explorationexport "github.com/flidai/leapview/internal/analytics/arrowquery/export"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
-	explorationexport "github.com/flidai/leapview/internal/analytics/exploration/export"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+// QueryAuditRecorder exposes query/export audit recording through the analytics
+// capability surface, keeping composition independent of its implementation.
+type QueryAuditRecorder = queryaudit.Recorder
 
 var errSavedExplorationExportAuditUnavailable = errors.New("saved exploration export audit is unavailable")
 

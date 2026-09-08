@@ -10,8 +10,8 @@ import (
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
+	explorationexport "github.com/flidai/leapview/internal/analytics/arrowquery/export"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
-	explorationexport "github.com/flidai/leapview/internal/analytics/exploration/export"
 	saved "github.com/flidai/leapview/internal/analytics/exploration/saved"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
