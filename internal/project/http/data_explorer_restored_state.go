@@ -83,7 +83,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 			return fmt.Errorf("dimension field %q is not a date or timestamp dimension; choose a temporal field", dimension.Field)
 		}
 	}
-	filterDatasets := restoredFilterDatasetParticipation(command, projection, model, fieldByID)
+	filterDatasets := restoredFilterDatasetParticipation(command, projection, compiled, fieldByID)
 	seenFields := make(map[string]string, len(state.Dimensions)+len(state.Metrics))
 	selectedReferences := make(map[string]string, len(spec.Dimensions)+len(spec.Metrics))
 	for _, fieldID := range state.Dimensions {
@@ -186,7 +186,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 // effective query base. A normal query has one participating base. When a
 // selected metric spans multiple roots, the semantic executor clears the
 // dataset target and the complete recursive root union is the safe scope.
-func restoredFilterDatasetParticipation(command projectsignals.DataExploreCommand, projection DataExplorerProjection, model *semanticmodel.Model, fields map[string]projectsignals.DataExploreFieldSignal) map[string]bool {
+func restoredFilterDatasetParticipation(command projectsignals.DataExploreCommand, projection DataExplorerProjection, compiled *semanticquery.CompiledModel, fields map[string]projectsignals.DataExploreFieldSignal) map[string]bool {
 	participating := map[string]bool{}
 	effectiveDataset := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.Spec.DatasetID))
 	state := dataExploreStateFromSpec(command.Spec)
@@ -197,7 +197,7 @@ func restoredFilterDatasetParticipation(command projectsignals.DataExploreComman
 		return participating
 	}
 	for _, metric := range state.Metrics {
-		for _, root := range explorerMetricRootDatasets(model, metric) {
+		for _, root := range explorerMetricRootDatasets(compiled, metric) {
 			participating[root] = true
 		}
 	}
