@@ -80,7 +80,9 @@ func TestPostgres18RecoveryAdmissionChain(t *testing.T) {
 	if _, err := fixtureDB.Exec(t.Context(), `INSERT INTO ducklake.catalog_identity(physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema) VALUES ($1,$2,$3,$4,'lake')`, s.PhysicalPoolID, s.CatalogDatabase, s.CatalogID, s.CatalogUUID); err != nil {
 		t.Fatal(err)
 	}
-	for i, name := range []string{"missing snapshot retention", "expired snapshot retention", "mismatched retention identity", "invalid snapshot binding", "expired recovery hold"} {
+	// Retention belongs to preparation, not the evidence envelope. Missing
+	// delivery metadata must also fail before leaving any usable recovery set.
+	for i, name := range []string{"missing snapshot retention", "expired snapshot retention", "mismatched retention identity", "invalid snapshot binding", "expired recovery hold", "missing retention expiry", "missing publication identity", "missing target revision"} {
 		t.Run(name, func(t *testing.T) {
 			set := f.set
 			set.ID, set.Status, set.PublishedValidationAttemptID, set.FrontierDigest = uuid.NewString(), recoveryset.StatusPrepared, "", ""
@@ -114,6 +116,18 @@ func TestPostgres18RecoveryAdmissionChain(t *testing.T) {
 				expires = time.Now().Add(-time.Hour)
 				wantDiagnostic = "expiry must be in the future"
 			}
+			if name == "missing retention expiry" {
+				expires = time.Time{}
+				wantDiagnostic = "recovery retention root expiry is required"
+			}
+			if name == "missing publication identity" {
+				set.Delivery.PublicationID = ""
+				wantDiagnostic = "publication"
+			}
+			if name == "missing target revision" {
+				set.Delivery.TargetRevision = 0
+				wantDiagnostic = "revision"
+			}
 			if _, err := ops.PrepareRecovery(t.Context(), admincli.RecoveryPrepareRequest{Set: set, ExpiresAt: expires}); err == nil || !strings.Contains(err.Error(), wantDiagnostic) {
 				t.Fatalf("retention denial = %v, want %s", err, wantDiagnostic)
 			}
@@ -125,7 +139,10 @@ func TestPostgres18RecoveryAdmissionChain(t *testing.T) {
 				t.Fatalf("failed preparation left root: count=%d err=%v", roots, err)
 			}
 			attemptID := uuid.NewString()
-			envelope, err := recoveryset.NewValidationEvidenceEnvelope(set, attemptID)
+			// A valid envelope cannot repair a preparation that never committed.
+			evidenceSet := f.set
+			evidenceSet.ID = set.ID
+			envelope, err := recoveryset.NewValidationEvidenceEnvelope(evidenceSet, attemptID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -152,10 +169,11 @@ func TestPostgres18RecoveryAdmissionChain(t *testing.T) {
 	}
 	seedRecoveryAdmissionRetention(t, fixtureDB, f.set, f.set.Serving.DuckLakeSnapshotID, "live")
 
-	cases := []struct {
+	type evidenceCase struct {
 		name   string
 		mutate func(*recoveryset.ValidationEvidenceEnvelope)
-	}{
+	}
+	cases := []evidenceCase{
 		{"valid", nil},
 		{"control database identity", func(e *recoveryset.ValidationEvidenceEnvelope) { e.ClusterPoints[0].DatabaseIdentity = "wrong-control" }},
 		{"catalog database identity", func(e *recoveryset.ValidationEvidenceEnvelope) { e.ClusterPoints[1].DatabaseIdentity = "wrong-catalog" }},
@@ -176,6 +194,28 @@ func TestPostgres18RecoveryAdmissionChain(t *testing.T) {
 			}
 		}},
 		{"closure", func(e *recoveryset.ValidationEvidenceEnvelope) { e.ClosureDigest = "sha256:" + strings.Repeat("c", 64) }},
+	}
+	// Exercise actual omission at the wire boundary, not only empty values.
+	for _, field := range []string{"frontier_digest", "cluster_points", "object_roots", "relation_manifest_digest", "closure_digest", "attempt_id"} {
+		cases = append(cases, evidenceCase{name: "missing field " + field})
+	}
+	cases = append(cases, evidenceCase{"missing serving artifact", func(e *recoveryset.ValidationEvidenceEnvelope) {
+		roots := e.ObjectRoots[:0]
+		for _, root := range e.ObjectRoots {
+			if root.Kind != recoveryset.ObjectRootServingArtifact {
+				roots = append(roots, root)
+			}
+		}
+		e.ObjectRoots = roots
+	}})
+	for _, role := range []recoveryset.DatabaseRole{recoveryset.DatabaseControl, recoveryset.DatabaseDuckLake} {
+		cases = append(cases, evidenceCase{"missing database binding " + string(role), func(e *recoveryset.ValidationEvidenceEnvelope) {
+			for i := range e.ClusterPoints {
+				if e.ClusterPoints[i].DatabaseRole == role {
+					e.ClusterPoints[i].DatabaseIdentity = ""
+				}
+			}
+		}})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -237,9 +277,21 @@ func TestPostgres18RecoveryAdmissionChain(t *testing.T) {
 				t.Fatal(err)
 			}
 			request := admincli.RecoveryValidateRequest{SetID: set.ID, AttemptID: attemptID, Validator: "qualification", Evidence: encoded}
+			omittedField, omit := strings.CutPrefix(tc.name, "missing field ")
+			if omit {
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(encoded, &fields); err != nil {
+					t.Fatal(err)
+				}
+				delete(fields, omittedField)
+				request.Evidence, err = json.Marshal(fields)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
 			first, validationErr := ops.ValidateRecovery(t.Context(), request)
 			publish := admincli.RecoveryPublishRequest{SetID: set.ID, Publisher: "qualification", FenceEpoch: set.FenceEpoch, ValidationAttemptID: attemptID}
-			if tc.mutate != nil {
+			if tc.mutate != nil || omit {
 				if !errors.Is(validationErr, adminpostgres.ErrRecoveryValidationFailed) {
 					t.Fatalf("validation error = %v", validationErr)
 				}
@@ -280,6 +332,38 @@ func TestPostgres18RecoveryAdmissionChain(t *testing.T) {
 			}
 			if _, err := ops.ValidateRecovery(t.Context(), admincli.RecoveryValidateRequest{SetID: set.ID, AttemptID: otherID, Validator: "qualification", Evidence: otherBytes}); err != nil {
 				t.Fatalf("second valid attempt: %v", err)
+			}
+			// Even with two valid results, incomplete or fenced publication
+			// requests must leave the set unselected and readiness closed.
+			beforePublication, err := repo.ReadExact(t.Context(), set.ID)
+			if err != nil || beforePublication.Status != recoveryset.StatusPrepared || beforePublication.PublishedValidationAttemptID != "" {
+				t.Fatalf("validation selected a publication prematurely: %v", err)
+			}
+			for _, failure := range []struct {
+				name   string
+				mutate func(*admincli.RecoveryPublishRequest)
+				want   error
+			}{
+				{"missing attempt", func(r *admincli.RecoveryPublishRequest) { r.ValidationAttemptID = "" }, recoveryset.ErrInvalid},
+				{"missing publisher", func(r *admincli.RecoveryPublishRequest) { r.Publisher = "" }, recoveryset.ErrInvalid},
+				{"missing fence", func(r *admincli.RecoveryPublishRequest) { r.FenceEpoch = 0 }, recoveryset.ErrInvalid},
+				{"unknown attempt", func(r *admincli.RecoveryPublishRequest) { r.ValidationAttemptID = uuid.NewString() }, recoveryset.ErrFenced},
+				{"wrong fence", func(r *admincli.RecoveryPublishRequest) { r.FenceEpoch++ }, recoveryset.ErrFenced},
+			} {
+				t.Run(failure.name, func(t *testing.T) {
+					invalid := publish
+					failure.mutate(&invalid)
+					if _, err := ops.PublishRecovery(t.Context(), invalid); !errors.Is(err, failure.want) {
+						t.Fatalf("publication denial = %v, want %v", err, failure.want)
+					}
+					persisted, err := repo.ReadExact(t.Context(), set.ID)
+					if err != nil || !reflect.DeepEqual(persisted, beforePublication) {
+						t.Fatalf("failed publication changed recovery state: %v", err)
+					}
+					if err := check(t.Context()); err == nil || !strings.Contains(err.Error(), "recovery_set_not_published") {
+						t.Fatalf("failed publication readiness = %v", err)
+					}
+				})
 			}
 			published, err := ops.PublishRecovery(t.Context(), publish)
 			if err != nil {
