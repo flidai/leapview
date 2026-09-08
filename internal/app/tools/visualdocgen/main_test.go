@@ -244,7 +244,7 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 			}
 		}
 	}
-	if got, want := count, 83; got != want {
+	if got, want := count, 84; got != want {
 		t.Fatalf("examples = %d, want %d", got, want)
 	}
 	boxplots := artifact.Documents["visuals/boxplot"]
@@ -323,23 +323,42 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 		t.Fatalf("missing comparison KPI datasets = %#v", missingPayload.DataState.Value)
 	}
 	line := artifact.Documents["visuals/line"]
-	seriesSpec, ok := line[1].Spec.Value.(*visualizationir.CartesianVisualizationSpec)
-	if !ok || seriesSpec.Series == nil {
-		t.Fatalf("series line spec = %#v", line[1].Spec.Value)
+	lineByID := make(map[string]visualdocs.Payload, len(line))
+	for _, payload := range line {
+		lineByID[payload.VisualID] = payload
 	}
-	calculationSpec, ok := line[2].Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	seriesPayload := lineByID["revenue_line_status"]
+	seriesSpec, ok := seriesPayload.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	if !ok || seriesSpec.Series == nil || seriesSpec.Presentation.LegendTitle == nil || *seriesSpec.Presentation.LegendTitle != "Fulfillment status" || seriesSpec.Presentation.LegendItems == nil || len(*seriesSpec.Presentation.LegendItems) != 4 || seriesSpec.Presentation.SeriesIntent == nil || len(*seriesSpec.Presentation.SeriesIntent) != 4 || seriesSpec.TooltipItems == nil || len(*seriesSpec.TooltipItems) != 3 {
+		t.Fatalf("series line spec = %#v", seriesPayload.Spec.Value)
+	}
+	if got := (*seriesSpec.Presentation.SeriesIntent)[0]; got.Value != "delivered" || got.Order == nil || *got.Order != 0 || got.Color == nil || *got.Color != visualizationir.VisualizationColorIntentSuccess {
+		t.Fatalf("series intent = %#v, want ordered delivered success intent", *seriesSpec.Presentation.SeriesIntent)
+	}
+	if got := (*seriesSpec.TooltipItems)[2]; got.Label == nil || *got.Label != "Revenue" || got.Format == nil {
+		t.Fatalf("structured revenue tooltip = %#v", got)
+	}
+	axisPayload := lineByID["revenue_line_axis_policies"]
+	axisSpec, ok := axisPayload.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	if !ok || axisSpec.Axes == nil || len(*axisSpec.Axes) != 2 || (*axisSpec.Axes)[0].Type != visualizationir.VisualizationAxisTypeTime || (*axisSpec.Axes)[0].DateUnit != visualizationir.VisualizationDateDisplayUnitMonth || (*axisSpec.Axes)[0].Ticks != visualizationir.VisualizationAxisTickVisibilityVisible || (*axisSpec.Axes)[0].Grid != visualizationir.VisualizationAxisGridVisibilityHidden || (*axisSpec.Axes)[0].LabelRotation != visualizationir.VisualizationAxisLabelRotationDiagonal || (*axisSpec.Axes)[1].Type != visualizationir.VisualizationAxisTypeValue || (*axisSpec.Axes)[1].Inversion != visualizationir.VisualizationAxisInversionInverted {
+		t.Fatalf("axis policy spec = %#v", axisPayload.Spec.Value)
+	}
+	calculationPayload := lineByID["revenue_line_running"]
+	calculationSpec, ok := calculationPayload.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
 	if !ok || calculationSpec.Calculations == nil || len(*calculationSpec.Calculations) != 1 ||
 		(*calculationSpec.Calculations)[0].Template != visualizationir.VisualizationCalculationTemplateRunningTotal {
-		t.Fatalf("visual calculation was not compiled: %#v", line[2].Spec.Value)
+		t.Fatalf("visual calculation was not compiled: %#v", calculationPayload.Spec.Value)
 	}
-	stepSpec, ok := line[3].Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	stepPayload := lineByID["revenue_line_step"]
+	stepSpec, ok := stepPayload.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
 	if !ok || !stepSpec.Presentation.Step {
-		t.Fatalf("stepped line presentation was not compiled: %#v", line[3].Spec.Value)
+		t.Fatalf("stepped line presentation was not compiled: %#v", stepPayload.Spec.Value)
 	}
-	contextSpec, ok := line[4].Spec.Value.(*visualizationir.CartesianVisualizationSpec)
-	contextState, inline := line[4].DataState.Value.(*visualizationir.InlineVisualizationDataState)
+	contextPayload := lineByID["revenue_line_context"]
+	contextSpec, ok := contextPayload.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	contextState, inline := contextPayload.DataState.Value.(*visualizationir.InlineVisualizationDataState)
 	if !ok || !inline || len(contextSpec.Datasets) != 2 || len(contextState.Datasets) != 2 || contextSpec.MetadataBindings == nil || contextSpec.MetadataBindings.Title == nil || contextSpec.MetadataBindings.Description == nil {
-		t.Fatalf("context line spec/state = %#v / %#v", line[4].Spec.Value, line[4].DataState.Value)
+		t.Fatalf("context line spec/state = %#v / %#v", contextPayload.Spec.Value, contextPayload.DataState.Value)
 	}
 	first, err := json.Marshal(artifact)
 	if err != nil {
