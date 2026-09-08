@@ -29,9 +29,9 @@ spec:
     order_count: {datatype: Integer, description: dbt-owned customer order count.}
     lifetime_value: {datatype: Float, description: dbt-owned customer lifetime revenue.}
   checks:
-    - {type: non_null, field: customer_id, severity: error}
-    - {type: non_null, field: customer_name, severity: error}
-    - {type: non_null, field: region, severity: error}
-    - {type: non_null, field: order_count, severity: error}
-    - {type: non_null, field: lifetime_value, severity: error}
-    - {type: row_count, minimum: 1, severity: error}
+    - {id: customers_customer_id_not_null, type: non_null, field: customer_id, severity: error}
+    - {id: customers_customer_name_not_null, type: non_null, field: customer_name, severity: error}
+    - {id: customers_region_not_null, type: non_null, field: region, severity: error}
+    - {id: customers_order_count_not_null, type: non_null, field: order_count, severity: error}
+    - {id: customers_lifetime_value_not_null, type: non_null, field: lifetime_value, severity: error}
+    - {id: customers_row_count, type: row_count, minimum: 1, severity: error}

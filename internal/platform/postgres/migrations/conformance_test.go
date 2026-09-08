@@ -25,13 +25,15 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator", Password: "migration-conformance", Login: true})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
-	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance"})
+	maintenance := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Password: "maintenance-conformance", Login: true})
+	h.EnsureRole(t, postgrestest.Role{Name: "recovery_unrelated"})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
 	h.GrantRole(t, owner, migrator)
 	database := h.NewDatabase(t, "leapview_control")
 	h.GrantDatabase(t, database.Name, owner, "CREATE")
 	h.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
+	h.GrantDatabase(t, database.Name, maintenance, "CONNECT")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	db, err := pgxpool.New(ctx, database.AdminURL())
@@ -62,6 +64,35 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	// LeapView still reconciles its role policy.
 	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
 		t.Fatalf("reapply baseline: %v", err)
+	}
+	// Recovery verifies Goose through the canonical non-owner maintenance
+	// login. No test-only table grants or substituted baseline verifier.
+	maintenanceDB, err := sql.Open("pgx", database.URL(maintenance))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer maintenanceDB.Close()
+	if err := postgresbaseline.Verify(ctx, maintenanceDB); err != nil {
+		t.Fatalf("recovery maintenance Goose verification: %v", err)
+	}
+	for _, role := range []string{"leapview_control_maintenance", "leapview_control_runtime", "leapview_control_readonly", "leapview_control_backup", "recovery_unrelated"} {
+		var usage, create bool
+		if err := db.QueryRow(ctx, `SELECT has_schema_privilege($1, 'public', 'USAGE'), has_schema_privilege($1, 'public', 'CREATE')`, role).Scan(&usage, &create); err != nil {
+			t.Fatal(err)
+		}
+		if usage != (role != "recovery_unrelated") || create {
+			t.Fatalf("public schema privileges %s: usage=%t create=%t", role, usage, create)
+		}
+		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+			var allowed bool
+			if err := db.QueryRow(ctx, `SELECT has_table_privilege($1, 'public.goose_db_version', $2)`, role, privilege).Scan(&allowed); err != nil {
+				t.Fatal(err)
+			}
+			want := privilege == "SELECT" && role != "recovery_unrelated"
+			if allowed != want {
+				t.Fatalf("Goose privilege %s/%s = %t, want %t", role, privilege, allowed, want)
+			}
+		}
 	}
 
 	var schemaCount int

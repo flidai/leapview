@@ -23,7 +23,14 @@
     },
     "AcceptedValuesModelCheck": {
       "properties": {
+        "description": {
+          "type": "string"
+        },
         "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "id": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
@@ -33,6 +40,12 @@
             "error"
           ],
           "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "type": {
           "enum": [
@@ -49,6 +62,7 @@
       },
       "required": [
         "field",
+        "id",
         "type",
         "values"
       ],
@@ -163,6 +177,27 @@
       },
       "required": [
         "any"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "AuthoritativeDefinition": {
+      "properties": {
+        "type": {
+          "enum": [
+            "businessDefinition",
+            "transformationImplementation"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -420,6 +455,71 @@
       ],
       "type": "object"
     },
+    "ContractMetadata": {
+      "properties": {
+        "compatibility": {
+          "enum": [
+            "backward"
+          ],
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "compatibility",
+        "version"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractResourceMetadata": {
+      "properties": {
+        "contract": {
+          "$ref": "#/$defs/ContractMetadata"
+        },
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "documentation": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$",
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/ResourceProvenance"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "DeltaPathSourceLocation": {
       "allOf": [
         {
@@ -647,6 +747,27 @@
         "scanKind": "table_function",
         "sourceDataIdentityCapability": "unavailable"
       }
+    },
+    "FieldDeprecation": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "replacement": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "since": {
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "since"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "FieldFreshness": {
       "properties": {
@@ -1233,7 +1354,7 @@
           "type": "string"
         },
         "metadata": {
-          "$ref": "#/$defs/ResourceMetadata"
+          "$ref": "#/$defs/ContractResourceMetadata"
         },
         "spec": {
           "$ref": "#/$defs/ModelSpec"
@@ -1425,6 +1546,19 @@
         "aiContext": {
           "$ref": "#/$defs/AIContext"
         },
+        "authoritativeDefinitions": {
+          "items": {
+            "$ref": "#/$defs/AuthoritativeDefinition"
+          },
+          "type": "array"
+        },
+        "classification": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "criticalDataElement": {
+          "type": "boolean"
+        },
         "datatype": {
           "enum": [
             "String",
@@ -1440,11 +1574,23 @@
           ],
           "type": "string"
         },
+        "deprecation": {
+          "$ref": "#/$defs/FieldDeprecation"
+        },
         "description": {
           "type": "string"
         },
         "label": {
           "type": "string"
+        },
+        "nullable": {
+          "type": "boolean"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object",
@@ -1560,7 +1706,14 @@
     },
     "NonNullModelCheck": {
       "properties": {
+        "description": {
+          "type": "string"
+        },
         "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "id": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
@@ -1571,6 +1724,12 @@
           ],
           "type": "string"
         },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "type": {
           "enum": [
             "non_null"
@@ -1580,6 +1739,7 @@
       },
       "required": [
         "field",
+        "id",
         "type"
       ],
       "type": "object"
@@ -2002,7 +2162,14 @@
     },
     "RelationshipModelCheck": {
       "properties": {
+        "description": {
+          "type": "string"
+        },
         "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "id": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
@@ -2012,6 +2179,12 @@
             "error"
           ],
           "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "to": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*\\.[A-Za-z_][A-Za-z0-9_]*$",
@@ -2026,6 +2199,7 @@
       },
       "required": [
         "field",
+        "id",
         "to",
         "type"
       ],
@@ -2115,6 +2289,13 @@
     },
     "RowCountModelCheck": {
       "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "maximum": {
           "format": "int64",
           "type": "integer"
@@ -2130,6 +2311,12 @@
           ],
           "type": "string"
         },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "type": {
           "enum": [
             "row_count"
@@ -2138,6 +2325,7 @@
         }
       },
       "required": [
+        "id",
         "type"
       ],
       "type": "object"
@@ -2805,7 +2993,7 @@
           "type": "string"
         },
         "metadata": {
-          "$ref": "#/$defs/ResourceMetadata"
+          "$ref": "#/$defs/ContractResourceMetadata"
         },
         "spec": {
           "$ref": "#/$defs/SourceSpec"
@@ -2955,6 +3143,19 @@
     },
     "SourceSchemaField": {
       "properties": {
+        "authoritativeDefinitions": {
+          "items": {
+            "$ref": "#/$defs/AuthoritativeDefinition"
+          },
+          "type": "array"
+        },
+        "classification": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "criticalDataElement": {
+          "type": "boolean"
+        },
         "datatype": {
           "enum": [
             "String",
@@ -2970,11 +3171,20 @@
           ],
           "type": "string"
         },
+        "deprecation": {
+          "$ref": "#/$defs/FieldDeprecation"
+        },
         "description": {
           "type": "string"
         },
         "nullable": {
           "type": "boolean"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -3125,6 +3335,9 @@
     },
     "UniqueModelCheck": {
       "properties": {
+        "description": {
+          "type": "string"
+        },
         "fields": {
           "items": {
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -3132,12 +3345,22 @@
           },
           "type": "array"
         },
+        "id": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "severity": {
           "enum": [
             "warning",
             "error"
           ],
           "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "type": {
           "enum": [
@@ -3148,6 +3371,7 @@
       },
       "required": [
         "fields",
+        "id",
         "type"
       ],
       "type": "object"

@@ -88,7 +88,7 @@ func TestExecutionSnapshotDetachesEvidenceAndChecks(t *testing.T) {
 	minimum, maximum := int64(1), int64(9)
 	model := &Model{Tables: map[string]Table{"orders": Table{
 		SQLAnalysisEvidence: &SQLAnalysisEvidence{Validated: true, SourceRefs: []string{"orders"}, ModelRefs: []string{"customers"}},
-		Checks:              []ModelCheck{{Type: "accepted_values", Fields: []string{"status"}, Values: []string{"open", "closed"}, Minimum: &minimum, Maximum: &maximum}},
+		Checks:              []ModelCheck{{ID: "status_values", Type: "accepted_values", Fields: []string{"status"}, Values: []string{"open", "closed"}, Tags: []string{"governance"}, Minimum: &minimum, Maximum: &maximum}},
 	}}}
 	snapshot := model.ExecutionSnapshot()
 	if snapshot == nil || snapshot.Tables["orders"].SQLAnalysisEvidence == nil || len(snapshot.Tables["orders"].Checks) != 1 {
@@ -98,11 +98,18 @@ func TestExecutionSnapshotDetachesEvidenceAndChecks(t *testing.T) {
 	snapshotEvidence.SourceRefs[0] = "changed"
 	snapshotEvidence.ModelRefs[0] = "changed"
 	snapshotCheck := &snapshot.Tables["orders"].Checks[0]
+	if snapshotCheck.ID != "status_values" {
+		t.Fatal("snapshot lost authored check identity")
+	}
 	snapshotCheck.Fields[0] = "changed"
 	snapshotCheck.Values[0] = "changed"
+	snapshotCheck.Tags[0] = "changed"
 	*snapshotCheck.Minimum = 100
 	*snapshotCheck.Maximum = 200
 	authored := model.Tables["orders"]
+	if authored.Checks[0].Tags[0] != "governance" {
+		t.Fatal("snapshot check tags alias authored state")
+	}
 	if authored.SQLAnalysisEvidence.SourceRefs[0] != "orders" || authored.SQLAnalysisEvidence.ModelRefs[0] != "customers" || authored.Checks[0].Fields[0] != "status" || authored.Checks[0].Values[0] != "open" || *authored.Checks[0].Minimum != minimum || *authored.Checks[0].Maximum != maximum {
 		t.Fatal("snapshot table evidence or checks alias authored state")
 	}

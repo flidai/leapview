@@ -26,6 +26,35 @@ scalar SemanticModelResourceName extends string;
 @pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 scalar ResourceID extends string;
 
+// Semantic Versioning 2.0.0. Numeric prerelease identifiers may not contain
+// leading zeroes; identifiers containing letters or hyphens remain valid.
+@pattern("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$")
+scalar SemanticVersion extends string;
+
+// APIGen currently does not emit custom scalar `@format` annotations into its
+// JSON Schema output. Keep the annotation for downstream consumers and use a
+// narrow scheme/non-whitespace shape constraint at this contract boundary;
+// complete URI conformance remains a separate hardening concern.
+@format("uri")
+@pattern("^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]+$")
+scalar AuthoritativeURL extends string;
+
+model ContractMetadata {
+  version: SemanticVersion;
+  compatibility: "backward";
+}
+
+model AuthoritativeDefinition {
+  type: "businessDefinition" | "transformationImplementation";
+  url: AuthoritativeURL;
+}
+
+model FieldDeprecation {
+  since: SemanticVersion;
+  reason: string;
+  replacement?: Identifier;
+}
+
 /**
  * Portable access is intentionally tiny. Endpoints, credentials, secret
  * providers, and resolved authentication are target-owned bindings.
@@ -276,6 +305,11 @@ model SourceSchemaField {
   datatype: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
   nullable?: boolean;
   description?: string;
+  tags?: string[];
+  criticalDataElement?: boolean;
+  classification?: Identifier;
+  authoritativeDefinitions?: AuthoritativeDefinition[];
+  deprecation?: FieldDeprecation;
 }
 
 model AIContext {
@@ -435,6 +469,12 @@ model ModelField {
   label?: string;
   description?: string;
   aiContext?: AIContext;
+  nullable?: boolean;
+  tags?: string[];
+  criticalDataElement?: boolean;
+  classification?: Identifier;
+  authoritativeDefinitions?: AuthoritativeDefinition[];
+  deprecation?: FieldDeprecation;
 }
 
 model ModelEntity {
@@ -449,36 +489,51 @@ model ModelGrain {
 }
 
 model NonNullModelCheck {
+  id: Identifier;
   type: "non_null";
   field: Identifier;
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model UniqueModelCheck {
+  id: Identifier;
   type: "unique";
   fields: Identifier[];
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model AcceptedValuesModelCheck {
+  id: Identifier;
   type: "accepted_values";
   field: Identifier;
   values: string[];
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model RelationshipModelCheck {
+  id: Identifier;
   type: "relationship";
   field: Identifier;
   to: ModelReference;
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model RowCountModelCheck {
+  id: Identifier;
   type: "row_count";
   minimum?: int64;
   maximum?: int64;
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 @discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
@@ -797,6 +852,11 @@ model ResourceMetadata {
   provenance?: ResourceProvenance;
 }
 
+model ContractResourceMetadata {
+  ...ResourceMetadata;
+  contract?: ContractMetadata;
+}
+
 // SemanticModel retains the legacy ResourceName grammar while other authored
 // resources use the stricter shared ResourceName contract.
 model SemanticModelMetadata {
@@ -823,7 +883,7 @@ model Connection {
 model Source {
   apiVersion: "leapview.dev/v1";
   kind: "Source";
-  metadata: ResourceMetadata;
+  metadata: ContractResourceMetadata;
   spec: SourceSpec;
 }
 
@@ -831,7 +891,7 @@ model Source {
 model Model {
   apiVersion: "leapview.dev/v1";
   kind: "Model";
-  metadata: ResourceMetadata;
+  metadata: ContractResourceMetadata;
   aiContext?: AIContext;
   spec: ModelSpec;
 }
