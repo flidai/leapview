@@ -2790,11 +2790,8 @@ test('rejected filter validation reconciles optimistic state and announces the e
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
-      // The signal can arrive before Lit finishes the initial render and reconciliation.
-      await element.updateComplete
-    })
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
       let command: any
       element.addEventListener('lv-filter-command', (event: CustomEvent) => {
         command = event.detail
