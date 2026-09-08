@@ -382,7 +382,7 @@ func TestValidateSpecGainLossColorsAreCandlestickOnly(t *testing.T) {
 	}
 }
 
-func TestValidateSpecFinancialLabelsAreHiddenOnly(t *testing.T) {
+func TestValidateSpecFinancialLabelPolicyCompatibility(t *testing.T) {
 	base := VisualizationSpecBase{
 		Kind: "cartesian", Title: "Financial",
 		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
@@ -408,6 +408,49 @@ func TestValidateSpecFinancialLabelsAreHiddenOnly(t *testing.T) {
 				t.Fatalf("hidden financial labels rejected: %v", err)
 			}
 		})
+		t.Run(string(mark)+"/historical automatic default", func(t *testing.T) {
+			spec := newSpec(mark, VisualizationLabelDensityAutomatic, nil)
+			policy := &spec.Value.(*CartesianVisualizationSpec).Presentation.LabelPolicy
+			policy.Priority = []VisualizationLabelPriority{
+				VisualizationLabelPrioritySelected,
+				VisualizationLabelPriorityAnomaly,
+				VisualizationLabelPriorityThreshold,
+			}
+			policy.MinimumSpacing = 6
+			if err := ValidateSpec(spec); err != nil {
+				t.Fatalf("historical automatic financial label default rejected: %v", err)
+			}
+		})
+		for _, test := range []struct {
+			name   string
+			mutate func(*VisualizationLabelPolicy)
+		}{
+			{name: "historical automatic changed priority", mutate: func(policy *VisualizationLabelPolicy) {
+				policy.Priority[0] = VisualizationLabelPriorityThreshold
+			}},
+			{name: "historical automatic changed spacing", mutate: func(policy *VisualizationLabelPolicy) {
+				policy.MinimumSpacing = 7
+			}},
+			{name: "historical automatic changed characters", mutate: func(policy *VisualizationLabelPolicy) {
+				policy.MaxCharacters = 25
+			}},
+		} {
+			t.Run(string(mark)+"/"+test.name, func(t *testing.T) {
+				spec := newSpec(mark, VisualizationLabelDensityAutomatic, nil)
+				policy := &spec.Value.(*CartesianVisualizationSpec).Presentation.LabelPolicy
+				policy.Priority = []VisualizationLabelPriority{
+					VisualizationLabelPrioritySelected,
+					VisualizationLabelPriorityAnomaly,
+					VisualizationLabelPriorityThreshold,
+				}
+				policy.MinimumSpacing = 6
+				test.mutate(policy)
+				err := ValidateSpec(spec)
+				if err == nil || !strings.Contains(err.Error(), "spec.presentation.labelPolicy") {
+					t.Fatalf("error = %v, want path-bearing label policy diagnostic", err)
+				}
+			})
+		}
 		for _, density := range []VisualizationLabelDensity{VisualizationLabelDensityAutomatic, VisualizationLabelDensityDense, VisualizationLabelDensityAlways} {
 			t.Run(string(mark)+"/"+string(density), func(t *testing.T) {
 				err := ValidateSpec(newSpec(mark, density, nil))

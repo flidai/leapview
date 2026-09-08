@@ -838,7 +838,12 @@ func validateLabelPolicy(spec VisualizationSpec) error {
 	case *CartesianVisualizationSpec:
 		policy = value.Presentation.LabelPolicy
 		if value.Mark == VisualizationCartesianMarkCandlestick || value.Mark == VisualizationCartesianMarkBoxplot {
-			if policy.Density != VisualizationLabelDensityHidden {
+			// Before financial labels became an explicitly unsupported authored
+			// control, the compiler populated this generic automatic default on
+			// every Cartesian mark. ECharts never rendered it for financial marks,
+			// so preserve that exact serialized default for already-persisted
+			// definitions while new compilation emits the explicit hidden policy.
+			if policy.Density != VisualizationLabelDensityHidden && !isHistoricalFinancialAutomaticLabelPolicy(policy) {
 				return fmt.Errorf("spec.presentation.labelPolicy is not supported for cartesian mark %q", value.Mark)
 			}
 			if value.Presentation.LabelPosition != nil {
@@ -885,6 +890,17 @@ func validateLabelPolicy(spec VisualizationSpec) error {
 		return fmt.Errorf("labels that can be suppressed require tooltip fallback")
 	}
 	return nil
+}
+
+func isHistoricalFinancialAutomaticLabelPolicy(policy VisualizationLabelPolicy) bool {
+	return policy.Density == VisualizationLabelDensityAutomatic &&
+		len(policy.Priority) == 3 &&
+		policy.Priority[0] == VisualizationLabelPrioritySelected &&
+		policy.Priority[1] == VisualizationLabelPriorityAnomaly &&
+		policy.Priority[2] == VisualizationLabelPriorityThreshold &&
+		policy.MaxCharacters == 24 &&
+		policy.MinimumSpacing == 6 &&
+		policy.TooltipFallback
 }
 
 func validatePointSpecification(spec VisualizationSpec, schemas map[string]VisualizationDatasetSchema) error {
