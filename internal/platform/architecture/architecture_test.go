@@ -2933,7 +2933,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	for _, want := range []string{
 		"name: CI",
 		"pull_request:",
-		"types: [opened, synchronize, reopened, ready_for_review, stacked]",
+		"types: [opened, synchronize, reopened, ready_for_review, stacked, labeled, unlabeled]",
 		"workflow_dispatch:",
 		"group: ci-${{ github.workflow }}-${{ github.event.pull_request.stack.id || github.ref }}",
 		"apigen-validation:",
@@ -2958,7 +2958,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
-		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]",
+		"needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation]",
 		"APIGEN_RESULT: ${{ needs.apigen-validation.result }}",
 		"GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}",
 		"GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}",
@@ -2966,7 +2966,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"POSTGRES_ISOLATION_RESULT: ${{ needs.postgres-isolation-validation.result }}",
 		"SPATIAL_BENCHMARK_RESULT: ${{ needs.spatial-tile-benchmarks.result }}",
 		"DBT_WAREHOUSE_RESULT: ${{ needs.dbt-warehouse-boundary-validation.result }}",
-		"Validation is deferred to the top of this stack.",
+		"--expected-deferred=\"$DEFERRED\"",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("CI workflow missing GitHub-hosted fragment %q", want)
@@ -2980,7 +2980,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	for _, want := range []string{
 		"name: Frontend tests (PR, ${{ matrix.shard }})",
 		"fail-fast: false",
-		"shard: [core, reports, chat, data, site]",
+		"matrix: ${{ fromJSON(needs.prepare.outputs.frontend_matrix) }}",
 		"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
 	} {
 		if !strings.Contains(frontendCI, want) {
@@ -2995,9 +2995,8 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"postgres-isolation-validation": postgresIsolationCI,
 	} {
 		for _, want := range []string{
-			"github.event_name == 'workflow_dispatch'",
-			"github.event.pull_request.stack == null",
-			"github.event.pull_request.stack.position == github.event.pull_request.stack.size",
+			"needs: [prepare]",
+			"if: needs.prepare.outputs." + strings.ReplaceAll(name, "-", "_") + " == 'true'",
 		} {
 			if !strings.Contains(block, want) {
 				t.Fatalf("%s job is not limited to standalone pull requests and stack tips: missing %q", name, want)
@@ -3052,7 +3051,6 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Full merge validation",
 		"runs-on: ubuntu-24.04",
 		"uses: ./.github/actions/setup-ci",
-		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation]",
 		"run: task ci:full:extras",
 		"name: CI gate",
 		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation]",
@@ -3517,7 +3515,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 		prepareCount    int
 		frontendTimeout string
 	}{
-		"ci.yml":               {prepareCount: 3, frontendTimeout: "timeout-minutes: 30"},
+		"ci.yml":               {prepareCount: 5, frontendTimeout: "timeout-minutes: 30"},
 		"merge-validation.yml": {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
 		"nightly.yml":          {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
 	} {
@@ -3532,11 +3530,15 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 		}
 
 		frontend := workflowJobBlock(t, text, "frontend-validation")
+		matrix := "shard: [core, reports, chat, data, site]"
+		if workflow == "ci.yml" {
+			matrix = "matrix: ${{ fromJSON(needs.prepare.outputs.frontend_matrix) }}"
+		}
 		for _, want := range []string{
 			contract.frontendTimeout,
 			prepareWatchdog,
 			"fail-fast: false",
-			"shard: [core, reports, chat, data, site]",
+			matrix,
 			"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
 		} {
 			if !strings.Contains(frontend, want) {

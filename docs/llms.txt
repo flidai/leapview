@@ -64,6 +64,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Data revisions and activation](/docs/guides/data/revisions): Understand revision identity and atomic activation.
 - [Materialization and refresh](/docs/guides/data/refresh): Refresh model materializations without disrupting active queries.
 - [Storage and recovery](/docs/guides/data/storage-recovery): Operate local or object-backed analytical storage safely.
+- [Recovery evidence manifests](/docs/guides/data/recovery-evidence-manifest): Understand qualified manifest capture, boundary binding, and immutable evidence retention.
 - [Data troubleshooting](/docs/guides/data/troubleshooting): Diagnose planning, upload, revision, and refresh failures.
 
 ### Deploy and operate
@@ -236,6 +237,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 
 - [Architecture overview](/docs/architecture): See how the monolith, contracts, storage, and browser components fit together.
 - [Runtime architecture](/docs/architecture/runtime): Follow routing, query execution, and streamed UI updates.
+- [Canonical contract projections](/docs/architecture/contract-projections): Follow sealed projection inputs, deterministic contract identity, and fail-closed coverage checks.
 - [Semantic attribute registry and control plane](/docs/architecture/semantic-attribute-registry): Understand typed semantic attribute identity, ownership, lifecycle, and compatibility boundaries.
 - [Semantic access planner boundary](/docs/architecture/semantic-access-planner): Place typed authorization barriers before protected scans participate in relational operations.
 - [Semantic access discovery and consumers](/docs/architecture/semantic-access-consumers): Bind protected semantic discovery and execution to authoritative request evidence.

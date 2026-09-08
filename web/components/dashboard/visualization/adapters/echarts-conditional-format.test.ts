@@ -122,7 +122,8 @@ test('ECharts keeps heatmap visualMap colors with icon-only conditional cues', (
     const option = echartsOption(envelope, defaultRendererContext) as any
     expect(option.visualMap).toMatchObject({ type: 'continuous', dimension: 'value', inRange: { color: [expect.any(String), expect.any(String)] }, outOfRange: { opacity: 1 } })
     expect(option.series[0].itemStyle.color({ value: ['A', 'R1', 1] })).toBeTypeOf('string')
-    expect(option.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
+    expect(option.series[0].label.show).toBe(true)
+    expect(option.series[0].labelLayout({ dataIndex: 0, rect: { width: 40, height: 24 } })).toMatchObject({ hideOverlap: false })
     expect(option.series[0].label.formatter({ value: ['A', 'R1', 1] })).toBe('↑ 1')
   }
 })
@@ -164,10 +165,11 @@ test('ECharts translates governed heatmap gradients and waterfall rule styles', 
     min: 0,
     max: 100,
     calculable: true,
-    text: ['100', '0'],
     inRange: { color: [defaultRendererContext.colors.danger, defaultRendererContext.colors.success] },
     outOfRange: { opacity: 1 },
   })
+  expect(heatmapOption.visualMap.formatter(0)).toBe('0')
+  expect(heatmapOption.visualMap.formatter(100)).toBe('100')
   expect(heatmapOption.series[0].itemStyle.color({ value: ['A', 'R1', null] })).toBe(defaultRendererContext.colors.muted)
 
   const waterfall = cartesianFixture('waterfall', ['label', 'start', 'value']) as any
@@ -197,7 +199,8 @@ test('ECharts composes conditional heatmap colors per outcome and keeps null cel
   expect(color({ value: ['B', 'R1', 50] })).toBeTypeOf('string'); expect(color({ value: ['B', 'R1', 50] })).not.toBe(defaultRendererContext.colors.danger)
   expect(color({ value: ['C', 'R1', null] })).toBe(defaultRendererContext.colors.muted); expect(color({ value: ['D', 'R1', 'bad'] })).toBe(defaultRendererContext.colors.muted)
   expect(option.visualMap).toBeUndefined()
-  expect(option.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
+  expect(option.series[0].label.show).toBe(true)
+  expect(option.series[0].labelLayout({ dataIndex: 0, rect: { width: 40, height: 24 } })).toMatchObject({ hideOverlap: false })
   expect(option.series[0].label.formatter({ value: ['C', 'R1', null] })).toBe('⚠ —')
 })
 

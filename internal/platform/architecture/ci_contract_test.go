@@ -182,9 +182,13 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"nightly.yml":          nightlyWorkflow,
 	} {
 		frontend := workflowJobBlock(t, workflow, "frontend-validation")
+		matrix := "shard: [core, reports, chat, data, site]"
+		if workflowName == "ci.yml" {
+			matrix = "matrix: ${{ fromJSON(needs.prepare.outputs.frontend_matrix) }}"
+		}
 		for _, want := range []string{
 			"fail-fast: false",
-			"shard: [core, reports, chat, data, site]",
+			matrix,
 			"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
 		} {
 			if !strings.Contains(frontend, want) {

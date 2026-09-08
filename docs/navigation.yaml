@@ -208,6 +208,11 @@ sections:
         type: how-to
         summary: Operate local or object-backed analytical storage safely.
         source: articles/data/storage-recovery.md
+      - slug: guides/data/recovery-evidence-manifest
+        title: Recovery evidence manifests
+        type: how-to
+        summary: Understand qualified manifest capture, boundary binding, and immutable evidence retention.
+        source: articles/data/recovery-evidence-manifest.md
       - slug: guides/data/troubleshooting
         title: Data troubleshooting
         type: how-to
@@ -545,6 +550,11 @@ sections:
             type: explanation
             summary: Follow routing, query execution, and streamed UI updates.
             source: articles/architecture/runtime.md
+          - slug: architecture/contract-projections
+            title: Canonical contract projections
+            type: explanation
+            summary: Follow sealed projection inputs, deterministic contract identity, and fail-closed coverage checks.
+            source: articles/architecture/contract-projections.md
           - slug: architecture/semantic-attribute-registry
             title: Semantic attribute registry and control plane
             type: explanation

@@ -47,7 +47,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   })
   const patch: Record<string, any> = { grid: Array.isArray(option.grid) ? grid : grid[0] }
   if (option.legend !== undefined) patch.legend = compact ? compactLegend(option.legend) : option.legend
-  if (option.dataZoom !== undefined) patch.dataZoom = compact ? compactDataZoom(option.dataZoom, bottomLegend) : option.dataZoom
+  if (option.dataZoom !== undefined) patch.dataZoom = compact ? compactDataZoom(option.dataZoom, bottomLegend) : stripDataZoomNavigation(option.dataZoom)
   return patch
 }
 
@@ -83,10 +83,44 @@ function compactLegend(value: unknown): unknown {
 }
 
 function compactDataZoom(value: unknown, bottomLegend: boolean): unknown {
-  if (!Array.isArray(value)) return value
+  if (!Array.isArray(value)) return stripDataZoomNavigation(value)
   return value.map((entry) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || (entry as Record<string, unknown>).type !== 'slider') return entry
-    return { ...(entry as Record<string, unknown>), bottom: bottomLegend ? 28 : 12 }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const layout = stripDataZoomNavigationEntry(entry as Record<string, unknown>)
+    return layout.type === 'slider' ? { ...layout, bottom: bottomLegend ? 28 : 12 } : layout
+  })
+}
+
+function stripDataZoomNavigation(value: unknown): unknown {
+  if (!Array.isArray(value)) {
+    return value && typeof value === 'object' ? stripDataZoomNavigationEntry(value as Record<string, unknown>) : value
+  }
+  return value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    return stripDataZoomNavigationEntry(entry as Record<string, unknown>)
+  })
+}
+
+function stripDataZoomNavigationEntry(entry: Record<string, unknown>): Record<string, unknown> {
+  const layout = { ...entry }
+  delete layout.start
+  delete layout.end
+  delete layout.startValue
+  delete layout.endValue
+  return layout
+}
+
+function overlayDataZoomNavigation(layout: unknown, state: EChartsViewState['dataZoom']): unknown {
+  if (!Array.isArray(layout) || !Array.isArray(state)) return layout
+  return layout.map((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const current = state[index]
+    if (!current) return entry
+    const result = { ...(entry as Record<string, unknown>) }
+    for (const key of ['start', 'end', 'startValue', 'endValue']) {
+      if (current[key] !== undefined) result[key] = current[key]
+    }
+    return result
   })
 }
 
@@ -210,6 +244,9 @@ export class EChartsHandle implements RendererHandle {
   private compactLayout?: boolean
   private lastWidth = 0
   private lastHeight = 0
+  private dataZoomInitialized = false
+  private focusedHeatmapFullData = false
+  private compactHeatmapZoom?: { start?: number; end?: number }
 
   constructor(private readonly container: HTMLElement, private readonly frame: HTMLElement, private readonly chart: ECharts, private readonly categoryColors: CategoryColorRegistry) {
     this.chart.on('click', this.handleClick)
@@ -225,7 +262,9 @@ export class EChartsHandle implements RendererHandle {
     this.readinessAbort?.abort()
     this.readinessAbort = new AbortController()
     this.readiness = waitForEChartsFrame(this.chart, 5_000, this.readinessAbort.signal)
-    this.chart.setOption(echartsOption(envelope, context, this.categoryColors), { notMerge: true, lazyUpdate: false })
+    const option = echartsOption(envelope, context, this.categoryColors)
+    this.dataZoomInitialized = hasEChartsDataZoom(option)
+    this.chart.setOption(option, { notMerge: true, lazyUpdate: false })
   }
 
   whenReady(): Promise<void> { return this.readiness }
@@ -237,10 +276,22 @@ export class EChartsHandle implements RendererHandle {
     this.envelope = envelope
     this.context = context
     const option = echartsOption(envelope, context, this.categoryColors)
-    const plan = echartsUpdatePlan(change, option)
+    const initializeDataZoom = !this.dataZoomInitialized && hasEChartsDataZoom(option)
+    const resetDataZoom = hasEmptyEChartsDataZoom(option)
+    const refreshHeatmapDataZoom = isHeatmapWithDataZoom(envelope) && (change & Change.Data) !== 0 && hasEChartsDataZoom(option)
+    const preserveHeatmapFocus = previous !== undefined && preservesEChartsViewState(previous, envelope)
+    const resetHeatmapFocus = isHeatmapWithDataZoom(envelope)
+      && (resetDataZoom || ((change & Change.Spec) !== 0 && !preserveHeatmapFocus))
+    const plan = echartsUpdatePlan(change, option, initializeDataZoom, refreshHeatmapDataZoom)
+    if ((change & Change.Spec) !== 0 || initializeDataZoom || resetDataZoom) this.dataZoomInitialized = hasEChartsDataZoom(option)
+    if (resetHeatmapFocus) {
+      this.focusedHeatmapFullData = false
+      this.compactHeatmapZoom = undefined
+    }
     this.chart.setOption(plan.option, plan.settings)
-    if (viewState) this.restoreViewState(viewState)
+    if (viewState) this.restoreViewState(viewState, !resetDataZoom)
     this.applyResponsiveLayout(true)
+    if ((change & Change.Spec) !== 0 || initializeDataZoom || refreshHeatmapDataZoom || resetDataZoom) this.syncHeatmapFocusZoom(true)
   }
 
   resize(width: number, height: number): void {
@@ -249,6 +300,7 @@ export class EChartsHandle implements RendererHandle {
     this.lastWidth = width
     this.lastHeight = height
     this.applyResponsiveLayout(false)
+    this.syncHeatmapFocusZoom()
   }
 
   private applyResponsiveLayout(force: boolean): void {
@@ -258,7 +310,33 @@ export class EChartsHandle implements RendererHandle {
     if (!force && compact === this.compactLayout) return
     this.compactLayout = compact
     const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
+    if (patch.dataZoom !== undefined) patch.dataZoom = overlayDataZoomNavigation(patch.dataZoom, this.captureViewState().dataZoom)
     if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: !force })
+  }
+
+  private syncHeatmapFocusZoom(force = false): void {
+    const envelope = this.envelope
+    if (!heatmapFocusZoomEnabled(envelope, this.dataZoomInitialized)) {
+      this.focusedHeatmapFullData = false
+      this.compactHeatmapZoom = undefined
+      return
+    }
+    const focused = visualizationHostIsFocused(this.container)
+    if (!force && focused === this.focusedHeatmapFullData) return
+    if (focused) {
+      const current = ((this.chart.getOption() as Record<string, any>).dataZoom ?? [])[0] as Record<string, any> | undefined
+      if (!this.focusedHeatmapFullData && current) {
+        this.compactHeatmapZoom = {
+          ...(Number.isFinite(current.start) ? { start: current.start } : {}),
+          ...(Number.isFinite(current.end) ? { end: current.end } : {}),
+        }
+      }
+      this.chart.setOption({ dataZoom: heatmapFocusDataZoom(true) }, { lazyUpdate: false })
+    } else if (this.focusedHeatmapFullData) {
+      const range = this.compactHeatmapZoom ?? {}
+      this.chart.setOption({ dataZoom: heatmapFocusDataZoom(false, range) }, { lazyUpdate: false })
+    }
+    this.focusedHeatmapFullData = focused
   }
 
   async snapshot(): Promise<Blob> {
@@ -284,11 +362,11 @@ export class EChartsHandle implements RendererHandle {
     return captureEChartsViewState(this.chart.getOption() as Record<string, any>)
   }
 
-  restoreViewState(state: unknown): void {
+  restoreViewState(state: unknown, restoreDataZoom = true): void {
     if (!state || typeof state !== 'object') return
     const value = state as EChartsViewState
     const patch: Record<string, any> = {}
-    if (Array.isArray(value.dataZoom) && value.dataZoom.length > 0) patch.dataZoom = value.dataZoom
+    if (restoreDataZoom && Array.isArray(value.dataZoom) && value.dataZoom.length > 0) patch.dataZoom = value.dataZoom
     if (Array.isArray(value.series) && value.series.length > 0) patch.series = value.series
     if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: false })
   }
@@ -357,6 +435,33 @@ export class EChartsHandle implements RendererHandle {
     this.chart.setOption({ graphic: [{ id: 'graphic:proportional:center', style: { text } }] })
   }
 
+}
+
+function isHeatmapWithDataZoom(envelope: VisualizationEnvelope | undefined): boolean {
+  return envelope?.spec.kind === 'cartesian'
+    && envelope.spec.mark === 'heatmap'
+    && envelope.spec.presentation.dataZoom === true
+}
+
+export function heatmapFocusZoomEnabled(envelope: VisualizationEnvelope | undefined, dataZoomInitialized: boolean): boolean {
+  return dataZoomInitialized && isHeatmapWithDataZoom(envelope)
+}
+
+type HeatmapZoomRange = Readonly<{ start?: number; end?: number }>
+
+export function heatmapFocusDataZoom(focused: boolean, compactRange: HeatmapZoomRange = {}): Array<Record<string, any>> {
+  const range = focused ? { start: 0, end: 100 } : compactRange
+  return [
+    { id: 'dataZoom:heatmap:inside', type: 'inside', disabled: focused, ...range },
+    {
+      id: 'dataZoom:heatmap:slider', type: 'slider', show: true, bottom: 64, showDetail: false, brushSelect: false, ...range,
+    },
+  ]
+}
+
+function visualizationHostIsFocused(container: HTMLElement): boolean {
+  const root = container.getRootNode()
+  return root instanceof ShadowRoot && root.host.getAttribute('slot') === 'focus-visual'
 }
 
 export function preservesEChartsViewState(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {
@@ -487,7 +592,7 @@ export type EChartsUpdatePlan = Readonly<{
   settings: { notMerge: boolean; lazyUpdate: boolean; replaceMerge?: string[] }
 }>
 
-export function echartsUpdatePlan(change: Change, option: EChartsOption): EChartsUpdatePlan {
+export function echartsUpdatePlan(change: Change, option: EChartsOption, initializeDataZoom = false, refreshHeatmapDataZoom = false): EChartsUpdatePlan {
   if ((change & Change.Spec) !== 0) {
     return { option: option as Record<string, any>, settings: { notMerge: true, lazyUpdate: false } }
   }
@@ -498,14 +603,29 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption): EChart
     patch.dataset = source.dataset
     patch.series = source.series
     patch.legend = source.legend ?? []
-    patch.dataZoom = source.dataZoom ?? []
     patch.visualMap = source.visualMap ?? []
     patch.graphic = source.graphic ?? []
+    const resetDataZoom = hasEmptyEChartsDataZoom(option)
+    const replaceDataZoom = initializeDataZoom || refreshHeatmapDataZoom
+    if (replaceDataZoom) {
+      if (source.dataZoom !== undefined) patch.dataZoom = source.dataZoom
+      if (source.grid !== undefined) patch.grid = source.grid
+    }
+    if (resetDataZoom) {
+      patch.dataZoom = []
+      if (source.grid !== undefined) patch.grid = source.grid
+    }
     if (source.aria !== undefined) patch.aria = source.aria
     for (const key of ['xAxis', 'yAxis', 'radar']) {
       if (source[key] !== undefined) patch[key] = source[key]
     }
-    replaceMerge.push('dataset', 'series', 'legend', 'dataZoom', 'visualMap', 'graphic')
+    replaceMerge.push('dataset', 'series', 'legend', 'visualMap', 'graphic')
+    if (replaceDataZoom && source.dataZoom !== undefined) replaceMerge.push('dataZoom')
+    if (refreshHeatmapDataZoom && source.grid !== undefined) replaceMerge.push('grid')
+    if (resetDataZoom) {
+      replaceMerge.push('dataZoom')
+      if (source.grid !== undefined) replaceMerge.push('grid')
+    }
   } else if ((change & Change.Selection) !== 0) {
     patch.dataset = source.dataset
     patch.visualMap = source.visualMap ?? []
@@ -541,6 +661,16 @@ function echartsContextPatch(option: Record<string, any>): Record<string, any> {
     })
   }
   return patch
+}
+
+function hasEChartsDataZoom(option: EChartsOption): boolean {
+  const dataZoom = (option as Record<string, any>).dataZoom
+  return Array.isArray(dataZoom) ? dataZoom.length > 0 : dataZoom !== undefined
+}
+
+function hasEmptyEChartsDataZoom(option: EChartsOption): boolean {
+  const dataZoom = (option as Record<string, any>).dataZoom
+  return Array.isArray(dataZoom) && dataZoom.length === 0
 }
 
 type EChartsFrameChart = Pick<ECharts, 'on' | 'off' | 'getWidth' | 'getHeight'>

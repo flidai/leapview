@@ -1214,7 +1214,7 @@ test('governed label policies remain renderable across visual families, locales,
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
   const cases = [
-    { path: 'heatmap', id: 'category_status_heatmap_labels', density: 'automatic' },
+    { path: 'heatmap', id: 'category_status_heatmap_labels', density: 'dense' },
     { path: 'pie', id: 'category_pie_inside', density: 'automatic' },
     { path: 'scatter', id: 'delivery_scatter_labeled', density: 'automatic' },
     { path: 'tree', id: 'category_state_status_tree', density: 'automatic' },
@@ -2488,7 +2488,10 @@ test('visual showcase renders every supported visual type', async () => {
       }),
     )
     expect(chartLabelPolicies.length).toBeGreaterThan(0)
-    expect(chartLabelPolicies.filter(({ density }) => density !== 'automatic' && density !== 'hidden')).toEqual([])
+    expect(chartLabelPolicies.filter(({ density }) => density !== 'automatic' && density !== 'hidden' && density !== 'dense')).toEqual([])
+    expect(chartLabelPolicies.filter(({ density }) => density === 'dense').map(({ visualID }) => visualID).sort()).toEqual([
+      'state_status_heatmap',
+    ])
     expect(chartLabelPolicies.filter(({ density }) => density === 'hidden').map(({ visualID }) => visualID).sort()).toEqual([
       'delivery_distribution',
       'market_candlestick',
@@ -2505,12 +2508,16 @@ test('visual showcase renders every supported visual type', async () => {
       const sunburst = hosts.find((host) => host.envelope?.visualID === 'category_status_sunburst')
       return sunburst?.envelope?.spec?.presentation?.labelPolicy
     })).toMatchObject({ density: 'automatic', maxCharacters: 12, minimumSpacing: 6, tooltipFallback: true })
+    expect(await page.locator('lv-site-visual-showcase').evaluate((element) => {
+      const hosts = Array.from(element.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as Array<HTMLElement & { envelope?: any }>
+      return hosts.find((host) => host.envelope?.visualID === 'state_status_heatmap')?.envelope?.spec?.presentation?.displayUnits
+    })).toBe('none')
   } finally {
     await page.close()
   }
 }, 20_000)
 
-test('heatmap scale is a calculable range that hides only out-of-range cells', async () => {
+test('heatmap scale is a calculable range that hides only out-of-range visible cells', async () => {
   const page = await browser.newPage({ viewport: { width: 966, height: 749 } })
   try {
     await page.goto(`${baseURL}/visuals`)
@@ -2570,10 +2577,10 @@ test('heatmap scale is a calculable range that hides only out-of-range cells', a
       calculable: true,
       hiddenRows: 0,
       maximum: 3,
-      minimum: 1,
-      rowCount: 29,
-      text: ['3', '1'],
-      visibleRows: 29,
+      minimum: 0,
+      rowCount: 8,
+      text: undefined,
+      visibleRows: 8,
     })
     expect(states.narrowed.hiddenRows).toBeGreaterThan(0)
     expect(states.narrowed.visibleRows).toBeGreaterThan(0)

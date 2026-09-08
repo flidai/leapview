@@ -236,9 +236,14 @@ function formatAxisDate(
   unit: VisualizationDateDisplayUnit | undefined,
 ): string {
   if (value === null || value === undefined) return '—'
-  if ((!unit || unit === 'automatic') && field(envelope, ref)?.format) return formatField(envelope, ref, value, context)
+  const definition = field(envelope, ref)
+  if ((!unit || unit === 'automatic') && definition?.format && typeof value === 'string') return formatField(envelope, ref, value, context)
   const date = new Date(typeof value === 'number' ? value : String(value))
   if (!Number.isFinite(date.getTime())) return formatField(envelope, ref, value, context)
+  if ((!unit || unit === 'automatic') && definition?.format?.kind === 'temporal') {
+    const canonical = definition.dataType === 'date' ? date.toISOString().slice(0, 10) : date.toISOString()
+    return formatField(envelope, ref, canonical, context)
+  }
   const year = date.getUTCFullYear()
   if (unit === 'quarter') return `Q${Math.floor(date.getUTCMonth() / 3) + 1} ${year}`
   if (unit === 'week') {

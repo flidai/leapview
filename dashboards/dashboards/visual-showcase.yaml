@@ -33,6 +33,9 @@ spec:
     - delivery
     - categories
     - orders_table
+    - state_status_heatmap
+    - category_status_heatmap
+    - category_status_heatmap_labels
   - id: purchase_time
     label: Relative purchase period
     dimension: purchase_timestamp
@@ -75,6 +78,9 @@ spec:
     - delivery
     - categories
     - orders_table
+    - state_status_heatmap
+    - category_status_heatmap
+    - category_status_heatmap_labels
   - id: order_status
     label: Order status
     dimension: order_status
@@ -570,10 +576,23 @@ spec:
         - order_status
         metrics:
         - order_count
+        sort:
+        - field: state
+          direction: asc
+        - field: order_status
+          direction: asc
       title: State by order status
       description: Shows order status concentration by customer state.
       presentation:
         type: cartesian
+        displayUnits: none
+        dataZoom: true
+        labels:
+          density: dense
+          priority: [selected, anomaly, threshold]
+          maxCharacters: 12
+          minimumSpacing: 2
+          tooltipFallback: true
     state_status_column:
       type: column
       query:
@@ -1360,9 +1379,22 @@ spec:
         - order_status
         metrics:
         - order_count
+        sort:
+        - field: category
+          direction: asc
+        - field: order_status
+          direction: asc
       title: Category by order status
       presentation:
         type: cartesian
+        displayUnits: none
+        dataZoom: true
+        labels:
+          density: dense
+          priority: [selected, anomaly, threshold]
+          maxCharacters: 12
+          minimumSpacing: 2
+          tooltipFallback: true
     category_status_heatmap_labels:
       type: heatmap
       query:
@@ -1372,14 +1404,21 @@ spec:
         - order_status
         metrics:
         - order_count
+        sort:
+        - field: category
+          direction: asc
+        - field: order_status
+          direction: asc
       title: Labeled category status heatmap
       presentation:
         type: cartesian
+        displayUnits: none
+        dataZoom: true
         labels:
-          density: automatic
+          density: dense
           priority: [selected, anomaly, threshold]
           maxCharacters: 12
-          minimumSpacing: 4
+          minimumSpacing: 2
           tooltipFallback: true
     category_status_flow:
       type: sankey
@@ -1832,7 +1871,13 @@ spec:
           axis: primary
         - field: delivery_days
           mark: column
-          axis: primary
+          axis: secondary
+        labels:
+          density: hidden
+          priority: []
+          maxCharacters: 24
+          minimumSpacing: 0
+          tooltipFallback: true
     revenue_orders_dual_axis_combo:
       type: combo
       query:
@@ -1856,6 +1901,12 @@ spec:
         - field: order_count
           mark: line
           axis: secondary
+        labels:
+          density: hidden
+          priority: []
+          maxCharacters: 24
+          minimumSpacing: 0
+          tooltipFallback: true
     orders_waterfall:
       type: waterfall
       query:
