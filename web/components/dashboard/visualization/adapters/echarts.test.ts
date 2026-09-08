@@ -3,51 +3,8 @@ import { expect, test } from 'bun:test'
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { Change, defaultRendererContext } from '../host-controller'
 import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echartsUpdatePlan, interactionCommandForRow, legendSelectionCommand, normalizeRendererLocale, removeEChartsRendererFrame, waitForEChartsFrame } from './echarts'
-import { echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
 import { CategoryColorRegistry } from './echarts/category-colors'
 import { proportionalCenterText } from './echarts/proportional'
-
-test('ECharts label policy truncates by grapheme and preserves selected and threshold labels', () => {
-  const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
-  envelope.spec.datasets[0].fields[0].role = 'identity'
-  envelope.selection = [{
-    datum: { dataset: 'primary', dataRevision: 1, identity: { label: 'A' } },
-    label: 'A',
-  }]
-  envelope.spec.conditionalFormatting = [{
-    id: 'threshold', target: 'label_foreground', field: { dataset: 'primary', field: 'value' },
-    rule: {
-      kind: 'rules',
-      rules: [{ operator: 'greater_or_equal', value: 1, style: { color: 'warning', icon: 'warning' } }],
-      nullStyle: { color: 'neutral' },
-      defaultStyle: { color: 'neutral', icon: 'circle' },
-    },
-  }]
-  const policy = {
-    density: 'automatic', priority: ['selected', 'threshold'],
-    maxCharacters: 8, minimumSpacing: 6, tooltipFallback: true,
-  } as const
-  const translated = echartsLabelPolicy(envelope, 'primary', policy, (params) => String(params.value?.[0] ?? ''), defaultRendererContext)
-
-  expect(translated.label).toMatchObject({ show: true, padding: 3, overflow: 'truncate' })
-  expect(translated.label.formatter({ value: ['São Paulo 😀 zone'] })).toBe('São Pau…')
-  expect(translated.labelLayout({ dataIndex: 0 }).hideOverlap).toBe(false)
-  expect(translated.labelLayout({ dataIndex: 99 }).hideOverlap).toBe(true)
-  expect(truncateVisualizationLabel('ação 😀 norte', 7, 'pt-BR')).toBe('ação 😀…')
-
-  const dense = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'dense', minimumSpacing: 2 }, () => 'value', defaultRendererContext)
-  expect(dense.label).toMatchObject({ show: true, fontSize: 10, padding: 1 })
-  const always = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'always' }, () => 'value', defaultRendererContext)
-  expect(always.labelLayout).toEqual({ hideOverlap: false })
-  const hidden = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'hidden' }, () => 'value', defaultRendererContext)
-  expect(hidden.label.show).toBe(false)
-  envelope.spec.presentation.labelPolicy = { ...policy, density: 'hidden' }
-  envelope.dataState.datasets[0].rows[0][0] = 'São Paulo 😀 zone'
-  const hiddenOption = echartsOption(envelope, defaultRendererContext) as any
-  expect(hiddenOption.tooltip.confine).toBe(true)
-  expect(hiddenOption.tooltip.formatter({ value: envelope.dataState.datasets[0].rows[0] })).toContain('São Paulo 😀 zone')
-  expect(hiddenOption.aria.description).toContain('label: São Paulo 😀 zone')
-})
 
 test('ECharts renders governed bivariate points, bubbles, labels, color, and stable brushes', () => {
   const envelope = {
@@ -132,6 +89,47 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   expect(brushSelectionCommands(envelope, { batch: [{ selected: [] }] })).toEqual([{
     sourceKind: 'visual', sourceId: 'delivery', interactionKind: 'point_selection', action: 'clear', toggle: true, mappings: [],
   }])
+})
+
+test('ECharts formats Cartesian temporal axis ticks as UTC dates and preserves rows and tooltips', () => {
+  const envelope = cartesianFixture('area') as any
+  const category = envelope.spec.datasets[0].fields.find((candidate: any) => candidate.id === 'label')
+  category.dataType = 'date'
+  category.format = { kind: 'temporal', dateStyle: 'short' }
+  envelope.dataState.datasets[0].rows = [
+    ['2016-12-23', 19.62],
+    ['2017-01-05', 27.4],
+  ]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const december = Date.UTC(2016, 11, 23)
+  expect(option.xAxis.type).toBe('time')
+  expect(option.xAxis.axisLabel.formatter(december)).toBe('2016-12-23')
+  expect(option.xAxis.axisLabel.formatter(december)).not.toContain(String(december))
+  expect(option.dataset.source).toEqual([
+    ['label', 'value'],
+    ['2016-12-23', 19.62],
+    ['2017-01-05', 27.4],
+  ])
+  expect(option.tooltip.formatter({ value: ['2016-12-23', 19.62] })).toBe('label: 2016-12-23<br>value: 19.62')
+})
+
+test('ECharts heatmap axis labels preserve governed temporal and null category formatting', () => {
+  const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
+  const category = envelope.spec.datasets[0].fields.find((candidate: any) => candidate.id === 'label')
+  category.dataType = 'date'
+  category.nullable = true
+  category.format = { kind: 'temporal', dateStyle: 'short' }
+  envelope.spec.presentation.dataZoom = true
+  envelope.dataState.datasets[0].rows = [
+    ['2026-01-02', 'R1', 1],
+    [null, 'R2', 2],
+  ]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.xAxis.axisLabel.formatter('2026-01-02')).toBe('2026-01-02')
+  expect(option.xAxis.axisLabel.formatter('')).toBe('—')
+  expect(option.xAxis.data).toEqual(['2026-01-02', ''])
 })
 
 test('superseded ECharts mounts own isolated renderer frames', () => {
@@ -233,10 +231,12 @@ test('ECharts translates governed heatmap gradients and waterfall rule styles', 
     min: 0,
     max: 100,
     calculable: true,
-    text: ['100', '0'],
     inRange: { color: [defaultRendererContext.colors.danger, defaultRendererContext.colors.success] },
     outOfRange: { opacity: 0 },
   })
+  expect(heatmapOption.visualMap.text).toBeUndefined()
+  expect(heatmapOption.visualMap.formatter(100)).toBe('100')
+  expect(heatmapOption.visualMap.formatter(0)).toBe('0')
 
   const waterfall = cartesianFixture('waterfall', ['label', 'start', 'value']) as any
   waterfall.spec.conditionalFormatting = [{
@@ -353,6 +353,8 @@ test('ECharts translation preserves combo series marks and axes', () => {
     ['Revenue', 'line', 0], ['Orders', 'bar', 1],
   ])
   expect(option.yAxis).toHaveLength(2)
+  expect(option.yAxis[0].splitNumber).toBe(4)
+  expect(option.yAxis[1].splitNumber).toBe(4)
   expect(option.series[0].markLine.data[0].id).toBe('reference-line:primary-target')
   expect(option.series[1].markLine.data[0].id).toBe('reference-line:secondary-target')
   expect(option.series[1].markArea.data[0][0].id).toBe('reference-band:secondary-range')
@@ -360,6 +362,11 @@ test('ECharts translation preserves combo series marks and axes', () => {
   horizontal.spec.presentation.orientation = 'horizontal'
   const horizontalOption = echartsOption(horizontal) as any
   expect(horizontalOption.xAxis).toHaveLength(2)
+  expect(horizontalOption.xAxis[0].splitLine.show).not.toBe(false)
+  expect(horizontalOption.xAxis[1].splitLine.show).toBe(false)
+  expect(horizontalOption.xAxis[0].splitNumber).toBe(4)
+  expect(horizontalOption.xAxis[1].splitNumber).toBe(4)
+  expect(horizontalOption.xAxis[1].alignTicks).toBe(true)
   expect(horizontalOption.series.map((series: any) => series.xAxisIndex)).toEqual([0, 1])
   expect(horizontalOption.series[1].markLine.data[0]).toMatchObject({ id: 'reference-line:secondary-target', xAxis: 2 })
   const reordered = structuredClone(base) as any
@@ -398,11 +405,71 @@ test('ECharts translation applies combo marks and axes to multi-measure series',
   ])
   expect(option.series[0].areaStyle).toEqual({})
   expect(option.yAxis).toHaveLength(2)
+  expect(option.yAxis[0].splitNumber).toBe(4)
+  expect(option.yAxis[1].splitNumber).toBe(4)
+  expect(option.yAxis[0].splitLine.show).not.toBe(false)
+  expect(option.yAxis[1].splitLine.show).toBe(false)
+  expect(option.yAxis[1].alignTicks).toBe(true)
   expect(option.series.map((series: any) => series.itemStyle.color)).toEqual([
     defaultRendererContext.colors.data[0],
     defaultRendererContext.colors.data[1],
   ])
   expect(option.grid.bottom).toBe(44)
+})
+
+test('ECharts scopes multi-measure combo axes and colors by authored measure', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'combo-mixed-units', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    spec: {
+      kind: 'cartesian', title: 'Revenue and delivery', mark: 'combo',
+      datasets: [{ id: 'primary', fields: [
+        { id: 'month', role: 'dimension', dataType: 'string', nullable: false, label: 'Month' },
+        { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue', format: { kind: 'currency', currency: 'USD' } },
+        { id: 'delivery_days', role: 'metric', dataType: 'integer', nullable: false, label: 'Delivery days', format: { kind: 'duration', unit: 'days' } },
+      ] }],
+      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Revenue and delivery', description: 'Revenue and delivery' }, interactions: [],
+      x: { dataset: 'primary', field: 'month' }, y: [{ dataset: 'primary', field: 'revenue' }, { dataset: 'primary', field: 'delivery_days' }],
+      presentation: { legend: 'bottom', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false, comboSeries: [
+        { seriesValue: 'revenue', mark: 'line', axis: 'primary' },
+        { seriesValue: 'delivery_days', mark: 'column', axis: 'secondary' },
+      ] },
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [
+      { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['month', 'revenue', 'delivery_days'], rows: [['Jan', 10, 4], ['Feb', 12, 5]], completeness: 'complete' },
+    ] },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series.every((series: any) => series.label.show === false)).toBe(true)
+  expect(option.yAxis).toHaveLength(2)
+  expect(option.yAxis[0].splitNumber).toBe(4)
+  expect(option.yAxis[1].splitNumber).toBe(4)
+  expect(option.yAxis[0].splitLine.show).not.toBe(false)
+  expect(option.yAxis[1].splitLine.show).toBe(false)
+  expect(option.yAxis[1].alignTicks).toBe(true)
+  expect(option.yAxis[0].axisLabel.formatter(1000)).toBe('$1,000')
+  expect(option.yAxis[1].axisLabel.formatter(4)).toBe('4d')
+  expect(option.tooltip.formatter({ value: ['Jan', 10, 4] })).toBe('Month: Jan<br>Revenue: $10.00<br>Delivery days: 4d')
+  expect(option.aria.description).toContain('Revenue: $10.00')
+  expect(option.aria.description).toContain('Delivery days: 4d')
+
+  const largeMixedUnits = structuredClone(envelope) as any
+  largeMixedUnits.spec.datasets[0].fields[2].format = { kind: 'number' }
+  largeMixedUnits.dataState.datasets[0].rows = [['Jan', 1_200_000, 2_500], ['Feb', 1_500_000, 3_000]]
+  const largeMixedOption = echartsOption(largeMixedUnits, defaultRendererContext) as any
+  expect(largeMixedOption.series[0].label.formatter({ value: ['Jan', 1_200_000, 2_500] })).toBe('$1.2M')
+  expect(largeMixedOption.series[1].label.formatter({ value: ['Jan', 1_200_000, 2_500] })).toBe('2.5K')
+
+  const colors = Object.fromEntries(option.series.map((series: any) => [series.name, series.itemStyle.color]))
+  expect(colors).toEqual({ Revenue: defaultRendererContext.colors.data[0], 'Delivery days': defaultRendererContext.colors.data[1] })
+
+  const reordered = structuredClone(envelope) as any
+  reordered.spec.y.reverse()
+  reordered.spec.presentation.comboSeries[0].mark = 'column'
+  reordered.spec.presentation.comboSeries[1].mark = 'line'
+  const reorderedOption = echartsOption(reordered, defaultRendererContext) as any
+  expect(Object.fromEntries(reorderedOption.series.map((series: any) => [series.name, series.itemStyle.color]))).toEqual(colors)
 })
 
 test('ECharts normalizes stacks and preserves series order and color identity across filters', () => {
@@ -755,13 +822,29 @@ test('ECharts incremental plans commit data synchronously, preserve interaction 
   const option = {
     dataset: { id: 'dataset:primary', source: [['month', 'value'], ['Jan', 10]] },
     series: [{ id: 'series:primary:value', type: 'line', encode: { x: 'month', y: 'value' }, data: [10], label: { color: '#fff' } }],
-    xAxis: { type: 'category' }, yAxis: { type: 'value', axisLabel: { formatter: () => '10K' } },
+    xAxis: { type: 'category' }, yAxis: { type: 'value', axisLabel: { formatter: () => '10K' } }, grid: { bottom: 96 },
     dataZoom: [{ type: 'inside' }], legend: { textStyle: { color: '#fff' } }, textStyle: { color: '#fff' },
   } as any
 
   const data = echartsUpdatePlan(Change.Data, option)
   expect(data.settings).toEqual({ notMerge: false, lazyUpdate: false, replaceMerge: ['dataset', 'series', 'legend', 'visualMap', 'graphic'] })
   expect(data.option).toEqual({ dataset: option.dataset, series: option.series, legend: option.legend, visualMap: [], graphic: [], xAxis: option.xAxis, yAxis: option.yAxis })
+
+  const initialDataZoom = echartsUpdatePlan(Change.Data, option, true)
+  expect(initialDataZoom.settings.replaceMerge).toEqual(['dataset', 'series', 'legend', 'visualMap', 'graphic', 'dataZoom'])
+  expect(initialDataZoom.option.dataZoom).toEqual(option.dataZoom)
+  expect(initialDataZoom.option.grid).toEqual(option.grid)
+
+  const refreshedHeatmapDataZoom = echartsUpdatePlan(Change.Data, option, false, true)
+  expect(refreshedHeatmapDataZoom.settings.replaceMerge).toEqual(['dataset', 'series', 'legend', 'visualMap', 'graphic', 'dataZoom', 'grid'])
+  expect(refreshedHeatmapDataZoom.option.dataZoom).toEqual(option.dataZoom)
+  expect(refreshedHeatmapDataZoom.option.grid).toEqual(option.grid)
+
+  const emptyHeatmap = { ...option, dataZoom: [], grid: { ...option.grid, bottom: 64 } }
+  const resetDataZoom = echartsUpdatePlan(Change.Data, emptyHeatmap)
+  expect(resetDataZoom.option.dataZoom).toEqual([])
+  expect(resetDataZoom.option.grid).toEqual(emptyHeatmap.grid)
+  expect(resetDataZoom.settings.replaceMerge).toEqual(['dataset', 'series', 'legend', 'visualMap', 'graphic', 'dataZoom', 'grid'])
 
   const selection = echartsUpdatePlan(Change.Selection, option)
   expect(selection.settings.replaceMerge).toEqual(['dataset', 'visualMap'])
@@ -863,20 +946,64 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect(waterfall.series[1].itemStyle.color({ value: ['Gain', 12, 0] })).toBe(defaultRendererContext.colors.success)
   expect(waterfall.series[1].itemStyle.color({ value: ['Loss', -5, 12] })).toBe(defaultRendererContext.colors.danger)
   const heatmapEnvelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
-  heatmapEnvelope.dataState.datasets[0].rows = [['A', 'R1', 1], ['B', 'R1', 3]]
+  heatmapEnvelope.spec.presentation.displayUnits = 'none'
+  heatmapEnvelope.spec.presentation.dataZoom = true
+  heatmapEnvelope.dataState.datasets[0].rows = [['A', 'R1', 1], ['B', 'R1', 1234]]
   const heatmap = echartsOption(heatmapEnvelope, defaultRendererContext) as any
   expect(heatmap.series[0]).toMatchObject({ id: 'series:primary:heatmap', type: 'heatmap', encode: { x: 'label', y: 'row', value: 'value' } })
   expect(heatmap.visualMap).toMatchObject({
     type: 'continuous',
     dimension: 'value',
-    min: 1,
-    max: 3,
+    min: 0,
+    max: 1234,
     calculable: true,
-    text: ['3', '1'],
     inRange: { color: ['rgba(0, 110, 219, 0.18)', defaultRendererContext.colors.data[0]] },
     outOfRange: { opacity: 0 },
   })
   expect(heatmap.visualMap.precision).toBeUndefined()
+  expect(heatmap.visualMap.bottom).toBe(0)
+  expect(heatmap.visualMap.text).toBeUndefined()
+  expect(heatmap.visualMap.formatter(1234)).toBe('1,234')
+  expect(heatmap.visualMap.formatter(0)).toBe('0')
+  expect(heatmap.series[0].label.formatter({ value: ['A', 'R1', 0] })).toBe('0')
+  expect(heatmap.series[0].label.formatter({ value: ['B', 'R1', 1] })).toBe('1')
+  expect(heatmap.series[0].label.formatter({ value: ['C', 'R1', 1234] })).toBe('1,234')
+  expect(heatmap.tooltip.formatter({ value: ['C', 'R1', 1234] })).toBe('label: C<br>row: R1<br>value: 1234')
+  expect(heatmap.dataZoom).toEqual([
+    { id: 'dataZoom:heatmap:inside', type: 'inside', xAxisIndex: 0, filterMode: 'filter', startValue: 'A', endValue: 'B' },
+    { id: 'dataZoom:heatmap:slider', type: 'slider', xAxisIndex: 0, filterMode: 'filter', startValue: 'A', endValue: 'B', bottom: 64, height: 14, showDetail: false, brushSelect: false },
+  ])
+  expect(heatmap.xAxis.axisLabel.formatter('agro_industry_and_commerce')).toBe('agro industry and commerce')
+  expect(heatmap.xAxis.data).toEqual(['A', 'B'])
+  expect(heatmap.yAxis.data).toEqual(['R1'])
+  expect(heatmap.grid.bottom).toBe(96)
+
+  const emptyHeatmapEnvelope = structuredClone(heatmapEnvelope)
+  emptyHeatmapEnvelope.dataState.datasets[0].rows = []
+  const emptyHeatmap = echartsOption(emptyHeatmapEnvelope, defaultRendererContext) as any
+  expect(emptyHeatmap.dataZoom).toEqual([])
+  expect(emptyHeatmap.grid.bottom).toBe(64)
+  expect(emptyHeatmap.xAxis.data).toEqual([])
+  expect(emptyHeatmap.yAxis.data).toEqual([])
+  const resetHeatmap = echartsUpdatePlan(Change.Data, emptyHeatmap)
+  expect(resetHeatmap.option.dataZoom).toEqual([])
+  expect(resetHeatmap.option.grid).toEqual(emptyHeatmap.grid)
+  expect(resetHeatmap.settings.replaceMerge).toContain('dataZoom')
+  expect(resetHeatmap.settings.replaceMerge).toContain('grid')
+
+  const nonPositiveHeatmap = structuredClone(heatmapEnvelope)
+  nonPositiveHeatmap.dataState.datasets[0].rows = [['A', 'R1', -1234], ['B', 'R1', -1]]
+  const nonPositiveOption = echartsOption(nonPositiveHeatmap, defaultRendererContext) as any
+  expect(nonPositiveOption.visualMap).toMatchObject({ min: -1234, max: 0 })
+  expect(nonPositiveOption.visualMap.text).toBeUndefined()
+  expect(nonPositiveOption.visualMap.formatter(-1234)).toBe('-1,234')
+
+  const mixedSignHeatmap = structuredClone(heatmapEnvelope)
+  mixedSignHeatmap.dataState.datasets[0].rows = [['A', 'R1', -1], ['B', 'R1', 1234]]
+  const mixedSignOption = echartsOption(mixedSignHeatmap, defaultRendererContext) as any
+  expect(mixedSignOption.visualMap).toMatchObject({ min: -1, max: 1234 })
+  expect(mixedSignOption.visualMap.text).toBeUndefined()
+  expect(mixedSignOption.visualMap.formatter(1234)).toBe('1,234')
   const boxplot = echartsOption(cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']), defaultRendererContext) as any
   expect(boxplot.xAxis.data).toEqual(['A'])
   expect(boxplot.series[0]).toMatchObject({ id: 'series:primary:boxplot', type: 'boxplot', data: [{ name: 'A', value: [1, 2, 3, 4, 5], __lv_dataset: 'primary', __lv_row_index: 0 }] })

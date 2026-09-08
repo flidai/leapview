@@ -14,12 +14,15 @@ test('changing evidence or enforcement requires review; unrelated work does not'
 
 test('build inputs, benchmark dependencies and every enforcement entry point require review', () => {
   for (const path of [
-    'package.json', 'bun.lock', 'tsconfig.json',
+    'package.json', 'bun.lock', 'tsconfig.json', 'scripts/frontend_ci_contract.test.ts',
     'scripts/build_maplibre_worker.ts', 'scripts/generate_lucide_icon_catalog.ts',
     'scripts/generate_visualization_validator.ts', 'deploy/compose/qualification/browser.mjs',
     'deploy/compose/qualification/package.json', 'deploy/compose/qualification/package-lock.json',
     '.github/actions/oci-admission/action.yml', '.github/workflows/merge-validation.yml',
     '.github/workflows/nightly.yml',
+    'internal/platform/ci/planner.go', 'internal/platform/ci/pr_plan.go',
+    'internal/app/tools/ciplan/main.go', 'internal/app/tools/cireport/main.go',
+    'internal/app/tools/ciadapter/adapter.go',
   ]) {
     assert.equal(requiresPerformanceReview([path]), true, path)
   }

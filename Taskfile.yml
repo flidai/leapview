@@ -311,6 +311,7 @@ tasks:
       # duplicate production rebuild in every frontend validation shard.
       - task: quality:frontend-bundle:check
       - bun test scripts/node_deps_contract.test.ts
+      - bun test scripts/contract_projection_fixture.test.ts
       - bun test scripts/ensure_playwright.test.ts
       - bun run test:primer-primitives
       - bun run test:primer-alignment
@@ -335,6 +336,7 @@ tasks:
       - bun run test:visual-modal
       - bun run test:catalog-page
       - bun run test:dashboard-page
+      - bun run test:date-picker
       - bun run test:dashboard-builder
       - bun run test:windowed-table
       - bun run test:filter-menu
@@ -1036,6 +1038,8 @@ tasks:
       - Taskfile.yml
       - api/apigen.yaml
       - api/data-resources/**/*.tsp
+      - internal/project/contractprojection/exclusions.json
+      - internal/project/contractprojection/manifest.go
       - internal/project/contracts/generate/**/*.go
       - internal/analytics/connectors/**/*.go
       - pkg/apigen/**/*.go
@@ -1425,6 +1429,14 @@ tasks:
       - task: quality:critical:coverage
       - task: test:go:packages
 
+  ci:lane:quality:
+    desc: Run cross-language quality and architecture contracts
+    cmds:
+      - task: quality:budget:check
+      - task: quality:exceptions:check
+      - task: quality:trends:report
+      - go test ./internal/platform/architecture -count=1
+
   ci:lane:go:apigen:
     desc: Run the vendored APIGen Go module and TypeSpec tests
     cmds:
@@ -1503,7 +1515,7 @@ tasks:
       - task: ci:full:extras
 
   ci:full:extras:
-    desc: Run merge-only validation after the fast CI contract has passed
+    desc: Run merge-only validation on prepared inputs; hosted merge CI runs this alongside base lanes
     cmds:
       - task: desktop:test
       - go vet ./...

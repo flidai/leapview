@@ -500,7 +500,7 @@ func TestDBTWarehouseBoundaryCIJobUsesTheTieredWorkflow(t *testing.T) {
 	for _, want := range []string{
 		"dbt-warehouse-boundary-validation:",
 		"name: dbt physical contract (PR)",
-		"needs: [performance-baseline-review, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]",
+		"needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation]",
 		"DBT_WAREHOUSE_RESULT: ${{ needs.dbt-warehouse-boundary-validation.result }}",
 	} {
 		if !strings.Contains(text, want) {
@@ -517,9 +517,8 @@ func TestDBTWarehouseBoundaryCIJobUsesTheTieredWorkflow(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"github.event_name == 'workflow_dispatch'",
-		"github.event.pull_request.stack == null",
-		"github.event.pull_request.stack.position == github.event.pull_request.stack.size",
+		"needs: [prepare]",
+		"if: needs.prepare.outputs.dbt_warehouse_boundary_validation == 'true'",
 	} {
 		if !strings.Contains(dbtWarehouseCI, want) {
 			t.Fatalf("dbt validation job is not limited to standalone pull requests and stack tips: missing %q", want)

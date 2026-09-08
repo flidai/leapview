@@ -10,9 +10,10 @@ export function requiresPerformanceReview(paths) {
     /^\.quality\/(frontend-bundle|performance-)/.test(path) ||
     /^deploy\/compose\/qualification\/(performance|browser\.mjs$|package(?:-lock)?\.json$)/.test(path) ||
     /^internal\/app\/cli\/composectl\/qualification/.test(path) ||
+    /^internal\/(platform\/ci\/|app\/tools\/(ciplan|cireport|ciadapter)\/)/.test(path) ||
     /^scripts\/(frontend_bundle|performance_baseline|qualify_performance)/.test(path) ||
     ['Taskfile.yml', 'Dockerfile', 'package.json', 'bun.lock', 'tsconfig.json',
-      'scripts/build_assets.ts', 'scripts/build_maplibre_worker.ts',
+      'scripts/build_assets.ts', 'scripts/build_maplibre_worker.ts', 'scripts/frontend_ci_contract.test.ts',
       'scripts/generate_lucide_icon_catalog.ts', 'scripts/generate_visualization_validator.ts',
       '.github/workflows/ci.yml', '.github/workflows/artifacts.yml', '.github/workflows/release.yml',
       '.github/workflows/installed-candidate.yml', '.github/workflows/merge-validation.yml',
@@ -47,7 +48,7 @@ export function checkPerformanceBaselineReview(event, repository, api = github) 
   if (!requiresPerformanceReview(paths)) return 'No performance baseline or gate changes.'
   const reviews = api(`repos/${repository}/pulls/${pull.number}/reviews?per_page=100`).flat()
   if (!hasIndependentApproval(current, reviews)) {
-    throw new Error(`Performance governance changed: an independent repository collaborator must approve PR #${pull.number} at ${pull.head.sha}. Include calibration and regression evidence in the PR, then rerun the failed review job. Editing approval fields or approving an older commit does not satisfy this gate.`)
+    throw new Error(`Performance governance changed: an independent repository collaborator must approve PR #${pull.number} at ${pull.head.sha}. Include calibration and regression evidence in the PR, then rerun the failed CI gate job. Editing approval fields or approving an older commit does not satisfy this gate.`)
   }
   return `Performance governance independently reviewed at ${pull.head.sha}.`
 }

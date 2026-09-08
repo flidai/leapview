@@ -21,6 +21,12 @@ func EvaluateGate(plan Jobs, results map[string]string) error {
 }
 
 func EvaluatePlanGate(plan Plan, results map[string]string) GateReport {
+	if plan.Version == PRPlanVersion || plan.PR != nil {
+		return evaluatePRGate(plan, results)
+	}
+	if plan.Version != 0 && plan.Version != PlanVersion {
+		return GateReport{Problems: []string{"unsupported plan schema"}}
+	}
 	report := evaluateJobs(plan.Effective, results)
 	if !plan.Audit {
 		return report

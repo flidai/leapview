@@ -4,7 +4,12 @@ import { resolveConditionalFormat } from '../../conditional-format'
 import { inlineDataset, type EChartsTranslation } from './common'
 
 type LabelFormatterParameters = { value?: unknown[]; dataIndex?: number }
-type LabelLayoutParameters = { dataIndex?: number }
+type LabelLayoutParameters = {
+  dataIndex?: number
+  rect?: { width?: number; height?: number }
+}
+
+type LabelLayout = EChartsTranslation | ((params: LabelLayoutParameters) => EChartsTranslation)
 
 export function echartsLabelPolicy(
   envelope: VisualizationEnvelope,
@@ -12,7 +17,7 @@ export function echartsLabelPolicy(
   policy: VisualizationLabelPolicy,
   formatter: (params: LabelFormatterParameters) => unknown,
   context: RendererContext,
-): { label: EChartsTranslation; labelLayout: EChartsTranslation | ((params: LabelLayoutParameters) => EChartsTranslation) } {
+): { label: EChartsTranslation; labelLayout: LabelLayout } {
   const visible = policy.density !== 'hidden'
   const dense = policy.density === 'dense'
   const label = {
@@ -33,6 +38,22 @@ export function echartsLabelPolicy(
     labelLayout: (params: LabelLayoutParameters) => ({
       hideOverlap: !isPriorityDatum(envelope, datasetID, params.dataIndex, policy),
     }),
+  }
+}
+
+export function constrainEChartsLabelToDataRect(
+  labelLayout: LabelLayout,
+  minimumSpacing: number,
+): (params: LabelLayoutParameters) => EChartsTranslation {
+  return (params) => {
+    const base = typeof labelLayout === 'function' ? labelLayout(params) : labelLayout
+    const width = finiteInsetSize(params.rect?.width, minimumSpacing)
+    const height = finiteInsetSize(params.rect?.height, minimumSpacing)
+    return {
+      ...base,
+      ...(width === undefined ? {} : { width }),
+      ...(height === undefined ? {} : { height }),
+    }
   }
 }
 
@@ -81,4 +102,9 @@ function isSelectedDatum(envelope: VisualizationEnvelope, datasetID: string, row
     && selection.datum.dataRevision === envelope.dataRevision
     && identity.every((field) => Object.is(row[dataset.columns.indexOf(field.id)], selection.datum.identity[field.id])),
   )
+}
+
+function finiteInsetSize(size: number | undefined, spacing: number): number | undefined {
+  if (!Number.isFinite(size)) return undefined
+  return Math.max(0, Math.floor(size! - Math.max(0, spacing)))
 }

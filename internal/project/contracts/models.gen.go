@@ -536,6 +536,316 @@ type ContractMetadata struct {
 	Compatibility string `json:"compatibility" yaml:"compatibility"`
 }
 
+type ContractProjectionAuthoritativeDefinition struct {
+	Type string `json:"type" yaml:"type"`
+	URL  string `json:"url" yaml:"url"`
+}
+
+type ContractProjectionCanonicalBooleanValue struct {
+	Type  string `json:"type" yaml:"type"`
+	Value bool   `json:"value" yaml:"value"`
+}
+
+type ContractProjectionCanonicalTextValue struct {
+	Type  string `json:"type" yaml:"type"`
+	Value string `json:"value" yaml:"value"`
+}
+
+type ContractProjectionCanonicalValueVariant interface {
+	isContractProjectionCanonicalValueVariant()
+}
+
+type ContractProjectionCanonicalValue struct {
+	Value ContractProjectionCanonicalValueVariant
+}
+
+func (*ContractProjectionCanonicalTextValue) isContractProjectionCanonicalValueVariant()    {}
+func (*ContractProjectionCanonicalBooleanValue) isContractProjectionCanonicalValueVariant() {}
+
+func (value ContractProjectionCanonicalValue) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *ContractProjectionCanonicalTextValue:
+		if variant == nil {
+			return nil, fmt.Errorf("ContractProjectionCanonicalValue variant is nil")
+		}
+		return json.Marshal(variant)
+	case *ContractProjectionCanonicalBooleanValue:
+		if variant == nil {
+			return nil, fmt.Errorf("ContractProjectionCanonicalValue variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("ContractProjectionCanonicalValue variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported ContractProjectionCanonicalValue variant %T", variant)
+	}
+}
+
+func (value *ContractProjectionCanonicalValue) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal ContractProjectionCanonicalValue into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode ContractProjectionCanonicalValue object: %w", err)
+	}
+	*value = ContractProjectionCanonicalValue{}
+	var matched string
+	var decoded any
+	var failures []string
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	{
+		valid := true
+		if _, ok := fields["type"]; !ok {
+			valid = false
+			failures = append(failures, "ContractProjectionCanonicalTextValue: required property type is missing")
+		}
+		if _, ok := fields["value"]; !ok {
+			valid = false
+			failures = append(failures, "ContractProjectionCanonicalTextValue: required property value is missing")
+		}
+		if valid {
+			var candidate ContractProjectionCanonicalTextValue
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode ContractProjectionCanonicalValue: object matches both %s and ContractProjectionCanonicalTextValue", matched)
+				}
+				matched = "ContractProjectionCanonicalTextValue"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "ContractProjectionCanonicalTextValue: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["type"]; !ok {
+			valid = false
+			failures = append(failures, "ContractProjectionCanonicalBooleanValue: required property type is missing")
+		}
+		if _, ok := fields["value"]; !ok {
+			valid = false
+			failures = append(failures, "ContractProjectionCanonicalBooleanValue: required property value is missing")
+		}
+		if valid {
+			var actual any
+			if err := json.Unmarshal(fields["type"], &actual); err != nil {
+				valid = false
+				failures = append(failures, "ContractProjectionCanonicalBooleanValue: required property type must equal \"Boolean\"")
+			} else if value, ok := actual.(string); !ok || value != "Boolean" {
+				valid = false
+				failures = append(failures, "ContractProjectionCanonicalBooleanValue: required property type must equal \"Boolean\"")
+			}
+		}
+		if valid {
+			var candidate ContractProjectionCanonicalBooleanValue
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode ContractProjectionCanonicalValue: object matches both %s and ContractProjectionCanonicalBooleanValue", matched)
+				}
+				matched = "ContractProjectionCanonicalBooleanValue"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "ContractProjectionCanonicalBooleanValue: "+err.Error())
+			}
+		}
+	}
+	if matched == "" {
+		return fmt.Errorf("decode ContractProjectionCanonicalValue: no object variant matched (fields=%v, errors=%s)", fields, strings.Join(failures, "; "))
+	}
+	switch matched {
+	case "ContractProjectionCanonicalTextValue":
+		value.Value = decoded.(*ContractProjectionCanonicalTextValue)
+	case "ContractProjectionCanonicalBooleanValue":
+		value.Value = decoded.(*ContractProjectionCanonicalBooleanValue)
+	}
+	return nil
+}
+
+type ContractProjectionContract struct {
+	Version       string `json:"version" yaml:"version"`
+	Compatibility string `json:"compatibility" yaml:"compatibility"`
+}
+
+type ContractProjectionDuration struct {
+	Amount int64  `json:"amount" yaml:"amount"`
+	Unit   string `json:"unit" yaml:"unit"`
+}
+
+type ContractProjectionField struct {
+	Datatype                 *string                                      `json:"datatype,omitempty" yaml:"datatype,omitempty"`
+	Nullable                 *bool                                        `json:"nullable,omitempty" yaml:"nullable,omitempty"`
+	CriticalDataElement      *bool                                        `json:"criticalDataElement,omitempty" yaml:"criticalDataElement,omitempty"`
+	Classification           *string                                      `json:"classification,omitempty" yaml:"classification,omitempty"`
+	AuthoritativeDefinitions *[]ContractProjectionAuthoritativeDefinition `json:"authoritativeDefinitions,omitempty" yaml:"authoritativeDefinitions,omitempty"`
+	Deprecation              *ContractProjectionFieldDeprecation          `json:"deprecation,omitempty" yaml:"deprecation,omitempty"`
+}
+
+type ContractProjectionFieldDeprecation struct {
+	Since       string  `json:"since" yaml:"since"`
+	Reason      string  `json:"reason" yaml:"reason"`
+	Replacement *string `json:"replacement,omitempty" yaml:"replacement,omitempty"`
+}
+
+type ContractProjectionMetadata struct {
+	ID       string                     `json:"id" yaml:"id"`
+	Name     string                     `json:"name" yaml:"name"`
+	Contract ContractProjectionContract `json:"contract" yaml:"contract"`
+}
+
+type ContractProjectionModelBody struct {
+	Definition ContractProjectionModelDefinition        `json:"definition" yaml:"definition"`
+	Entities   map[string]ContractProjectionModelEntity `json:"entities" yaml:"entities"`
+	Grain      ContractProjectionModelGrain             `json:"grain" yaml:"grain"`
+	Fields     map[string]ContractProjectionModelField  `json:"fields" yaml:"fields"`
+	Checks     *[]ContractProjectionModelCheck          `json:"checks,omitempty" yaml:"checks,omitempty"`
+}
+
+type ContractProjectionModelCheck struct {
+	ID       string    `json:"id" yaml:"id"`
+	Type     string    `json:"type" yaml:"type"`
+	Field    *string   `json:"field,omitempty" yaml:"field,omitempty"`
+	Fields   *[]string `json:"fields,omitempty" yaml:"fields,omitempty"`
+	Values   *[]string `json:"values,omitempty" yaml:"values,omitempty"`
+	To       *string   `json:"to,omitempty" yaml:"to,omitempty"`
+	Minimum  *int64    `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum  *int64    `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Severity *string   `json:"severity,omitempty" yaml:"severity,omitempty"`
+}
+
+type ContractProjectionModelDefinition struct {
+	Type   string  `json:"type" yaml:"type"`
+	Source *string `json:"source,omitempty" yaml:"source,omitempty"`
+	SQLAst *string `json:"sqlAst,omitempty" yaml:"sqlAst,omitempty"`
+}
+
+type ContractProjectionModelEntity struct {
+	Type   string   `json:"type" yaml:"type"`
+	Fields []string `json:"fields" yaml:"fields"`
+}
+
+type ContractProjectionModelField struct {
+	Datatype                 *string                                      `json:"datatype,omitempty" yaml:"datatype,omitempty"`
+	Nullable                 *bool                                        `json:"nullable,omitempty" yaml:"nullable,omitempty"`
+	CriticalDataElement      *bool                                        `json:"criticalDataElement,omitempty" yaml:"criticalDataElement,omitempty"`
+	Classification           *string                                      `json:"classification,omitempty" yaml:"classification,omitempty"`
+	AuthoritativeDefinitions *[]ContractProjectionAuthoritativeDefinition `json:"authoritativeDefinitions,omitempty" yaml:"authoritativeDefinitions,omitempty"`
+	Deprecation              *ContractProjectionFieldDeprecation          `json:"deprecation,omitempty" yaml:"deprecation,omitempty"`
+}
+
+type ContractProjectionModelGrain struct {
+	Entity string `json:"entity" yaml:"entity"`
+}
+
+type ContractProjectionRelationshipEndpoint struct {
+	Dataset string    `json:"dataset" yaml:"dataset"`
+	Entity  *string   `json:"entity,omitempty" yaml:"entity,omitempty"`
+	Fields  *[]string `json:"fields,omitempty" yaml:"fields,omitempty"`
+}
+
+type ContractProjectionSemanticAccessFilter struct {
+	Field         string `json:"field" yaml:"field"`
+	UserAttribute string `json:"userAttribute" yaml:"userAttribute"`
+}
+
+type ContractProjectionSemanticAccessGrant struct {
+	UserAttribute string                             `json:"userAttribute" yaml:"userAttribute"`
+	AllowedValues []ContractProjectionCanonicalValue `json:"allowedValues" yaml:"allowedValues"`
+}
+
+type ContractProjectionSemanticBinding struct {
+	Field string    `json:"field" yaml:"field"`
+	Path  *[]string `json:"path,omitempty" yaml:"path,omitempty"`
+}
+
+type ContractProjectionSemanticDataset struct {
+	Model                string                                    `json:"model" yaml:"model"`
+	DefaultTimeDimension *string                                   `json:"defaultTimeDimension,omitempty" yaml:"defaultTimeDimension,omitempty"`
+	RequiredAccessGrants *[]string                                 `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
+	AccessFilters        *[]ContractProjectionSemanticAccessFilter `json:"accessFilters,omitempty" yaml:"accessFilters,omitempty"`
+}
+
+type ContractProjectionSemanticDimension struct {
+	Datatype             string                                       `json:"datatype" yaml:"datatype"`
+	Time                 *ContractProjectionSemanticTime              `json:"time,omitempty" yaml:"time,omitempty"`
+	Bindings             map[string]ContractProjectionSemanticBinding `json:"bindings" yaml:"bindings"`
+	RequiredAccessGrants *[]string                                    `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
+}
+
+type ContractProjectionSemanticFilter struct {
+	Field    *string                             `json:"field,omitempty" yaml:"field,omitempty"`
+	Operator *string                             `json:"operator,omitempty" yaml:"operator,omitempty"`
+	Value    *ContractProjectionCanonicalValue   `json:"value,omitempty" yaml:"value,omitempty"`
+	Values   *[]ContractProjectionCanonicalValue `json:"values,omitempty" yaml:"values,omitempty"`
+	Path     *[]string                           `json:"path,omitempty" yaml:"path,omitempty"`
+	All      *[]ContractProjectionSemanticFilter `json:"all,omitempty" yaml:"all,omitempty"`
+	Any      *[]ContractProjectionSemanticFilter `json:"any,omitempty" yaml:"any,omitempty"`
+	Not      *ContractProjectionSemanticFilter   `json:"not,omitempty" yaml:"not,omitempty"`
+}
+
+type ContractProjectionSemanticMetric struct {
+	Type                 string                                 `json:"type" yaml:"type"`
+	Dataset              *string                                `json:"dataset,omitempty" yaml:"dataset,omitempty"`
+	Aggregation          *string                                `json:"aggregation,omitempty" yaml:"aggregation,omitempty"`
+	Input                *ContractProjectionSemanticMetricInput `json:"input,omitempty" yaml:"input,omitempty"`
+	Where                *[]string                              `json:"where,omitempty" yaml:"where,omitempty"`
+	Empty                *string                                `json:"empty,omitempty" yaml:"empty,omitempty"`
+	TimeDimension        *string                                `json:"timeDimension,omitempty" yaml:"timeDimension,omitempty"`
+	Expression           *string                                `json:"expression,omitempty" yaml:"expression,omitempty"`
+	Numerator            *string                                `json:"numerator,omitempty" yaml:"numerator,omitempty"`
+	Denominator          *string                                `json:"denominator,omitempty" yaml:"denominator,omitempty"`
+	Unit                 *string                                `json:"unit,omitempty" yaml:"unit,omitempty"`
+	Format               *string                                `json:"format,omitempty" yaml:"format,omitempty"`
+	RequiredAccessGrants *[]string                              `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
+}
+
+type ContractProjectionSemanticMetricInput struct {
+	Field string `json:"field" yaml:"field"`
+}
+
+type ContractProjectionSemanticModelBody struct {
+	Datasets      map[string]ContractProjectionSemanticDataset       `json:"datasets" yaml:"datasets"`
+	AccessGrants  *map[string]ContractProjectionSemanticAccessGrant  `json:"accessGrants,omitempty" yaml:"accessGrants,omitempty"`
+	Relationships *map[string]ContractProjectionSemanticRelationship `json:"relationships,omitempty" yaml:"relationships,omitempty"`
+	Dimensions    *map[string]ContractProjectionSemanticDimension    `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
+	Filters       *map[string]ContractProjectionSemanticFilter       `json:"filters,omitempty" yaml:"filters,omitempty"`
+	Metrics       map[string]ContractProjectionSemanticMetric        `json:"metrics" yaml:"metrics"`
+}
+
+type ContractProjectionSemanticRelationship struct {
+	From ContractProjectionRelationshipEndpoint `json:"from" yaml:"from"`
+	To   ContractProjectionRelationshipEndpoint `json:"to" yaml:"to"`
+}
+
+type ContractProjectionSemanticTime struct {
+	NativeGrain string   `json:"nativeGrain" yaml:"nativeGrain"`
+	Grains      []string `json:"grains" yaml:"grains"`
+	Calendar    *string  `json:"calendar,omitempty" yaml:"calendar,omitempty"`
+	Timezone    *string  `json:"timezone,omitempty" yaml:"timezone,omitempty"`
+}
+
+type ContractProjectionSourceBody struct {
+	Schema    ContractProjectionSourceSchema     `json:"schema" yaml:"schema"`
+	Freshness *ContractProjectionSourceFreshness `json:"freshness,omitempty" yaml:"freshness,omitempty"`
+}
+
+type ContractProjectionSourceFreshness struct {
+	Basis        string                      `json:"basis" yaml:"basis"`
+	Field        *string                     `json:"field,omitempty" yaml:"field,omitempty"`
+	Revision     *string                     `json:"revision,omitempty" yaml:"revision,omitempty"`
+	WarningAfter *ContractProjectionDuration `json:"warningAfter,omitempty" yaml:"warningAfter,omitempty"`
+	ErrorAfter   *ContractProjectionDuration `json:"errorAfter,omitempty" yaml:"errorAfter,omitempty"`
+}
+
+type ContractProjectionSourceSchema struct {
+	Mode   string                              `json:"mode" yaml:"mode"`
+	Fields *map[string]ContractProjectionField `json:"fields,omitempty" yaml:"fields,omitempty"`
+}
+
 type ContractResourceMetadata struct {
 	ID            string              `json:"id" yaml:"id"`
 	Name          string              `json:"name" yaml:"name"`
@@ -1000,6 +1310,14 @@ type ModelCheckRowCountVariant struct {
 type ModelCheckUniqueVariant struct {
 	UniqueModelCheck
 	Type string `json:"type" yaml:"type"`
+}
+
+type ModelContractProjection struct {
+	Profile    string                      `json:"profile" yaml:"profile"`
+	APIVersion string                      `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string                      `json:"kind" yaml:"kind"`
+	Metadata   ContractProjectionMetadata  `json:"metadata" yaml:"metadata"`
+	Contract   ContractProjectionModelBody `json:"contract" yaml:"contract"`
 }
 
 type ModelDefinitionVariant interface {
@@ -2681,6 +2999,14 @@ type SemanticModel struct {
 	Spec       SemanticModelSpec     `json:"spec" yaml:"spec"`
 }
 
+type SemanticModelContractProjection struct {
+	Profile    string                              `json:"profile" yaml:"profile"`
+	APIVersion string                              `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string                              `json:"kind" yaml:"kind"`
+	Metadata   ContractProjectionMetadata          `json:"metadata" yaml:"metadata"`
+	Contract   ContractProjectionSemanticModelBody `json:"contract" yaml:"contract"`
+}
+
 type SemanticModelMetadata struct {
 	ID            string              `json:"id" yaml:"id"`
 	Name          string              `json:"name" yaml:"name"`
@@ -2826,6 +3152,14 @@ type Source struct {
 	Kind       string                   `json:"kind" yaml:"kind"`
 	Metadata   ContractResourceMetadata `json:"metadata" yaml:"metadata"`
 	Spec       SourceSpec               `json:"spec" yaml:"spec"`
+}
+
+type SourceContractProjection struct {
+	Profile    string                       `json:"profile" yaml:"profile"`
+	APIVersion string                       `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string                       `json:"kind" yaml:"kind"`
+	Metadata   ContractProjectionMetadata   `json:"metadata" yaml:"metadata"`
+	Contract   ContractProjectionSourceBody `json:"contract" yaml:"contract"`
 }
 
 type SourceFreshnessVariant interface {

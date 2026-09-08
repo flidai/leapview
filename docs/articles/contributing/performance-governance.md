@@ -89,7 +89,9 @@ The required `CI gate` includes performance baseline review. Changes to a
 performance policy, reference or evidence checker require an approval from a
 different human repository collaborator at the current PR head. A local review
 field, a bot approval, a dismissed approval or an approval of an older commit
-does not satisfy it. After approval, rerun the failed review job. Once the guard
+does not satisfy it. The review step runs inside the required CI gate, before
+the planned-results check, including for deferred or selectively validated PRs.
+After approval, rerun the failed CI gate job. Once the guard
 is on main, CI executes the base branch's copy when evaluating candidate changes.
 Initial installation of the guard itself requires review of that first PR;
 the base branch has no trusted checker yet, so the first PR's check alone is

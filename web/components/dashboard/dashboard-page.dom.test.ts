@@ -3,7 +3,8 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
-import { testDocument } from './dashboard-page-test-fixtures'
+import validateVisualizationEnvelope from '../../generated/visualization/validate'
+import { testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
@@ -11,6 +12,13 @@ let browser: Browser
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/dashboard-page-test')
 
+test('dashboard fixtures satisfy the fail-closed visualization contract', () => {
+  for (const [id, envelope] of Object.entries(testVisualizationEnvelopes())) {
+    if (!validateVisualizationEnvelope(envelope)) {
+      throw new Error(`${id}: ${JSON.stringify((validateVisualizationEnvelope as typeof validateVisualizationEnvelope & { errors?: unknown }).errors)}`)
+    }
+  }
+})
 
 test('dashboard refresh loading does not mark unrelated filter controls stale', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
@@ -41,7 +49,7 @@ test('dashboard coalesces duplicate option requests for one binding context', as
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    const requests = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    const stateFilter = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const seen: unknown[] = []
       element.addEventListener('lv-filter-options-request', (event: CustomEvent) => seen.push(event.detail))
       for (let index = 0; index < 2; index++) {
@@ -52,9 +60,31 @@ test('dashboard coalesces duplicate option requests for one binding context', as
         }))
       }
       await element.updateComplete
-      return seen
+      return {
+        requests: seen,
+        definition: element.signal('filterContract', {}).definitions?.state,
+        binding: element.signal('filterContract', {}).bindings?.fb_state,
+        page: element.signal('filterOptionPages', {}).fb_state,
+        purchaseDateDefinition: element.signal('filterContract', {}).definitions?.purchase_date,
+        purchaseDateBinding: element.signal('filterContract', {}).bindings?.fb_purchase_date,
+      }
     })
-    expect(requests).toHaveLength(1)
+    expect(stateFilter.requests).toHaveLength(1)
+    expect(stateFilter.definition).toMatchObject({
+      field: 'sales_orders.state',
+      options: { kind: 'distinct', limit: 50, values: [] },
+    })
+    expect(stateFilter.binding).toMatchObject({ selectionMode: 'multiple', maxSelectedValues: 50 })
+    expect(stateFilter.page).toMatchObject({
+      bindingKey: 'fb_state', complete: true,
+      items: [{ label: 'SP', available: true }],
+    })
+    expect(stateFilter.purchaseDateDefinition).toMatchObject({
+      field: 'sales_orders.purchase_date', valueKind: 'date',
+      predicates: [{ kind: 'range', operators: [] }],
+      options: { kind: 'none', limit: 0, values: [] },
+    })
+    expect(stateFilter.purchaseDateBinding).toMatchObject({ scope: 'report', default: { kind: 'unfiltered' } })
   } finally {
     await page.close()
   }
@@ -878,6 +908,7 @@ test('the closed filter control follows scrolling in Mobile layout', async () =>
       localStorage.setItem('leapview:filters-open', 'closed')
     })
     await page.goto(baseURL)
+    await page.waitForLoadState('networkidle')
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
 
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
@@ -2501,7 +2532,7 @@ test('filter summaries remain explicit without a layout-shifting update indicato
   }
 })
 
-test('date-range slicers rearrange at contract boundaries without removing either input', async () => {
+test('date-range slicers rearrange at contract boundaries without removing either custom control', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -2535,7 +2566,7 @@ test('date-range slicers rearrange at contract boundaries without removing eithe
       const snapshot = () => ({
         variant: leaf.dataset.layoutVariant,
         fit: leaf.dataset.layoutFit,
-        inputs: leaf.shadowRoot.querySelectorAll('.range input[type="date"]').length,
+        controls: leaf.shadowRoot.querySelectorAll('.range lv-date-picker').length,
         columns: getComputedStyle(leaf.shadowRoot.querySelector('.range')).gridTemplateColumns,
       })
       const inline = snapshot()
@@ -2551,10 +2582,10 @@ test('date-range slicers rearrange at contract boundaries without removing eithe
 
     expect(result.inline.variant).toBe('inline')
     expect(result.inline.fit).toBe('fit')
-    expect(result.inline.inputs).toBe(2)
+    expect(result.inline.controls).toBe(2)
     expect(result.inline.columns.split(' ')).toHaveLength(2)
-    expect(result.stacked).toMatchObject({ variant: 'stacked', fit: 'fit', inputs: 2, columns: '240px' })
-    expect(result.invalid).toMatchObject({ variant: 'stacked', fit: 'too-small', inputs: 2 })
+    expect(result.stacked).toMatchObject({ variant: 'stacked', fit: 'fit', controls: 2, columns: '240px' })
+    expect(result.invalid).toMatchObject({ variant: 'stacked', fit: 'too-small', controls: 2 })
   } finally {
     await page.close()
   }

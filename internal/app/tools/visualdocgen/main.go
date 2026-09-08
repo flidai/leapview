@@ -811,7 +811,11 @@ func buildVisualDocumentReference(examples []visualExample, compiledVisualizatio
 		for key := range visualPresentationValues(visual) {
 			presentation[key] = struct{}{}
 		}
-		reference.Examples[examples[index].ID] = visualExampleReference{KeyFields: visualKeyFields(previous, visual)}
+		keyFields := visualKeyFields(previous, visual)
+		if len(keyFields) == 0 {
+			keyFields = []string{"type", "query"}
+		}
+		reference.Examples[examples[index].ID] = visualExampleReference{KeyFields: keyFields}
 		previous = &examples[index].Visual
 	}
 	reference.Kind = strings.Join(sortedSet(kinds), ", ")

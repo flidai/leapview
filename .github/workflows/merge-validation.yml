@@ -125,7 +125,7 @@ jobs:
   full-validation:
     name: Full merge validation
     if: github.repository == 'flidai/leapview'
-    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation]
+    # This runner prepares its own inputs; only the final gate joins the lanes.
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:

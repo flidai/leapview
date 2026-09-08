@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, stacked]
+    types: [opened, synchronize, reopened, ready_for_review, stacked, labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
@@ -12,40 +12,62 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.stack.id || github.ref }}
   cancel-in-progress: true
 
+env:
+  DEFERRED: ${{ github.event_name == 'pull_request' && github.event.pull_request.stack != null && github.event.pull_request.stack.position < github.event.pull_request.stack.size }}
+
 jobs:
-  performance-baseline-review:
-    name: Performance baseline review
+  prepare:
+    name: Plan PR validation
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
+    timeout-minutes: 10
+    outputs:
+      apigen_validation: ${{ steps.plan.outputs.apigen_validation }}
+      go_packages_validation: ${{ steps.plan.outputs.go_packages_validation }}
+      go_application_validation: ${{ steps.plan.outputs.go_application_validation }}
+      frontend_validation: ${{ steps.plan.outputs.frontend_validation }}
+      postgres_isolation_validation: ${{ steps.plan.outputs.postgres_isolation_validation }}
+      spatial_tile_benchmarks: ${{ steps.plan.outputs.spatial_tile_benchmarks }}
+      dbt_warehouse_boundary_validation: ${{ steps.plan.outputs.dbt_warehouse_boundary_validation }}
+      docs_validation: ${{ steps.plan.outputs.docs_validation }}
+      quality_validation: ${{ steps.plan.outputs.quality_validation }}
+      frontend_matrix: ${{ steps.plan.outputs.frontend_matrix }}
+
     steps:
-      - name: Check out repository
+      - name: Check out the exact candidate and full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - name: Verify independent review of changed performance governance
+      - name: Set up planner Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Plan cumulative candidate validation
+        id: plan
         env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_REVISION: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number || 0 }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          STACK_BASE: ${{ github.event.pull_request.stack != null && format('refs/remotes/origin/{0}', github.event.repository.default_branch) || '' }}
         run: |
-          set -euo pipefail
-          # Use the base branch's guard once installed. A candidate cannot
-          # authorize its baseline by changing the checker in the same PR.
-          guard=scripts/performance_baseline_review.mjs
-          if [[ -n "$BASE_REVISION" ]] && git cat-file -e "$BASE_REVISION:$guard" 2>/dev/null; then
-            git show "$BASE_REVISION:$guard" > "$RUNNER_TEMP/performance-baseline-review.mjs"
-            guard="$RUNNER_TEMP/performance-baseline-review.mjs"
-          fi
-          node "$guard"
-
+          go run ./internal/app/tools/ciplan \
+            --event "$GITHUB_EVENT_NAME" --base "$BASE_SHA" --head "$GITHUB_SHA" \
+            --stack-base "$STACK_BASE" --deferred="$DEFERRED" \
+            --pr-number "$PR_NUMBER" --labels "$PR_LABELS" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --github-output "$GITHUB_OUTPUT" --github-summary "$GITHUB_STEP_SUMMARY"
+      - name: Publish versioned selection evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-plan
+          path: ci-plan.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
   apigen-validation:
     name: APIGen tests (PR)
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.stack == null ||
-      github.event.pull_request.stack.position == github.event.pull_request.stack.size
+    needs: [prepare]
+    if: needs.prepare.outputs.apigen_validation == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -67,10 +89,8 @@ jobs:
 
   go-packages-validation:
     name: Go package tests (PR)
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.stack == null ||
-      github.event.pull_request.stack.position == github.event.pull_request.stack.size
+    needs: [prepare]
+    if: needs.prepare.outputs.go_packages_validation == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
@@ -124,10 +144,8 @@ jobs:
 
   go-application-validation:
     name: Go application tests (PR)
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.stack == null ||
-      github.event.pull_request.stack.position == github.event.pull_request.stack.size
+    needs: [prepare]
+    if: needs.prepare.outputs.go_application_validation == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
@@ -154,12 +172,9 @@ jobs:
     name: Frontend tests (PR, ${{ matrix.shard }})
     strategy:
       fail-fast: false
-      matrix:
-        shard: [core, reports, chat, data, site]
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.stack == null ||
-      github.event.pull_request.stack.position == github.event.pull_request.stack.size
+      matrix: ${{ fromJSON(needs.prepare.outputs.frontend_matrix) }}
+    needs: [prepare]
+    if: needs.prepare.outputs.frontend_validation == 'true'
     runs-on: ubuntu-24.04
     # Browser system dependencies come from Ubuntu mirrors and can consume
     # most of the old budget before validation starts. Keep the lane bounded
@@ -190,10 +205,8 @@ jobs:
 
   postgres-isolation-validation:
     name: PostgreSQL topology isolation (PR)
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.stack == null ||
-      github.event.pull_request.stack.position == github.event.pull_request.stack.size
+    needs: [prepare]
+    if: needs.prepare.outputs.postgres_isolation_validation == 'true'
     runs-on: ubuntu-24.04
     # The native qualification starts a pinned PostgreSQL 18 sidecar, runs
     # the canonical init hook, and exercises a deliberate fail-closed case.
@@ -228,10 +241,8 @@ jobs:
 
   spatial-tile-benchmarks:
     name: Spatial tile benchmarks (PR)
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.stack == null ||
-      github.event.pull_request.stack.position == github.event.pull_request.stack.size
+    needs: [prepare]
+    if: needs.prepare.outputs.spatial_tile_benchmarks == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -267,10 +278,8 @@ jobs:
 
   dbt-warehouse-boundary-validation:
     name: dbt physical contract (PR)
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.stack == null ||
-      github.event.pull_request.stack.position == github.event.pull_request.stack.size
+    needs: [prepare]
+    if: needs.prepare.outputs.dbt_warehouse_boundary_validation == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -304,19 +313,114 @@ jobs:
         if: always()
         run: task postgres:dev:down
 
+  docs-validation:
+    name: Documentation and public site (PR)
+    needs: [prepare]
+    if: needs.prepare.outputs.docs_validation == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "true"
+      - name: Prepare generated and embedded assets
+        run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare
+      - name: Validate documentation and embedded site contracts
+        run: task ci:test:docs-site
+      - name: Verify generated artifacts
+        run: task generated:check
+
+  quality-validation:
+    name: Cross-language quality (PR)
+    needs: [prepare]
+    if: needs.prepare.outputs.quality_validation == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+      - name: Prepare generated and embedded assets
+        run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare
+      - name: Run cross-language quality validation
+        run: task ci:lane:quality
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [performance-baseline-review, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]
+    needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation]
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
-      - name: Require performance governance review
+      - name: Require successful planning
         env:
-          PERFORMANCE_REVIEW_RESULT: ${{ needs.performance-baseline-review.result }}
-        run: test "$PERFORMANCE_REVIEW_RESULT" = success
-      - name: Require GitHub-hosted validation
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+        run: test "$PREPARE_RESULT" = success
+      - name: Check out the gate contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Verify independent review of changed performance governance
         env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REVISION: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # Use the base branch's guard once installed. A candidate cannot
+          # authorize its baseline by changing the checker in the same PR.
+          guard=scripts/performance_baseline_review.mjs
+          base_revision="$BASE_REVISION"
+          if [[ -z "$base_revision" ]]; then
+            # workflow_dispatch has no pull_request payload. Resolve exactly
+            # one open PR for this head before trusting its main base.
+            base_revision="$(gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls?per_page=100" |
+              jq -r --arg sha "$GITHUB_SHA" '
+                [.[][] | select(.state == "open" and .base.ref == "main" and .head.sha == $sha) | .base.sha] |
+                if length == 1 then .[0] else error("manual CI requires exactly one open PR to main at this commit") end
+              ')"
+          fi
+          if [[ ! "$base_revision" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "performance review base revision is not a full commit SHA" >&2
+            exit 1
+          fi
+          if git cat-file -e "$base_revision:$guard" 2>/dev/null; then
+            git show "$base_revision:$guard" > "$RUNNER_TEMP/performance-baseline-review.mjs"
+            guard="$RUNNER_TEMP/performance-baseline-review.mjs"
+          else
+            # First installation has no trusted base guard; the candidate
+            # guard is the explicit bootstrap fallback until the next PR.
+            echo "performance review guard is absent from the trusted base; using candidate bootstrap guard" >&2
+          fi
+          node "$guard"
+      - name: Set up gate Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Read the exact plan artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-plan
+      - name: Require every planned validation result
+        env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
           APIGEN_RESULT: ${{ needs.apigen-validation.result }}
           GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}
           GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}
@@ -324,36 +428,23 @@ jobs:
           POSTGRES_ISOLATION_RESULT: ${{ needs.postgres-isolation-validation.result }}
           SPATIAL_BENCHMARK_RESULT: ${{ needs.spatial-tile-benchmarks.result }}
           DBT_WAREHOUSE_RESULT: ${{ needs.dbt-warehouse-boundary-validation.result }}
+          DOCS_RESULT: ${{ needs.docs-validation.result }}
+          QUALITY_RESULT: ${{ needs.quality-validation.result }}
+          FRONTEND_MATRIX: ${{ needs.prepare.outputs.frontend_matrix }}
         run: |
-          if [[ "${APIGEN_RESULT}" = skipped && "${GO_PACKAGES_RESULT}" = skipped && "${GO_APPLICATION_RESULT}" = skipped && "${FRONTEND_RESULT}" = skipped && "${POSTGRES_ISOLATION_RESULT}" = skipped && "${SPATIAL_BENCHMARK_RESULT}" = skipped && "${DBT_WAREHOUSE_RESULT}" = skipped ]]; then
-            printf '%s\n' 'Validation is deferred to the top of this stack.' >> "${GITHUB_STEP_SUMMARY}"
-            exit 0
-          fi
-          test "${APIGEN_RESULT}" = success || {
-            printf 'APIGen validation: %s\n' "${APIGEN_RESULT}" >&2
-            exit 1
-          }
-          test "${GO_PACKAGES_RESULT}" = success || {
-            printf 'Go package validation: %s\n' "${GO_PACKAGES_RESULT}" >&2
-            exit 1
-          }
-          test "${GO_APPLICATION_RESULT}" = success || {
-            printf 'Go application validation: %s\n' "${GO_APPLICATION_RESULT}" >&2
-            exit 1
-          }
-          test "${FRONTEND_RESULT}" = success || {
-            printf 'Frontend validation: %s\n' "${FRONTEND_RESULT}" >&2
-            exit 1
-          }
-          test "${POSTGRES_ISOLATION_RESULT}" = success || {
-            printf 'PostgreSQL topology isolation: %s\n' "${POSTGRES_ISOLATION_RESULT}" >&2
-            exit 1
-          }
-          test "${SPATIAL_BENCHMARK_RESULT}" = success || {
-            printf 'Spatial tile benchmarks: %s\n' "${SPATIAL_BENCHMARK_RESULT}" >&2
-            exit 1
-          }
-          test "${DBT_WAREHOUSE_RESULT}" = success || {
-            printf 'dbt warehouse-boundary validation: %s\n' "${DBT_WAREHOUSE_RESULT}" >&2
-            exit 1
-          }
+          jq -n '{
+            "prepare": env.PREPARE_RESULT,
+            "apigen-validation": env.APIGEN_RESULT,
+            "go-packages-validation": env.GO_PACKAGES_RESULT,
+            "go-application-validation": env.GO_APPLICATION_RESULT,
+            "frontend-validation": env.FRONTEND_RESULT,
+            "postgres-isolation-validation": env.POSTGRES_ISOLATION_RESULT,
+            "spatial-tile-benchmarks": env.SPATIAL_BENCHMARK_RESULT,
+            "dbt-warehouse-boundary-validation": env.DBT_WAREHOUSE_RESULT,
+            "docs-validation": env.DOCS_RESULT,
+            "quality-validation": env.QUALITY_RESULT
+          }' > ci-results.json
+          go run ./internal/app/tools/ciplan gate --plan ci-plan.json --results ci-results.json \
+            --expected-head "$GITHUB_SHA" --expected-run-id "$GITHUB_RUN_ID" \
+            --expected-attempt "$GITHUB_RUN_ATTEMPT" --expected-deferred="$DEFERRED" \
+            --frontend-matrix "$FRONTEND_MATRIX" --github-summary "$GITHUB_STEP_SUMMARY"

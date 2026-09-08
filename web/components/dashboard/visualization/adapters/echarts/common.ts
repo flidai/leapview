@@ -171,9 +171,33 @@ export function axis(
     axisLine: { lineStyle: { color: context.colors.grid } },
     axisTick: { lineStyle: { color: context.colors.grid } },
     splitLine: { lineStyle: { color: context.colors.grid } },
-    axisLabel: { color: context.colors.muted, formatter: (value: unknown) => type === 'value' ? formatDisplayField(envelope, ref, value, context, displayUnit) : formatField(envelope, ref, value, context) },
+    axisLabel: {
+      color: context.colors.muted,
+      formatter: (value: unknown) => type === 'value'
+        ? formatDisplayField(envelope, ref, value, context, displayUnit)
+        : type === 'time'
+          ? formatTimeAxisField(envelope, ref, value, context)
+          : formatField(envelope, ref, value, context),
+    },
     nameTextStyle: { color: context.colors.muted },
   }
+}
+
+function formatTimeAxisField(envelope: VisualizationEnvelope, ref: VisualizationFieldRef, value: unknown, context: RendererContext): string {
+  if (typeof value === 'string') return formatField(envelope, ref, value, context)
+  const date = new Date(value as number)
+  if (!Number.isFinite(date.getTime())) return formatField(envelope, ref, value, context)
+  const definition = field(envelope, ref)
+  if (definition?.format?.kind === 'temporal') {
+    const canonical = definition.dataType === 'date' ? date.toISOString().slice(0, 10) : date.toISOString()
+    return formatField(envelope, ref, canonical, context)
+  }
+  return new Intl.DateTimeFormat(context.locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }).format(date)
 }
 
 export function legend(position: string, context: RendererContext, scroll = false): EChartsTranslation | undefined {

@@ -1,0 +1,11 @@
+{
+  "pr": {
+    "neutral_field": "warehouse",
+    "wire_field": "dbt"
+  },
+  "lane": {
+    "neutral_id": "warehouse-validation",
+    "workflow_id": "dbt-warehouse-boundary-validation",
+    "display": "dbt physical contract"
+  }
+}

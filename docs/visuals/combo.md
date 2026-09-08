@@ -47,7 +47,8 @@ visuals:
 ## Per-series renderers
 
 Use typed `presentation.series` entries to render review score as a line and
-delivery days as columns while retaining one shared status axis.
+delivery days as columns while retaining one shared status category axis and
+independent value axes.
 
 {{< visual id="review_delivery_combo" >}}
 
@@ -64,7 +65,13 @@ visuals:
         axis: primary
       - field: delivery_days
         mark: column
-        axis: primary
+        axis: secondary
+      labels:
+        density: hidden
+        priority: []
+        maxCharacters: 24
+        minimumSpacing: 0
+        tooltipFallback: true
     query:
       type: aggregate
       dimensions:
@@ -98,6 +105,12 @@ visuals:
       - field: order_count
         mark: line
         axis: secondary
+      labels:
+        density: hidden
+        priority: []
+        maxCharacters: 24
+        minimumSpacing: 0
+        tooltipFallback: true
     query:
       type: aggregate
       dimensions:

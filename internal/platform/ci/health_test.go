@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 )
@@ -12,33 +13,33 @@ func TestAnalyzeHealth(t *testing.T) {
 	selective := Jobs{Docs: true, SiteImage: true}
 	runs := []HealthRun{
 		{
-			Event: "pull_request", Attempt: 2, DurationSeconds: 4, QueueSeconds: 2, Conclusion: "success", Deferred: true,
+			Workflow: "ci.yml", Event: "pull_request", Attempt: 2, DurationSeconds: 4, QueueSeconds: 2, Conclusion: "success", Deferred: true,
 		},
 		{
-			Event: "push", DurationSeconds: 600, QueueSeconds: 20, Conclusion: "success",
-			Plan:    Plan{Nominal: full, Effective: full},
-			Results: successfulResults(full),
+			Workflow: "merge-validation.yml", Event: "merge_group", DurationSeconds: 600, QueueSeconds: 20, Conclusion: "success",
+			Plan:    Plan{Version: PlanVersion, Nominal: full, Effective: full},
+			Results: healthSuccessfulResults(full),
 		},
 		{
-			Event: "push", DurationSeconds: 700, QueueSeconds: 30, Conclusion: "success",
-			Plan:    Plan{Nominal: full, Effective: full},
-			Results: successfulResults(full),
+			Workflow: "merge-validation.yml", Event: "merge_group", DurationSeconds: 700, QueueSeconds: 30, Conclusion: "success",
+			Plan:    Plan{Version: PlanVersion, Nominal: full, Effective: full},
+			Results: healthSuccessfulResults(full),
 		},
 		{
-			Event: "push", DurationSeconds: 800, QueueSeconds: 140, Conclusion: "failure",
-			Plan:    Plan{Nominal: full, Effective: full},
-			Results: successfulResults(full),
+			Workflow: "merge-validation.yml", Event: "merge_group", DurationSeconds: 800, QueueSeconds: 140, Conclusion: "failure",
+			Plan:    Plan{Version: PlanVersion, Nominal: full, Effective: full},
+			Results: healthSuccessfulResults(full),
 		},
 		{
-			Event: "pull_request", DurationSeconds: 240, QueueSeconds: 10, Conclusion: "success",
-			Plan:    Plan{Nominal: selective, Effective: selective},
-			Results: successfulResults(selective),
+			Workflow: "ci.yml", Event: "pull_request", DurationSeconds: 240, QueueSeconds: 10, Conclusion: "success",
+			Plan:    Plan{Version: PlanVersion, Nominal: selective, Effective: selective},
+			Results: healthSuccessfulResults(selective),
 		},
 		{
-			Event: "pull_request", DurationSeconds: 300, QueueSeconds: 15, Conclusion: "success", Attempt: 2,
-			Plan: Plan{Nominal: selective, Effective: full, Audit: true},
+			Workflow: "ci.yml", Event: "pull_request", DurationSeconds: 300, QueueSeconds: 15, Conclusion: "success", Attempt: 2,
+			Plan: Plan{Version: PlanVersion, Nominal: selective, Effective: full, Audit: true},
 			Results: func() map[string]string {
-				results := successfulResults(full)
+				results := healthSuccessfulResults(full)
 				results["production-image"] = "failure"
 				return results
 			}(),
@@ -83,14 +84,118 @@ func TestAnalyzeHealthHealthyReportHasNoAlerts(t *testing.T) {
 
 	jobs := Jobs{Docs: true}
 	got := AnalyzeHealth([]HealthRun{{
-		Event:           "pull_request",
+		Workflow: "ci.yml", Event: "pull_request",
 		DurationSeconds: 120,
 		QueueSeconds:    5,
 		Conclusion:      "success",
-		Plan:            Plan{Nominal: jobs, Effective: jobs},
-		Results:         successfulResults(jobs),
+		Plan:            Plan{Version: PlanVersion, Nominal: jobs, Effective: jobs},
+		Results:         healthSuccessfulResults(jobs),
 	}})
 	if len(got.Alerts) != 0 {
 		t.Fatalf("alerts = %v, want none", got.Alerts)
+	}
+}
+
+func TestHealthMissingPlanDoesNotInventSelection(t *testing.T) {
+	r := AnalyzeHealth([]HealthRun{{Workflow: "ci.yml", Event: "pull_request", Conclusion: "failure", DurationSeconds: 800, QueueSeconds: -1, Results: map[string]string{"go-packages-validation": "failure"}}})
+	if len(r.Selection) != 0 || r.UnknownSelection != 1 || r.Unknown.Count != 1 || r.Failures != 1 {
+		t.Fatalf("fabricated or lost evidence: %+v", r)
+	}
+	if r.Jobs["go-packages-validation"].Executed != 1 {
+		t.Fatal("actual failed execution lost")
+	}
+	if len(r.Alerts) == 0 {
+		t.Fatal("missing evidence must not yield a healthy report")
+	}
+}
+
+func TestHealthPopulationsAndIncompleteEvidence(t *testing.T) {
+	jobs := Jobs{Docs: true}
+	plan := Plan{Version: PlanVersion, Nominal: jobs, Effective: jobs}
+	runs := []HealthRun{
+		{Workflow: "ci.yml", Event: "pull_request", Plan: plan, Conclusion: "success", DurationSeconds: 100, QueueSeconds: 0, Results: healthSuccessfulResults(jobs)},
+		{Workflow: "merge-validation.yml", Event: "merge_group", Conclusion: "failure", DurationSeconds: 800, QueueSeconds: 0},
+		{Workflow: "nightly.yml", Event: "schedule", Conclusion: "success", DurationSeconds: 900, QueueSeconds: 0},
+		{Workflow: "ci.yml", Event: "pull_request", Conclusion: "cancelled", Attempt: 2, DurationSeconds: 50, QueueSeconds: -1},
+		{Conclusion: "", DurationSeconds: -1, QueueSeconds: -1},
+	}
+	r := AnalyzeHealth(runs)
+	if r.Selective.Count != 1 || r.Merge.P95Seconds != 800 || r.Nightly.P95Seconds != 900 || r.Unknown.P95Seconds != 50 {
+		t.Fatalf("populations mixed: %+v", r)
+	}
+	if r.Cancellations != 1 || r.Reruns != 1 || r.UnknownConclusions != 1 || r.MissingDurations != 1 {
+		t.Fatalf("edge cases lost: %+v", r)
+	}
+	if r.Selection["docs"].Percent != 100 || r.PlannedRuns != 1 {
+		t.Fatal("selection denominator must include only supported plans")
+	}
+}
+
+func TestUnsupportedPlanRemainsUnknown(t *testing.T) {
+	r := AnalyzeHealth([]HealthRun{{Workflow: "ci.yml", Event: "pull_request", Plan: Plan{Version: 99, Effective: FullJobs()}, DurationSeconds: 20, QueueSeconds: -1}})
+	if len(r.Selection) != 0 || r.UnknownSelection != 1 || r.Selective.Count != 0 {
+		t.Fatalf("unsupported plan trusted: %+v", r)
+	}
+}
+
+func healthSuccessfulResults(jobs Jobs) map[string]string {
+	results := map[string]string{}
+	for _, job := range expectedPlanJobs(Plan{Effective: jobs}) {
+		results[job] = "success"
+	}
+	return results
+}
+
+func TestHistoricalHealthJSONRemainsReadableWithoutTrustingMissingMetadata(t *testing.T) {
+	var run HealthRun
+	if err := json.Unmarshal([]byte(`{"event":"pull_request","conclusion":"success","duration_seconds":123,"plan":{"version":1,"effective":{"docs":true},"nominal":{"docs":true}},"results":{"docs":"success"}}`), &run); err != nil {
+		t.Fatal(err)
+	}
+	report := AnalyzeHealth([]HealthRun{run})
+	if report.Unknown.Count != 1 || report.Selective.Count != 0 || report.Runs[0].SelectionConfidence == "verified" {
+		t.Fatalf("historical metadata inferred: %+v", report)
+	}
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded HealthReport
+	if err := json.Unmarshal(data, &decoded); err != nil || decoded.Version != 2 || decoded.Unknown.Count != 1 {
+		t.Fatalf("report roundtrip failed: %s, %v", data, err)
+	}
+}
+
+func TestHistoricalV2HealthProjectionRemainsReadOnly(t *testing.T) {
+	plan := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "M", Paths: []string{"README.md"}}})
+	plan.Version = HistoricalPRPlanVersion
+	plan.PR.Nominal.Quality = false
+	plan.PR.Effective.Quality = false
+	run := HealthRun{
+		Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", DurationSeconds: 10, QueueSeconds: 1,
+		Plan: plan,
+		Results: map[string]string{
+			"prepare": "success", "docs-validation": "success", "frontend-validation/site": "success",
+		},
+	}
+	report := AnalyzeHealth([]HealthRun{run})
+	if report.Selective.Count != 1 || report.Runs[0].SelectionConfidence != "verified" {
+		t.Fatalf("historical v2 plan was not trusted read-only: %+v", report.Runs[0])
+	}
+	if _, present := report.Selection["quality-validation"]; present {
+		t.Fatalf("historical v2 report fabricated quality selection: %+v", report)
+	}
+
+	plan.PR.Effective.Quality = true
+	report = AnalyzeHealth([]HealthRun{{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", Plan: plan, Results: run.Results}})
+	if report.Selective.Count != 0 || report.UnknownSelection != 1 {
+		t.Fatalf("historical v2 quality tamper was trusted: %+v", report)
+	}
+}
+
+func TestMatrixSkipIsNotProofOfCompleteSelection(t *testing.T) {
+	jobs := Jobs{Frontend: []string{"core", "site"}}
+	report := AnalyzeHealth([]HealthRun{{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", Plan: Plan{Version: PlanVersion, Nominal: jobs, Effective: jobs}, Results: map[string]string{"frontend-tests/core": "success", "frontend-tests/site": "skipped"}}})
+	if report.Runs[0].SelectionConfidence != "incomplete" || report.Jobs["frontend-tests/site"].Skipped != 1 || report.Jobs["frontend-tests/site"].Executed != 0 {
+		t.Fatalf("skipped shard accepted: %+v", report)
 	}
 }
