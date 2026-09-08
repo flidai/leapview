@@ -84,4 +84,9 @@ before feature-branch integration.
 
 Focused adapter and dashboard-handoff tests passed three repetitions with
 the race detector after these corrections. The explicit quality budget also
-passed; full CI and the replacement remote scan are separate gates.
+passed. The patch's full `task ci` attempt passed the Go lane and other
+frontend suites but failed when a site test timed out and its browser closed.
+An unchanged isolated rerun of `bun run test:site:prepared` passed all 51
+tests (1,217 assertions). This is recovered lane evidence, not a claim that
+the full CI invocation exited successfully. The replacement remote scan
+and exact-head CI remain required before integration.
