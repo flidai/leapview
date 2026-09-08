@@ -403,8 +403,11 @@ func appGoShards() []GoShard {
 }
 
 func unionStrings(current, additions []string) []string {
-	seen := make(map[string]struct{}, len(current)+len(additions))
-	for _, value := range append(append([]string(nil), current...), additions...) {
+	seen := make(map[string]struct{})
+	for _, value := range current {
+		seen[value] = struct{}{}
+	}
+	for _, value := range additions {
 		seen[value] = struct{}{}
 	}
 	values := make([]string, 0, len(seen))
