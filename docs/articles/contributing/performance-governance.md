@@ -60,6 +60,11 @@ budgets include shared JavaScript dependencies; the aggregate counts each file
 once, including the external Datastar runtime and MapLibre worker. Raw and gzip
 bytes are measured independently. CSS, images and fonts are outside this
 JavaScript policy.
+Production app output uses whitespace-only minification; identifier renaming
+and syntax minification are disabled. The options module participates in the
+source digest and independent review requirement. License-retention and emitted
+code tests accompany the byte checks. This is an output optimization, not a
+budget increase or an automatic baseline update.
 The independent static-directory audit also accounts for the shipped theme and
 login-loader scripts. Docker uses the same pinned Bun release as CI, checks the
 budget in its web build stage, and retains the evidence in
