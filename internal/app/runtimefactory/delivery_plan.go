@@ -224,6 +224,9 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 	if input.Candidate.ID == "" || input.Candidate.TargetID == "" || input.ProjectID.Validate() != nil {
 		return deployment.DeliveryPlanRequest{}, fmt.Errorf("candidate plan scope is incomplete")
 	}
+	if err := validateSemanticActivationReadiness(artifacts); err != nil {
+		return deployment.DeliveryPlanRequest{}, err
+	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	} else {

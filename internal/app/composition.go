@@ -1988,6 +1988,17 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		durableApproval := routes.deploymentModule.SealedApprovalVerifier()
 		sealedControlCoordinator.ApprovalVerifier = func(approvalCtx context.Context, binding sealedcontrol.SealBinding, publication deployment.PublicationIntent) error {
 			slog.Default().InfoContext(approvalCtx, "sealed publication approval verification started", "deployment", binding.DeploymentID, "bootstrap", binding.Bootstrap)
+			plan, planErr := sealedDelivery.PlanByID(approvalCtx, publication.PlanID)
+			if planErr != nil {
+				return planErr
+			}
+			planNow := time.Now().UTC()
+			if sealedControlCoordinator.Now != nil {
+				planNow = sealedControlCoordinator.Now().UTC()
+			}
+			if err := validateSealedPublicationPlanBinding(plan, binding, publication, planNow); err != nil {
+				return err
+			}
 			if binding.Bootstrap {
 				// The activation worker has already revalidated the durable
 				// one-shot bootstrap policy. Recheck the active-generation fence
@@ -2010,10 +2021,6 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				if !active {
 					return nil
 				}
-			}
-			plan, planErr := sealedDelivery.PlanByID(approvalCtx, publication.PlanID)
-			if planErr != nil {
-				return planErr
 			}
 			if !plan.Governance.RequiresApproval {
 				slog.Default().InfoContext(approvalCtx, "sealed publication approval not required", "deployment", binding.DeploymentID)
