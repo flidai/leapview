@@ -56,6 +56,7 @@ class ReportCanvas extends LitElement {
       display: block;
       width: 100%;
       height: 100%;
+      --report-canvas-inverse-scale: 1;
       max-width: 100%;
       min-width: 0;
       min-height: 0;

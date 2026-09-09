@@ -16,7 +16,7 @@ export class MapSpatialSelectionControl {
   private clearControl?: HTMLButtonElement
   private points: ScreenPoint[] = []
   private pointerID?: number
-  private restoreDragPan = false
+  private roamDragPanEnabled: boolean
   private suppressClick = false
 
   constructor(
@@ -25,6 +25,7 @@ export class MapSpatialSelectionControl {
     private readonly dispatch: Dispatch,
     private readonly onStateChange: () => void = () => undefined,
   ) {
+    this.roamDragPanEnabled = map.dragPan.isEnabled()
     this.element = document.createElement('div')
     this.element.dataset.mapSpatialSelectionControl = ''
     this.element.setAttribute('role', 'toolbar')
@@ -115,6 +116,14 @@ export class MapSpatialSelectionControl {
     this.element.style.display = suppressed ? 'none' : 'flex'
   }
 
+  setRoamDragPanEnabled(enabled: boolean): void {
+    this.roamDragPanEnabled = enabled
+    const shouldEnable = this.pointerID === undefined && enabled
+    if (this.map.dragPan.isEnabled() === shouldEnable) return
+    if (shouldEnable) this.map.dragPan.enable()
+    else this.map.dragPan.disable()
+  }
+
   deactivate(): void {
     this.finishPointer()
     this.setActive(undefined)
@@ -181,8 +190,7 @@ export class MapSpatialSelectionControl {
     if (!this.active || !this.envelope || this.pointerID !== undefined || event.button !== 0) return
     this.pointerID = event.pointerId
     this.points = [this.eventPoint(event)]
-    this.restoreDragPan = this.map.dragPan.isEnabled()
-    if (this.restoreDragPan) this.map.dragPan.disable()
+    this.map.dragPan.disable()
     this.map.getCanvas().setPointerCapture?.(event.pointerId)
     event.preventDefault(); event.stopPropagation()
     this.renderDraft()
@@ -228,11 +236,11 @@ export class MapSpatialSelectionControl {
   }
 
   private finishPointer(): void {
-    if (this.pointerID !== undefined) this.map.getCanvas().releasePointerCapture?.(this.pointerID)
+    const pointerID = this.pointerID
     this.pointerID = undefined
     this.points = []
-    if (this.restoreDragPan) this.map.dragPan.enable()
-    this.restoreDragPan = false
+    if (pointerID !== undefined) this.map.getCanvas().releasePointerCapture?.(pointerID)
+    this.setRoamDragPanEnabled(this.roamDragPanEnabled)
   }
 
   private eventPoint(event: PointerEvent): ScreenPoint {

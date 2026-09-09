@@ -2,8 +2,11 @@ package migrations_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +15,9 @@ import (
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/flidai/leapview/internal/project/contractprojection"
+	"github.com/flidai/leapview/internal/project/contractpublication"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/recoveryset"
 	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -68,6 +74,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
 		t.Fatalf("reapply baseline: %v", err)
 	}
+	assertContractPublicationMigrationChecks(t, ctx, db)
 	// The owner package copy is idempotent and must remain executable against
 	// the freshly migrated database; it is not a second migration authority.
 	if _, err := db.Exec(ctx, recoverypostgres.SuccessorSchemaSQL()); err != nil {
@@ -269,6 +276,29 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	}
 	if canUpdateAudit || canUpdateGoose || !canReadGoose || canUpdateEvent || canDeleteEvent || canUpdateLineage || canInsertLineageRevision || !canPublishLineage || canUpdateServingBundle || backupInsert || !backupSelect || !backupCursor || !backupProject || readonlyCursor || !readonlyJobs || readonlyJobView || readonlySession || readonlyCredential || readonlyToken || readonlyServiceSecret || readonlyDesktopCode || readonlyDeviceAuth || readonlyAuthoringCredential || !physicalRuntimeSelect || physicalRuntimeInsert || physicalRuntimeUpdate || physicalRuntimeDelete || !physicalReadonlySelect || physicalReadonlyInsert || !physicalBackupSelect || physicalBackupInsert || !physicalMaintenanceSelect || !physicalMaintenanceLeaseWrite || physicalMaintenanceAdmissionWrite || !dashboardRuntimeSessionInsert || dashboardRuntimeSessionDelete || !dashboardRuntimeUsageInsert || dashboardRuntimeUsageDelete || !dashboardRuntimeAppearanceInsert || dashboardRuntimeAppearanceDelete || !dashboardMaintenanceSessionDelete || !dashboardMaintenanceUsageDelete || dashboardMaintenanceAppearanceInsert || dashboardReadonlySessionInsert || dashboardReadonlyUsageInsert || dashboardReadonlyAppearanceUpdate {
 		t.Fatalf("least-privilege grants leaked: audit update=%t Goose update/read=%t/%t event update=%t event delete=%t lineage update/insert-revision/publish=%t/%t/%t serving bundle update=%t backup insert=%t backup select=%t backup cursor=%t backup project=%t readonly cursor=%t readonly jobs=%t readonly job view=%t readonly credentials=%t/%t/%t/%t/%t/%t/%t physical runtime select/write=%t/%t/%t/%t readonly select/insert=%t/%t backup select/insert=%t/%t maintenance select/lease-write/admission-write=%t/%t/%t dashboard runtime session insert/delete=%t/%t usage insert/delete=%t/%t appearance insert/delete=%t/%t maintenance session/usage delete=%t/%t appearance insert=%t readonly session/usage insert=%t/%t appearance update=%t", canUpdateAudit, canUpdateGoose, canReadGoose, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateServingBundle, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView, readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential, physicalRuntimeSelect, physicalRuntimeInsert, physicalRuntimeUpdate, physicalRuntimeDelete, physicalReadonlySelect, physicalReadonlyInsert, physicalBackupSelect, physicalBackupInsert, physicalMaintenanceSelect, physicalMaintenanceLeaseWrite, physicalMaintenanceAdmissionWrite, dashboardRuntimeSessionInsert, dashboardRuntimeSessionDelete, dashboardRuntimeUsageInsert, dashboardRuntimeUsageDelete, dashboardRuntimeAppearanceInsert, dashboardRuntimeAppearanceDelete, dashboardMaintenanceSessionDelete, dashboardMaintenanceUsageDelete, dashboardMaintenanceAppearanceInsert, dashboardReadonlySessionInsert, dashboardReadonlyUsageInsert, dashboardReadonlyAppearanceUpdate)
+	}
+	var runtimePublicationSelect, runtimePublicationInsert, runtimePublicationUpdate, runtimePublicationDelete, runtimePublicationTruncate bool
+	var readonlyPublicationSelect, readonlyPublicationInsert, readonlyPublicationTruncate bool
+	var backupPublicationSelect, backupPublicationInsert, backupPublicationUpdate, backupPublicationDelete, backupPublicationTruncate bool
+	if err := db.QueryRow(ctx, `
+		SELECT has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'SELECT'),
+		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'INSERT'),
+		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'UPDATE'),
+		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'DELETE'),
+		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'TRUNCATE'),
+		       has_table_privilege('leapview_control_readonly', 'project.contract_publication', 'SELECT'),
+		       has_table_privilege('leapview_control_readonly', 'project.contract_publication', 'INSERT'),
+		       has_table_privilege('leapview_control_readonly', 'project.contract_publication', 'TRUNCATE'),
+		       has_table_privilege('leapview_control_backup', 'project.contract_publication', 'SELECT'),
+		       has_table_privilege('leapview_control_backup', 'project.contract_publication', 'INSERT'),
+		       has_table_privilege('leapview_control_backup', 'project.contract_publication', 'UPDATE'),
+		       has_table_privilege('leapview_control_backup', 'project.contract_publication', 'DELETE'),
+		       has_table_privilege('leapview_control_backup', 'project.contract_publication', 'TRUNCATE')`).
+		Scan(&runtimePublicationSelect, &runtimePublicationInsert, &runtimePublicationUpdate, &runtimePublicationDelete, &runtimePublicationTruncate, &readonlyPublicationSelect, &readonlyPublicationInsert, &readonlyPublicationTruncate, &backupPublicationSelect, &backupPublicationInsert, &backupPublicationUpdate, &backupPublicationDelete, &backupPublicationTruncate); err != nil {
+		t.Fatal(err)
+	}
+	if !runtimePublicationSelect || !runtimePublicationInsert || runtimePublicationUpdate || runtimePublicationDelete || runtimePublicationTruncate || !readonlyPublicationSelect || readonlyPublicationInsert || readonlyPublicationTruncate || !backupPublicationSelect || backupPublicationInsert || backupPublicationUpdate || backupPublicationDelete || backupPublicationTruncate {
+		t.Fatalf("contract publication replay grants invalid: runtime select/insert/update/delete/truncate=%t/%t/%t/%t/%t readonly select/insert/truncate=%t/%t/%t backup select/insert/update/delete/truncate=%t/%t/%t/%t/%t", runtimePublicationSelect, runtimePublicationInsert, runtimePublicationUpdate, runtimePublicationDelete, runtimePublicationTruncate, readonlyPublicationSelect, readonlyPublicationInsert, readonlyPublicationTruncate, backupPublicationSelect, backupPublicationInsert, backupPublicationUpdate, backupPublicationDelete, backupPublicationTruncate)
 	}
 	var runtimePublicUsage, readonlyPublicUsage, backupPublicUsage bool
 	if err := db.QueryRow(ctx, `
@@ -643,6 +673,120 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		VALUES ('00000000-0000-0000-0000-000000000001', 'user', 'active', $1::jsonb)`, `{"oversized":"`+strings.Repeat("x", 20000)+`"}`)
 	if err == nil {
 		t.Fatal("oversized principal attributes unexpectedly accepted")
+	}
+}
+
+func assertContractPublicationMigrationChecks(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
+	t.Helper()
+	fields := `"id":{"datatype":"Integer"}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{` + fields + `}}}}`
+	var source projectcontracts.Source
+	if err := json.Unmarshal([]byte(raw), &source); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := contractprojection.ProjectSource(source, contractprojection.Contract{Version: "1.0.0", Compatibility: "backward"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := contractpublication.Prepare(contractpublication.ContractPublicationInput{
+		InstanceID: "instance:migration",
+		Projection: projection,
+		Validation: contractpublication.ValidationEvidence{
+			Version: contractpublication.ValidationEvidenceVersion,
+			Checks:  []contractpublication.ValidationCheck{{Name: "projection", Outcome: contractpublication.ValidationPassed, Reference: "go test"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name             string
+		mutateCanonical  func(map[string]any)
+		mutateValidation func(map[string]any)
+		valid            bool
+	}{
+		{name: "valid", valid: true},
+		{name: "missing apiVersion", mutateCanonical: func(document map[string]any) { delete(document, "apiVersion") }},
+		{name: "null apiVersion", mutateCanonical: func(document map[string]any) { document["apiVersion"] = nil }},
+		{name: "missing profile", mutateCanonical: func(document map[string]any) { delete(document, "profile") }},
+		{name: "null profile", mutateCanonical: func(document map[string]any) { document["profile"] = nil }},
+		{name: "missing metadata id", mutateCanonical: func(document map[string]any) { delete(document["metadata"].(map[string]any), "id") }},
+		{name: "null metadata id", mutateCanonical: func(document map[string]any) { document["metadata"].(map[string]any)["id"] = nil }},
+		{name: "missing contract version", mutateCanonical: func(document map[string]any) {
+			delete(document["metadata"].(map[string]any)["contract"].(map[string]any), "version")
+		}},
+		{name: "null contract version", mutateCanonical: func(document map[string]any) {
+			document["metadata"].(map[string]any)["contract"].(map[string]any)["version"] = nil
+		}},
+		{name: "missing validation version", mutateValidation: func(evidence map[string]any) { delete(evidence, "version") }},
+		{name: "null validation version", mutateValidation: func(evidence map[string]any) { evidence["version"] = nil }},
+		{name: "missing validation checks", mutateValidation: func(evidence map[string]any) { delete(evidence, "checks") }},
+		{name: "null validation checks", mutateValidation: func(evidence map[string]any) { evidence["checks"] = nil }},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			canonical := append([]byte(nil), prepared.CanonicalBytes...)
+			digest := prepared.Digest
+			if test.mutateCanonical != nil {
+				var document map[string]any
+				if err := json.Unmarshal(canonical, &document); err != nil {
+					t.Fatal(err)
+				}
+				test.mutateCanonical(document)
+				var err error
+				canonical, err = json.Marshal(document)
+				if err != nil {
+					t.Fatal(err)
+				}
+				hash := sha256.Sum256(canonical)
+				digest = "sha256:" + fmt.Sprintf("%x", hash)
+			}
+			validation, err := json.Marshal(prepared.Validation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.mutateValidation != nil {
+				var evidence map[string]any
+				if err := json.Unmarshal(validation, &evidence); err != nil {
+					t.Fatal(err)
+				}
+				test.mutateValidation(evidence)
+				validation, err = json.Marshal(evidence)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			tx, err := db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			instanceID := fmt.Sprintf("instance:migration-null-check-%d", index)
+			if test.valid {
+				instanceID = prepared.InstanceID
+			}
+			_, err = tx.Exec(ctx, `
+				INSERT INTO project.contract_publication(
+					instance_id, authored_id, resource_kind, version, version_baseline,
+					projection_profile, canonical_bytes, canonical_digest, validation_evidence_json
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+				instanceID, prepared.AuthoredID.String(), string(prepared.ResourceKind), prepared.Version, prepared.VersionBaseline,
+				prepared.ProjectionProfile, canonical, digest, validation)
+			if test.valid {
+				if err != nil {
+					_ = tx.Rollback(ctx)
+					t.Fatal(err)
+				}
+				if err := tx.Commit(ctx); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			_ = tx.Rollback(ctx)
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+				t.Fatalf("invalid migration evidence error = %v, want check_violation (23514)", err)
+			}
+		})
 	}
 }
 

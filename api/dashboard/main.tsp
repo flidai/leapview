@@ -536,6 +536,24 @@ enum DashboardLegendPosition {
   left: "left",
 }
 
+/** One ordered tooltip field projection. Compact string entries remain supported. */
+model DashboardTooltipItem {
+  field: DashboardResultField;
+  label?: string;
+  format?: LeapViewVisualization.VisualizationFormat;
+}
+
+union DashboardTooltip {
+  field: DashboardResultField,
+  item: DashboardTooltipItem,
+}
+
+/** One canonical legend value. Array order is the display order. */
+model DashboardLegendItem {
+  value: string;
+  label?: string;
+}
+
 enum DashboardStackingMode {
   none: "none",
   normal: "normal",
@@ -566,6 +584,13 @@ model DashboardComboSeries {
   field: DashboardResultField;
   mark: DashboardComboSeriesMark;
   axis: DashboardComboSeriesAxis;
+}
+
+/** A stable renderer-neutral policy for one named chart series. */
+model DashboardSeriesIntent {
+  value: string;
+  order?: int32;
+  color?: LeapViewVisualization.VisualizationColorIntent;
 }
 
 /** A renderer-neutral color or icon intent applied by a conditional rule. */
@@ -622,13 +647,19 @@ model DashboardConditionalFormat {
 model DashboardAxisConfiguration {
   id: LeapViewVisualization.VisualizationCartesianAxis;
   title?: string;
+  type?: LeapViewVisualization.VisualizationAxisType;
   scale: LeapViewVisualization.VisualizationAxisScale;
   zero: LeapViewVisualization.VisualizationAxisZeroPolicy;
+  inversion?: LeapViewVisualization.VisualizationAxisInversion;
   minimum?: float64;
   maximum?: float64;
   unit?: string;
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
   tickDensity: LeapViewVisualization.VisualizationAxisTickDensity;
+  ticks?: LeapViewVisualization.VisualizationAxisTickVisibility;
+  grid?: LeapViewVisualization.VisualizationAxisGridVisibility;
+  labelRotation?: LeapViewVisualization.VisualizationAxisLabelRotation;
+  dateUnit?: LeapViewVisualization.VisualizationDateDisplayUnit;
 }
 
 /** A scalar value used by a governed reference line, band, or annotation. */
@@ -687,13 +718,19 @@ model DashboardEventAnnotation {
 model DashboardPresentation {
   type: string;
   conditionalFormatting?: DashboardConditionalFormat[];
-  /** Whether cartesian/value axes are rendered for this visual. */
+  /**
+   * Whether axes are rendered for Cartesian marks and point (scatter)
+   * visuals. Omit this field to use the renderer default; an authored value
+   * on another presentation family is invalid rather than silently ignored.
+   */
   axisVisible?: boolean;
 }
 
 model CartesianDashboardPresentation extends DashboardPresentation {
   type: "cartesian";
   legend?: DashboardLegendPosition;
+  legendTitle?: string;
+  legendItems?: DashboardLegendItem[];
   labels?: DashboardLabelPolicy;
   stacking?: DashboardStackingMode;
   orientation?: DashboardOrientation;
@@ -707,10 +744,17 @@ model CartesianDashboardPresentation extends DashboardPresentation {
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
   /** Explicit per-measure marks and axis assignments for combo visuals. */
   series?: DashboardComboSeries[];
+  /** Stable per-series color and order policy. Category values may be data-dependent for non-combo Cartesian series. */
+  seriesIntent?: DashboardSeriesIntent[];
+  /** Candlestick gain color; omitted values use the active theme success color. */
+  gainColor?: LeapViewVisualization.VisualizationColorIntent;
+  /** Candlestick loss color; omitted values use the active theme danger color. */
+  lossColor?: LeapViewVisualization.VisualizationColorIntent;
   axes?: DashboardAxisConfiguration[];
   referenceLines?: DashboardReferenceLine[];
   referenceBands?: DashboardReferenceBand[];
   eventAnnotations?: DashboardEventAnnotation[];
+  tooltip?: DashboardTooltip[];
 }
 
 /** A governed result-frame binding used by a point/scatter visual. */
@@ -718,7 +762,6 @@ model PointDashboardColorScale {
   kind: LeapViewVisualization.VisualizationPointColorScaleKind;
   minimum?: float64;
   maximum?: float64;
-  scheme?: string;
 }
 
 /** Pixel and optional domain bounds for a governed point size binding. */
@@ -741,15 +784,16 @@ model PointDashboardOverplot {
 model PointDashboardPresentation extends DashboardPresentation {
   type: "point";
   legend?: DashboardLegendPosition;
+  legendTitle?: string;
+  legendItems?: DashboardLegendItem[];
   labels?: DashboardLabelPolicy;
   identity: DashboardResultField[];
   x: DashboardResultField;
   y: DashboardResultField;
   size?: DashboardResultField;
   color?: DashboardResultField;
-  series?: DashboardResultField;
   label?: DashboardResultField;
-  tooltip?: DashboardResultField[];
+  tooltip?: DashboardTooltip[];
   colorScale?: PointDashboardColorScale;
   sizeScale?: PointDashboardSizeScale;
   overplot?: PointDashboardOverplot;
@@ -763,6 +807,8 @@ model PointDashboardPresentation extends DashboardPresentation {
 model ProportionalDashboardPresentation extends DashboardPresentation {
   type: "proportional";
   legend?: DashboardLegendPosition;
+  legendTitle?: string;
+  legendItems?: DashboardLegendItem[];
   labels?: DashboardLabelPolicy;
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
   orientation?: DashboardOrientation;
@@ -773,6 +819,7 @@ model ProportionalDashboardPresentation extends DashboardPresentation {
   outerRadius?: float64;
   align?: DashboardProportionalAlignment;
   sort?: LeapViewVisualization.VisualizationSortDirection;
+  tooltip?: DashboardTooltip[];
 }
 
 enum DashboardProportionalAlignment {
@@ -784,6 +831,8 @@ enum DashboardProportionalAlignment {
 model HierarchyDashboardPresentation extends DashboardPresentation {
   type: "hierarchy";
   legend?: DashboardLegendPosition;
+  legendTitle?: string;
+  legendItems?: DashboardLegendItem[];
   labels?: DashboardLabelPolicy;
   orientation?: DashboardOrientation;
   initialDepth?: int32;
@@ -798,6 +847,8 @@ model HierarchyDashboardPresentation extends DashboardPresentation {
 model PolarDashboardPresentation extends DashboardPresentation {
   type: "polar";
   legend?: DashboardLegendPosition;
+  legendTitle?: string;
+  legendItems?: DashboardLegendItem[];
   labels?: DashboardLabelPolicy;
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
   minimum?: float64;
@@ -811,7 +862,6 @@ model PolarDashboardPresentation extends DashboardPresentation {
 
 model GeographicDashboardPresentation extends DashboardPresentation {
   type: "geographic";
-  labels?: DashboardLabelPolicy;
   theme?: LeapViewVisualization.VisualizationMapTheme;
   basemap?: string;
   labelDensity?: LeapViewVisualization.VisualizationMapLabelDensity;
@@ -875,11 +925,18 @@ model DashboardMapHeatStyle {
 
 model DashboardMapLineStyle {
   width?: float64;
-  curvature?: float64;
 }
 
 model DashboardMapCluster {
   enabled?: boolean;
+  /**
+   * Approximate CSS-pixel clustering target for tiled maps. The server uses a
+   * globally aligned grid with max(1, floor(256 / radius)) cells per tile;
+   * radii 129–512 therefore share one cell per tile. This does not promise
+   * pixel-identical cluster membership between inline and tiled data.
+   */
+  @minValue(1)
+  @maxValue(512)
   radius?: int32;
   maximumZoom?: int32;
   minimumPoints?: int32;
@@ -888,8 +945,7 @@ model DashboardMapCluster {
 
 model DashboardGeographicLayerOptions {
   id: DashboardObjectIdentifier;
-  label?: DashboardResultField;
-  tooltip?: DashboardResultField[];
+  tooltip?: DashboardTooltip[];
   position?: LeapViewVisualization.VisualizationMapLayerPosition;
   minimumZoom?: float64;
   maximumZoom?: float64;
@@ -906,6 +962,7 @@ model DashboardPointGeographicLayer extends DashboardGeographicLayer {
   longitude: DashboardResultField;
   value?: DashboardResultField;
   category?: DashboardResultField;
+  label?: DashboardResultField;
   size?: DashboardMapSizeScale;
   color?: DashboardMapColorScale;
   stroke?: DashboardMapStroke;
@@ -919,6 +976,7 @@ model DashboardChoroplethGeographicLayer extends DashboardGeographicLayer {
   join: DashboardResultField;
   value?: DashboardResultField;
   category?: DashboardResultField;
+  label?: DashboardResultField;
   color?: DashboardMapColorScale;
   stroke?: DashboardMapStroke;
   opacity?: float64;
@@ -980,7 +1038,6 @@ model KPIDashboardPresentation extends DashboardPresentation {
   favorableDirection?: LeapViewVisualization.VisualizationKPIDirection;
   missingComparison?: LeapViewVisualization.VisualizationKPIMissingComparison;
   ranges?: LeapViewVisualization.VisualizationKPIQualitativeRange[];
-  thresholds?: LeapViewVisualization.VisualizationThreshold[];
   comparison?: DashboardKPIValueBinding;
   goal?: DashboardKPIValueBinding;
   trend?: DashboardKPITrendBinding;

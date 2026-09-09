@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
 // VisualCatalogEntry is the builder-facing projection of the same closed
@@ -169,7 +170,7 @@ func formatSpec(key, label, section, control string, path []string, defaultValue
 
 func visualFormatSpecs(presentationType string) []visualFormatSpec {
 	axis := formatSpec("axisVisible", "Show axes", "Display", "toggle", []string{"axisVisible"}, "true", true)
-	legend := formatSpec("legend", "Legend", "Display", "select", []string{"legend"}, "right", true, "none", "top", "right", "bottom", "left")
+	legend := formatSpec("legend", "Legend", "Display", "select", []string{"legend"}, "bottom", true, "none", "top", "right", "bottom", "left")
 	labels := formatSpec("labels.density", "Data labels", "Display", "select", []string{"labels", "density"}, "automatic", true, "hidden", "automatic", "dense", "always")
 	labelLength := formatSpec("labels.maxCharacters", "Maximum label characters", "Labels", "number", []string{"labels", "maxCharacters"}, "24", true)
 	labelSpacing := formatSpec("labels.minimumSpacing", "Minimum label spacing", "Labels", "number", []string{"labels", "minimumSpacing"}, "6", true)
@@ -181,7 +182,7 @@ func visualFormatSpecs(presentationType string) []visualFormatSpec {
 			axis, legend, labels, labelLength, labelSpacing, labelTooltip,
 			formatSpec("stacking", "Stacking", "Chart", "select", []string{"stacking"}, "none", true, "none", "normal", "percent"),
 			formatSpec("orientation", "Orientation", "Chart", "select", []string{"orientation"}, "", true, "horizontal", "vertical"),
-			formatSpec("showSymbols", "Show symbols", "Chart", "toggle", []string{"showSymbols"}, "true", true),
+			formatSpec("showSymbols", "Show symbols", "Chart", "toggle", []string{"showSymbols"}, "false", true),
 			formatSpec("smooth", "Smooth lines", "Chart", "toggle", []string{"smooth"}, "false", true),
 			formatSpec("step", "Stepped lines", "Chart", "toggle", []string{"step"}, "false", true),
 			formatSpec("dataZoom", "Data zoom", "Interaction", "toggle", []string{"dataZoom"}, "false", true),
@@ -205,7 +206,7 @@ func visualFormatSpecs(presentationType string) []visualFormatSpec {
 		}
 	case "hierarchy":
 		return []visualFormatSpec{
-			legend, labels, labelLength, labelSpacing, labelTooltip,
+			labels, labelLength, labelSpacing, labelTooltip,
 			formatSpec("orientation", "Orientation", "Chart", "select", []string{"orientation"}, "", true, "horizontal", "vertical"),
 			formatSpec("initialDepth", "Initial depth", "Hierarchy", "number", []string{"initialDepth"}, "", true),
 			formatSpec("roam", "Pan and zoom", "Interaction", "toggle", []string{"roam"}, "false", true),
@@ -217,7 +218,7 @@ func visualFormatSpecs(presentationType string) []visualFormatSpec {
 		}
 	case "polar":
 		return []visualFormatSpec{
-			axis, legend, labels, labelLength, labelSpacing, labelTooltip, displayUnits,
+			legend, labels, labelLength, labelSpacing, labelTooltip, displayUnits,
 			formatSpec("minimum", "Minimum", "Scale", "number", []string{"minimum"}, "", true),
 			formatSpec("maximum", "Maximum", "Scale", "number", []string{"maximum"}, "", true),
 			formatSpec("target", "Target", "Scale", "number", []string{"target"}, "", true),
@@ -227,16 +228,15 @@ func visualFormatSpecs(presentationType string) []visualFormatSpec {
 		}
 	case "geographic":
 		return []visualFormatSpec{
-			labels, labelLength, labelSpacing, labelTooltip,
 			formatSpec("theme", "Map theme", "Map", "select", []string{"theme"}, "auto", true, "auto", "light", "dark"),
 			formatSpec("basemap", "Basemap", "Map", "text", []string{"basemap"}, "", true),
 			formatSpec("labelDensity", "Basemap labels", "Map", "select", []string{"labelDensity"}, "normal", true, "hidden", "normal", "dense"),
 			formatSpec("roam", "Pan and zoom", "Interaction", "toggle", []string{"roam"}, "true", true),
 			formatSpec("camera.mode", "Camera mode", "Camera", "select", []string{"camera", "mode"}, "fit_data", true, "fit_data", "fixed", "preserve"),
 			formatSpec("camera.zoom", "Zoom", "Camera", "number", []string{"camera", "zoom"}, "", true),
-			formatSpec("camera.padding", "Fit padding", "Camera", "number", []string{"camera", "padding"}, "24", true),
+			formatSpec("camera.padding", "Fit padding", "Camera", "number", []string{"camera", "padding"}, "32", true),
 			formatSpec("camera.minimumZoom", "Minimum zoom", "Camera", "number", []string{"camera", "minimumZoom"}, "0", true),
-			formatSpec("camera.maximumZoom", "Maximum zoom", "Camera", "number", []string{"camera", "maximumZoom"}, "10", true),
+			formatSpec("camera.maximumZoom", "Maximum zoom", "Camera", "number", []string{"camera", "maximumZoom"}, "14", true),
 			formatSpec("controls.zoom", "Zoom controls", "Controls", "toggle", []string{"controls", "zoom"}, "true", true),
 			formatSpec("controls.reset", "Reset control", "Controls", "toggle", []string{"controls", "reset"}, "true", true),
 			formatSpec("controls.compass", "Compass control", "Controls", "toggle", []string{"controls", "compass"}, "true", true),
@@ -262,6 +262,117 @@ func visualFormatSpecs(presentationType string) []visualFormatSpec {
 	}
 }
 
+// applicableVisualFormatSpecs narrows the presentation-family controls to
+// the actual visual mark. The compiler owns final validation; this bounded
+// projection keeps the builder from advertising fields that the compiler
+// intentionally rejects or the renderer does not consume.
+func applicableVisualFormatSpecs(visual document.DashboardVisual, presentationType string) []visualFormatSpec {
+	specs := visualFormatSpecs(presentationType)
+	result := make([]visualFormatSpec, 0, len(specs))
+	for _, spec := range specs {
+		if visualFormatSpecApplicable(visual, presentationType, spec.key) {
+			if spec.key == "camera.mode" {
+				p, ok := visual.Presentation.Value.(*document.GeographicDashboardPresentation)
+				if ok && (p.Camera == nil || p.Camera.Center == nil || p.Camera.Zoom == nil) {
+					// Center remains YAML-owned. Do not offer a camera mode the
+					// builder cannot configure without an authored center/zoom.
+					filtered := make([]VisualFormatChoice, 0, len(spec.choices))
+					for _, choice := range spec.choices {
+						if choice.Value != "fixed" {
+							filtered = append(filtered, choice)
+						}
+					}
+					spec.choices = filtered
+				}
+			}
+			result = append(result, spec)
+		}
+	}
+	return result
+}
+
+func visualFormatSpecApplicable(visual document.DashboardVisual, presentationType, key string) bool {
+	visualType := visual.Type
+	field := key
+	if dot := strings.IndexByte(field, '.'); dot >= 0 {
+		field = field[:dot]
+	}
+	if !document.SupportsPresentationFamily(visualType, presentationType) {
+		return false
+	}
+	switch presentationType {
+	case "cartesian":
+		lineControls := document.SupportsPresentationField(visualType, field)
+		if visualType == document.DashboardVisualTypeCombo && (field == "showSymbols" || field == "smooth" || field == "step" || field == "symbolSize") {
+			lineControls = comboPresentationHasLineControls(visual.Presentation)
+		}
+		switch key {
+		case "axisVisible", "dataZoom":
+			return document.SupportsPresentationField(visualType, field)
+		case "legend":
+			return document.SupportsPresentationField(visualType, field)
+		case "labels.density", "labels.maxCharacters", "labels.minimumSpacing", "labels.tooltipFallback", "labelPosition":
+			return document.SupportsPresentationField(visualType, field)
+		case "stacking":
+			return document.SupportsPresentationField(visualType, field)
+		case "orientation":
+			return document.SupportsPresentationField(visualType, field)
+		case "showSymbols", "smooth", "step", "symbolSize":
+			return lineControls && document.SupportsPresentationField(visualType, field)
+		case "displayUnits":
+			if !document.SupportsPresentationField(visualType, field) {
+				return false
+			}
+			if presentation, ok := visual.Presentation.Value.(*document.CartesianDashboardPresentation); ok && presentation != nil && presentation.Stacking != nil && *presentation.Stacking == document.DashboardStackingModePercent {
+				return false
+			}
+			return true
+		default:
+			return false
+		}
+	case "point":
+		if key == "legend" {
+			if !document.SupportsPresentationField(visualType, field) {
+				return false
+			}
+			presentation, ok := visual.Presentation.Value.(*document.PointDashboardPresentation)
+			return ok && presentation != nil && presentation.Color != nil && presentation.ColorScale != nil && presentation.ColorScale.Kind == visualizationir.VisualizationPointColorScaleKindCategorical
+		}
+		return document.SupportsPresentationField(visualType, field)
+	case "proportional":
+		return document.SupportsPresentationField(visualType, field)
+	case "hierarchy":
+		return document.SupportsPresentationField(visualType, field)
+	case "polar":
+		return document.SupportsPresentationField(visualType, field)
+	case "geographic", "table", "kpi":
+		return true
+	default:
+		return false
+	}
+}
+
+func comboPresentationHasLineControls(presentation document.DashboardPresentation) bool {
+	variant, ok := presentation.Value.(*document.CartesianDashboardPresentation)
+	if !ok || variant == nil || variant.Series == nil {
+		return true
+	}
+	if len(*variant.Series) == 0 {
+		return true
+	}
+	for _, series := range *variant.Series {
+		switch series.Mark {
+		case document.DashboardComboSeriesMarkLine, document.DashboardComboSeriesMarkArea:
+			return true
+		case document.DashboardComboSeriesMarkBar, document.DashboardComboSeriesMarkColumn:
+		default:
+			// Preserve the compiler's deferred diagnostics for malformed series.
+			return true
+		}
+	}
+	return false
+}
+
 // CanonicalVisualFormatOptions projects the actual authored presentation, so
 // a builder created visual and a dashboards-as-code visual expose identical
 // scalar/enum controls.
@@ -274,7 +385,7 @@ func CanonicalVisualFormatOptions(visual document.DashboardVisual) ([]VisualForm
 	if err != nil {
 		return nil, err
 	}
-	specs := visualFormatSpecs(presentationType)
+	specs := applicableVisualFormatSpecs(visual, presentationType)
 	result := make([]VisualFormatOption, 0, len(specs))
 	for _, spec := range specs {
 		value := spec.defaultValue
@@ -295,7 +406,7 @@ func applyCanonicalVisualFormatOption(visual *document.DashboardVisual, key, val
 		return fmt.Errorf("%w: visual presentation: %v", ErrInvalidPayload, err)
 	}
 	var spec *visualFormatSpec
-	for _, candidate := range visualFormatSpecs(presentationType) {
+	for _, candidate := range applicableVisualFormatSpecs(*visual, presentationType) {
 		if candidate.key == key {
 			copy := candidate
 			spec = &copy
@@ -303,7 +414,7 @@ func applyCanonicalVisualFormatOption(visual *document.DashboardVisual, key, val
 		}
 	}
 	if spec == nil {
-		return fmt.Errorf("%w: format option %q is not supported by %s presentations", ErrInvalidPayload, key, presentationType)
+		return fmt.Errorf("%w: presentation.%s is not supported for this %s visual configuration", ErrInvalidPayload, key, visual.Type)
 	}
 	raw, err := presentationObject(visual.Presentation)
 	if err != nil {

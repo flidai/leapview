@@ -16,6 +16,27 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
+func dataqueryClusterPolicy(policy *visualizationdefinition.SpatialClusterBinding) *dataquery.SpatialClusterPolicy {
+	if policy == nil {
+		return nil
+	}
+	return &dataquery.SpatialClusterPolicy{Enabled: policy.Enabled, Radius: policy.Radius, MaximumZoom: policy.MaximumZoom, MinimumPoints: policy.MinimumPoints, ShowCount: policy.ShowCount}
+}
+
+func spatialMetadataRawMinimumZoom(tiles *visualizationdefinition.SpatialTileBinding) int {
+	if tiles == nil {
+		return 0
+	}
+	minimum := int(tiles.RawMinimumZoom)
+	if tiles.Cluster == nil {
+		return minimum
+	}
+	if !tiles.Cluster.Enabled {
+		return int(tiles.MinimumZoom)
+	}
+	return min(minimum, int(tiles.Cluster.MaximumZoom)+1)
+}
+
 func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, dashboardID, pageID, visualID string, filters dashboard.Filters) (visualizationir.VisualizationEnvelope, error) {
 	definition, ok := report.Visualizations[visualID]
 	if !ok {
@@ -36,7 +57,7 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 		SpatialMetadata: &dataquery.SpatialMetadata{
 			Latitude:   dataquery.Field{Field: spatial.Tiles.Latitude.FieldID, Alias: spatial.Tiles.Latitude.Alias},
 			Longitude:  dataquery.Field{Field: spatial.Tiles.Longitude.FieldID, Alias: spatial.Tiles.Longitude.Alias},
-			FeatureCap: int(spatial.Tiles.FeatureCap), RawMinimumZoom: int(spatial.Tiles.RawMinimumZoom), MaximumZoom: int(spatial.Tiles.MaximumZoom),
+			FeatureCap: int(spatial.Tiles.FeatureCap), RawMinimumZoom: spatialMetadataRawMinimumZoom(spatial.Tiles), MaximumZoom: int(spatial.Tiles.MaximumZoom), Cluster: dataqueryClusterPolicy(spatial.Tiles.Cluster),
 		},
 	}
 	result, err := runtime.data.ExecuteDataQuery(ctx, query)
@@ -48,7 +69,8 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 	}
 	row := result.Rows[0]
 	effectiveRawMinimumZoom, ok := spatialInteger(row["__spatial_raw_minimum_zoom"])
-	if !ok || effectiveRawMinimumZoom < int64(spatial.Tiles.RawMinimumZoom) || effectiveRawMinimumZoom > int64(spatial.Tiles.MaximumZoom)+1 {
+	minimumRawZoom := int64(spatialMetadataRawMinimumZoom(spatial.Tiles))
+	if !ok || effectiveRawMinimumZoom < minimumRawZoom || effectiveRawMinimumZoom > int64(spatial.Tiles.MaximumZoom)+1 {
 		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("spatial metadata for %q has invalid raw precision transition", visualID)
 	}
 	effectiveRawMinimumZoom, err = s.spatialRawMinimumZoomByByteBudget(ctx, runtime, definition, queryFilters, int(effectiveRawMinimumZoom))
@@ -215,8 +237,9 @@ func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *mod
 			Fields: fields, Metrics: fieldBindingsToDataFields(spatial.Metrics), Filters: reportFiltersToDataFilters(queryFilters),
 			SpatialTile: &dataquery.SpatialTile{
 				Latitude: dataquery.Field{Field: spatial.Tiles.Latitude.FieldID, Alias: spatial.Tiles.Latitude.Alias}, Longitude: dataquery.Field{Field: spatial.Tiles.Longitude.FieldID, Alias: spatial.Tiles.Longitude.Alias},
-				Identity: identity, Zoom: zoom, TargetZoom: targetZoom, MetatileX: metatileX, MetatileY: metatileY, MetatileSize: metatileSize,
+				Dimensions: fieldBindingsToDataFields(spatial.Dimensions), Identity: identity, Zoom: zoom, TargetZoom: targetZoom, MetatileX: metatileX, MetatileY: metatileY, MetatileSize: metatileSize,
 				CellPixels: int(spatial.Tiles.CellRadius), Buffer: buffer, FeatureCap: int(spatial.Tiles.FeatureCap), Precision: precision,
+				Cluster: dataqueryClusterPolicy(spatial.Tiles.Cluster),
 			},
 		}
 		if spatial.Time != nil {
@@ -349,9 +372,17 @@ func (s *VisualizationDataService) spatialRawMinimumZoomByByteBudget(ctx context
 	if minimumZoom > maximumZoom {
 		return int64(minimumZoom), nil
 	}
+	if spatial.Tiles.Cluster != nil && !spatial.Tiles.Cluster.Enabled {
+		// Disabled clustering is raw-only. Do not let the transport probe
+		// silently reintroduce server aggregates when raw tiles are over budget;
+		// the raw tile request will fail closed instead.
+		return int64(minimumZoom), nil
+	}
+	clusterTransition := spatialClusterTransitionZoom(maximumZoom, spatial.Tiles.Cluster)
 	fields, identity := spatialTileFieldsAndIdentity(definition)
 	buffer := int(spatial.Tiles.CellRadius) * 16
-	for zoom := minimumZoom; zoom <= maximumZoom; zoom++ {
+	probeMaximumZoom := spatialRawBudgetProbeMaximumZoom(maximumZoom, spatial.Tiles.Cluster)
+	for zoom := minimumZoom; zoom <= probeMaximumZoom; zoom++ {
 		query := dataquery.Query{
 			Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialTileBudget,
 			ModelID: definition.Query.ModelID, Kind: dataquery.KindSemanticSpatialTileBudget,
@@ -359,6 +390,7 @@ func (s *VisualizationDataService) spatialRawMinimumZoomByByteBudget(ctx context
 			SpatialTileBudget: &dataquery.SpatialTileBudget{
 				Latitude: dataquery.Field{Field: spatial.Tiles.Latitude.FieldID, Alias: spatial.Tiles.Latitude.Alias}, Longitude: dataquery.Field{Field: spatial.Tiles.Longitude.FieldID, Alias: spatial.Tiles.Longitude.Alias},
 				Identity: identity, Zoom: zoom, Buffer: buffer, FeatureCap: int(spatial.Tiles.FeatureCap), MaximumBytes: spatial.Tiles.MaximumBytes,
+				Cluster: dataqueryClusterPolicy(spatial.Tiles.Cluster),
 			},
 		}
 		if spatial.Time != nil {
@@ -380,7 +412,26 @@ func (s *VisualizationDataService) spatialRawMinimumZoomByByteBudget(ctx context
 			return int64(zoom), nil
 		}
 	}
+	if clusterTransition <= maximumZoom {
+		// The authored maximumZoom is a semantic upper bound, not a hint that
+		// may be extended when occupancy first fits above the cutoff. Keep the
+		// transition at the first raw zoom; a subsequent raw tile request
+		// reports any bounded-budget violation explicitly.
+		return int64(clusterTransition), nil
+	}
 	return int64(maximumZoom + 1), nil
+}
+
+func spatialClusterTransitionZoom(maximumZoom int, cluster *visualizationdefinition.SpatialClusterBinding) int {
+	transition := maximumZoom + 1
+	if cluster != nil && cluster.Enabled {
+		transition = min(transition, int(cluster.MaximumZoom)+1)
+	}
+	return transition
+}
+
+func spatialRawBudgetProbeMaximumZoom(maximumZoom int, cluster *visualizationdefinition.SpatialClusterBinding) int {
+	return min(maximumZoom, spatialClusterTransitionZoom(maximumZoom, cluster))
 }
 
 func spatialRawZoomFits(maximumFeatures, maximumBytes, featureCap, maximumTileBytes int64) bool {

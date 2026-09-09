@@ -21,18 +21,30 @@ func canonicalConditionalFormatting(presentation document.DashboardPresentation,
 	}
 	result := make([]visualizationir.VisualizationConditionalFormat, 0, len(*base.ConditionalFormatting))
 	for index, authored := range *base.ConditionalFormatting {
+		path := func(part string) string {
+			if strings.TrimSpace(authored.ID) != "" {
+				return fmt.Sprintf("conditional formatting %q %s", authored.ID, part)
+			}
+			return fmt.Sprintf("conditional formatting entry %d %s", index, part)
+		}
+		wrapped := func(part string, cause error) error {
+			return fmt.Errorf("%s: %w", path(part), cause)
+		}
+		invalid := func(part, detail string) error {
+			return fmt.Errorf("%s: %s", path(part), detail)
+		}
 		field, err := canonicalResultRef(query, "primary", authored.Field)
 		if err != nil {
-			return nil, fmt.Errorf("entry %d field: %w", index, err)
+			return nil, wrapped("field", err)
 		}
 		compiled := visualizationir.VisualizationConditionalFormat{ID: authored.ID, Target: authored.Target, Field: field}
 		switch rule := authored.Rule.Value.(type) {
 		case *document.DashboardGradientConditionalRule:
 			if rule == nil {
-				return nil, fmt.Errorf("entry %d gradient rule is nil", index)
+				return nil, invalid("rule", "gradient rule is nil")
 			}
 			if !finiteDashboardFloat(rule.Minimum) || !finiteDashboardFloat(rule.Maximum) || rule.Minimum >= rule.Maximum {
-				return nil, fmt.Errorf("entry %d gradient minimum must be finite and less than maximum", index)
+				return nil, invalid("rule", "gradient minimum must be finite and less than maximum")
 			}
 			compiled.Rule.Value = &visualizationir.GradientVisualizationConditionalRule{
 				VisualizationConditionalRuleBase: visualizationir.VisualizationConditionalRuleBase{Kind: "gradient"},
@@ -41,12 +53,12 @@ func canonicalConditionalFormatting(presentation document.DashboardPresentation,
 			}
 		case *document.DashboardRulesConditionalRule:
 			if rule == nil {
-				return nil, fmt.Errorf("entry %d rules rule is nil", index)
+				return nil, invalid("rule", "rules rule is nil")
 			}
 			thresholds := make([]visualizationir.VisualizationConditionalThreshold, len(rule.Rules))
 			for thresholdIndex, threshold := range rule.Rules {
 				if !finiteDashboardFloat(threshold.Value) {
-					return nil, fmt.Errorf("entry %d rule %d value must be finite", index, thresholdIndex)
+					return nil, invalid(fmt.Sprintf("rule %d", thresholdIndex), "value must be finite")
 				}
 				thresholds[thresholdIndex] = visualizationir.VisualizationConditionalThreshold{Operator: threshold.Operator, Value: threshold.Value, Style: canonicalConditionalStyle(threshold.Style)}
 			}
@@ -56,11 +68,11 @@ func canonicalConditionalFormatting(presentation document.DashboardPresentation,
 			}
 		case *document.DashboardFieldConditionalRule:
 			if rule == nil {
-				return nil, fmt.Errorf("entry %d field rule is nil", index)
+				return nil, invalid("rule", "field rule is nil")
 			}
 			source, err := canonicalResultRef(query, "primary", rule.Source)
 			if err != nil {
-				return nil, fmt.Errorf("entry %d source: %w", index, err)
+				return nil, wrapped("source", err)
 			}
 			values := make(map[string]visualizationir.VisualizationConditionalStyle, len(rule.Values))
 			for value, style := range rule.Values {
@@ -71,7 +83,7 @@ func canonicalConditionalFormatting(presentation document.DashboardPresentation,
 				Kind:                             "field", Source: source, Values: values, NullStyle: canonicalConditionalStyle(rule.NullStyle), DefaultStyle: canonicalConditionalStyle(rule.DefaultStyle),
 			}
 		default:
-			return nil, fmt.Errorf("entry %d has unsupported rule %T", index, authored.Rule.Value)
+			return nil, invalid("rule", fmt.Sprintf("has unsupported rule %T", authored.Rule.Value))
 		}
 		result = append(result, compiled)
 	}

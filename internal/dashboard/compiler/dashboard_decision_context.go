@@ -61,14 +61,13 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 			}
 		}
 	}
-	axisIsNumeric := func(axis visualizationir.VisualizationCartesianAxis) bool {
-		if axis == visualizationir.VisualizationCartesianAxisSecondaryY {
-			return true
-		}
+	axisField := func(axis visualizationir.VisualizationCartesianAxis) (visualizationir.VisualizationField, bool) {
 		var ref visualizationir.VisualizationFieldRef
 		if cartesian != nil {
 			if axis == visualizationir.VisualizationCartesianAxisX {
 				ref = cartesian.X
+			} else if cartesian.Mark == visualizationir.VisualizationCartesianMarkCombo {
+				ref, _ = visualizationir.CartesianComboAxisOwner(*cartesian, axis)
 			} else if len(cartesian.Y) > 0 {
 				ref = cartesian.Y[0]
 			}
@@ -79,8 +78,35 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 				ref = point.Y
 			}
 		}
-		field, ok := primaryVisualizationField(*primary, ref.Field)
+		return primaryVisualizationField(*primary, ref.Field)
+	}
+	axisIsNumeric := func(axis visualizationir.VisualizationCartesianAxis) bool {
+		field, ok := axisField(axis)
 		return ok && dashboardNumericField(field)
+	}
+	axisDefaultType := func(axis visualizationir.VisualizationCartesianAxis) visualizationir.VisualizationAxisType {
+		field, hasField := axisField(axis)
+		temporal := hasField && (field.DataType == visualizationir.VisualizationDataTypeTemporal || field.DataType == visualizationir.VisualizationDataTypeDate)
+		if temporal {
+			return visualizationir.VisualizationAxisTypeTime
+		}
+		if axisIsNumeric(axis) && (point != nil || (cartesian != nil && axis != visualizationir.VisualizationCartesianAxisX && cartesian.Mark != visualizationir.VisualizationCartesianMarkHeatmap)) {
+			return visualizationir.VisualizationAxisTypeValue
+		}
+		return visualizationir.VisualizationAxisTypeCategory
+	}
+	axisEffectiveType := func(axis visualizationir.VisualizationCartesianAxis) visualizationir.VisualizationAxisType {
+		effective := axisDefaultType(axis)
+		if axes != nil {
+			for _, authoredAxis := range *axes {
+				if authoredAxis.ID != axis || authoredAxis.Type == nil || *authoredAxis.Type == visualizationir.VisualizationAxisTypeAutomatic {
+					continue
+				}
+				effective = *authoredAxis.Type
+				break
+			}
+		}
+		return effective
 	}
 
 	lowerAxes := func() (*[]visualizationir.VisualizationAxisConfiguration, error) {
@@ -101,11 +127,53 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 			if authoredAxis.ID == visualizationir.VisualizationCartesianAxisSecondaryY && (cartesian == nil || cartesian.Mark != visualizationir.VisualizationCartesianMarkCombo) {
 				return nil, fmt.Errorf("%s.id secondary_y requires a combo visual", path)
 			}
+			if cartesian != nil && cartesian.Mark == visualizationir.VisualizationCartesianMarkCombo && authoredAxis.ID != visualizationir.VisualizationCartesianAxisX {
+				if _, found := visualizationir.CartesianComboAxisOwner(*cartesian, authoredAxis.ID); !found {
+					return nil, fmt.Errorf("%s.id requires a %s combo series", path, comboAxisOwnerName(authoredAxis.ID))
+				}
+			}
 			if err := validateDashboardAxisEnums(authoredAxis, path); err != nil {
 				return nil, err
 			}
-			if authoredAxis.DisplayUnits != nil && !axisIsNumeric(authoredAxis.ID) {
-				return nil, fmt.Errorf("%s.displayUnits requires a numeric axis", path)
+			if authoredAxis.ID == visualizationir.VisualizationCartesianAxisPrimaryY && cartesian != nil && cartesian.Presentation.Stacking != nil && *cartesian.Presentation.Stacking == visualizationir.VisualizationStackingModePercent && authoredAxis.DisplayUnits != nil {
+				return nil, fmt.Errorf("%s.displayUnits is incompatible with percent stacking because the renderer owns the percent formatter", path)
+			}
+			numeric := axisIsNumeric(authoredAxis.ID)
+			fieldDefinition, hasAxisField := axisField(authoredAxis.ID)
+			temporal := hasAxisField && (fieldDefinition.DataType == visualizationir.VisualizationDataTypeTemporal || fieldDefinition.DataType == visualizationir.VisualizationDataTypeDate)
+			effectiveType := axisDefaultType(authoredAxis.ID)
+			if authoredAxis.Type != nil {
+				switch *authoredAxis.Type {
+				case visualizationir.VisualizationAxisTypeAutomatic:
+				case visualizationir.VisualizationAxisTypeValue:
+					if !numeric {
+						return nil, fmt.Errorf("%s.type value requires a numeric axis", path)
+					}
+					effectiveType = visualizationir.VisualizationAxisTypeValue
+				case visualizationir.VisualizationAxisTypeCategory:
+					effectiveType = visualizationir.VisualizationAxisTypeCategory
+				case visualizationir.VisualizationAxisTypeTime:
+					if !temporal {
+						return nil, fmt.Errorf("%s.type time requires a date or temporal axis", path)
+					}
+					effectiveType = visualizationir.VisualizationAxisTypeTime
+				}
+			}
+			effectiveNumeric := effectiveType == visualizationir.VisualizationAxisTypeValue
+			if authoredAxis.DisplayUnits != nil && !effectiveNumeric {
+				return nil, fmt.Errorf("%s.displayUnits requires a numeric axis (effective type is %s)", path, effectiveType)
+			}
+			if authoredAxis.DateUnit != nil && *authoredAxis.DateUnit != visualizationir.VisualizationDateDisplayUnitAutomatic && effectiveType != visualizationir.VisualizationAxisTypeTime {
+				return nil, fmt.Errorf("%s.dateUnit requires an effective time axis", path)
+			}
+			if authoredAxis.Zero != visualizationir.VisualizationAxisZeroPolicyAutomatic && !effectiveNumeric {
+				return nil, fmt.Errorf("%s.zero requires an effective numeric axis", path)
+			}
+			if (authoredAxis.Minimum != nil || authoredAxis.Maximum != nil) && !effectiveNumeric {
+				return nil, fmt.Errorf("%s domain bounds require an effective numeric axis", path)
+			}
+			if (authoredAxis.Scale == visualizationir.VisualizationAxisScaleLog || authoredAxis.Scale == visualizationir.VisualizationAxisScaleLinear) && !effectiveNumeric {
+				return nil, fmt.Errorf("%s.scale %s requires an effective numeric axis", path, authoredAxis.Scale)
 			}
 			if authoredAxis.Minimum != nil && !finiteDashboardFloat(*authoredAxis.Minimum) {
 				return nil, fmt.Errorf("%s.minimum must be finite", path)
@@ -127,7 +195,31 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 					return nil, fmt.Errorf("%s.maximum must be positive on a log scale", path)
 				}
 			}
-			out[index] = visualizationir.VisualizationAxisConfiguration{ID: authoredAxis.ID, Title: authoredAxis.Title, Scale: authoredAxis.Scale, Zero: authoredAxis.Zero, Minimum: authoredAxis.Minimum, Maximum: authoredAxis.Maximum, Unit: authoredAxis.Unit, DisplayUnits: authoredAxis.DisplayUnits, TickDensity: authoredAxis.TickDensity}
+			axisType := visualizationir.VisualizationAxisTypeAutomatic
+			if authoredAxis.Type != nil {
+				axisType = *authoredAxis.Type
+			}
+			inversion := visualizationir.VisualizationAxisInversionAutomatic
+			if authoredAxis.Inversion != nil {
+				inversion = *authoredAxis.Inversion
+			}
+			ticks := visualizationir.VisualizationAxisTickVisibilityAutomatic
+			if authoredAxis.Ticks != nil {
+				ticks = *authoredAxis.Ticks
+			}
+			grid := visualizationir.VisualizationAxisGridVisibilityAutomatic
+			if authoredAxis.Grid != nil {
+				grid = *authoredAxis.Grid
+			}
+			rotation := visualizationir.VisualizationAxisLabelRotationAutomatic
+			if authoredAxis.LabelRotation != nil {
+				rotation = *authoredAxis.LabelRotation
+			}
+			dateUnit := visualizationir.VisualizationDateDisplayUnitAutomatic
+			if authoredAxis.DateUnit != nil {
+				dateUnit = *authoredAxis.DateUnit
+			}
+			out[index] = visualizationir.VisualizationAxisConfiguration{ID: authoredAxis.ID, Title: authoredAxis.Title, Type: axisType, Scale: authoredAxis.Scale, Zero: authoredAxis.Zero, Inversion: inversion, Minimum: authoredAxis.Minimum, Maximum: authoredAxis.Maximum, Unit: authoredAxis.Unit, DisplayUnits: authoredAxis.DisplayUnits, TickDensity: authoredAxis.TickDensity, Ticks: ticks, Grid: grid, LabelRotation: rotation, DateUnit: dateUnit}
 		}
 		return &out, nil
 	}
@@ -184,11 +276,40 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 		if axis == visualizationir.VisualizationCartesianAxisSecondaryY && (cartesian == nil || cartesian.Mark != visualizationir.VisualizationCartesianMarkCombo) {
 			return fmt.Errorf("%s secondary_y requires a combo visual", path)
 		}
+		if cartesian != nil && cartesian.Mark == visualizationir.VisualizationCartesianMarkCombo {
+			ownerAxis := axis
+			if ownerAxis == visualizationir.VisualizationCartesianAxisX {
+				ownerAxis = visualizationir.VisualizationCartesianAxisPrimaryY
+			}
+			if _, found := visualizationir.CartesianComboAxisOwner(*cartesian, ownerAxis); !found {
+				return fmt.Errorf("%s requires a %s combo series", path, comboAxisOwnerName(ownerAxis))
+			}
+		}
 		return nil
 	}
 	validateAxisValue := func(value loweredValue, axis visualizationir.VisualizationCartesianAxis, path string) error {
+		effectiveType := axisEffectiveType(axis)
 		if axis != visualizationir.VisualizationCartesianAxisX && value.domain != "number" {
 			return fmt.Errorf("%s must use a numeric value on %s", path, axis)
+		}
+		if axis == visualizationir.VisualizationCartesianAxisX {
+			switch effectiveType {
+			case visualizationir.VisualizationAxisTypeValue:
+				if value.domain != "number" {
+					return fmt.Errorf("%s must use a numeric value on x (effective type is value)", path)
+				}
+			}
+		}
+		if axes != nil {
+			for _, authoredAxis := range *axes {
+				if authoredAxis.ID != axis || authoredAxis.Scale != visualizationir.VisualizationAxisScaleLog {
+					continue
+				}
+				if number, ok := value.value.Value.(*visualizationir.NumberVisualizationReferenceValue); ok && number != nil && number.Value <= 0 {
+					return fmt.Errorf("%s must be positive on a log axis", path)
+				}
+				break
+			}
 		}
 		return nil
 	}
@@ -285,11 +406,19 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 			if annotation.Axis != visualizationir.VisualizationCartesianAxisX {
 				return nil, fmt.Errorf("%s.axis must be x", path)
 			}
+			if cartesian != nil && cartesian.Mark == visualizationir.VisualizationCartesianMarkCombo {
+				if _, found := visualizationir.CartesianComboAxisOwner(*cartesian, visualizationir.VisualizationCartesianAxisPrimaryY); !found {
+					return nil, fmt.Errorf("%s.axis requires a primary_y combo series", path)
+				}
+			}
 			if strings.TrimSpace(annotation.Label) == "" {
 				return nil, fmt.Errorf("%s.label is required", path)
 			}
 			value, err := lowerValue(annotation.Value, path+".value")
 			if err != nil {
+				return nil, err
+			}
+			if err := validateAxisValue(value, annotation.Axis, path+".value"); err != nil {
 				return nil, err
 			}
 			if !validDashboardTone(annotation.Tone) {
@@ -331,6 +460,13 @@ func pointerLen[T any](value *[]T) int {
 	return len(*value)
 }
 
+func comboAxisOwnerName(axis visualizationir.VisualizationCartesianAxis) string {
+	if axis == visualizationir.VisualizationCartesianAxisSecondaryY {
+		return "secondary_y"
+	}
+	return "primary_y"
+}
+
 func primaryVisualizationField(schema visualizationir.VisualizationDatasetSchema, name string) (visualizationir.VisualizationField, bool) {
 	for _, field := range schema.Fields {
 		if field.ID == name {
@@ -359,6 +495,13 @@ func validDashboardReferenceReducer(reducer visualizationir.VisualizationReferen
 }
 
 func validateDashboardAxisEnums(axis document.DashboardAxisConfiguration, path string) error {
+	if axis.Type != nil {
+		switch *axis.Type {
+		case visualizationir.VisualizationAxisTypeAutomatic, visualizationir.VisualizationAxisTypeCategory, visualizationir.VisualizationAxisTypeValue, visualizationir.VisualizationAxisTypeTime:
+		default:
+			return fmt.Errorf("%s.type has unsupported type %q", path, *axis.Type)
+		}
+	}
 	switch axis.Scale {
 	case visualizationir.VisualizationAxisScaleAutomatic, visualizationir.VisualizationAxisScaleLinear, visualizationir.VisualizationAxisScaleLog:
 	default:
@@ -376,6 +519,41 @@ func validateDashboardAxisEnums(axis document.DashboardAxisConfiguration, path s
 	}
 	if axis.DisplayUnits != nil && !validDashboardDisplayUnits(*axis.DisplayUnits) {
 		return fmt.Errorf("%s.displayUnits has unsupported value %q", path, *axis.DisplayUnits)
+	}
+	if axis.Inversion != nil {
+		switch *axis.Inversion {
+		case visualizationir.VisualizationAxisInversionAutomatic, visualizationir.VisualizationAxisInversionNormal, visualizationir.VisualizationAxisInversionInverted:
+		default:
+			return fmt.Errorf("%s.inversion has unsupported value %q", path, *axis.Inversion)
+		}
+	}
+	if axis.Ticks != nil {
+		switch *axis.Ticks {
+		case visualizationir.VisualizationAxisTickVisibilityAutomatic, visualizationir.VisualizationAxisTickVisibilityVisible, visualizationir.VisualizationAxisTickVisibilityHidden:
+		default:
+			return fmt.Errorf("%s.ticks has unsupported value %q", path, *axis.Ticks)
+		}
+	}
+	if axis.Grid != nil {
+		switch *axis.Grid {
+		case visualizationir.VisualizationAxisGridVisibilityAutomatic, visualizationir.VisualizationAxisGridVisibilityVisible, visualizationir.VisualizationAxisGridVisibilityHidden:
+		default:
+			return fmt.Errorf("%s.grid has unsupported value %q", path, *axis.Grid)
+		}
+	}
+	if axis.LabelRotation != nil {
+		switch *axis.LabelRotation {
+		case visualizationir.VisualizationAxisLabelRotationAutomatic, visualizationir.VisualizationAxisLabelRotationHorizontal, visualizationir.VisualizationAxisLabelRotationDiagonal, visualizationir.VisualizationAxisLabelRotationVertical:
+		default:
+			return fmt.Errorf("%s.labelRotation has unsupported value %q", path, *axis.LabelRotation)
+		}
+	}
+	if axis.DateUnit != nil {
+		switch *axis.DateUnit {
+		case visualizationir.VisualizationDateDisplayUnitAutomatic, visualizationir.VisualizationDateDisplayUnitYear, visualizationir.VisualizationDateDisplayUnitQuarter, visualizationir.VisualizationDateDisplayUnitMonth, visualizationir.VisualizationDateDisplayUnitWeek, visualizationir.VisualizationDateDisplayUnitDay, visualizationir.VisualizationDateDisplayUnitHour, visualizationir.VisualizationDateDisplayUnitMinute, visualizationir.VisualizationDateDisplayUnitSecond:
+		default:
+			return fmt.Errorf("%s.dateUnit has unsupported value %q", path, *axis.DateUnit)
+		}
 	}
 	return nil
 }

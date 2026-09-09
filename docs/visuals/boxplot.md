@@ -9,6 +9,11 @@ Every preview on this page is generated from the YAML shown below it using a fix
 Select a numeric field, a semantic grouping dimension, and explicit quantiles
 so LeapView can derive comparable quartiles, medians, whiskers, and outliers.
 
+`outliers: omit` requires `whiskers` and filters observations to the whisker
+range before computing every displayed statistic. `outliers: include` uses all
+numeric observations and cannot be combined with `whiskers`. Boxplots expose
+the derived distribution only; they do not render separate outlier points.
+
 {{< visual id="delivery_distribution" >}}
 
 ```yaml visual-example=delivery_distribution

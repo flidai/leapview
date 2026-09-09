@@ -1,6 +1,9 @@
 package compiler
 
 import (
+	"fmt"
+	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -14,14 +17,14 @@ func TestLowerCanonicalCartesianPresentationPreservesEveryField(t *testing.T) {
 	density := document.DashboardLabelDensityDense
 	priority := []document.DashboardLabelPriority{document.DashboardLabelPriorityThreshold}
 	labels := document.DashboardLabelPolicy{Density: density, Priority: &priority}
-	stacking := document.DashboardStackingModePercent
+	stacking := document.DashboardStackingModeNormal
 	orientation := document.DashboardOrientationHorizontal
 	showSymbols, smooth, dataZoom, axisVisible := true, true, true, false
 	symbolSize := 14.0
 	position := document.DashboardLabelPositionInside
 	units := visualizationir.VisualizationDisplayUnitsMillions
 	value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{AxisVisible: &axisVisible}, Type: "cartesian", Legend: &legend, Labels: &labels, Stacking: &stacking, Orientation: &orientation, ShowSymbols: &showSymbols, Smooth: &smooth, DataZoom: &dataZoom, SymbolSize: &symbolSize, LabelPosition: &position, DisplayUnits: &units}}
-	lowered, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeBar)
+	lowered, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeLine)
 	if err != nil {
 		t.Fatalf("lower presentation: %v", err)
 	}
@@ -29,8 +32,80 @@ func TestLowerCanonicalCartesianPresentationPreservesEveryField(t *testing.T) {
 	if !ok {
 		t.Fatalf("lowered type = %T", lowered)
 	}
-	if got.Legend != visualizationir.VisualizationLegendPositionRight || got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityDense || len(got.LabelPolicy.Priority) != 1 || got.LabelPolicy.Priority[0] != visualizationir.VisualizationLabelPriorityThreshold || got.AxisVisible == nil || *got.AxisVisible || got.Stacking == nil || *got.Stacking != visualizationir.VisualizationStackingModePercent || got.Orientation == nil || *got.Orientation != visualizationir.VisualizationOrientationHorizontal || !got.ShowSymbols || !got.Smooth || !got.DataZoom || got.SymbolSize == nil || *got.SymbolSize != 14 || got.LabelPosition == nil || *got.LabelPosition != visualizationir.VisualizationLabelPositionInside || got.DisplayUnits == nil || *got.DisplayUnits != visualizationir.VisualizationDisplayUnitsMillions {
+	if got.Legend != visualizationir.VisualizationLegendPositionRight || got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityDense || len(got.LabelPolicy.Priority) != 1 || got.LabelPolicy.Priority[0] != visualizationir.VisualizationLabelPriorityThreshold || got.AxisVisible == nil || *got.AxisVisible || got.Stacking == nil || *got.Stacking != visualizationir.VisualizationStackingModeNormal || got.Orientation == nil || *got.Orientation != visualizationir.VisualizationOrientationHorizontal || !got.ShowSymbols || !got.Smooth || !got.DataZoom || got.SymbolSize == nil || *got.SymbolSize != 14 || got.LabelPosition == nil || *got.LabelPosition != visualizationir.VisualizationLabelPositionInside || got.DisplayUnits == nil || *got.DisplayUnits != visualizationir.VisualizationDisplayUnitsMillions {
 		t.Fatalf("lowered presentation dropped fields: %#v", got)
+	}
+}
+
+func TestLowerCanonicalCandlestickPresentationPreservesGainLossColors(t *testing.T) {
+	gain, loss := visualizationir.VisualizationColorIntentData2, visualizationir.VisualizationColorIntentWarning
+	value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", GainColor: &gain, LossColor: &loss}}
+	lowered, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeCandlestick)
+	if err != nil {
+		t.Fatalf("lower candlestick colors: %v", err)
+	}
+	got := lowered.(visualizationir.CartesianVisualizationPresentation)
+	if got.GainColor == nil || *got.GainColor != gain || got.LossColor == nil || *got.LossColor != loss {
+		t.Fatalf("candlestick colors = %#v", got)
+	}
+	for name, authored := range map[string]document.DashboardPresentation{
+		"gain on bar": {Value: &document.CartesianDashboardPresentation{Type: "cartesian", GainColor: &gain}},
+		"loss on bar": {Value: &document.CartesianDashboardPresentation{Type: "cartesian", LossColor: &loss}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LowerCanonicalDashboardPresentation(authored, document.DashboardVisualTypeBar)
+			field := "gainColor"
+			if name == "loss on bar" {
+				field = "lossColor"
+			}
+			want := "presentation." + field + " is not supported for bar visuals"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %v, want %q", err, want)
+			}
+		})
+	}
+	for name, field := range map[string]string{"invalid gain color": "gainColor", "invalid loss color": "lossColor"} {
+		t.Run(name, func(t *testing.T) {
+			invalid := visualizationir.VisualizationColorIntent("#fff")
+			value := &document.CartesianDashboardPresentation{Type: "cartesian"}
+			if field == "gainColor" {
+				value.GainColor = &invalid
+			} else {
+				value.LossColor = &invalid
+			}
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, document.DashboardVisualTypeCandlestick)
+			want := "presentation." + field
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %v, want %q", err, want)
+			}
+		})
+	}
+
+	lossOnly, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", LossColor: &loss}}, document.DashboardVisualTypeCandlestick)
+	if err != nil {
+		t.Fatalf("lower candlestick loss-only color: %v", err)
+	}
+	lossOnlyValue := lossOnly.(visualizationir.CartesianVisualizationPresentation)
+	if lossOnlyValue.GainColor != nil || lossOnlyValue.LossColor == nil || *lossOnlyValue.LossColor != loss {
+		t.Fatalf("loss-only candlestick colors = %#v", lossOnlyValue)
+	}
+}
+
+func TestLowerCanonicalFinancialPresentationUsesHiddenLabelDefault(t *testing.T) {
+	for _, visualType := range []document.DashboardVisualType{document.DashboardVisualTypeCandlestick, document.DashboardVisualTypeBoxplot} {
+		t.Run(string(visualType), func(t *testing.T) {
+			lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian"}}, visualType)
+			if err != nil {
+				t.Fatalf("lower financial presentation: %v", err)
+			}
+			got := lowered.(visualizationir.CartesianVisualizationPresentation)
+			if got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityHidden || len(got.LabelPolicy.Priority) != 0 || got.LabelPolicy.MaxCharacters != 24 || got.LabelPolicy.MinimumSpacing != 0 || !got.LabelPolicy.TooltipFallback {
+				t.Fatalf("financial label policy = %#v, want explicit hidden default", got.LabelPolicy)
+			}
+			if got.LabelPosition != nil {
+				t.Fatalf("financial label position = %#v, want unset", got.LabelPosition)
+			}
+		})
 	}
 }
 
@@ -43,8 +118,12 @@ func TestLowerCanonicalPointPresentationPreservesOverplotAndLabels(t *testing.T)
 	value := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
 		Type: "point", Legend: &legend, Labels: &labels,
 		Identity: []string{"order_id"}, X: "delivery_days", Y: "revenue",
-		Color: pointStringPtr("status"), Tooltip: &[]string{"order_id", "status", "delivery_days", "revenue"},
-		Overplot: &document.PointDashboardOverplot{Strategy: visualizationir.VisualizationPointOverplotStrategyOpacity, Opacity: &opacity, LargeMode: &largeMode, LargeThreshold: &threshold},
+		Color: pointStringPtr("status"), Tooltip: &[]document.DashboardTooltip{
+			{String: pointStringPtr("order_id")}, {String: pointStringPtr("status")},
+			{String: pointStringPtr("delivery_days")}, {String: pointStringPtr("revenue")},
+		},
+		ColorScale: &document.PointDashboardColorScale{Kind: visualizationir.VisualizationPointColorScaleKindCategorical},
+		Overplot:   &document.PointDashboardOverplot{Strategy: visualizationir.VisualizationPointOverplotStrategyOpacity, Opacity: &opacity, LargeMode: &largeMode, LargeThreshold: &threshold},
 	}}
 	lowered, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeScatter)
 	if err != nil {
@@ -70,6 +149,19 @@ func TestLowerCanonicalPointPresentationRejectsInvalidOverplot(t *testing.T) {
 	}
 }
 
+func TestLowerCanonicalPointPresentationRejectsNonFiniteOpacity(t *testing.T) {
+	for _, opacity := range []float64{math.NaN(), math.Inf(1)} {
+		value := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
+			Type: "point", Identity: []string{"id"}, X: "x", Y: "y",
+			Overplot: &document.PointDashboardOverplot{Strategy: visualizationir.VisualizationPointOverplotStrategyOpacity, Opacity: &opacity},
+		}}
+		_, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeScatter)
+		if err == nil || !strings.Contains(err.Error(), "presentation.overplot.opacity") || !strings.Contains(err.Error(), "finite") {
+			t.Fatalf("opacity %v error = %v, want path-bearing finite diagnostic", opacity, err)
+		}
+	}
+}
+
 func pointStringPtr(value string) *string { return &value }
 
 func TestLowerCanonicalPresentationVariantsPreserveTableAndKPIFields(t *testing.T) {
@@ -83,12 +175,14 @@ func TestLowerCanonicalPresentationVariantsPreserveTableAndKPIFields(t *testing.
 	}
 	units := visualizationir.VisualizationDisplayUnitsThousands
 	note, tone := "Target", visualizationir.VisualizationToneWarning
-	kpi, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.KPIDashboardPresentation{Type: "kpi", DisplayUnits: &units, Note: &note, Tone: &tone}}, document.DashboardVisualTypeKpi)
+	minimum, maximum := 0.0, 100.0
+	ranges := []visualizationir.VisualizationKPIQualitativeRange{{Minimum: &minimum, Maximum: &maximum, Label: "On track", Tone: visualizationir.VisualizationToneSuccess}}
+	kpi, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.KPIDashboardPresentation{Type: "kpi", Ranges: &ranges, DisplayUnits: &units, Note: &note, Tone: &tone}}, document.DashboardVisualTypeKpi)
 	if err != nil {
 		t.Fatal(err)
 	}
 	value := kpi.(visualizationir.KPIVisualizationPresentation)
-	if value.DisplayUnits == nil || *value.DisplayUnits != visualizationir.VisualizationDisplayUnitsThousands || value.Note == nil || *value.Note != "Target" || value.Tone == nil || *value.Tone != visualizationir.VisualizationToneWarning || value.FavorableDirection != visualizationir.VisualizationKPIDirectionNeutral || value.MissingComparison != visualizationir.VisualizationKPIMissingComparisonShowUnavailable {
+	if value.DisplayUnits == nil || *value.DisplayUnits != visualizationir.VisualizationDisplayUnitsThousands || value.Note == nil || *value.Note != "Target" || value.Tone == nil || *value.Tone != visualizationir.VisualizationToneWarning || value.FavorableDirection != visualizationir.VisualizationKPIDirectionNeutral || value.MissingComparison != visualizationir.VisualizationKPIMissingComparisonShowUnavailable || len(value.Ranges) != 1 || value.Ranges[0].Label != "On track" || value.Ranges[0].Tone != visualizationir.VisualizationToneSuccess {
 		t.Fatalf("kpi presentation = %#v", value)
 	}
 }
@@ -97,10 +191,11 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 	legend := document.DashboardLegendPositionTop
 	labels := document.DashboardLabelPolicy{Density: document.DashboardLabelDensityAlways}
 	orientation := document.DashboardOrientationHorizontal
+	initialDepth := int32(2)
+	roam := true
 	units := visualizationir.VisualizationDisplayUnitsBillions
-	nodeGap, curveness := 18.0, .32
+	minimum, maximum := 0.0, 100.0
 	layout := visualizationir.VisualizationHierarchyLayoutCircular
-	focus := visualizationir.VisualizationGraphFocusAdjacency
 	cases := []struct {
 		name       string
 		visualType document.DashboardVisualType
@@ -119,17 +214,17 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 		},
 		{
 			name: "hierarchy", visualType: document.DashboardVisualTypeTree,
-			value: document.DashboardPresentation{Value: &document.HierarchyDashboardPresentation{Type: "hierarchy", Orientation: &orientation, Layout: &layout, NodeGap: &nodeGap, Curveness: &curveness, Focus: &focus}},
+			value: document.DashboardPresentation{Value: &document.HierarchyDashboardPresentation{Type: "hierarchy", Orientation: &orientation, InitialDepth: &initialDepth, Roam: &roam, Layout: &layout}},
 			check: func(t *testing.T, value any) {
 				got := value.(visualizationir.HierarchyVisualizationPresentation)
-				if got.Orientation != visualizationir.VisualizationOrientationHorizontal || got.Legend != visualizationir.VisualizationLegendPositionBottom || got.Layout == nil || *got.Layout != visualizationir.VisualizationHierarchyLayoutCircular || got.NodeGap == nil || *got.NodeGap != 18 || got.Curveness == nil || *got.Curveness != .32 || got.Focus == nil || *got.Focus != visualizationir.VisualizationGraphFocusAdjacency {
+				if got.Orientation != visualizationir.VisualizationOrientationHorizontal || got.Legend != visualizationir.VisualizationLegendPositionBottom || got.InitialDepth == nil || *got.InitialDepth != 2 || !got.Roam || got.Layout == nil || *got.Layout != visualizationir.VisualizationHierarchyLayoutCircular {
 					t.Fatalf("hierarchy = %#v", got)
 				}
 			},
 		},
 		{
 			name: "polar", visualType: document.DashboardVisualTypeGauge,
-			value: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", DisplayUnits: &units}},
+			value: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", DisplayUnits: &units, Minimum: &minimum, Maximum: &maximum}},
 			check: func(t *testing.T, value any) {
 				got := value.(visualizationir.PolarVisualizationPresentation)
 				if got.DisplayUnits == nil || *got.DisplayUnits != visualizationir.VisualizationDisplayUnitsBillions || !got.ShowPointer {
@@ -142,7 +237,7 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 			value: document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{Type: "geographic"}},
 			check: func(t *testing.T, value any) {
 				got := value.(visualizationir.GeographicVisualizationPresentation)
-				if !got.Roam || got.Theme != visualizationir.VisualizationMapThemeAuto || got.LabelDensity != visualizationir.VisualizationMapLabelDensityNormal || got.Camera.Mode != visualizationir.VisualizationMapCameraModeFitData || got.Camera.Padding != 32 || got.Camera.MaximumZoom != 14 || !got.Controls.Zoom || !got.Controls.Reset || !got.Controls.Compass {
+				if !got.Roam || got.Theme != visualizationir.VisualizationMapThemeAuto || got.LabelDensity != visualizationir.VisualizationMapLabelDensityNormal || got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityHidden || len(got.LabelPolicy.Priority) != 0 || got.LabelPolicy.MaxCharacters != 24 || got.LabelPolicy.MinimumSpacing != 0 || !got.LabelPolicy.TooltipFallback || got.Camera.Mode != visualizationir.VisualizationMapCameraModeFitData || got.Camera.Padding != 32 || got.Camera.MaximumZoom != 14 || !got.Controls.Zoom || !got.Controls.Reset || !got.Controls.Compass {
 					t.Fatalf("geographic = %#v", got)
 				}
 			},
@@ -159,6 +254,81 @@ func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.
 	}
 }
 
+func TestLowerCanonicalGeographicPresentationValidatesFixedCamera(t *testing.T) {
+	finiteCenter := []float64{12.5, -3.25}
+	finiteZoom := 5.5
+	tests := []struct {
+		name  string
+		setup func(*document.DashboardMapCamera)
+		want  string
+	}{
+		{name: "invalid mode", setup: func(camera *document.DashboardMapCamera) {
+			mode := visualizationir.VisualizationMapCameraMode("invalid")
+			camera.Mode = &mode
+		}, want: "presentation.camera.mode must be fit_data, fixed, or preserve"},
+		{name: "missing center", setup: func(camera *document.DashboardMapCamera) { camera.Center = nil }, want: "presentation.camera.center is required"},
+		{name: "wrong center arity", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{12.5} }, want: "presentation.camera.center must contain exactly two coordinates"},
+		{name: "nonfinite center", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{math.NaN(), -3.25} }, want: "presentation.camera.center[0] must be finite"},
+		{name: "longitude range", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{180.1, -3.25} }, want: "presentation.camera.center[0] must be between -180 and 180"},
+		{name: "latitude range", setup: func(camera *document.DashboardMapCamera) { camera.Center = &[]float64{12.5, 90.1} }, want: "presentation.camera.center[1] must be between -90 and 90"},
+		{name: "missing zoom", setup: func(camera *document.DashboardMapCamera) { camera.Zoom = nil }, want: "presentation.camera.zoom is required"},
+		{name: "nonfinite zoom", setup: func(camera *document.DashboardMapCamera) { value := math.Inf(1); camera.Zoom = &value }, want: "presentation.camera.zoom must be finite"},
+		{name: "zoom range", setup: func(camera *document.DashboardMapCamera) { value := 25.0; camera.Zoom = &value }, want: "presentation.camera.zoom must be between 0 and 24"},
+		{name: "zoom below minimum", setup: func(camera *document.DashboardMapCamera) { value := 6.0; camera.MinimumZoom = &value }, want: "presentation.camera.zoom must be within presentation.camera.minimumZoom and presentation.camera.maximumZoom"},
+		{name: "zoom above maximum", setup: func(camera *document.DashboardMapCamera) { value := 5.0; camera.MaximumZoom = &value }, want: "presentation.camera.zoom must be within presentation.camera.minimumZoom and presentation.camera.maximumZoom"},
+		{name: "negative padding", setup: func(camera *document.DashboardMapCamera) { value := int32(-1); camera.Padding = &value }, want: "presentation.camera.padding must be non-negative"},
+		{name: "nonfinite minimum zoom", setup: func(camera *document.DashboardMapCamera) { value := math.Inf(1); camera.MinimumZoom = &value }, want: "presentation.camera.minimumZoom must be finite"},
+		{name: "minimum zoom range", setup: func(camera *document.DashboardMapCamera) { value := -1.0; camera.MinimumZoom = &value }, want: "presentation.camera.minimumZoom must be between 0 and 24"},
+		{name: "nonfinite maximum zoom", setup: func(camera *document.DashboardMapCamera) { value := math.Inf(1); camera.MaximumZoom = &value }, want: "presentation.camera.maximumZoom must be finite"},
+		{name: "maximum zoom range", setup: func(camera *document.DashboardMapCamera) { value := 25.0; camera.MaximumZoom = &value }, want: "presentation.camera.maximumZoom must be between 0 and 24"},
+		{name: "zoom order", setup: func(camera *document.DashboardMapCamera) {
+			minimum, maximum := 8.0, 7.0
+			camera.MinimumZoom, camera.MaximumZoom = &minimum, &maximum
+		}, want: "presentation.camera.minimumZoom must be less than or equal to maximumZoom"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mode := visualizationir.VisualizationMapCameraModeFixed
+			camera := &document.DashboardMapCamera{Mode: &mode, Center: &finiteCenter, Zoom: &finiteZoom}
+			test.setup(camera)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{Type: "geographic", Camera: camera}}, document.DashboardVisualTypeMap)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want path-bearing camera diagnostic containing %q", err, test.want)
+			}
+		})
+	}
+
+	mode := visualizationir.VisualizationMapCameraModeFixed
+	lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{
+		Type: "geographic", Camera: &document.DashboardMapCamera{Mode: &mode, Center: &finiteCenter, Zoom: &finiteZoom},
+	}}, document.DashboardVisualTypeMap)
+	if err != nil {
+		t.Fatalf("valid fixed camera rejected: %v", err)
+	}
+	got := lowered.(visualizationir.GeographicVisualizationPresentation)
+	if got.Camera.Mode != mode || got.Camera.Center == nil || !reflect.DeepEqual(*got.Camera.Center, finiteCenter) || got.Camera.Zoom == nil || *got.Camera.Zoom != finiteZoom {
+		t.Fatalf("lowered fixed camera = %#v", got.Camera)
+	}
+}
+
+func TestLowerCanonicalGeographicPresentationPreservesExplicitLabelDensity(t *testing.T) {
+	density := visualizationir.VisualizationMapLabelDensityDense
+	lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{
+		Type:         "geographic",
+		LabelDensity: &density,
+	}}, document.DashboardVisualTypeMap)
+	if err != nil {
+		t.Fatalf("lower geographic presentation: %v", err)
+	}
+	got, ok := lowered.(visualizationir.GeographicVisualizationPresentation)
+	if !ok {
+		t.Fatalf("lowered type = %T", lowered)
+	}
+	if got.LabelDensity != visualizationir.VisualizationMapLabelDensityDense {
+		t.Fatalf("label density = %q, want dense", got.LabelDensity)
+	}
+}
+
 func TestLowerCanonicalPresentationRejectsIncompatibleAndInvalidValues(t *testing.T) {
 	if _, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.KPIDashboardPresentation{Type: "kpi"}}, document.DashboardVisualTypeBar); err == nil {
 		t.Fatal("incompatible presentation accepted")
@@ -170,6 +340,518 @@ func TestLowerCanonicalPresentationRejectsIncompatibleAndInvalidValues(t *testin
 	zero := int32(0)
 	if _, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.TableDashboardPresentation{Type: "table", RowHeight: zero}}, document.DashboardVisualTypeTable); err == nil {
 		t.Fatal("zero table row height accepted")
+	}
+}
+
+func TestLowerCanonicalProportionalPresentationSupportsMarkSpecificOptions(t *testing.T) {
+	falseValue := false
+	zero, one := 0.0, 1.0
+	horizontal := document.DashboardOrientationHorizontal
+	center := document.DashboardProportionalAlignmentCenter
+	ascending := visualizationir.VisualizationSortDirectionAscending
+	cases := []struct {
+		name       string
+		visualType document.DashboardVisualType
+		value      document.ProportionalDashboardPresentation
+		check      func(t *testing.T, got visualizationir.ProportionalVisualizationPresentation)
+	}{
+		{
+			name: "pie preserves rose false and outer radius", visualType: document.DashboardVisualTypePie,
+			value: document.ProportionalDashboardPresentation{Type: "proportional", Rose: &falseValue, OuterRadius: &one},
+			check: func(t *testing.T, got visualizationir.ProportionalVisualizationPresentation) {
+				if got.Rose || got.OuterRadius == nil || *got.OuterRadius != 1 {
+					t.Fatalf("pie presentation = %#v", got)
+				}
+			},
+		},
+		{
+			name: "donut preserves zero inner radius", visualType: document.DashboardVisualTypeDonut,
+			value: document.ProportionalDashboardPresentation{Type: "proportional", Rose: &falseValue, InnerRadius: &zero, OuterRadius: &one, CenterLabel: stringPointer("Total")},
+			check: func(t *testing.T, got visualizationir.ProportionalVisualizationPresentation) {
+				if got.Rose || got.InnerRadius == nil || *got.InnerRadius != 0 || got.OuterRadius == nil || *got.OuterRadius != 1 || got.CenterLabel == nil || *got.CenterLabel != "Total" {
+					t.Fatalf("donut presentation = %#v", got)
+				}
+			},
+		},
+		{
+			name: "funnel preserves closed options", visualType: document.DashboardVisualTypeFunnel,
+			value: document.ProportionalDashboardPresentation{Type: "proportional", Orientation: &horizontal, Align: &center, Sort: &ascending},
+			check: func(t *testing.T, got visualizationir.ProportionalVisualizationPresentation) {
+				if got.Orientation != visualizationir.VisualizationOrientationHorizontal || got.Align == nil || *got.Align != "center" || got.Sort == nil || *got.Sort != ascending {
+					t.Fatalf("funnel presentation = %#v", got)
+				}
+			},
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &test.value}, test.visualType)
+			if err != nil {
+				t.Fatalf("lower: %v", err)
+			}
+			got, ok := lowered.(visualizationir.ProportionalVisualizationPresentation)
+			if !ok {
+				t.Fatalf("lowered type = %T", lowered)
+			}
+			test.check(t, got)
+		})
+	}
+}
+
+func TestLowerCanonicalProportionalPresentationRejectsInapplicableOptions(t *testing.T) {
+	falseValue := false
+	zero := 0.0
+	vertical := document.DashboardOrientationVertical
+	center := document.DashboardProportionalAlignmentCenter
+	ascending := visualizationir.VisualizationSortDirectionAscending
+	cases := []struct {
+		name       string
+		visualType document.DashboardVisualType
+		set        func(*document.ProportionalDashboardPresentation)
+		want       string
+	}{
+		{name: "orientation on pie", visualType: document.DashboardVisualTypePie, set: func(value *document.ProportionalDashboardPresentation) { value.Orientation = &vertical }, want: "presentation.orientation"},
+		{name: "rose false on funnel", visualType: document.DashboardVisualTypeFunnel, set: func(value *document.ProportionalDashboardPresentation) { value.Rose = &falseValue }, want: "presentation.rose"},
+		{name: "center label on pie", visualType: document.DashboardVisualTypePie, set: func(value *document.ProportionalDashboardPresentation) { value.CenterLabel = stringPointer("ignored") }, want: "presentation.centerLabel"},
+		{name: "inner radius on pie", visualType: document.DashboardVisualTypePie, set: func(value *document.ProportionalDashboardPresentation) { value.InnerRadius = &zero }, want: "presentation.innerRadius"},
+		{name: "outer radius on funnel", visualType: document.DashboardVisualTypeFunnel, set: func(value *document.ProportionalDashboardPresentation) { value.OuterRadius = &zero }, want: "presentation.outerRadius"},
+		{name: "align on donut", visualType: document.DashboardVisualTypeDonut, set: func(value *document.ProportionalDashboardPresentation) { value.Align = &center }, want: "presentation.align"},
+		{name: "sort on pie", visualType: document.DashboardVisualTypePie, set: func(value *document.ProportionalDashboardPresentation) { value.Sort = &ascending }, want: "presentation.sort"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.ProportionalDashboardPresentation{Type: "proportional"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, test.visualType)
+			if err == nil || !strings.Contains(err.Error(), test.want+" is not supported for "+string(test.visualType)+" visuals") {
+				t.Fatalf("error = %v, want path-bearing applicability error", err)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalDonutRejectsBlankCenterLabel(t *testing.T) {
+	for _, label := range []string{"", "   \t"} {
+		t.Run(fmt.Sprintf("%q", label), func(t *testing.T) {
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{Type: "proportional", CenterLabel: stringPointer(label)}}, document.DashboardVisualTypeDonut)
+			if err == nil || !strings.Contains(err.Error(), "presentation.centerLabel must not be empty") {
+				t.Fatalf("error = %v, want actionable centerLabel error", err)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalProportionalPresentationRejectsNonFiniteAndUnknownFunnelValues(t *testing.T) {
+	cases := []struct {
+		name string
+		set  func(*document.ProportionalDashboardPresentation)
+		want string
+	}{
+		{name: "non-finite inner radius", set: func(value *document.ProportionalDashboardPresentation) {
+			radius := math.NaN()
+			value.InnerRadius = &radius
+		}, want: "presentation.innerRadius must be finite"},
+		{name: "non-finite outer radius", set: func(value *document.ProportionalDashboardPresentation) {
+			radius := math.Inf(1)
+			value.OuterRadius = &radius
+		}, want: "presentation.outerRadius must be finite"},
+		{name: "inner radius below zero", set: func(value *document.ProportionalDashboardPresentation) { radius := -0.1; value.InnerRadius = &radius }, want: "presentation.innerRadius must be between zero and one"},
+		{name: "outer radius zero", set: func(value *document.ProportionalDashboardPresentation) { radius := 0.0; value.OuterRadius = &radius }, want: "presentation.outerRadius must be greater than zero"},
+		{name: "inner radius not below outer radius", set: func(value *document.ProportionalDashboardPresentation) {
+			inner, outer := 0.8, 0.8
+			value.InnerRadius, value.OuterRadius = &inner, &outer
+		}, want: "presentation.innerRadius must be less than outerRadius"},
+		{name: "unknown align", set: func(value *document.ProportionalDashboardPresentation) {
+			align := document.DashboardProportionalAlignment("start")
+			value.Align = &align
+		}, want: "presentation.align must be left, center, or right"},
+		{name: "unknown sort", set: func(value *document.ProportionalDashboardPresentation) {
+			sort := visualizationir.VisualizationSortDirection("natural")
+			value.Sort = &sort
+		}, want: "presentation.sort must be ascending or descending"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.ProportionalDashboardPresentation{Type: "proportional"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, func() document.DashboardVisualType {
+				if value.Align != nil || value.Sort != nil {
+					return document.DashboardVisualTypeFunnel
+				}
+				return document.DashboardVisualTypeDonut
+			}())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalPolarPresentationSupportsGaugeAndRadarOptions(t *testing.T) {
+	minimum, maximum, target, progressWidth := 0.0, 100.0, 100.0, 12.0
+	showPointer := false
+	area := false
+	thresholds := []visualizationir.VisualizationThreshold{{Value: 0, Tone: visualizationir.VisualizationToneSuccess}, {Value: 50, Tone: visualizationir.VisualizationToneWarning}, {Value: 100, Tone: visualizationir.VisualizationToneDanger}}
+	gauge, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Minimum: &minimum, Maximum: &maximum, Target: &target, ShowPointer: &showPointer, ProgressWidth: &progressWidth, Thresholds: &thresholds}}, document.DashboardVisualTypeGauge)
+	if err != nil {
+		t.Fatalf("lower gauge: %v", err)
+	}
+	gaugePresentation := gauge.(visualizationir.PolarVisualizationPresentation)
+	if gaugePresentation.ShowPointer || gaugePresentation.Target == nil || *gaugePresentation.Target != 100 || gaugePresentation.ProgressWidth == nil || *gaugePresentation.ProgressWidth != 12 || gaugePresentation.Thresholds == nil || len(*gaugePresentation.Thresholds) != 3 {
+		t.Fatalf("gauge presentation = %#v", gaugePresentation)
+	}
+
+	maximum = 10
+	legend := document.DashboardLegendPositionRight
+	radar, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Legend: &legend, Maximum: &maximum, Area: &area}}, document.DashboardVisualTypeRadar)
+	if err != nil {
+		t.Fatalf("lower radar: %v", err)
+	}
+	radarPresentation := radar.(visualizationir.PolarVisualizationPresentation)
+	if radarPresentation.Legend != visualizationir.VisualizationLegendPositionRight || radarPresentation.Maximum == nil || *radarPresentation.Maximum != 10 || radarPresentation.Area == nil || *radarPresentation.Area {
+		t.Fatalf("radar presentation = %#v", radarPresentation)
+	}
+}
+
+func TestLowerCanonicalPolarPresentationRejectsInapplicableAndInvalidOptions(t *testing.T) {
+	falseValue := false
+	zero := 0.0
+	minimum, maximum := 0.0, 100.0
+	legend := document.DashboardLegendPositionRight
+	emptyThresholds := []visualizationir.VisualizationThreshold{}
+	cases := []struct {
+		name       string
+		visualType document.DashboardVisualType
+		set        func(*document.PolarDashboardPresentation)
+		want       string
+	}{
+		{name: "minimum on radar", visualType: document.DashboardVisualTypeRadar, set: func(value *document.PolarDashboardPresentation) { value.Minimum = &zero }, want: "presentation.minimum is not supported for radar visuals"},
+		{name: "legend on gauge", visualType: document.DashboardVisualTypeGauge, set: func(value *document.PolarDashboardPresentation) { value.Legend = &legend }, want: "presentation.legend is not supported for gauge visuals"},
+		{name: "target on radar", visualType: document.DashboardVisualTypeRadar, set: func(value *document.PolarDashboardPresentation) { value.Target = &zero }, want: "presentation.target is not supported for radar visuals"},
+		{name: "pointer false on radar", visualType: document.DashboardVisualTypeRadar, set: func(value *document.PolarDashboardPresentation) { value.ShowPointer = &falseValue }, want: "presentation.showPointer is not supported for radar visuals"},
+		{name: "area false on gauge", visualType: document.DashboardVisualTypeGauge, set: func(value *document.PolarDashboardPresentation) { value.Area = &falseValue }, want: "presentation.area is not supported for gauge visuals"},
+		{name: "progress zero on radar", visualType: document.DashboardVisualTypeRadar, set: func(value *document.PolarDashboardPresentation) { value.ProgressWidth = &zero }, want: "presentation.progressWidth is not supported for radar visuals"},
+		{name: "empty thresholds on radar", visualType: document.DashboardVisualTypeRadar, set: func(value *document.PolarDashboardPresentation) { value.Thresholds = &emptyThresholds }, want: "presentation.thresholds is not supported for radar visuals"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.PolarDashboardPresentation{Type: "polar"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, test.visualType)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+
+	invalid := []struct {
+		name string
+		set  func(*document.PolarDashboardPresentation)
+		want string
+	}{
+		{name: "missing minimum", set: func(value *document.PolarDashboardPresentation) { value.Maximum = &maximum }, want: "presentation.minimum and presentation.maximum are required"},
+		{name: "missing maximum", set: func(value *document.PolarDashboardPresentation) { value.Minimum = &minimum }, want: "presentation.minimum and presentation.maximum are required"},
+		{name: "non-finite minimum", set: func(value *document.PolarDashboardPresentation) {
+			value.Minimum, value.Maximum = floatPointer(math.NaN()), &maximum
+		}, want: "presentation.minimum must be finite"},
+		{name: "non-finite maximum", set: func(value *document.PolarDashboardPresentation) {
+			value.Minimum, value.Maximum = &minimum, floatPointer(math.Inf(1))
+		}, want: "presentation.maximum must be finite"},
+		{name: "reversed domain", set: func(value *document.PolarDashboardPresentation) {
+			lower, upper := 10.0, 1.0
+			value.Minimum, value.Maximum = &lower, &upper
+		}, want: "presentation.minimum must be less than maximum"},
+		{name: "non-finite target", set: func(value *document.PolarDashboardPresentation) {
+			value.Minimum, value.Maximum, value.Target = &minimum, &maximum, floatPointer(math.NaN())
+		}, want: "presentation.target must be finite"},
+		{name: "target below domain", set: func(value *document.PolarDashboardPresentation) {
+			target := -1.0
+			value.Minimum, value.Maximum, value.Target = &minimum, &maximum, &target
+		}, want: "presentation.target must be within the gauge domain"},
+		{name: "non-finite progress width", set: func(value *document.PolarDashboardPresentation) {
+			value.Minimum, value.Maximum, value.ProgressWidth = &minimum, &maximum, floatPointer(math.Inf(1))
+		}, want: "presentation.progressWidth must be finite"},
+		{name: "zero progress width", set: func(value *document.PolarDashboardPresentation) {
+			value.Minimum, value.Maximum, value.ProgressWidth = &minimum, &maximum, floatPointer(0)
+		}, want: "presentation.progressWidth must be greater than zero"},
+		{name: "non-finite threshold", set: func(value *document.PolarDashboardPresentation) {
+			thresholds := []visualizationir.VisualizationThreshold{{Value: math.NaN()}}
+			value.Minimum, value.Maximum, value.Thresholds = &minimum, &maximum, &thresholds
+		}, want: "presentation.thresholds[0].value must be finite"},
+		{name: "threshold outside domain", set: func(value *document.PolarDashboardPresentation) {
+			thresholds := []visualizationir.VisualizationThreshold{{Value: 101}}
+			value.Minimum, value.Maximum, value.Thresholds = &minimum, &maximum, &thresholds
+		}, want: "presentation.thresholds[0].value must be within the gauge domain"},
+		{name: "thresholds not ordered", set: func(value *document.PolarDashboardPresentation) {
+			thresholds := []visualizationir.VisualizationThreshold{{Value: 50}, {Value: 50}}
+			value.Minimum, value.Maximum, value.Thresholds = &minimum, &maximum, &thresholds
+		}, want: "presentation.thresholds[1].value must be greater than the previous threshold"},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.PolarDashboardPresentation{Type: "polar"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, document.DashboardVisualTypeGauge)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name  string
+		value float64
+		want  string
+	}{
+		{name: "non-finite maximum", value: math.NaN(), want: "presentation.maximum must be finite"},
+		{name: "zero maximum", value: 0, want: "presentation.maximum must be greater than zero for radar visuals"},
+		{name: "negative maximum", value: -1, want: "presentation.maximum must be greater than zero for radar visuals"},
+	} {
+		t.Run("radar "+test.name, func(t *testing.T) {
+			maximum := test.value
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Maximum: &maximum}}, document.DashboardVisualTypeRadar)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func stringPointer(value string) *string { return &value }
+
+func floatPointer(value float64) *float64 { return &value }
+
+func TestLowerCanonicalHierarchyPresentationSupportsOptionsByVisualType(t *testing.T) {
+	tests := []struct {
+		name        string
+		visualTypes []document.DashboardVisualType
+		set         func(*document.HierarchyDashboardPresentation)
+		check       func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation)
+	}{
+		{
+			name: "orientation", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeTree, document.DashboardVisualTypeSankey},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				orientation := document.DashboardOrientationHorizontal
+				value.Orientation = &orientation
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Orientation != visualizationir.VisualizationOrientationHorizontal {
+					t.Fatalf("orientation = %q", got.Orientation)
+				}
+			},
+		},
+		{
+			name: "initialDepth", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeTree, document.DashboardVisualTypeTreemap},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				initialDepth := int32(0)
+				value.InitialDepth = &initialDepth
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.InitialDepth == nil || *got.InitialDepth != 0 {
+					t.Fatalf("initialDepth = %v", got.InitialDepth)
+				}
+			},
+		},
+		{
+			name: "roam", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeGraph, document.DashboardVisualTypeTree, document.DashboardVisualTypeTreemap, document.DashboardVisualTypeSunburst},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				roam := false
+				value.Roam = &roam
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Roam {
+					t.Fatal("roam = true, want explicit false")
+				}
+			},
+		},
+		{
+			name: "layout", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeGraph, document.DashboardVisualTypeTree},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				layout := visualizationir.VisualizationHierarchyLayoutStandard
+				value.Layout = &layout
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Layout == nil || *got.Layout != visualizationir.VisualizationHierarchyLayoutStandard {
+					t.Fatalf("layout = %v", got.Layout)
+				}
+			},
+		},
+		{
+			name: "breadcrumb", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeTreemap},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				breadcrumb := false
+				value.Breadcrumb = &breadcrumb
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Breadcrumb == nil || *got.Breadcrumb {
+					t.Fatalf("breadcrumb = %v", got.Breadcrumb)
+				}
+			},
+		},
+		{
+			name: "nodeGap", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeSankey},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				nodeGap := 0.0
+				value.NodeGap = &nodeGap
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.NodeGap == nil || *got.NodeGap != 0 {
+					t.Fatalf("nodeGap = %v", got.NodeGap)
+				}
+			},
+		},
+		{
+			name: "curveness", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeGraph, document.DashboardVisualTypeSankey},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				curveness := 0.0
+				value.Curveness = &curveness
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Curveness == nil || *got.Curveness != 0 {
+					t.Fatalf("curveness = %v", got.Curveness)
+				}
+			},
+		},
+		{
+			name: "focus", visualTypes: []document.DashboardVisualType{document.DashboardVisualTypeGraph},
+			set: func(value *document.HierarchyDashboardPresentation) {
+				focus := visualizationir.VisualizationGraphFocusNone
+				value.Focus = &focus
+			},
+			check: func(t *testing.T, got visualizationir.HierarchyVisualizationPresentation) {
+				if got.Focus == nil || *got.Focus != visualizationir.VisualizationGraphFocusNone {
+					t.Fatalf("focus = %v", got.Focus)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		for _, visualType := range test.visualTypes {
+			t.Run(test.name+"/"+string(visualType), func(t *testing.T) {
+				value := &document.HierarchyDashboardPresentation{Type: "hierarchy"}
+				test.set(value)
+				lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, visualType)
+				if err != nil {
+					t.Fatalf("lower %s: %v", visualType, err)
+				}
+				got, ok := lowered.(visualizationir.HierarchyVisualizationPresentation)
+				if !ok {
+					t.Fatalf("lowered type = %T", lowered)
+				}
+				test.check(t, got)
+			})
+		}
+	}
+}
+
+func TestLowerCanonicalHierarchyPresentationRejectsInapplicableOptions(t *testing.T) {
+	tests := []struct {
+		name       string
+		visualType document.DashboardVisualType
+		set        func(*document.HierarchyDashboardPresentation)
+		want       string
+	}{
+		{
+			name: "orientation on treemap", visualType: document.DashboardVisualTypeTreemap,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				orientation := document.DashboardOrientationHorizontal
+				value.Orientation = &orientation
+			}, want: "presentation.orientation",
+		},
+		{
+			name: "initialDepth on sunburst", visualType: document.DashboardVisualTypeSunburst,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				initialDepth := int32(0)
+				value.InitialDepth = &initialDepth
+			}, want: "presentation.initialDepth",
+		},
+		{
+			name: "roam on sankey", visualType: document.DashboardVisualTypeSankey,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				roam := false
+				value.Roam = &roam
+			}, want: "presentation.roam",
+		},
+		{
+			name: "layout on sunburst", visualType: document.DashboardVisualTypeSunburst,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				layout := visualizationir.VisualizationHierarchyLayoutStandard
+				value.Layout = &layout
+			}, want: "presentation.layout",
+		},
+		{
+			name: "breadcrumb on tree", visualType: document.DashboardVisualTypeTree,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				breadcrumb := false
+				value.Breadcrumb = &breadcrumb
+			}, want: "presentation.breadcrumb",
+		},
+		{
+			name: "nodeGap on graph", visualType: document.DashboardVisualTypeGraph,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				nodeGap := 0.0
+				value.NodeGap = &nodeGap
+			}, want: "presentation.nodeGap",
+		},
+		{
+			name: "curveness on tree", visualType: document.DashboardVisualTypeTree,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				curveness := 0.0
+				value.Curveness = &curveness
+			}, want: "presentation.curveness",
+		},
+		{
+			name: "focus on treemap", visualType: document.DashboardVisualTypeTreemap,
+			set: func(value *document.HierarchyDashboardPresentation) {
+				focus := visualizationir.VisualizationGraphFocusNone
+				value.Focus = &focus
+			}, want: "presentation.focus",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.HierarchyDashboardPresentation{Type: "hierarchy"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, test.visualType)
+			if err == nil || !strings.Contains(err.Error(), test.want+" is not supported for "+string(test.visualType)+" visuals") {
+				t.Fatalf("error = %v, want path-bearing applicability error for %s", err, test.want)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalHierarchyPresentationRejectsUnknownEnums(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*document.HierarchyDashboardPresentation)
+		want string
+	}{
+		{
+			name: "layout",
+			set: func(value *document.HierarchyDashboardPresentation) {
+				layout := visualizationir.VisualizationHierarchyLayout("spiral")
+				value.Layout = &layout
+			},
+			want: "presentation.layout must be standard or circular",
+		},
+		{
+			name: "focus",
+			set: func(value *document.HierarchyDashboardPresentation) {
+				focus := visualizationir.VisualizationGraphFocus("neighbors")
+				value.Focus = &focus
+			},
+			want: "presentation.focus must be none or adjacency",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := &document.HierarchyDashboardPresentation{Type: "hierarchy"}
+			test.set(value)
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: value}, document.DashboardVisualTypeGraph)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -226,12 +908,106 @@ func TestLowerCanonicalComboPresentationRejectsUnknownDuplicateAndInapplicableSe
 		{name: "unknown result", visualType: document.DashboardVisualTypeCombo, series: []document.DashboardComboSeries{{Field: "missing", Mark: document.DashboardComboSeriesMark("line"), Axis: document.DashboardComboSeriesAxis("primary")}}, want: "not a compiled result field"},
 		{name: "duplicate result", visualType: document.DashboardVisualTypeCombo, series: []document.DashboardComboSeries{{Field: "revenue", Mark: document.DashboardComboSeriesMark("line"), Axis: document.DashboardComboSeriesAxis("primary")}, {Field: "revenue", Mark: document.DashboardComboSeriesMark("area"), Axis: document.DashboardComboSeriesAxis("secondary")}}, want: "duplicates"},
 		{name: "empty series", visualType: document.DashboardVisualTypeCombo, series: []document.DashboardComboSeries{}, want: "at least one entry"},
-		{name: "non combo visual", visualType: document.DashboardVisualTypeLine, series: []document.DashboardComboSeries{{Field: "revenue", Mark: document.DashboardComboSeriesMark("line"), Axis: document.DashboardComboSeriesAxis("primary")}}, want: "only supported for combo"},
+		{name: "non combo visual", visualType: document.DashboardVisualTypeLine, series: []document.DashboardComboSeries{{Field: "revenue", Mark: document.DashboardComboSeriesMark("line"), Axis: document.DashboardComboSeriesAxis("primary")}}, want: "presentation.series is not supported for line visuals"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", Series: &test.series}}
 			_, err := LowerCanonicalDashboardPresentationForQuery(value, test.visualType, query)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestLowerCanonicalSeriesIntentPreservesPolicyAndAllowsMissingDynamicCategories(t *testing.T) {
+	order0, order1 := int32(0), int32(1)
+	color0, color1 := visualizationir.VisualizationColorIntentSuccess, visualizationir.VisualizationColorIntentData3
+	intents := []document.DashboardSeriesIntent{
+		{Value: "order_count", Order: &order0, Color: &color0},
+		{Value: "revenue", Order: &order1, Color: &color1},
+	}
+	value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", SeriesIntent: &intents}}
+	query := LoweredDashboardQuery{
+		Type:        "aggregate",
+		Binding:     visualizationdefinition.QueryBinding{Aggregate: &visualizationdefinition.AggregateQueryBinding{Metrics: []visualizationdefinition.FieldBinding{{Alias: "revenue"}, {Alias: "order_count"}}}},
+		ResultFrame: []DashboardQueryResultField{{Name: "month"}, {Name: "revenue"}, {Name: "order_count"}},
+	}
+	lowered, err := LowerCanonicalDashboardPresentationForQuery(value, document.DashboardVisualTypeCombo, query)
+	if err != nil {
+		t.Fatalf("lower series intent: %v", err)
+	}
+	presentation := lowered.(visualizationir.CartesianVisualizationPresentation)
+	if presentation.SeriesIntent == nil || len(*presentation.SeriesIntent) != 2 || (*presentation.SeriesIntent)[0].Value != "order_count" || *(*presentation.SeriesIntent)[1].Color != visualizationir.VisualizationColorIntentData3 {
+		t.Fatalf("series intent = %#v", presentation.SeriesIntent)
+	}
+
+	dynamic := query
+	dynamic.Binding.Aggregate.Series = &visualizationdefinition.FieldBinding{Alias: "status"}
+	dynamic.ResultFrame = []DashboardQueryResultField{{Name: "month"}, {Name: "status"}, {Name: "revenue"}}
+	dynamicIntents := []document.DashboardSeriesIntent{{Value: "category-omitted-at-compile-time"}}
+	dynamicValue := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", SeriesIntent: &dynamicIntents}}
+	if _, err := LowerCanonicalDashboardPresentationForQuery(dynamicValue, document.DashboardVisualTypeLine, dynamic); err != nil {
+		t.Fatalf("dynamic category intent should not require a compiled result field: %v", err)
+	}
+	if _, err := LowerCanonicalDashboardPresentationForQuery(dynamicValue, document.DashboardVisualTypeCombo, dynamic); err == nil || !strings.Contains(err.Error(), "presentation.seriesIntent[0].value") || !strings.Contains(err.Error(), "compiled metric alias") {
+		t.Fatalf("dynamic combo category intent error = %v, want path-bearing compiled-alias diagnostic", err)
+	}
+}
+
+func TestLowerCanonicalSeriesIntentAllowsSingleMetricColor(t *testing.T) {
+	color := visualizationir.VisualizationColorIntentSuccess
+	intents := []document.DashboardSeriesIntent{{Value: "revenue", Color: &color}}
+	value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", SeriesIntent: &intents}}
+	query := LoweredDashboardQuery{
+		Type:        "aggregate",
+		Binding:     visualizationdefinition.QueryBinding{Aggregate: &visualizationdefinition.AggregateQueryBinding{Metrics: []visualizationdefinition.FieldBinding{{Alias: "revenue"}}}},
+		ResultFrame: []DashboardQueryResultField{{Name: "revenue"}},
+	}
+	lowered, err := LowerCanonicalDashboardPresentationForQuery(value, document.DashboardVisualTypeLine, query)
+	if err != nil {
+		t.Fatalf("single-metric series intent: %v", err)
+	}
+	presentation := lowered.(visualizationir.CartesianVisualizationPresentation)
+	if presentation.SeriesIntent == nil || len(*presentation.SeriesIntent) != 1 || (*presentation.SeriesIntent)[0].Value != "revenue" || (*presentation.SeriesIntent)[0].Order != nil || (*presentation.SeriesIntent)[0].Color == nil || *(*presentation.SeriesIntent)[0].Color != visualizationir.VisualizationColorIntentSuccess {
+		t.Fatalf("series intent = %#v", presentation.SeriesIntent)
+	}
+	order := int32(0)
+	ordered := []document.DashboardSeriesIntent{{Value: "revenue", Order: &order}}
+	orderedValue := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", SeriesIntent: &ordered}}
+	if _, err := LowerCanonicalDashboardPresentationForQuery(orderedValue, document.DashboardVisualTypeLine, query); err == nil || !strings.Contains(err.Error(), "presentation.seriesIntent[0].order") || !strings.Contains(err.Error(), "single compiled metric") {
+		t.Fatalf("single-metric order error = %v, want path-bearing diagnostic", err)
+	}
+}
+
+func TestLowerCanonicalSeriesIntentRejectsInvalidPolicyAndUnknownMetric(t *testing.T) {
+	order := int32(-1)
+	duplicateOrder := int32(0)
+	invalidColor := visualizationir.VisualizationColorIntent("#fff")
+	validQuery := LoweredDashboardQuery{
+		Type:        "aggregate",
+		Binding:     visualizationdefinition.QueryBinding{Aggregate: &visualizationdefinition.AggregateQueryBinding{Metrics: []visualizationdefinition.FieldBinding{{Alias: "revenue"}}}},
+		ResultFrame: []DashboardQueryResultField{{Name: "month"}, {Name: "revenue"}},
+	}
+	cases := []struct {
+		name    string
+		intents []document.DashboardSeriesIntent
+		want    string
+	}{
+		{name: "empty value", intents: []document.DashboardSeriesIntent{{Value: ""}}, want: "presentation.seriesIntent[0].value is required"},
+		{name: "surrounding whitespace", intents: []document.DashboardSeriesIntent{{Value: " revenue "}}, want: "must not contain surrounding whitespace"},
+		{name: "empty intent list", intents: []document.DashboardSeriesIntent{}, want: "presentation.seriesIntent must contain at least one intent"},
+		{name: "duplicate value", intents: []document.DashboardSeriesIntent{{Value: "revenue"}, {Value: "revenue"}}, want: "duplicates"},
+		{name: "duplicate order", intents: []document.DashboardSeriesIntent{{Value: "revenue", Order: &duplicateOrder}, {Value: "orders", Order: &duplicateOrder}}, want: "order 0 duplicates"},
+		{name: "negative order", intents: []document.DashboardSeriesIntent{{Value: "revenue", Order: &order}}, want: "non-negative"},
+		{name: "closed color", intents: []document.DashboardSeriesIntent{{Value: "revenue", Color: &invalidColor}}, want: "unsupported"},
+		{name: "unknown metric", intents: []document.DashboardSeriesIntent{{Value: "missing"}}, want: "compiled metric result"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian", SeriesIntent: &test.intents}}
+			_, err := LowerCanonicalDashboardPresentationForQuery(value, document.DashboardVisualTypeCombo, validQuery)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want substring %q", err, test.want)
 			}

@@ -1,9 +1,11 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
-import { echartsOption, heatmapFocusDataZoom, heatmapFocusZoomEnabled } from './echarts'
+import { echartsOption, heatmapFocusDataZoom, heatmapFocusZoomEnabled, responsiveEChartsPatch } from './echarts'
 import { constrainEChartsLabelToDataRect, echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
+import visualDocumentation from '../../../../../docs/visuals/examples.gen.json'
 
 test('ECharts label policy truncates by grapheme and preserves selected and threshold labels', () => {
   const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
@@ -86,6 +88,61 @@ test('ECharts heatmap focus requires initialized generated zoom controls', () =>
   expect(heatmapFocusZoomEnabled(envelope, false)).toBe(false)
 })
 
+test('compact generated heatmap keeps rotated categories above its visual map', () => {
+  const document = (visualDocumentation as any).documents['visuals/heatmap']
+  const envelope = structuredClone(document.find((candidate: any) => candidate.visualID === 'category_status_heatmap')) as VisualizationEnvelope
+  const source = echartsOption(envelope, defaultRendererContext) as Record<string, any>
+  const option = { ...source, ...responsiveEChartsPatch(source, 358, 411) }
+  expect(option.grid.bottom).toBe(96)
+  expect(option.xAxis.axisLabel.rotate).toBe(24)
+  expect(option.dataZoom.find((entry: any) => entry.id === 'dataZoom:heatmap:slider')?.bottom).toBe(64)
+
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 358, height: 411 })
+  try {
+    chart.setOption(option, { notMerge: true, lazyUpdate: false })
+    chart.renderToSVGString()
+    assertCompactHeatmapBounds(chart, 'initial compact')
+
+    chart.setOption({ dataZoom: heatmapFocusDataZoom(true) }, { lazyUpdate: false })
+    chart.renderToSVGString()
+    assertCompactHeatmapBounds(chart, 'focused')
+
+    chart.setOption({ dataZoom: heatmapFocusDataZoom(false) }, { lazyUpdate: false })
+    chart.renderToSVGString()
+    assertCompactHeatmapBounds(chart, 'unfocused')
+
+    chart.resize({ width: 358, height: 411, silent: true })
+    chart.renderToSVGString()
+    assertCompactHeatmapBounds(chart, 'resized compact')
+  } finally {
+    chart.dispose()
+  }
+})
+
+function assertCompactHeatmapBounds(chart: echarts.EChartsType, state: string): void {
+  const categories = new Set(['Books', 'Sports', 'Electronics', 'Fashion', 'Beauty', 'Home'])
+  const labels = chart.getZr().storage.getDisplayList().filter((item: any) => item.type === 'tspan' && categories.has(item.style?.text))
+  expect(labels, `${state} category labels should render`).toHaveLength(categories.size)
+  const visualMap = chart.getModel().findComponents({ mainType: 'visualMap' })[0]
+  const slider = chart.getModel().findComponents({ mainType: 'dataZoom' }).find((component: any) => component.option?.id === 'dataZoom:heatmap:slider')
+  const visualMapGroup = visualMap ? (chart as any).getViewOfComponentModel(visualMap)?.group : undefined
+  const sliderGroup = slider ? (chart as any).getViewOfComponentModel(slider)?.group : undefined
+  expect(visualMapGroup, `${state} visual map should render`).toBeDefined()
+  expect(sliderGroup, `${state} zoom slider should render`).toBeDefined()
+  const visualMapBounds = visibleBounds(chart, visualMapGroup)
+  const sliderBounds = visibleBounds(chart, sliderGroup)
+  expect(visualMapBounds, `${state} visual map should have visible primitives`).toBeDefined()
+  expect(sliderBounds, `${state} zoom slider should have visible primitives`).toBeDefined()
+  expect(visualMapBounds!.width).toBeGreaterThan(0)
+  expect(sliderBounds!.width).toBeGreaterThan(0)
+  for (const label of labels) {
+    const labelBounds = globalBounds(label)
+    expect(labelBounds.y + labelBounds.height, `${state} ${label.style.text} should clear zoom slider`).toBeLessThanOrEqual(sliderBounds!.y)
+    expect(labelBounds.y + labelBounds.height, `${state} ${label.style.text} should clear visual map`).toBeLessThanOrEqual(visualMapBounds!.y)
+  }
+  expect(sliderBounds!.y + sliderBounds!.height, `${state} zoom slider should clear visual map`).toBeLessThanOrEqual(visualMapBounds!.y)
+}
+
 function cartesianFixture(mark: string, columns = ['label', 'value']): VisualizationEnvelope {
   const fields = columns.map((id, index) => ({ id, role: index === 0 ? 'dimension' : 'metric', dataType: index === 0 || id === 'row' ? 'string' : 'decimal', nullable: false, label: id }))
   const y = columns.slice(1).map((field) => ({ dataset: 'primary', field }))
@@ -95,4 +152,35 @@ function cartesianFixture(mark: string, columns = ['label', 'value']): Visualiza
     spec: { kind: 'cartesian', title: mark, mark, datasets: [{ id: 'primary', fields }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], x: { dataset: 'primary', field: 'label' }, y, presentation: { legend: 'bottom', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: true, stacked: true, showSymbols: false, dataZoom: true, area: mark === 'area', step: true, symbolSize: 12, labelPosition: 'top', orientation: mark === 'bar' ? 'horizontal' : 'vertical', histogramBins: mark === 'histogram' ? 10 : undefined } },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns, rows: [row], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
+}
+
+function globalBounds(item: any): { x: number; y: number; width: number; height: number } {
+  const bounds = item.getBoundingRect().clone()
+  const transform = item.getComputedTransform?.() ?? item.transform
+  if (transform) bounds.applyTransform(transform)
+  return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+}
+
+function visibleBounds(chart: echarts.EChartsType, group: any): { x: number; y: number; width: number; height: number } | undefined {
+  const items = chart.getZr().storage.getDisplayList().filter((item: any) => belongsTo(item, group) && hasVisiblePaint(item))
+  if (items.length === 0) return undefined
+  const bounds = items.map(globalBounds)
+  const left = Math.min(...bounds.map((value) => value.x))
+  const top = Math.min(...bounds.map((value) => value.y))
+  const right = Math.max(...bounds.map((value) => value.x + value.width))
+  const bottom = Math.max(...bounds.map((value) => value.y + value.height))
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+function belongsTo(item: any, group: any): boolean {
+  for (let parent = item.parent; parent; parent = parent.parent) if (parent === group) return true
+  return false
+}
+
+function hasVisiblePaint(item: any): boolean {
+  const style = item.style ?? {}
+  const fill = style.fill
+  const visibleFill = fill !== undefined && fill !== null && fill !== 'transparent' && fill !== 'rgba(0,0,0,0)'
+  const visibleStroke = style.stroke !== undefined && style.stroke !== null && style.stroke !== 'transparent' && style.lineWidth !== 0
+  return visibleFill || visibleStroke
 }

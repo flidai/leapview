@@ -68,7 +68,7 @@ function categoryColorScope(envelope: VisualizationEnvelope, ref: VisualizationF
   return sourceRef ? `source:${sourceRef}` : `visual:${envelope.visualID}:${ref.dataset}:${ref.field}`
 }
 
-function categoryIdentity(value: unknown): string {
+export function categoryIdentity(value: unknown): string {
   if (value === null) return 'null:'
   if (value === undefined) return 'undefined:'
   if (typeof value === 'number') {

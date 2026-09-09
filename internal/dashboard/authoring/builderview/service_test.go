@@ -15,6 +15,7 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
@@ -89,7 +90,7 @@ func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if signal.Revision.ID != f.revision.ID.String() || signal.Revision.Number != int64(f.revision.Number) || signal.Revision.ContentHash != f.revision.ContentHash || f.provider.acquireCalls != 1 || f.lease.releases != 1 {
+	if signal.ProjectID != f.repository.lifecycle.ProjectID.String() || signal.DashboardID != f.revision.DashboardID.String() || signal.Revision.ID != f.revision.ID.String() || signal.Revision.Number != int64(f.revision.Number) || signal.Revision.ContentHash != f.revision.ContentHash || f.provider.acquireCalls != 1 || f.lease.releases != 1 {
 		t.Fatalf("signal/token/lease = %#v/%#v acquire=%d release=%d", signal.Revision, f.revision.Token(), f.provider.acquireCalls, f.lease.releases)
 	}
 	if signal.SemanticModel.ID != "sales_model" {
@@ -121,6 +122,20 @@ func TestBuildHidesArchiveWhenManageAuthorizationIsDenied(t *testing.T) {
 	}
 	if signal.Capabilities.CanArchive {
 		t.Fatalf("archive capability = %#v, want manage-denied archive hidden", signal.Capabilities)
+	}
+}
+
+func TestCanonicalVisualFormatVisibilityDoesNotExposeMapLabelsAsDataLabels(t *testing.T) {
+	density := visualizationir.VisualizationMapLabelDensityDense
+	visual := document.DashboardVisual{
+		Type: document.DashboardVisualTypeMap,
+		Presentation: document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{
+			Type: "geographic", LabelDensity: &density,
+		}},
+	}
+	legendVisible, labelsVisible, axisVisible := canonicalVisualFormatVisibility(visual)
+	if legendVisible || labelsVisible || axisVisible {
+		t.Fatalf("map format visibility = legend:%t labels:%t axis:%t, want false/false/false", legendVisible, labelsVisible, axisVisible)
 	}
 }
 
