@@ -2,6 +2,17 @@
 
 Tracking: [FAI-769](https://linear.app/flid/issue/FAI-769/reconcile-saved-data-exploration-with-current-main-and-prepare-green).
 
+## September 9 project-boundary base refresh
+
+While hosted checks ran on `e2bfb5963`, main advanced to `4435ea6c1` with
+server-bound Project selector/locator enforcement. The PR remained conflict-free
+but became behind. A subsequent normal merge includes that security-boundary
+change without modifying its guards. Focused Project and SavedExploration tests
+passed in access/module, app, analytics/cache, and app/api/protocol. The prior
+full-CI success below validates the preceding merge; combined full CI for this
+new base is pending. No merge into main, force push, or live database operation
+is authorized or performed.
+
 ## September 9 ResourceUID integration checkpoint
 
 Reconciliation now includes main `4b9ee86fb`: the released ResourceUID registry

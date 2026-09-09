@@ -39,6 +39,8 @@ func TestReadClaimedProjectFailsClosedAndChecksEnvironment(t *testing.T) {
 	}{
 		{name: "repository error", repo: projectClaimRepositoryStub{err: errors.New("database unavailable")}, env: "prod", wantErr: "read claimed project"},
 		{name: "environment mismatch", repo: projectClaimRepositoryStub{claim: claim}, env: "dev", wantErr: "does not match configured environment"},
+		{name: "missing project evidence", repo: projectClaimRepositoryStub{claim: deployment.ProjectClaim{Environment: "prod", ClaimedBy: "principal", ClaimedAt: time.Now().UTC()}}, env: "prod", wantErr: "invalid"},
+		{name: "missing claim evidence", repo: projectClaimRepositoryStub{claim: deployment.ProjectClaim{ProjectID: "finance", Environment: "prod"}}, env: "prod", wantErr: "invalid"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			projectID, found, err := readClaimedProject(test.repo, test.env)(context.Background())

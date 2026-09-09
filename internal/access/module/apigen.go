@@ -209,6 +209,27 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 	if !apiGenExtensionModeMatches(contract) {
 		return nil, false
 	}
+	if strings.Contains(contract.Path, "{project}") && (scope == "platform" || contract.AuthzMode == "authenticated") {
+		// A principal/platform-scoped operation can still carry a Project
+		// locator (refresh, authoring, managed-data discovery). Authentication
+		// or platform admin must never turn that locator into a context switch.
+		// Resource and bootstrap operations use their existing snapshot/claim
+		// checks below, including before the first serving generation exists.
+		dispatch := next
+		next = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			projectID, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
+			if err != nil {
+				http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+				return
+			}
+			boundProjectID, ok := a.projectBoundaryProjectID(r.Context())
+			if !ok || projectID != boundProjectID {
+				http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+				return
+			}
+			dispatch.ServeHTTP(w, r)
+		})
+	}
 	if scope == "platform" {
 		return a.module.RequirePlatformAdmin(next), true
 	}
@@ -259,6 +280,39 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 		return nil, false
 	}
 	return a.protectResources(operationID, capability, resolver, next), true
+}
+
+// projectBoundaryProjectID resolves the authoritative project identity for
+// principal/platform operations that carry a project locator. Application
+// composition supplies Module.CurrentProjectID even when no serving runtime
+// host exists; when configured, that resolver is authoritative and any
+// non-empty runtime-host identity must agree with it. Direct authorizer users
+// without the resolver retain the valid runtime-host path.
+func (a *APIGenAuthorizer) projectBoundaryProjectID(ctx context.Context) (projectgraph.ResourceID, bool) {
+	if a == nil || a.module == nil {
+		return "", false
+	}
+	if a.module.currentProjectID != nil {
+		boundProjectID, err := a.module.CurrentProjectID(ctx)
+		if err != nil || boundProjectID.Validate() != nil {
+			return "", false
+		}
+		if a.runtime != nil {
+			runtimeProjectID := a.runtime.ProjectID()
+			if runtimeProjectID != "" && (runtimeProjectID.Validate() != nil || runtimeProjectID != boundProjectID) {
+				return "", false
+			}
+		}
+		return boundProjectID, true
+	}
+	if a.runtime == nil {
+		return "", false
+	}
+	boundProjectID := a.runtime.ProjectID()
+	if boundProjectID.Validate() != nil {
+		return "", false
+	}
+	return boundProjectID, true
 }
 
 // isBootstrapAPIGenOperation is the exact pre-activation operation allowlist.
