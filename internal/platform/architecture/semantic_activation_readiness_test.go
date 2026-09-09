@@ -59,6 +59,9 @@ func TestSemanticActivationReadinessPreservesAuthorities(t *testing.T) {
 	if !strings.Contains(composition, "WithContractActivationFence") {
 		t.Fatal("canonical publication must reuse the identity/publication lifecycle fence")
 	}
+	if strings.Count(composition, "validateUnsupportedContractServingArtifact") < 3 || !strings.Contains(composition, "validateCanonicalContractServingArtifact") {
+		t.Fatal("canonical and legacy activation paths must inspect immutable serving artifacts before selecting a contract fence")
+	}
 	if strings.Count(composition, "validateLegacySealedContractPlan") < 4 {
 		t.Fatal("legacy sealed publish and rollback resolvers must reject contract-bearing plans")
 	}

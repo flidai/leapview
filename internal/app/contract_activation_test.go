@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/deployment"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
+	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/identityledger"
 	"github.com/flidai/leapview/internal/release"
@@ -14,6 +16,32 @@ import (
 
 type rejectingLatestLifecycleReader struct {
 	err error
+}
+
+func TestLegacyPlanWithoutReferencesCannotActivateProtectedArtifact(t *testing.T) {
+	protected := protectedContractActivationArtifact(t)
+	compiled := projectbundle.CompiledProjectArtifact{Manifest: protected.Manifest()}
+	if err := validateCanonicalContractArtifact(compiled, deployment.DeliveryPlan{}); !errors.Is(err, ErrIdentityLifecycleUnavailable) {
+		t.Fatalf("legacy protected plan error=%v, want ErrIdentityLifecycleUnavailable", err)
+	}
+	exact := deployment.DeliveryPlan{Evidence: deployment.DeliveryPlanEvidence{
+		ContractActivations: []identityledger.PolicyActivationReference{{Version: identityledger.PolicyActivationReferenceVersion}},
+	}}
+	if err := validateCanonicalContractArtifact(compiled, exact); err != nil {
+		t.Fatalf("canonical protected plan rejected before exact fence: %v", err)
+	}
+	if err := validateUnsupportedContractArtifact(compiled, exact, "asynchronous sealed publication"); !errors.Is(err, ErrIdentityLifecycleUnavailable) {
+		t.Fatalf("legacy exact-reference plan error=%v, want canonical-path rejection", err)
+	}
+
+	unprotected := materializationDeltaFixture(t)
+	unprotectedCompiled := projectbundle.CompiledProjectArtifact{Manifest: unprotected.Manifest()}
+	if err := validateUnsupportedContractArtifact(unprotectedCompiled, deployment.DeliveryPlan{}, "asynchronous sealed publication"); err != nil {
+		t.Fatalf("unprotected legacy plan rejected: %v", err)
+	}
+	if err := validateCanonicalContractArtifact(unprotectedCompiled, exact); !errors.Is(err, identityledger.ErrPolicyEvidenceConflict) {
+		t.Fatalf("unprotected plan with contract references error=%v, want policy conflict", err)
+	}
 }
 
 func (r rejectingLatestLifecycleReader) ReadLatestLifecycleEvidence(context.Context, string, projectgraph.ResourceID, projectgraph.Kind) (identityledger.LifecycleEvidence, error) {

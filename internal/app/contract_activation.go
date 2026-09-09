@@ -7,10 +7,75 @@ import (
 	"sort"
 
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
+	"github.com/flidai/leapview/internal/deployment"
+	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	identitymodule "github.com/flidai/leapview/internal/project/identityledger/module"
 	"github.com/flidai/leapview/internal/release"
+	"github.com/flidai/leapview/internal/servingstate"
 )
+
+type contractActivationArtifactReader interface {
+	ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error)
+}
+
+func validateCanonicalContractServingArtifact(ctx context.Context, reader contractActivationArtifactReader, generationID string, plan deployment.DeliveryPlan) error {
+	compiled, err := readContractActivationArtifact(ctx, reader, generationID)
+	if err != nil {
+		return err
+	}
+	return validateCanonicalContractArtifact(compiled, plan)
+}
+
+func validateUnsupportedContractServingArtifact(ctx context.Context, reader contractActivationArtifactReader, generationID string, plan deployment.DeliveryPlan, operation string) error {
+	compiled, err := readContractActivationArtifact(ctx, reader, generationID)
+	if err != nil {
+		return err
+	}
+	return validateUnsupportedContractArtifact(compiled, plan, operation)
+}
+
+func validateUnsupportedContractArtifact(compiled projectbundle.CompiledProjectArtifact, plan deployment.DeliveryPlan, operation string) error {
+	if err := validateCanonicalContractArtifact(compiled, plan); err != nil {
+		return err
+	}
+	if len(plan.Evidence.ContractActivations) != 0 {
+		return fmt.Errorf("%w: %s requires the canonical exact-evidence activation path", ErrIdentityLifecycleUnavailable, operation)
+	}
+	return nil
+}
+
+func readContractActivationArtifact(ctx context.Context, reader contractActivationArtifactReader, generationID string) (projectbundle.CompiledProjectArtifact, error) {
+	if reader == nil || generationID == "" {
+		return projectbundle.CompiledProjectArtifact{}, fmt.Errorf("%w: serving artifact authority is unavailable", ErrIdentityLifecycleUnavailable)
+	}
+	artifact, err := reader.ArtifactByServingState(ctx, servingstate.ID(generationID))
+	if err != nil {
+		return projectbundle.CompiledProjectArtifact{}, fmt.Errorf("load contract activation serving artifact: %w", err)
+	}
+	compiled, err := loadCompiledArtifact(artifact.Path)
+	if err != nil {
+		return projectbundle.CompiledProjectArtifact{}, fmt.Errorf("decode contract activation serving artifact: %w", err)
+	}
+	return compiled, nil
+}
+
+func validateCanonicalContractArtifact(compiled projectbundle.CompiledProjectArtifact, plan deployment.DeliveryPlan) error {
+	protected := false
+	for _, model := range compiled.Manifest.SemanticModels {
+		if analyticsmodule.ModelRequiresSemanticAccess(model) {
+			protected = true
+			break
+		}
+	}
+	if protected && len(plan.Evidence.ContractActivations) == 0 {
+		return fmt.Errorf("%w: protected serving artifact has no exact publication activation evidence", ErrIdentityLifecycleUnavailable)
+	}
+	if !protected && len(plan.Evidence.ContractActivations) != 0 {
+		return fmt.Errorf("%w: unprotected serving artifact carries contract activation evidence", identitymodule.ErrPolicyEvidenceConflict)
+	}
+	return nil
+}
 
 func resolveContractActivationReferences(ctx context.Context, reader identitymodule.LatestLifecycleEvidenceReader, instanceID, expectedActiveBundle string, artifacts release.CandidateArtifactSet) ([]identitymodule.PolicyActivationReference, error) {
 	candidateModels := artifacts.Compiler.Artifact.Models()

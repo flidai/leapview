@@ -1038,12 +1038,30 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		releases := releaseModule.DeploymentLinkage()
 		sealedPublishRequest = func(ctx context.Context, pending deploymentapiadapter.Deployment, releaseID string, actor deployment.ApprovalActor, bootstrap bool) (sealedcontrol.PublishRequest, error) {
 			request, err := buildSealedPublishRequest(ctx, sealedDelivery, releases, pending, releaseID, instanceID)
+			if err == nil {
+				plan, planErr := sealedDelivery.PlanByID(ctx, request.Publication.PlanID)
+				if planErr != nil {
+					err = planErr
+				} else {
+					err = validateUnsupportedContractServingArtifact(ctx, servingStateRepo, request.Generation.ServingStateID, plan, "asynchronous sealed publication")
+				}
+			}
 			request.ActorID = actor.PrincipalID
 			request.Bootstrap = bootstrap
 			return request, err
 		}
 		sealedRollbackRequest = func(ctx context.Context, pending deploymentapiadapter.Deployment, releaseID string, actor deployment.ApprovalActor, expectedBaseGenerationID string, expectedTargetRevision int64) (sealedcontrol.RollbackRequest, error) {
 			request, err := buildSealedRollbackRequest(ctx, sealedDelivery, releases, pending, releaseID, instanceID, expectedBaseGenerationID, expectedTargetRevision)
+			if err == nil {
+				generation, generationErr := sealedDelivery.DeliveryGenerationByID(ctx, request.Request.GenerationID)
+				if generationErr != nil {
+					err = generationErr
+				} else if plan, planErr := sealedDelivery.PlanByID(ctx, generation.PlanID); planErr != nil {
+					err = planErr
+				} else {
+					err = validateUnsupportedContractServingArtifact(ctx, servingStateRepo, request.Request.GenerationID, plan, "asynchronous sealed rollback")
+				}
+			}
 			request.ActorID = actor.PrincipalID
 			return request, err
 		}
@@ -1646,6 +1664,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if err != nil {
 				return deployment.DeliveryPublication{}, err
 			}
+			if err := validateCanonicalContractServingArtifact(publishCtx, servingStateRepo, request.Generation.ServingStateID, activationPlan); err != nil {
+				return deployment.DeliveryPublication{}, err
+			}
 			if _, err := sealedCoordinator.PublishWithActivation(publishCtx, request, func(activationCtx context.Context, commit func() error) error {
 				activate := func(fencedCtx context.Context) error {
 					commitAndVerify := func() error {
@@ -1691,6 +1712,13 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			}
 			if generationRecord.ProjectID.String() != project {
 				return deployment.DeliveryPublication{}, fmt.Errorf("%w: rollback project scope changed", deployment.ErrDeliveryConflict)
+			}
+			rollbackPlan, planErr := sealedDelivery.PlanByID(rollbackCtx, generationRecord.PlanID)
+			if planErr != nil {
+				return deployment.DeliveryPublication{}, planErr
+			}
+			if err := validateUnsupportedContractServingArtifact(rollbackCtx, servingStateRepo, generation, rollbackPlan, "canonical rollback"); err != nil {
+				return deployment.DeliveryPublication{}, err
 			}
 			request, err := buildCanonicalRollbackRequest(rollbackCtx, sealedDelivery, generation, key, instanceID)
 			if err != nil {
