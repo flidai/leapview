@@ -19,10 +19,21 @@ database migration, reset, or data transfer is included.
 The refresh-test merge preserves main's scoped, deterministic lease-expiration
 fixture and the additional publishing-fence concurrency regression. Main's CI
 overlap and the native application-test sharding correction are both retained.
-Canonical `task generate` passed. Both affected refresh tests passed three runs;
-independent review found no lost CI coverage or schema inputs. Full CI is pending;
-this checkpoint is not a green claim. PR #543 remains unmerged, with no force push
-or automatic merge enabled.
+Merge commit `e42208b33` passed canonical `task generate` and full `task ci`
+(exit 0), including ordinary Go, required PostgreSQL conformance, all browser
+shards, and generated-file checks. Native application shards passed in 64.031s,
+70.033s, 71.770s, and 84.224s. The previously intermittent dashboard URL-state
+and site-search checks passed in this complete run; this is not proof that their
+historical reliability caveats are permanently fixed.
+
+The full migration package also passed separately with PostgreSQL conformance
+required (19.861s), covering fresh installation and released-5-to-6 upgrade.
+Both affected refresh tests passed three runs; independent review found no lost
+CI coverage or schema inputs. Evidence: `/tmp/fai769-registry-merge-ci.log`,
+`/tmp/fai769-registry-merge-migrations.log`, and
+`/tmp/fai769-registry-merge-generate.log`.
+Hosted exact-head validation remains pending. PR #543 remains unmerged, with no
+force push or automatic merge enabled.
 
 ## September 9 hosted-CI follow-up
 
