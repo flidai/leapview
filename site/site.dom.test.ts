@@ -1663,10 +1663,28 @@ test('documentation articles provide a readable, navigable reference experience'
     expect(page.url()).toBe(`${baseURL}/docs/guides/build/dashboard`)
     const resultCount = await search.locator('.status').innerText()
     expect(resultCount).toMatch(/^[1-9]\d* results$/)
-    await searchInput.fill('no-document-can-match-this-query-9f83c1')
+    const emptyQuery = 'no-document-can-match-this-query-9f83c1'
+    const expectedEmptyStatus = `No results for “${emptyQuery}”.`
+    const emptySearchResponse = page.waitForResponse((response) => {
+      const responseURL = new URL(response.url())
+      if (responseURL.pathname !== '/docs/search/active' || !response.ok()) return false
+      const encodedSignals = responseURL.searchParams.get('datastar')
+      if (!encodedSignals) return false
+      try {
+        const signals = JSON.parse(encodedSignals) as { docsSearch?: { query?: string } }
+        return signals.docsSearch?.query === emptyQuery
+      } catch {
+        return false
+      }
+    })
+    await searchInput.fill(emptyQuery)
+    expect(await (await emptySearchResponse).finished()).toBeNull()
     const emptyStatus = search.locator('.status')
-    await page.waitForFunction(() => document.querySelector('lv-site-search')?.shadowRoot?.querySelector('.status')?.textContent?.startsWith('No results'))
-    expect(await emptyStatus.innerText()).toBe('No results for “no-document-can-match-this-query-9f83c1”.')
+    await page.waitForFunction((expected) => {
+      const shadowRoot = document.querySelector('lv-site-search')?.shadowRoot
+      return shadowRoot?.querySelector('.status')?.textContent === expected && shadowRoot?.querySelector('.results')?.getAttribute('aria-busy') === 'false'
+    }, expectedEmptyStatus)
+    expect(await emptyStatus.innerText()).toBe(expectedEmptyStatus)
     expect(await emptyStatus.getAttribute('role')).toBe('status')
     await search.getByRole('button', { name: 'Close search' }).click()
     await page.keyboard.press('/')
