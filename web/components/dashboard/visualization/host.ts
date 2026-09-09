@@ -15,9 +15,28 @@ import { resolveVisualizationMetadata } from './metadata'
 
 export { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, supportsHostDataActions, type AccessibleVisualizationData, type AccessibleVisualizationColumn } from './accessibility'
 
+/** Start mounting within 600 CSS pixels above or below the viewport. */
+export const visualizationNearViewportRootMargin = '600px 0px'
+
 export class VisualizationHost extends LitElement {
-  @property({ attribute: false }) envelope?: VisualizationEnvelope
+  private envelopeValue?: VisualizationEnvelope
+  @property({ attribute: false })
+  get envelope(): VisualizationEnvelope | undefined { return this.envelopeValue }
+  set envelope(value: VisualizationEnvelope | undefined) {
+    const previous = this.envelopeValue
+    // Before an opt-in deferred host has a controller, keep only signal values
+    // that can be mounted. Eager hosts retain the existing controller boundary
+    // and error rendering for invalid envelopes.
+    if (this.deferMount && !this.authoring && !this.mountRequested) {
+      if (value && !isAcceptedEnvelope(value)) return
+      if (value && previous && previous.specRevision === value.specRevision && value.dataRevision < previous.dataRevision) return
+    }
+    if (Object.is(previous, value)) return
+    this.envelopeValue = value
+    this.requestUpdate('envelope', previous)
+  }
   @property({ attribute: false }) openVisualFocus?: (source: HTMLElement, detail: VisualActionDetail) => void
+  @property({ type: Boolean, attribute: 'defer-mount', reflect: true }) deferMount = false
   @property({ type: Boolean, reflect: true }) authoring = false
   @query('.renderer') private rendererContainer?: HTMLDivElement
   @state() private error = ''
@@ -31,6 +50,11 @@ export class VisualizationHost extends LitElement {
   private presentedRendererID = ''
   private contextListenersConnected = false
   private reducedMotionMedia?: MediaQueryList
+  private mountObserver?: IntersectionObserver
+  private mountRequested = false
+  private pendingApply?: Promise<void>
+  private applyQueued = false
+  private mountEpoch = 0
 
   static styles = [visualActionStyles, css`
     :host, .surface { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; }
@@ -335,20 +359,44 @@ export class VisualizationHost extends LitElement {
   `]
 
   protected firstUpdated(): void {
-    this.connectContextListeners()
-    this.ensureController()
+    this.setupMountLifecycle()
   }
 
   connectedCallback(): void {
     super.connectedCallback()
     const generation = ++this.connectionGeneration
-    if (!this.hasUpdated || this.controller) return
+    if (!this.hasUpdated || this.controller || this.mountObserver) return
     queueMicrotask(() => {
       if (generation === this.connectionGeneration && this.isConnected) {
-        this.connectContextListeners()
-        this.ensureController()
+        this.setupMountLifecycle()
       }
     })
+  }
+
+  private setupMountLifecycle(): void {
+    if (!this.rendererContainer) return
+    if (this.controller || this.mountObserver) return
+    if (this.mountRequested || !this.deferMount || this.authoring) {
+      this.requestMount()
+      return
+    }
+    if (typeof IntersectionObserver !== 'function') {
+      this.requestMount()
+      return
+    }
+    let observer: IntersectionObserver | undefined
+    try {
+      observer = new IntersectionObserver((entries) => {
+        if (!this.isConnected || this.mountObserver !== observer || this.mountRequested) return
+        if (entries.some((entry) => entry.isIntersecting)) this.requestMount()
+      }, { rootMargin: visualizationNearViewportRootMargin })
+      this.mountObserver = observer
+      observer.observe(this.rendererContainer)
+    } catch {
+      if (this.mountObserver === observer) this.mountObserver = undefined
+      try { observer?.disconnect() } catch { /* best-effort cleanup */ }
+      this.requestMount()
+    }
   }
 
   private ensureController(): void {
@@ -359,17 +407,25 @@ export class VisualizationHost extends LitElement {
       (value): value is VisualizationEnvelope => validateGeneratedEnvelope(value) && validateEnvelopeBoundary(value),
       (detail) => this.dispatchEvent(new CustomEvent('lv-visualization-observation', { bubbles: true, composed: true, detail })),
     )
-    this.resizeObserver = new ResizeObserver(([entry]) => {
-      if (!entry) return
-      this.controller?.resize(entry.contentRect.width, entry.contentRect.height, window.devicePixelRatio || 1)
-    })
-    this.resizeObserver.observe(this.rendererContainer)
-    void this.applyEnvelope()
+    this.connectContextListeners()
+    if (typeof ResizeObserver !== 'function') return
+    try {
+      this.resizeObserver = new ResizeObserver(([entry]) => {
+        if (!entry) return
+        this.controller?.resize(entry.contentRect.width, entry.contentRect.height, window.devicePixelRatio || 1)
+      })
+      this.resizeObserver.observe(this.rendererContainer)
+    } catch {
+      try { this.resizeObserver?.disconnect() } catch { /* best-effort cleanup */ }
+      this.resizeObserver = undefined
+    }
   }
 
   protected updated(changed: Map<PropertyKey, unknown>): void {
-    if (changed.has('envelope')) {
-      void this.applyEnvelope()
+    if (changed.has('envelope') && this.mountRequested) this.scheduleApply()
+    if ((changed.has('deferMount') || changed.has('authoring')) && !this.mountRequested) {
+      if (!this.deferMount || this.authoring) this.requestMount()
+      else if (!this.mountObserver) this.setupMountLifecycle()
     }
   }
 
@@ -381,17 +437,45 @@ export class VisualizationHost extends LitElement {
     // state; a host that stays detached is still disposed in the same microtask.
     queueMicrotask(() => {
       if (generation !== this.connectionGeneration || this.isConnected) return
-      this.resizeObserver?.disconnect()
+      this.mountEpoch++
+      try { this.mountObserver?.disconnect() } catch { /* best-effort cleanup */ }
+      this.mountObserver = undefined
+      try { this.resizeObserver?.disconnect() } catch { /* best-effort cleanup */ }
       this.resizeObserver = undefined
       this.disconnectContextListeners()
+      this.applyGeneration++
+      this.pendingApply = undefined
+      this.applyQueued = false
       this.controller?.dispose()
       this.controller = undefined
+      this.mountRequested = false
       this.presented = false
       this.presentedRendererID = ''
+      this.applying = false
     })
   }
 
-  async snapshot(): Promise<Blob> { return this.controller?.snapshot() ?? Promise.reject(new Error('visualization is not mounted')) }
+  async ensureMounted(): Promise<void> {
+    if (!this.isConnected) throw new Error('visualization is detached')
+    const epoch = this.mountEpoch
+    this.mountRequested = true
+    try { this.mountObserver?.disconnect() } catch { /* best-effort cleanup */ }
+    this.mountObserver = undefined
+    await this.updateComplete
+    if (!this.isConnected || this.mountEpoch !== epoch) throw new Error('visualization mount superseded')
+    this.ensureController()
+    this.scheduleApply()
+    await this.waitForApply()
+    if (!this.isConnected || this.mountEpoch !== epoch) throw new Error('visualization mount superseded')
+    if (!this.envelope) throw new Error('visualization has no envelope')
+    if (this.error) throw new Error(this.error)
+  }
+
+  async snapshot(): Promise<Blob> {
+    await this.ensureMounted()
+    await this.waitForApply()
+    return this.controller?.snapshot() ?? Promise.reject(new Error('visualization is not mounted'))
+  }
 
   protected render() {
     const statusError = this.envelope?.status.kind === 'error' ? this.envelope.status.message ?? 'Visualization error' : ''
@@ -429,6 +513,56 @@ export class VisualizationHost extends LitElement {
       ${this.announcement ? html`<div class="announcement" role="status" aria-live="polite">${this.announcement}</div>` : null}
       ${error ? html`<div class="error" role="alert">${error}</div>` : null}
     </div>`
+  }
+
+  private requestMount(): void {
+    this.mountRequested = true
+    try { this.mountObserver?.disconnect() } catch { /* best-effort cleanup */ }
+    this.mountObserver = undefined
+    // Eager callers retain the original firstUpdated timing. The explicit
+    // ensureMounted path below still waits for Lit to settle before observing
+    // the result, while event callbacks can start the renderer immediately.
+    if (this.rendererContainer) {
+      this.ensureController()
+      this.scheduleApply()
+      return
+    }
+    void this.ensureMounted().catch(() => {})
+  }
+
+  private scheduleApply(): void {
+    if (!this.mountRequested || !this.envelope || !this.controller) return
+    if (this.pendingApply) {
+      this.applyQueued = true
+      return
+    }
+    const pending = this.applyEnvelope()
+    this.pendingApply = pending
+    void pending.then(
+      () => {
+        if (this.pendingApply !== pending) return
+        this.pendingApply = undefined
+        if (this.applyQueued) {
+          this.applyQueued = false
+          this.scheduleApply()
+        }
+      },
+      () => {
+        if (this.pendingApply !== pending) return
+        this.pendingApply = undefined
+        if (this.applyQueued) {
+          this.applyQueued = false
+          this.scheduleApply()
+        }
+      },
+    )
+  }
+
+  private async waitForApply(): Promise<void> {
+    while (this.pendingApply) {
+      const pending = this.pendingApply
+      await pending
+    }
   }
 
   private async applyEnvelope(): Promise<void> {
@@ -474,6 +608,7 @@ export class VisualizationHost extends LitElement {
       rows: [],
       selection: envelope.selection.map((entry) => entry.label ?? Object.values(entry.datum.identity).join(' · ')),
     }
+    this.requestMount()
     this.openFocus(detail)
   }
 
@@ -554,7 +689,7 @@ export class VisualizationHost extends LitElement {
     this.reducedMotionMedia = undefined
   }
 
-  private readonly handleRendererContextChange = (): void => { void this.applyEnvelope() }
+  private readonly handleRendererContextChange = (): void => { this.scheduleApply() }
 
   private rendererContext(): RendererContext {
     const target = this.rendererContainer
@@ -598,3 +733,7 @@ export class VisualizationHost extends LitElement {
 if (!customElements.get('lv-visualization-host')) customElements.define('lv-visualization-host', VisualizationHost)
 
 declare global { interface HTMLElementTagNameMap { 'lv-visualization-host': VisualizationHost } }
+
+function isAcceptedEnvelope(value: unknown): value is VisualizationEnvelope {
+  return validateGeneratedEnvelope(value) && validateEnvelopeBoundary(value)
+}

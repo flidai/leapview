@@ -419,12 +419,35 @@ The architecture applies bounds before rendering:
 - Frame construction and adapter indexing are linear in row count unless a declared algorithm documents another bound.
 - Specification and frame changes use revision identity instead of whole-payload `JSON.stringify` comparisons.
 - Pagestream patches immutable specification only when its revision changes.
-- Renderers mount near the viewport and remain reusable across frame updates.
+- Hosts support opt-in near-viewport mounting and reuse mounted renderers across frame updates; existing production callers remain eager.
 - Resize notifications are coalesced to animation frames.
 - Renderer and map code is lazy-loaded by capability.
 - Theme or selection changes do not rebuild query data.
 
 Performance budgets are tested for initial module bytes, mount latency, update latency, memory after disposal, maximum live renderer count, and large-frame interaction latency.
+
+### Viewport lifecycle rollout (FAI-551)
+
+`lv-visualization-host` defaults to eager mounting, including dashboard, builder,
+and chat-artifact callers. The opt-in `deferMount` property delays renderer
+initialization while retaining the host shell and the latest valid signal state.
+An eligible host mounts once; scrolling away does not dispose it. Authoring
+hosts and browsers with unavailable or failing `IntersectionObserver` remain
+eager. The current `600px 0px` observer margin is a rollout parameter, not a
+qualified latency budget or a measured performance improvement.
+
+Explicit `ensureMounted()` and `snapshot()` calls can request mounting without
+an intersection callback. They reject when no envelope is available; later
+signals can still mount the eligible host. Snapshot readiness is not dashboard-wide export or
+print readiness: browser-menu printing cannot be assumed to await asynchronous
+renderer initialization. No production caller enables deferral in this stage.
+Activation still requires a reviewed print/capture policy and representative
+before/after qualification, alongside the existing interaction and route tests.
+
+The reports CI shard runs the host browser lifecycle tests through
+`bun run test:dashboard-page`. Controller tests run through
+`bun run test:visualization-ir`. These checks establish lifecycle correctness;
+they do not replace runtime latency/memory qualification or prove FAI-551 complete.
 
 ## Security and trust boundaries
 

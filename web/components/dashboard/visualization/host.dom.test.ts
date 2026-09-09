@@ -1,0 +1,485 @@
+import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { createServer, type Server } from 'node:http'
+import { readFile } from 'node:fs/promises'
+import { join, normalize } from 'node:path'
+import { chromium, type Browser } from '@playwright/test'
+import { testDocument } from '../dashboard-page-test-fixtures'
+
+let server: Server
+let baseURL = ''
+let browser: Browser
+const projectRoot = process.cwd()
+const fixtureRoot = join(projectRoot, '.tmp/dashboard-page-test')
+
+beforeAll(async () => {
+  server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument())
+      return
+    }
+    const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : fixtureRoot
+    const file = normalize(join(fileRoot, url.pathname))
+    if (!file.startsWith(fileRoot)) { response.writeHead(404); response.end('not found'); return }
+    try {
+      response.setHeader('content-type', file.endsWith('.css') ? 'text/css' : 'text/javascript')
+      response.end(await readFile(file))
+    } catch { response.writeHead(404); response.end('not found') }
+  })
+  await new Promise<void>((resolve) => server.listen(0, resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('test server did not bind')
+  baseURL = `http://127.0.0.1:${address.port}`
+  browser = await chromium.launch()
+})
+
+afterAll(async () => {
+  await browser?.close()
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+}, 15_000)
+
+test('deferred hosts retain the latest valid envelope and mount once on eligibility', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => {
+      const observers: Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; rootMargin: string }> = []
+      class DeferredIntersectionObserver {
+        readonly record: { callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; rootMargin: string }
+        constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+          this.record = { callback, disconnected: false, rootMargin: options?.rootMargin ?? '' }
+          observers.push(this.record)
+        }
+        observe(target: Element): void { this.record.target = target }
+        unobserve(): void {}
+        disconnect(): void { this.record.disconnected = true }
+        takeRecords(): IntersectionObserverEntry[] { return [] }
+      }
+      Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: DeferredIntersectionObserver })
+      Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+
+    const state = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      await dashboard.updateComplete
+      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+      const deferred = document.createElement('lv-visualization-host') as any
+      deferred.deferMount = true
+      deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
+      document.body.append(deferred)
+      await deferred.updateComplete
+
+      const observers = (window as any).__lvIntersectionObservers as Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; rootMargin: string }>
+      const record = observers.find((candidate) => candidate.target === deferred.shadowRoot.querySelector('.renderer'))!
+      const before = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
+
+      const latest = JSON.parse(JSON.stringify(deferred.envelope))
+      latest.dataRevision = 2
+      latest.dataState.dataRevision = 2
+      for (const dataset of latest.dataState.datasets ?? []) dataset.dataRevision = 2
+      deferred.envelope = latest
+      const loading = JSON.parse(JSON.stringify(latest))
+      loading.status = { kind: 'loading', message: 'Refreshing' }
+      deferred.envelope = loading
+      const errored = JSON.parse(JSON.stringify(loading))
+      errored.status = { kind: 'error', message: 'Refresh failed' }
+      deferred.envelope = errored
+      const stale = JSON.parse(JSON.stringify(latest))
+      stale.dataRevision = 1
+      stale.dataState.dataRevision = 1
+      for (const dataset of stale.dataState.datasets ?? []) dataset.dataRevision = 1
+      deferred.envelope = stale
+      const invalid = JSON.parse(JSON.stringify(latest))
+      invalid.dataRevision = -1
+      deferred.envelope = invalid
+      await deferred.updateComplete
+
+      record.callback([{ isIntersecting: false, target: record.target }], {} as IntersectionObserver)
+      window.dispatchEvent(new Event('beforeprint'))
+      await Promise.resolve()
+      const beforeEligibility = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
+      record.callback([{ isIntersecting: true, target: record.target }], {} as IntersectionObserver)
+      const deadline = Date.now() + 2_000
+      while ((deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) === 0 && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      }
+      const controllerBefore = (deferred as any).controller
+      const mounted = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
+      const mountedRevision = (deferred as any).controller?.envelope?.dataRevision
+      const snapshotText = await (await deferred.snapshot()).text()
+      record.callback([{ isIntersecting: true, target: record.target }], {} as IntersectionObserver)
+      await deferred.ensureMounted()
+      const controllerAfter = (deferred as any).controller
+
+      deferred.remove()
+      await new Promise<void>((resolve) => queueMicrotask(() => queueMicrotask(resolve)))
+      record.callback([{ isIntersecting: true, target: record.target }], {} as IntersectionObserver)
+      await Promise.resolve()
+      return {
+        before,
+        beforeEligibility,
+        retainedRevision: deferred.envelope?.dataRevision,
+        retainedStatus: deferred.envelope?.status.kind,
+        mounted,
+        mountedRevision,
+        snapshotText,
+        mountedOnce: controllerBefore === controllerAfter,
+        disconnected: record.disconnected,
+        observerCount: observers.length,
+        rootMargin: record.rootMargin,
+        disposed: (deferred as any).controller === undefined,
+        resurrected: Boolean((deferred as any).controller),
+      }
+    })
+
+    expect(state).toMatchObject({
+      before: 0,
+      beforeEligibility: 0,
+      retainedRevision: 2,
+      retainedStatus: 'error',
+      mountedRevision: 2,
+      mountedOnce: true,
+      disconnected: true,
+      observerCount: 1,
+      rootMargin: '600px 0px',
+      disposed: true,
+      resurrected: false,
+    })
+    expect(state.mounted).toBeGreaterThan(0)
+    expect(state.snapshotText).toContain('Orders')
+  } finally {
+    await page.close()
+  }
+})
+
+test('snapshot explicitly mounts a deferred host without an intersection callback', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => {
+      const observers: Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean }> = []
+      class DeferredIntersectionObserver {
+        readonly record: { callback: IntersectionObserverCallback; target?: Element; disconnected: boolean }
+        constructor(callback: IntersectionObserverCallback) {
+          this.record = { callback, disconnected: false }
+          observers.push(this.record)
+        }
+        observe(target: Element): void { this.record.target = target }
+        disconnect(): void { this.record.disconnected = true }
+      }
+      Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: DeferredIntersectionObserver })
+      Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    const state = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      await dashboard.updateComplete
+      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+      const deferred = document.createElement('lv-visualization-host') as any
+      deferred.deferMount = true
+      deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
+      document.body.append(deferred)
+      await deferred.updateComplete
+      const record = ((window as any).__lvIntersectionObservers as Array<{ target?: Element; disconnected: boolean }>).find((candidate) => candidate.target === deferred.shadowRoot.querySelector('.renderer'))!
+      const before = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
+      const snapshotText = await (await deferred.snapshot()).text()
+      return { before, mounted: deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0, snapshotText, disconnected: record.disconnected }
+    })
+    expect(state.before).toBe(0)
+    expect(state.mounted).toBeGreaterThan(0)
+    expect(state.snapshotText).toContain('Orders')
+    expect(state.disconnected).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('eligibility before data waits for the later valid envelope', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => {
+      const observers: Array<{ callback: IntersectionObserverCallback; target?: Element }> = []
+      class DeferredIntersectionObserver {
+        readonly record: { callback: IntersectionObserverCallback; target?: Element }
+        constructor(callback: IntersectionObserverCallback) {
+          this.record = { callback }
+          observers.push(this.record)
+        }
+        observe(target: Element): void { this.record.target = target }
+        disconnect(): void {}
+      }
+      Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: DeferredIntersectionObserver })
+      Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    const mounted = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      await dashboard.updateComplete
+      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+      const deferred = document.createElement('lv-visualization-host') as any
+      deferred.deferMount = true
+      document.body.append(deferred)
+      await deferred.updateComplete
+      const record = ((window as any).__lvIntersectionObservers as Array<{ callback: IntersectionObserverCallback; target?: Element }>).find((candidate) => candidate.target === deferred.shadowRoot.querySelector('.renderer'))!
+      record.callback([{ isIntersecting: true, target: record.target }], {} as IntersectionObserver)
+      await Promise.resolve()
+      const beforeEnvelope = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
+      const ensureBeforeEnvelope = await deferred.ensureMounted().then(() => 'resolved', (error: unknown) => error instanceof Error ? error.message : String(error))
+      const snapshotBeforeEnvelope = await deferred.snapshot().then(() => 'resolved', (error: unknown) => error instanceof Error ? error.message : String(error))
+      deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
+      await deferred.updateComplete
+      const deadline = Date.now() + 2_000
+      while ((deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) === 0 && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      }
+      return {
+        beforeEnvelope,
+        ensureBeforeEnvelope,
+        snapshotBeforeEnvelope,
+        mounted: deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0,
+        revision: deferred.envelope?.dataRevision,
+      }
+    })
+    expect(mounted.beforeEnvelope).toBe(0)
+    expect(mounted.ensureBeforeEnvelope).toBe('visualization has no envelope')
+    expect(mounted.snapshotBeforeEnvelope).toBe('visualization has no envelope')
+    expect(mounted.mounted).toBeGreaterThan(0)
+    expect(mounted.revision).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
+
+test('eager invalid and unknown-renderer envelopes remain visible errors', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    const errors = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      await dashboard.updateComplete
+      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+      const invalid = document.createElement('lv-visualization-host') as any
+      const invalidEnvelope = JSON.parse(JSON.stringify(source.envelope))
+      invalidEnvelope.dataRevision = -1
+      invalid.envelope = invalidEnvelope
+      document.body.append(invalid)
+      const unknown = document.createElement('lv-visualization-host') as any
+      const unknownEnvelope = JSON.parse(JSON.stringify(source.envelope))
+      unknownEnvelope.rendererID = 'missing-renderer'
+      unknown.envelope = unknownEnvelope
+      document.body.append(unknown)
+      const deadline = Date.now() + 2_000
+      while ((!invalid.shadowRoot.querySelector('[role="alert"]') || !unknown.shadowRoot.querySelector('[role="alert"]')) && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      }
+      return {
+        invalid: invalid.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),
+        unknown: unknown.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),
+      }
+    })
+    expect(errors.invalid).toContain('invalid visualization envelope')
+    expect(errors.unknown).toContain('unknown visualization renderer')
+  } finally {
+    await page.close()
+  }
+})
+
+test('pending renderer loads reject stale mount promises after detach and reattach', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  let releaseRenderer!: () => void
+  let rendererRequested!: () => void
+  const rendererBlocked = new Promise<void>((resolve) => { releaseRenderer = resolve })
+  const rendererRequest = new Promise<void>((resolve) => { rendererRequested = resolve })
+  try {
+    await page.route('**/chunks/echarts-*.js', async (route) => {
+      rendererRequested()
+      await rendererBlocked
+      await route.continue()
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      await dashboard.updateComplete
+      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_chart') as any
+      const deferred = document.createElement('lv-visualization-host') as any
+      deferred.deferMount = true
+      deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
+      document.body.append(deferred)
+      await deferred.updateComplete
+      const transient = document.createElement('lv-visualization-host') as any
+      transient.deferMount = true
+      transient.envelope = JSON.parse(JSON.stringify(source.envelope))
+      document.body.append(transient)
+      await transient.updateComplete
+      const transientMount = transient.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
+      await Promise.resolve()
+      const transientController = transient.controller
+      const transientHolder = document.createElement('section')
+      document.body.append(transientHolder)
+      transientHolder.append(transient)
+      await transient.updateComplete
+      const stale = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
+      const race = { stale, staleSettled: false, transientMount, transientController, transient, fresh: Promise.resolve('pending'), reattached: false }
+      stale.then(() => { race.staleSettled = true })
+      ;(window as any).__lvMountRace = { deferred, race }
+      await Promise.resolve()
+      deferred.remove()
+      await new Promise<void>((resolve) => queueMicrotask(() => queueMicrotask(resolve)))
+      document.body.append(deferred)
+      await deferred.updateComplete
+      race.fresh = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
+      race.reattached = true
+    })
+    await rendererRequest
+    const beforeRelease = await page.evaluate(() => (window as any).__lvMountRace.race.staleSettled)
+    expect(beforeRelease).toBe(false)
+    releaseRenderer()
+    const result = await page.evaluate(async () => {
+      const { deferred, race } = (window as any).__lvMountRace
+      return {
+        stale: await race.stale,
+        transient: await race.transientMount,
+        transientControllerRetained: race.transient.controller === race.transientController,
+        fresh: await race.fresh,
+        mounted: deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0,
+        controller: Boolean(deferred.controller),
+      }
+    })
+    expect(result.stale).toContain('rejected:visualization mount superseded')
+    expect(result.transient).toBe('resolved')
+    expect(result.transientControllerRetained).toBe(true)
+    expect(result.fresh).toBe('resolved')
+    expect(result.mounted).toBeGreaterThan(0)
+    expect(result.controller).toBe(true)
+  } finally {
+    releaseRenderer?.()
+    await page.close()
+  }
+})
+
+test('existing and authoring hosts stay eager by default, including with no intersection', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => {
+      const observers: unknown[] = []
+      class FailingIntersectionObserver {
+        constructor() { observers.push(this) }
+        observe(): void { throw new Error('intersection observe should not be reached for eager hosts') }
+        disconnect(): void {}
+      }
+      Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: FailingIntersectionObserver })
+      Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    const state = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      await dashboard.updateComplete
+      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+      await source.updateComplete
+      const authoring = document.createElement('lv-visualization-host') as any
+      authoring.deferMount = true
+      authoring.authoring = true
+      authoring.envelope = JSON.parse(JSON.stringify(source.envelope))
+      document.body.append(authoring)
+      await authoring.updateComplete
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      return {
+        defaultMounted: (source.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) > 0,
+        authoringMounted: (authoring.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) > 0,
+        observerCount: ((window as any).__lvIntersectionObservers as unknown[]).length,
+      }
+    })
+    expect(state).toEqual({ defaultMounted: true, authoringMounted: true, observerCount: 0 })
+  } finally {
+    await page.close()
+  }
+})
+
+test('a deferred host can be switched back to eager mounting without leaking its observer', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => {
+      const observers: Array<{ target?: Element; disconnected: boolean }> = []
+      class DeferredIntersectionObserver {
+        readonly record: { target?: Element; disconnected: boolean }
+        constructor() {
+          this.record = { disconnected: false }
+          observers.push(this.record)
+        }
+        observe(target: Element): void { this.record.target = target }
+        disconnect(): void { this.record.disconnected = true }
+      }
+      Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: DeferredIntersectionObserver })
+      Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    const state = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      await dashboard.updateComplete
+      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+      const deferred = document.createElement('lv-visualization-host') as any
+      deferred.deferMount = true
+      deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
+      document.body.append(deferred)
+      await deferred.updateComplete
+      const record = ((window as any).__lvIntersectionObservers as Array<{ target?: Element; disconnected: boolean }>).find((candidate) => candidate.target === deferred.shadowRoot.querySelector('.renderer'))!
+      const before = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
+      deferred.deferMount = false
+      await deferred.updateComplete
+      const deadline = Date.now() + 2_000
+      while ((deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) === 0 && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      }
+      return { before, mounted: deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0, disconnected: record.disconnected }
+    })
+    expect(state.before).toBe(0)
+    expect(state.mounted).toBeGreaterThan(0)
+    expect(state.disconnected).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
+  test(`deferred hosts fall back to eager mounting when IntersectionObserver ${failureMode}`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+    try {
+      await page.addInitScript((mode) => {
+        if (mode === 'missing') {
+          Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: undefined })
+          return
+        }
+        class FailingIntersectionObserver {
+          constructor() { if (mode === 'constructor') throw new Error('intersection constructor failed') }
+          observe(): void { if (mode === 'observe') throw new Error('intersection observe failed') }
+          disconnect(): void {}
+        }
+        Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: FailingIntersectionObserver })
+      }, failureMode)
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
+      await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+      const mounted = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+        await dashboard.updateComplete
+        const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+        const deferred = document.createElement('lv-visualization-host') as any
+        deferred.deferMount = true
+        deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
+        document.body.append(deferred)
+        await deferred.updateComplete
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+        return (deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) > 0
+      })
+      expect(mounted).toBe(true)
+    } finally {
+      await page.close()
+    }
+  })
+}
