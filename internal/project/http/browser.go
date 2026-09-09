@@ -11,6 +11,7 @@ import (
 	stdhttp "net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,8 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	dashboardauthoringcatalog "github.com/flidai/leapview/internal/dashboard/authoring/catalog"
+	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -47,6 +50,14 @@ type GraphReader interface {
 // history persistence can still render the current content hash.
 type AssetVersionsReader interface {
 	AssetVersions(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID) ([]servingstate.AssetVersion, error)
+}
+
+// ActiveServingStateReader supplies the deployment timestamp used by
+// discovery rows for repository-managed dashboards. Those dashboards do not
+// have an instance authoring revision, so their active serving generation is
+// the canonical source for when the displayed configuration was updated.
+type ActiveServingStateReader interface {
+	ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
 }
 
 // AssetRefreshStateReader adapts the refresh capability's presentation state
@@ -111,6 +122,10 @@ type DashboardAppearanceStore interface {
 	ApplyPatch(context.Context, dashboardappearance.Key, string, dashboardappearance.Patch) (dashboardappearance.Record, error)
 }
 
+type DashboardCatalogReader interface {
+	List(context.Context, dashboardauthoringcatalog.ListRequest) (dashboardauthoringcatalog.ListResult, error)
+}
+
 // ErrSemanticModelUnavailable indicates that the active generation could not
 // provide the compiled definition required to render semantic-model detail.
 // A graph metadata payload is not a valid substitute because it would render
@@ -145,11 +160,14 @@ type CreatorCommandInvocation struct {
 type BrowserHandler struct {
 	Graph                          GraphReader
 	AssetVersions                  AssetVersionsReader
+	ActiveServingState             ActiveServingStateReader
 	RefreshState                   AssetRefreshStateReader
 	PhysicalCatalog                PhysicalCatalogReader
 	SourceSchemas                  SourceSchemaReader
 	ProjectDefinitionReader        ProjectDefinitionReader
 	DashboardAppearances           DashboardAppearanceStore
+	DashboardCatalog               DashboardCatalogReader
+	DashboardPopularity            func(context.Context, int) (map[string]string, error)
 	QueryExecutor                  DataQueryExecutor
 	Catalog                        CatalogAuthorizer
 	SearchCatalog                  ProductSearchCatalog
@@ -353,9 +371,26 @@ func (h *BrowserHandler) Insights(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindDashboard, projectgraph.KindModel, projectgraph.KindSemanticModel}) {
 		return
 	}
-	catalog := h.navigationCatalog(r)
+	catalog, options, err := h.dashboardCatalogPage(r, r.URL.Query().Get("q"))
+	if err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return
+	}
 	canCreateDraft := h.dashboardCreationAllowed(r)
-	writeDocument(w, projectui.CatalogPageForCatalogsWithOptions([]projectnavigation.Catalog{catalog}, projectui.CatalogListOptions{Query: r.URL.Query().Get("q"), CanCreateDraft: canCreateDraft}, h.csrf(r), h.layout(r)))
+	options.CanCreateDraft = canCreateDraft
+	if canCreateDraft {
+		options.CreateDashboardIdempotencyKey = httptransport.NewRequestID()
+		options.CreateDashboardModels = make([]projectui.CatalogDashboardModelOption, 0, len(catalog.SemanticModels))
+		for _, model := range catalog.SemanticModels {
+			id := strings.TrimSpace(model.ID)
+			if id == "" {
+				continue
+			}
+			title := browserFirstNonEmpty(model.Title, id)
+			options.CreateDashboardModels = append(options.CreateDashboardModels, projectui.CatalogDashboardModelOption{ID: id, Title: title})
+		}
+	}
+	writeDocument(w, projectui.CatalogPageForCatalogsWithOptions([]projectnavigation.Catalog{catalog}, options, h.csrf(r), h.layout(r)))
 }
 
 func (h *BrowserHandler) dashboardCreationAllowed(r *stdhttp.Request) bool {
@@ -392,7 +427,12 @@ func (h *BrowserHandler) CatalogSearch(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	query := strings.TrimSpace(signals.Query)
-	patch := projectui.CatalogListPatchForCatalogsQuery([]projectnavigation.Catalog{h.navigationCatalog(r)}, query)
+	catalog, options, err := h.dashboardCatalogPage(r, query)
+	if err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return
+	}
+	patch := projectui.CatalogListPatchForCatalogs([]projectnavigation.Catalog{catalog}, options)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
 
@@ -477,7 +517,11 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeDocument(w, projectui.ConnectionAssetPageWithAdministrationForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Versions, administration, h.ConnectionCommands, h.csrf(r), []webpage.Provider{h.layout(r)}))
 		return
 	}
-	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.csrf(r), h.layout(r)))
+	createDashboardHref := ""
+	if projection.Asset.Type == string(projectview.AssetTypeSemanticModel) && h.dashboardCreationAllowed(r) {
+		createDashboardHref = "/dashboards/new?semanticModel=" + url.QueryEscape(projection.Asset.ID)
+	}
+	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironmentAndDashboardCreation(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.csrf(r), createDashboardHref, h.layout(r)))
 }
 
 func (h *BrowserHandler) projectAssets(w stdhttp.ResponseWriter, r *stdhttp.Request, area, activeType string) {
@@ -1270,6 +1314,100 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 	}
 	h.enrichDashboardAppearances(r.Context(), projectID, &out)
 	return out
+}
+
+func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) (projectnavigation.Catalog, projectui.CatalogListOptions, error) {
+	catalog := h.navigationCatalog(r)
+	options := projectui.CatalogListOptions{Query: strings.TrimSpace(query)}
+	if h.DashboardCatalog == nil {
+		return catalog, options, nil
+	}
+	principal, ok := h.currentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return projectnavigation.Catalog{}, projectui.CatalogListOptions{}, errors.New("current principal is unavailable")
+	}
+	projectID, err := h.boundProject(r.Context())
+	if err != nil {
+		return projectnavigation.Catalog{}, projectui.CatalogListOptions{}, err
+	}
+	result, err := h.DashboardCatalog.List(r.Context(), dashboardauthoringcatalog.ListRequest{ProjectID: projectID, ActorID: principal.ID})
+	if err != nil {
+		return projectnavigation.Catalog{}, projectui.CatalogListOptions{}, err
+	}
+	popularity := map[string]string{}
+	if h.DashboardPopularity != nil {
+		// Discovery metadata must never make the dashboard catalog unavailable.
+		// Usage ranking is intentionally best effort and degrades to no meter.
+		if levels, popularityErr := h.DashboardPopularity(r.Context(), len(result.Items)); popularityErr == nil {
+			popularity = levels
+		}
+	}
+	appearanceByID := make(map[string]dashboardappearance.Value, len(catalog.Dashboards))
+	for _, item := range catalog.Dashboards {
+		appearanceByID[item.ID] = item.Appearance
+	}
+	managedUpdatedAt := h.activeServingStateUpdatedAt(r.Context(), projectID)
+	options.Dashboards = make([]projectui.CatalogDashboardItem, 0, len(result.Items))
+	for _, item := range result.Items {
+		status := dashboardCatalogStatus(item)
+		href := "/dashboards/" + url.PathEscape(item.ID.String())
+		if item.Source == dashboardauthoringcatalog.SourceInstance && item.DraftID != "" && status == "private_draft" && item.Revision != nil && strings.TrimSpace(item.FirstPageID) != "" {
+			values := url.Values{}
+			values.Set("draft", item.DraftID.String())
+			values.Set("page", item.FirstPageID)
+			values.Set("revisionContentHash", item.Revision.ContentHash)
+			values.Set("revisionId", item.Revision.ID)
+			values.Set("revisionNumber", strconv.FormatUint(item.Revision.Number, 10))
+			href += "/preview?" + values.Encode()
+		}
+		scope := "managed"
+		owner := strings.TrimSpace(item.Owner)
+		if item.Source == dashboardauthoringcatalog.SourceInstance {
+			scope = "shared"
+			if owner == principal.ID {
+				scope, owner = "mine", "You"
+			}
+		}
+		updatedAt := ""
+		if item.Source == dashboardauthoringcatalog.SourceProject {
+			updatedAt = managedUpdatedAt
+		}
+		if item.Revision != nil && !item.Revision.CreatedAt.IsZero() {
+			updatedAt = item.Revision.CreatedAt.UTC().Format(time.RFC3339)
+		}
+		options.Dashboards = append(options.Dashboards, projectui.CatalogDashboardItem{
+			ID: item.StableID, DashboardID: item.ID.String(), Title: item.Title, Description: item.Description,
+			SemanticModel: item.SemanticModel.String(), Href: href, Owner: owner, Status: status,
+			CatalogScope: scope, UpdatedAt: updatedAt, PageCount: item.PageCount, Tags: append([]string(nil), item.Tags...),
+			Appearance: appearanceByID[item.ID.String()],
+			Popularity: projectsignals.PopularityLevel(popularity[item.ID.String()]),
+		})
+	}
+	return catalog, options, nil
+}
+
+func (h *BrowserHandler) activeServingStateUpdatedAt(ctx context.Context, projectID projectgraph.ResourceID) string {
+	if h == nil || h.ActiveServingState == nil {
+		return ""
+	}
+	state, _, err := h.ActiveServingState.ActiveArtifact(ctx, projectID, servingstate.Environment(h.Environment))
+	if err != nil || state.ProjectID != projectID {
+		return ""
+	}
+	return browserFirstNonEmpty(strings.TrimSpace(state.ActivatedAt), strings.TrimSpace(state.CreatedAt))
+}
+
+func dashboardCatalogStatus(item dashboardauthoringcatalog.Dashboard) string {
+	if item.Source == dashboardauthoringcatalog.SourceProject {
+		return "published"
+	}
+	if item.Publication == nil {
+		return "private_draft"
+	}
+	if item.Revision != nil && item.Revision.ID == item.Publication.Revision.ID && item.Revision.Number == item.Publication.Revision.Number && item.Revision.ContentHash == item.Publication.Revision.ContentHash {
+		return "published"
+	}
+	return "unpublished_changes"
 }
 
 func (h *BrowserHandler) enrichDashboardAppearances(ctx context.Context, projectID projectgraph.ResourceID, catalog *projectnavigation.Catalog) {

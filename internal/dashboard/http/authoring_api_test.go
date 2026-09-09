@@ -147,6 +147,10 @@ func (f *fakeHeadlessAuthoring) mutationResult() authoringservice.Result {
 func (f *fakeHeadlessAuthoring) Preview(context.Context, preview.PreviewRequest) (preview.Preview, error) {
 	return preview.Preview{}, f.previewErr
 }
+
+func (f *fakeHeadlessAuthoring) Compile(context.Context, preview.CompileRequest) (preview.Compilation, error) {
+	return preview.Compilation{}, nil
+}
 func (f *fakeHeadlessAuthoring) ExportYAML(_ context.Context, request sourceadapter.ExportRequest) ([]byte, error) {
 	f.exports = append(f.exports, request)
 	return []byte("dashboard: {}\n"), nil

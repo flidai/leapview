@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
 	"github.com/flidai/leapview/internal/dashboard/authoring/catalog"
@@ -44,6 +46,20 @@ type Application struct {
 	repository     authoring.Repository
 	authorizer     authoringservice.Authorizer
 	acquireRuntime sourceadapter.AcquireRuntime
+}
+
+// EncodeDashboardAuthoringCommandAuditMetadata uses the generated API audit
+// schema for browser and headless command adapters that share this source
+// capability. Repository persistence replaces placeholder identities with the
+// authoritative project/dashboard/draft values in its transaction.
+func EncodeDashboardAuthoringCommandAuditMetadata(project, dashboard, draft string, origin authoring.Origin) (string, error) {
+	return dashboardgen.EncodeGenExecuteDashboardAuthoringCommandAuditPayload(dashboardgen.GenSchemaDashboardAuthoringCommandAuditPayload{
+		OperationId: "executeDashboardAuthoringCommand",
+		ProjectId:   project,
+		DashboardId: dashboard,
+		DraftId:     draft,
+		Origin:      string(origin),
+	})
 }
 
 // New validates the composition ports and builds the source adapter once.
@@ -122,7 +138,32 @@ func (a *Application) Execute(ctx context.Context, project projectgraph.Resource
 	if err != nil {
 		return authoringservice.Result{}, err
 	}
+	ctx = normalizeAuthoringAuditCapability(ctx, command)
 	return a.authoring.Execute(ctx, projectID, command)
+}
+
+// normalizeAuthoringAuditCapability binds durable audit evidence to the
+// command's declared action. Transport intents may carry a stale generic edit
+// capability (older browser callers did); the repository trigger must still
+// enforce publish/manage evidence for those lifecycle transitions.
+func normalizeAuthoringAuditCapability(ctx context.Context, command authoring.Command) context.Context {
+	intent, ok := authoring.AuditIntentFromContext(ctx)
+	if !ok {
+		return ctx
+	}
+	action, err := command.RequiredAction()
+	if err != nil {
+		return ctx
+	}
+	switch action {
+	case authoring.AuthorizationActionPublish:
+		intent.Capability = access.CapabilityResourcePublish
+	case authoring.AuthorizationActionArchive:
+		intent.Capability = access.CapabilityResourceManage
+	default:
+		intent.Capability = access.CapabilityResourceEdit
+	}
+	return authoring.WithAuditIntent(ctx, intent)
 }
 
 // List returns the governed dashboard catalog for one project. A provider
@@ -247,6 +288,29 @@ func (a *Application) Preview(ctx context.Context, request preview.PreviewReques
 	return service.Preview(ctx, request)
 }
 
+// Compile strictly compiles one exact draft revision without executing a
+// dashboard page. Filter-option loading uses this path so a failing visual
+// query cannot hide an otherwise valid governed filter contract.
+func (a *Application) Compile(ctx context.Context, request preview.CompileRequest) (preview.Compilation, error) {
+	if err := a.validate(); err != nil {
+		return preview.Compilation{}, err
+	}
+	projectID, err := projectID(request.ProjectID)
+	if err != nil {
+		return preview.Compilation{}, err
+	}
+	service, err := preview.NewService(preview.Options{
+		Repository: a.repository,
+		Authorizer: a.authorizer,
+		Provider:   projectProvider{projectID: projectID, acquire: a.acquireRuntime},
+	})
+	if err != nil {
+		return preview.Compilation{}, err
+	}
+	request.ProjectID = projectID
+	return service.Compile(ctx, request)
+}
+
 // Builder returns the governed dashboard-builder bootstrap for one exact
 // project draft. The runtime provider is scoped to the normalized request
 // project and the builder service owns the single lease for this call.
@@ -273,6 +337,16 @@ func (a *Application) Builder(ctx context.Context, request builderview.Request) 
 // are intentionally absent from the active serving graph; the authoring
 // service loads their lifecycle and applies the owner/project-role context.
 func (a *Application) AuthorizeDashboardEdit(ctx context.Context, requestedProject projectgraph.ResourceID, actorID string, dashboardID authoring.DashboardID) error {
+	return a.authorizeDashboardAction(ctx, requestedProject, actorID, dashboardID, authoring.AuthorizationActionEdit)
+}
+
+// AuthorizeDashboardManage performs the repository-backed manage decision
+// used before lifecycle operations such as archive are exposed.
+func (a *Application) AuthorizeDashboardManage(ctx context.Context, requestedProject projectgraph.ResourceID, actorID string, dashboardID authoring.DashboardID) error {
+	return a.authorizeDashboardAction(ctx, requestedProject, actorID, dashboardID, authoring.AuthorizationActionArchive)
+}
+
+func (a *Application) authorizeDashboardAction(ctx context.Context, requestedProject projectgraph.ResourceID, actorID string, dashboardID authoring.DashboardID, action authoring.AuthorizationAction) error {
 	if err := a.validate(); err != nil {
 		return err
 	}
@@ -298,7 +372,7 @@ func (a *Application) AuthorizeDashboardEdit(ctx context.Context, requestedProje
 		ActorID: actorID, ProjectID: project, DashboardID: dashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
 		Target: authoringservice.AuthorizationTargetAuthoredDashboard, Visibility: lifecycle.Visibility,
-		Action: authoring.AuthorizationActionEdit,
+		Action: action,
 	})
 }
 

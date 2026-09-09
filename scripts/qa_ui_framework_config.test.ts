@@ -9,9 +9,23 @@ test('UI framework QA gives the managed dev task its full readiness budget', asy
   expect(source).toContain("LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts)")
 })
 
+test('UI framework QA owns an isolated disposable PostgreSQL topology', async () => {
+  const [runner, postgres] = await Promise.all([
+    readFile('scripts/qa_ui_framework.ts', 'utf8'),
+    readFile('scripts/postgres-dev.sh', 'utf8'),
+  ])
+
+  expect(runner).toContain("LEAPVIEW_POSTGRES_PROJECT_SUFFIX: '-qa-ui-framework'")
+  expect(runner).toContain("LEAPVIEW_POSTGRES_TEST_MODE: '1'")
+  expect(runner).toContain('await destroyManagedPostgres()')
+  expect(postgres).toContain('destroy)')
+  expect(postgres).toContain('compose down --volumes --remove-orphans')
+})
+
 test('UI framework QA waits for asynchronous publication activation', async () => {
   const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
 
+  expect(source).toContain("new URL('/healthz', baseURL)")
   expect(source).toContain('await waitForProjectReady(started)')
   expect(source).toContain("new URL('/explore', baseURL)")
 })
@@ -39,6 +53,14 @@ test('development readiness files are published only after PostgreSQL bootstrap'
   expect(bootstrap).toBeGreaterThanOrEqual(0)
   expect(readiness).toBeGreaterThan(bootstrap)
   expect(source).toContain('Publish the readiness contract only after the final server')
+})
+
+test('development publication can seed a healthy server before a project is active', async () => {
+  const source = await readFile('scripts/dev-server.sh', 'utf8')
+  const publishRunning = source.slice(source.indexOf('publish_running()'), source.indexOf('attach_server()'))
+
+  expect(publishRunning).toContain('"http://localhost:${port}/healthz"')
+  expect(publishRunning).not.toContain('"http://localhost:${port}/"')
 })
 
 test('maintained headless workflows use the managed PostgreSQL dev lifecycle', async () => {

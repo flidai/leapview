@@ -2,7 +2,7 @@
 -- name: GetDashboard :one
 SELECT project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visibility,status,created_at,updated_at FROM dashboard.authoring_dashboards WHERE project_id=sqlc.arg(project_id) AND dashboard_id=sqlc.arg(dashboard_id);
 -- name: LockDashboard :one
-SELECT 1::bigint AS locked FROM dashboard.authoring_dashboards WHERE project_id=sqlc.arg(project_id) AND dashboard_id=sqlc.arg(dashboard_id) FOR UPDATE;
+SELECT dashboard.lock_authoring_dashboard(sqlc.arg(project_id),sqlc.arg(dashboard_id)) AS locked;
 -- name: ListDashboards :many
 SELECT project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visibility,status,created_at,updated_at FROM dashboard.authoring_dashboards WHERE project_id=sqlc.arg(project_id) ORDER BY dashboard_id;
 -- name: GetDraft :one

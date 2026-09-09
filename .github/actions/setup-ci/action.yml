@@ -15,10 +15,47 @@ runs:
   using: composite
   steps:
     - name: Set up Go
+      id: go
       uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
       with:
         go-version-file: go.mod
-        cache: true
+        cache: false
+
+    - name: Resolve Go validation cache paths
+      id: go-cache-paths
+      shell: bash
+      run: |
+        set -eu
+        gomodcache="$(go env GOMODCACHE)"
+        gocache="$(go env GOCACHE)"
+        image="${ImageOS:-}"
+        if [ -z "$image" ] && [ -r /etc/os-release ]; then
+          . /etc/os-release
+          if [ -n "${ID:-}" ] && [ -n "${VERSION_ID:-}" ]; then
+            image="${ID}-${VERSION_ID}"
+          fi
+        fi
+        if [ -z "$image" ]; then
+          echo "unable to determine the runner image identity from ImageOS or /etc/os-release" >&2
+          exit 1
+        fi
+        if [ -z "$gomodcache" ] || [ -z "$gocache" ]; then
+          echo "Go module and build cache paths must be non-empty" >&2
+          exit 1
+        fi
+        {
+          echo "gomodcache=$gomodcache"
+          echo "gocache=$gocache"
+          echo "image=$image"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore Go validation cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ${{ steps.go-cache-paths.outputs.gomodcache }}
+          ${{ steps.go-cache-paths.outputs.gocache }}
+        key: go-validation-v1-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.mod', '**/go.sum', 'Taskfile.yml', '.github/actions/setup-ci/action.yml') }}
 
     - name: Set up Node.js
       uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -92,7 +129,6 @@ runs:
           done
         }
         install_go_tool github.com/go-task/task/v3/cmd/task@v3.50.0
-        install_go_tool github.com/bufbuild/buf/cmd/buf@v1.57.2
         echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
 
     - name: Install cached Chromium and system dependencies

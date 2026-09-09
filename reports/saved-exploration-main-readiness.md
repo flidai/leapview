@@ -2,7 +2,59 @@
 
 Tracking: [FAI-769](https://linear.app/flid/issue/FAI-769/reconcile-saved-data-exploration-with-current-main-and-prepare-green).
 
-## Current status
+## September 9 conflict-resolution checkpoint
+
+Main advanced to `4f677d4b9` with the interactive dashboard builder. PR #543
+is being reconciled through a normal merge commit, preserving the builder
+and saved-exploration functionality. The prior green result below is
+historical and does not validate this new merge.
+
+Main's released PostgreSQL migrations 003 and 004 remain byte-identical.
+The unmerged saved-exploration migration is now 005, with revision-4-to-5
+upgrade coverage. No deployed database or historical data was changed.
+If a development database previously applied this PR's unmerged migration
+003, inspect and reconcile its migration history before applying the new
+chain; it is not equivalent to main's revision 3. No automatic history rewrite,
+database reset, or data transfer is included in this conflict resolution.
+
+The merge also preserves both API/signal contract families, builder catalog
+updates and saved handoff routes. Append now supplies canonical generated
+security-retention audit metadata required by main's capability guards,
+keeping the durable command/event identity distinct from trace IDs. The
+visualization decoder preserves received schema versions. A self-contained
+visual-frame component was extracted to satisfy the unchanged quality budget.
+
+Focused migration, authoring/HTTP/application, architecture, contract/typecheck
+and dashboard DOM tests passed. The first full `task ci` run failed required
+PostgreSQL conformance: a losing concurrent update incorrectly returned not-found
+instead of stale-revision. The failed run was stopped. A deterministic row-lock
+barrier reproduced the failure against the old query. The fix locks lifecycle
+metadata before reading its current revision in a fresh statement snapshot,
+without loading payload bytes; the regression passed five consecutive runs.
+This addresses the inconsistent-snapshot behavior documented for PostgreSQL
+[Read Committed](https://www.postgresql.org/docs/18/transaction-iso.html#XACT-READ-COMMITTED).
+The full saved PostgreSQL suite also passed under Go's race detector. The second
+full CI run passed the saved concurrency regression but failed main's existing
+refresh test: its 10-millisecond lease expired before admission completed.
+Separate frontend validation found a catalog test assuming UTC while the local
+browser used Europe/Berlin. Reviewed test-only corrections use a two-second
+admission lease, server-observed expiry, exact PostgreSQL blocker verification,
+and an explicit UTC browser context. Production lease guards and localized
+rendering remain unchanged. All frontend shards passed, and the engineering
+quality budget remains unchanged and passing. Both refresh fencing tests passed
+five consecutive runs each, retaining the stale-writer assertions.
+
+The final `task ci` run passed every Go, PostgreSQL conformance, and frontend
+lane. Its last `generated:check` step rejected staged changes because it requires
+a committed worktree; regeneration produced no unstaged changes. That final
+gate must be rerun after the normal merge commit. Evidence:
+`/tmp/fai769-conflict-task-ci-3.log` (test lanes passed; overall exit 201 at the
+clean-worktree check), `/tmp/fai769-conflict-native-race.log`, and
+`/tmp/fai769-refresh-fence-after-barrier.log`.
+Exact-head CI must be checked after the reviewed merge
+is pushed. No force push, main merge, or auto-merge is allowed.
+
+## Previous checkpoint (September 8)
 
 Implementation and full local CI validation reached a stable checkpoint.
 The main-target [PR #543](https://github.com/flidai/leapview/pull/543) is open

@@ -217,13 +217,17 @@ func TestPostgresRefreshConcurrentOccurrenceClaimAndFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := r.ClaimAttempt(t.Context(), "run_1", "worker-a", 1, 10*time.Millisecond)
+	// Keep the first lease long enough for the claim transaction's guarded
+	// statements to complete under a loaded CI runner. The takeover below
+	// waits for PostgreSQL's clock to observe expiry rather than guessing with
+	// a client-side sleep.
+	first, err := r.ClaimAttempt(t.Context(), "run_1", "worker-a", 1, 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Let the short lease expire before exercising takeover; direct runtime
-	// updates cannot fabricate an expired running lease.
-	time.Sleep(25 * time.Millisecond)
+	if err := waitForRunAndAttemptLeaseExpiry(t.Context(), admin, "run_1"); err != nil {
+		t.Fatal(err)
+	}
 	second, err := r.ClaimAttempt(t.Context(), "run_1", "worker-b", 2, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -233,6 +237,65 @@ func TestPostgresRefreshConcurrentOccurrenceClaimAndFence(t *testing.T) {
 	}
 	if err := r.CompleteAttempt(t.Context(), "run_1", "worker-a", first.FenceGeneration, nil); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("stale completion = %v", err)
+	}
+}
+
+func waitForRunAndAttemptLeaseExpiry(ctx context.Context, db *pgxpool.Pool, runID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var expired bool
+		if err := db.QueryRow(ctx, `
+			SELECT r.lease_expires_at <= clock_timestamp()
+			   AND a.lease_expires_at <= clock_timestamp()
+			  FROM refresh.run r
+			  JOIN refresh.attempt a ON a.run_id = r.run_id AND a.attempt_number = 1
+			 WHERE r.run_id=$1`, runID).Scan(&expired); err != nil {
+			return err
+		}
+		if expired {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return errors.New("run lease did not expire before timeout")
+			}
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForPostgresLockWait(ctx context.Context, db *pgxpool.Pool, waitingPID, blockingPID uint32) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		if err := db.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				  FROM pg_stat_activity
+				 WHERE pid = $1::integer
+				   AND $2::integer = ANY(pg_blocking_pids(pid))
+			)`, int64(waitingPID), int64(blockingPID)).Scan(&waiting); err != nil {
+			return err
+		}
+		if waiting {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return errors.New("takeover did not reach the expected PostgreSQL lock wait")
+			}
+			return ctx.Err()
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -866,7 +929,7 @@ func TestPostgresRefreshRunMayPublishTxLocksWorkerFence(t *testing.T) {
 	if _, err := r.CreateRun(ctx, RunInput{RunID: "fence-lock-run", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-fence-lock"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.ClaimAttempt(ctx, "fence-lock-run", "worker-a", 1, 10*time.Millisecond); err != nil {
+	if _, err := r.ClaimAttempt(ctx, "fence-lock-run", "worker-a", 1, 2*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	tx1, err := admin.Begin(ctx)
@@ -883,14 +946,20 @@ func TestPostgresRefreshRunMayPublishTxLocksWorkerFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx2.Rollback(ctx)
+	// The leases expire while tx1 still owns the row lock. A takeover must
+	// remain blocked until the publishing transaction releases that lock; use
+	// PostgreSQL's clock rather than a client-side sleep to observe expiry.
+	if err := waitForRunAndAttemptLeaseExpiry(ctx, admin, "fence-lock-run"); err != nil {
+		t.Fatal(err)
+	}
 	takeover := make(chan error, 1)
 	go func() {
 		_, claimErr := r.ClaimAttemptTx(ctx, tx2, "fence-lock-run", "worker-b", 2, time.Minute)
 		takeover <- claimErr
 	}()
-	// The lease expires while tx1 still owns the row lock. A takeover must
-	// remain blocked until the publishing transaction releases that lock.
-	time.Sleep(80 * time.Millisecond)
+	if err := waitForPostgresLockWait(ctx, admin, tx2.Conn().PgConn().PID(), tx1.Conn().PgConn().PID()); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case claimErr := <-takeover:
 		t.Fatalf("takeover completed while publication fence lock held: %v", claimErr)

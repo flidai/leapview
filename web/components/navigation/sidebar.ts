@@ -30,6 +30,7 @@ import {
 } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import { leapViewBrandName } from '../shared/brand-mark'
+import { sidebarControlStyles } from './sidebar-controls'
 import '../shared/loading-spinner'
 import '../shared/user-avatar'
 
@@ -196,7 +197,7 @@ class LeapViewSidebar extends LitElement {
   private mobileMediaQuery?: MediaQueryList
   private resizeDrag?: { pointerId: number; startX: number; startWidth: number }
 
-  static styles = css`
+  static styles = [sidebarControlStyles, css`
     :host {
       --lv-sidebar-width-default: var(--lv-sidebar-width-expanded);
       --lv-sidebar-width: var(--lv-sidebar-resized-width, var(--lv-sidebar-width-default));
@@ -451,45 +452,6 @@ class LeapViewSidebar extends LitElement {
       white-space: nowrap;
     }
 
-    .brand-back {
-      position: relative;
-      box-sizing: border-box;
-      display: grid;
-      min-width: 0;
-      flex: 1 1 auto;
-      grid-template-columns: calc(var(--control-xsmall-size) + var(--base-size-2)) minmax(0, 1fr);
-      min-height: var(--control-medium-size);
-      align-items: center;
-      gap: var(--base-size-8);
-      border: var(--lv-border-transparent);
-      border-radius: var(--lv-radius-default);
-      color: var(--lv-fg-muted);
-      padding: 0 var(--control-xsmall-paddingInline-normal);
-      text-decoration: none;
-      font: var(--lv-type-body);
-    }
-
-    .brand-back:hover,
-    .brand-back:focus-visible {
-      background: var(--control-bgColor-hover);
-      color: var(--lv-fg-default);
-      outline: 0;
-    }
-
-    .brand-back-icon {
-      display: grid;
-      width: var(--control-xsmall-size);
-      height: var(--control-xsmall-size);
-      flex: 0 0 auto;
-      place-items: center;
-    }
-
-    .brand-back-text {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
     .name {
       overflow: hidden;
       min-width: 0;
@@ -581,48 +543,6 @@ class LeapViewSidebar extends LitElement {
 
     .mobile-header {
       display: none;
-    }
-
-    .sidebar-search {
-      position: relative;
-      display: grid;
-      min-width: 0;
-    }
-
-    .sidebar-search-icon {
-      position: absolute;
-      top: 50%;
-      left: var(--control-xsmall-paddingInline-normal);
-      display: grid;
-      width: var(--control-xsmall-size);
-      height: var(--control-xsmall-size);
-      place-items: center;
-      color: var(--lv-fg-muted);
-      pointer-events: none;
-      transform: translateY(-50%);
-    }
-
-    .sidebar-search input {
-      box-sizing: border-box;
-      width: 100%;
-      min-height: var(--control-medium-size);
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
-      color: var(--lv-fg-default);
-      padding: 0 var(--control-xsmall-paddingInline-normal) 0 calc(var(--control-xsmall-size) + var(--base-size-8));
-      font: var(--lv-type-body);
-    }
-
-    .sidebar-search input::placeholder {
-      color: var(--lv-fg-muted);
-      opacity: 1;
-    }
-
-    .sidebar-search input:focus {
-      border-color: var(--lv-fg-accent);
-      outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
     }
 
     .mobile-sidebar-search {
@@ -1219,7 +1139,7 @@ class LeapViewSidebar extends LitElement {
       }
     }
 
-  `
+  `]
 
   connectedCallback(): void {
     super.connectedCallback()
@@ -1420,14 +1340,14 @@ class LeapViewSidebar extends LitElement {
           <div class="brand-row">
             ${this.config.admin && this.config.primaryAction ? html`
               <a
-                class="nav-item brand-back"
+                class="nav-item brand-back sidebar-control-back"
                 href=${this.config.primaryAction.href}
                 aria-label=${this.config.primaryAction.label}
                 title=${this.config.primaryAction.label}
                 @click=${(event: MouseEvent) => this.followInternalLink(event, this.config.primaryAction!.href)}
               >
-                <span class="brand-back-icon">${icon(this.config.primaryAction.icon)}</span>
-                <span class="brand-back-text">${this.config.primaryAction.label}</span>
+                <span class="brand-back-icon sidebar-control-back-icon">${icon(this.config.primaryAction.icon)}</span>
+                <span class="brand-back-text sidebar-control-back-label">${this.config.primaryAction.label}</span>
               </a>
             ` : html`
               <span class="brand-identity">
@@ -1464,13 +1384,13 @@ class LeapViewSidebar extends LitElement {
           <div class="mobile-drawer-header">
             ${this.config.admin && this.config.primaryAction ? html`
               <a
-                class="mobile-drawer-title nav-item brand-back"
+                class="mobile-drawer-title nav-item brand-back sidebar-control-back"
                 href=${this.config.primaryAction.href}
                 aria-label=${this.config.primaryAction.label}
                 @click=${(event: MouseEvent) => this.followInternalLink(event, this.config.primaryAction!.href)}
               >
-                <span class="brand-back-icon">${icon(this.config.primaryAction.icon)}</span>
-                <span class="brand-back-text">${this.config.primaryAction.label}</span>
+                <span class="brand-back-icon sidebar-control-back-icon">${icon(this.config.primaryAction.icon)}</span>
+                <span class="brand-back-text sidebar-control-back-label">${this.config.primaryAction.label}</span>
               </a>
             ` : html`<strong class="mobile-drawer-title">${productName}</strong>`}
             <button class="mobile-close-button" type="button" aria-label="Close navigation" title="Close navigation" @click=${() => this.closeMobileNavigation(true)}>

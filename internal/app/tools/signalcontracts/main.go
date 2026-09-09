@@ -94,6 +94,10 @@ func generatedOutputs(root string, doc ir.Document) (map[string][]byte, error) {
 					GoPackage: "github.com/flidai/leapview/internal/analytics/exploration",
 					GoAlias:   "exploration",
 				},
+				"LeapViewDashboard": {
+					GoPackage: "github.com/flidai/leapview/internal/dashboard/document",
+					GoAlias:   "dashboarddocument",
+				},
 				"LeapViewVisualization": {
 					GoPackage: "github.com/flidai/leapview/internal/dashboard/visualization/ir",
 					GoAlias:   "visualizationir",

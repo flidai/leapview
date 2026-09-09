@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ArrowLeft, ChevronDown, SlidersHorizontal } from 'lucide'
+import { ChevronDown, Copy, EllipsisVertical, PencilLine, SlidersHorizontal, Star } from 'lucide'
 import type {
   AgentContextSignal,
   AgentReferenceSignal,
@@ -36,6 +36,7 @@ import type { FilterOptionsNeededDetail } from './filters/filter-control'
 import './report-canvas'
 import './report-footer'
 import './visual-modal'
+import './dashboard-visual-frame'
 import type { VisualActionDetail } from './visual-modal'
 import './visualization/host'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
@@ -65,6 +66,8 @@ const emptyStatus: DashboardStatus = {
   progressPercent: 100,
 }
 
+const dashboardFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
+
 type DashboardRenderSnapshot = {
   page: DashboardPageSignal
   filterContract: DashboardFilterContract
@@ -83,6 +86,9 @@ type DashboardRefreshProgress = {
 
 class LeapViewDashboardPage extends DatastarLit(LitElement) {
   @property({ type: String, reflect: true }) presentation: 'app' | 'public' | 'embed' = 'app'
+  @property({ type: Boolean, reflect: true, attribute: 'read-only' }) readOnly = false
+  @property({ attribute: 'authoring-action-label' }) authoringActionLabel = ''
+  @property({ attribute: 'authoring-action-href' }) authoringActionHref = ''
   @state() private unsupportedKinds = new Set<string>()
   @state() private optimisticSelections: CanonicalInteractionSelection[] | null = null
   @state() private optimisticSpatialSelections: VisualizationSpatialSelectionState[] | null = null
@@ -90,6 +96,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   @state() private agentReferences: AgentReferenceSignal[] = []
   @state() private reportLayout: 'desktop' | 'mobile' = 'desktop'
   @state() private filterDockOpen = false
+  @state() private dashboardFavorite = false
+  @state() private dashboardOptionsOpen = false
+  private favoriteDashboardID = ''
   private agentStateInitialized = false
   private agentRestoreDispatched = false
   private restoredAgentConversationID = ''
@@ -142,11 +151,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       transition: grid-template-columns var(--lv-duration-fast) var(--motion-easing-move);
     }
 
-    .route > .rail-footer {
-      grid-column: 1;
-      grid-row: 3;
-    }
-
     .route > .header {
       grid-column: 2 / -1;
       grid-row: 1;
@@ -154,9 +158,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
     .route > lv-sub-sidebar {
       grid-column: 1;
-      grid-row: 1 / 3;
+      grid-row: 1 / 4;
       --lv-sub-sidebar-header-height: calc(var(--control-medium-size) + (2 * var(--lv-space-control, var(--base-size-8))) + var(--borderWidth-thin));
       --lv-sub-sidebar-header-padding-block: var(--lv-space-control, var(--base-size-8));
+      --lv-sub-sidebar-footer-height: var(--control-medium-size);
       --lv-sub-sidebar-nav-padding-block-start: 0px;
     }
 
@@ -196,7 +201,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       text-decoration: underline;
     }
 
-    :host([presentation='embed']) .rail-footer,
     :host([presentation='embed']) .header,
     :host([presentation='embed']) lv-report-footer {
       display: none;
@@ -250,38 +254,20 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       padding: var(--lv-space-control, var(--base-size-8)) var(--base-size-16);
     }
 
-    .rail-footer {
-      box-sizing: border-box;
+    .dashboard-heading {
+      display: flex;
       min-width: 0;
-      contain: inline-size;
-      overflow: hidden;
-      border-right: var(--lv-border-muted);
-      background: var(--lv-sidebar-bg);
-    }
-
-    .rail-footer {
-      display: grid;
-      min-height: var(--control-medium-size);
       align-items: center;
-      justify-items: start;
-      border-top: var(--lv-border-muted);
-      padding: 0 var(--base-size-16);
+      gap: var(--base-size-2);
     }
 
-    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-footer {
-      justify-items: center;
-      padding-inline: 0;
+    .dashboard-heading .breadcrumb {
+      min-width: 0;
     }
 
-    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-back-link {
-      display: grid;
-      width: var(--control-medium-size);
-      gap: 0;
-      padding: 0;
-    }
-
-    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-back-label {
-      display: none;
+    .dashboard-heading .dashboard-favorite,
+    .dashboard-heading .dashboard-options {
+      flex: 0 0 auto;
     }
 
     .breadcrumb-root {
@@ -317,52 +303,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       font: var(--lv-type-body-compact);
     }
 
-    .dashboard-back-link {
-      display: grid;
-      width: var(--control-medium-size);
-      height: var(--control-medium-size);
-      flex: 0 0 auto;
-      place-items: center;
-      border-radius: var(--lv-radius-default);
-      color: var(--lv-fg-muted);
-      text-decoration: none;
-    }
-
-    .dashboard-back-link:hover {
-      color: var(--lv-fg-default);
-    }
-
-    .dashboard-back-link:focus-visible {
-      color: var(--lv-fg-default);
-      outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
-    }
-
-    .dashboard-back-link svg {
-      width: var(--base-size-16);
-      height: var(--base-size-16);
-    }
-
-    .rail-back-link {
-      display: inline-flex;
-      width: auto;
-      min-width: 0;
-      max-width: 100%;
-      align-items: center;
-      gap: var(--base-size-8);
-      padding-right: var(--base-size-8);
-    }
-
-    .rail-back-label {
-      display: block;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-medium);
-    }
-
     h1,
     h2,
     p {
@@ -380,6 +320,70 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     `,
     dashboardPageInteractionStyles,
     css`
+    .icon-button.dashboard-favorite,
+    .icon-button.dashboard-options-trigger {
+      border-color: transparent;
+      color: var(--lv-fg-muted);
+    }
+
+    .dashboard-favorite[aria-pressed='true'] {
+      color: var(--display-yellow-fgColor, var(--lv-fg-default));
+    }
+
+    .dashboard-favorite[aria-pressed='true'] svg {
+      fill: currentColor;
+    }
+
+    .dashboard-options {
+      position: relative;
+    }
+
+    .dashboard-options-menu {
+      position: absolute;
+      z-index: var(--zIndex-popover, 300);
+      top: calc(100% + var(--base-size-6));
+      right: 0;
+      display: grid;
+      width: max-content;
+      min-width: 12rem;
+      gap: var(--base-size-2);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+      padding: var(--base-size-6);
+      box-shadow: var(--shadow-floating-small);
+    }
+
+    .dashboard-options-menu a {
+      display: flex;
+      min-height: var(--control-medium-size);
+      align-items: center;
+      gap: var(--base-size-8);
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-default);
+      padding: 0 var(--base-size-8);
+      text-decoration: none;
+      white-space: nowrap;
+      font: var(--lv-type-body-compact);
+    }
+
+    .dashboard-options-menu a:hover,
+    .dashboard-options-menu a:focus-visible {
+      background: var(--lv-bg-control-hover);
+      outline: 0;
+    }
+
+    .dashboard-options-menu a:focus-visible {
+      outline: var(--focus-outline);
+      outline-offset: calc(-1 * var(--focus-outline-offset));
+    }
+
+    .dashboard-options-menu svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+      color: var(--lv-fg-muted);
+    }
+
     @media (max-width: 640px) {
       .route,
 			.route.agent-open,
@@ -393,10 +397,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         min-height: 0;
         grid-template-rows: auto minmax(0, 1fr) auto;
         overflow: hidden;
-      }
-
-      .route > .rail-footer {
-        display: none;
       }
 
       .route > .header {
@@ -420,15 +420,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         padding: var(--base-size-8) var(--base-size-12);
       }
 
-      :host(:not([presentation='embed'])) .breadcrumb-current {
-        display: none;
-      }
-
-      :host(:not([presentation='embed'])) .dashboard-back-link {
-        width: var(--control-medium-size);
-        height: var(--control-medium-size);
-      }
-
       :host(:not([presentation='embed'])) .actions {
         gap: var(--base-size-4);
       }
@@ -446,7 +437,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       }
 
       :host(:not([presentation='embed'])) .mobile-filter-toggle,
-      :host(:not([presentation='embed'])) .agent-toggle {
+      :host(:not([presentation='embed'])) .agent-toggle,
+      :host(:not([presentation='embed'])) .dashboard-favorite,
+      :host(:not([presentation='embed'])) .dashboard-options-trigger {
         width: var(--control-medium-size);
         padding-inline: 0;
       }
@@ -559,6 +552,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     super.connectedCallback()
     document.addEventListener('pointerdown', this.handleMobilePageMenuPointerDown, true)
     document.addEventListener('keydown', this.handleMobilePageMenuKeyDown, true)
+    document.addEventListener('pointerdown', this.handleDashboardOptionsPointerDown, true)
+    document.addEventListener('keydown', this.handleDashboardOptionsKeyDown, true)
+    window.addEventListener('storage', this.handleDashboardFavoriteStorage)
     this.addEventListener('lv-interaction-select', this.handleOptimisticInteraction as EventListener, { capture: true })
     this.addEventListener('lv-interaction-spatial-select', this.handleOptimisticSpatialInteraction as EventListener, { capture: true })
     this.addEventListener('lv-filter-mutate', this.handleFilterMutation as EventListener, { capture: true })
@@ -569,6 +565,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   disconnectedCallback(): void {
     document.removeEventListener('pointerdown', this.handleMobilePageMenuPointerDown, true)
     document.removeEventListener('keydown', this.handleMobilePageMenuKeyDown, true)
+    document.removeEventListener('pointerdown', this.handleDashboardOptionsPointerDown, true)
+    document.removeEventListener('keydown', this.handleDashboardOptionsKeyDown, true)
+    window.removeEventListener('storage', this.handleDashboardFavoriteStorage)
     this.removeEventListener('lv-interaction-select', this.handleOptimisticInteraction as EventListener, { capture: true })
     this.removeEventListener('lv-interaction-spatial-select', this.handleOptimisticSpatialInteraction as EventListener, { capture: true })
     this.removeEventListener('lv-filter-mutate', this.handleFilterMutation as EventListener, { capture: true })
@@ -597,6 +596,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     }
     const page = this.page
     if (!page) return
+    if (this.favoriteDashboardID !== page.dashboardId) {
+      this.favoriteDashboardID = page.dashboardId
+      this.dashboardFavorite = dashboardIsFavorite(readDashboardFavorites(), page.dashboardId)
+    }
     checkSignalContract('dashboard page', page, {
       dashboardId: 'required',
       pageId: 'required',
@@ -766,25 +769,15 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const refreshProgress = this.refreshProgress(snapshot)
     const agentEnabled = this.presentation === 'app'
     const activeFilterCount = this.activeFilterCount(snapshot)
-    const dashboardHref = page.pages[0]?.href ?? `/dashboards/${page.dashboardId}`
     return html`
 			<div class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`}>
-          <footer class="rail-footer">
-            ${this.presentation === 'app' ? html`
-              <a
-                class="dashboard-back-link rail-back-link"
-                href="/"
-                aria-label="Back to dashboards"
-                title="All dashboards"
-              >${lucideIcon(ArrowLeft)}<span class="rail-back-label">Back</span></a>
-            ` : nothing}
-          </footer>
           <header class="header">
+						<div class="dashboard-heading">
 						${renderBreadcrumb([
 						  { label: 'Dashboards', href: '/', className: 'breadcrumb-root' },
 						  {
 							label: page.dashboardTitle,
-							href: dashboardHref,
+							current: true,
 							className: 'breadcrumb-dashboard',
 							prefix: html`<span
 							  class=${`breadcrumb-glyph dashboard-appearance-glyph appearance-color-${appearanceColor(page.appearanceColor)}`}
@@ -793,8 +786,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 							  aria-hidden="true"
 							>${lucideIcon(lucideIconByCanonicalName(page.appearanceIcon), { size: 16, strokeWidth: 1.75 })}</span>`,
 						  },
-						  { label: page.pageTitle, current: true, className: 'breadcrumb-current' },
 						], 'Breadcrumb')}
+						${this.presentation === 'app' ? this.renderDashboardHeaderActions(page) : nothing}
+						</div>
 						<div class="actions">
 							${this.renderMobilePageMenu(page)}
 							<button
@@ -917,6 +911,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       storageKey: 'leapview-report-sidebar-collapsed',
       widthStorageKey: 'leapview-report-sidebar-width',
       activeId: page.pageId,
+      backAction: this.presentation === 'app' ? { label: 'Back', href: '/', title: 'Back to dashboards' } : undefined,
+      searchable: this.presentation === 'app',
+      searchPlaceholder: 'Search pages',
       items: page.pages.map((item: DashboardPageNavSignal) => ({
         id: item.id,
         title: item.title,
@@ -949,6 +946,76 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         </nav>
       </details>
     `
+  }
+
+  private renderDashboardHeaderActions(page: DashboardPageSignal) {
+    const favoriteLabel = this.dashboardFavorite
+      ? `Remove ${page.dashboardTitle} from favorites`
+      : `Add ${page.dashboardTitle} to favorites`
+    return html`
+      <button
+        type="button"
+        class="icon-button dashboard-favorite"
+        aria-label=${favoriteLabel}
+        aria-pressed=${String(this.dashboardFavorite)}
+        title=${favoriteLabel}
+        @click=${this.toggleDashboardFavorite}
+      >${lucideIcon(Star)}</button>
+      ${this.authoringActionLabel && this.authoringActionHref ? html`
+        <div class="dashboard-options">
+          <button
+            type="button"
+            class="icon-button dashboard-options-trigger"
+            aria-label="Dashboard options"
+            aria-haspopup="menu"
+            aria-controls="dashboard-options-menu"
+            aria-expanded=${String(this.dashboardOptionsOpen)}
+            title="Dashboard options"
+            @click=${() => { this.dashboardOptionsOpen = !this.dashboardOptionsOpen }}
+          >${lucideIcon(EllipsisVertical)}</button>
+          ${this.dashboardOptionsOpen ? html`
+            <div id="dashboard-options-menu" class="dashboard-options-menu" role="menu" aria-label="Dashboard options">
+              <a role="menuitem" href=${this.authoringActionHref} @click=${() => { this.dashboardOptionsOpen = false }}>
+                ${this.authoringActionLabel.toLowerCase().includes('copy') ? lucideIcon(Copy) : lucideIcon(PencilLine)}
+                <span>${this.authoringActionLabel}</span>
+              </a>
+            </div>
+          ` : nothing}
+        </div>
+      ` : nothing}
+    `
+  }
+
+  private toggleDashboardFavorite = (): void => {
+    const dashboardID = this.page?.dashboardId.trim() ?? ''
+    if (!dashboardID) return
+    const stored = readDashboardFavorites()
+    const wasFavorite = dashboardIsFavorite(stored, dashboardID)
+    const favorites = stored.filter(id => id !== dashboardID && !id.endsWith(`:${dashboardID}`))
+    if (!wasFavorite) favorites.push(dashboardID)
+    this.dashboardFavorite = !wasFavorite
+    writeDashboardFavorites(favorites)
+  }
+
+  private handleDashboardFavoriteStorage = (event: StorageEvent): void => {
+    if (event.key !== dashboardFavoritesStorageKey || !this.favoriteDashboardID) return
+    this.dashboardFavorite = dashboardIsFavorite(readDashboardFavorites(), this.favoriteDashboardID)
+  }
+
+  private handleDashboardOptionsPointerDown = (event: PointerEvent): void => {
+    if (!this.dashboardOptionsOpen) return
+    const options = this.renderRoot.querySelector<HTMLElement>('.dashboard-options')
+    if (options && event.composedPath().includes(options)) return
+    this.dashboardOptionsOpen = false
+  }
+
+  private handleDashboardOptionsKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !this.dashboardOptionsOpen) return
+    event.preventDefault()
+    this.dashboardOptionsOpen = false
+    void this.updateComplete.then(() => {
+      this.renderRoot.querySelector<HTMLElement>('.dashboard-options-trigger')?.focus()
+    })
   }
 
   private activeFilterCount(snapshot: DashboardRenderSnapshot): number {
@@ -1001,6 +1068,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     if (!anchor?.href) return
     const target = this.page?.pages.find((item) => new URL(item.href, window.location.href).href === anchor.href)
     if (!target) return
+    // Exact draft previews deliberately have no mutation bridge. Let their
+    // revision-pinned page links perform normal document navigation instead
+    // of dispatching an authoring command that nothing can handle.
+    if (this.readOnly) return
     if (target.active) {
       event.preventDefault()
       return
@@ -1268,6 +1339,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private handleOptimisticInteraction = (event: CustomEvent<unknown>): void => {
+    if (this.readOnly) return
     if (!event.detail || typeof event.detail !== 'object') return
     const candidate = event.detail as Partial<OptimisticInteractionCommand>
     if (typeof candidate.sourceId !== 'string') return
@@ -1293,6 +1365,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private handleFilterMutation = (event: CustomEvent<FilterMutationDetail>): void => {
+    if (this.readOnly) {
+      event.stopPropagation()
+      return
+    }
     if (!event.detail?.bindingKey || !event.detail.expression) return
     event.stopPropagation()
     // Clearing is a first-class mutation so textbox and drawer clears share
@@ -1307,6 +1383,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterClear = (event: CustomEvent<{ bindingKey: string }>): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     const binding = this.filterContract.bindings[event.detail?.bindingKey]
     if (!binding?.readerEditable) return
     this.filterController.clear(binding.key)
@@ -1315,6 +1392,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterResetBinding = (event: CustomEvent<{ bindingKey: string }>): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     const binding = this.filterContract.bindings[event.detail?.bindingKey]
     if (!binding?.readerEditable) return
     this.filterController.resetBinding(binding.key)
@@ -1326,6 +1404,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     bindingKeys: string[]
   }>): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     if (event.detail?.scope !== 'page' && event.detail?.scope !== 'dashboard') return
     const pageID = (this.renderSnapshot?.page ?? this.page)?.pageId
     const allowed = Object.values(this.filterContract.bindings)
@@ -1341,6 +1420,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterApply = (event: Event): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     if (this.filterContract.applicationMode !== 'deferred') return
     this.filterController.apply()
     this.requestUpdate()
@@ -1348,12 +1428,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterCancel = (event: Event): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     if (this.filterContract.applicationMode !== 'deferred') return
     this.filterController.cancel()
     this.requestUpdate()
   }
 
   private handleFilterOptionsNeeded = (event: CustomEvent<FilterOptionsNeededDetail>): void => {
+    if (this.readOnly) {
+      event.stopPropagation()
+      return
+    }
     const detail = event.detail
     if (!detail?.bindingKey) return
     event.stopPropagation()
@@ -1406,6 +1491,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private handleOptimisticSpatialInteraction = (event: CustomEvent<unknown>): void => {
+    if (this.readOnly) return
     if (!event.detail || typeof event.detail !== 'object') return
     const candidate = event.detail as Partial<VisualizationSpatialSelectionCommand>
     if (typeof candidate.visualID !== 'string') return
@@ -1427,14 +1513,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     if (command.action === 'set' && (!command.geometry || command.geometry.kind !== command.gesture)) return
 
     const current = [...(this.optimisticSpatialSelections ?? this.spatialSelections)]
-    if (command.action === 'clear') {
-      for (let index = current.length - 1; index >= 0; index--) {
-        const selection = current[index]!
-        if (selection.visualID === command.visualID && selection.interactionID === command.interactionID) current.splice(index, 1)
-      }
-    } else if (command.geometry) {
-      current.push({ visualID: command.visualID, interactionID: command.interactionID, geometry: command.geometry })
-    }
+      .filter((selection) => selection.visualID !== command.visualID || selection.interactionID !== command.interactionID)
+    if (command.action === 'set' && command.geometry) current.push({ visualID: command.visualID, interactionID: command.interactionID, geometry: command.geometry })
     this.optimisticController.setSpatialSelections(current, this.status.generation)
   }
 
@@ -1492,66 +1572,6 @@ function visualizationType(visual: VisualizationEnvelope): string {
   return typeof spec.mark === 'string' && spec.mark ? spec.mark : spec.kind
 }
 
-class DashboardVisualFrame extends LitElement {
-  @property({ type: Boolean, reflect: true }) transparent = false
-
-  static styles = css`
-    :host {
-      display: block;
-      height: 100%;
-      min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-      box-sizing: border-box;
-    }
-
-    .frame {
-      position: relative;
-      height: 100%;
-      min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
-      box-sizing: border-box;
-    }
-
-		:host([data-agent-referenced]) .frame {
-			box-shadow: inset 0 0 0 2px var(--lv-line-accent);
-		}
-
-    :host([transparent]) .frame {
-      border-color: transparent;
-      background: transparent;
-    }
-
-    :host([data-canvas-filter-visual]) {
-      overflow: visible;
-      z-index: 5;
-    }
-
-    :host([data-canvas-filter-visual]) .frame {
-      overflow: visible;
-    }
-
-    ::slotted(*) {
-      display: block;
-      width: 100%;
-      height: 100%;
-    }
-
-  `
-
-  render() {
-    return html`
-      <article class="frame">
-        <slot></slot>
-      </article>
-    `
-  }
-}
-
 function tagForComponent(component: DashboardComponentSignal, visuals: Record<string, VisualizationEnvelope>): string {
   switch (component.kind) {
     case 'slicer':
@@ -1572,5 +1592,27 @@ function appearanceColor(value: string): string {
   return ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'coral'].includes(value) ? value : 'purple'
 }
 
+function readDashboardFavorites(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(dashboardFavoritesStorageKey) ?? '[]')
+    return Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+      : []
+  } catch {
+    return []
+  }
+}
+
+function writeDashboardFavorites(favorites: string[]): void {
+  try {
+    localStorage.setItem(dashboardFavoritesStorageKey, JSON.stringify(favorites))
+  } catch {
+    // Favorites remain usable for the current view when storage is unavailable.
+  }
+}
+
+function dashboardIsFavorite(favorites: string[], dashboardID: string): boolean {
+  return favorites.some(id => id === dashboardID || id.endsWith(`:${dashboardID}`))
+}
+
 if (!customElements.get('lv-dashboard-page')) customElements.define('lv-dashboard-page', LeapViewDashboardPage)
-if (!customElements.get('lv-dashboard-visual-frame')) customElements.define('lv-dashboard-visual-frame', DashboardVisualFrame)

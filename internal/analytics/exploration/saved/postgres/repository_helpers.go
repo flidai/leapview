@@ -323,21 +323,27 @@ func replayMetadata(row operationRow) (saved.MutationReplayMetadata, error) {
 func getLifecycleRow(ctx context.Context, db DBTX, projectID, explorationID string, forUpdate bool) (lifecycleRow, error) {
 	q := saveddb.New(db)
 	if forUpdate {
-		row, err := q.GetSavedExplorationLifecycleForUpdate(ctx, saveddb.GetSavedExplorationLifecycleForUpdateParams{ProjectID: projectID, ExplorationID: explorationID})
-		return lifecycleRowFromUpdate(row), err
+		if _, err := q.GetSavedExplorationLifecycleForUpdate(ctx, saveddb.GetSavedExplorationLifecycleForUpdateParams{ProjectID: projectID, ExplorationID: explorationID}); err != nil {
+			return lifecycleRow{}, err
+		}
+		// Lock the lifecycle row first, then read its current revision in a
+		// separate statement. Under READ COMMITTED, a joined FOR UPDATE query
+		// can EvalPlanQual the lifecycle row after waiting for a concurrent
+		// writer while still using the old statement snapshot for the revision
+		// join. The fresh statement sees the committed revision inserted by the
+		// writer and preserves stale-CAS classification without loading payload
+		// bytes into the lock query.
+		row, err := q.GetSavedExplorationLifecycle(ctx, saveddb.GetSavedExplorationLifecycleParams{ProjectID: projectID, ExplorationID: explorationID})
+		if err != nil {
+			return lifecycleRow{}, err
+		}
+		return lifecycleRowFromNormal(row), nil
 	}
 	row, err := q.GetSavedExplorationLifecycle(ctx, saveddb.GetSavedExplorationLifecycleParams{ProjectID: projectID, ExplorationID: explorationID})
 	return lifecycleRowFromNormal(row), err
 }
 
 func lifecycleRowFromNormal(row saveddb.GetSavedExplorationLifecycleRow) lifecycleRow {
-	return lifecycleRow{ProjectID: row.ProjectID, ExplorationID: row.ExplorationID, OwnerPrincipalID: row.OwnerPrincipalID, Title: row.Title, Slug: row.Slug,
-		Visibility: row.Visibility, Status: row.Status, SemanticModelID: row.SemanticModelID, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ArchivedAt: row.ArchivedAt,
-		RevisionID: row.RevisionID, RevisionNumber: row.RevisionNumber, ContentHash: row.ContentHash, RevisionCreatedBy: row.CreatedBy, RevisionCreatedAt: row.RevisionCreatedAt,
-		ServingProjectID: row.ServingProjectID, ServingEnvironment: row.ServingEnvironment, ServingGenerationID: row.ServingGenerationID}
-}
-
-func lifecycleRowFromUpdate(row saveddb.GetSavedExplorationLifecycleForUpdateRow) lifecycleRow {
 	return lifecycleRow{ProjectID: row.ProjectID, ExplorationID: row.ExplorationID, OwnerPrincipalID: row.OwnerPrincipalID, Title: row.Title, Slug: row.Slug,
 		Visibility: row.Visibility, Status: row.Status, SemanticModelID: row.SemanticModelID, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ArchivedAt: row.ArchivedAt,
 		RevisionID: row.RevisionID, RevisionNumber: row.RevisionNumber, ContentHash: row.ContentHash, RevisionCreatedBy: row.CreatedBy, RevisionCreatedAt: row.RevisionCreatedAt,

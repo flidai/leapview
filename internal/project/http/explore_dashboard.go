@@ -46,6 +46,42 @@ func (h *BrowserHandler) dashboardAuthoringCommandBinding() uicommand.Binding {
 	return h.DashboardAuthoringCommand
 }
 
+// dashboardAppendAuditContext supplies the transactional audit envelope for
+// the browser-only append path. The Idempotency-Key is the durable command and
+// domain-event identity; request/correlation headers remain trace metadata.
+// Principal and trace context from composition are retained where the request
+// does not provide a more specific value; source/action/metadata are rebound
+// to the canonical generated command contract.
+func dashboardAppendAuditContext(ctx context.Context, r *stdhttp.Request, requestID, actor string, project projectgraph.ResourceID, dashboardID authoring.DashboardID) (context.Context, error) {
+	intent, _ := authoring.AuditIntentFromContext(ctx)
+	intent.Source = "dashboard.authoring"
+	intent.Operation = "executeDashboardAuthoringCommand"
+	intent.Action = "dashboard_authoring.draft_updated"
+	intent.EventID = strings.TrimSpace(requestID)
+	intent.ActorID = strings.TrimSpace(actor)
+	if strings.TrimSpace(intent.PrincipalID) == "" {
+		intent.PrincipalID = strings.TrimSpace(actor)
+	}
+	intent.ResourceKind = "dashboard"
+	intent.Capability = access.CapabilityResourceEdit
+	intent.Outcome = "success"
+	if traceID := strings.TrimSpace(r.Header.Get("X-Request-ID")); traceID != "" {
+		intent.RequestID = traceID
+		if strings.TrimSpace(r.Header.Get("X-Correlation-ID")) == "" {
+			intent.CorrelationID = traceID
+		}
+	}
+	if correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID")); correlationID != "" {
+		intent.CorrelationID = correlationID
+	}
+	metadata, err := authoringapplication.EncodeDashboardAuthoringCommandAuditMetadata(project.String(), dashboardID.String(), "pending-draft", authoring.OriginUI)
+	if err != nil {
+		return nil, err
+	}
+	intent.MetadataJSON = metadata
+	return authoring.WithAuditIntent(ctx, intent), nil
+}
+
 func (h *BrowserHandler) dashboardBootstrap(r *stdhttp.Request, sourceModelID string) projectui.DataExplorerDashboardBootstrap {
 	binding := h.dashboardAuthoringCommandBinding()
 	if h == nil || h.DashboardAuthoring == nil || !binding.Valid() {
@@ -303,7 +339,12 @@ func (h *BrowserHandler) DataExplorerAddToDashboard(w stdhttp.ResponseWriter, r 
 		stdhttp.Error(w, "X-Request-ID is required", stdhttp.StatusBadRequest)
 		return
 	}
-	if _, err := h.DashboardAuthoring.AppendExploration(r.Context(), authoringapplication.ExplorationAppendRequest{
+	appendContext, err := dashboardAppendAuditContext(r.Context(), r, requestID, principal.ID, project, authoring.DashboardID(input.DashboardID))
+	if err != nil {
+		stdhttp.Error(w, "dashboard authoring is unavailable", stdhttp.StatusInternalServerError)
+		return
+	}
+	if _, err := h.DashboardAuthoring.AppendExploration(appendContext, authoringapplication.ExplorationAppendRequest{
 		ProjectID: project, ActorID: principal.ID, DashboardID: authoring.DashboardID(input.DashboardID), PageID: input.PageID,
 		RevisionToken: input.RevisionToken, RequestID: requestID, PlacementChoice: input.PlacementChoice, Spec: input.Spec,
 	}); err != nil {

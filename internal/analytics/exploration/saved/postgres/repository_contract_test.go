@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/exploration/saved"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type postgresRepositoryRowCounts struct {
@@ -508,7 +509,32 @@ func TestRepositoryPostgreSQLContractConcurrentUpdateCAS(t *testing.T) {
 		<-start
 		attempts[1].result, attempts[1].err = f.repo.UpdateVersion(saved.WithAuditIntent(t.Context(), f.intent()), rightInput)
 	}()
+	// Hold the lifecycle row before starting both mutations. Both statements
+	// then establish their READ COMMITTED snapshots before the barrier is
+	// released and wait on the same row lock. The first waiter commits the
+	// winning revision; the second waiter must classify the newly visible
+	// lifecycle as a stale CAS rather than losing the joined revision row from
+	// its pre-wait snapshot.
+	barrier, err := f.db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer barrier.Rollback(t.Context())
+	var locked int
+	if err := barrier.QueryRow(t.Context(), `
+		SELECT 1
+		  FROM saved_exploration.saved_explorations
+		 WHERE project_id = $1 AND exploration_id = $2
+		 FOR UPDATE`, created.Lifecycle.ProjectID.String(), created.Lifecycle.ID.String()).Scan(&locked); err != nil {
+		t.Fatal(err)
+	}
 	close(start)
+	if err := waitForConcurrentLifecycleLocks(t.Context(), f.db, 2); err != nil {
+		t.Fatalf("concurrent update lock barrier: %v", err)
+	}
+	if err := barrier.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	wait.Wait()
 	winner := -1
 	for index, attempt := range attempts {
@@ -557,5 +583,32 @@ func TestRepositoryPostgreSQLContractConcurrentUpdateCAS(t *testing.T) {
 	}
 	if _, found, err := f.repo.LookupMutation(t.Context(), saved.MutationLookupInput{ProjectID: "project:sales", ActorID: loserEvidence.ActorID, Action: loserEvidence.Action, IdempotencyKey: loserEvidence.IdempotencyKey, Fingerprint: loserEvidence.Fingerprint}); err != nil || found {
 		t.Fatalf("loser operation lookup = found:%t err:%v", found, err)
+	}
+}
+
+func waitForConcurrentLifecycleLocks(ctx context.Context, db *pgxpool.Pool, expected int) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var blocked int
+		if err := db.QueryRow(ctx, `
+			SELECT count(*)
+			  FROM pg_stat_activity
+			 WHERE pid <> pg_backend_pid()
+			   AND datname = current_database()
+			   AND wait_event_type = 'Lock'
+			   AND query LIKE '%saved_exploration.saved_explorations%'`).Scan(&blocked); err != nil {
+			return err
+		}
+		if blocked >= expected {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
 	}
 }

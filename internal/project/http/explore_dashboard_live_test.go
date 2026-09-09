@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	stdhttp "net/http"
 	"net/http/httptest"
@@ -51,7 +52,7 @@ func TestExploreFromDashboardMountedWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	modelValue, compiled := liveHandoffModel(t)
-	repository, closeStore := liveHandoffRepository(t, ctx)
+	repository, db, closeStore := liveHandoffRepository(t, ctx)
 	t.Cleanup(closeStore)
 	authorizer := &liveHandoffAuthorizer{denyProjectView: true}
 	runtime := &liveHandoffRuntime{identity: identity, model: modelValue, compiled: compiled}
@@ -132,6 +133,26 @@ func TestExploreFromDashboardMountedWorkflow(t *testing.T) {
 	}
 	if filters := appendedRevision.Document.Spec.Filters; len(filters) != 1 || filters[0].Targets == nil || !reflect.DeepEqual(*filters[0].Targets, []string{visualID}) {
 		t.Fatalf("scoped appended filters = %#v", filters)
+	}
+	var auditEventID, auditScope, auditAction, auditResourceID, auditCapability, auditRequestID, auditCorrelation, auditMetadata string
+	if err := db.QueryRow(ctx, `SELECT event_id::text, scope_id, action, resource_id, capability, COALESCE(request_id, ''), COALESCE(correlation_id, ''), metadata::text FROM audit.audit_event WHERE event_id = $1::uuid`, liveHandoffAppendRequestID).Scan(&auditEventID, &auditScope, &auditAction, &auditResourceID, &auditCapability, &auditRequestID, &auditCorrelation, &auditMetadata); err != nil {
+		t.Fatalf("read append audit evidence: %v", err)
+	}
+	var auditEnvelope struct {
+		Retention string `json:"retention"`
+	}
+	if err := json.Unmarshal([]byte(auditMetadata), &auditEnvelope); err != nil {
+		t.Fatalf("decode append audit metadata: %v", err)
+	}
+	if auditEventID != liveHandoffAppendRequestID || auditScope != "project:sales" || auditAction != "dashboard_authoring.draft_updated" || auditResourceID != "dashboard:sales" || auditCapability != string(access.CapabilityResourceEdit) || auditRequestID != liveHandoffTraceRequestID || auditCorrelation != liveHandoffTraceRequestID || auditEnvelope.Retention != "security" {
+		t.Fatalf("append audit evidence = id=%q scope=%q action=%q resource=%q capability=%q request=%q correlation=%q metadata=%s", auditEventID, auditScope, auditAction, auditResourceID, auditCapability, auditRequestID, auditCorrelation, auditMetadata)
+	}
+	var domainEventID, domainCorrelation string
+	if err := db.QueryRow(ctx, `SELECT event_id::text, COALESCE(correlation_id::text, '') FROM event.event_log WHERE event_id = $1::uuid`, liveHandoffAppendRequestID).Scan(&domainEventID, &domainCorrelation); err != nil {
+		t.Fatalf("read append domain event: %v", err)
+	}
+	if domainEventID != liveHandoffAppendRequestID || domainCorrelation != liveHandoffTraceRequestID {
+		t.Fatalf("append domain event = id=%q correlation=%q", domainEventID, domainCorrelation)
 	}
 
 	// A retry with the same transport request identity must replay the durable
@@ -279,7 +300,7 @@ func graphIdentityForLiveHandoff() (projectgraph.ServingIdentity, error) {
 	return projectgraph.NewServingIdentity("project:sales", "production", "generation:live-handoff")
 }
 
-func liveHandoffRepository(t *testing.T, ctx context.Context) (*authoringpostgres.Repository, func()) {
+func liveHandoffRepository(t *testing.T, ctx context.Context) (*authoringpostgres.Repository, *pgxpool.Pool, func()) {
 	t.Helper()
 	h := postgrestest.Start(t)
 	database := h.NewDatabase(t, "")
@@ -320,7 +341,7 @@ func liveHandoffRepository(t *testing.T, ctx context.Context) (*authoringpostgre
 		db.Close()
 		t.Fatal(err)
 	}
-	return repository, func() { db.Close() }
+	return repository, db, func() { db.Close() }
 }
 
 func liveHandoffRevisionIDs() func() (authoring.RevisionID, error) {
@@ -330,7 +351,7 @@ func liveHandoffRevisionIDs() func() (authoring.RevisionID, error) {
 }
 
 func liveHandoffAuditContext(ctx context.Context, eventID, action string) context.Context {
-	metadata := `{"schemaVersion":1,"retention":"standard","payloadSchema":"dashboard.authoring.command.audit.v1","payload":{"operationId":"operation","projectId":"project:sales","dashboardId":"pending-dashboard","draftId":"pending-draft","origin":"ui"}}`
+	metadata := `{"schemaVersion":1,"retention":"security","payloadSchema":"dashboard.authoring.command.audit.v1","payload":{"operationId":"executeDashboardAuthoringCommand","projectId":"project:sales","dashboardId":"pending-dashboard","draftId":"pending-draft","origin":"ui"}}`
 	return authoring.WithAuditIntent(ctx, access.AuditIntent{
 		EventID: eventID, ActorID: "principal:alice", Source: "dashboard.authoring", Operation: "executeDashboardAuthoringCommand",
 		Action: action, Capability: access.CapabilityResourceEdit, Outcome: "success", RequestID: eventID, CorrelationID: eventID, MetadataJSON: metadata,

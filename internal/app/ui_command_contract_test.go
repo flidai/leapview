@@ -67,6 +67,9 @@ func TestUIRequestsCannotBypassTypedCommandHelpers(t *testing.T) {
 		filepath.Clean("internal/admin/ui/page.go"):             {"QueryPost": true, "EventPost": true},
 		filepath.Clean("internal/admin/personalsettings/ui.go"): {"QueryPost": true},
 		filepath.Clean("internal/dashboard/ui/page.go"):         {"EventPost": true},
+		// Builder filter posts mutate only exact-revision ephemeral preview
+		// state; durable dashboard edits continue through generated CommandPost.
+		filepath.Clean("internal/dashboard/ui/builder_page.go"): {"EventPost": true},
 		filepath.Clean("internal/project/ui/data_explorer.go"):  {"EventPost": true},
 		filepath.Clean("internal/project/ui/develop.go"):        {"QueryPost": true, "EventPost": true},
 		// These helpers are the project Develop route's typed-signal bridges;

@@ -35,6 +35,32 @@ test('dashboard visualization signal decoder reuses data on status-only patches'
   expect(loading?.status.kind).toBe('loading')
 })
 
+test('dashboard visualization signal decoder preserves envelope identity for unchanged signals', () => {
+  const decoder = new DashboardVisualizationSignalDecoder()
+  const state = {
+    specRevision: 'spec-1', dataRevision: 1, generation: 1, kind: 'inline',
+    datasets: [{ id: 'primary', specRevision: 'spec-1', dataRevision: 1, generation: 1, columns: ['value'], rows: [[1]], completeness: 'complete' }],
+  }
+  const first = decoder.decode(visualizationSignal(state))
+  const second = decoder.decode(structuredClone(visualizationSignal(state)))
+  const loading = decoder.decode({ ...visualizationSignal(state), status: { kind: 'loading' } })
+
+  expect(second).toBe(first)
+  expect(loading).not.toBe(first)
+  expect(loading?.dataState).toBe(first?.dataState)
+})
+
+test('dashboard visualization signal decoder preserves the received envelope schema version', () => {
+  const decoder = new DashboardVisualizationSignalDecoder()
+  const signal = visualizationSignal({
+    specRevision: 'spec-1', dataRevision: 1, generation: 1, kind: 'inline',
+    datasets: [{ id: 'primary', specRevision: 'spec-1', dataRevision: 1, generation: 1, columns: ['value'], rows: [[1]], completeness: 'complete' }],
+  })
+  const runtimeVersionSignal = { ...signal, schemaVersion: 7 as unknown as 11 }
+
+  expect(decoder.decode(runtimeVersionSignal)?.schemaVersion).toBe(7)
+})
+
 test('dashboard visualization signal decoder fails closed on transport and payload mismatches', () => {
   const decoder = new DashboardVisualizationSignalDecoder()
   const state = {

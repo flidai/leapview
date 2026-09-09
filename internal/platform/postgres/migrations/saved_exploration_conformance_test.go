@@ -16,8 +16,10 @@ import (
 )
 
 // This is intentionally an upgrade test, not a second schema unit test. It
-// applies the real control-plane migrations through revision two, upgrades
-// with 003, and then exercises the exact roles used by production pools.
+// applies the released control-plane migrations through revision four,
+// upgrades with 005, and then exercises the exact roles used by production
+// pools. The checks around the upgrade ensure the dashboard builder's released
+// lock/evidence guards remain present while saved-exploration guards are added.
 func TestSavedExplorationMigrationUpgradeAndRoleBoundary(t *testing.T) {
 	h := postgrestest.Start(t)
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
@@ -54,17 +56,20 @@ func TestSavedExplorationMigrationUpgradeAndRoleBoundary(t *testing.T) {
 	}
 	ctx, cancel := contextWithTimeout(t)
 	defer cancel()
-	if _, err := provider.UpTo(ctx, 2); err != nil {
-		t.Fatalf("apply migrations through revision two: %v", err)
+	if _, err := provider.UpTo(ctx, 4); err != nil {
+		t.Fatalf("apply migrations through released revision four: %v", err)
 	}
 	if current, target, err := provider.GetVersions(ctx); err != nil {
 		t.Fatal(err)
-	} else if current != 2 || target != platformmigrations.CurrentRevision {
-		t.Fatalf("pre-upgrade Goose versions = %d/%d, want 2/%d", current, target, platformmigrations.CurrentRevision)
+	} else if current != 4 || target != platformmigrations.CurrentRevision {
+		t.Fatalf("pre-upgrade Goose versions = %d/%d, want 4/%d", current, target, platformmigrations.CurrentRevision)
 	}
+	assertDashboardBuilderGuards(t, ctx, admin, "released revision four")
 	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
-		t.Fatalf("upgrade to saved exploration migration: %v", err)
+		t.Fatalf("upgrade to saved exploration revision five: %v", err)
 	}
+	assertDashboardBuilderGuards(t, ctx, admin, "saved exploration revision five")
+	assertSavedExplorationGuards(t, ctx, admin)
 
 	// VerifyGoose is the startup read-only gate. It must succeed through the
 	// maintenance authority without invoking the explicit upgrade path.
@@ -165,6 +170,36 @@ func TestSavedExplorationMigrationUpgradeAndRoleBoundary(t *testing.T) {
 		t.Fatal("readonly role inserted a saved exploration")
 	} else {
 		assertPostgreSQLState(t, "readonly insert", err, "42501")
+	}
+}
+
+func assertDashboardBuilderGuards(t *testing.T, ctx context.Context, db *pgxpool.Pool, stage string) {
+	t.Helper()
+	var builderLock, builderEvidence bool
+	if err := db.QueryRow(ctx, `
+		SELECT to_regprocedure('dashboard.lock_authoring_dashboard(text,text)') IS NOT NULL,
+		       to_regprocedure('dashboard.guard_authoring_dashboard_evidence()') IS NOT NULL`).
+		Scan(&builderLock, &builderEvidence); err != nil {
+		t.Fatalf("%s migration guard query: %v", stage, err)
+	}
+	if !builderLock || !builderEvidence {
+		t.Fatalf("%s dashboard builder guards = lock/evidence %t/%t", stage, builderLock, builderEvidence)
+	}
+}
+
+func assertSavedExplorationGuards(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
+	t.Helper()
+	var operationSnapshot, lifecycle, currentRevision, revisionInsert bool
+	if err := db.QueryRow(ctx, `
+		SELECT to_regprocedure('saved_exploration.validate_operation_snapshot()') IS NOT NULL,
+		       to_regprocedure('saved_exploration.validate_lifecycle_mutation()') IS NOT NULL,
+		       to_regprocedure('saved_exploration.validate_current_revision()') IS NOT NULL,
+		       to_regprocedure('saved_exploration.validate_revision_insert()') IS NOT NULL`).
+		Scan(&operationSnapshot, &lifecycle, &currentRevision, &revisionInsert); err != nil {
+		t.Fatalf("saved exploration migration guard query: %v", err)
+	}
+	if !operationSnapshot || !lifecycle || !currentRevision || !revisionInsert {
+		t.Fatalf("saved exploration guards = operation/lifecycle/current-revision/revision-insert %t/%t/%t/%t", operationSnapshot, lifecycle, currentRevision, revisionInsert)
 	}
 }
 

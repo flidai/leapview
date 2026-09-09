@@ -1,8 +1,10 @@
 import { LitElement, css, html, nothing } from 'lit'
-import { state } from 'lit/decorators.js'
+import { property, state } from 'lit/decorators.js'
 import {
   ArrowLeft,
   BookOpen,
+  ChartColumn,
+  ChevronRight,
   ExternalLink,
   RefreshCw,
   Search,
@@ -228,6 +230,7 @@ class LeapViewConnectionsPage extends DatastarLit(LitElement) {
 }
 
 class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
+  @property({ attribute: 'create-dashboard-href' }) createDashboardHref = ''
   private modelFieldDrawerPageKey = ''
   private pushedModelFieldDrawerEntry = false
   private refreshRunDrawerPageKey = ''
@@ -657,6 +660,12 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         <header class="breadcrumb-header">
           ${renderAssetBreadcrumb(page)}
           <div class="actions">
+            ${this.createDashboardHref ? html`
+              <a class="action-link" href=${this.createDashboardHref}>
+                ${lucideIcon(ChartColumn)}
+                <span>Create dashboard</span>
+              </a>
+            ` : nothing}
             ${page.connectionLifecycle ? html`
               <lv-connection-administration
                 surface="detail"

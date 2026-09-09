@@ -57,6 +57,13 @@ func (a *Application) AppendExploration(ctx context.Context, request Exploration
 	if requestID == "" || len(requestID) > 256 {
 		return authoringservice.Result{}, fmt.Errorf("request id is required and must be at most 256 characters")
 	}
+	// The durable append key is the command and domain-event identity. A
+	// browser trace may be carried separately in the audit intent, so normalize
+	// only EventID here before the repository's capability-evidence guard.
+	if intent, ok := authoring.AuditIntentFromContext(ctx); ok {
+		intent.EventID = requestID
+		ctx = authoring.WithAuditIntent(ctx, intent)
+	}
 	intent := authoringservice.AppendExplorationIntent{
 		ProjectID: project, ActorID: actor, DashboardID: request.DashboardID, DraftID: draftID,
 		ExpectedRevision: expected, PageID: request.PageID, RequestID: requestID, PlacementChoice: request.PlacementChoice, Spec: request.Spec,

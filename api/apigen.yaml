@@ -92,6 +92,10 @@ targets:
         go_package: github.com/flidai/leapview/internal/analytics/exploration
         go_alias: exploration
         typescript_module: ../exploration
+      LeapViewDashboard:
+        go_package: github.com/flidai/leapview/internal/dashboard/document
+        go_alias: dashboarddocument
+        typescript_module: ../dashboard
       LeapViewVisualization:
         go_package: github.com/flidai/leapview/internal/dashboard/visualization/ir
         go_alias: visualizationir

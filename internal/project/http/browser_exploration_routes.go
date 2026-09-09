@@ -6,6 +6,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/web/transport"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectnavigation "github.com/flidai/leapview/internal/project/navigation"
 	projectui "github.com/flidai/leapview/internal/project/ui"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 	"github.com/flidai/leapview/pkg/pagestream"
@@ -119,7 +120,12 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	patch := map[string]any{"status": projectsignals.DashboardStatus{}, "runtime": projectsignals.RouteRuntimeSignal{Kind: projectsignals.RouteKindData}}
 	switch transport.Route(r) {
 	case "catalog":
-		patch = projectui.CatalogBootstrapSignals(h.navigationCatalog(r), h.layout(r))
+		catalog, options, err := h.dashboardCatalogPage(r, r.URL.Query().Get("q"))
+		if err != nil {
+			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+			return
+		}
+		patch = projectui.CatalogBootstrapSignalsForCatalogsWithOptions([]projectnavigation.Catalog{catalog}, options, h.layout(r))
 	case "data":
 		surface := r.URL.Query().Get("surface")
 		if surface == "explore" {

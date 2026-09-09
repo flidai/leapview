@@ -23,6 +23,22 @@ const (
 	AuthorizationActionUse     AuthorizationAction = "use"
 	AuthorizationActionPublish AuthorizationAction = "publish"
 	AuthorizationActionArchive AuthorizationAction = "archive"
+
+	// maxPlacementUpdates bounds one atomic browser reflow command and keeps
+	// validation and revision hashing work proportional to the page size.
+	maxPlacementUpdates = 1024
+	// maxFilterTargets bounds one browser target-scope mutation. Canonical
+	// builder projections expose at most this many visual components, keeping
+	// validation and revision hashing proportional to the authored document.
+	maxFilterTargets = 1024
+	// maxAuthoringPages and maxAuthoringVisualComponents mirror the bounded
+	// builder projection. Mutations enforce them before retaining a revision so
+	// a valid command cannot make its own read projection unloadable.
+	maxAuthoringPages            = 128
+	maxAuthoringVisualComponents = 1024
+	maxAuthoringFilterComponents = 1024
+	maxVisualQuerySorts          = 64
+	maxVisualQueryLimit          = 1000
 )
 
 func (a AuthorizationAction) Valid() bool {
@@ -89,6 +105,45 @@ type MetadataPatch struct {
 	Appearance    *document.DashboardAppearance `json:"appearance,omitempty"`
 }
 
+// UpdateDashboardMetadataPayload is the narrow builder-safe subset of
+// dashboard metadata. Slug, visibility, appearance, and semantic-model
+// changes remain on their dedicated authoring paths.
+type UpdateDashboardMetadataPayload struct {
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+func (UpdateDashboardMetadataPayload) authoringPayload() {}
+func (UpdateDashboardMetadataPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// UpdatePageMetadataPayload changes only one page's display metadata.
+type UpdatePageMetadataPayload struct {
+	PageID      string  `json:"pageId"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+func (UpdatePageMetadataPayload) authoringPayload() {}
+func (UpdatePageMetadataPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// UpdateHeaderMetadataPayload changes only one canonical header component's
+// display metadata. It cannot create, remove, or replace components.
+type UpdateHeaderMetadataPayload struct {
+	PageID      string  `json:"pageId"`
+	HeaderID    string  `json:"headerId"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+func (UpdateHeaderMetadataPayload) authoringPayload() {}
+func (UpdateHeaderMetadataPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 // SetVisibilityPayload changes only the dashboard lifecycle visibility. It is
 // intentionally separate from MetadataPatch so builder intent handling cannot
 // accidentally rewrite authored document metadata while sharing the same
@@ -116,15 +171,75 @@ func (AddPagePayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
+// RenamePagePayload updates the authored title of one page.
+type RenamePagePayload struct {
+	PageID string `json:"pageId"`
+	Title  string `json:"title"`
+}
+
+func (RenamePagePayload) authoringPayload() {}
+func (RenamePagePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// DuplicatePagePayload clones one page and all visual definitions referenced
+// by it. The reducer always allocates visual definition IDs; page ID and title
+// are optional convenience overrides for the generated duplicate.
+type DuplicatePagePayload struct {
+	PageID    string `json:"pageId"`
+	NewPageID string `json:"newPageId,omitempty"`
+	Title     string `json:"title,omitempty"`
+}
+
+func (DuplicatePagePayload) authoringPayload() {}
+func (DuplicatePagePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// MovePagePayload moves one page to a zero-based position in the authored
+// page order.
+type MovePagePayload struct {
+	PageID string `json:"pageId"`
+	Index  int    `json:"index"`
+}
+
+func (MovePagePayload) authoringPayload() {}
+func (MovePagePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// UpdatePageLayoutPayload replaces one page's grid override. All values are
+// explicit so a browser layout transaction cannot accidentally preserve stale
+// grid settings from a prior revision.
+type UpdatePageLayoutPayload struct {
+	PageID    string `json:"pageId"`
+	Columns   int32  `json:"columns"`
+	RowHeight int32  `json:"rowHeight"`
+	Gap       int32  `json:"gap"`
+	Padding   int32  `json:"padding"`
+}
+
+func (UpdatePageLayoutPayload) authoringPayload() {}
+func (UpdatePageLayoutPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 // AddVisualPayload creates a definition and its page component in one reducer
 // transaction. The payload contains only closed visual-builder fields; it does
 // not accept a caller-supplied authored document or raw query expression.
 type AddVisualPayload struct {
-	PageID      string `json:"pageId"`
-	VisualID    string `json:"visualId,omitempty"`
-	ComponentID string `json:"componentId,omitempty"`
-	Type        string `json:"type"`
-	Title       string `json:"title,omitempty"`
+	PageID      string    `json:"pageId"`
+	VisualID    string    `json:"visualId,omitempty"`
+	ComponentID string    `json:"componentId,omitempty"`
+	Type        string    `json:"type"`
+	Title       string    `json:"title,omitempty"`
+	FieldID     string    `json:"fieldId,omitempty"`
+	Role        FieldRole `json:"role,omitempty"`
+
+	// ResolvedTable and FieldValidated are application-derived execution
+	// evidence. They never enter the wire contract or command fingerprint.
+	ResolvedTable  string `json:"-"`
+	FieldValidated bool   `json:"-"`
 }
 
 func (AddVisualPayload) authoringPayload() {}
@@ -149,6 +264,27 @@ type AppendExplorationVisualPayload struct {
 
 func (AppendExplorationVisualPayload) authoringPayload() {}
 func (AppendExplorationVisualPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// PlacementUpdate identifies one page component and its final canonical grid
+// placement. A placement command carries every component touched by a drag or
+// resize transaction so GridStack-style reflow is persisted atomically.
+type PlacementUpdate struct {
+	ComponentID string                      `json:"componentId"`
+	Placement   document.DashboardPlacement `json:"placement"`
+}
+
+// SetPlacementsPayload atomically replaces the placements of one page's
+// components. Components not listed retain their existing placement.
+// Placement coordinates are canonical 1-based column/row values.
+type SetPlacementsPayload struct {
+	PageID     string            `json:"pageId"`
+	Placements []PlacementUpdate `json:"placements"`
+}
+
+func (SetPlacementsPayload) authoringPayload() {}
+func (SetPlacementsPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
@@ -177,6 +313,153 @@ type AssignFieldPayload struct {
 	// after it validates FieldID against the active semantic model. It is not a
 	// transport field and therefore cannot be supplied by a builder client.
 	ResolvedTable string `json:"-"`
+}
+
+// SetVisualTypePayload changes the renderer type of one placed visual. VisualID
+// is the page component identity (rather than the shared definition key), so
+// duplicated definitions remain independently editable.
+type SetVisualTypePayload struct {
+	PageID   string                       `json:"pageId"`
+	VisualID string                       `json:"visualId"`
+	Type     document.DashboardVisualType `json:"type"`
+
+	// ResolvedBindings is populated only by the governed application boundary.
+	// It carries exact semantic/physical equivalents of the current query so
+	// the reducer can atomically author a query that belongs to the target
+	// visual family. Builder clients cannot supply or retain these bindings.
+	ResolvedBindings *VisualTypeFieldBindings `json:"-"`
+}
+
+// SetVisualQueryOptionsPayload changes the small set of query options exposed
+// by the browser builder. A nil option is omitted and preserves the authored
+// value; an explicitly empty alias clears the alias, an empty sort slice
+// clears sorting, and a zero limit (or ClearLimit) clears the limit.
+// ClearGrain is the explicit clear form because DashboardTimeGrain is an enum
+// and therefore has no valid empty value.
+type SetVisualQueryOptionsPayload struct {
+	PageID     string                       `json:"pageId"`
+	VisualID   string                       `json:"visualId"`
+	FieldID    string                       `json:"fieldId,omitempty"`
+	Role       FieldRole                    `json:"role,omitempty"`
+	Alias      *string                      `json:"alias,omitempty"`
+	Grain      *document.DashboardTimeGrain `json:"grain,omitempty"`
+	ClearGrain bool                         `json:"clearGrain,omitempty"`
+	Sort       *[]document.DashboardSort    `json:"sort,omitempty"`
+	Limit      *int32                       `json:"limit,omitempty"`
+	ClearLimit bool                         `json:"clearLimit,omitempty"`
+}
+
+func (SetVisualQueryOptionsPayload) authoringPayload() {}
+func (SetVisualQueryOptionsPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// VisualTypeFieldBindings is the application-resolved, transport-invisible
+// bridge between query families during a visual type switch. Dimensions and
+// Metrics are semantic member IDs. Dataset and Details are the canonical
+// records-query dataset and its unqualified fields.
+type VisualTypeFieldBindings struct {
+	Dimensions []string
+	Metrics    []string
+	Dataset    string
+	Details    []string
+}
+
+func (SetVisualTypePayload) authoringPayload() {}
+func (SetVisualTypePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// RenameVisualPayload updates the authored title of one placed visual.
+type RenameVisualPayload struct {
+	PageID   string `json:"pageId"`
+	VisualID string `json:"visualId"`
+	Title    string `json:"title"`
+}
+
+func (RenameVisualPayload) authoringPayload() {}
+func (RenameVisualPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// DuplicateVisualPayload clones a placed visual definition and component. IDs
+// are optional; the reducer allocates deterministic collision-free IDs.
+type DuplicateVisualPayload struct {
+	PageID         string `json:"pageId"`
+	VisualID       string `json:"visualId"`
+	NewVisualID    string `json:"newVisualId,omitempty"`
+	NewComponentID string `json:"newComponentId,omitempty"`
+	Title          string `json:"title,omitempty"`
+}
+
+func (DuplicateVisualPayload) authoringPayload() {}
+func (DuplicateVisualPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// RestoreRevisionPayload restores the canonical document from an exact,
+// retained revision. The restore itself is appended as a new revision so the
+// draft history remains monotonic and auditable.
+type RestoreRevisionPayload struct {
+	TargetRevision RevisionToken `json:"targetRevision"`
+}
+
+func (RestoreRevisionPayload) authoringPayload() {}
+func (RestoreRevisionPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// UpdateVisualFormatPayload changes only explicit, renderer-neutral visual
+// formatting controls. Omitted pointers preserve existing values.
+type UpdateVisualFormatPayload struct {
+	PageID            string  `json:"pageId"`
+	VisualID          string  `json:"visualId"`
+	Title             *string `json:"title,omitempty"`
+	TitleVisible      *bool   `json:"titleVisible,omitempty"`
+	LegendVisible     *bool   `json:"legendVisible,omitempty"`
+	AxisVisible       *bool   `json:"axisVisible,omitempty"`
+	DataLabelsVisible *bool   `json:"dataLabelsVisible,omitempty"`
+	FormatKey         string  `json:"formatKey,omitempty"`
+	FormatValue       *string `json:"formatValue,omitempty"`
+}
+
+func (UpdateVisualFormatPayload) authoringPayload() {}
+func (UpdateVisualFormatPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// RemoveFieldPayload removes one governed query selection from a placed
+// visual. Scalar histogram/distribution bindings cannot be removed without
+// making an invalid canonical query and are rejected by the reducer.
+type RemoveFieldPayload struct {
+	PageID   string    `json:"pageId"`
+	VisualID string    `json:"visualId"`
+	FieldID  string    `json:"fieldId"`
+	Role     FieldRole `json:"role"`
+}
+
+func (RemoveFieldPayload) authoringPayload() {}
+func (RemoveFieldPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// MoveFieldPayload reorders a selection within its governed semantic role.
+// Cross-role moves are rejected unless a future governed conversion contract
+// proves the source field's kind. Index is zero-based; when omitted, direction
+// is one of up/down and moves within the current role.
+type MoveFieldPayload struct {
+	PageID     string    `json:"pageId"`
+	VisualID   string    `json:"visualId"`
+	FieldID    string    `json:"fieldId"`
+	Role       FieldRole `json:"role"`
+	TargetRole FieldRole `json:"targetRole,omitempty"`
+	Direction  string    `json:"direction,omitempty"`
+	Index      *int      `json:"index,omitempty"`
+}
+
+func (MoveFieldPayload) authoringPayload() {}
+func (MoveFieldPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
 }
 
 func (AssignFieldPayload) authoringPayload() {}
@@ -218,6 +501,7 @@ func (UpsertVisualPayload) RequiredAction() (AuthorizationAction, error) {
 }
 
 type RemoveVisualPayload struct {
+	PageID   string `json:"pageId,omitempty"`
 	VisualID string `json:"visualId"`
 }
 
@@ -246,6 +530,125 @@ func (SetFiltersPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
+// AddFilterPayload creates one report-scoped governed filter definition in the
+// canonical dashboard document. Dataset is only used by select controls to
+// author their distinct option source.
+type AddFilterPayload struct {
+	FilterID    string `json:"filterId,omitempty"`
+	Label       string `json:"label"`
+	Dimension   string `json:"dimension"`
+	Dataset     string `json:"dataset,omitempty"`
+	ControlType string `json:"controlType"`
+}
+
+func (AddFilterPayload) authoringPayload() {}
+func (AddFilterPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// AddSlicerPayload creates one governed filter and places its control on a
+// page in the same revision. It is the builder's atomic convenience intent;
+// the canonical document still stores the ordinary filter definition and
+// filter page component used by dashboards as code.
+type AddSlicerPayload struct {
+	PageID      string `json:"pageId"`
+	FilterID    string `json:"filterId,omitempty"`
+	ComponentID string `json:"componentId,omitempty"`
+	Label       string `json:"label"`
+	Dimension   string `json:"dimension"`
+	Dataset     string `json:"dataset,omitempty"`
+	ControlType string `json:"controlType"`
+}
+
+func (AddSlicerPayload) authoringPayload() {}
+func (AddSlicerPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// UpdateFilterPayload changes only builder-owned presentation properties and
+// deliberately preserves authored defaults, operators, targets, and advanced
+// option settings that may have been added in YAML or by an agent.
+type UpdateFilterPayload struct {
+	FilterID       string `json:"filterId"`
+	Label          string `json:"label"`
+	Description    string `json:"description,omitempty"`
+	Dataset        string `json:"dataset,omitempty"`
+	ControlType    string `json:"controlType"`
+	Required       bool   `json:"required"`
+	ReaderEditable bool   `json:"readerEditable"`
+	URLParameter   string `json:"urlParameter,omitempty"`
+}
+
+func (UpdateFilterPayload) authoringPayload() {}
+func (UpdateFilterPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// SetFilterTargetsPayload changes only the visual target policy of one
+// canonical report filter. A nil Targets slice means the filter applies to
+// every semantically compatible visual on every page (the authored
+// all-pages/default form). A non-nil slice must contain one or more visual
+// definition IDs and narrows the filter to those targets. Keeping this edit
+// separate from UpdateFilterPayload preserves defaults, operators, and other
+// code-only filter properties authored in YAML or by an agent.
+type SetFilterTargetsPayload struct {
+	FilterID string   `json:"filterId"`
+	Targets  []string `json:"targets"`
+}
+
+func (SetFilterTargetsPayload) authoringPayload() {}
+func (SetFilterTargetsPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// SetFilterScopePayload selects report or page state scope and may narrow that
+// binding to explicit visual consumers. Page targets are page-local component
+// IDs; report targets are visual IDs or qualified page/component IDs.
+type SetFilterScopePayload struct {
+	FilterID string   `json:"filterId"`
+	Scope    string   `json:"scope"`
+	PageID   string   `json:"pageId,omitempty"`
+	Targets  []string `json:"targets,omitempty"`
+}
+
+func (SetFilterScopePayload) authoringPayload() {}
+func (SetFilterScopePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+type RemoveFilterPayload struct {
+	FilterID string `json:"filterId"`
+}
+
+func (RemoveFilterPayload) authoringPayload() {}
+func (RemoveFilterPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// AddFilterComponentPayload places one existing governed filter definition on
+// a page as a slicer component. The filter definition remains report-scoped;
+// this command only adds its page presentation and canonical grid placement.
+type AddFilterComponentPayload struct {
+	PageID      string `json:"pageId"`
+	FilterID    string `json:"filterId"`
+	ComponentID string `json:"componentId,omitempty"`
+}
+
+func (AddFilterComponentPayload) authoringPayload() {}
+func (AddFilterComponentPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+type RemoveFilterComponentPayload struct {
+	PageID      string `json:"pageId"`
+	ComponentID string `json:"componentId"`
+}
+
+func (RemoveFilterComponentPayload) authoringPayload() {}
+func (RemoveFilterComponentPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 type SetInteractionPayload struct {
 	PageID      string                         `json:"pageId,omitempty"`
 	VisualID    string                         `json:"visualId,omitempty"`
@@ -255,6 +658,22 @@ type SetInteractionPayload struct {
 
 func (SetInteractionPayload) authoringPayload() {}
 func (SetInteractionPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// SetInteractionTargetPayload is the deliberately narrow builder intent for
+// changing one source interaction edge. The reducer resolves both IDs against
+// the same page, so transports never submit an authored interaction union.
+// Each ID may be either a page component ID or a visual definition ID.
+type SetInteractionTargetPayload struct {
+	PageID         string `json:"pageId"`
+	VisualID       string `json:"visualId"`
+	TargetVisualID string `json:"targetVisualId"`
+	Effect         string `json:"effect"`
+}
+
+func (SetInteractionTargetPayload) authoringPayload() {}
+func (SetInteractionTargetPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
@@ -274,6 +693,19 @@ func (ArchivePayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionArchive, nil
 }
 
+// ReplaceDocumentPayload replaces one complete canonical draft document. It
+// is reserved for trusted application boundaries such as the agent source
+// editor; browser builder intents remain limited to their narrow payloads.
+// The reducer preserves immutable resource identity and semantic-model scope.
+type ReplaceDocumentPayload struct {
+	Document document.DashboardDocument `json:"document"`
+}
+
+func (ReplaceDocumentPayload) authoringPayload() {}
+func (ReplaceDocumentPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 // CommandID is the idempotency key. Fingerprint intentionally excludes it so
 // a store can detect reuse of one key with changed request inputs.
 type Command struct {
@@ -285,18 +717,44 @@ type Command struct {
 	Provenance       Provenance    `json:"provenance"`
 
 	Metadata                *MetadataPatch                  `json:"metadata,omitempty"`
+	UpdateDashboardMetadata *UpdateDashboardMetadataPayload `json:"updateDashboardMetadata,omitempty"`
+	UpdatePageMetadata      *UpdatePageMetadataPayload      `json:"updatePageMetadata,omitempty"`
+	UpdateHeaderMetadata    *UpdateHeaderMetadataPayload    `json:"updateHeaderMetadata,omitempty"`
 	SetVisibility           *SetVisibilityPayload           `json:"setVisibility,omitempty"`
 	AddPage                 *AddPagePayload                 `json:"addPage,omitempty"`
+	RenamePage              *RenamePagePayload              `json:"renamePage,omitempty"`
+	DuplicatePage           *DuplicatePagePayload           `json:"duplicatePage,omitempty"`
+	MovePage                *MovePagePayload                `json:"movePage,omitempty"`
+	UpdatePageLayout        *UpdatePageLayoutPayload        `json:"updatePageLayout,omitempty"`
 	AddVisual               *AddVisualPayload               `json:"addVisual,omitempty"`
 	AppendExplorationVisual *AppendExplorationVisualPayload `json:"appendExplorationVisual,omitempty"`
+	SetPlacements           *SetPlacementsPayload           `json:"setPlacements,omitempty"`
 	AssignField             *AssignFieldPayload             `json:"assignField,omitempty"`
+	SetVisualType           *SetVisualTypePayload           `json:"setVisualType,omitempty"`
+	SetVisualQueryOptions   *SetVisualQueryOptionsPayload   `json:"setVisualQueryOptions,omitempty"`
+	RenameVisual            *RenameVisualPayload            `json:"renameVisual,omitempty"`
+	DuplicateVisual         *DuplicateVisualPayload         `json:"duplicateVisual,omitempty"`
+	RestoreRevision         *RestoreRevisionPayload         `json:"restoreRevision,omitempty"`
+	UpdateVisualFormat      *UpdateVisualFormatPayload      `json:"updateVisualFormat,omitempty"`
+	RemoveField             *RemoveFieldPayload             `json:"removeField,omitempty"`
+	MoveField               *MoveFieldPayload               `json:"moveField,omitempty"`
 	UpsertPage              *UpsertPagePayload              `json:"upsertPage,omitempty"`
 	RemovePage              *RemovePagePayload              `json:"removePage,omitempty"`
 	UpsertVisual            *UpsertVisualPayload            `json:"upsertVisual,omitempty"`
 	RemoveVisual            *RemoveVisualPayload            `json:"removeVisual,omitempty"`
 	SetLayout               *SetLayoutPayload               `json:"setLayout,omitempty"`
 	SetFilters              *SetFiltersPayload              `json:"setFilters,omitempty"`
+	AddFilter               *AddFilterPayload               `json:"addFilter,omitempty"`
+	AddSlicer               *AddSlicerPayload               `json:"addSlicer,omitempty"`
+	UpdateFilter            *UpdateFilterPayload            `json:"updateFilter,omitempty"`
+	SetFilterTargets        *SetFilterTargetsPayload        `json:"setFilterTargets,omitempty"`
+	SetFilterScope          *SetFilterScopePayload          `json:"setFilterScope,omitempty"`
+	RemoveFilter            *RemoveFilterPayload            `json:"removeFilter,omitempty"`
+	AddFilterComponent      *AddFilterComponentPayload      `json:"addFilterComponent,omitempty"`
+	RemoveFilterComponent   *RemoveFilterComponentPayload   `json:"removeFilterComponent,omitempty"`
 	SetInteraction          *SetInteractionPayload          `json:"setInteraction,omitempty"`
+	SetInteractionTarget    *SetInteractionTargetPayload    `json:"setInteractionTarget,omitempty"`
+	ReplaceDocument         *ReplaceDocumentPayload         `json:"replaceDocument,omitempty"`
 	Publish                 *PublishPayload                 `json:"publish,omitempty"`
 	Archive                 *ArchivePayload                 `json:"archive,omitempty"`
 }
@@ -306,11 +764,32 @@ func (c Command) payloads() []authoringPayload {
 	if c.Metadata != nil {
 		payloads = append(payloads, c.Metadata)
 	}
+	if c.UpdateDashboardMetadata != nil {
+		payloads = append(payloads, c.UpdateDashboardMetadata)
+	}
+	if c.UpdatePageMetadata != nil {
+		payloads = append(payloads, c.UpdatePageMetadata)
+	}
+	if c.UpdateHeaderMetadata != nil {
+		payloads = append(payloads, c.UpdateHeaderMetadata)
+	}
 	if c.SetVisibility != nil {
 		payloads = append(payloads, c.SetVisibility)
 	}
 	if c.AddPage != nil {
 		payloads = append(payloads, c.AddPage)
+	}
+	if c.RenamePage != nil {
+		payloads = append(payloads, c.RenamePage)
+	}
+	if c.DuplicatePage != nil {
+		payloads = append(payloads, c.DuplicatePage)
+	}
+	if c.MovePage != nil {
+		payloads = append(payloads, c.MovePage)
+	}
+	if c.UpdatePageLayout != nil {
+		payloads = append(payloads, c.UpdatePageLayout)
 	}
 	if c.AddVisual != nil {
 		payloads = append(payloads, c.AddVisual)
@@ -318,8 +797,35 @@ func (c Command) payloads() []authoringPayload {
 	if c.AppendExplorationVisual != nil {
 		payloads = append(payloads, c.AppendExplorationVisual)
 	}
+	if c.SetPlacements != nil {
+		payloads = append(payloads, c.SetPlacements)
+	}
 	if c.AssignField != nil {
 		payloads = append(payloads, c.AssignField)
+	}
+	if c.SetVisualType != nil {
+		payloads = append(payloads, c.SetVisualType)
+	}
+	if c.SetVisualQueryOptions != nil {
+		payloads = append(payloads, c.SetVisualQueryOptions)
+	}
+	if c.RenameVisual != nil {
+		payloads = append(payloads, c.RenameVisual)
+	}
+	if c.DuplicateVisual != nil {
+		payloads = append(payloads, c.DuplicateVisual)
+	}
+	if c.RestoreRevision != nil {
+		payloads = append(payloads, c.RestoreRevision)
+	}
+	if c.UpdateVisualFormat != nil {
+		payloads = append(payloads, c.UpdateVisualFormat)
+	}
+	if c.RemoveField != nil {
+		payloads = append(payloads, c.RemoveField)
+	}
+	if c.MoveField != nil {
+		payloads = append(payloads, c.MoveField)
 	}
 	if c.UpsertPage != nil {
 		payloads = append(payloads, c.UpsertPage)
@@ -339,8 +845,38 @@ func (c Command) payloads() []authoringPayload {
 	if c.SetFilters != nil {
 		payloads = append(payloads, c.SetFilters)
 	}
+	if c.AddFilter != nil {
+		payloads = append(payloads, c.AddFilter)
+	}
+	if c.AddSlicer != nil {
+		payloads = append(payloads, c.AddSlicer)
+	}
+	if c.UpdateFilter != nil {
+		payloads = append(payloads, c.UpdateFilter)
+	}
+	if c.SetFilterTargets != nil {
+		payloads = append(payloads, c.SetFilterTargets)
+	}
+	if c.SetFilterScope != nil {
+		payloads = append(payloads, c.SetFilterScope)
+	}
+	if c.RemoveFilter != nil {
+		payloads = append(payloads, c.RemoveFilter)
+	}
+	if c.AddFilterComponent != nil {
+		payloads = append(payloads, c.AddFilterComponent)
+	}
+	if c.RemoveFilterComponent != nil {
+		payloads = append(payloads, c.RemoveFilterComponent)
+	}
 	if c.SetInteraction != nil {
 		payloads = append(payloads, c.SetInteraction)
+	}
+	if c.SetInteractionTarget != nil {
+		payloads = append(payloads, c.SetInteractionTarget)
+	}
+	if c.ReplaceDocument != nil {
+		payloads = append(payloads, c.ReplaceDocument)
 	}
 	if c.Publish != nil {
 		payloads = append(payloads, c.Publish)
@@ -386,7 +922,13 @@ func (c Command) IsBuilderIntent() bool {
 		return false
 	}
 	switch payload.(type) {
-	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *AppendExplorationVisualPayload, *AssignFieldPayload:
+	case *UpdateDashboardMetadataPayload, *UpdatePageMetadataPayload, *UpdateHeaderMetadataPayload,
+		*SetVisibilityPayload, *AddPagePayload, *RenamePagePayload, *DuplicatePagePayload, *MovePagePayload,
+		*UpdatePageLayoutPayload, *AddVisualPayload, *AppendExplorationVisualPayload, *SetPlacementsPayload, *AssignFieldPayload, *RemovePagePayload,
+		*SetVisualTypePayload, *SetVisualQueryOptionsPayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
+		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload,
+		*AddFilterPayload, *AddSlicerPayload, *UpdateFilterPayload, *SetFilterTargetsPayload, *SetFilterScopePayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload,
+		*SetInteractionTargetPayload:
 		return true
 	default:
 		return false
@@ -446,10 +988,42 @@ func validatePayload(payload authoringPayload) error {
 		if value.Visibility != nil && !value.Visibility.Valid() {
 			return fmt.Errorf("%w: unsupported visibility %q", ErrInvalidPayload, *value.Visibility)
 		}
-		if value.Appearance != nil {
-			if value.Appearance.Icon != nil && strings.TrimSpace(*value.Appearance.Icon) == "" {
-				return fmt.Errorf("%w: appearance icon cannot be blank", ErrInvalidPayload)
-			}
+		if value.Appearance != nil && value.Appearance.Icon != nil && strings.TrimSpace(*value.Appearance.Icon) == "" {
+			return fmt.Errorf("%w: appearance icon cannot be blank", ErrInvalidPayload)
+		}
+	case *UpdateDashboardMetadataPayload:
+		if value.Title == nil && value.Description == nil {
+			return fmt.Errorf("%w: dashboard metadata has no edits", ErrInvalidPayload)
+		}
+		if value.Title != nil && strings.TrimSpace(*value.Title) == "" {
+			return fmt.Errorf("%w: dashboard title cannot be blank", ErrInvalidPayload)
+		}
+	case *UpdatePageMetadataPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if value.Title == nil && value.Description == nil {
+			return fmt.Errorf("%w: page metadata has no edits", ErrInvalidPayload)
+		}
+		if value.Title != nil && strings.TrimSpace(*value.Title) == "" {
+			return fmt.Errorf("%w: page title cannot be blank", ErrInvalidPayload)
+		}
+	case *UpdateHeaderMetadataPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if err := validateCanonicalObjectID("header id", value.HeaderID); err != nil {
+			return err
+		}
+		if value.Title == nil && value.Description == nil {
+			return fmt.Errorf("%w: header metadata has no edits", ErrInvalidPayload)
+		}
+		if value.Title != nil && strings.TrimSpace(*value.Title) == "" {
+			return fmt.Errorf("%w: header title cannot be blank", ErrInvalidPayload)
+		}
+	case *ReplaceDocumentPayload:
+		if err := ValidateCanonicalDocument(value.Document); err != nil {
+			return fmt.Errorf("%w: replacement document: %v", ErrInvalidPayload, err)
 		}
 	case *SetVisibilityPayload:
 		if !value.Visibility.Valid() {
@@ -463,6 +1037,48 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if value.Title != "" && strings.TrimSpace(value.Title) == "" {
 			return fmt.Errorf("%w: page title cannot be blank", ErrInvalidPayload)
+		}
+	case *RenamePagePayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if strings.TrimSpace(value.Title) == "" {
+			return fmt.Errorf("%w: page title cannot be blank", ErrInvalidPayload)
+		}
+	case *DuplicatePagePayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if value.NewPageID != "" {
+			if err := validateCanonicalObjectID("new page id", value.NewPageID); err != nil {
+				return err
+			}
+		}
+		if value.Title != "" && strings.TrimSpace(value.Title) == "" {
+			return fmt.Errorf("%w: duplicate page title cannot be blank", ErrInvalidPayload)
+		}
+	case *MovePagePayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if value.Index < 0 {
+			return fmt.Errorf("%w: page index must be non-negative", ErrInvalidPayload)
+		}
+	case *UpdatePageLayoutPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if value.Columns <= 0 {
+			return fmt.Errorf("%w: page layout columns must be greater than zero", ErrInvalidPayload)
+		}
+		if value.RowHeight <= 0 {
+			return fmt.Errorf("%w: page layout row height must be greater than zero", ErrInvalidPayload)
+		}
+		if value.Gap < 0 {
+			return fmt.Errorf("%w: page layout gap must be non-negative", ErrInvalidPayload)
+		}
+		if value.Padding < 0 {
+			return fmt.Errorf("%w: page layout padding must be non-negative", ErrInvalidPayload)
 		}
 	case *AddVisualPayload:
 		if strings.TrimSpace(value.PageID) == "" {
@@ -484,9 +1100,50 @@ func validatePayload(payload authoringPayload) error {
 		if !canonicalVisualTypeSupported(document.DashboardVisualType(strings.TrimSpace(value.Type))) {
 			return fmt.Errorf("%w: unsupported visual type %q", ErrInvalidPayload, value.Type)
 		}
+		if value.FieldID == "" && value.Role != "" {
+			return fmt.Errorf("%w: add visual field role requires a field", ErrInvalidPayload)
+		}
+		if value.FieldID != "" {
+			if !ValidGovernedFieldID(value.FieldID) {
+				return fmt.Errorf("%w: invalid governed field id %q", ErrInvalidPayload, value.FieldID)
+			}
+			if !value.Role.Valid() {
+				return fmt.Errorf("%w: unsupported field role %q", ErrInvalidPayload, value.Role)
+			}
+		}
 	case *AppendExplorationVisualPayload:
 		if err := validateAppendExplorationVisualPayload(*value); err != nil {
 			return err
+		}
+	case *SetPlacementsPayload:
+		if strings.TrimSpace(value.PageID) == "" {
+			return fmt.Errorf("%w: set placement requires page id", ErrInvalidPayload)
+		}
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if len(value.Placements) == 0 {
+			return fmt.Errorf("%w: set placement requires at least one component placement", ErrInvalidPayload)
+		}
+		if len(value.Placements) > maxPlacementUpdates {
+			return fmt.Errorf("%w: set placement exceeds bounded component limit", ErrInvalidPayload)
+		}
+		seen := make(map[string]struct{}, len(value.Placements))
+		for index, update := range value.Placements {
+			componentID := strings.TrimSpace(update.ComponentID)
+			if componentID == "" {
+				return fmt.Errorf("%w: set placement component %d requires component id", ErrInvalidPayload, index)
+			}
+			if err := validateCanonicalObjectID("component id", componentID); err != nil {
+				return err
+			}
+			if _, exists := seen[componentID]; exists {
+				return fmt.Errorf("%w: set placement contains duplicate component %q", ErrInvalidPayload, componentID)
+			}
+			seen[componentID] = struct{}{}
+			if err := validatePlacementCoordinates(update.Placement); err != nil {
+				return fmt.Errorf("%w: set placement component %q: %v", ErrInvalidPayload, componentID, err)
+			}
 		}
 	case *AssignFieldPayload:
 		for kind, id := range map[string]string{"page id": value.PageID, "visual id": value.VisualID, "field id": value.FieldID} {
@@ -505,6 +1162,136 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if !value.Role.Valid() {
 			return fmt.Errorf("%w: unsupported field role %q", ErrInvalidPayload, value.Role)
+		}
+	case *SetVisualTypePayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "set visual type"); err != nil {
+			return err
+		}
+		if !canonicalVisualTypeSupported(value.Type) {
+			return fmt.Errorf("%w: unsupported visual type %q", ErrInvalidPayload, value.Type)
+		}
+	case *SetVisualQueryOptionsPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "set visual query options"); err != nil {
+			return err
+		}
+		if value.FieldID == "" && (value.Alias != nil || value.Grain != nil || value.ClearGrain) {
+			return fmt.Errorf("%w: query field options require field id", ErrInvalidPayload)
+		}
+		if value.FieldID != "" {
+			if !ValidGovernedFieldID(value.FieldID) {
+				return fmt.Errorf("%w: invalid query field id %q", ErrInvalidPayload, value.FieldID)
+			}
+			if !value.Role.Valid() {
+				return fmt.Errorf("%w: query field options require a valid role", ErrInvalidPayload)
+			}
+		}
+		if value.Alias != nil && strings.TrimSpace(*value.Alias) != "" && !validQueryResultAlias(strings.TrimSpace(*value.Alias)) {
+			return fmt.Errorf("%w: invalid query result alias %q", ErrInvalidPayload, *value.Alias)
+		}
+		if value.Grain != nil && !validDashboardTimeGrain(*value.Grain) {
+			return fmt.Errorf("%w: unsupported query grain %q", ErrInvalidPayload, *value.Grain)
+		}
+		if value.ClearGrain && value.Grain != nil {
+			return fmt.Errorf("%w: query grain cannot be set and cleared together", ErrInvalidPayload)
+		}
+		if value.Sort == nil && value.Limit == nil && value.Alias == nil && value.Grain == nil && !value.ClearGrain && !value.ClearLimit {
+			return fmt.Errorf("%w: query options have no edits", ErrInvalidPayload)
+		}
+		if value.Sort != nil {
+			if len(*value.Sort) > maxVisualQuerySorts {
+				return fmt.Errorf("%w: query sort exceeds bounded limit", ErrInvalidPayload)
+			}
+			for index, sort := range *value.Sort {
+				if !validQueryResultAlias(strings.TrimSpace(sort.Field)) {
+					return fmt.Errorf("%w: query sort %d has invalid result field %q", ErrInvalidPayload, index, sort.Field)
+				}
+				if sort.Direction != document.DashboardSortDirectionAsc && sort.Direction != document.DashboardSortDirectionDesc {
+					return fmt.Errorf("%w: query sort %d has unsupported direction %q", ErrInvalidPayload, index, sort.Direction)
+				}
+			}
+		}
+		if value.Limit != nil && (*value.Limit < 0 || *value.Limit > maxVisualQueryLimit) {
+			return fmt.Errorf("%w: query limit must be between 1 and %d, or zero to clear", ErrInvalidPayload, maxVisualQueryLimit)
+		}
+		if value.ClearLimit && value.Limit != nil {
+			return fmt.Errorf("%w: query limit cannot be set and cleared together", ErrInvalidPayload)
+		}
+	case *RenameVisualPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "rename visual"); err != nil {
+			return err
+		}
+		if strings.TrimSpace(value.Title) == "" {
+			return fmt.Errorf("%w: visual title cannot be blank", ErrInvalidPayload)
+		}
+	case *DuplicateVisualPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "duplicate visual"); err != nil {
+			return err
+		}
+		for kind, id := range map[string]string{"new visual id": value.NewVisualID, "new component id": value.NewComponentID} {
+			if strings.TrimSpace(id) != "" {
+				if err := validateCanonicalObjectID(kind, id); err != nil {
+					return err
+				}
+			}
+		}
+		if value.Title != "" && strings.TrimSpace(value.Title) == "" {
+			return fmt.Errorf("%w: duplicate visual title cannot be blank", ErrInvalidPayload)
+		}
+	case *RestoreRevisionPayload:
+		if err := value.TargetRevision.ValidateComplete(); err != nil {
+			return fmt.Errorf("%w: restore target: %v", ErrInvalidPayload, err)
+		}
+	case *UpdateVisualFormatPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "update visual format"); err != nil {
+			return err
+		}
+		if value.Title == nil && value.TitleVisible == nil && value.LegendVisible == nil && value.AxisVisible == nil && value.DataLabelsVisible == nil && value.FormatKey == "" {
+			return fmt.Errorf("%w: visual format has no edits", ErrInvalidPayload)
+		}
+		if value.FormatKey != "" && value.FormatValue == nil {
+			return fmt.Errorf("%w: visual format option requires a value", ErrInvalidPayload)
+		}
+		if value.FormatKey == "" && value.FormatValue != nil {
+			return fmt.Errorf("%w: visual format value requires an option key", ErrInvalidPayload)
+		}
+		if value.FormatKey != "" && (value.Title != nil || value.TitleVisible != nil || value.LegendVisible != nil || value.AxisVisible != nil || value.DataLabelsVisible != nil) {
+			return fmt.Errorf("%w: update one visual format option at a time", ErrInvalidPayload)
+		}
+		if value.Title != nil && strings.TrimSpace(*value.Title) == "" {
+			return fmt.Errorf("%w: visual title cannot be blank", ErrInvalidPayload)
+		}
+	case *RemoveFieldPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "remove field"); err != nil {
+			return err
+		}
+		if !ValidGovernedFieldID(value.FieldID) {
+			return fmt.Errorf("%w: invalid governed field id %q", ErrInvalidPayload, value.FieldID)
+		}
+		if !value.Role.Valid() {
+			return fmt.Errorf("%w: unsupported field role %q", ErrInvalidPayload, value.Role)
+		}
+	case *MoveFieldPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "move field"); err != nil {
+			return err
+		}
+		if !ValidGovernedFieldID(value.FieldID) {
+			return fmt.Errorf("%w: invalid governed field id %q", ErrInvalidPayload, value.FieldID)
+		}
+		if !value.Role.Valid() {
+			return fmt.Errorf("%w: unsupported field role %q", ErrInvalidPayload, value.Role)
+		}
+		if value.TargetRole != "" && !value.TargetRole.Valid() {
+			return fmt.Errorf("%w: unsupported target field role %q", ErrInvalidPayload, value.TargetRole)
+		}
+		if value.Index != nil && *value.Index < 0 {
+			return fmt.Errorf("%w: field index must be non-negative", ErrInvalidPayload)
+		}
+		direction := strings.TrimSpace(value.Direction)
+		if value.Index == nil && direction != "up" && direction != "down" {
+			return fmt.Errorf("%w: move field requires index or up/down direction", ErrInvalidPayload)
+		}
+		if value.Index != nil && direction != "" && direction != "before" && direction != "after" {
+			return fmt.Errorf("%w: unsupported field move direction %q", ErrInvalidPayload, value.Direction)
 		}
 	case *UpsertPagePayload:
 		if value.Page.ID == "" {
@@ -537,6 +1324,11 @@ func validatePayload(payload authoringPayload) error {
 		if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
 			return err
 		}
+		if value.PageID != "" {
+			if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+				return err
+			}
+		}
 	case *SetLayoutPayload:
 		if strings.TrimSpace(value.PageID) == "" {
 			return fmt.Errorf("%w: set layout requires page id", ErrInvalidPayload)
@@ -553,6 +1345,126 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if !value.Clear && value.Filters == nil {
 			return fmt.Errorf("%w: set filters has no edits", ErrInvalidPayload)
+		}
+	case *AddFilterPayload:
+		if strings.TrimSpace(value.Label) == "" || strings.TrimSpace(value.Dimension) == "" {
+			return fmt.Errorf("%w: add filter requires label and dimension", ErrInvalidPayload)
+		}
+		if value.FilterID != "" {
+			if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+				return err
+			}
+		}
+		if err := validateBuilderFilterControl(value.ControlType, value.Dataset); err != nil {
+			return err
+		}
+	case *AddSlicerPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if strings.TrimSpace(value.Label) == "" || strings.TrimSpace(value.Dimension) == "" {
+			return fmt.Errorf("%w: add slicer requires label and dimension", ErrInvalidPayload)
+		}
+		if value.FilterID != "" {
+			if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+				return err
+			}
+		}
+		if value.ComponentID != "" {
+			if err := validateCanonicalObjectID("component id", value.ComponentID); err != nil {
+				return err
+			}
+		}
+		if err := validateBuilderFilterControl(value.ControlType, value.Dataset); err != nil {
+			return err
+		}
+	case *UpdateFilterPayload:
+		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+			return err
+		}
+		if strings.TrimSpace(value.Label) == "" {
+			return fmt.Errorf("%w: update filter requires label", ErrInvalidPayload)
+		}
+		if err := validateBuilderFilterControl(value.ControlType, value.Dataset); err != nil {
+			return err
+		}
+	case *SetFilterTargetsPayload:
+		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+			return err
+		}
+		// A nil slice is the explicit all-pages form. Once supplied, at least
+		// one target is required; canonical DashboardFilter validation rejects
+		// an authored empty targets array as ambiguous/invalid.
+		if value.Targets == nil {
+			break
+		}
+		if len(value.Targets) == 0 {
+			return fmt.Errorf("%w: set filter targets cannot be empty when specified", ErrInvalidPayload)
+		}
+		if len(value.Targets) > maxFilterTargets {
+			return fmt.Errorf("%w: set filter targets exceeds bounded visual limit", ErrInvalidPayload)
+		}
+		seen := make(map[string]struct{}, len(value.Targets))
+		for _, target := range value.Targets {
+			if err := validateCanonicalFilterTarget(target, true); err != nil {
+				return err
+			}
+			if _, exists := seen[target]; exists {
+				return fmt.Errorf("%w: set filter targets contains duplicate target %q", ErrInvalidPayload, target)
+			}
+			seen[target] = struct{}{}
+		}
+	case *SetFilterScopePayload:
+		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+			return err
+		}
+		switch value.Scope {
+		case "report":
+			if strings.TrimSpace(value.PageID) != "" {
+				return fmt.Errorf("%w: report filter scope cannot include page id", ErrInvalidPayload)
+			}
+		case "page":
+			if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("%w: filter scope must be report or page", ErrInvalidPayload)
+		}
+		if len(value.Targets) > maxFilterTargets {
+			return fmt.Errorf("%w: filter scope targets exceed bounded visual limit", ErrInvalidPayload)
+		}
+		seen := make(map[string]struct{}, len(value.Targets))
+		for _, target := range value.Targets {
+			if err := validateCanonicalFilterTarget(target, value.Scope == "report"); err != nil {
+				return err
+			}
+			if _, exists := seen[target]; exists {
+				return fmt.Errorf("%w: filter scope contains duplicate target %q", ErrInvalidPayload, target)
+			}
+			seen[target] = struct{}{}
+		}
+	case *RemoveFilterPayload:
+		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+			return err
+		}
+	case *AddFilterComponentPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+			return err
+		}
+		if value.ComponentID != "" {
+			if err := validateCanonicalObjectID("component id", value.ComponentID); err != nil {
+				return err
+			}
+		}
+	case *RemoveFilterComponentPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if err := validateCanonicalObjectID("component id", value.ComponentID); err != nil {
+			return err
 		}
 	case *SetInteractionPayload:
 		if strings.TrimSpace(value.PageID) == "" && strings.TrimSpace(value.VisualID) == "" {
@@ -574,9 +1486,37 @@ func validatePayload(payload authoringPayload) error {
 		if !value.Clear && value.Interaction == nil {
 			return fmt.Errorf("%w: set interaction requires interaction or clear", ErrInvalidPayload)
 		}
+	case *SetInteractionTargetPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
+			return err
+		}
+		if err := validateCanonicalObjectID("target visual id", value.TargetVisualID); err != nil {
+			return err
+		}
+		switch strings.TrimSpace(value.Effect) {
+		case "filter", "highlight", "none":
+		default:
+			return fmt.Errorf("%w: unsupported interaction target effect %q", ErrInvalidPayload, value.Effect)
+		}
 	case *PublishPayload, *ArchivePayload:
 	default:
 		return fmt.Errorf("%w: unsupported payload %T", ErrInvalidPayload, payload)
+	}
+	return nil
+}
+
+func validateBuilderFilterControl(controlType, dataset string) error {
+	switch strings.TrimSpace(controlType) {
+	case "singleSelect", "multiSelect":
+		if strings.TrimSpace(dataset) == "" {
+			return fmt.Errorf("%w: select filter requires dataset", ErrInvalidPayload)
+		}
+	case "text", "numericRange", "dateRange", "relativePeriod":
+	default:
+		return fmt.Errorf("%w: unsupported filter control %q", ErrInvalidPayload, controlType)
 	}
 	return nil
 }
@@ -585,6 +1525,40 @@ func validateCanonicalObjectID(kind, value string) error {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || value != trimmed || !canonicalObjectIDPattern.MatchString(trimmed) {
 		return fmt.Errorf("%w: invalid canonical %s %q", ErrInvalidPayload, kind, value)
+	}
+	return nil
+}
+
+func validateCanonicalFilterTarget(value string, allowQualified bool) error {
+	if !allowQualified || !strings.Contains(value, "/") {
+		return validateCanonicalObjectID("filter target", value)
+	}
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 {
+		return fmt.Errorf("%w: invalid canonical filter target %q", ErrInvalidPayload, value)
+	}
+	if err := validateCanonicalObjectID("filter target page id", parts[0]); err != nil {
+		return err
+	}
+	return validateCanonicalObjectID("filter target component id", parts[1])
+}
+
+func validateVisualTargetFields(pageID, visualID, operation string) error {
+	if strings.TrimSpace(pageID) == "" || strings.TrimSpace(visualID) == "" {
+		return fmt.Errorf("%w: %s requires page id and visual id", ErrInvalidPayload, operation)
+	}
+	if err := validateCanonicalObjectID("page id", pageID); err != nil {
+		return err
+	}
+	return validateCanonicalObjectID("visual id", visualID)
+}
+
+func validatePlacementCoordinates(value document.DashboardPlacement) error {
+	if value.Column <= 0 || value.Row <= 0 {
+		return fmt.Errorf("placement column and row must be greater than zero")
+	}
+	if value.ColumnSpan <= 0 || value.RowSpan <= 0 {
+		return fmt.Errorf("placement spans must be greater than zero")
 	}
 	return nil
 }
@@ -616,6 +1590,21 @@ func ValidGovernedFieldID(value string) bool {
 func ValidSemanticMemberID(value string) bool {
 	trimmed := strings.TrimSpace(value)
 	return trimmed != "" && value == trimmed && validSemanticPart(trimmed)
+}
+
+func validQueryResultAlias(value string) bool {
+	return value != "" && value == strings.TrimSpace(value) && validSemanticPart(value)
+}
+
+func validDashboardTimeGrain(value document.DashboardTimeGrain) bool {
+	switch value {
+	case document.DashboardTimeGrainSecond, document.DashboardTimeGrainMinute, document.DashboardTimeGrainHour,
+		document.DashboardTimeGrainDay, document.DashboardTimeGrainWeek, document.DashboardTimeGrainMonth,
+		document.DashboardTimeGrainQuarter, document.DashboardTimeGrainYear:
+		return true
+	default:
+		return false
+	}
 }
 
 func validSemanticPart(value string) bool {

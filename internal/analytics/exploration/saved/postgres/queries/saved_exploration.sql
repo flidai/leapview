@@ -23,16 +23,9 @@ WHERE e.project_id = sqlc.arg(project_id)
 -- name: GetSavedExplorationLifecycleForUpdate :one
 SELECT e.project_id, e.exploration_id, e.owner_principal_id, e.title, e.slug,
        e.visibility, e.status, e.semantic_model_id, e.created_at, e.updated_at,
-       e.archived_at, r.revision_id, r.revision_number, r.content_hash,
-       r.created_by, r.created_at AS revision_created_at,
-       r.serving_project_id, r.serving_environment, r.serving_generation_id
+       e.archived_at, e.current_revision_id, e.current_revision_number,
+       e.current_content_hash
 FROM saved_exploration.saved_explorations e
-JOIN saved_exploration.saved_exploration_revisions r
-  ON r.project_id = e.project_id
- AND r.exploration_id = e.exploration_id
- AND r.revision_id = e.current_revision_id
- AND r.revision_number = e.current_revision_number
- AND r.content_hash = e.current_content_hash
 WHERE e.project_id = sqlc.arg(project_id)
   AND e.exploration_id = sqlc.arg(exploration_id)
 FOR UPDATE OF e;

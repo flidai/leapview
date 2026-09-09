@@ -30,6 +30,10 @@ func ProjectAssetPageWithRefreshAndVersions(catalog catalog.Catalog, project pro
 }
 
 func ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
+	return ProjectAssetPageWithRefreshAndVersionsForEnvironmentAndDashboardCreation(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, refresh, versions, csrfToken, "", chromeOptions...)
+}
+
+func ProjectAssetPageWithRefreshAndVersionsForEnvironmentAndDashboardCreation(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, csrfToken, createDashboardHref string, chromeOptions ...webpage.Provider) g.Node {
 	activeSection = normalizeProjectAssetSection(activeSection)
 	lineage := assetLineage(project.ID, asset, assets, edges)
 	page := projectAssetPageSignalWithRefreshAndVersions(project, asset, assets, edges, activeSection, lineage, refresh, versions)
@@ -39,6 +43,9 @@ func ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Catalo
 	extras := projectDocumentExtras{}
 	attrs := []g.Node{
 		g.Attr("slot", "page"),
+	}
+	if asset.Type == string(projectview.AssetTypeSemanticModel) && strings.TrimSpace(createDashboardHref) != "" {
+		attrs = append(attrs, g.Attr("create-dashboard-href", strings.TrimSpace(createDashboardHref)))
 	}
 	if activeSection == "details" && asset.Type == string(projectview.AssetTypeDashboard) {
 		extras.CSRFToken = csrfToken
