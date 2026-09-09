@@ -155,6 +155,8 @@ BEGIN
 		GRANT SELECT ON ALL TABLES IN SCHEMA physical_pool TO leapview_control_runtime;
 		GRANT SELECT ON ALL TABLES IN SCHEMA recovery TO leapview_control_runtime;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_runtime;
+		REVOKE ALL ON recovery.set_identity_registry, recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.successor_trust_generation, recovery.recovery_set_v3, recovery.recovery_set_v3_root FROM leapview_control_runtime;
+		REVOKE EXECUTE ON FUNCTION recovery.successor_raw_sha256(bytea), recovery.successor_domain_sha256(text, bytea), recovery.lock_successor_generation() FROM leapview_control_runtime;
         GRANT SELECT, INSERT ON serving_state.bundle, serving_state.asset, serving_state.asset_edge TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON serving_state.reader_lease TO leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION serving_state.guard_reader_snapshot_retention(uuid, bigint) TO leapview_control_runtime;
@@ -167,6 +169,12 @@ BEGIN
 		GRANT SELECT, INSERT ON recovery.recovery_cluster_point, recovery.recovery_object_root, recovery.validation_result TO leapview_control_maintenance;
 		REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_maintenance;
 		REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON recovery.recovery_cluster_point, recovery.recovery_object_root, recovery.validation_result FROM leapview_control_maintenance;
+		GRANT SELECT ON recovery.set_identity_registry TO leapview_control_maintenance;
+		GRANT SELECT ON recovery.successor_trust_generation TO leapview_control_maintenance;
+		GRANT SELECT, INSERT ON recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.recovery_set_v3, recovery.recovery_set_v3_root TO leapview_control_maintenance;
+		GRANT EXECUTE ON FUNCTION recovery.successor_raw_sha256(bytea), recovery.successor_domain_sha256(text, bytea), recovery.lock_successor_generation() TO leapview_control_maintenance;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON recovery.set_identity_registry, recovery.successor_trust_generation FROM leapview_control_maintenance;
+		REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.recovery_set_v3, recovery.recovery_set_v3_root FROM leapview_control_maintenance;
 		GRANT USAGE ON SCHEMA delivery TO leapview_control_maintenance;
 		GRANT SELECT ON delivery.delivery_retention_root TO leapview_control_maintenance;
 		GRANT EXECUTE ON FUNCTION delivery.lock_retention_root(uuid), delivery.retire_retention_root(uuid), delivery.expire_retention_root(uuid, interval), delivery.maintain_retention_roots(text, text, interval, integer), delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) TO leapview_control_maintenance;
@@ -193,6 +201,9 @@ BEGIN
 		GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_readonly;
 		GRANT SELECT ON ALL TABLES IN SCHEMA recovery TO leapview_control_readonly;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_readonly;
+		GRANT SELECT ON recovery.set_identity_registry, recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.successor_trust_generation, recovery.recovery_set_v3, recovery.recovery_set_v3_root TO leapview_control_readonly;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON recovery.set_identity_registry, recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.successor_trust_generation, recovery.recovery_set_v3, recovery.recovery_set_v3_root FROM leapview_control_readonly;
+		REVOKE ALL ON FUNCTION recovery.successor_raw_sha256(bytea), recovery.successor_domain_sha256(text, bytea), recovery.lock_successor_generation() FROM leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA agent TO leapview_control_readonly;
 		GRANT SELECT ON jobs.job_history TO leapview_control_readonly;
 		REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON jobs.event_sequence, jobs.event FROM leapview_control_readonly;
@@ -216,6 +227,9 @@ BEGIN
 		GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_backup;
 		GRANT SELECT ON ALL TABLES IN SCHEMA recovery TO leapview_control_backup;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_backup;
+		GRANT SELECT ON recovery.set_identity_registry, recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.successor_trust_generation, recovery.recovery_set_v3, recovery.recovery_set_v3_root TO leapview_control_backup;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON recovery.set_identity_registry, recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.successor_trust_generation, recovery.recovery_set_v3, recovery.recovery_set_v3_root FROM leapview_control_backup;
+		REVOKE ALL ON FUNCTION recovery.successor_raw_sha256(bytea), recovery.successor_domain_sha256(text, bytea), recovery.lock_successor_generation() FROM leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA agent TO leapview_control_backup;
         GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
         GRANT SELECT ON platform.operation, platform.operation_successor_attempt, platform.api_cursor_signing_keys TO leapview_control_backup;

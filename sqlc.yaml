@@ -443,7 +443,9 @@ sql:
 
   - engine: "postgresql"
     queries: "internal/recoveryset/postgres/queries"
-    schema: "internal/recoveryset/postgres/schema.sql"
+    schema:
+      - "internal/recoveryset/postgres/schema.sql"
+      - "internal/recoveryset/postgres/successor_schema.sql"
     gen:
       go:
         package: "db"
