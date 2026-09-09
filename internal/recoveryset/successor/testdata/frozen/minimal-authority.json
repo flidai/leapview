@@ -1,0 +1,1 @@
+{"registry_version":2,"keys":[{"authority_id":"authority-a","key_id":"key-a","algorithm":"Ed25519","public_key":"6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=","not_before":"2026-01-01T00:00:00.000000Z","not_after":"2027-01-01T00:00:00.000000Z","revoked":false,"provider_profile_digests":["sha256:fbf0702756bb86a251e2bec01700c4491b2d9d91836577fa837c0b5f9dde0e2e"]}]}

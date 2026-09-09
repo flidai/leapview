@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
+	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/internal/recoveryset"
 	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
@@ -66,6 +67,11 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	// LeapView still reconciles its role policy.
 	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
 		t.Fatalf("reapply baseline: %v", err)
+	}
+	// The owner package copy is idempotent and must remain executable against
+	// the freshly migrated database; it is not a second migration authority.
+	if _, err := db.Exec(ctx, recoverypostgres.SuccessorSchemaSQL()); err != nil {
+		t.Fatalf("apply successor owner schema copy: %v", err)
 	}
 	// Recovery verifies Goose through the canonical non-owner maintenance
 	// login. No test-only table grants or substituted baseline verifier.
@@ -132,6 +138,67 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	}
 	if version != postgresbaseline.CurrentRevision || !applied {
 		t.Fatalf("Goose baseline identity = %d/applied=%t", version, applied)
+	}
+	var successorTables, successorOwners int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'recovery' AND c.relname = ANY($1::text[])`, []string{
+		"set_identity_registry", "successor_evidence_v2", "successor_evidence_locator_v2", "successor_manifest_binding", "successor_trust_generation", "recovery_set_v3", "recovery_set_v3_root",
+	}).Scan(&successorTables); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_roles r ON r.oid = c.relowner
+		WHERE n.nspname = 'recovery' AND c.relname = ANY($1::text[]) AND r.rolname = $2`, []string{
+		"set_identity_registry", "successor_evidence_v2", "successor_evidence_locator_v2", "successor_manifest_binding", "successor_trust_generation", "recovery_set_v3", "recovery_set_v3_root",
+	}, owner.Name).Scan(&successorOwners); err != nil {
+		t.Fatal(err)
+	}
+	if successorTables != 7 || successorOwners != 7 {
+		t.Fatalf("successor v3 tables/owners = %d/%d, want 7/7", successorTables, successorOwners)
+	}
+	var maintenanceSelect, maintenanceInsert, maintenanceUpdate, maintenanceDelete bool
+	if err := db.QueryRow(ctx, `
+		SELECT bool_and(has_table_privilege($1, 'recovery.' || table_name, 'SELECT')),
+		       bool_and(has_table_privilege($1, 'recovery.' || table_name, 'INSERT')),
+		       bool_or(has_table_privilege($1, 'recovery.' || table_name, 'UPDATE')),
+		       bool_or(has_table_privilege($1, 'recovery.' || table_name, 'DELETE'))
+		FROM unnest($2::text[]) AS names(table_name)
+		WHERE table_name NOT IN ('set_identity_registry', 'successor_trust_generation')`, maintenance.Name, []string{
+		"set_identity_registry", "successor_evidence_v2", "successor_evidence_locator_v2", "successor_manifest_binding", "successor_trust_generation", "recovery_set_v3", "recovery_set_v3_root",
+	}).Scan(&maintenanceSelect, &maintenanceInsert, &maintenanceUpdate, &maintenanceDelete); err != nil {
+		t.Fatal(err)
+	}
+	if !maintenanceSelect || !maintenanceInsert || maintenanceUpdate || maintenanceDelete {
+		t.Fatalf("successor maintenance grants select/insert/update/delete = %t/%t/%t/%t", maintenanceSelect, maintenanceInsert, maintenanceUpdate, maintenanceDelete)
+	}
+	var registrySelect, registryInsert bool
+	if err := db.QueryRow(ctx, `
+		SELECT has_table_privilege($1, 'recovery.set_identity_registry', 'SELECT'),
+		       has_table_privilege($1, 'recovery.set_identity_registry', 'INSERT')`, maintenance.Name).
+		Scan(&registrySelect, &registryInsert); err != nil {
+		t.Fatal(err)
+	}
+	if !registrySelect || registryInsert {
+		t.Fatalf("successor identity registry maintenance select/insert = %t/%t", registrySelect, registryInsert)
+	}
+	var successorReadonlySelect, successorBackupSelect, successorRuntimeSelect bool
+	var successorReadonlyMutation, successorBackupMutation, successorRuntimeMutation bool
+	if err := db.QueryRow(ctx, `
+		SELECT bool_and(has_table_privilege($1, 'recovery.' || table_name, 'SELECT')),
+		       bool_and(has_table_privilege($2, 'recovery.' || table_name, 'SELECT')),
+		       bool_or(has_table_privilege($3, 'recovery.' || table_name, 'SELECT')),
+		       bool_or(has_table_privilege($1, 'recovery.' || table_name, 'INSERT') OR has_table_privilege($1, 'recovery.' || table_name, 'UPDATE') OR has_table_privilege($1, 'recovery.' || table_name, 'DELETE')),
+		       bool_or(has_table_privilege($2, 'recovery.' || table_name, 'INSERT') OR has_table_privilege($2, 'recovery.' || table_name, 'UPDATE') OR has_table_privilege($2, 'recovery.' || table_name, 'DELETE')),
+		       bool_or(has_table_privilege($3, 'recovery.' || table_name, 'INSERT') OR has_table_privilege($3, 'recovery.' || table_name, 'UPDATE') OR has_table_privilege($3, 'recovery.' || table_name, 'DELETE'))
+		FROM unnest($4::text[]) AS names(table_name)`, "leapview_control_readonly", "leapview_control_backup", "leapview_control_runtime", []string{
+		"set_identity_registry", "successor_evidence_v2", "successor_evidence_locator_v2", "successor_manifest_binding", "successor_trust_generation", "recovery_set_v3", "recovery_set_v3_root",
+	}).Scan(&successorReadonlySelect, &successorBackupSelect, &successorRuntimeSelect, &successorReadonlyMutation, &successorBackupMutation, &successorRuntimeMutation); err != nil {
+		t.Fatal(err)
+	}
+	if !successorReadonlySelect || !successorBackupSelect || successorRuntimeSelect || successorReadonlyMutation || successorBackupMutation || successorRuntimeMutation {
+		t.Fatalf("successor grants readonly/backup/runtime select=%t/%t/%t mutation=%t/%t/%t", successorReadonlySelect, successorBackupSelect, successorRuntimeSelect, successorReadonlyMutation, successorBackupMutation, successorRuntimeMutation)
 	}
 	var registryProfile, registryDigest string
 	var registryRevision int64
@@ -576,6 +643,89 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		VALUES ('00000000-0000-0000-0000-000000000001', 'user', 'active', $1::jsonb)`, `{"oversized":"`+strings.Repeat("x", 20000)+`"}`)
 	if err == nil {
 		t.Fatal("oversized principal attributes unexpectedly accepted")
+	}
+}
+
+// TestSuccessorV3UpgradePreservesV1AndRefusesDown exercises the mixed-version
+// path separately from the clean-baseline test: an existing v1 frontier is
+// committed before migration 006, then the additive schema is upgraded,
+// reapplied, and asked to down-migrate.  Down must refuse without touching
+// either the old row or the successor schema.
+func TestSuccessorV3UpgradePreservesV1AndRefusesDown(t *testing.T) {
+	h := postgrestest.Start(t)
+	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
+	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator", Password: "migration-upgrade", Login: true})
+	maintenance := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Password: "maintenance-upgrade", Login: true})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
+	h.GrantRole(t, owner, migrator)
+	database := h.NewDatabase(t, "leapview_upgrade")
+	h.GrantDatabase(t, database.Name, owner, "CREATE")
+	h.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
+	h.GrantDatabase(t, database.Name, maintenance, "CONNECT")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	admin, err := pgxpool.New(ctx, database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(ctx, `ALTER DATABASE leapview_upgrade OWNER TO leapview_control_owner; REVOKE ALL ON SCHEMA public FROM PUBLIC; GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator`); err != nil {
+		t.Fatal(err)
+	}
+	migrationDB, err := sql.Open("pgx", database.URL(migrator))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrationDB.Close()
+	provider, err := platformmigrations.NewProvider(migrationDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 4); err != nil {
+		t.Fatalf("upgrade precondition through migration 004: %v", err)
+	}
+	maintenanceDB, err := pgxpool.New(ctx, database.URL(maintenance))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer maintenanceDB.Close()
+	recoveryRepo := recoverypostgres.New(maintenanceDB)
+	before, err := recoveryRepo.Create(ctx, baselineRecoverySetFixture(t))
+	if err != nil {
+		t.Fatalf("create v1 frontier before successor upgrade: %v", err)
+	}
+	beforeDigest := before.FrontierDigest
+	if _, err := provider.UpTo(ctx, 6); err != nil {
+		t.Fatalf("apply successor migration 006: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 6); err != nil {
+		t.Fatalf("reapply successor migration 006: %v", err)
+	}
+	var wireVersion int16
+	if err := admin.QueryRow(ctx, `SELECT wire_version FROM recovery.set_identity_registry WHERE set_id=$1::uuid`, before.ID).Scan(&wireVersion); err != nil {
+		t.Fatal(err)
+	}
+	if wireVersion != 1 {
+		t.Fatalf("copied v1 identity wire version = %d, want 1", wireVersion)
+	}
+	after, err := recoveryRepo.ReadExact(ctx, before.ID)
+	if err != nil {
+		t.Fatalf("read v1 frontier after successor upgrade: %v", err)
+	}
+	if after.FrontierDigest != beforeDigest {
+		t.Fatalf("v1 frontier digest changed across successor upgrade: %q -> %q", beforeDigest, after.FrontierDigest)
+	}
+	if _, err := provider.DownTo(ctx, 5); err == nil {
+		t.Fatal("successor migration Down unexpectedly succeeded")
+	}
+	var successorExists bool
+	if err := admin.QueryRow(ctx, `SELECT to_regclass('recovery.recovery_set_v3') IS NOT NULL`).Scan(&successorExists); err != nil {
+		t.Fatal(err)
+	}
+	if !successorExists {
+		t.Fatal("destructive Down removed the successor schema")
 	}
 }
 

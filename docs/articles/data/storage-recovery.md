@@ -859,3 +859,903 @@ another discovery algorithm or admission validator.
 Implementation planning is complete with these explicit gates. Next approve
 them and begin Phase 1 only; PostgreSQL restore, PITR, coordinated recovery,
 off-host rebuild and RPO/RTO remain later work.
+## Recovery evidence contract reconciliation
+
+### Decision and baseline
+
+This 2026-09-08 design decision reconciles main at `a97e07e35` (PR #538)
+with the independently reviewed, unmerged FAI-520 signed-manifest prototype.
+It supersedes earlier proposals on this page wherever they assign the signed
+contract the already-used RecoverySet version 2 or observation manifest version 1.
+It does not change code, historical evidence, or current admission capabilities.
+
+Choose **Option A: preserve the merged contracts and version the successor**.
+RecoverySet v1 and main's qualification-only RecoverySet v2 retain their exact
+wire formats and digest algorithms. The single future integration direction is
+a signed, source-anchored **RecoverySet v3**, referencing a **managed observation
+manifest v2**. These successor numbers are a design reservation, not supported
+reader/writer versions today. Do not deploy the local prototype's version-2
+dispatcher or version-1 manifest as replacements for main's owners.
+
+The successor combines trusted capture and independently retained evidence from
+main with the prototype's explicit authority/profile, closure, receipt and
+domain-separated commitment requirements. It is not permission to implement
+admission, publication, startup or restore. The unmerged prototype remains an
+isolated compatibility artifact until its successor wire vectors are reviewed.
+
+### Conflicting models and information boundaries
+
+| Concern | Merged main | Reviewed local prototype | Reconciled requirement |
+|---|---|---|---|
+| Recovery set | Existing roots plus nested `managed_evidence`: manifest, boundary and descriptor digests, and boundary document | Separate exact-field set, source-anchor digest, manifest version/digest and F2 commitment | Preserve both historical interpretations in their own readers; use a new v3 writer contract |
+| Manifest | `Boundary`, `Inventory`, `Objects`; inventory binds revision IDs, paths, managed file hashes, storage keys and sizes | Capture/anchor/closure/revision membership, provider profiles and historical observations | Successor must retain revision/path membership and exact provider identities; neither representation is a lossless alias |
+| Capture frontier | PostgreSQL database/system identity, timeline, LSN, restore-point name and inventory digest | Source anchor binds set identity, database/catalog/snapshot frontier, closure and profiles | Trusted anchor must include independently verified capture-boundary identity, not only a caller-supplied hash |
+| Shared objects | Membership is revision ID/path; conflicts checked for the same endpoint/region/bucket/key/version | Per-revision membership; one authoritative version/content per provider object in a capture | Preserve all memberships; reject different selected versions for the same scoped object in the successor, even when main's older evidence can represent them |
+| Trust | Opaque PostgreSQL capture adapter, exact provider replay, independent evidence store and retention checks | Detached signed receipt with pinned authority/profile verification | Require both capture/closure verification and signed authority; Object Lock is not a signature and a signature is not proof of provider bytes |
+| Lifecycle | Prepared, off-host qualification evidence; SQL create remains v1-only | Planned PostgreSQL atomic association and immutable evidence retention | No activation guarantee follows from either format; persistence and admission remain separate gates |
+
+Code anchors are `internal/recoveryset/frontier_v2.go`,
+`internal/recoveryset/frontier_identity.go`, `internal/recoveryset/observation/`,
+`internal/recoveryset/observationstore/`, and
+`internal/recoveryset/postgres/observation_capture.go`. The unmerged comparison
+uses `internal/manageddata/observation/` and
+`internal/recoveryset/compatibility/` in the reviewed prototype worktree; those
+packages are not dependencies present on this main baseline.
+
+Do not infer catalog/snapshot consistency from the control database's WAL marker.
+Do not translate a storage key into a provider profile without independently
+approved endpoint, account, region, bucket and namespace rules. Do not collapse
+revision/path membership when deduplicating byte retrieval. Missing scope, key,
+profile or retention evidence blocks new authority rather than being backfilled.
+
+### Cryptography and version dispatch
+
+Main's frontier digest hashes its existing immutable normalized record projection
+with lifecycle fields cleared. Its manifest hashes canonical manifest JSON with
+plain SHA-256. The prototype instead uses domain-separated manifest hashing and
+the `leapview/recovery-frontier/v2` five-field F2 projection. These are different
+identities, not alternate encodings of the same hash. Preserve every existing
+byte sequence, golden vector and digest under its original contract.
+
+Future storage/lookups must qualify a digest by **contract family and version**;
+a bare numeric version or digest does not identify an evidence format. Known
+main v1/v2 inputs retain their existing owner behavior. Legacy prototype bytes
+may only be inspected through an explicitly named prototype import boundary;
+never guess their contract by trying multiple parsers until one accepts them.
+Unknown formats, ambiguous input and unsupported versions fail closed. Old
+readers must reject successors, not reinterpret them as v1/v2.
+
+For the successor, preserve the non-circular construction:
+
+```text
+trusted database/catalog/snapshot frontier + closure + profiles
+  -> source anchor A
+  -> manifest M (includes A and receipt-core digest, not core bytes or signature)
+  -> detached receipt signing M
+  -> final frontier commitment (includes A and M)
+```
+
+Use successor-specific domains and explicit versions, not the prototype's F2
+domain with silently changed payloads. Exact v3/manifest-v2 field order, domains,
+receipt and validation-envelope/result version pairing and golden vectors must
+be frozen together before SQL
+implementation. Renumbering creates NEW bytes and NEW identities; retain old
+prototype fixtures unchanged as provenance, not as successor goldens. Do not
+automatically re-sign old captures or give them stronger guarantees.
+
+An old evidence object can be wrapped as an opaque, typed reference without
+changing its bytes/hash. Such a wrapper proves only that those bytes were
+referenced. It cannot manufacture a trusted source anchor, signing authority or
+complete capture scope. If explicitly retained as provenance for a new capture,
+both old and new typed digests are recorded and independently checked; they are
+never equated. Dual hashes are therefore provenance links, not required aliases
+for every successor manifest. Reject a generic migration bridge or automatic
+compatibility conversion: incomplete old evidence requires fresh authorized
+capture and byte verification, not a synthetic manifest/receipt.
+
+A reference-only frontier hash does not independently validate materialized
+serving, delivery or object-root fields. Future consumers must rederive the
+source anchor from those fields and independently trusted scope, then verify
+manifest and receipt bindings through their owners. Structural validation or a
+matching commitment alone must never authorize publication or readiness.
+
+### Ownership and storage direction
+
+| Asset | Authoritative owner | Persistence/retention responsibility |
+|---|---|---|
+| Closure inventory and revision membership | Managed-data owner, captured through the trusted database boundary adapter | Recovery retains the exact inventory/anchor evidence; storage cannot redefine membership |
+| Provider observations and object mappings | Storage adapter verifies exact versions, size and actual bytes under approved profiles | Provider/operator protects historical source versions; recovery records and rechecks protection evidence |
+| Canonical manifest, anchor and profile documents | Recovery contract owner composes and verifies existing domain-owner outputs | Recovery-owned PostgreSQL immutable records plus independently retained exact off-host copies |
+| Receipt/signature | Approved capture authority signs; recovery verifies against independently configured keys/profiles | Preserve receipt bytes, verification metadata and public-key history; private keys/secrets remain outside evidence |
+| Frontier association | Recovery owner | PostgreSQL atomically commits a typed manifest reference and frontier; no dangling reference or mutable replacement |
+| Retention | Recovery owns reference/hold lifecycle; operator owns provider retention and key availability | Protect evidence and provider versions for the longest active recovery/hold obligation; no automatic deletion in the first slice |
+
+PostgreSQL and the off-host store serve complementary purposes. PostgreSQL owns
+local transactional consistency, not the only surviving copy of recovery
+evidence. Off-host storage preserves exact evidence independently of the control
+database; it does not select admission/publication/readiness state. Do not promise
+a distributed transaction across PostgreSQL and S3. Future writes first verify
+and durably retain off-host evidence, then atomically insert/associate its verified
+local representation. A failed database transaction may leave an unreferenced
+protected off-host object, never a committed dangling set. Retries must verify
+identical typed bytes/receipt and reject conflicting associations. Cleanup of
+unreferenced objects is a later, retention-aware operation, not compensating
+deletion of possibly shared evidence.
+
+### Compatibility, migration implications and implementation gates
+
+1. Preserve v1 SQL rows, serialization, hashes, validation attempts and FAI-521
+   evidence without backfills or new implied guarantees. Main's v2 remains
+   qualification-only; storing evidence must not remove its activation guard.
+2. Freeze the successor schema/domain/version matrix and cross-family rejection
+   vectors first. Test main-v1, main-v2, isolated prototype and successor identities
+   separately, including shared-object version divergence and empty verified scope.
+3. Introduce reader capability before any successor writer. Keep production
+   writers disabled until the supported fleet and migration boundary are qualified.
+4. Design additive storage for typed immutable bytes, receipt/anchor/profile
+   evidence and atomic references. Do not repurpose a v1/v2 column/hash or mutate
+   an existing set's version. Rollback may disable new writers; it must not delete
+   successor evidence or let an older reader serve an unsupported selected set.
+5. Qualify exact retry, concurrent conflicts, database rollback, off-host retention,
+   restart verification, lost-control-database evidence availability and key/profile
+   failures before proposing admission integration. Retention truth must be checked
+   against the provider, not inferred solely from a saved deadline.
+
+The architecture collision is resolved by this direction, but persistence coding
+is **not yet unconditionally ready**: successor byte-level contracts/goldens,
+trusted capture deployment, authority rotation/revocation, retention horizons,
+provider profiles, permissions and rollout/downgrade gates still need executable
+specification or qualification. Revocation must distinguish historical inspection
+from permission to establish new recovery authority. No endpoint substitution,
+unsigned legacy import or unavailable off-host object may silently fall back to
+latest data or weaker evidence.
+
+The next bounded task is successor contract/golden reconciliation, reusing owner
+validators and capture/replay mechanisms without duplicate validation logic. This
+decision introduces no SQL, repositories, migrations or production behavior.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.
+
+## RecoverySet v3 / Manifest v2 frozen successor contract
+
+This contract-only successor is isolated under `internal/recoveryset/successor`.
+It does not replace the RecoverySet v1/v2 or observation-v1 readers, migrate old
+evidence, or establish a production admission path. Canonical serialization and
+signature verification are evidence checks, not physical restore operations.
+
+### Manifest wire and membership
+
+The RecoverySet v3 field order is `id`, `schema_version`, `cluster_points`,
+`delivery`, `serving`, `catalog`, `object_roots`, `compatibility`,
+`source_frontier_anchor_digest`, `managed_observation_manifest_version`,
+`managed_observation_manifest_digest`, `frontier_digest`, `fence_epoch`,
+`audit_identity`, `status`, `published_validation_attempt_id`, `created_by`,
+`created_at`. Only `published_validation_attempt_id` is conditionally omitted;
+the legacy status owner controls when it is required. These are contract fields,
+not permission to produce a publication. The version pair is set 3 / manifest 2.
+Database, delivery, seal, catalog and compatibility child fields reuse the exact
+existing owner structs at this baseline; static golden bytes pin their field
+order. Future changes to those owner fields require compatibility review before
+altering successor serialization.
+
+The frontier commitment hashes the ordered projection `schema_version`, `set_id`,
+`source_frontier_anchor_digest`, `managed_observation_manifest_version`,
+`managed_observation_manifest_digest`. It deliberately excludes lifecycle fields.
+Full evidence verification must additionally compare the actual set roots with
+the trusted anchor; a reference-only commitment cannot detect root substitution
+without that comparison.
+
+ManagedObservationManifest v2 has the following field order. All fields are
+required; an absent value, JSON `null`, unknown field or aliased field name is
+not an alternative encoding. There are no signature bytes or self/final-frontier
+digests in the manifest.
+
+| Document | Fields in canonical order | Meaning |
+|---|---|---|
+| Manifest | `manifest_version`, `set_id`, `source_frontier_anchor_digest`, `capture`, `managed_closure_digest`, `revisions` | Version 2; canonical recovery UUID; independent anchor A; capture core reference; independently verifiable membership commitment |
+| Capture | `authority_id`, `capture_id`, `started_at`, `completed_at`, `receipt_digest` | Capturing authority/attempt, bounded capture interval, **receipt-core digest**, not detached receipt digest |
+| Revision | `project_id`, `collection_id`, `revision_id`, `revision_manifest_digest`, `files` | Tenant-scoped membership; managed-data owner validates the file manifest identity |
+| File | `path`, `sha256`, `size`, `provider` | Logical path, raw lowercase 64-hex content SHA-256, nonnegative integer bytes, exact historical observation |
+| Provider | `implementation`, `account_identity`, `endpoint`, `region`, `bucket`, `prefix`, `key`, `version_id` | Explicit account/namespace, object location and immutable selected provider version; no credentials |
+
+Revision order is the bytewise `(project_id, collection_id, revision_id)` tuple;
+files sort by logical path. Duplicate revisions or paths reject rather than
+being collapsed. Revision/file arrays are always explicit, including `[]`.
+The closure commitment excludes provider observations and commits project,
+collection, revision and managed-manifest identities plus path/hash/size; the
+observation projection additionally commits provider identities. Neither alone
+establishes trusted capture provenance.
+
+All memberships of a shared scoped physical object must select identical
+version, content hash and size. Different revisions may reference that same
+tuple; retrieval may deduplicate the physical read only after checking agreement.
+It must not remove logical memberships, ignore conflicts or select latest.
+Provider prefix boundaries must match complete path segments, not string-prefix
+lookalikes. Provider credentials and signing private keys are never wire fields.
+
+### Ownership and compatibility guarantees
+
+The source-anchor field order is `anchor_version`, `set_id`, `cluster_points`,
+`delivery`, `serving`, `catalog`, `object_roots`, `compatibility`,
+`managed_closure_digest`, `provider_profile_digest`. It excludes capture receipt,
+manifest and final frontier digests. Existing recovery owners validate the
+database identities, delivery/seal/catalog consistency, compatibility tuple and
+two required roots. Cluster points sort by database role; roots by kind, URI and
+version ID. Each root explicitly encodes `kind`, `uri`, `version_id`, `digest`,
+`provider_recovery_frontier`, including a permitted empty local frontier.
+
+Provider-profile documents encode `profile_version`, `profiles`. Profiles encode
+`implementation`, `account_identity`, `endpoint`, `region`, `bucket`,
+`version_semantics`, `namespaces`. Namespace entries encode `project_id`,
+`collection_id`, `prefix`. Account identity is independently configured, never
+inferred from endpoint or credentials. Profiles authorize specific logical
+project/collection namespaces, not arbitrary objects sharing a bucket.
+
+Existing recovery roots and managed inventory remain owned by their existing
+contracts. Reusing an explicitly versioned nested owner document is not an
+upgrade of that document's guarantees: the successor must additionally bind it
+to the independently selected capture scope and verify the successor signature.
+The new wire identity cannot be inferred from shape, nor selected by trying old
+parsers until one succeeds. Historical local prototype bytes remain prototype
+evidence and cannot acquire successor guarantees through renumbering.
+
+An accepted receipt does not prove that an operator restored PostgreSQL or
+retrieved the provider bytes. The trusted capture implementation must separately
+establish the database/catalog boundary, authoritative complete membership and
+exact historical byte observations. A verified empty scope requires independent
+confirmation, not just an empty submitted array. Future persistence must retain
+all canonical dependencies and receipts; a stored digest alone is insufficient.
+
+### Receipt boundary
+
+The successor version matrix is RecoverySet **3**, manifest **2**, source anchor
+**2**, provider-profile set **2**, receipt core **2**, detached receipt **2** and
+authority registry **2**. Supporting document identifiers are not reused from the
+historical prototype. Version dispatch is explicit; other version combinations
+are unsupported even if the JSON otherwise resembles a known document.
+
+Canonical documents use UTF-8 compact JSON in declared field order, no trailing
+newline, decimal integers and UTC timestamps with exactly six fractional digits
+(`YYYY-MM-DDTHH:MM:SS.ffffffZ`). Typed builders may sort collections into canonical
+order without mutating inputs; parsers require those exact canonical bytes.
+String escaping follows Go `encoding/json`: quotes/backslashes are escaped,
+`<`, `>` and `&` use lowercase Unicode escapes, and U+2028/U+2029 are escaped;
+other accepted Unicode remains UTF-8. Integer consumers must preserve exact
+signed 64-bit values rather than round through binary floating point. Existing
+managed-data file/path/size limits apply in addition to successor document limits.
+Alternate field order, whitespace, number spelling, duplicate keys, nulls and
+case aliases are rejected on the persisted-wire boundary. SHA-256 identities
+use `sha256:` plus 64 lowercase hexadecimal digits. Hash inputs are the exact
+ASCII domain including its final newline followed by canonical document bytes:
+
+| Commitment | Domain |
+|---|---|
+| Manifest | `leapview/managed-observations/v2\n` |
+| Provider-free closure | `leapview/managed-closure/v2\n` |
+| Provider-bearing revision projection | `leapview/managed-observation-projection/v2\n` |
+| Source anchor | `leapview/recovery-source-anchor/v2\n` |
+| Provider-profile set | `leapview/managed-provider-profiles/v2\n` |
+| Receipt core | `leapview/managed-capture-core/v2\n` |
+| Detached receipt | `leapview/managed-capture-receipt/v2\n` |
+| Signature payload (not a replacement digest) | `leapview/managed-capture-signature/v2\n` |
+| Frontier projection | `leapview/recovery-frontier/v3\n` |
+| Authority registry | `leapview/authority-registry/v2\n` |
+
+The receipt core field order is `core_version`, `authority_id`, `key_id`,
+`capture_id`, `set_id`, `started_at`, `completed_at`,
+`source_frontier_anchor_digest`, `managed_closure_digest`,
+`provider_profile_digest`, `observation_projection_digest`, `membership_count`,
+`object_count`, `result`. The sole successful result is `verified`; zero counts
+are meaningful only with independently verified empty membership. The manifest
+commits this core's digest before the final manifest digest is calculated.
+
+The detached receipt fields are `receipt_version`, `core`, `manifest_digest`,
+`signature`. Ed25519 signs the signature-domain bytes followed by canonical JSON
+of `receipt_version`, `core`, `manifest_digest`, excluding the signature. Signature
+and public-key bytes use padded standard Base64, with exact decoded lengths and
+round-trip encoding checks. A registry supplied independently of the receipt
+selects authority/key identity, algorithm, public key, validity interval,
+revocation state and allowed provider-profile digests. Neither embedded claims
+nor a valid signature may extend that allowlist.
+
+Verification must join **all** commitments: set ID, trusted source anchor,
+managed closure, profile digest, receipt core, manifest digest, observation
+projection and counts. Validating each document in isolation is insufficient.
+Expiry/revocation rejection must preserve a useful failure cause; historical
+inspection never creates a new permission to recover.
+
+Authority registry fields are `registry_version`, `keys`; keys encode
+`authority_id`, `key_id`, `algorithm`, `public_key`, `not_before`, `not_after`,
+`revoked`, `provider_profile_digests`. Key identity tuples sort by authority/key;
+profile allowlists must already be sorted and unique. Revoked or unknown keys
+reject. The complete capture interval must fall within `[not_before, not_after)`.
+`ValidateEvidence` also requires an independently supplied verification clock and
+rejects captures ending in its future. Ordinary key expiry after an authorized
+capture does not rewrite historical cryptographic evidence; deciding whether
+that history may establish new recovery authority belongs to future admission,
+which this package does not implement.
+
+Limits are 1 MiB for canonical set bytes, 8 MiB per supporting document and JSON
+depth 16; at most 10,000 revisions/file memberships, profiles and total namespace
+entries. Text fields are bounded to 4,096 bytes unless narrower rules apply;
+endpoint length is 2,048 bytes and bucket length 3–63. This successor profile is
+conservative: S3, explicit nonempty account identity, canonical HTTPS endpoint,
+and `opaque-exact-version` semantics. Text must be NFC UTF-8 without controls;
+non-NFC opaque keys/version IDs are **rejected, never rewritten**, and are outside
+this contract's qualified scope. Version IDs remain case-sensitive and are never
+inferred from ETags or latest. Equivalent endpoint spellings must arrive in the
+one accepted canonical form; unsupported provider profiles require an explicit
+future contract review.
+
+Static fixtures under `internal/recoveryset/successor/testdata/frozen` pin the
+minimal, shared-object closure and verified-empty documents, receipt signatures
+and domain digests. Fixture files have one transport newline which is excluded
+from the canonical bytes. Rejection vectors are under `testdata/rejected`.
+Legacy recovery and observation vectors remain in
+`internal/recoveryset/testdata/successor-legacy`; none are converted to successors.
+
+Contract qualification commands (no provider operations):
+
+```bash
+go test ./internal/recoveryset/successor ./internal/recoveryset ./internal/recoveryset/observation -count=2
+go test -race ./internal/recoveryset/successor ./internal/recoveryset ./internal/recoveryset/observation -count=2
+go vet ./internal/recoveryset/successor ./internal/recoveryset ./internal/recoveryset/observation
+go test ./internal/platform/architecture -count=1
+task docs:generate
+task docs:check
+task generated:check
+git diff --check
+```
+
+### Remaining integration gates
+
+No successor SQL table, migration, repository, admission envelope, publication
+attempt or startup callback is introduced by this slice. Existing FAI-521
+validation-envelope/result bytes and selected-attempt behavior remain unchanged.
+Before a future admission envelope/result is enabled, freeze its distinct version
+pairing and rejection vectors; neither the old envelope nor a successful contract
+test may be treated as successor admission evidence.
+
+The next persistence review must cover immutable typed lookup, atomic references,
+concurrent conflicts, restart verification and independent off-host retention.
+Trusted capture deployment, key rotation/revocation, provider protection, schema
+rollout and mixed-reader behavior remain separate operational gates. There is no
+provider restore, PITR, key recovery, activation or RPO/RTO claim.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.
+
+## RecoverySet v3 persistence architecture
+
+This is the design for the next bounded storage slice, not implemented storage.
+It refines the earlier reconciliation's PostgreSQL/off-host split: PostgreSQL
+owns immutable **references and associations**, while independently retained
+off-host storage owns the canonical payloads. No change to the frozen successor
+wire, hash domains, existing SQL, readers or recovery lifecycle is made here.
+The baseline is `a97e07e35` plus the isolated successor contract freeze above.
+
+### Ownership and retrieval boundary
+
+```text
+Trusted capture + independently selected roots/closure/profiles/authority
+    -> canonical manifest, anchor, profiles, receipt and prepared set bytes
+    -> protected off-host exact versions, read back and verified
+    -> PostgreSQL transaction: typed references + complete set association
+    -> restart: exact-version retrieval + owner verification
+    -> future admission (not implemented or authorized by persistence)
+```
+
+| Owner | Durable responsibility | Must not imply |
+|---|---|---|
+| Recovery-owned PostgreSQL | Globally unique local recovery-set identity across supported versions; immutable typed evidence references; root/anchor/manifest/frontier associations; append-only verification observations and retention dependencies | That a row or cached success proves current object availability or readiness |
+| Off-host evidence store | Exact canonical manifest, detached receipt, source-anchor, profile and prepared-set bytes; bounded supporting capture/verification payloads; independently protected exact object versions | That a storage key selects a recovery set, supplies trusted keys, or authorizes activation |
+| Managed-data/capture owners | Authoritative revision membership, complete closure and coordinated source frontier | That submitted hashes alone establish capture truth |
+| Provider/operator | Exact historical source-version availability and retention; evidence-store protection in a separate failure domain | That retained evidence bytes are retained managed-data bytes |
+| Authority/key owner | Independently configured trust registry, rotation/revocation and public-key history | That an embedded public key or saved verification result remains trusted |
+
+Reuse the ownership patterns in `internal/recoveryset/postgres/repository.go`
+(complete creation, caller-owned transactions, exact conflicts),
+`internal/recoveryset/observationstore/store.go` (pinned clients, exact versions,
+byte checks and retention) and its descriptor/frontier helpers. These existing
+implementations accept their own older formats; they are **not** successor
+storage APIs and must not be repurposed by changing a version number.
+
+Lookup identity is `(contract family, wire version, domain digest)`, never a bare
+digest. Each immutable locator additionally pins the configured evidence-store
+profile/account/endpoint identity, bucket, key, exact version, byte length and
+raw transport SHA-256. Raw byte SHA-256 and the frozen domain digest are separate
+checks with separate purposes; neither replaces the other. Storage routes use
+an independently configured client, never a caller-supplied endpoint or URL.
+No credentials, signed access URLs or private keys belong in these records.
+
+Retrieval bounds the stream before allocation, hashes actual bytes, requires the
+frozen canonical parser and recomputes the family-specific commitment. It then
+joins set roots, anchor, closure, manifest, receipt and trusted profile/key
+bindings through the existing successor verifier. No latest-version fallback,
+parser probing, reserialization repair or unsigned replacement is permitted.
+Canonical evidence can be inspected after restart; establishing trust also
+requires independently loaded authority, scope and clock. A saved authority
+snapshot is provenance, not a replacement trust source.
+
+### Logical persistence entities (no SQL specification)
+
+| Entity | Identity and immutable contents | Constraints and lifecycle |
+|---|---|---|
+| Recovery-set identity and v3 record | Set UUID, version 3, existing roots, anchor-v2 reference, manifest-v2 reference, F3 commitment, creator/audit/creation metadata and exact initial prepared-set payload reference | One identity across v1/v2/v3; no in-place version transition. First complete creation wins. Initial state is prepared with no published attempt |
+| Evidence reference | Family/version/domain digest, canonical length and raw SHA-256, accepted exact-version locator, creation metadata | Unique typed digest; same identity with different bytes or locator conflicts. Immutable insert only; a conflict must never become an update |
+| Manifest association | Set identity, manifest version/digest and matching anchor/closure/profile references | Exactly one manifest per v3 set, including independently verified empty scope; all referenced rows must exist in the committing transaction |
+| Receipt reference | Detached receipt version/digest and locator, core digest, manifest digest, authority/key identity, provider-profile digest and signature metadata derived from canonical bytes | One accepted receipt selection for the set; mismatched or replacement receipt conflicts. Manifest `capture.receipt_digest` means **core** digest, not detached-receipt digest |
+| Verification observation | Attempt identity, exact evidence tuple, verifier implementation identity, trusted registry/profile identity, clock, outcome and safe cause | Append-only; immutable historical result, never a mutable trusted boolean. Rechecks append observations; failures cannot rewrite a successful observation or association |
+| Retention dependency | Set/hold identity, referenced evidence and provider-version identities, required protection horizon and observed protection | Hold acquisition/release is a separately fenced lifecycle, not mutation of canonical evidence. No GC in the first implementation |
+
+PostgreSQL may store derived scalar fields for indexed lookup, but readback must
+compare them with canonical payloads; JSONB reserialization is not canonical
+byte storage. Avoid a second inventory copy as independent truth. The manifest
+and protected source-capture dependencies retain complete membership. The first
+slice requires one accepted locator per typed object; replica addition/relocation
+is a later verified, append-only locator operation, never reference replacement.
+
+Use distinct storage names for M (manifest digest), C (receipt-core digest) and
+R (detached-receipt digest); verify `capture.receipt_digest == C` and the detached
+receipt's manifest reference equals M. A generic receipt-digest column would hide
+this distinction. Because the manifest binds set identity, its association cannot
+be reused for a different set; content retrieval may still deduplicate shared
+source objects without deduplicating logical membership.
+
+F3 commits the frozen five-field frontier projection, **not the full record**.
+It cannot be used alone for exact-retry comparisons: compare all immutable set
+fields and exact initial payload bytes as well as every selected evidence
+reference. An exact prepared-set payload is retained off-host for reconstruction;
+future lifecycle changes cannot overwrite it. Reconstruction from that payload
+does not recreate publication authority lost with PostgreSQL.
+
+Only state, fence and selected validation-attempt identity are lifecycle-managed
+in a future integration, using owner-authorized conditional transitions with
+history. This storage slice exposes no such transition or publication operation.
+Creator, roots, version, anchor, manifest, receipt selection and F3 never change.
+New conflicting evidence requires a new authorized recovery identity/capture,
+not edits to an existing set or invented retry metadata.
+
+### Create, retry and transaction protocol
+
+1. Resolve independent source scope, configured evidence location, authority and
+   verification time. Validate all canonical documents and their cross-bindings
+   through the frozen owners. Require the source versions' protection/availability
+   evidence separately; a signature is not a physical replay check.
+2. Establish a protected off-host upload intent/hold, then conditionally create
+   each typed content-addressed payload. Read back the exact versions, verify
+   bytes and provider-side retention through the required horizon. A preexisting
+   object is reusable only after identical-byte/version/protection verification.
+   An unsupported conditional-write or retention provider blocks this protocol.
+3. Enter one short PostgreSQL transaction **after** network operations. Pin the
+   local trust-policy generation and retention intent, and insert/compare evidence
+   references, receipt binding, verification observation, complete set roots and
+   associations. Unique keys, referential constraints and immutable-write guards
+   enforce the model; no partially populated v3 set may commit. A changed local
+   authority/profile generation requires fresh verification rather than accepting
+   the stale pre-transaction decision.
+   These invariants apply to direct SQL too, not only repository pre-read checks.
+4. Commit before reporting a persisted set. A storage result means only durable
+   association, not admission/publication/readiness. Provider immutability and the
+   protected intent cover the interval between external verification and commit;
+   the database transaction itself cannot prevent provider loss or revocation.
+
+The implementation must define a bounded operation deadline, a minimum retention
+margin exceeding that deadline, and an explicit required recovery/hold horizon.
+Reject if the remaining protection is too short at commit. Do not hold SQL locks
+while retrieving objects. Later consumers recheck external availability,
+protection and current authorization; verification is not a perpetual guarantee.
+
+| Situation | Required result |
+|---|---|
+| Identical retry after success or an unknown commit result | Resolve the same set identity; compare complete immutable tuple and bytes, then return the existing association without new selections or duplicate attempt results. Required external/trust rechecks may fail availability without undoing historical persistence |
+| Conflicting retry | Stable conflict; no replacing bytes, receipt, locator, roots, metadata or manifest reference, even if F3 happens to match |
+| Failure before SQL commit | Roll back every local insert/association. Protected off-host objects may remain; do not compensate by deleting potentially shared evidence |
+| Process restart during upload or commit | Recover the same operation/set identity; inspect committed state and exact protected payloads, then resume verification or return the existing result. Never infer success from object presence alone |
+| Two identical writers | One immutable insertion, both may succeed after exact comparison. Concurrent readers see either no committed set or its complete graph |
+| Two conflicting writers | First successful PostgreSQL commit wins; the other receives a conflict. Winner scheduling is not predetermined; the conflict rule and surviving evidence are deterministic |
+| Deadlock/serialization failure | Bounded retry of the whole transaction in stable typed-key order; preserve operation identity and never relax comparisons |
+
+There is no distributed SQL/S3 transaction. Local foreign keys prevent dangling
+**local references**, not disappearance of remote bytes. The off-host intent must
+be discoverable independently of PostgreSQL for eventual orphan reconciliation;
+losing local rows must never be interpreted as permission to delete their payloads.
+The intent/locator operational representation still needs a reviewed successor
+storage contract before implementation; this document does not invent a new
+signed evidence envelope or modify the frozen one.
+That review must pin operation/set identity, typed evidence identities, expected
+locators, retention horizon and policy generation, append-only intent states,
+idempotent retries and independent orphan reconciliation. It must not reuse the
+older evidence store's set-ID object as PostgreSQL association authority.
+
+### Retention and failure semantics
+
+Recovery owns dependencies across prepared/published/retained sets and explicit
+holds. Provider/operator protection must cover the maximum outstanding obligation
+for manifest, receipt, anchor, profiles, capture dependencies and **source object
+versions**. Snapshot retention is another independent dependency: its presence
+does not protect S3 bytes. Authority/profile history and independently recoverable
+configuration must also survive for inspection; private-key recovery is separate.
+The required horizon is derived from active set, attempt, hold and audit policy,
+not an arbitrary caller-supplied deadline. Record that policy/hold generation and
+the provider verification time; checks prove protection only at that instant.
+
+Expiry never changes immutable evidence. Expired/unknown protection, key revocation
+or missing source bytes blocks new trusted use, with a fresh diagnostic, rather
+than rewriting previous verification results. Renewal must happen before expiry
+and cannot shorten another set's hold. Future deletion requires a fenced scan of
+all references/holds plus off-host intent reconciliation and provider permission;
+invalid/superseded status alone is not deletion authority. No automated cleanup,
+retention bypass or GC is part of the first persistence slice.
+
+These are required distinguishable failure classes, not new runtime error codes:
+
+| Failure | Result and retry condition |
+|---|---|
+| Missing evidence object / backend unavailable | No new association or trusted read; preserve provider cause. Retry exact locator after repair, never latest |
+| Transport hash, domain digest or canonical-byte mismatch | Integrity rejection; no cache repair, object substitution or overwrite |
+| Invalid signature / unknown or revoked authority / disallowed profile | Trust rejection with safe owner cause; saved success cannot bypass it |
+| Stale anchor, scope or trust-policy generation | Binding rejection; reselect trusted inputs and verify. Do not change the existing evidence to fit |
+| Missing historical source version / insufficient retention | Explicit availability/protection rejection, even when evidence payloads remain intact |
+| Unsupported family/version | Fail closed without trying another historical parser |
+| Conflicting evidence or association | Immutable conflict; exact historical winner remains unchanged |
+
+Diagnostics identify the failed family/version, safe digest and stage; credentials,
+signed URLs and unrestricted provider response bodies must not be logged.
+
+### Reader-first rollout and implementation prerequisites
+
+1. **Schema/read capability:** design additive recovery-owned storage and access
+   policy, preserving v1 rows, owner serialization, hashes and FAI-521 attempts.
+   Main's qualification v2 keeps its guards. Introduce explicit successor read
+   capability before enabling writes; old binaries must reject unsupported sets.
+2. **Evidence storage availability:** qualify configured exact-version clients,
+   protected upload intents, least-privilege credentials, canonical retrieval,
+   off-host reconstruction and retention in the chosen provider/failure domain.
+3. **Validation support:** connect persistence reads to existing successor owners
+   and independently selected scope/clock/trust. Qualify corrupt SQL metadata,
+   missing objects, replay, revocation and transaction rollback without admission.
+4. **Writer enablement:** qualify fresh/upgrade databases, v1 coexistence, immutable
+   retries, competing writers and crashes around every upload/commit boundary.
+   Enable only with compatible readers and reviewed operational limits.
+5. **Admission adoption (separate approval):** freeze distinct successor admission
+   envelope/result versions and qualify publication/startup selection before any
+   successor record can affect readiness. Persistence alone cannot open this gate.
+
+No backfill, automatic conversion, re-signing or in-place version mutation is
+permitted. Downgrade disables successor writers and preserves all v3 evidence;
+destructive down migration must refuse while evidence exists. An older application
+may run only when its required selected state is supported, never by silently
+falling back to a different set. Off-host payloads are not a rollback mechanism
+for the database schema or a substitute for publication history.
+
+The architecture is specified, but coding still requires review of the additive
+schema/permissions and operational locator/intent contract, provider retention
+capabilities and horizons, trust-policy generation fencing, trusted capture/key
+deployment and resource limits. Preserve the existing 1 MiB set / 8 MiB document
+bounds and bounded parallel retrieval. No provider restore or RPO/RTO claim follows.
+The prior full CI run was blocked by MinIO HTTP 507 `XMinioStorageFull`; use a
+runner with sufficient free storage for future persistence qualification. This
+documentation-only step runs documentation/generated/diff checks, not recovery CI.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.
+
+## RecoverySet v3 capture and transport contract
+
+This design freezes the operational boundary left open by the persistence
+architecture. It adds no implementation or signed evidence format. The frozen
+RecoverySet 3, Manifest 2 and receipt/profile/anchor version-2 bytes and domains
+remain unchanged. Transport metadata is not a recovery admission envelope.
+
+### Lifecycle and authority boundaries
+
+| Stage | Owner and trusted inputs | Required output and failure boundary |
+|---|---|---|
+| Capture request | Recovery coordinator authenticates an authorized recovery operator/service; independently resolves set scope, source frontier, complete managed membership and approved policy generation | Immutable request/capture identity and scope; missing authorization, scope or fresh policy rejects before capture/upload |
+| Evidence generation | Domain capture owners establish database/catalog/snapshot and managed closure facts; configured storage worker verifies exact source versions and bytes | Recovery contract owner constructs anchor and manifest; approved capture authority signs the detached receipt only after complete verification. Partial capture cannot claim `verified` |
+| Payload upload | Coordinator authorizes bounded upload intents; pinned storage worker has create/read access only in the approved evidence namespace | Protected conditional-create payloads and exact provider-version results; upload success alone does not qualify a reference |
+| Verification | Recovery verifier independently resolves scope, clock, current authority/profile generation and pinned storage clients | Exact readback, size/raw hash/canonical/domain checks, complete receipt bindings and source/evidence retention checks; any missing dependency rejects the complete set |
+| PostgreSQL association | Recovery persistence owner uses current generation and worker fence in one short transaction | Complete immutable association and verification observation commit together; stale/conflicting/partial inputs cannot commit |
+| Recovery availability | Recovery evidence consumer reloads the associated graph and rechecks current trust, exact versions and protection | A time-bounded availability observation, not publication/readiness or proof of physical recovery. Loss/revocation appends failure, never rewrites historical bytes |
+
+The capture request fixes the set UUID, capture UUID, independently selected
+source scope, requester identity and operation deadline. Its immutable identity
+cannot be reused for a different frontier. No capture worker may infer scope from
+submitted manifests, substitute a provider account or assert empty scope solely
+because an array is empty. Evidence generation completes locally before payload
+intents are issued, so every upload has known canonical bytes, digest and size.
+Existing per-document bounds apply; no unbounded streaming capture exemption.
+
+### Upload intent: authorization, not bearer authority
+
+Define the operational family `leapview.recovery-upload-intent`, version **1**.
+It is distinct from every historical manifest/receipt family. One immutable
+intent covers one canonical payload, and all intents for a set are bound to the
+same capture request. The ordered fields are:
+
+| Field | Required value and rule |
+|---|---|
+| `kind`, `version` | Exact family above and integer 1; no alternative parser/version fallback |
+| `intent_id`, `request_id`, `set_id`, `capture_id` | Canonical UUIDs; allocated by coordinator, not storage worker |
+| `authorized_by` | Authenticated coordinator service identity; a claim to compare with authoritative authorization, not proof by itself |
+| `trust_generation`, `worker_fence` | Generation tuple below; positive coordinator-issued integer worker fence |
+| `payload_family`, `payload_version`, `payload_digest` | Explicit frozen evidence family/version and its domain commitment; only an allowlisted supported combination |
+| `payload_sha256`, `payload_size` | Raw lowercase 64-hex SHA-256 of exact canonical bytes; positive integer size within family bounds. F3 is not this full-payload hash |
+| `target` | Immutable destination target defined below; no unknown version placeholder |
+| `issued_at`, `deadline`, `retain_until` | UTC microsecond timestamps; issued < deadline < retain-until, with policy-required retention margin/horizon |
+
+The coordinator authorizes only already-verified payloads whose set/capture and
+M/C/R/A/F3 bindings agree. Authority is an authenticated control-plane decision
+against the current generation, not a new signature added to the manifest.
+Persist a protected off-host copy of the intent before writing its payload for
+orphan accounting, but possession of that copy grants no write or association
+permission. Live authorization/fence must be checked at each boundary. After
+loss of authoritative control state, historical intent copies are audit inputs;
+they cannot self-authorize a resumed writer. Reauthorization requires the trusted
+recovery procedure, outside this slice.
+
+Intent fields never change. Exact retry reuses the same identity and bytes; a
+changed digest, size, destination, scope, generation or deadline requires a new
+authorized intent, never an update. Reauthorization may reuse verified immutable
+payloads only after full checks under the new generation. It cannot silently
+re-sign an old capture or extend a receipt's authority. A worker takeover gets
+a higher fence and new intent; old workers cannot finalize with the new fence.
+
+Operational outcomes are append-only observations keyed by intent plus attempt:
+`authorized`, `uploaded`, `verified`, `associated`, or a terminal `failed`,
+`expired`, `revoked`. Retries are separate observations, not overwritten results.
+Only PostgreSQL commit establishes `associated`; an off-host completion copy is
+a repairable projection and cannot select a recovery state. No payload/upload
+event bypasses full-set verification. Deadline expiry forbids new writes,
+verification acceptance and association; it does not delete retained evidence.
+
+### Destination target and exact locator
+
+Target fields, in order: `backend`, `storage_profile_id`,
+`storage_profile_revision`, `account_identity`, `endpoint`, `region`, `bucket`,
+`namespace`, `key`. Backend is `s3`; profile ID is a configured canonical UUID;
+revision is a positive immutable configuration revision. The profile registry
+independently pins this entire tuple, allowed evidence families and required
+conditional-create/retention capabilities. It is the **evidence destination**
+profile, not the source-provider profile signed in the capture receipt.
+
+The first transport profile supports canonical HTTPS DNS endpoints only: lowercase
+host, no userinfo, path, query, fragment or explicit default port; approved
+non-default ports remain explicit. Account/region/bucket/namespace must match
+configuration exactly. Namespace is a relative sequence of nonempty segments,
+without leading/trailing slash, dot segments, backslash or percent escapes.
+Target keys are derived, not supplied arbitrarily:
+`<namespace>/<payload-family-token>/v<version>/sha256/<payload-sha256>`.
+The family-token mapping is a fixed allowlist for the frozen successor document
+families, not a caller string inserted into a path. No URL decoding, path cleanup
+or redirect may change the target; unsupported spelling rejects.
+
+| `payload_family` | `payload_version` | Path token | Commitment owner |
+|---|---|---|---|
+| `leapview.recovery-set` | 3 | `recovery-set` | Frozen F3 projection; raw SHA-256 additionally binds full prepared-set bytes |
+| `leapview.managed-observation-manifest` | 2 | `managed-observation-manifest` | Manifest domain |
+| `leapview.recovery-source-anchor` | 2 | `recovery-source-anchor` | Source-anchor domain |
+| `leapview.managed-provider-profiles` | 2 | `managed-provider-profiles` | Provider-profile domain |
+| `leapview.managed-capture-core` | 2 | `managed-capture-core` | Receipt-core domain |
+| `leapview.managed-capture-receipt` | 2 | `managed-capture-receipt` | Detached-receipt domain |
+| `leapview.authority-registry` | 2 | `authority-registry` | Authority-registry domain; archived provenance only |
+
+The intent itself is stored in a separate coordinator-owned protected namespace,
+not as a recursively self-authorizing payload in this allowlist. Provider retention
+of this operational record is required, but its location is not authority.
+The independently deployed destination profile pins an `intent_namespace` and
+the deterministic key `<intent_namespace>/recovery-upload-intent/v1/<incarnation-id>/<intent-id>`.
+The coordinator conditionally writes the exact canonical intent bytes there and
+verifies their raw SHA-256, size, returned provider version and retention through
+at least `retain_until` before authorizing payload writes. No intent authorizes
+its own creation: that write is the authenticated coordinator operation under the
+current policy. Its resulting exact-version reference follows the locator rules
+above except that it identifies the operational intent family and raw hash, not
+a frozen evidence-domain commitment; it is not accepted as a payload locator.
+
+Orphan reconciliation uses this separately configured profile/namespace and
+provider version enumeration, not only SQL indexes. Discovery/listing is untrusted:
+enumerate explicit candidate versions, retrieve each by exact version, check
+canonical fields, key/intent/incarnation bindings, raw bytes and protection, and
+quarantine conflicting versions for one intent identity. A raw hash of discovered
+bytes proves no authorization. Without surviving authoritative authorization,
+preserve the objects as untrusted audit material; neither resume upload nor infer
+permission to associate/delete. The independent configuration and enumeration
+permissions must be recoverable without the control database. No mutable latest
+index or self-referential intent hash is required.
+
+An accepted locator is family `leapview.recovery-evidence-locator`, version **1**,
+with ordered fields `kind`, `version`, `target`, `version_id`, `payload_family`,
+`payload_version`, `payload_digest`, `payload_sha256`, `payload_size`.
+`version_id` is required, nonempty, case-sensitive opaque canonical UTF-8 text;
+empty, `null` (case-insensitive), sentinel `latest` and missing versions reject.
+Do not parse it as an ETag or rewrite it. The version is unknown before creation:
+the intent has a target, never a fabricated pre-upload locator. Only exact-version
+readback can turn a write result into an accepted locator.
+
+Both operational documents use compact UTF-8 JSON, exact field order, no unknown
+or omitted fields, canonical integers and the frozen UTC-microsecond/escaping/NFC
+rules. `trust_generation` encodes `incarnation_id`, `revision`, `policy_digest`
+in that order. Canonical content comparison, not tolerant JSON parsing, defines
+an identical retry. There is no new signature or replacement recovery hash for
+these transport documents. Their immutability comes from protected storage and
+authoritative control-plane binding, never from their self-declared fields.
+
+Limits: 16 KiB per intent/locator, 4,096 bytes per opaque text field, 2,048-byte
+endpoint, 1,024-byte derived S3 key, standard 3–63-byte bucket; tighter configured
+bounds win. Long namespace/family combinations reject rather than truncate.
+No embedded secrets, presigned URLs or arbitrary redirects are accepted.
+
+Payload writes use conditional create and provider-native immutable retention;
+no overwrite/delete/retention-shortening permission is granted to the uploader.
+An existing key is resolved through the pinned client, its exact version bound,
+then all bytes/protection checks run. Different bytes or unavailable protection
+are conflicts, not permission to upload a newer replacement. Once accepted, a
+locator is never refreshed to latest, even for identical content. Duplicate
+writers may converge only on the same verified exact locator; a different
+version is not an identical retry. Backend capability qualification must prove
+conditional-create behavior under concurrent writers.
+
+### Capture authority, delegation and generation fence
+
+Domain owners supply frontier/closure facts; the recovery coordinator constructs
+the source anchor and manifest using those facts. The registered capture signer
+alone creates the detached receipt, using its pinned authority/key identity and
+source-profile allowlist. The coordinator alone authorizes upload intents under
+the separate destination profile. Storage workers cannot sign captures, choose
+keys/profiles, expand namespaces or grant recovery authority.
+
+Workers authenticate using deployment-managed service identities and a bounded
+assignment `(request, intent, worker identity, fence, generation, deadline)`.
+Delegation is limited to executing that assignment; no transitive delegation or
+possession-based bearer upload authority. The signer rechecks authorization before
+signing. Signing credentials stay at the approved signer/key service, not in
+worker payloads, manifests or locators. Infrastructure administrators control
+deployment credentials; runtime workers cannot edit the authority registry.
+
+The authoritative trust-generation tuple is `(incarnation UUID, monotonic positive
+revision, immutable policy digest)`. Its policy binds approved capture authorities,
+revocation/validity, source profiles, destination profiles, delegation and retention
+rules. It is operational control metadata, **not an added receipt/manifest field**.
+Any relevant policy change advances revision; no timestamp-only or process-local
+counter. Revisions are never reused within an incarnation. Restoration of older
+control state cannot roll back trust: a fresh incarnation and externally trusted
+policy reconciliation are required before enabling workers. If freshness cannot
+be established, capture/association stays blocked.
+
+At request authorization, before signing, before each upload, at readback
+acceptance and at SQL association, compare the assignment generation/fence with
+authoritative current state and check deadline using a trusted clock. Any mismatch
+is stale, even if the old receipt signature remains mathematically valid. The
+verification observation records the exact generation, worker fence and clock.
+Capture-time key validity remains governed by the frozen receipt contract; new
+trusted use also applies current revocation and policy. Historical inspection
+never creates current authority.
+
+Association and local policy-generation changes must serialize on the same
+authoritative fence inside PostgreSQL: lock/check current generation and worker
+assignment through commit; policy update/revocation takes the conflicting fence.
+A pre-transaction check alone is insufficient. All references and verification
+metadata commit under that generation, with no network work under the lock.
+If association wins first, it remains a historical stored association; a later
+revocation still blocks new trusted use. If the policy change wins first, the
+stale association rejects. Worker-takeover fencing follows the same rule.
+
+This ordering is relative to the committed policy authority, not an instantaneous
+guarantee about an external revocation notification not yet ingested. Deployment
+must bound policy freshness and fail closed when its required feed is unavailable
+or stale. In-flight object writes cannot be atomically revoked with SQL: a stale
+worker may leave a protected unreferenced object, but cannot have it accepted or
+associated. Short-lived credentials and restricted writes reduce that exposure;
+no cross-store fencing/rollback guarantee is claimed.
+
+### Deterministic failures and replay
+
+| Condition | Required outcome |
+|---|---|
+| Interrupted/expired upload | No verified locator or association; record stage/cause. Retry exact intent only while authorized and before deadline; otherwise reauthorize with a new intent |
+| Existing target contains wrong bytes | Integrity/conflict rejection, never overwrite or choose latest |
+| Locator missing/unavailable or substituted profile/account/namespace/version | Availability or identity rejection; pinned exact lookup only. Network repair may allow revalidation, not reference mutation |
+| Invalid signature, unsupported family/version or malformed canonical payload | Owner-verification rejection; no parser fallback or normalization repair |
+| Revoked authority, disallowed profile or stale generation/fence | Current-trust rejection; old success/signature cannot bypass the fence |
+| Historical source version disappeared or protection expired | Recovery availability fails even if manifest and receipt are intact; no physical-recovery claim |
+| Lost SQL commit response | Read the authoritative set association first; exact compare and revalidate before reporting current availability. Object presence alone is not success |
+
+Failure observations expose stable stage/category and safe typed identities, not
+credentials or raw provider bodies. Missing any payload in the required set
+prevents association; a partially successful upload batch has no recovery status.
+Only provider-side exact-version byte verification establishes integrity;
+metadata, location, Object Lock and valid signatures each prove different things.
+
+### Freeze boundary and next implementation gates
+
+The lifecycle, target-versus-locator distinction, immutable intent, delegated
+authority and serialized generation fence above are the selected design. Future
+contract tests must pin operational document bytes, profile canonicalization,
+concurrent conditional writes, revoked/stale workers, lost commit responses,
+deadline races and control-state rollback. The family-token allowlist must cover
+only reviewed frozen payload families; unsupported large/supporting formats need
+their own contract decision, not arbitrary uploads.
+
+Before persistence implementation, review additive schema/permissions and the
+transactional policy/assignment authority, provision signer/service identities,
+approve immutable destination-profile revisions and retention horizons, and
+qualify the provider's exact-version/conditional-create/protection capabilities.
+Define deployment-specific maximum policy staleness and operation deadlines;
+absence of approved limits blocks enablement rather than selecting permissive
+defaults. No transport proof enables successor admission, publication or startup.
+Existing v1/v2/FAI-521 bytes and guarantees remain unchanged.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.
+
+## RecoverySet v3 persistence implementation
+
+The first storage foundation is isolated from the existing admission,
+publication and startup consumers. It does not enable a v3 writer in application
+composition. The successor contract owner verifies evidence; the PostgreSQL
+adapter owns durable associations, not a second cryptographic validator.
+
+### Storage and transaction boundary
+
+The additive migration retains existing recovery tables and their serialized
+records. Separate successor tables hold content-addressed supporting payloads,
+exact-version locators, immutable manifest bindings, prepared v3 sets and their
+two existing roots. PostgreSQL canonical bytes are an integrity comparison
+cache, not a replacement for the off-host evidence store. A shared identity
+registry prevents reusing a v1 identity for a different v3 record; it does not
+convert the original record or recalculate its hashes.
+
+Before insertion, a configured exact-version reader fetches the selected
+off-host payloads. The adapter checks bounded size, raw SHA-256, canonical owner
+encoding, domain-separated identity and the full owner evidence contract.
+Authority, expected source scope, profile and verification clock come from an
+independently configured trust resolver, never from request-supplied approval or
+stored verification metadata. Private keys and provider credentials are not
+persisted in these records.
+
+One explicit PostgreSQL transaction checks the provisioned trust generation and
+inserts or exactly compares the evidence graph and association. No provider I/O
+occurs while holding its generation lock. Immutable constraints and foreign
+keys protect references; the complete association either commits or rolls back.
+An exact retry does not replace the winner. A different locator, receipt,
+canonical payload or set record is a conflict, not an update. Creation and
+verification metadata describe the original insertion rather than a mutable
+last-success cache.
+
+Every successful lookup re-fetches exact payload versions, compares stored
+bytes and identities, and repeats owner verification against independently
+selected trust. Missing off-host evidence or revoked trust cannot be repaired
+by a successful past SQL record. Concurrent policy changes must serialize with
+association on the owner-provisioned generation; production policy provisioning
+and worker assignment remain deployment prerequisites, not implicit defaults.
+
+### Migration, qualification and limits
+
+The schema is additive and has no v3 backfill. Existing v1 hashes, wire bytes,
+validators and FAI-521 guarantees remain unchanged. Downgrade must refuse rather
+than delete successor evidence. Maintenance receives bounded persistence
+permissions; normal application code is not granted a successor mutation path.
+Canonical policy reconciliation must preserve those permissions on reapply.
+
+The persistence qualification uses real PostgreSQL migrations and maintenance
+connections with frozen signed contract vectors. Its exact-version byte reader
+models already-uploaded evidence; it is not a new provider implementation or a
+provider availability drill. The matrix covers restart through a separate
+connection, exact retries, concurrent writers/readers, failed association
+rollback, missing/tampered payloads and independent trust rejection.
+
+Run the focused qualification with Docker available and PostgreSQL tests made
+mandatory:
+
+```sh
+LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1 go test ./internal/recoveryset/postgres -run '^TestSuccessor' -count=2
+go test ./internal/recoveryset/successor ./internal/recoveryset -count=1
+```
+
+No garbage collector is added. Database references cannot silently lose their
+evidence, but provider versions need independent retention protection. Trusted
+capture deployment, upload-intent execution, destination-profile provisioning,
+worker/deadline fencing, policy freshness and provider retention qualification
+remain required before production enablement. Admission, publication, startup,
+physical restore, PITR and RPO/RTO measurement are outside this foundation.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.

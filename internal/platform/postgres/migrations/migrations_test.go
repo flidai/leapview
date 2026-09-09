@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"io/fs"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -25,7 +27,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -82,6 +84,68 @@ func TestProjectFreeSourceBundleQuarantinesLegacyLineageVersions(t *testing.T) {
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("forward migration quarantines reusable child/blob evidence %q", forbidden)
+		}
+	}
+}
+
+func TestSuccessorV3MigrationMirrorsOwnerSchemaAndRefusesDestructiveDown(t *testing.T) {
+	migrationBytes, err := fs.ReadFile(MigrationFS(), "006_recovery_successor_v3.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(migrationBytes)
+	owner := recoverypostgres.SuccessorSchemaSQL()
+	for _, marker := range []string{
+		"recovery.set_identity_registry",
+		"recovery.successor_evidence_v2",
+		"recovery.successor_evidence_locator_v2",
+		"recovery.successor_manifest_binding",
+		"recovery.successor_trust_generation",
+		"recovery.recovery_set_v3",
+		"recovery.recovery_set_v3_root",
+		"successor_domain_sha256",
+		"lock_successor_generation",
+		"guard_successor_set_complete",
+		"successor_registry_immutable",
+	} {
+		if !strings.Contains(owner, marker) || !strings.Contains(migration, marker) {
+			t.Errorf("successor schema/migration missing %q", marker)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("successor migration must restore the migrator role after its Down refusal")
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") || !strings.Contains(down, "destructive down is forbidden") {
+		t.Error("successor Down must refuse, never destroy, persisted evidence")
+	}
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?m)^CREATE TABLE IF NOT EXISTS (recovery\.[a-z0-9_]+)`),
+		regexp.MustCompile(`(?m)^CREATE OR REPLACE FUNCTION (recovery\.[a-z0-9_]+)`),
+		regexp.MustCompile(`(?m)^CREATE (?:CONSTRAINT )?TRIGGER (recovery\.[a-z0-9_]+)`),
+		regexp.MustCompile(`(?m)^CREATE INDEX IF NOT EXISTS ([a-z0-9_]+)`),
+	}
+	for _, pattern := range patterns {
+		matches := func(source string) []string {
+			all := pattern.FindAllStringSubmatch(source, -1)
+			names := make([]string, 0, len(all))
+			for _, match := range all {
+				names = append(names, match[1])
+			}
+			return names
+		}
+		ownerNames := matches(owner)
+		migrationNames := matches(migration)
+		sort.Strings(ownerNames)
+		sort.Strings(migrationNames)
+		if len(ownerNames) != len(migrationNames) {
+			t.Errorf("owner/migration object count for %q = %d/%d", pattern, len(ownerNames), len(migrationNames))
+			continue
+		}
+		for i := range ownerNames {
+			if ownerNames[i] != migrationNames[i] {
+				t.Errorf("owner/migration object %d for %q = %q/%q", i, pattern, ownerNames[i], migrationNames[i])
+			}
 		}
 	}
 }

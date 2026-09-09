@@ -1,0 +1,1 @@
+{"profile_version":2,"profiles":[{"implementation":"s3","account_identity":"account-a","endpoint":"https://objects.example.com","region":"us-east-1","bucket":"bucket-a","version_semantics":"opaque-exact-version","namespaces":[{"project_id":"project-a","collection_id":"collection-a","prefix":"managed"}]}]}
