@@ -2,6 +2,17 @@ import { describe, expect, test } from 'bun:test'
 
 import { emptyTable, normalizeTable, preserveCardinality } from './block-source'
 
+test('normalizes legacy table styles with headers enabled unless explicitly hidden', () => {
+  const legacyTable = JSON.parse(JSON.stringify(emptyTable)) as typeof emptyTable
+  delete (legacyTable.style as Partial<typeof legacyTable.style>).showHeader
+
+  expect(normalizeTable(legacyTable).style.showHeader).toBe(true)
+  expect(normalizeTable({
+    ...emptyTable,
+    style: { ...emptyTable.style, showHeader: false },
+  }).style.showHeader).toBe(false)
+})
+
 describe('progressive table cardinality', () => {
   test('normalizes an unknown total without hiding the available window', () => {
     const table = normalizeTable({

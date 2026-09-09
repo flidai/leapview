@@ -59,6 +59,28 @@ func TestSpatialEnvelopeValidationRejectsMalformedOperation(t *testing.T) {
 	}
 }
 
+func TestSpatialAggregateEnvelopeRequiresMemberBranchForEnabledThresholdClustering(t *testing.T) {
+	graph := envelopeGraph(SpatialEnvelopeTileAggregate)
+	node := graph.Nodes["spatial"].(SpatialEnvelope)
+	node.Cluster = &SpatialClusterPolicy{Enabled: true, Radius: 40, MaximumZoom: 14, MinimumPoints: 3}
+	graph.Nodes["spatial"] = node
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "member input must be present") {
+		t.Fatalf("Validate() error = %v, want required member branch", err)
+	}
+}
+
+func TestSpatialAggregateEnvelopeRejectsMemberBranchWithoutThresholdClustering(t *testing.T) {
+	graph := envelopeGraph(SpatialEnvelopeTileAggregate)
+	node := graph.Nodes["spatial"].(SpatialEnvelope)
+	node.Cluster = &SpatialClusterPolicy{Enabled: false, Radius: 40, MaximumZoom: 14, MinimumPoints: 3}
+	node.MemberInput = node.Input
+	node.MemberProperties = []SpatialProperty{{Name: "id", Source: "id", Type: "string"}}
+	graph.Nodes["spatial"] = node
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "member input must be present") {
+		t.Fatalf("Validate() error = %v, want rejected member branch", err)
+	}
+}
+
 func TestAnalyticalEnvelopeRendererUsesClosedNode(t *testing.T) {
 	graph := validPlan()
 	meta := NodeMeta{NodeID: "histogram", FilterPhase: FilterPhasePostAggregate, RootDatasets: []string{"orders"}, AvailableFields: []Field{{Name: "bucket"}, {Name: "count"}, {Name: "start"}, {Name: "end"}}}

@@ -67,6 +67,65 @@ test('TanStack adapter leaves row interaction disabled when the IR declares none
   expect(tableSignal(envelope).interaction).toBeUndefined()
 })
 
+test('TanStack adapter propagates showHeader for every tabular visual kind', () => {
+  const tabularEnvelope = (kind: 'table' | 'matrix' | 'pivot'): VisualizationEnvelope => {
+    const fields = [
+      { id: 'state', role: 'dimension', dataType: 'string', nullable: false, label: 'State' },
+      { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
+    ]
+    const grid = {
+      kind,
+      title: kind,
+      datasets: [{ id: 'primary', fields }],
+      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' },
+      accessibility: { title: kind, description: kind },
+      interactions: [],
+      presentation: { rowHeight: 34, striped: true, showHeader: false },
+      ...(kind === 'table'
+        ? {
+            columns: [{ field: { dataset: 'primary', field: 'state' }, label: 'State', formatting: [] }],
+            defaultSort: [],
+          }
+        : {
+            rows: [{ dataset: 'primary', field: 'state' }],
+            columns: [{ dataset: 'primary', field: 'state' }],
+            metrics: [{ dataset: 'primary', field: 'revenue' }],
+            metricFormatting: {},
+            ...(kind === 'pivot' ? { totals: { rows: false, columns: false, grand: false }, window: { limit: 100 } } : {}),
+          }),
+    }
+    return {
+      schemaVersion: 9, visualID: kind, rendererID: 'tanstack', specRevision: `sha256:${kind}`, dataRevision: 1,
+      spec: grid,
+      dataState: {
+        kind: 'inline', specRevision: `sha256:${kind}`, dataRevision: 1, generation: 1,
+        datasets: [{ id: 'primary', specRevision: `sha256:${kind}`, dataRevision: 1, generation: 1, columns: ['state', 'revenue'], rows: [['CA', 42]], completeness: 'complete' }],
+      },
+      selection: [], status: { kind: 'ready' }, diagnostics: [],
+    } as VisualizationEnvelope
+  }
+
+  for (const kind of ['table', 'matrix', 'pivot'] as const) {
+    expect(tableSignal(tabularEnvelope(kind)).style.showHeader).toBe(false)
+  }
+})
+
+test('TanStack adapter preserves enabled table headers', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'orders', rendererID: 'tanstack', specRevision: 'sha256:test', dataRevision: 1,
+    spec: {
+      kind: 'table', title: 'Orders', datasets: [{ id: 'primary', fields: [{ id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' }] }],
+      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Orders' }, interactions: [],
+      columns: [{ field: { dataset: 'primary', field: 'order_id' }, label: 'Order', formatting: [] }], defaultSort: [],
+      presentation: { rowHeight: 34, striped: true, showHeader: true },
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['order_id'], rows: [['o1']], completeness: 'complete' }] },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+
+  expect(tableSignal(envelope).style.showHeader).toBe(true)
+})
+
 test('TanStack adapter preserves sparse window block identities', () => {
   const envelope = {
     schemaVersion: 9, visualID: 'orders', rendererID: 'tanstack', specRevision: 'sha256:test', dataRevision: 3,
@@ -117,4 +176,64 @@ test('TanStack matrix adapter renders dynamic window schema columns with compile
   const table = tableSignal(envelope)
   expect(table.columns.map((column) => column.key)).toEqual(['state', 'delivered__revenue'])
 	expect(table.columns[1]).toMatchObject({ group: 'Delivered', metric: 'revenue', columnValue: 'delivered', formatting: [{ kind: 'data_bar', min: 0, max: 100, color: 'accent' }] })
+})
+
+test('TanStack matrix adapter projects metric aliases onto visible generated columns', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'matrix-conditional', rendererID: 'tanstack', specRevision: 'sha256:matrix', dataRevision: 2,
+    spec: {
+      kind: 'matrix', title: 'Matrix', datasets: [{ id: 'primary', fields: [
+        { id: 'state', role: 'dimension', dataType: 'string', nullable: true, label: 'State' },
+        { id: 'status', role: 'dimension', dataType: 'string', nullable: true, label: 'Hidden column' },
+        { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: true, label: 'Revenue' },
+      ] }], dataBudget: { maxRows: 1000, requiredCompleteness: 'partial' }, accessibility: { title: 'Matrix', description: 'Matrix' }, interactions: [],
+      rows: [{ dataset: 'primary', field: 'state' }], columns: [{ dataset: 'primary', field: 'status' }], metrics: [{ dataset: 'primary', field: 'revenue' }, { dataset: 'primary', field: 'orders' }], metricFormatting: {},
+      conditionalFormatting: [{
+        id: 'revenue-health', target: 'cell_background', field: { dataset: 'primary', field: 'revenue' },
+        rule: { kind: 'field', source: { dataset: 'primary', field: 'orders' }, values: { late: { color: 'danger', icon: 'warning' } }, nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'circle' } },
+      }],
+      presentation: { rowHeight: 34, striped: true, showHeader: true },
+    },
+    dataState: {
+      kind: 'windowed', specRevision: 'sha256:matrix', dataRevision: 2, generation: 1,
+      schema: { id: 'primary', fields: [
+        { id: 'state', role: 'identity', dataType: 'string', nullable: true, label: 'State', grid: { formatting: [] } },
+        { id: 'status', role: 'dimension', dataType: 'string', nullable: true, label: 'Hidden column', grid: { group: 'Hidden', columnValue: 'Delivered', formatting: [] } },
+        { id: 'delivered__revenue', role: 'metric', dataType: 'decimal', nullable: true, label: 'Delivered revenue', grid: { group: 'Delivered', metric: 'revenue', columnValue: 'delivered', formatting: [] } },
+        { id: 'delivered__orders', role: 'metric', dataType: 'decimal', nullable: true, label: 'Delivered orders', grid: { group: 'Orders', metric: 'orders', columnValue: 'delivered', formatting: [] } },
+        { id: 'shipped__revenue', role: 'metric', dataType: 'decimal', nullable: true, label: 'Shipped revenue', grid: { group: 'Revenue', metric: 'revenue', columnValue: 'shipped', formatting: [] } },
+        { id: 'shipped__orders', role: 'metric', dataType: 'decimal', nullable: true, label: 'Shipped orders', grid: { group: 'Orders', metric: 'orders', columnValue: 'shipped', formatting: [] } },
+      ] },
+      cardinality: { kind: 'exact', count: 1 }, availableRows: 1, rowCap: 1000, chunkSize: 50, resetVersion: 1,
+      sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }],
+      blocks: { a: { id: 'a', start: 0, rows: [['SP', 'delivered', 42, 3, 55, 4]], requestSeq: 1, resetVersion: 1, sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }] } },
+    }, selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+
+  const table = tableSignal(envelope)
+  expect(table.columns.map((column) => column.key)).toEqual(['state', 'delivered__revenue', 'shipped__revenue', 'delivered__orders', 'shipped__orders'])
+  expect(table.columns[1]?.conditionalFormatting?.[0]).toMatchObject({
+    id: 'revenue-health', field: { dataset: 'primary', field: 'delivered__revenue' },
+    rule: { kind: 'field', source: { dataset: 'primary', field: 'delivered__orders' } },
+  })
+  expect(table.columns[2]?.conditionalFormatting?.[0]).toMatchObject({
+    id: 'revenue-health', field: { dataset: 'primary', field: 'shipped__revenue' },
+    rule: { kind: 'field', source: { dataset: 'primary', field: 'shipped__orders' } },
+  })
+
+  const pivotEnvelope = { ...envelope, visualID: 'pivot-conditional', spec: { ...envelope.spec, kind: 'pivot' as const } } as VisualizationEnvelope
+  const pivotTable = tableSignal(pivotEnvelope)
+  expect(pivotTable.columns[1]?.conditionalFormatting?.[0]).toMatchObject({
+    rule: { kind: 'field', source: { dataset: 'primary', field: 'delivered__orders' } },
+  })
+
+  const windowed = envelope.dataState as Extract<VisualizationEnvelope['dataState'], { kind: 'windowed' }>
+  const crossCategory = {
+    ...envelope,
+    dataState: {
+      ...windowed,
+      schema: { ...windowed.schema, fields: windowed.schema.fields.filter((field) => field.id !== 'delivered__orders') },
+    },
+  } as VisualizationEnvelope
+  expect(() => tableSignal(crossCategory)).toThrow(/cannot be validated for generated column "delivered__revenue"/)
 })

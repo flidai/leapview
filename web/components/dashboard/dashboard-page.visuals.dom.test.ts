@@ -144,3 +144,63 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
     } finally { await page.close() }
   })
 }
+
+test('visualization actions keep touch targets and spacing when a report is scaled', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      document.documentElement.style.setProperty('--control-xsmall-size', '20px')
+      document.documentElement.style.setProperty('--lv-button-height-xs', '20px')
+      document.documentElement.style.setProperty('--control-small-size', '20px')
+      document.documentElement.style.setProperty('--lv-button-height-sm', '20px')
+      document.dispatchEvent(new CustomEvent('lv-report-zoom-command', { detail: { mode: 'custom', scale: 0.8 } }))
+      const canvas = dashboard.shadowRoot.querySelector('lv-report-canvas') as any
+      await canvas.updateComplete
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      await canvas.updateComplete
+      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const chart = hosts.find((host) => host.envelope?.visualID === 'orders_chart')
+      const options = chart?.shadowRoot?.querySelector('.visual-options') as HTMLDetailsElement | null
+      if (options) {
+        options.open = true
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const actions = [
+        chart?.shadowRoot?.querySelector('[data-visualization-expand]'),
+        chart?.shadowRoot?.querySelector('.visual-options summary'),
+      ].filter(Boolean) as HTMLElement[]
+      const rects = actions.map((action) => {
+        const rect = action.getBoundingClientRect()
+        return { width: rect.width, height: rect.height, left: rect.left, right: rect.right }
+      })
+      const menuRects = Array.from(chart?.shadowRoot?.querySelectorAll('.visual-options .menu button') ?? []).map((button) => {
+        const rect = (button as HTMLElement).getBoundingClientRect()
+        return { width: rect.width, height: rect.height, top: rect.top, bottom: rect.bottom }
+      })
+      return {
+        scale: canvas.shadowRoot.querySelector('.surface')?.dataset.scale,
+        inverseScale: getComputedStyle(canvas.shadowRoot.querySelector('.surface')).getPropertyValue('--report-canvas-inverse-scale'),
+        rects,
+        menuRects,
+        gap: rects.length === 2 ? rects[1].left - rects[0].right : 0,
+      }
+    })
+    expect(result.scale).toBe('0.8')
+    expect(Number(result.inverseScale)).toBeCloseTo(1.25)
+    expect(result.rects).toHaveLength(2)
+    for (const rect of result.rects) {
+      expect(rect.width).toBeGreaterThanOrEqual(24)
+      expect(rect.height).toBeGreaterThanOrEqual(24)
+    }
+    expect(result.gap).toBeGreaterThanOrEqual(0)
+    expect(result.menuRects.length).toBeGreaterThan(0)
+    for (const rect of result.menuRects) {
+      expect(rect.height).toBeGreaterThanOrEqual(24)
+    }
+    for (let index = 1; index < result.menuRects.length; index += 1) {
+      expect(result.menuRects[index].top).toBeGreaterThanOrEqual(result.menuRects[index - 1].bottom)
+    }
+  } finally { await page.close() }
+})

@@ -250,7 +250,7 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 		return uisignals.DashboardBuilderSignal{}, err
 	}
 	signal := uisignals.DashboardBuilderSignal{
-		DashboardID: lifecycle.ID.String(), DraftID: draftID,
+		ProjectID: lifecycle.ProjectID.String(), DashboardID: lifecycle.ID.String(), DraftID: draftID,
 		Revision: revisionValue, Title: lifecycle.Title, Description: projectDescription(revision.Document.Metadata.Description), Appearance: projectAppearance(revision.Document), Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
 		HasUnpublishedChanges: dirty, Origin: originSignal(revision.Provenance), SourceEvidence: sourceEvidence,
 		SemanticModel: semantic, VisualCatalog: projectVisualCatalog(), Filters: projectFilters(revision.Document), Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
@@ -745,17 +745,15 @@ func projectVisualFormatOptions(options []authoring.VisualFormatOption) []uisign
 func canonicalVisualFormatVisibility(visual dashboarddocument.DashboardVisual) (legendVisible, labelsVisible, axisVisible bool) {
 	// Unsupported controls remain false so the browser cannot present a toggle
 	// that the selected presentation cannot persist.
-	legendVisible, labelsVisible, axisVisible = false, false, true
-	if base, err := visual.Presentation.Base(); err == nil {
-		if base.AxisVisible != nil {
-			axisVisible = *base.AxisVisible
-		}
-	}
+	legendVisible, labelsVisible, axisVisible = false, false, false
+	axisSupported := false
 	switch presentation := visual.Presentation.Value.(type) {
 	case *dashboarddocument.CartesianDashboardPresentation:
+		axisSupported = true
 		legendVisible = dashboardLegendVisible(presentation.Legend)
 		labelsVisible = dashboardLabelsVisible(presentation.Labels)
 	case *dashboarddocument.PointDashboardPresentation:
+		axisSupported = true
 		legendVisible = dashboardLegendVisible(presentation.Legend)
 		labelsVisible = dashboardLabelsVisible(presentation.Labels)
 	case *dashboarddocument.ProportionalDashboardPresentation:
@@ -767,8 +765,12 @@ func canonicalVisualFormatVisibility(visual dashboarddocument.DashboardVisual) (
 	case *dashboarddocument.PolarDashboardPresentation:
 		legendVisible = dashboardLegendVisible(presentation.Legend)
 		labelsVisible = dashboardLabelsVisible(presentation.Labels)
-	case *dashboarddocument.GeographicDashboardPresentation:
-		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	}
+	if axisSupported {
+		axisVisible = true
+		if base, err := visual.Presentation.Base(); err == nil && base.AxisVisible != nil {
+			axisVisible = *base.AxisVisible
+		}
 	}
 	return legendVisible, labelsVisible, axisVisible
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 )
 
@@ -118,6 +119,43 @@ func TestExportDashboardPreservesZeroDomainAndEmptyFilters(t *testing.T) {
 	}
 	if roundTrip.Spec.Filters == nil || roundTrip.Spec.Visuals["distribution"].Query.Value.(*document.HistogramDashboardQuery).Domain.Minimum == nil || *roundTrip.Spec.Visuals["distribution"].Query.Value.(*document.HistogramDashboardQuery).Domain.Minimum != 0 {
 		t.Fatal("round-trip did not retain empty filters and zero domain minimum")
+	}
+}
+
+func TestExportDashboardPreservesAxisFormatting(t *testing.T) {
+	path := filepath.Join("..", "..", "dashboard", "document", "testdata", "canonical.yaml")
+	value, err := LoadDashboardDocument(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	axisType := visualizationir.VisualizationAxisTypeTime
+	inversion := visualizationir.VisualizationAxisInversionInverted
+	ticks := visualizationir.VisualizationAxisTickVisibilityVisible
+	grid := visualizationir.VisualizationAxisGridVisibilityHidden
+	rotation := visualizationir.VisualizationAxisLabelRotationDiagonal
+	dateUnit := visualizationir.VisualizationDateDisplayUnitMonth
+	visual := value.Spec.Visuals["revenue"]
+	presentation := visual.Presentation.Value.(*document.CartesianDashboardPresentation)
+	presentation.Axes = &[]document.DashboardAxisConfiguration{{
+		ID: visualizationir.VisualizationCartesianAxisX, Type: &axisType,
+		Scale: visualizationir.VisualizationAxisScaleAutomatic, Zero: visualizationir.VisualizationAxisZeroPolicyAutomatic,
+		Inversion: &inversion, TickDensity: visualizationir.VisualizationAxisTickDensityNormal,
+		Ticks: &ticks, Grid: &grid, LabelRotation: &rotation, DateUnit: &dateUnit,
+	}}
+	visual.Presentation.Value = presentation
+	value.Spec.Visuals["revenue"] = visual
+
+	encoded, err := ExportDashboard(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip document.DashboardDocument
+	if err := configschema.DecodeResource(configschema.KindDashboard, "roundtrip.yaml", encoded, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	axis := (*roundTrip.Spec.Visuals["revenue"].Presentation.Value.(*document.CartesianDashboardPresentation).Axes)[0]
+	if axis.Type == nil || *axis.Type != axisType || axis.Inversion == nil || *axis.Inversion != inversion || axis.Ticks == nil || *axis.Ticks != ticks || axis.Grid == nil || *axis.Grid != grid || axis.LabelRotation == nil || *axis.LabelRotation != rotation || axis.DateUnit == nil || *axis.DateUnit != dateUnit {
+		t.Fatalf("axis formatting changed across export round trip: %#v", axis)
 	}
 }
 

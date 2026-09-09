@@ -21,6 +21,10 @@ test('conditional formatting resolves deterministic gradients with explicit null
     style: { gradient: { low: 'danger', high: 'success', ratio: 1 } },
     outcome: 'matched',
   })
+  expect(resolveConditionalFormat(gradient, ['label', 'revenue'], ['A', '25.00'])).toEqual({
+    style: { gradient: { low: 'danger', high: 'success', ratio: 0.25 } },
+    outcome: 'matched',
+  })
   expect(resolveConditionalFormat(gradient, ['label', 'revenue'], ['A', null])).toEqual({
     style: { color: 'neutral' },
     outcome: 'null',
@@ -30,12 +34,22 @@ test('conditional formatting resolves deterministic gradients with explicit null
     outcome: 'invalid',
     diagnostic: 'conditional formatting "revenue-gradient" expected a finite numeric value',
   })
+  expect(resolveConditionalFormat(gradient, ['label', 'revenue'], ['A', '1e2'])).toEqual({
+    style: { color: 'neutral' },
+    outcome: 'invalid',
+    diagnostic: 'conditional formatting "revenue-gradient" expected a finite numeric value',
+  })
+  expect(resolveConditionalFormat(gradient, ['label', 'revenue'], ['A', `0.${'0'.repeat(400)}1`])).toEqual({
+    style: { color: 'neutral' },
+    outcome: 'invalid',
+    diagnostic: 'conditional formatting "revenue-gradient" expected a finite numeric value',
+  })
 })
 
 test('conditional formatting uses authored first-match rule order and redundant cues', () => {
   const format = {
     id: 'health-rules',
-    target: 'icon',
+    target: 'mark_fill',
     field: { dataset: 'primary', field: 'value' },
     rule: {
       kind: 'rules',
@@ -51,9 +65,18 @@ test('conditional formatting uses authored first-match rule order and redundant 
     style: { color: 'warning', icon: 'circle' },
     outcome: 'matched',
   })
+  expect(resolveConditionalFormat(format, ['value'], ['90.00'])).toEqual({
+    style: { color: 'warning', icon: 'circle' },
+    outcome: 'matched',
+  })
   expect(resolveConditionalFormat(format, ['value'], [-1])).toEqual({
     style: { color: 'danger', icon: 'arrow_down' },
     outcome: 'default',
+  })
+  expect(resolveConditionalFormat(format, ['value'], ['1e2'])).toEqual({
+    style: { icon: 'warning' },
+    outcome: 'invalid',
+    diagnostic: 'conditional formatting "health-rules" expected a finite numeric value',
   })
 })
 

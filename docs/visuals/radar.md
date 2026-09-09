@@ -4,9 +4,11 @@ Use a radar chart to compare a compact set of category values around a shared sc
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
+Radar presentation supports `area` and an optional shared `maximum` across its indicators. Gauge-only fields such as `minimum`, `target`, `showPointer`, `progressWidth`, and `thresholds` do not apply.
+
 ## Basic
 
-Use one categorical dimension to create the radar indicators and one metric to set each spoke length.
+Use one categorical dimension to create the radar indicators and one metric to set each spoke length. Add a second dimension to compare governed series; the first dimension remains the category and `presentation.legend` controls the series legend.
 
 {{< visual id="status_radar" >}}
 

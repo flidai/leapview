@@ -1,12 +1,12 @@
 # Scatter chart
 
-Use a scatter chart to evaluate the relationship between two quantitative fields. Every point has stable entity identity; optional size, color, series, labels, and tooltips add governed context without changing that identity.
+Use a scatter chart to evaluate the relationship between two quantitative fields. Every point has stable entity identity; optional size, color, labels, and tooltips add governed context without changing that identity.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
 ## Bivariate scatter
 
-Place delivery time on X and order revenue on Y. Status supplies a categorical color channel, while order ID remains the stable point identity.
+Place delivery time on X and order revenue on Y. Status supplies a categorical legend, while governed conditional formatting controls point fill and symbol and emphasizes canceled orders. Order ID remains the stable point identity.
 
 {{< visual id="delivery_scatter" >}}
 
@@ -36,6 +36,17 @@ visuals:
       tooltip: [order_id, status, delivery_days, revenue]
       colorScale:
         kind: categorical
+      conditionalFormatting:
+      - id: canceled-orders
+        target: mark_fill
+        field: status
+        rule:
+          kind: field
+          source: status
+          values:
+            canceled: {color: danger, icon: warning}
+          nullStyle: {color: neutral}
+          defaultStyle: {color: accent, icon: circle}
       overplot:
         strategy: opacity
         opacity: 0.58

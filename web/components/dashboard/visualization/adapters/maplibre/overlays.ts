@@ -1,9 +1,55 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import { defaultRendererContext, type RendererContext } from '../../host-controller'
 import { formatValue } from '../../format'
+import { formatTooltipEntries, formatTooltipValue } from '../../tooltip-format'
 import { geographicDataset } from './data'
 
+export function mapAccessibleTableSides(legendPosition: string): { left: string; right: string } {
+  return legendPosition === 'left' || legendPosition === 'bottom'
+    ? { left: '', right: '10px' }
+    : { left: '10px', right: '' }
+}
+
+export function mapOverlayBottom(attributionHeight: number): string {
+  return `${Math.max(28, Math.ceil(attributionHeight) + 12)}px`
+}
+
+export function mapOverlaysNeedStacking(frameWidth: number, legendWidth: number, tableWidth: number): boolean {
+  // Both overlays are inset by 10px, so reserving their combined 20px edge
+  // margins is sufficient; any remaining width becomes the gap between them.
+  return legendWidth + tableWidth + 20 > frameWidth
+}
+
+export function mapVisibleDataSummary(visibleRows: number, aggregateRows: number, rawRows: number, totalRows: number): { label: string; accessibleLabel: string } {
+  const aggregateNoun = (count: number) => `aggregate-resolution feature${count === 1 ? '' : 's'}`
+  const rawNoun = (count: number) => `raw point${count === 1 ? '' : 's'}`
+  const precision = aggregateRows > 0 && rawRows === 0
+    ? `${visibleRows} visible ${aggregateNoun(visibleRows)}`
+    : rawRows > 0 && aggregateRows === 0
+      ? `${visibleRows} visible ${rawNoun(visibleRows)}`
+      : `${visibleRows} visible features: ${rawRows} ${rawNoun(rawRows)}, ${aggregateRows} ${aggregateNoun(aggregateRows)}`
+  const count = aggregateRows > 0 && rawRows === 0
+    ? `${visibleRows} features`
+    : rawRows > 0 && aggregateRows === 0
+      ? `${visibleRows} points`
+      : `${visibleRows} features`
+  return {
+    label: `View map data (${count})`,
+    accessibleLabel: `View visible map data (${precision}${totalRows > 0 ? `; ${totalRows} total coordinates` : ''})`,
+  }
+}
+
 export type RenderedFeatureLocator = Readonly<{ layer?: { id?: string }; properties?: Record<string, unknown> | null }>
+
+type MapSpatialPrecision = 'raw' | 'aggregated'
+
+function mapSpatialPrecision(properties: Record<string, unknown>): MapSpatialPrecision {
+  if (properties.__lv_precision === 'aggregated') return 'aggregated'
+  if (properties.__lv_precision === 'raw') return 'raw'
+  // Older tiles do not carry an explicit precision family. Their geometry
+  // flag remains the compatibility fallback for accessibility summaries.
+  return properties.__lv_aggregate === true ? 'aggregated' : 'raw'
+}
 
 export function mapTooltipEntries(envelope: VisualizationEnvelope, features: readonly RenderedFeatureLocator[], context: RendererContext = defaultRendererContext): Array<{ label: string; value: string }> {
 	if (envelope.spec.kind !== 'geographic') return []
@@ -12,20 +58,25 @@ export function mapTooltipEntries(envelope: VisualizationEnvelope, features: rea
 			const layerID = feature.layer?.id?.replace(/^lv-/, '')
 			const layer = envelope.spec.layers.find((candidate) => candidate.id === layerID)
 			if (!layer || !feature.properties) continue
-			const fields = layer.tooltip.length ? layer.tooltip : 'label' in layer && layer.label ? [layer.label] : []
+			if (layer.kind === 'reference') continue
+			const configuredItems = layer.tooltipItems
+			if (configuredItems !== undefined && configuredItems.length === 0) return []
+			const fields = configuredItems !== undefined
+				? configuredItems.map((item) => item.field)
+				: layer.tooltip.length ? layer.tooltip : 'label' in layer && layer.label ? [layer.label] : []
 			const entries = fields.flatMap((reference) => {
 				const schema = envelope.spec.datasets.find((candidate) => candidate.id === reference.dataset)
 				const field = schema?.fields.find((candidate) => candidate.id === reference.field)
 				const raw = feature.properties?.[reference.field]
 				if (!field || raw === undefined) return []
-				let value: string
-				try { value = field.format ? formatValue(context.locale, field.format, raw) : raw == null ? '—' : String(raw) } catch { value = raw == null ? '—' : String(raw) }
-				return [{ label: field.label, value }]
+				const item = configuredItems?.find((candidate) => candidate.field.dataset === reference.dataset && candidate.field.field === reference.field)
+				return [{ label: item?.label ?? field.label, value: formatTooltipValue(envelope, reference, raw, context, item?.format) }]
 			})
-			if (feature.properties.__lv_aggregate === true) {
+			const aggregateCell = feature.properties.__lv_aggregate === true
+			if (aggregateCell || mapSpatialPrecision(feature.properties) === 'aggregated') {
 				const coordinateCount = feature.properties.__lv_coordinate_count
-				if (typeof coordinateCount === 'number' && Number.isFinite(coordinateCount)) entries.unshift({ label: 'Contained locations', value: String(coordinateCount) })
-				entries.unshift({ label: 'Precision', value: 'Aggregated area' })
+				if (aggregateCell && typeof coordinateCount === 'number' && Number.isFinite(coordinateCount)) entries.unshift({ label: 'Contained locations', value: String(coordinateCount) })
+				entries.unshift({ label: 'Precision', value: aggregateCell ? 'Aggregated area' : 'Aggregate resolution' })
 			}
 			if (entries.length) return entries
 		}
@@ -38,18 +89,12 @@ export function mapTooltipEntries(envelope: VisualizationEnvelope, features: rea
     const layer = envelope.spec.layers.find((candidate) => candidate.id === layerID)
     const row = dataset?.rows[rowIndex]
     if (!dataset || !layer || !row) continue
-    const fields = layer.tooltip.length ? layer.tooltip : layer.label ? [layer.label] : []
-    return fields.flatMap((reference) => {
-      if (reference.dataset !== datasetID) return []
-      const column = dataset.columns.indexOf(reference.field)
-      if (column < 0 || column >= row.length) return []
-      const schema = envelope.spec.datasets.find((candidate) => candidate.id === datasetID)
-      const field = schema?.fields.find((candidate) => candidate.id === reference.field)
-      const raw = row[column]
-      let value: string
-      try { value = field?.format ? formatValue(context.locale, field.format, raw) : raw == null ? '—' : String(raw) } catch { value = raw == null ? '—' : String(raw) }
-      return [{ label: field?.label ?? reference.field, value }]
-    })
+    if (layer.kind === 'reference') continue
+    const configuredItems = layer.tooltipItems
+    const fields = configuredItems !== undefined
+      ? configuredItems.map((item) => item.field)
+      : layer.tooltip.length ? layer.tooltip : layer.label ? [layer.label] : []
+    return formatTooltipEntries(envelope, row, datasetID, context, fields, configuredItems)
   }
   return []
 }
@@ -69,8 +114,8 @@ export function mapAccessibleData(envelope: VisualizationEnvelope, limit = 100, 
     if (reference?.dataset === schema.id && !fieldIDs.includes(reference.field)) fieldIDs.push(reference.field)
   }
   for (const layer of envelope.spec.layers) {
-    for (const reference of layer.tooltip) add(reference)
-    if (layer.tooltip.length > 0) continue
+    for (const reference of layer.tooltipItems?.map((item) => item.field) ?? layer.tooltip) add(reference)
+    if ((layer.tooltipItems !== undefined && layer.tooltipItems.length > 0) || layer.tooltip.length > 0) continue
     add(layer.label)
     if (layer.kind === 'choropleth') { add(layer.join); add(layer.value); add(layer.category) }
     if (layer.kind === 'point') { add(layer.latitude); add(layer.longitude); add(layer.value); add(layer.category) }
@@ -105,8 +150,8 @@ export function mapAccessibleRenderedFeatures(
     if (reference?.dataset === schema.id && !fieldIDs.includes(reference.field)) fieldIDs.push(reference.field)
   }
   for (const layer of envelope.spec.layers) {
-    for (const reference of layer.tooltip) add(reference)
-    if (layer.tooltip.length === 0) add(layer.label)
+    for (const reference of layer.tooltipItems?.map((item) => item.field) ?? layer.tooltip) add(reference)
+    if ((layer.tooltipItems === undefined || layer.tooltipItems.length === 0) && layer.tooltip.length === 0) add(layer.label)
     if (layer.kind === 'point' || layer.kind === 'heat' || layer.kind === 'density') {
       add(layer.latitude); add(layer.longitude); add(layer.value)
     }
@@ -126,16 +171,18 @@ export function mapAccessibleRenderedFeatures(
     const identity = String(feature.properties.__lv_id ?? JSON.stringify(feature.properties))
     if (seen.has(identity)) continue
     seen.add(identity)
-    const aggregate = feature.properties.__lv_aggregate === true
-    if (aggregate) aggregateRows++
-    else rawRows++
+		const aggregateCell = feature.properties.__lv_aggregate === true
+		const aggregate = mapSpatialPrecision(feature.properties) === 'aggregated'
+		if (aggregate) aggregateRows++
+		else rawRows++
     if (rows.length >= limit) continue
     const values = fields.map((field) => {
       const raw = feature.properties?.[field.id]
       try { return field.format ? formatValue(context.locale, field.format, raw) : raw == null ? '—' : String(raw) } catch { return raw == null ? '—' : String(raw) }
     })
-		const coordinateCount = aggregate && typeof feature.properties.__lv_coordinate_count === 'number' ? String(feature.properties.__lv_coordinate_count) : '1'
-		rows.push([aggregate ? 'Aggregated area' : 'Raw point', coordinateCount, ...values])
+		const coordinateCount = aggregateCell && typeof feature.properties.__lv_coordinate_count === 'number' ? String(feature.properties.__lv_coordinate_count) : '1'
+		const precisionLabel = aggregateCell ? 'Aggregated area' : aggregate ? 'Point (aggregate resolution)' : 'Raw point'
+		rows.push([precisionLabel, coordinateCount, ...values])
   }
   return { columns, rows, totalRows: envelope.dataState.cardinality.count ?? 0, visibleRows: seen.size, aggregateRows, rawRows }
 }

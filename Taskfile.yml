@@ -707,6 +707,8 @@ tasks:
     method: checksum
     sources:
       - Taskfile.yml
+      - api/dashboard/**/*.tsp
+      - api/visualization/**/*.tsp
       - internal/agent/contracts/typespec/**/*.tsp
       - api/typespec/**/*.tsp
       - internal/agent/contracts/**/*.go
@@ -870,6 +872,7 @@ tasks:
   apigen:build:
     desc: Build the vendored APIGen TypeSpec emitter used by generation
     method: checksum
+    run: once
     sources:
       - pkg/apigen/typespec/src/**/*.ts
       - pkg/apigen/typespec/lib/**/*.tsp
@@ -914,6 +917,7 @@ tasks:
     desc: Generate headless API contract artifacts and APIGen Go surfaces
     deps:
       - apigen:build
+      - dashboard-contracts:generate
     method: checksum
     run: once
     sources:
@@ -921,6 +925,7 @@ tasks:
       - api/apigen.yaml
       - api/typespec/**/*.tsp
       - api/visualization/**/*.tsp
+      - schemas/json/dashboard-document.schema.json
       - internal/app/tools/openapidocgen/**/*.go
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
@@ -977,6 +982,8 @@ tasks:
     sources:
       - Taskfile.yml
       - api/apigen.yaml
+      - api/dashboard/**/*.tsp
+      - api/visualization/**/*.tsp
       - internal/agent/contracts/typespec/**/*.tsp
       - internal/agent/contracts/generate/**/*.go
       - pkg/apigen/**/*.go

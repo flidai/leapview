@@ -4,6 +4,10 @@ Use a donut chart for part-to-whole comparisons that benefit from a central anno
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
+Donut presentation supports `rose`, `centerLabel`, `labelPosition`, `innerRadius`, and `outerRadius`. `innerRadius: 0` is the boundary that closes the center; use the pie visual when no center is needed.
+
+With outside conditional icon cues and a bottom legend, the chart reserves label columns as the card resizes. Authored radius proportions are retained within the available plot area; use a small category count to keep the cues readable.
+
 ## Basic
 
 Use one categorical dimension and one metric to show each status as a share of the whole.

@@ -13,7 +13,7 @@ func lowerCanonicalVisualSeries(query *LoweredDashboardQuery, visualType documen
 		return nil
 	}
 	switch visualType {
-	case document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar, document.DashboardVisualTypeColumn:
+	case document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar, document.DashboardVisualTypeColumn, document.DashboardVisualTypeRadar:
 	default:
 		return nil
 	}

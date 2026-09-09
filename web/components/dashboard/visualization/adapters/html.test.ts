@@ -64,6 +64,38 @@ test('HTML KPI formatting resolves semantic backgrounds, readable text, and redu
   })
 })
 
+test('HTML KPI conditional value formatting preserves null, first-match, default, and theme-safe cues', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'health', rendererID: 'html', specRevision: 'sha256:health-cues', dataRevision: 1,
+    spec: {
+      kind: 'kpi', title: 'Health', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: true, label: 'Health' }] }],
+      dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Health', description: 'Health' }, interactions: [],
+      conditionalFormatting: [{
+        id: 'value', target: 'kpi_value', field: { dataset: 'primary', field: 'value' },
+        rule: {
+          kind: 'rules',
+          rules: [
+            { operator: 'greater_or_equal', value: 0, style: { color: 'warning', icon: 'circle' } },
+            { operator: 'greater_or_equal', value: 80, style: { color: 'success', icon: 'arrow_up' } },
+          ],
+          nullStyle: { icon: 'warning' }, defaultStyle: { color: 'danger', icon: 'arrow_down' },
+        },
+      }],
+      value: { dataset: 'primary', field: 'value' },
+      presentation: { mode: 'compact', delta: 'absolute', favorableDirection: 'neutral', missingComparison: 'show_unavailable', ranges: [] },
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:health-cues', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:health-cues', dataRevision: 1, generation: 1, columns: ['value'], rows: [[null]], completeness: 'complete' }] },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+  const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, danger: '#ff7b72', attention: '#d29922', success: '#56d364' } }
+
+  expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ icon: '⚠', iconLabel: 'warning' })
+  envelope.dataState.datasets[0]!.rows = [[90]]
+  expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ valueColor: dark.colors.attention, icon: '●', iconLabel: 'circle' })
+  envelope.dataState.datasets[0]!.rows = [[-1]]
+  expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ valueColor: dark.colors.danger, icon: '↓', iconLabel: 'decreasing' })
+})
+
 test('HTML KPI layout requirements come only from explicitly configured features', () => {
   const envelope = {
     schemaVersion: 9, visualID: 'revenue', rendererID: 'html', specRevision: 'sha256:responsive', dataRevision: 1,
@@ -126,4 +158,22 @@ test('HTML KPI layout requirements come only from explicitly configured features
     layout: 'wide',
     minimum: { width: 320, height: 242 },
   })
+})
+
+test('HTML KPI status layout is driven by qualitative ranges', () => {
+  const envelope = {
+    schemaVersion: 14, visualID: 'revenue', rendererID: 'html', specRevision: 'sha256:status', dataRevision: 1,
+    spec: {
+      kind: 'kpi', title: 'Revenue', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' }] }],
+      dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Revenue', description: 'Revenue' }, interactions: [],
+      value: { dataset: 'primary', field: 'value' },
+      presentation: { mode: 'compact', delta: 'absolute', favorableDirection: 'neutral', missingComparison: 'show_unavailable', ranges: [] },
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:status', dataRevision: 1, generation: 1, datasets: [] },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+
+  expect(kpiLayoutFeatures(envelope)).not.toContain('status')
+  envelope.spec.presentation.ranges = [{ minimum: 0, maximum: 100, label: 'On track', tone: 'success' }]
+  expect(kpiLayoutFeatures(envelope)).toContain('status')
 })

@@ -1,4 +1,4 @@
-import type { Map as MapLibreMap } from 'maplibre-gl'
+import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl'
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 
 export type MapObservationStage = 'basemap_load' | 'layer_shape' | 'webgl_context_loss' | 'webgl_context_restored'
@@ -55,6 +55,74 @@ export function waitForMapIdle(map: MapLibreMap): Promise<void> {
 // visualization host permanently busy even though a useful frame is visible.
 export function waitForMapRender(map: MapLibreMap): Promise<void> {
   return waitForMapEvent(map, ['idle', 'render'], 2_000)
+}
+
+export function tiledRawPrecisionVisible(zoom: number, rawMinimumZoom: number): boolean {
+  return zoom >= rawMinimumZoom
+}
+
+/** A new tile capability is a new source generation; never reuse rendered tiles across it. */
+export function tiledSourceTransition(previousTileTemplate: string | undefined, nextTileTemplate: string): 'stable' | 'replace' {
+  return previousTileTemplate !== undefined && previousTileTemplate !== nextTileTemplate ? 'replace' : 'stable'
+}
+
+export function tiledSourceLifecycle(transition: 'stable' | 'replace', sourceUpdated: boolean): 'stable' | 'waiting' | 'error' {
+  if (!sourceUpdated) return 'error'
+  return transition === 'replace' ? 'waiting' : 'stable'
+}
+
+export function tiledSourceEventReady(event: { sourceId?: string; isSourceLoaded?: boolean; sourceDataType?: string }, sourceID: string | undefined): boolean {
+  return event.sourceId === sourceID && (event.sourceDataType === 'content' || event.isSourceLoaded === true)
+}
+
+export type TiledPrecisionLayerFamily = 'hidden' | 'raw' | 'aggregate'
+
+export function tiledPrecisionLayerFamily(transitioning: boolean, zoom: number, rawMinimumZoom: number): TiledPrecisionLayerFamily {
+  if (transitioning) return 'hidden'
+  return tiledRawPrecisionVisible(zoom, rawMinimumZoom) ? 'raw' : 'aggregate'
+}
+
+export function applyTiledPrecisionLayerVisibility(
+  target: Pick<MapLibreMap, 'getLayer' | 'setLayoutProperty'>,
+  rawLayerIDs: string[],
+  aggregateLayerIDs: string[],
+  family: TiledPrecisionLayerFamily,
+): void {
+  const rawVisible = family === 'raw'
+  const aggregateVisible = family === 'aggregate'
+  for (const id of rawLayerIDs) if (target.getLayer(id)) target.setLayoutProperty(id, 'visibility', rawVisible ? 'visible' : 'none')
+  for (const id of aggregateLayerIDs) if (target.getLayer(id)) target.setLayoutProperty(id, 'visibility', aggregateVisible ? 'visible' : 'none')
+}
+
+export function setMapStyleAndWait(map: Pick<MapLibreMap, 'setStyle' | 'on' | 'off'>, style: StyleSpecification): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const cleanup = () => {
+      if (timer !== undefined) clearTimeout(timer)
+      map.off('styledata', ready)
+      map.off('error', fail)
+      map.off('remove', removed)
+    }
+    const settle = (result: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      result()
+    }
+    const ready = () => settle(resolve)
+    const removed = () => settle(resolve)
+    const fail = (event: { error?: unknown }) => settle(() => reject(event.error instanceof Error ? event.error : new Error('MapLibre basemap style failed to load')))
+    map.on('styledata', ready)
+    map.on('error', fail)
+    map.on('remove', removed)
+    timer = setTimeout(() => settle(() => reject(new Error('Timed out waiting for MapLibre basemap style'))), 10_000)
+    try {
+      map.setStyle(style, { diff: false })
+    } catch (error) {
+      settle(() => reject(error))
+    }
+  })
 }
 
 function waitForMapEvent(map: MapLibreMap, events: Array<'idle' | 'render'>, timeoutMs: number): Promise<void> {

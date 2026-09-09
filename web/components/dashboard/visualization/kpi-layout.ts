@@ -16,7 +16,7 @@ export function kpiLayoutFeatures(envelope: VisualizationEnvelope): WidgetLayout
     ...(envelope.spec.comparison ? ['comparison' as const] : []),
     ...(presentation.mode === 'bullet' || presentation.mode === 'progress' ? ['progress' as const] : []),
     ...(envelope.spec.goal ? ['goal' as const] : []),
-    ...(presentation.ranges.length > 0 || (presentation.thresholds?.length ?? 0) > 0 ? ['status' as const] : []),
+    ...(presentation.ranges.length > 0 ? ['status' as const] : []),
     ...(envelope.spec.trend ? ['trend' as const] : []),
     ...(presentation.note ? ['note' as const] : []),
   ]

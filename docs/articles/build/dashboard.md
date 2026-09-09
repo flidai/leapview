@@ -86,6 +86,32 @@ Dimension and metric selections are ordered sequences of semantic members. The n
 
 Every chart query should have a bounded limit and deterministic sort. For time series, sort the time field ascending. For ranked bars, sort the value descending and choose a limit readers can scan. Do not rely on database default order.
 
+### Set series color and order
+
+Line, area, bar, column, and combo presentations can attach a renderer-neutral
+policy to a result series. `seriesIntent.value` is a compiled metric alias for
+multi-measure queries. Line, area, bar, and column category-series values may
+also be data-dependent and absent after filtering; combo intents are always
+compiled metric aliases.
+
+```yaml
+presentation:
+  type: cartesian
+  seriesIntent:
+    - {value: revenue, order: 0, color: data_1}
+    - {value: order_count, order: 1, color: data_2}
+```
+
+Explicit numeric orders render first, followed by orderless intents in authored
+sequence and then unconfigured query series. A single metric may declare a
+color, but cannot declare an order. Conditional color rules take precedence
+over `seriesIntent.color`, which takes precedence over the stable identity-bound
+palette. Values, orders, and colors are closed and validated during dashboard
+compilation. When dynamic category values have colliding string forms, use the
+displayed type-qualified name, such as `1 [number:1]`, to address one exactly.
+Null and missing dynamic categories use the displayed names `(null)` and
+`(undefined)`.
+
 ### Add a KPI
 
 KPI visuals use one metric and a typed KPI presentation:
