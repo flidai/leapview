@@ -2,6 +2,28 @@
 
 Tracking: [FAI-769](https://linear.app/flid/issue/FAI-769/reconcile-saved-data-exploration-with-current-main-and-prepare-green).
 
+## September 9 ResourceUID integration checkpoint
+
+Reconciliation now includes main `4b9ee86fb`: the released ResourceUID registry
+and hosted full-validation overlap. This supersedes the migration numbering in
+the historical checkpoints below. Released migrations 001–005 remain unchanged;
+only the unmerged saved-exploration migration moves from 005 to 006. Validation
+must cover a fresh installation and upgrade from released revision 5 to 6,
+preserving the ResourceUID registry.
+
+Development databases that already applied an earlier unmerged saved-exploration
+migration numbered 003 or 005 need migration-history inspection and explicit
+reconciliation before using this chain. No automatic history rewrite, live
+database migration, reset, or data transfer is included.
+
+The refresh-test merge preserves main's scoped, deterministic lease-expiration
+fixture and the additional publishing-fence concurrency regression. Main's CI
+overlap and the native application-test sharding correction are both retained.
+Canonical `task generate` passed. Both affected refresh tests passed three runs;
+independent review found no lost CI coverage or schema inputs. Full CI is pending;
+this checkpoint is not a green claim. PR #543 remains unmerged, with no force push
+or automatic merge enabled.
+
 ## September 9 hosted-CI follow-up
 
 On head `aa38ee0aa`, hosted Go application validation reached its package-wide

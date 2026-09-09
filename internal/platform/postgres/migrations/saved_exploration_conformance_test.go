@@ -16,8 +16,8 @@ import (
 )
 
 // This is intentionally an upgrade test, not a second schema unit test. It
-// applies the released control-plane migrations through revision four,
-// upgrades with 005, and then exercises the exact roles used by production
+// applies the released control-plane migrations through revision five,
+// upgrades with 006, and then exercises the exact roles used by production
 // pools. The checks around the upgrade ensure the dashboard builder's released
 // lock/evidence guards remain present while saved-exploration guards are added.
 func TestSavedExplorationMigrationUpgradeAndRoleBoundary(t *testing.T) {
@@ -56,19 +56,21 @@ func TestSavedExplorationMigrationUpgradeAndRoleBoundary(t *testing.T) {
 	}
 	ctx, cancel := contextWithTimeout(t)
 	defer cancel()
-	if _, err := provider.UpTo(ctx, 4); err != nil {
-		t.Fatalf("apply migrations through released revision four: %v", err)
+	if _, err := provider.UpTo(ctx, 5); err != nil {
+		t.Fatalf("apply migrations through released revision five: %v", err)
 	}
 	if current, target, err := provider.GetVersions(ctx); err != nil {
 		t.Fatal(err)
-	} else if current != 4 || target != platformmigrations.CurrentRevision {
-		t.Fatalf("pre-upgrade Goose versions = %d/%d, want 4/%d", current, target, platformmigrations.CurrentRevision)
+	} else if current != 5 || target != platformmigrations.CurrentRevision {
+		t.Fatalf("pre-upgrade Goose versions = %d/%d, want 5/%d", current, target, platformmigrations.CurrentRevision)
 	}
-	assertDashboardBuilderGuards(t, ctx, admin, "released revision four")
+	assertDashboardBuilderGuards(t, ctx, admin, "released revision five")
+	assertResourceUIDRegistry(t, ctx, admin, "released revision five")
 	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
-		t.Fatalf("upgrade to saved exploration revision five: %v", err)
+		t.Fatalf("upgrade to saved exploration revision six: %v", err)
 	}
-	assertDashboardBuilderGuards(t, ctx, admin, "saved exploration revision five")
+	assertDashboardBuilderGuards(t, ctx, admin, "saved exploration revision six")
+	assertResourceUIDRegistry(t, ctx, admin, "saved exploration revision six")
 	assertSavedExplorationGuards(t, ctx, admin)
 
 	// VerifyGoose is the startup read-only gate. It must succeed through the
@@ -184,6 +186,23 @@ func assertDashboardBuilderGuards(t *testing.T, ctx context.Context, db *pgxpool
 	}
 	if !builderLock || !builderEvidence {
 		t.Fatalf("%s dashboard builder guards = lock/evidence %t/%t", stage, builderLock, builderEvidence)
+	}
+}
+
+func assertResourceUIDRegistry(t *testing.T, ctx context.Context, db *pgxpool.Pool, stage string) {
+	t.Helper()
+	var registry, generation, inventory, tombstone, restore bool
+	if err := db.QueryRow(ctx, `
+		SELECT to_regclass('project.resource_uid_registry') IS NOT NULL,
+		       to_regclass('project.resource_uid_generation') IS NOT NULL,
+		       to_regclass('project.resource_uid_inventory') IS NOT NULL,
+		       to_regclass('project.resource_uid_tombstone') IS NOT NULL,
+		       to_regclass('project.resource_uid_restore_authorization') IS NOT NULL`).
+		Scan(&registry, &generation, &inventory, &tombstone, &restore); err != nil {
+		t.Fatalf("%s ResourceUID registry query: %v", stage, err)
+	}
+	if !registry || !generation || !inventory || !tombstone || !restore {
+		t.Fatalf("%s ResourceUID registry tables = registry/generation/inventory/tombstone/restore %t/%t/%t/%t/%t", stage, registry, generation, inventory, tombstone, restore)
 	}
 }
 

@@ -87,7 +87,10 @@ transactions, or deployment-history integration.
 
 FAI-662's sealed-input and coverage safeguards belong at this boundary. Its
 database publication-integrity requirements remain with publication storage.
-FAI-670 retains Project-qualified ResourceUID authority. FAI-645 remains a
+FAI-670 retains [Project-qualified ResourceUID authority](/docs/architecture/resource-uid-registry).
+Its inventory distinguishes canonical contract evidence from unversioned and
+non-contract-bearing resources; allocation does not invent publication authority.
+FAI-645 remains a
 downstream consumer; its cache, lifecycle, and audit implementation is not
 part of this reconciliation.
 

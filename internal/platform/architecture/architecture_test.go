@@ -3051,7 +3051,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Full merge validation",
 		"runs-on: ubuntu-24.04",
 		"uses: ./.github/actions/setup-ci",
-		"run: task ci:full:extras",
+		"run: task ci:full:extras:hosted",
 		"name: CI gate",
 		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation]",
 	} {

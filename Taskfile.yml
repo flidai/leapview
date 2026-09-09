@@ -1508,18 +1508,58 @@ tasks:
       - task: ci:full:extras
 
   ci:full:extras:
-    desc: Run merge-only validation on prepared inputs; hosted merge CI runs this alongside base lanes
+    desc: Run merge-only validation sequentially on prepared inputs for local and nightly CI
     cmds:
       - task: desktop:test
+      - task: ci:full:extras:static
+      - task: ci:full:extras:runtime:multinode
+      - task: qa:ui-framework
+      - task: ci:full:extras:runtime:tail
+
+  ci:full:extras:static:
+    internal: true
+    desc: Run static merge-only validation
+    cmds:
       - go vet ./...
       - go test -race ./pkg/...
       - task: quality:critical:race
       - task: test:workload:qualify
+
+  ci:full:extras:runtime:
+    internal: true
+    desc: Run runtime merge-only validation
+    cmds:
+      - task: ci:full:extras:runtime:multinode
+      - task: ci:full:extras:runtime:tail
+
+  ci:full:extras:parallel:
+    internal: true
+    desc: Run independent static and runtime validation concurrently
+    deps:
+      - task: ci:full:extras:static
+      - task: ci:full:extras:runtime
+
+  ci:full:extras:runtime:multinode:
+    internal: true
+    desc: Run container-backed PostgreSQL multinode validation
+    cmds:
       - task: test:go:postgres-multinode-qualification
-      - task: qa:ui-framework
+
+  ci:full:extras:runtime:tail:
+    internal: true
+    desc: Run deployment and object-backed runtime validation
+    cmds:
       - task: deploy:check
       - task: test:go:minio-conformance
       - task: test:go:plan-gc-conformance
+
+  ci:full:extras:hosted:
+    desc: Run merge-only validation with bounded hosted parallelism
+    cmds:
+      - task: desktop:test
+      - task: qa:ui-framework
+      - task: generate
+      - task: ci:full:extras:parallel
 
   ci:nightly:
     desc: Run exhaustive scheduled validation, including dependency security scans
