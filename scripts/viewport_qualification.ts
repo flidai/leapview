@@ -70,19 +70,34 @@ async function runSample(browser: Browser, baseURL: string, variant: ViewportQua
   try {
     await session.send('Performance.enable')
     await page.goto(`${baseURL}/${variant}/`, { waitUntil: 'load' })
-    await page.waitForFunction(({ count, margin, deferred }) => {
-      const dashboard = document.querySelector('lv-dashboard-page')
-      const hosts = [...(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])] as any[]
-      if (hosts.length !== count) return false
-      const near = hosts.filter((host) => {
-        const rect = host.getBoundingClientRect()
-        return rect.bottom >= -margin && rect.top <= innerHeight + margin && rect.right >= 0 && rect.left <= innerWidth
+    try {
+      await page.waitForFunction(({ count, margin, deferred }) => {
+        const dashboard = document.querySelector('lv-dashboard-page')
+        const hosts = [...(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])] as any[]
+        if (hosts.length !== count) return false
+        const near = hosts.filter((host) => {
+          const rect = host.getBoundingClientRect()
+          return rect.bottom >= -margin && rect.top <= innerHeight + margin && rect.right >= 0 && rect.left <= innerWidth
+        })
+        if (near.length === 0 || near.length >= count) return false
+        const required = deferred ? near : hosts
+        return required.every((host) => (host.shadowRoot?.querySelector('.renderer')?.childElementCount ?? 0) > 0
+          && !host.shadowRoot?.querySelector('[data-visualization-loading]'))
+      }, { count: viewportQualificationVisualCount, margin: marginPixels, deferred: variant === 'deferred' }, { timeout: 30_000 })
+    } catch (error) {
+      const state = await page.evaluate(() => {
+        const dashboard = document.querySelector('lv-dashboard-page') as any
+        const hosts = [...(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])] as any[]
+        return hosts.map((host) => ({
+          visualID: host.envelope?.visualID,
+          rendererChildren: host.shadowRoot?.querySelector('.renderer')?.childElementCount ?? 0,
+          loading: Boolean(host.shadowRoot?.querySelector('[data-visualization-loading]')),
+          error: host.shadowRoot?.querySelector('[role="alert"]')?.textContent?.trim() ?? '',
+          top: Math.round(host.getBoundingClientRect().top),
+        }))
       })
-      if (near.length === 0 || near.length >= count) return false
-      const required = deferred ? near : hosts
-      return required.every((host) => (host.shadowRoot?.querySelector('.renderer')?.childElementCount ?? 0) > 0
-        && !host.shadowRoot?.querySelector('[data-visualization-loading]'))
-    }, { count: viewportQualificationVisualCount, margin: marginPixels, deferred: variant === 'deferred' }, { timeout: 30_000 })
+      throw new Error(`initial readiness failed for ${variant} repetition ${repetition}: ${error instanceof Error ? error.message : String(error)}; browser errors=${JSON.stringify(errors)}; hosts=${JSON.stringify(state)}`)
+    }
     await page.evaluate(() => new Promise<void>((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame()))))
 
     const initial = await page.evaluate((margin) => {
