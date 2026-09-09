@@ -237,6 +237,59 @@ test('mounted deferred hosts retain current renderer, shell, and actions after s
   }
 })
 
+test('queued signals are announced only after their own renderer apply completes', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (window as any).__lvSourceHosts)
+    const result = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.deferMount = true
+      const initial = structuredClone((window as any).__lvSourceHosts.orders_chart.envelope)
+      initial.spec.accessibility = { ...initial.spec.accessibility, announceChanges: true }
+      host.envelope = initial
+      document.body.append(host)
+      await host.ensureMounted()
+      const releases: Record<number, () => void> = {}
+      const entered: Record<number, () => void> = {}
+      const entry = Object.fromEntries([2, 3].map((revision) => [revision, new Promise<void>((resolve) => { entered[revision] = resolve })]))
+      const apply = host.controller.apply.bind(host.controller)
+      host.controller.apply = async (envelope: any, context: any) => {
+        const paused = new Promise<void>((resolve) => { releases[envelope.dataRevision] = resolve })
+        entered[envelope.dataRevision]!()
+        await paused
+        await apply(envelope, context)
+      }
+      const update = (revision: number) => {
+        const next = structuredClone(initial)
+        next.dataRevision = revision
+        next.dataState.dataRevision = revision
+        for (const dataset of next.dataState.datasets) dataset.dataRevision = revision
+        host.envelope = next
+      }
+      update(2)
+      await entry[2]
+      update(3)
+      await host.updateComplete
+      releases[2]!()
+      await entry[3]
+      const during = { announcement: host.announcement, applying: host.applying }
+      releases[3]!()
+      await host.waitForApply()
+      const after = { announcement: host.announcement, revision: host.controller.envelope.dataRevision, applying: host.applying }
+      host.remove()
+      return { during, after }
+    })
+    expect(result.during.announcement).toBe('')
+    expect(result.during.applying).toBe(true)
+    expect(result.after.announcement).toContain('updated')
+    expect(result.after.revision).toBe(3)
+    expect(result.after.applying).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
 test('snapshot explicitly mounts a deferred host without an intersection callback', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

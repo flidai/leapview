@@ -71,6 +71,9 @@ export function validateViewportQualificationSample(sample: ViewportQualificatio
     if (!Number.isFinite(value) || value < 0) errors.push(`${name} must be a finite non-negative number`)
   }
   const near = sample.nearViewportVisualIDs
+  // The fixed 1280x820 fixture and 600px prefetch margin cover its first four
+  // rows of three visuals. Layout drift must not redefine success implicitly.
+  exactIDs('near-viewport fixture', near, expected.slice(0, 12), errors)
   if (near.length === 0 || near.length >= expected.length || near.some((id) => !expected.includes(id))) {
     errors.push('near-viewport identity must be a non-empty strict subset of expected visuals')
   }

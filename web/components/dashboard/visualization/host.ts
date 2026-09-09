@@ -280,25 +280,26 @@ export class VisualizationHost extends LitElement {
   }
 
   private async applyEnvelope(): Promise<void> {
-    if (!this.envelope || !this.controller) return
+    const envelope = this.envelope
+    if (!envelope || !this.controller) return
     const previous = this.controller.envelope
-    if (this.presentedRendererID !== this.envelope.rendererID) {
-      this.presentedRendererID = this.envelope.rendererID
+    if (this.presentedRendererID !== envelope.rendererID) {
+      this.presentedRendererID = envelope.rendererID
       this.presented = false
     }
     const generation = ++this.applyGeneration
     this.applying = true
     try {
-      await this.controller.apply(this.envelope, this.rendererContext())
-      if (generation === this.applyGeneration) {
+      await this.controller.apply(envelope, this.rendererContext())
+      if (generation === this.applyGeneration && envelope === this.envelope) {
         this.error = ''
         this.presented = true
-        this.announcement = visualizationChangeAnnouncement(previous, this.envelope)
+        this.announcement = visualizationChangeAnnouncement(previous, envelope)
       }
     } catch (error) {
-      if (generation === this.applyGeneration) this.error = error instanceof Error ? error.message : String(error)
+      if (generation === this.applyGeneration && envelope === this.envelope) this.error = error instanceof Error ? error.message : String(error)
     } finally {
-      if (generation === this.applyGeneration) this.applying = false
+      if (generation === this.applyGeneration && envelope === this.envelope) this.applying = false
     }
   }
 

@@ -105,4 +105,14 @@ describe('viewport qualification evidence', () => {
     expect(viewportObservationError({ stage: 'adapter_error', durationMs: 1, visualID: 'visual-1' })).toContain('adapter_error')
     expect(viewportObservationError({ stage: 'validation_failure', durationMs: 1, visualID: 'visual-1' })).toContain('validation_failure')
   })
+
+  test('rejects geometry drift and duplicate near-viewport identities', () => {
+    for (const nearIDs of [ids.slice(0, 9), [...near.slice(0, 11), near[0]!]]) {
+      const invalid = sample('deferred')
+      invalid.nearViewportVisualIDs = nearIDs
+      invalid.initialMountVisualIDs = nearIDs
+      invalid.scrollNewMountVisualIDs = ids.filter((id) => !nearIDs.includes(id))
+      expect(validateViewportQualificationSample(invalid).join('\n')).toContain('near-viewport fixture')
+    }
+  })
 })
