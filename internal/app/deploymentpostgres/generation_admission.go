@@ -21,8 +21,10 @@ import (
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
 	"github.com/flidai/leapview/internal/manageddata"
+	project "github.com/flidai/leapview/internal/project"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	"github.com/flidai/leapview/internal/release"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -68,6 +70,9 @@ type GenerationAdmissionInput struct {
 	// transaction before this evidence is retained.
 	Provenance release.ProvenanceInput
 	Graph      projectgraph.ProjectGraph
+	// ResourceInventory is derived from the same verified portable artifact.
+	// It is retained at admission but cannot allocate a ResourceUID.
+	ResourceInventory project.ResourceUIDInventory
 }
 
 // CommitEvidence is the immutable attempt completion proof written by the
@@ -408,6 +413,15 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	if err := verifyBundle(bundle, normalized); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
+	// Retain the complete sealed inventory in the same admission transaction.
+	// This does not allocate UIDs: the database activation transition consumes
+	// this immutable evidence only when the generation becomes authoritative.
+	if err := projectpostgres.New(tx).AdmitResourceUIDInventoryTx(ctx, tx,
+		normalized.Generation.TargetID, normalized.Bundle.ProjectID.String(),
+		string(normalized.Bundle.Environment), normalized.Generation.GenerationID,
+		normalized.ResourceInventory); err != nil {
+		return GenerationAdmissionResult{}, fmt.Errorf("admit resource inventory: %w", err)
+	}
 	identity, err := projectgraph.NewServingIdentity(normalized.Bundle.ProjectID, string(normalized.Bundle.Environment), normalized.Generation.GenerationID)
 	if err != nil {
 		return GenerationAdmissionResult{}, err
@@ -689,6 +703,12 @@ func normalizeInput(input GenerationAdmissionInput) (GenerationAdmissionInput, e
 	}
 	if ctx.Generation.CompiledGraphDigest != ctx.Graph.Digest() {
 		return GenerationAdmissionInput{}, conflict("generation and graph digests differ")
+	}
+	if _, err := ctx.ResourceInventory.JSON(); err != nil {
+		return GenerationAdmissionInput{}, fmt.Errorf("%w: resource inventory: %v", deploymentnative.ErrInvalid, err)
+	}
+	if ctx.ResourceInventory.GraphDigest() != ctx.Graph.Digest() || ctx.ResourceInventory.BundleDigest() != ctx.Bundle.ProjectDigest {
+		return GenerationAdmissionInput{}, conflict("resource inventory and generation artifact differ")
 	}
 	if ctx.Bundle.Artifact.Digest != ctx.Generation.ServingArtifactDigest || ctx.Bundle.Artifact.Digest != ctx.Seal.ServingArtifactDigest {
 		return GenerationAdmissionInput{}, conflict("artifact and generation digests differ")

@@ -3,6 +3,7 @@ package migrations_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/internal/recoveryset"
 	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -339,6 +341,34 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if _, err := runtimeConn.Exec(ctx, `SET ROLE leapview_control_runtime`); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("ResourceUID runtime is read and admission only", func(t *testing.T) {
+		for _, table := range []string{"resource_uid_registry", "resource_uid_generation", "resource_uid_inventory", "resource_uid_tombstone", "resource_uid_restore_authorization"} {
+			if _, err := runtimeConn.Exec(ctx, "SELECT * FROM project."+table+" LIMIT 0"); err != nil {
+				t.Fatalf("runtime read %s: %v", table, err)
+			}
+			for _, statement := range []string{"INSERT INTO project." + table + " DEFAULT VALUES", "DELETE FROM project." + table, "TRUNCATE project." + table} {
+				_, err := runtimeConn.Exec(ctx, statement)
+				var denied *pgconn.PgError
+				if !errors.As(err, &denied) || denied.Code != "42501" {
+					t.Fatalf("runtime mutation must fail for privilege denial: %s: %v", statement, err)
+				}
+			}
+		}
+		for _, statement := range []string{
+			"SELECT project.bind_resource_uid_generation(NULL)",
+			"SELECT project.authorize_resource_uid_restore(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)",
+		} {
+			_, err := runtimeConn.Exec(ctx, statement)
+			var denied *pgconn.PgError
+			if !errors.As(err, &denied) || denied.Code != "42501" {
+				t.Fatalf("runtime authority must fail for privilege denial: %s: %v", statement, err)
+			}
+		}
+		var canAdmit bool
+		if err := runtimeConn.QueryRow(ctx, `SELECT has_function_privilege(current_user, 'project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb)', 'EXECUTE')`).Scan(&canAdmit); err != nil || !canAdmit {
+			t.Fatalf("runtime inventory admission capability missing: allowed=%t error=%v", canAdmit, err)
+		}
+	})
 	var lockedTarget, lockedKind, lockedState string
 	if err := runtimeConn.QueryRow(ctx, `SELECT target_id,root_kind,state FROM delivery.lock_retention_root($1::uuid)`, retentionLockRoot).Scan(&lockedTarget, &lockedKind, &lockedState); err != nil {
 		t.Fatalf("runtime retention-root lock capability: %v", err)

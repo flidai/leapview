@@ -92,7 +92,12 @@ sql:
 
   - engine: "postgresql"
     queries: "internal/project/postgres/queries"
-    schema: "internal/project/postgres/schema.sql"
+    schema:
+      - "internal/project/postgres/schema.sql"
+      - "internal/platform/bootstrap/postgres/schema.sql"
+      - "internal/deployment/postgres/schema.sql"
+      - "internal/servingstate/postgres/schema.sql"
+      - "internal/project/postgres/resource_uid_schema.sql"
     gen:
       go:
         package: "db"
