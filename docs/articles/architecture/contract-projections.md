@@ -86,10 +86,12 @@ already-canonical bytes; it does not project, serialize, or hash resources.
 The separate `contractpublication` domain binds an explicit genesis or exact
 existing baseline to the candidate profile, authored identity, version,
 canonical bytes, digest, validation checks, compatibility/security result, and
-any required widening approval. PostgreSQL appends and replays that evidence
-through caller-owned transactions. Reusing a version with different bytes,
-using a stale or mismatched baseline, omitting required widening approval, or
-reading tampered evidence fails closed.
+the directly published affected-resource identity, and any required widening
+approval. The direct identity is the immutable seed for later Project-owned
+dependency-graph expansion; it does not claim to contain the consumer graph.
+PostgreSQL appends and replays that evidence through caller-owned transactions.
+Reusing a version with different bytes, using a stale or mismatched baseline,
+omitting required widening approval, or reading tampered evidence fails closed.
 
 Publication does not authorize activation. The approval evidence is an exact,
 bounded input to later deployment policy, not an approval workflow or a

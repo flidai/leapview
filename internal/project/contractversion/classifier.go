@@ -455,15 +455,15 @@ func classifyChange(before, after document, change rawChange) Change {
 		} else {
 			classified.Class, classified.Compatibility, classified.RequiresMajor, classified.Reason = Breaking, CompatibilityBreaking, true, "published field removed"
 		}
-	case strings.HasSuffix(change.Path, ".datatype"):
+	case datatypePath(after.Kind, change.Path):
 		classified.Class, classified.Compatibility, classified.RequiresMajor, classified.Reason = Breaking, CompatibilityBreaking, true, "logical datatype changed"
-	case strings.HasSuffix(change.Path, ".nullable"):
+	case nullablePath(after.Kind, change.Path):
 		if nullabilityStrengthened(change) {
 			classified.Class, classified.Compatibility, classified.Reason = Compatible, CompatibilityAdditive, "field strengthened from nullable to non-null"
 		} else {
 			classified.Class, classified.Compatibility, classified.RequiresMajor, classified.Reason = Breaking, CompatibilityBreaking, true, "field may now return null"
 		}
-	case behavioralMetadataPath(change.Path):
+	case behavioralMetadataPath(after.Kind, change.Path):
 		classified.Class, classified.Compatibility, classified.Reason = Warning, CompatibilityBehavioral, "behavioral or governance metadata changed"
 	case semanticMemberRoot(change.Path):
 		if change.Operation == OperationAdded {

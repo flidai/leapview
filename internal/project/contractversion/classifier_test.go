@@ -1,6 +1,7 @@
 package contractversion
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -100,6 +101,88 @@ func TestClassifySecurityTighteningWideningMixedAndIndeterminate(t *testing.T) {
 	}
 	if result.SecurityImpact != SecurityIndeterminate || result.Compatibility != CompatibilityBreaking || !result.RequiresMajor || !result.RequiresSecurityApproval {
 		t.Fatalf("indeterminate classification = %#v", result)
+	}
+}
+
+func TestClassifySemanticProtectedMemberNamesStructurally(t *testing.T) {
+	tests := []struct {
+		collection string
+		name       string
+		value      string
+	}{
+		{collection: "datasets", name: "nullable", value: `{"model":"model:orders"}`},
+		{collection: "datasets", name: "datatype", value: `{"model":"model:orders"}`},
+		{collection: "datasets", name: "classification", value: `{"model":"model:orders"}`},
+		{collection: "datasets", name: "requiredAccessGrants", value: `{"model":"model:orders"}`},
+		{collection: "datasets", name: "accessFilters", value: `{"model":"model:orders"}`},
+		{collection: "dimensions", name: "nullable", value: `{"bindings":{},"datatype":"String"}`},
+		{collection: "dimensions", name: "datatype", value: `{"bindings":{},"datatype":"String"}`},
+		{collection: "dimensions", name: "classification", value: `{"bindings":{},"datatype":"String"}`},
+		{collection: "dimensions", name: "requiredAccessGrants", value: `{"bindings":{},"datatype":"String"}`},
+		{collection: "dimensions", name: "accessFilters", value: `{"bindings":{},"datatype":"String"}`},
+		{collection: "metrics", name: "nullable", value: `{"aggregation":"count","dataset":"orders","empty":"zero","input":{"field":"orders.id"},"type":"aggregate"}`},
+		{collection: "metrics", name: "datatype", value: `{"aggregation":"count","dataset":"orders","empty":"zero","input":{"field":"orders.id"},"type":"aggregate"}`},
+		{collection: "metrics", name: "classification", value: `{"aggregation":"count","dataset":"orders","empty":"zero","input":{"field":"orders.id"},"type":"aggregate"}`},
+		{collection: "metrics", name: "requiredAccessGrants", value: `{"aggregation":"count","dataset":"orders","empty":"zero","input":{"field":"orders.id"},"type":"aggregate"}`},
+		{collection: "metrics", name: "accessFilters", value: `{"aggregation":"count","dataset":"orders","empty":"zero","input":{"field":"orders.id"},"type":"aggregate"}`},
+	}
+
+	baseline := semanticMemberDocument("1.0.0", "", "", "")
+	for _, test := range tests {
+		t.Run(test.collection+"/"+test.name, func(t *testing.T) {
+			candidate := semanticMemberDocument("1.1.0", test.collection, test.name, test.value)
+			result, err := Classify(baseline, candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Changes) != 1 {
+				t.Fatalf("changes = %#v", result.Changes)
+			}
+			change := result.Changes[0]
+			if change.Path != "contract."+test.collection+"."+test.name || change.Domain != DomainSemantic || change.Class != SecuritySensitive || change.Compatibility != CompatibilityAdditive || change.SecurityImpact != SecurityWidening || change.RequiresMajor {
+				t.Fatalf("change = %#v", change)
+			}
+			if !result.RequiresSecurityApproval || result.SecurityImpact != SecurityWidening {
+				t.Fatalf("result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestClassifyNamedSemanticFilterIsNotSecurityWidening(t *testing.T) {
+	baseline := semanticMemberDocument("1.0.0", "", "", "")
+	candidate := semanticMemberDocument("1.1.0", "filters", "accessFilters", `{"field":"orders.id","operator":"is_null"}`)
+	result, err := Classify(baseline, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Class != Compatible || result.Compatibility != CompatibilityAdditive || result.SemanticCompatibility != CompatibilityAdditive || result.SecurityImpact != SecurityNone || result.RequiresSecurityApproval || result.RequiresMajor {
+		t.Fatalf("named filter classification = %#v", result)
+	}
+	if len(result.Changes) != 1 || result.Changes[0].Path != "contract.filters.accessFilters" || result.Changes[0].Domain != DomainSemantic {
+		t.Fatalf("named filter changes = %#v", result.Changes)
+	}
+}
+
+func TestClassifySemanticNestedFieldsRetainLeafSemantics(t *testing.T) {
+	base := semanticMemberDocument("1.0.0", "dimensions", "classification", `{"bindings":{},"datatype":"String"}`)
+	candidate := semanticMemberDocument("2.0.0", "dimensions", "classification", `{"bindings":{},"datatype":"Integer"}`)
+	result, err := Classify(base, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Changes) != 1 || result.Changes[0].Path != "contract.dimensions.classification.datatype" || result.Changes[0].Class != Breaking || result.Changes[0].Compatibility != CompatibilityBreaking || !result.Changes[0].RequiresMajor || result.Changes[0].SecurityImpact != SecurityNone {
+		t.Fatalf("nested datatype classification = %#v", result)
+	}
+
+	base = semanticMemberDocument("1.0.0", "datasets", "accessFilters", `{"model":"model:orders"}`)
+	candidate = semanticMemberDocument("2.0.0", "datasets", "accessFilters", `{"model":"model:orders","accessFilters":[{"field":"id","userAttribute":"region"}]}`)
+	result, err = Classify(base, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Changes) != 1 || result.Changes[0].Path != "contract.datasets.accessFilters.accessFilters" || result.Changes[0].Class != SecuritySensitive || result.Changes[0].Compatibility != CompatibilityBreaking || result.Changes[0].SecurityImpact != SecurityTightening || !result.Changes[0].RequiresMajor {
+		t.Fatalf("nested access filter classification = %#v", result)
 	}
 }
 
@@ -244,4 +327,49 @@ func semanticDocument(version string, required bool, userAttribute, allowed stri
 		requiredGrant = `,"requiredAccessGrants":["region_access"]`
 	}
 	return []byte(fmt.Sprintf(`{"apiVersion":"leapview.dev/v1","contract":{"accessGrants":{"region_access":{"allowedValues":%s,"userAttribute":"%s"}},"datasets":{"orders":{"model":"model:orders"%s}},"metrics":{"order_count":{"aggregation":"count","dataset":"orders","empty":"zero","input":{"field":"orders.id"},"type":"aggregate"}}},"kind":"SemanticModel","metadata":{"contract":{"compatibility":"backward","version":"%s"},"id":"semantic-model:sales","name":"sales"},"profile":"leapview.contract/v1"}`, allowed, userAttribute, requiredGrant, version))
+}
+
+func semanticMemberDocument(version, collection, name, value string) []byte {
+	contract := map[string]any{
+		"datasets": map[string]any{
+			"orders": map[string]any{"model": "model:orders"},
+		},
+		"metrics": map[string]any{
+			"order_count": map[string]any{
+				"aggregation": "count",
+				"dataset":     "orders",
+				"empty":       "zero",
+				"input":       map[string]any{"field": "orders.id"},
+				"type":        "aggregate",
+			},
+		},
+	}
+	if collection != "" {
+		var decoded any
+		if err := json.Unmarshal([]byte(value), &decoded); err != nil {
+			panic(err)
+		}
+		members, ok := contract[collection].(map[string]any)
+		if !ok {
+			members = map[string]any{}
+			contract[collection] = members
+		}
+		members[name] = decoded
+	}
+	document := map[string]any{
+		"apiVersion": "leapview.dev/v1",
+		"contract":   contract,
+		"kind":       "SemanticModel",
+		"metadata": map[string]any{
+			"contract": map[string]any{"compatibility": "backward", "version": version},
+			"id":       "semantic-model:sales",
+			"name":     "sales",
+		},
+		"profile": "leapview.contract/v1",
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		panic(err)
+	}
+	return encoded
 }

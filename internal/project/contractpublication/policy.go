@@ -53,6 +53,7 @@ type PolicyEvidence struct {
 	Candidate                PublicationIdentity      `json:"candidate"`
 	Classification           contractversion.Result   `json:"classification"`
 	RequiresSecurityApproval bool                     `json:"requiresSecurityApproval"`
+	AffectedResources        []PolicyAffectedResource `json:"affectedResources"`
 	ChangedDimensions        []contractversion.Domain `json:"changedDimensions"`
 	EvidenceDigest           string                   `json:"evidenceDigest"`
 }
@@ -110,6 +111,7 @@ func DerivePolicyEvidence(context PolicyContext, candidate ContractPublication) 
 		Baseline: baselineIdentity, Candidate: candidate.Identity(),
 		Classification:           cloneClassification(classification),
 		RequiresSecurityApproval: classification.SecurityImpact == contractversion.SecurityWidening,
+		AffectedResources:        directAffectedResources(candidate.Identity()),
 		ChangedDimensions:        changedDimensions(classification),
 	}
 	if classification.RequiresSecurityApproval != evidence.RequiresSecurityApproval {
@@ -168,6 +170,9 @@ func (e PolicyEvidence) Validate() error {
 	if e.RequiresSecurityApproval != wantApproval || e.Classification.RequiresSecurityApproval != wantApproval {
 		return fmt.Errorf("%w: security approval requirement is not derived", ErrInvalidPolicy)
 	}
+	if !equalAffectedResources(e.AffectedResources, directAffectedResources(e.Candidate)) {
+		return fmt.Errorf("%w: affected resources are not the exact published resource", ErrInvalidPolicy)
+	}
 	wantDimensions := changedDimensions(e.Classification)
 	if !equalDomains(wantDimensions, e.ChangedDimensions) {
 		return fmt.Errorf("%w: changed dimensions are not derived", ErrInvalidPolicy)
@@ -206,6 +211,7 @@ func (e PolicyEvidence) computeDigest() (string, error) {
 		Version: e.Version, BaselineKind: e.BaselineKind, Baseline: e.Baseline,
 		Candidate: e.Candidate, Classification: e.Classification,
 		RequiresSecurityApproval: e.RequiresSecurityApproval,
+		AffectedResources:        e.AffectedResources,
 		ChangedDimensions:        e.ChangedDimensions,
 	})
 }
@@ -217,6 +223,7 @@ type policyEvidenceDigestPayload struct {
 	Candidate                PublicationIdentity      `json:"candidate"`
 	Classification           contractversion.Result   `json:"classification"`
 	RequiresSecurityApproval bool                     `json:"requiresSecurityApproval"`
+	AffectedResources        []PolicyAffectedResource `json:"affectedResources"`
 	ChangedDimensions        []contractversion.Domain `json:"changedDimensions"`
 }
 
@@ -225,9 +232,18 @@ func (e PolicyEvidence) Dimensions() []contractversion.Domain {
 	return append([]contractversion.Domain(nil), e.ChangedDimensions...)
 }
 
+// Affected returns the immutable direct-resource seed consumed by graph-owned
+// dependency planning. It never claims to be an exhaustive consumer graph.
+func (e PolicyEvidence) Affected() []PolicyAffectedResource {
+	return append([]PolicyAffectedResource(nil), e.AffectedResources...)
+}
+
 // Clone returns a defensive copy of policy evidence.
 func (e PolicyEvidence) Clone() PolicyEvidence {
 	e.Classification = cloneClassification(e.Classification)
+	if e.AffectedResources != nil {
+		e.AffectedResources = append(make([]PolicyAffectedResource, 0, len(e.AffectedResources)), e.AffectedResources...)
+	}
 	if e.ChangedDimensions != nil {
 		e.ChangedDimensions = append(make([]contractversion.Domain, 0, len(e.ChangedDimensions)), e.ChangedDimensions...)
 	}

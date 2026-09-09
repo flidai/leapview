@@ -54,7 +54,7 @@ func classifySecurityChange(before, after document, change rawChange) Change {
 		classified.RequiresMajor = true
 		classified.SecurityImpact = SecurityIndeterminate
 		classified.Reason = "security attribute transition cannot be classified without registry evidence"
-	case strings.Contains(change.Path, "allowedValues"):
+	case accessGrantAllowedValuesPath(change.Path):
 		switch classified.SecurityImpact {
 		case SecurityWidening:
 			classified.Compatibility = CompatibilityBehavioral
@@ -69,7 +69,7 @@ func classifySecurityChange(before, after document, change rawChange) Change {
 			classified.RequiresMajor = true
 			classified.Reason = securityReason(classified.SecurityImpact)
 		}
-	case strings.Contains(change.Path, "requiredAccessGrants") || strings.Contains(change.Path, "accessFilters"):
+	case semanticRequiredAccessGrantsPath(change.Path) || semanticAccessFiltersPath(change.Path):
 		switch classified.SecurityImpact {
 		case SecurityTightening:
 			classified.Compatibility = CompatibilityBreaking
@@ -152,7 +152,7 @@ func validateChange(change Change) error {
 	}
 	if change.SecurityImpact != SecurityNone {
 		semanticWidening := change.Domain == DomainSemantic && change.Class == SecuritySensitive &&
-			change.Operation == OperationAdded && semanticMemberRoot(change.Path)
+			change.Operation == OperationAdded && semanticProtectedMemberRoot(change.Path)
 		if change.Class != SecuritySensitive || change.Domain != DomainSecurity && !semanticWidening {
 			return errors.New("security impact is inconsistent with change domain or class")
 		}
@@ -206,7 +206,37 @@ func mergeSecurityImpact(left, right SecurityImpact) SecurityImpact {
 }
 
 func securityPath(path string) bool {
-	return strings.Contains(path, ".requiredAccessGrants") || strings.Contains(path, ".accessFilters") || strings.HasPrefix(path, "contract.accessGrants.")
+	return semanticAccessGrantPath(path) || semanticRequiredAccessGrantsPath(path) || semanticAccessFiltersPath(path)
+}
+
+func semanticAccessGrantPath(path string) bool {
+	parts := strings.Split(path, ".")
+	return len(parts) >= 3 && parts[0] == "contract" && parts[1] == "accessGrants"
+}
+
+func accessGrantAllowedValuesPath(path string) bool {
+	return semanticMemberFieldPath(path, "accessGrants", "allowedValues")
+}
+
+func accessGrantUserAttributePath(path string) bool {
+	return semanticMemberFieldPath(path, "accessGrants", "userAttribute")
+}
+
+func semanticRequiredAccessGrantsPath(path string) bool {
+	parts := strings.Split(path, ".")
+	if len(parts) != 4 || parts[0] != "contract" || parts[3] != "requiredAccessGrants" {
+		return false
+	}
+	switch parts[1] {
+	case "datasets", "dimensions", "metrics":
+		return true
+	default:
+		return false
+	}
+}
+
+func semanticAccessFiltersPath(path string) bool {
+	return semanticMemberFieldPath(path, "datasets", "accessFilters")
 }
 
 func wholeAccessGrantChange(path string) bool {
@@ -218,9 +248,9 @@ func securityImpact(change rawChange) SecurityImpact {
 	switch {
 	case securityAttributeTransition(change.Path) || accessFilterFieldTransition(change):
 		return SecurityIndeterminate
-	case strings.Contains(change.Path, "allowedValues"):
+	case accessGrantAllowedValuesPath(change.Path):
 		return setImpact(change, SecurityWidening, SecurityTightening)
-	case strings.Contains(change.Path, "requiredAccessGrants"), strings.Contains(change.Path, "accessFilters"):
+	case semanticRequiredAccessGrantsPath(change.Path), semanticAccessFiltersPath(change.Path):
 		return setImpact(change, SecurityTightening, SecurityWidening)
 	case change.Operation == OperationAdded:
 		return SecurityTightening
@@ -232,17 +262,14 @@ func securityImpact(change rawChange) SecurityImpact {
 }
 
 func securityAttributeTransition(path string) bool {
-	if strings.HasPrefix(path, "contract.accessGrants.") && strings.HasSuffix(path, ".userAttribute") {
-		return true
-	}
-	if strings.Contains(path, ".accessFilters.") && (strings.HasSuffix(path, ".field") || strings.HasSuffix(path, ".userAttribute")) {
+	if accessGrantUserAttributePath(path) {
 		return true
 	}
 	return false
 }
 
 func accessFilterFieldTransition(change rawChange) bool {
-	if !strings.Contains(change.Path, ".accessFilters") || change.Operation != OperationModified {
+	if !semanticAccessFiltersPath(change.Path) || change.Operation != OperationModified {
 		return false
 	}
 	before, beforeOK := change.Before.([]any)
@@ -264,7 +291,7 @@ func accessFilterFieldTransition(change rawChange) bool {
 }
 
 func unprotectedSemanticMember(kind, path string, value any) bool {
-	if kind != "SemanticModel" || !semanticMemberRoot(path) || strings.HasPrefix(path, "contract.relationships.") {
+	if kind != "SemanticModel" || !semanticProtectedMemberRoot(path) {
 		return false
 	}
 	object, ok := value.(map[string]any)
@@ -359,6 +386,29 @@ func fieldRootChange(kind, path string) bool {
 	return kind == "Model" && len(parts) == 3 && parts[0] == "contract" && parts[1] == "fields"
 }
 
+func datatypePath(kind, path string) bool {
+	if contractFieldPath(kind, path, "datatype") {
+		return true
+	}
+	return kind == "SemanticModel" && semanticMemberFieldPath(path, "dimensions", "datatype")
+}
+
+func nullablePath(kind, path string) bool {
+	return contractFieldPath(kind, path, "nullable")
+}
+
+func contractFieldPath(kind, path, field string) bool {
+	parts := strings.Split(path, ".")
+	switch kind {
+	case "Source":
+		return len(parts) == 5 && parts[0] == "contract" && parts[1] == "schema" && parts[2] == "fields" && parts[4] == field
+	case "Model":
+		return len(parts) == 4 && parts[0] == "contract" && parts[1] == "fields" && parts[3] == field
+	default:
+		return false
+	}
+}
+
 func nullableField(value any) bool {
 	object, _ := value.(map[string]any)
 	nullable, _ := object["nullable"].(bool)
@@ -394,8 +444,35 @@ func semanticMemberRoot(path string) bool {
 	}
 }
 
-func behavioralMetadataPath(path string) bool {
-	return strings.HasPrefix(path, "contract.freshness") || strings.HasPrefix(path, "contract.checks") || strings.Contains(path, ".authoritativeDefinitions") || strings.Contains(path, ".deprecation") || strings.HasSuffix(path, ".criticalDataElement") || strings.HasSuffix(path, ".classification")
+func semanticMemberFieldPath(path, collection, field string) bool {
+	parts := strings.Split(path, ".")
+	return len(parts) == 4 && parts[0] == "contract" && parts[1] == collection && parts[3] == field
+}
+
+func semanticProtectedMemberRoot(path string) bool {
+	parts := strings.Split(path, ".")
+	if len(parts) != 3 || parts[0] != "contract" {
+		return false
+	}
+	switch parts[1] {
+	case "datasets", "dimensions", "metrics":
+		return true
+	default:
+		return false
+	}
+}
+
+func behavioralMetadataPath(kind, path string) bool {
+	if kind == "Source" && (path == "contract.freshness" || strings.HasPrefix(path, "contract.freshness.")) {
+		return true
+	}
+	if kind == "Model" && (path == "contract.checks" || strings.HasPrefix(path, "contract.checks.")) {
+		return true
+	}
+	return contractFieldPath(kind, path, "authoritativeDefinitions") ||
+		contractFieldPath(kind, path, "deprecation") ||
+		contractFieldPath(kind, path, "criticalDataElement") ||
+		contractFieldPath(kind, path, "classification")
 }
 
 func securityReason(impact SecurityImpact) string {
