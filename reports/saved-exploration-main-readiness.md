@@ -17,7 +17,30 @@ RecoverySet v3 objects and role boundaries. Canonical generation passed; require
 PostgreSQL migration tests passed (34.100s), and both affected refresh tests passed
 three runs (25.381s). The refresh resolution matches main's stronger independent
 lock-probe regression and removes superseded polling helpers. Root reviewed both
-delegated resolutions and the automatic schema/baseline merge. Full CI is pending.
+delegated resolutions and the automatic schema/baseline merge.
+
+Full `task ci` on merge `c7c091bb9` passed all Go/native packages, core frontend,
+reports, and chat, then stopped in the data shard on an admin-browser custom-element
+startup timeout (overall exit 201). Subsequent tests failed because the browser
+had closed. A fresh admin run timed out at a different component startup; the
+isolated test passed three runs. Two instrumented complete admin runs passed
+(21 tests each), with no page/console errors, failed requests, missing assets,
+or observed crashes; diagnostics were removed. The unmodified complete data
+shard then passed. The site shard separately hit a five-second startup timeout
+and browser-closure cascade; a fresh unchanged full site run passed all 53 tests.
+Shared-host load was approximately 38 runnable tasks across 16 CPUs, a possible
+contributor but not a proven root cause. No timeout, assertion, or product change
+was made to hide these failures. Browser startup reliability remains a caveat.
+
+All constituent local CI stages passed, including generated-file checks, but
+the original complete invocation exited 201, not 0. Native application shards
+passed in 72.326s, 86.782s, 94.919s, and 97.117s. Exact-head hosted checks remain
+pending; PR #543 remains unmerged with auto-merge disabled.
+Evidence: `/tmp/fai769-recovery-merge-ci.log`,
+`/tmp/fai769-recovery-merge-generated-check.log`,
+`/tmp/fai769-admin-diagnostic-1.log`, `/tmp/fai769-admin-diagnostic-2.log`,
+`/tmp/fai769-recovery-browser-remaining.log` (data passed; site failed), and
+`/tmp/fai769-recovery-site-rerun.log` (site passed).
 
 Development databases that applied earlier unmerged saved-exploration migrations
 003, 005, or 006 require migration-history inspection and explicit reconciliation;
@@ -32,8 +55,8 @@ but became behind. A subsequent normal merge includes that security-boundary
 change without modifying its guards. Focused Project and SavedExploration tests
 passed in access/module, app, analytics/cache, and app/api/protocol. The prior
 full-CI success below validates the preceding merge; combined full CI for this
-base subsequently passed, as recorded above. No merge into main, force push, or live database operation
-is authorized or performed.
+base subsequently passed, as recorded above. No merge into main, force push,
+or live database operation is authorized or performed.
 
 ## September 9 ResourceUID integration checkpoint
 
