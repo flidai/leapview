@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
+import { hasMixedSpatialPrecision } from '../../../../../scripts/spatial_precision_summary'
 import { aggregateExpansionCamera, applyBasemapTheme, applyDataLabelTheme, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, dataLabelLayerID, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapDataLabelColors, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setMapStyleAndWait, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPointLabelFilter, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
@@ -26,10 +27,13 @@ test('MapLibre reserves a non-overlapping mobile attribution band for accessible
   expect(mapOverlaysNeedStacking(680, 150, 470)).toBe(false)
   expect(mapOverlaysNeedStacking(680, 150, 520)).toBe(true)
   expect(mapVisibleDataSummary(8, 8, 0, 14_833)).toEqual({
-    label: 'View map data (8 cells)',
-    accessibleLabel: 'View visible map data (8 visible aggregate cells; 14833 total coordinates)',
+    label: 'View map data (8 features)',
+    accessibleLabel: 'View visible map data (8 visible aggregate-resolution features; 14833 total coordinates)',
   })
-  expect(mapVisibleDataSummary(12, 1, 11, 14_833).label).toBe('View map data (12 features)')
+  expect(mapVisibleDataSummary(12, 1, 11, 14_833)).toEqual({
+    label: 'View map data (12 features)',
+    accessibleLabel: 'View visible map data (12 visible features: 11 raw points, 1 aggregate-resolution feature; 14833 total coordinates)',
+  })
 })
 
 test('MapLibre geometry assets are same-origin and content addressed', async () => {
@@ -353,7 +357,17 @@ test('MapLibre aggregate tooltip items keep the precision context and authored m
   envelope.spec.layers[0].tooltipItems = [{ field: { dataset: 'primary', field: 'revenue' }, label: 'Net', format: { kind: 'currency', currency: 'USD' } }]
   expect(mapTooltipEntries(envelope, [{ layer: { id: 'lv-orders' }, properties: { __lv_aggregate: true, __lv_coordinate_count: 12, revenue: 1250 } }])).toEqual([
     { label: 'Precision', value: 'Aggregated area' }, { label: 'Contained locations', value: '12' }, { label: 'Net', value: '$1,250.00' },
-  ])
+])
+})
+
+test('MapLibre aggregate-resolution member tooltips do not report a cell count', () => {
+  const envelope = tiledPointEnvelope()
+  const entries = mapTooltipEntries(envelope, [{
+    layer: { id: 'lv-orders' },
+    properties: { __lv_aggregate: false, __lv_precision: 'aggregated', __lv_coordinate_count: 12, revenue: 1_250 },
+  }])
+  expect(entries).toContainEqual({ label: 'Precision', value: 'Aggregate resolution' })
+  expect(entries).not.toContainEqual({ label: 'Contained locations', value: '12' })
 })
 
 test('MapLibre tiled empty tooltip items suppress aggregate context rows', () => {
@@ -672,6 +686,33 @@ test('MapLibre tiled accessibility deduplicates visible raw and aggregate featur
   expect(data.rows.map((row) => row[0])).toEqual(['Raw point', 'Aggregated area'])
 	expect(data.columns[1]).toEqual({ id: '__lv_coordinate_count', label: 'Contained locations' })
 	expect(data.rows.map((row) => row[1])).toEqual(['1', '12'])
+})
+
+test('MapLibre tiled accessibility counts aggregate-resolution members without calling them cells', () => {
+  const envelope = tiledPointEnvelope()
+  const data = mapAccessibleRenderedFeatures(envelope, [
+    { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_id: 'member:11', __lv_aggregate: false, __lv_precision: 'aggregated', __lv_coordinate_count: 11, order_id: 'o1' } },
+    { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_id: 'aggregate:2:10:7', __lv_aggregate: true, __lv_precision: 'aggregated', __lv_coordinate_count: 12, revenue: 500 } },
+  ])
+  expect({ visible: data.visibleRows, raw: data.rawRows, aggregate: data.aggregateRows }).toEqual({ visible: 2, raw: 0, aggregate: 2 })
+  expect(data.rows.map((row) => row[0])).toEqual(['Point (aggregate resolution)', 'Aggregated area'])
+  expect(data.rows.map((row) => row[1])).toEqual(['1', '12'])
+  const summary = mapVisibleDataSummary(data.visibleRows, data.aggregateRows, data.rawRows, data.totalRows)
+  expect(hasMixedSpatialPrecision(summary.accessibleLabel)).toBe(false)
+})
+
+test('MapLibre tiled accessibility uses the geometry flag for legacy precision and keeps raw members selectable', () => {
+  const envelope = tiledPointEnvelope()
+  const raw = { layer: { id: 'lv-orders' }, properties: { __lv_id: 'raw:11', __lv_aggregate: false, order_id: 'o1' } }
+  const member = { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_id: 'member:11', __lv_aggregate: false, __lv_precision: 'aggregated', __lv_coordinate_count: 11, order_id: 'o1' } }
+  const aggregate = { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_id: 'aggregate:2:10:7', __lv_aggregate: true, __lv_coordinate_count: 12, order_id: 'not-a-row' } }
+  const data = mapAccessibleRenderedFeatures(envelope, [raw, aggregate])
+  expect({ raw: data.rawRows, aggregate: data.aggregateRows }).toEqual({ raw: 1, aggregate: 1 })
+  expect(data.rows.map((row) => row[0])).toEqual(['Raw point', 'Aggregated area'])
+  expect(data.rows[1]?.[1]).toBe('12')
+  const summary = mapVisibleDataSummary(data.visibleRows, data.aggregateRows, data.rawRows, data.totalRows)
+  expect(hasMixedSpatialPrecision(summary.accessibleLabel)).toBe(true)
+  expect(mapInteractionCommand(envelope, [member], ['lv-orders-aggregate'])?.mappings[0]?.value).toBe('o1')
 })
 
 test('MapLibre tiled interaction submits raw identities and never aggregate cells', () => {

@@ -10,6 +10,12 @@ explicit empty list suppresses hover rows. Values are escaped by the MapLibre
 overlay, null values display as `—`, and reference layers do not support row
 tooltips.
 
+The tiled map accessible table reports precision family separately from
+geometry: an aggregate-resolution tile can contain individual points and
+aggregate cells. Rows identify these as `Point (aggregate resolution)` or
+`Aggregated area`; individual points retain their stable selection identity
+and remain selectable.
+
 Every preview on this page is generated from the YAML shown below against the
 fixed documentation dataset.
 

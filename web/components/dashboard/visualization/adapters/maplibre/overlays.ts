@@ -21,13 +21,15 @@ export function mapOverlaysNeedStacking(frameWidth: number, legendWidth: number,
 }
 
 export function mapVisibleDataSummary(visibleRows: number, aggregateRows: number, rawRows: number, totalRows: number): { label: string; accessibleLabel: string } {
+  const aggregateNoun = (count: number) => `aggregate-resolution feature${count === 1 ? '' : 's'}`
+  const rawNoun = (count: number) => `raw point${count === 1 ? '' : 's'}`
   const precision = aggregateRows > 0 && rawRows === 0
-    ? `${visibleRows} visible aggregate cells`
+    ? `${visibleRows} visible ${aggregateNoun(visibleRows)}`
     : rawRows > 0 && aggregateRows === 0
-      ? `${visibleRows} visible raw points`
-      : `${visibleRows} visible features: ${rawRows} raw points, ${aggregateRows} aggregate cells`
+      ? `${visibleRows} visible ${rawNoun(visibleRows)}`
+      : `${visibleRows} visible features: ${rawRows} ${rawNoun(rawRows)}, ${aggregateRows} ${aggregateNoun(aggregateRows)}`
   const count = aggregateRows > 0 && rawRows === 0
-    ? `${visibleRows} cells`
+    ? `${visibleRows} features`
     : rawRows > 0 && aggregateRows === 0
       ? `${visibleRows} points`
       : `${visibleRows} features`
@@ -38,6 +40,16 @@ export function mapVisibleDataSummary(visibleRows: number, aggregateRows: number
 }
 
 export type RenderedFeatureLocator = Readonly<{ layer?: { id?: string }; properties?: Record<string, unknown> | null }>
+
+type MapSpatialPrecision = 'raw' | 'aggregated'
+
+function mapSpatialPrecision(properties: Record<string, unknown>): MapSpatialPrecision {
+  if (properties.__lv_precision === 'aggregated') return 'aggregated'
+  if (properties.__lv_precision === 'raw') return 'raw'
+  // Older tiles do not carry an explicit precision family. Their geometry
+  // flag remains the compatibility fallback for accessibility summaries.
+  return properties.__lv_aggregate === true ? 'aggregated' : 'raw'
+}
 
 export function mapTooltipEntries(envelope: VisualizationEnvelope, features: readonly RenderedFeatureLocator[], context: RendererContext = defaultRendererContext): Array<{ label: string; value: string }> {
 	if (envelope.spec.kind !== 'geographic') return []
@@ -60,10 +72,11 @@ export function mapTooltipEntries(envelope: VisualizationEnvelope, features: rea
 				const item = configuredItems?.find((candidate) => candidate.field.dataset === reference.dataset && candidate.field.field === reference.field)
 				return [{ label: item?.label ?? field.label, value: formatTooltipValue(envelope, reference, raw, context, item?.format) }]
 			})
-			if (feature.properties.__lv_aggregate === true) {
+			const aggregateCell = feature.properties.__lv_aggregate === true
+			if (aggregateCell || mapSpatialPrecision(feature.properties) === 'aggregated') {
 				const coordinateCount = feature.properties.__lv_coordinate_count
-				if (typeof coordinateCount === 'number' && Number.isFinite(coordinateCount)) entries.unshift({ label: 'Contained locations', value: String(coordinateCount) })
-				entries.unshift({ label: 'Precision', value: 'Aggregated area' })
+				if (aggregateCell && typeof coordinateCount === 'number' && Number.isFinite(coordinateCount)) entries.unshift({ label: 'Contained locations', value: String(coordinateCount) })
+				entries.unshift({ label: 'Precision', value: aggregateCell ? 'Aggregated area' : 'Aggregate resolution' })
 			}
 			if (entries.length) return entries
 		}
@@ -158,16 +171,18 @@ export function mapAccessibleRenderedFeatures(
     const identity = String(feature.properties.__lv_id ?? JSON.stringify(feature.properties))
     if (seen.has(identity)) continue
     seen.add(identity)
-    const aggregate = feature.properties.__lv_aggregate === true
-    if (aggregate) aggregateRows++
-    else rawRows++
+		const aggregateCell = feature.properties.__lv_aggregate === true
+		const aggregate = mapSpatialPrecision(feature.properties) === 'aggregated'
+		if (aggregate) aggregateRows++
+		else rawRows++
     if (rows.length >= limit) continue
     const values = fields.map((field) => {
       const raw = feature.properties?.[field.id]
       try { return field.format ? formatValue(context.locale, field.format, raw) : raw == null ? '—' : String(raw) } catch { return raw == null ? '—' : String(raw) }
     })
-		const coordinateCount = aggregate && typeof feature.properties.__lv_coordinate_count === 'number' ? String(feature.properties.__lv_coordinate_count) : '1'
-		rows.push([aggregate ? 'Aggregated area' : 'Raw point', coordinateCount, ...values])
+		const coordinateCount = aggregateCell && typeof feature.properties.__lv_coordinate_count === 'number' ? String(feature.properties.__lv_coordinate_count) : '1'
+		const precisionLabel = aggregateCell ? 'Aggregated area' : aggregate ? 'Point (aggregate resolution)' : 'Raw point'
+		rows.push([precisionLabel, coordinateCount, ...values])
   }
   return { columns, rows, totalRows: envelope.dataState.cardinality.count ?? 0, visibleRows: seen.size, aggregateRows, rawRows }
 }
