@@ -108,6 +108,75 @@ func TestLowerCanonicalCartesianPresentationAllowsHeatmapDataZoom(t *testing.T) 
 	}
 }
 
+func TestLowerCanonicalPresentationAxisVisibleApplicability(t *testing.T) {
+	for _, visible := range []bool{false, true} {
+		visible := visible
+		for _, visualType := range []document.DashboardVisualType{
+			document.DashboardVisualTypeLine,
+			document.DashboardVisualTypeArea,
+			document.DashboardVisualTypeBar,
+			document.DashboardVisualTypeColumn,
+			document.DashboardVisualTypeCandlestick,
+			document.DashboardVisualTypeBoxplot,
+			document.DashboardVisualTypeCombo,
+			document.DashboardVisualTypeHeatmap,
+			document.DashboardVisualTypeWaterfall,
+			document.DashboardVisualTypeHistogram,
+		} {
+			t.Run(string(visualType)+fmt.Sprintf("_%t", visible), func(t *testing.T) {
+				value := document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+					DashboardPresentationBase: document.DashboardPresentationBase{AxisVisible: &visible}, Type: "cartesian",
+				}}
+				if _, err := LowerCanonicalDashboardPresentation(value, visualType); err != nil {
+					t.Fatalf("cartesian %s axisVisible=%t rejected: %v", visualType, visible, err)
+				}
+			})
+		}
+		t.Run(fmt.Sprintf("point_%t", visible), func(t *testing.T) {
+			value := document.DashboardPresentation{Value: &document.PointDashboardPresentation{
+				DashboardPresentationBase: document.DashboardPresentationBase{AxisVisible: &visible}, Type: "point",
+				Identity: []string{"id"}, X: "x", Y: "y",
+			}}
+			if _, err := LowerCanonicalDashboardPresentation(value, document.DashboardVisualTypeScatter); err != nil {
+				t.Fatalf("point axisVisible=%t rejected: %v", visible, err)
+			}
+		})
+	}
+
+	tests := []struct {
+		name  string
+		type_ document.DashboardVisualType
+		value document.DashboardPresentation
+	}{
+		{name: "proportional", type_: document.DashboardVisualTypePie, value: document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{AxisVisible: boolPtr(false)}, Type: "proportional"}}},
+		{name: "hierarchy", type_: document.DashboardVisualTypeTreemap, value: document.DashboardPresentation{Value: &document.HierarchyDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{AxisVisible: boolPtr(false)}, Type: "hierarchy"}}},
+		{name: "polar", type_: document.DashboardVisualTypeRadar, value: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{AxisVisible: boolPtr(false)}, Type: "polar"}}},
+		{name: "geographic", type_: document.DashboardVisualTypeMap, value: document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{AxisVisible: boolPtr(false)}, Type: "geographic"}}},
+		{name: "table", type_: document.DashboardVisualTypeTable, value: document.DashboardPresentation{Value: &document.TableDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{AxisVisible: boolPtr(false)}, Type: "table", RowHeight: 32}}},
+		{name: "kpi", type_: document.DashboardVisualTypeKpi, value: document.DashboardPresentation{Value: &document.KPIDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{AxisVisible: boolPtr(false)}, Type: "kpi"}}},
+	}
+	for _, test := range tests {
+		for _, visible := range []bool{false, true} {
+			t.Run(test.name+fmt.Sprintf("_%t", visible), func(t *testing.T) {
+				value := test.value
+				base, err := value.Base()
+				if err != nil {
+					t.Fatal(err)
+				}
+				flag := visible
+				base.AxisVisible = &flag
+				_, err = LowerCanonicalDashboardPresentation(value, test.type_)
+				want := "presentation.axisVisible is not supported for " + string(test.type_) + " visuals"
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("axisVisible=%t error = %v, want %q", visible, err, want)
+				}
+			})
+		}
+	}
+}
+
+func boolPtr(value bool) *bool { return &value }
+
 func TestLowerCanonicalCartesianPresentationRejectsDataZoomAcrossFamilies(t *testing.T) {
 	dataZoom := true
 	for _, visualType := range []document.DashboardVisualType{

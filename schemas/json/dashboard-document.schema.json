@@ -924,9 +924,9 @@
         },
         "targets": {
           "items": {
-            "maxLength": 128,
+            "maxLength": 257,
             "minLength": 1,
-            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(?:/[A-Za-z_][A-Za-z0-9_-]*)?$",
             "type": "string"
           },
           "type": "array"
@@ -1863,6 +1863,12 @@
         "description": {
           "type": "string"
         },
+        "filterBindings": {
+          "items": {
+            "$ref": "#/$defs/DashboardPageFilterBinding"
+          },
+          "type": "array"
+        },
         "id": {
           "maxLength": 128,
           "minLength": 1,
@@ -1918,6 +1924,53 @@
         "type"
       ],
       "type": "object"
+    },
+    "DashboardPageFilterBinding": {
+      "description": "A page-scoped state binding for one governed dashboard filter definition.\nThe binding identity is local to its page and is independent from any\nin-canvas filter component that presents the same filter.",
+      "properties": {
+        "default": {
+          "$ref": "#/$defs/DashboardFilterExpression"
+        },
+        "filter": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+          "type": "string"
+        },
+        "readerEditable": {
+          "type": "boolean"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "targets": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "urlParameter": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "filter",
+        "id"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "DashboardPathGeographicLayer": {
       "allOf": [
@@ -2140,6 +2193,10 @@
     "DashboardPresentationBase": {
       "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
       "properties": {
+        "axisVisible": {
+          "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
+          "type": "boolean"
+        },
         "conditionalFormatting": {
           "items": {
             "$ref": "#/$defs/DashboardConditionalFormat"
@@ -2695,6 +2752,10 @@
         },
         "title": {
           "type": "string"
+        },
+        "titleVisible": {
+          "description": "Controls whether the authored title is shown in the visual frame.",
+          "type": "boolean"
         },
         "type": {
           "$ref": "#/$defs/DashboardVisualType"

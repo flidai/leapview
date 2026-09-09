@@ -4,6 +4,39 @@ import { formatValue } from '../../format'
 import { formatTooltipEntries, formatTooltipValue } from '../../tooltip-format'
 import { geographicDataset } from './data'
 
+export function mapAccessibleTableSides(legendPosition: string): { left: string; right: string } {
+  return legendPosition === 'left' || legendPosition === 'bottom'
+    ? { left: '', right: '10px' }
+    : { left: '10px', right: '' }
+}
+
+export function mapOverlayBottom(attributionHeight: number): string {
+  return `${Math.max(28, Math.ceil(attributionHeight) + 12)}px`
+}
+
+export function mapOverlaysNeedStacking(frameWidth: number, legendWidth: number, tableWidth: number): boolean {
+  // Both overlays are inset by 10px, so reserving their combined 20px edge
+  // margins is sufficient; any remaining width becomes the gap between them.
+  return legendWidth + tableWidth + 20 > frameWidth
+}
+
+export function mapVisibleDataSummary(visibleRows: number, aggregateRows: number, rawRows: number, totalRows: number): { label: string; accessibleLabel: string } {
+  const precision = aggregateRows > 0 && rawRows === 0
+    ? `${visibleRows} visible aggregate cells`
+    : rawRows > 0 && aggregateRows === 0
+      ? `${visibleRows} visible raw points`
+      : `${visibleRows} visible features: ${rawRows} raw points, ${aggregateRows} aggregate cells`
+  const count = aggregateRows > 0 && rawRows === 0
+    ? `${visibleRows} cells`
+    : rawRows > 0 && aggregateRows === 0
+      ? `${visibleRows} points`
+      : `${visibleRows} features`
+  return {
+    label: `View map data (${count})`,
+    accessibleLabel: `View visible map data (${precision}${totalRows > 0 ? `; ${totalRows} total coordinates` : ''})`,
+  }
+}
+
 export type RenderedFeatureLocator = Readonly<{ layer?: { id?: string }; properties?: Record<string, unknown> | null }>
 
 export function mapTooltipEntries(envelope: VisualizationEnvelope, features: readonly RenderedFeatureLocator[], context: RendererContext = defaultRendererContext): Array<{ label: string; value: string }> {

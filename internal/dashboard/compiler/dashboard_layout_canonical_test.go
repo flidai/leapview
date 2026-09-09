@@ -118,14 +118,6 @@ func TestCompileDashboardLayoutRejectsInvalidPlacements(t *testing.T) {
 			}}},
 			want: "overlap",
 		},
-		{
-			name: "empty grid row",
-			pages: []document.DashboardPage{{ID: "overview", Components: []document.DashboardPageComponent{
-				canonicalVisualComponent("one", "revenue", canonicalPlacement(1, 1, 12, 2)),
-				canonicalVisualComponent("two", "orders", canonicalPlacement(1, 4, 12, 2)),
-			}}},
-			want: "grid row 3 is empty",
-		},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -134,6 +126,30 @@ func TestCompileDashboardLayoutRejectsInvalidPlacements(t *testing.T) {
 				t.Fatalf("error = %v, want substring %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestCompileDashboardLayoutPreservesIntentionalEmptyRows(t *testing.T) {
+	spec := document.DashboardSpec{Pages: []document.DashboardPage{{
+		ID: "overview",
+		Components: []document.DashboardPageComponent{
+			canonicalVisualComponent("revenue", "revenue", canonicalPlacement(1, 6, 6, 3)),
+			canonicalVisualComponent("orders", "orders", canonicalPlacement(7, 10, 6, 2)),
+		},
+	}}}
+	layout, err := CompileDashboardLayout(spec)
+	if err != nil {
+		t.Fatalf("CompileDashboardLayout: %v", err)
+	}
+	page := layout.Pages[0]
+	if got := []int{page.Visuals[0].Placement.Row, page.Visuals[1].Placement.Row}; got[0] != 6 || got[1] != 10 {
+		t.Fatalf("placement rows = %v, want [6 10]", got)
+	}
+	if page.ResponsiveLayout.OccupiedRows != 11 {
+		t.Fatalf("occupied rows = %d, want 11", page.ResponsiveLayout.OccupiedRows)
+	}
+	if got, want := page.Height, 16*2+11*48+10*16; got != want {
+		t.Fatalf("height = %d, want %d", got, want)
 	}
 }
 

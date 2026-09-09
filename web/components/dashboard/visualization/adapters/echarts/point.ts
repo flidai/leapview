@@ -2,6 +2,7 @@ import type { VisualizationEnvelope, VisualizationFieldRef } from '../../../../.
 import type { RendererContext } from '../../host-controller'
 import { axis, field, inlineDataset, labelFormatter, legendDecoration, selectedDatasetSource, type EChartsTranslation } from './common'
 import { applyDecisionContext } from './cartesian'
+import { hideCartesianAxes } from './cartesian-presentation'
 import { conditionalItemColor } from './conditional-color'
 import { resolveConditionalFormat, type ConditionalFormatResult } from '../../conditional-format'
 import { echartsLabelPolicy } from './label-policy'
@@ -53,7 +54,8 @@ export function pointOption(envelope: VisualizationEnvelope, context: RendererCo
     } : {}),
     ...(spec.presentation.brush.length > 0 ? pointBrush(spec) : {}),
   }
-  return applyDecisionContext(envelope, context, option)
+  const decided = applyDecisionContext(envelope, context, option)
+  return spec.presentation.axisVisible === false ? hideCartesianAxes(decided) : decided
 }
 
 type PointCategory = Readonly<{

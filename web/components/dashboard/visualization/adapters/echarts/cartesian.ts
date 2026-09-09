@@ -20,13 +20,15 @@ import {
   type CartesianCategory,
   type CartesianSpec,
 } from './series-intent'
-import { categoricalFieldValues, configureSecondaryComboAxis, finiteFieldExtent as finiteFieldExtentHelper, heatmapDataZoom, humanizeCategoryLabel, multiMeasureComboAxes, rawCategoricalFieldValue } from './cartesian-presentation'
+import { categoricalFieldValues, configureSecondaryComboAxis, finiteFieldExtent as finiteFieldExtentHelper, heatmapDataZoom, hideCartesianAxes, humanizeCategoryLabel, multiMeasureComboAxes, rawCategoricalFieldValue } from './cartesian-presentation'
 import { applyDecisionContext } from './decision-context'
 
 export { applyDecisionContext }
 
 export function cartesianOption(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): EChartsTranslation {
-  return applyDecisionContext(envelope, context, cartesianBaseOption(envelope, context, categoryColors))
+  const option = applyDecisionContext(envelope, context, cartesianBaseOption(envelope, context, categoryColors))
+  const spec = envelope.spec as CartesianSpec
+  return spec.presentation.axisVisible === false ? hideCartesianAxes(option) : option
 }
 
 function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): EChartsTranslation {

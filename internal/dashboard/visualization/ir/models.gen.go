@@ -2737,6 +2737,7 @@ const (
 type VisualizationPresentation struct {
 	Legend       VisualizationLegendPosition `json:"legend" yaml:"legend"`
 	LabelPolicy  VisualizationLabelPolicy    `json:"labelPolicy" yaml:"labelPolicy"`
+	AxisVisible  *bool                       `json:"axisVisible,omitempty" yaml:"axisVisible,omitempty"`
 	DisplayUnits *VisualizationDisplayUnits  `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
 	LegendTitle  *string                     `json:"legendTitle,omitempty" yaml:"legendTitle,omitempty"`
 	LegendItems  *[]VisualizationLegendItem  `json:"legendItems,omitempty" yaml:"legendItems,omitempty"`
@@ -3949,6 +3950,7 @@ func (value *VisualizationSpec) Base() (*VisualizationSpecBase, error) {
 type VisualizationSpecBase struct {
 	Kind                  string                            `json:"kind" yaml:"kind"`
 	Title                 string                            `json:"title" yaml:"title"`
+	TitleVisible          *bool                             `json:"titleVisible,omitempty" yaml:"titleVisible,omitempty"`
 	Subtitle              *string                           `json:"subtitle,omitempty" yaml:"subtitle,omitempty"`
 	Datasets              []VisualizationDatasetSchema      `json:"datasets" yaml:"datasets"`
 	DataBudget            VisualizationDataBudget           `json:"dataBudget" yaml:"dataBudget"`

@@ -358,6 +358,9 @@ func validateSpecification(spec VisualizationSpec, base VisualizationSpecBase) (
 	if base.Title == "" || base.Accessibility.Title == "" || base.Accessibility.Description == "" {
 		return nil, fmt.Errorf("visualization title and accessibility text are required")
 	}
+	if err := validateAxisVisibility(spec); err != nil {
+		return nil, err
+	}
 	schemas := make(map[string]VisualizationDatasetSchema, len(base.Datasets))
 	for _, schema := range base.Datasets {
 		if err := validateSchema(schema); err != nil {
@@ -431,6 +434,33 @@ func validateSpecification(spec VisualizationSpec, base VisualizationSpecBase) (
 		}
 	}
 	return schemas, nil
+}
+
+func validateAxisVisibility(spec VisualizationSpec) error {
+	unsupported := func(kind string) error {
+		return fmt.Errorf("spec.presentation.axisVisible is unsupported for %s visuals", kind)
+	}
+	switch value := spec.Value.(type) {
+	case *CartesianVisualizationSpec, *PointVisualizationSpec:
+		return nil
+	case *ProportionalVisualizationSpec:
+		if value.Presentation.AxisVisible != nil {
+			return unsupported("proportional")
+		}
+	case *HierarchyVisualizationSpec:
+		if value.Presentation.AxisVisible != nil {
+			return unsupported("hierarchy")
+		}
+	case *PolarVisualizationSpec:
+		if value.Presentation.AxisVisible != nil {
+			return unsupported("polar")
+		}
+	case *GeographicVisualizationSpec:
+		if value.Presentation.AxisVisible != nil {
+			return unsupported("geographic")
+		}
+	}
+	return nil
 }
 
 func validateGeographicReferenceTooltips(spec VisualizationSpec) error {

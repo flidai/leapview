@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
@@ -147,6 +148,44 @@ func TestDashboardAuthoringExportProvidesTypedYAMLDisplay(t *testing.T) {
 	}
 }
 
+func TestDashboardAuthoringSourceToolsReadAndEditExactDraftYAML(t *testing.T) {
+	app := &projectAuthoringFake{
+		source: authoringapplication.SourceRead{
+			DashboardID: "dashboard_sales", DraftID: "draft_1",
+			Revision: dashboardauthoring.RevisionToken{RevisionID: "revision_1", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)},
+			YAML:     "apiVersion: leapview.dev/v1\n",
+		},
+		editSourceResult: authoringapplication.SourceEditResult{
+			Result: authoringservice.Result{Revision: dashboardauthoring.RevisionToken{RevisionID: "revision_2", Number: 2, ContentHash: "sha256:" + strings.Repeat("b", 64)}},
+			YAML:   "apiVersion: leapview.dev/v1\n", Diff: "--- dashboard.yaml\n+++ dashboard.yaml\n", ChangedBlocks: 1,
+		},
+	}
+	provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest()}
+	scope := Scope{PrincipalID: "principal", ConversationID: "conversation"}
+	read := definitionByName(provider.Definitions(scope), ReadDashboardSourceToolName)
+	result, err := read.Handler.Run(context.Background(), agentcore.ToolCall{ID: "read-source", Arguments: json.RawMessage(`{"dashboardId":"dashboard_sales"}`)})
+	if err != nil || result.IsError {
+		t.Fatalf("read result=%#v err=%v", result, err)
+	}
+	display, ok := result.DisplayContent.(map[string]any)
+	if !ok || display["language"] != "yaml" || display["content"] != app.source.YAML {
+		t.Fatalf("read display = %#v", result.DisplayContent)
+	}
+
+	edit := definitionByName(provider.Definitions(scope), EditDashboardSourceToolName)
+	result, err = edit.Handler.Run(context.Background(), agentcore.ToolCall{ID: "edit-source", Arguments: json.RawMessage(`{"dashboardId":"dashboard_sales","draftId":"draft_1","expectedRevision":{"revisionId":"revision_1","number":1,"contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"edits":[{"oldText":"Overview","newText":"Executive overview"}]}`)})
+	if err != nil || result.IsError {
+		t.Fatalf("edit result=%#v err=%v", result, err)
+	}
+	if app.editSource.Provenance.ActorID != "principal" || app.editSource.Provenance.ConversationID != "conversation" || app.editSource.Provenance.ToolCallID != "edit-source" {
+		t.Fatalf("edit provenance = %#v", app.editSource.Provenance)
+	}
+	display, ok = result.DisplayContent.(map[string]any)
+	if !ok || display["language"] != "diff" || display["content"] != app.editSourceResult.Diff {
+		t.Fatalf("edit display = %#v", result.DisplayContent)
+	}
+}
+
 func projectIDForTest() projectgraph.ResourceID { return projectgraph.ResourceID("project_demo") }
 
 func toolErrorCode(result agentcore.ToolResult) string {
@@ -186,12 +225,15 @@ func (f *projectResolverFake) capabilityFor(id string) access.Capability {
 }
 
 type projectAuthoringFake struct {
-	list        catalog.ListResult
-	listRequest catalog.ListRequest
-	getRequest  catalog.GetRequest
-	create      authoringservice.CreateRequest
-	fork        sourceadapter.ForkRequest
-	command     dashboardauthoring.Command
+	list             catalog.ListResult
+	listRequest      catalog.ListRequest
+	getRequest       catalog.GetRequest
+	create           authoringservice.CreateRequest
+	fork             sourceadapter.ForkRequest
+	command          dashboardauthoring.Command
+	source           authoringapplication.SourceRead
+	editSource       authoringapplication.SourceEditRequest
+	editSourceResult authoringapplication.SourceEditResult
 }
 
 func (f *projectAuthoringFake) List(_ context.Context, request catalog.ListRequest) (catalog.ListResult, error) {
@@ -225,6 +267,13 @@ func (f *projectAuthoringFake) Preview(context.Context, previewservice.PreviewRe
 }
 func (f *projectAuthoringFake) ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error) {
 	return []byte("version: 1\n"), nil
+}
+func (f *projectAuthoringFake) ReadSource(context.Context, authoringapplication.DraftRequest) (authoringapplication.SourceRead, error) {
+	return f.source, nil
+}
+func (f *projectAuthoringFake) EditSource(_ context.Context, request authoringapplication.SourceEditRequest) (authoringapplication.SourceEditResult, error) {
+	f.editSource = request
+	return f.editSourceResult, nil
 }
 
 var _ DashboardAuthoring = (*projectAuthoringFake)(nil)

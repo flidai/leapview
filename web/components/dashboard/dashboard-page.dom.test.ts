@@ -20,6 +20,65 @@ test('dashboard fixtures satisfy the fail-closed visualization contract', () => 
   }
 })
 
+test('dashboard header exposes favorite and contextual actions without crowding the breadcrumb', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    const action = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      localStorage.removeItem('leapview.dashboard-catalog.favorites.v1')
+      window.dispatchEvent(new StorageEvent('storage', { key: 'leapview.dashboard-catalog.favorites.v1' }))
+      element.setAttribute('authoring-action-label', 'Continue editing')
+      element.setAttribute('authoring-action-href', '/dashboards/executive-sales/edit?draft=draft-7&page=overview')
+      await element.updateComplete
+      const favorite = element.shadowRoot.querySelector('.dashboard-favorite') as HTMLButtonElement
+      const trigger = element.shadowRoot.querySelector('.dashboard-options-trigger') as HTMLButtonElement
+      const initialFavoriteLabel = favorite.getAttribute('aria-label')
+      favorite.click()
+      trigger.click()
+      await element.updateComplete
+      const link = element.shadowRoot.querySelector('.dashboard-options-menu a') as HTMLAnchorElement
+      const open = trigger.getAttribute('aria-expanded')
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await element.updateComplete
+      return {
+        breadcrumb: Array.from(element.shadowRoot.querySelectorAll('.breadcrumb-label')).map((item: Element) => item.textContent?.trim()),
+        headingOrder: Array.from(element.shadowRoot.querySelector('.dashboard-heading').children).map((item: Element) => item.className),
+        controlsRemainOutsideUtilityActions: !element.shadowRoot.querySelector('.actions .dashboard-favorite, .actions .dashboard-options'),
+        initialFavoriteLabel,
+        favoriteLabel: favorite.getAttribute('aria-label'),
+        favoritePressed: favorite.getAttribute('aria-pressed'),
+        storedFavorites: JSON.parse(localStorage.getItem('leapview.dashboard-catalog.favorites.v1') ?? '[]'),
+        triggerLabel: trigger.getAttribute('aria-label'),
+        triggerHasPopup: trigger.getAttribute('aria-haspopup'),
+        open,
+        closed: trigger.getAttribute('aria-expanded'),
+        label: link?.textContent?.trim(),
+        href: link?.getAttribute('href'),
+        directActionCount: element.shadowRoot.querySelectorAll('.authoring-action').length,
+      }
+    })
+    expect(action).toEqual({
+      breadcrumb: ['Dashboards', 'Executive Sales Dashboard'],
+      headingOrder: ['breadcrumb', 'icon-button dashboard-favorite', 'dashboard-options'],
+      controlsRemainOutsideUtilityActions: true,
+      initialFavoriteLabel: 'Add Executive Sales Dashboard to favorites',
+      favoriteLabel: 'Remove Executive Sales Dashboard from favorites',
+      favoritePressed: 'true',
+      storedFavorites: ['executive-sales'],
+      triggerLabel: 'Dashboard options',
+      triggerHasPopup: 'menu',
+      open: 'true',
+      closed: 'false',
+      label: 'Continue editing',
+      href: '/dashboards/executive-sales/edit?draft=draft-7&page=overview',
+      directActionCount: 0,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard refresh loading does not mark unrelated filter controls stale', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -302,7 +361,7 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
   }
 })
 
-test('app report frame puts page navigation at the top and dashboard navigation in the footer', async () => {
+test('app report frame uses a settings-style searchable page sidebar with Back at the top', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.addInitScript(() => localStorage.setItem('leapview-report-sidebar-collapsed', 'false'))
@@ -320,12 +379,12 @@ test('app report frame puts page navigation at the top and dashboard navigation 
       await sidebar.updateComplete
       const root = sidebar.shadowRoot!
       const reportHeader = element.shadowRoot.querySelector('.header') as HTMLElement
-      const railFooter = element.shadowRoot.querySelector('.rail-footer') as HTMLElement
-      const back = railFooter.querySelector('.dashboard-back-link') as HTMLAnchorElement
-      const backLabel = back.querySelector('.rail-back-label') as HTMLElement
+      const railFooter = root.querySelector('.sidebar-footer') as HTMLElement
+      const back = root.querySelector('.back-link') as HTMLAnchorElement
+      const backLabel = back.querySelector('.back-label') as HTMLElement
+      const search = root.querySelector('.sidebar-search input') as HTMLInputElement
       const collapse = root.querySelector('.collapse') as HTMLButtonElement
       const header = root.querySelector('header') as HTMLElement
-      const sectionTitle = root.querySelector('.section-title') as HTMLElement
       const firstPage = root.querySelector('.item-link') as HTMLElement
       const main = element.shadowRoot.querySelector('.main') as HTMLElement
       const reportFooter = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
@@ -343,8 +402,15 @@ test('app report frame puts page navigation at the top and dashboard navigation 
       const sidebarRect = sidebar.getBoundingClientRect()
       const mainRect = main.getBoundingClientRect()
       const breadcrumbRect = breadcrumb.getBoundingClientRect()
-      const sectionTitleRect = sectionTitle.getBoundingClientRect()
       const reportFooterRect = reportFooter.getBoundingClientRect()
+      const searchRect = search.getBoundingClientRect()
+      search.value = 'det'
+      search.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+      await sidebar.updateComplete
+      const filteredPages = Array.from(root.querySelectorAll('.item-title')).map(item => item.textContent?.trim())
+      search.value = ''
+      search.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+      await sidebar.updateComplete
       collapse.click()
       await sidebar.updateComplete
       await new Promise(resolve => setTimeout(resolve, 200))
@@ -391,42 +457,40 @@ test('app report frame puts page navigation at the top and dashboard navigation 
         sidebarBackCount: root.querySelectorAll('.back-link').length,
         backInRailFooter: railFooter.contains(back),
         railFooterAligned: Math.round(railFooterRect.left) === Math.round(sidebarRect.left),
-        backInset: Math.round(backRect.left - railFooterRect.left),
+        backInset: Math.round(backRect.left - sidebarRect.left),
+        backAtTop: backRect.top < expandedPageTop,
+        searchBelowBack: searchRect.top >= backRect.bottom,
+        searchLabel: search.getAttribute('aria-label'),
+        searchPlaceholder: search.getAttribute('placeholder'),
+        filteredPages,
         reportHeaderAligned: Math.round(reportHeaderRect.left) === Math.round(mainRect.left),
         breadcrumbInset: Math.round(breadcrumbRect.left - mainRect.left),
-        pagesTitleBreadcrumbCenterDelta: Math.abs(
-          (sectionTitleRect.top + sectionTitleRect.bottom) / 2
-            - (breadcrumbRect.top + breadcrumbRect.bottom) / 2,
-        ),
         sidebarStartsWithHeader: Math.abs(sidebarRect.top - reportHeaderRect.top) < 2,
-        pagesTitleAboveCanvas: sectionTitle.getBoundingClientRect().top < mainRect.top,
         mainBelowHeader: Math.abs(mainRect.top - reportHeaderRect.bottom) < 2,
         railHeaderCount: element.shadowRoot.querySelectorAll('.rail-header').length,
-        sidebarEndsAtFooter: Math.abs(sidebarRect.bottom - railFooterRect.top) < 2,
+        sidebarFooterAtBottom: Math.abs(sidebarRect.bottom - railFooterRect.bottom) < 2,
         railFooterMatchesReportFooter: Math.abs(railFooterRect.top - reportFooterRect.top) < 2
           && Math.abs(railFooterRect.bottom - reportFooterRect.bottom) < 2,
         footerAligned: Math.round(reportFooterRect.left) === Math.round(mainRect.left),
-        collapsedSidebarEndsAtFooter: Math.abs(collapsedSidebarRect.bottom - collapsedRailFooterRect.top) < 2,
+        collapsedSidebarFooterAtBottom: Math.abs(collapsedSidebarRect.bottom - collapsedRailFooterRect.bottom) < 2,
         collapsedRailFooterMatchesReportFooter: Math.abs(collapsedRailFooterRect.top - collapsedReportFooterRect.top) < 2
           && Math.abs(collapsedRailFooterRect.bottom - collapsedReportFooterRect.bottom) < 2,
         collapsedBreadcrumbInset: Math.round(collapsedBreadcrumbRect.left - collapsedMainRect.left),
         collapsedFooterAligned: Math.round(collapsedReportFooterRect.left) === Math.round(collapsedMainRect.left),
         collapsedBackCentered: Math.abs(
           (collapsedBackRect.left + collapsedBackRect.width / 2)
-            - (collapsedRailFooterRect.left + collapsedRailFooterRect.width / 2),
+            - (collapsedSidebarRect.left + collapsedSidebarRect.width / 2),
         ) < 2,
         collapsedBackWidth: Math.round(collapsedBackRect.width),
         breadcrumbMovesWithCanvas: Math.round(collapsedBreadcrumbRect.left - breadcrumbRect.left)
           === Math.round(collapsedMainRect.left - mainRect.left),
         collapseInHeader: header.contains(collapse),
-        sectionTitle: sectionTitle.textContent?.trim(),
-        sectionTitleTransform: getComputedStyle(sectionTitle).textTransform,
         expandedWidth,
         collapseTag: collapse.tagName,
         collapseLabel: collapse.getAttribute('aria-label'),
         collapsed: sidebar.hasAttribute('data-collapsed'),
         railLabelDisplay: getComputedStyle(root.querySelector('.rail-label')).display,
-        pageTopShift: collapsedPageTop - expandedPageTop,
+        collapsedPageMovesUp: collapsedPageTop < expandedPageTop,
         toggleIconDistinctFromBack: expandedToggleIconMarkup !== backIconMarkup,
         toggleIconChanges: collapsedToggleIconMarkup !== expandedToggleIconMarkup,
       }
@@ -437,18 +501,17 @@ test('app report frame puts page navigation at the top and dashboard navigation 
       label: 'Back to dashboards',
       text: 'Back',
       backTag: 'A',
-      title: 'All dashboards',
+      title: 'Back to dashboards',
       expandedBackLabelDisplay: 'block',
       collapsedBackLabelDisplay: 'none',
-      reportTitle: 'Overview',
+      reportTitle: 'Executive Sales Dashboard',
       reportTitleCount: 1,
       breadcrumbLabel: 'Breadcrumb',
       breadcrumbItems: [
         { text: 'Dashboards', href: '/', current: null },
-        { text: 'Executive Sales Dashboard', href: '/dashboards/executive-sales/pages/overview', current: null },
-        { text: 'Overview', href: null, current: 'page' },
+        { text: 'Executive Sales Dashboard', href: null, current: 'page' },
       ],
-      breadcrumbSeparatorCount: 2,
+      breadcrumbSeparatorCount: 1,
       dashboardGlyph: {
         icon: 'gallery-vertical-end',
         color: 'blue',
@@ -461,40 +524,40 @@ test('app report frame puts page navigation at the top and dashboard navigation 
         svgCount: 1,
       },
       sidebarTitleCount: 0,
-      sidebarBackCount: 0,
-      backInRailFooter: true,
+      sidebarBackCount: 1,
+      backInRailFooter: false,
       railFooterAligned: true,
-      backInset: 16,
+      backInset: 8,
+      backAtTop: true,
+      searchBelowBack: true,
+      searchLabel: 'Search pages',
+      searchPlaceholder: 'Search pages',
+      filteredPages: ['Details'],
       reportHeaderAligned: true,
       breadcrumbInset: 16,
-      pagesTitleBreadcrumbCenterDelta: expect.any(Number),
       sidebarStartsWithHeader: true,
-      pagesTitleAboveCanvas: true,
       mainBelowHeader: true,
       railHeaderCount: 0,
-      sidebarEndsAtFooter: true,
+      sidebarFooterAtBottom: true,
       railFooterMatchesReportFooter: true,
       footerAligned: true,
-      collapsedSidebarEndsAtFooter: true,
+      collapsedSidebarFooterAtBottom: true,
       collapsedRailFooterMatchesReportFooter: true,
       collapsedBreadcrumbInset: 16,
       collapsedFooterAligned: true,
       collapsedBackCentered: true,
-      collapsedBackWidth: 32,
+      collapsedBackWidth: 28,
       breadcrumbMovesWithCanvas: true,
-      collapseInHeader: true,
-      sectionTitle: 'Pages',
-      sectionTitleTransform: 'none',
+      collapseInHeader: false,
       expandedWidth: 144,
       collapseTag: 'BUTTON',
       collapseLabel: 'Expand Report pages',
       collapsed: true,
       railLabelDisplay: 'none',
-      pageTopShift: 0,
+      collapsedPageMovesUp: true,
       toggleIconDistinctFromBack: true,
-      toggleIconChanges: false,
+      toggleIconChanges: true,
     })
-    expect(state.pagesTitleBreadcrumbCenterDelta).toBeLessThanOrEqual(2)
   } finally {
     await page.close()
   }
@@ -1871,7 +1934,7 @@ test('mobile report header combines page and filter controls without stacked rai
       const header = root.querySelector('.header') as HTMLElement
       const pageMenu = root.querySelector('.mobile-page-menu') as HTMLDetailsElement
       const breadcrumb = root.querySelector('.breadcrumb') as HTMLElement
-      const breadcrumbCurrent = breadcrumb.querySelector('.breadcrumb-current') as HTMLElement
+      const breadcrumbCurrent = breadcrumb.querySelector('[aria-current="page"]') as HTMLElement
       const filterTrigger = root.querySelector('.mobile-filter-toggle') as HTMLButtonElement
       const agentTrigger = root.querySelector('.agent-toggle') as HTMLButtonElement
       const dockRail = dock.shadowRoot.querySelector('.rail') as HTMLButtonElement
@@ -1911,8 +1974,8 @@ test('mobile report header combines page and filter controls without stacked rai
     expect(compact).toMatchObject({
       sidebarDisplay: 'none',
       pageMenuDisplay: 'block',
-      breadcrumbLabels: ['Dashboards', 'Executive Sales Dashboard', 'Overview'],
-      breadcrumbCurrentDisplay: 'none',
+      breadcrumbLabels: ['Dashboards', 'Executive Sales Dashboard'],
+      breadcrumbCurrentDisplay: 'flex',
       pageLabel: 'Overview',
       pageOptions: ['Overview', 'Details'],
       filterLabel: 'Filters, 1 active',
@@ -2826,8 +2889,12 @@ test('rejected filter validation reconciles optimistic state and announces the e
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    await page.waitForFunction(() => {
+      const element = document.querySelector('lv-dashboard-page') as any
+      return Boolean(element?.page && !element.isUpdatePending)
+    })
+    const moduleHandle = await page.evaluateHandle(() => import('/static/vendor/datastar-1.0.2.js?v=dev'))
+    const mutation = await page.locator('lv-dashboard-page').evaluate((element: any) => {
       let command: any
       element.addEventListener('lv-filter-command', (event: CustomEvent) => {
         command = event.detail
@@ -2837,28 +2904,25 @@ test('rejected filter validation reconciles optimistic state and announces the e
         operator: 'in',
         values: [{ kind: 'string', value: 'CA' }],
       })
-      element.requestUpdate()
-      await element.updateComplete
-      const optimistic = element.filterController.projected.appliedControls.fb_state.expression
-
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      mergePatch({
-        filterValidation: {
-          accepted: false,
-          message: 'range lower bound must not exceed upper bound',
-          currentRevision: 0,
-          clientMutationID: command.clientMutationID,
-        },
-      })
-      await element.updateComplete
-      return {
-        optimistic,
-        reconciled: element.filterController.projected.appliedControls.fb_state.expression,
-        pending: element.filterController.pending,
-        alert: element.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),
-      }
+      return { command, optimistic: element.filterController.projected.appliedControls.fb_state.expression }
     })
-    expect(result).toEqual({
+    await moduleHandle.evaluate((module: any, validation: any) => module.mergePatch({ filterValidation: validation }), {
+      accepted: false,
+      message: 'range lower bound must not exceed upper bound',
+      currentRevision: 0,
+      clientMutationID: mutation.command.clientMutationID,
+    })
+    await page.waitForFunction((clientMutationID) => {
+      const element = document.querySelector('lv-dashboard-page') as any
+      const validation = element?.signal('filterValidation', null)
+      return Boolean(element && !element.filterController.pending && !element.isUpdatePending && validation?.clientMutationID === clientMutationID)
+    }, mutation.command.clientMutationID)
+    const result = await page.locator('lv-dashboard-page').evaluate((element: any) => ({
+      reconciled: element.filterController.projected.appliedControls.fb_state.expression,
+      pending: element.filterController.pending,
+      alert: element.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),
+    }))
+    expect({ optimistic: mutation.optimistic, ...result }).toEqual({
       optimistic: {
         kind: 'set',
         operator: 'in',
@@ -3433,6 +3497,28 @@ test('same-dashboard page navigation commits canonical history after the page pa
       params: { state: 'canonical' },
       path: '/dashboards/executive-sales/pages/details',
     }])
+  } finally {
+    await page.close()
+  }
+})
+
+test('read-only draft preview preserves native revision-pinned page navigation', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.pageId === 'overview')
+    const navigation = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      element.readOnly = true
+      await element.updateComplete
+      let commands = 0
+      element.addEventListener('lv-page-navigate', () => { commands += 1 })
+      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar')
+      const details = sidebar.shadowRoot.querySelector('a[href$="/details"]') as HTMLAnchorElement
+      const click = new MouseEvent('click', { bubbles: true, composed: true, cancelable: true, button: 0 })
+      details.dispatchEvent(click)
+      return { commands, defaultPrevented: click.defaultPrevented, reflected: element.hasAttribute('read-only') }
+    })
+    expect(navigation).toEqual({ commands: 0, defaultPrevented: false, reflected: true })
   } finally {
     await page.close()
   }

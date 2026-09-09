@@ -33,7 +33,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 	}
 	switch variant := value.Value.(type) {
 	case *document.CartesianDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -114,7 +114,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.PointDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, nil)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, nil, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -163,7 +163,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.ProportionalDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -229,7 +229,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		out.Sort = variant.Sort
 		return out, nil
 	case *document.HierarchyDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, nil)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, nil, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -275,7 +275,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.PolarDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -340,7 +340,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.GeographicDashboardPresentation:
-		base, err := lowerBasePresentation(nil, nil, nil, nil, nil)
+		base, err := lowerBasePresentation(nil, nil, nil, nil, nil, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -542,6 +542,11 @@ func LowerCanonicalDashboardPresentationForQuery(value document.DashboardPresent
 }
 
 func validateCanonicalPresentationApplicability(value document.DashboardPresentation, visualType document.DashboardVisualType) error {
+	if base, err := value.Base(); err != nil {
+		return err
+	} else if base.AxisVisible != nil && !document.SupportsPresentationField(visualType, "axisVisible") {
+		return fmt.Errorf("presentation.axisVisible is not supported for %s visuals", visualType)
+	}
 	optionSupported := func(option string, present bool, supported bool) error {
 		if present && !supported {
 			return fmt.Errorf("presentation.%s is not supported for %s visuals", option, visualType)
@@ -555,37 +560,37 @@ func validateCanonicalPresentationApplicability(value document.DashboardPresenta
 		if variant == nil {
 			return nil
 		}
-		if err := optionSupported("legend", variant.Legend != nil, false); err != nil {
+		if err := optionSupported("legend", variant.Legend != nil, document.SupportsPresentationField(visualType, "legend")); err != nil {
 			return err
 		}
-		if err := optionSupported("legendTitle", variant.LegendTitle != nil, false); err != nil {
+		if err := optionSupported("legendTitle", variant.LegendTitle != nil, document.SupportsPresentationField(visualType, "legendTitle")); err != nil {
 			return err
 		}
-		if err := optionSupported("legendItems", variant.LegendItems != nil, false); err != nil {
+		if err := optionSupported("legendItems", variant.LegendItems != nil, document.SupportsPresentationField(visualType, "legendItems")); err != nil {
 			return err
 		}
-		if err := optionSupported("orientation", variant.Orientation != nil, visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeSankey); err != nil {
+		if err := optionSupported("orientation", variant.Orientation != nil, document.SupportsPresentationField(visualType, "orientation")); err != nil {
 			return err
 		}
-		if err := optionSupported("initialDepth", variant.InitialDepth != nil, visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeTreemap); err != nil {
+		if err := optionSupported("initialDepth", variant.InitialDepth != nil, document.SupportsPresentationField(visualType, "initialDepth")); err != nil {
 			return err
 		}
-		if err := optionSupported("roam", variant.Roam != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeTreemap || visualType == document.DashboardVisualTypeSunburst); err != nil {
+		if err := optionSupported("roam", variant.Roam != nil, document.SupportsPresentationField(visualType, "roam")); err != nil {
 			return err
 		}
-		if err := optionSupported("layout", variant.Layout != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeTree); err != nil {
+		if err := optionSupported("layout", variant.Layout != nil, document.SupportsPresentationField(visualType, "layout")); err != nil {
 			return err
 		}
-		if err := optionSupported("breadcrumb", variant.Breadcrumb != nil, visualType == document.DashboardVisualTypeTreemap); err != nil {
+		if err := optionSupported("breadcrumb", variant.Breadcrumb != nil, document.SupportsPresentationField(visualType, "breadcrumb")); err != nil {
 			return err
 		}
-		if err := optionSupported("nodeGap", variant.NodeGap != nil, visualType == document.DashboardVisualTypeSankey); err != nil {
+		if err := optionSupported("nodeGap", variant.NodeGap != nil, document.SupportsPresentationField(visualType, "nodeGap")); err != nil {
 			return err
 		}
-		if err := optionSupported("curveness", variant.Curveness != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeSankey); err != nil {
+		if err := optionSupported("curveness", variant.Curveness != nil, document.SupportsPresentationField(visualType, "curveness")); err != nil {
 			return err
 		}
-		if err := optionSupported("focus", variant.Focus != nil, visualType == document.DashboardVisualTypeGraph); err != nil {
+		if err := optionSupported("focus", variant.Focus != nil, document.SupportsPresentationField(visualType, "focus")); err != nil {
 			return err
 		}
 	case *document.PointDashboardPresentation:
@@ -595,65 +600,65 @@ func validateCanonicalPresentationApplicability(value document.DashboardPresenta
 		if variant.Legend != nil && (variant.Color == nil || variant.ColorScale == nil || variant.ColorScale.Kind != visualizationir.VisualizationPointColorScaleKindCategorical) {
 			return fmt.Errorf("presentation.legend requires a categorical point color series")
 		}
-		if err := optionSupported("legendTitle", variant.LegendTitle != nil, true); err != nil {
+		if err := optionSupported("legendTitle", variant.LegendTitle != nil, document.SupportsPresentationField(visualType, "legendTitle")); err != nil {
 			return err
 		}
-		return optionSupported("legendItems", variant.LegendItems != nil, true)
+		return optionSupported("legendItems", variant.LegendItems != nil, document.SupportsPresentationField(visualType, "legendItems"))
 	case *document.ProportionalDashboardPresentation:
 		if variant == nil {
 			return nil
 		}
-		if err := optionSupported("orientation", variant.Orientation != nil, visualType == document.DashboardVisualTypeFunnel); err != nil {
+		if err := optionSupported("orientation", variant.Orientation != nil, document.SupportsPresentationField(visualType, "orientation")); err != nil {
 			return err
 		}
-		if err := optionSupported("rose", variant.Rose != nil, visualType == document.DashboardVisualTypePie || visualType == document.DashboardVisualTypeDonut); err != nil {
+		if err := optionSupported("rose", variant.Rose != nil, document.SupportsPresentationField(visualType, "rose")); err != nil {
 			return err
 		}
-		if err := optionSupported("centerLabel", variant.CenterLabel != nil, visualType == document.DashboardVisualTypeDonut); err != nil {
+		if err := optionSupported("centerLabel", variant.CenterLabel != nil, document.SupportsPresentationField(visualType, "centerLabel")); err != nil {
 			return err
 		}
-		if err := optionSupported("innerRadius", variant.InnerRadius != nil, visualType == document.DashboardVisualTypeDonut); err != nil {
+		if err := optionSupported("innerRadius", variant.InnerRadius != nil, document.SupportsPresentationField(visualType, "innerRadius")); err != nil {
 			return err
 		}
-		if err := optionSupported("outerRadius", variant.OuterRadius != nil, visualType == document.DashboardVisualTypePie || visualType == document.DashboardVisualTypeDonut); err != nil {
+		if err := optionSupported("outerRadius", variant.OuterRadius != nil, document.SupportsPresentationField(visualType, "outerRadius")); err != nil {
 			return err
 		}
-		if err := optionSupported("align", variant.Align != nil, visualType == document.DashboardVisualTypeFunnel); err != nil {
+		if err := optionSupported("align", variant.Align != nil, document.SupportsPresentationField(visualType, "align")); err != nil {
 			return err
 		}
-		return optionSupported("sort", variant.Sort != nil, visualType == document.DashboardVisualTypeFunnel)
+		return optionSupported("sort", variant.Sort != nil, document.SupportsPresentationField(visualType, "sort"))
 	case *document.PolarDashboardPresentation:
 		if variant == nil {
 			return nil
 		}
-		if err := optionSupported("legend", variant.Legend != nil, visualType == document.DashboardVisualTypeRadar); err != nil {
+		if err := optionSupported("legend", variant.Legend != nil, document.SupportsPresentationField(visualType, "legend")); err != nil {
 			return err
 		}
-		if err := optionSupported("legendTitle", variant.LegendTitle != nil, visualType == document.DashboardVisualTypeRadar); err != nil {
+		if err := optionSupported("legendTitle", variant.LegendTitle != nil, document.SupportsPresentationField(visualType, "legendTitle")); err != nil {
 			return err
 		}
-		if err := optionSupported("legendItems", variant.LegendItems != nil, visualType == document.DashboardVisualTypeRadar); err != nil {
+		if err := optionSupported("legendItems", variant.LegendItems != nil, document.SupportsPresentationField(visualType, "legendItems")); err != nil {
 			return err
 		}
-		if err := optionSupported("minimum", variant.Minimum != nil, visualType == document.DashboardVisualTypeGauge); err != nil {
+		if err := optionSupported("minimum", variant.Minimum != nil, document.SupportsPresentationField(visualType, "minimum")); err != nil {
 			return err
 		}
-		if err := optionSupported("maximum", variant.Maximum != nil, visualType == document.DashboardVisualTypeGauge || visualType == document.DashboardVisualTypeRadar); err != nil {
+		if err := optionSupported("maximum", variant.Maximum != nil, document.SupportsPresentationField(visualType, "maximum")); err != nil {
 			return err
 		}
-		if err := optionSupported("target", variant.Target != nil, visualType == document.DashboardVisualTypeGauge); err != nil {
+		if err := optionSupported("target", variant.Target != nil, document.SupportsPresentationField(visualType, "target")); err != nil {
 			return err
 		}
-		if err := optionSupported("showPointer", variant.ShowPointer != nil, visualType == document.DashboardVisualTypeGauge); err != nil {
+		if err := optionSupported("showPointer", variant.ShowPointer != nil, document.SupportsPresentationField(visualType, "showPointer")); err != nil {
 			return err
 		}
-		if err := optionSupported("area", variant.Area != nil, visualType == document.DashboardVisualTypeRadar); err != nil {
+		if err := optionSupported("area", variant.Area != nil, document.SupportsPresentationField(visualType, "area")); err != nil {
 			return err
 		}
-		if err := optionSupported("progressWidth", variant.ProgressWidth != nil, visualType == document.DashboardVisualTypeGauge); err != nil {
+		if err := optionSupported("progressWidth", variant.ProgressWidth != nil, document.SupportsPresentationField(visualType, "progressWidth")); err != nil {
 			return err
 		}
-		return optionSupported("thresholds", variant.Thresholds != nil, visualType == document.DashboardVisualTypeGauge)
+		return optionSupported("thresholds", variant.Thresholds != nil, document.SupportsPresentationField(visualType, "thresholds"))
 	default:
 		return nil
 	}
@@ -913,8 +918,8 @@ func validateCanonicalSeriesIntent(value document.DashboardPresentation, visualT
 	return nil
 }
 
-func lowerBasePresentation(legend *document.DashboardLegendPosition, legendTitle *string, legendItems *[]document.DashboardLegendItem, labels *document.DashboardLabelPolicy, units *visualizationir.VisualizationDisplayUnits) (visualizationir.VisualizationPresentation, error) {
-	out := visualizationir.VisualizationPresentation{Legend: visualizationir.VisualizationLegendPositionBottom, LabelPolicy: defaultCanonicalLabelPolicy(), DisplayUnits: units}
+func lowerBasePresentation(legend *document.DashboardLegendPosition, legendTitle *string, legendItems *[]document.DashboardLegendItem, labels *document.DashboardLabelPolicy, units *visualizationir.VisualizationDisplayUnits, axisVisible *bool) (visualizationir.VisualizationPresentation, error) {
+	out := visualizationir.VisualizationPresentation{Legend: visualizationir.VisualizationLegendPositionBottom, LabelPolicy: defaultCanonicalLabelPolicy(), AxisVisible: axisVisible, DisplayUnits: units}
 	if legend != nil {
 		value, err := lowerLegend(*legend)
 		if err != nil {

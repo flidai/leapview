@@ -202,6 +202,37 @@ type DashboardAuthoringSetVisibilityInput struct {
 	Visibility       string                          `json:"visibility" yaml:"visibility"`
 }
 
+type DashboardAuthoringSourceEditInput struct {
+	DashboardID      string                                `json:"dashboardId" yaml:"dashboardId"`
+	DraftID          string                                `json:"draftId" yaml:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken       `json:"expectedRevision" yaml:"expectedRevision"`
+	Edits            []DashboardAuthoringSourceReplacement `json:"edits" yaml:"edits"`
+}
+
+type DashboardAuthoringSourceEditResult struct {
+	Revision      map[string]any `json:"revision" yaml:"revision"`
+	Lifecycle     map[string]any `json:"lifecycle" yaml:"lifecycle"`
+	Yaml          string         `json:"yaml" yaml:"yaml"`
+	Diff          string         `json:"diff" yaml:"diff"`
+	ChangedBlocks int32          `json:"changedBlocks" yaml:"changedBlocks"`
+}
+
+type DashboardAuthoringSourceReadInput struct {
+	DashboardID string `json:"dashboardId" yaml:"dashboardId"`
+}
+
+type DashboardAuthoringSourceReadResult struct {
+	DashboardID string                          `json:"dashboardId" yaml:"dashboardId"`
+	DraftID     string                          `json:"draftId" yaml:"draftId"`
+	Revision    DashboardAuthoringRevisionToken `json:"revision" yaml:"revision"`
+	Yaml        string                          `json:"yaml" yaml:"yaml"`
+}
+
+type DashboardAuthoringSourceReplacement struct {
+	OldText string `json:"oldText" yaml:"oldText"`
+	NewText string `json:"newText" yaml:"newText"`
+}
+
 type DashboardVisualColumn struct {
 	ID        string          `json:"id" yaml:"id"`
 	SourceRef *string         `json:"sourceRef,omitempty" yaml:"sourceRef,omitempty"`

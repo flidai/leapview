@@ -20,51 +20,29 @@ func validateCanonicalCartesianPresentationApplicability(variant *document.Carte
 	// Label policy, label position, display units, and axes use common paths.
 	// ECharts does not render series labels for financial marks, so accepting
 	// authored label controls there would silently discard user intent.
-	if err := optionSupported("labels", variant.Labels != nil,
-		visualType != document.DashboardVisualTypeCandlestick && visualType != document.DashboardVisualTypeBoxplot); err != nil {
+	if err := optionSupported("labels", variant.Labels != nil, document.SupportsPresentationField(visualType, "labels")); err != nil {
 		return err
 	}
-	if err := optionSupported("labelPosition", variant.LabelPosition != nil,
-		visualType != document.DashboardVisualTypeCandlestick && visualType != document.DashboardVisualTypeBoxplot); err != nil {
+	if err := optionSupported("labelPosition", variant.LabelPosition != nil, document.SupportsPresentationField(visualType, "labelPosition")); err != nil {
 		return err
 	}
-	if err := optionSupported("legend", variant.Legend != nil,
-		visualType == document.DashboardVisualTypeLine ||
-			visualType == document.DashboardVisualTypeArea ||
-			visualType == document.DashboardVisualTypeBar ||
-			visualType == document.DashboardVisualTypeColumn ||
-			visualType == document.DashboardVisualTypeCombo ||
-			visualType == document.DashboardVisualTypeCandlestick); err != nil {
+	if err := optionSupported("legend", variant.Legend != nil, document.SupportsPresentationField(visualType, "legend")); err != nil {
 		return err
 	}
-	legendSupported := visualType == document.DashboardVisualTypeLine ||
-		visualType == document.DashboardVisualTypeArea ||
-		visualType == document.DashboardVisualTypeBar ||
-		visualType == document.DashboardVisualTypeColumn ||
-		visualType == document.DashboardVisualTypeCombo ||
-		visualType == document.DashboardVisualTypeCandlestick
+	legendSupported := document.SupportsPresentationField(visualType, "legend")
 	if err := optionSupported("legendTitle", variant.LegendTitle != nil, legendSupported); err != nil {
 		return err
 	}
-	if err := optionSupported("legendItems", variant.LegendItems != nil, legendSupported && visualType != document.DashboardVisualTypeCandlestick); err != nil {
+	if err := optionSupported("legendItems", variant.LegendItems != nil, document.SupportsPresentationField(visualType, "legendItems")); err != nil {
 		return err
 	}
-	if err := optionSupported("stacking", variant.Stacking != nil,
-		visualType == document.DashboardVisualTypeLine ||
-			visualType == document.DashboardVisualTypeArea ||
-			visualType == document.DashboardVisualTypeBar ||
-			visualType == document.DashboardVisualTypeColumn ||
-			visualType == document.DashboardVisualTypeCombo); err != nil {
+	if err := optionSupported("stacking", variant.Stacking != nil, document.SupportsPresentationField(visualType, "stacking")); err != nil {
 		return err
 	}
 	if variant.Stacking != nil && *variant.Stacking == document.DashboardStackingModePercent && variant.DisplayUnits != nil {
 		return fmt.Errorf("presentation.displayUnits is incompatible with percent stacking because the renderer owns the percent formatter")
 	}
-	if err := optionSupported("orientation", variant.Orientation != nil,
-		visualType == document.DashboardVisualTypeLine ||
-			visualType == document.DashboardVisualTypeArea ||
-			visualType == document.DashboardVisualTypeColumn ||
-			visualType == document.DashboardVisualTypeCombo); err != nil {
+	if err := optionSupported("orientation", variant.Orientation != nil, document.SupportsPresentationField(visualType, "orientation")); err != nil {
 		return err
 	}
 	// Every current Cartesian mark has a renderer-owned data-zoom channel,
@@ -77,37 +55,28 @@ func validateCanonicalCartesianPresentationApplicability(variant *document.Carte
 		// reports the precise series path in those cases.
 		comboLineArea = comboSeriesSupportsLineControls(*variant.Series)
 	}
-	if err := optionSupported("showSymbols", variant.ShowSymbols != nil,
-		(visualType == document.DashboardVisualTypeLine || visualType == document.DashboardVisualTypeArea || visualType == document.DashboardVisualTypeCombo) && comboLineArea); err != nil {
+	if err := optionSupported("showSymbols", variant.ShowSymbols != nil, document.SupportsPresentationField(visualType, "showSymbols") && comboLineArea); err != nil {
 		return err
 	}
-	if err := optionSupported("smooth", variant.Smooth != nil,
-		(visualType == document.DashboardVisualTypeLine || visualType == document.DashboardVisualTypeArea || visualType == document.DashboardVisualTypeCombo) && comboLineArea); err != nil {
+	if err := optionSupported("smooth", variant.Smooth != nil, document.SupportsPresentationField(visualType, "smooth") && comboLineArea); err != nil {
 		return err
 	}
-	if err := optionSupported("step", variant.Step != nil,
-		(visualType == document.DashboardVisualTypeLine || visualType == document.DashboardVisualTypeArea || visualType == document.DashboardVisualTypeCombo) && comboLineArea); err != nil {
+	if err := optionSupported("step", variant.Step != nil, document.SupportsPresentationField(visualType, "step") && comboLineArea); err != nil {
 		return err
 	}
-	if err := optionSupported("symbolSize", variant.SymbolSize != nil,
-		(visualType == document.DashboardVisualTypeLine || visualType == document.DashboardVisualTypeArea || visualType == document.DashboardVisualTypeCombo) && comboLineArea); err != nil {
+	if err := optionSupported("symbolSize", variant.SymbolSize != nil, document.SupportsPresentationField(visualType, "symbolSize") && comboLineArea); err != nil {
 		return err
 	}
-	if err := optionSupported("series", variant.Series != nil, visualType == document.DashboardVisualTypeCombo); err != nil {
+	if err := optionSupported("series", variant.Series != nil, document.SupportsPresentationField(visualType, "series")); err != nil {
 		return err
 	}
-	if err := optionSupported("seriesIntent", variant.SeriesIntent != nil,
-		visualType == document.DashboardVisualTypeLine ||
-			visualType == document.DashboardVisualTypeArea ||
-			visualType == document.DashboardVisualTypeBar ||
-			visualType == document.DashboardVisualTypeColumn ||
-			visualType == document.DashboardVisualTypeCombo); err != nil {
+	if err := optionSupported("seriesIntent", variant.SeriesIntent != nil, document.SupportsPresentationField(visualType, "seriesIntent")); err != nil {
 		return err
 	}
-	if err := optionSupported("gainColor", variant.GainColor != nil, visualType == document.DashboardVisualTypeCandlestick); err != nil {
+	if err := optionSupported("gainColor", variant.GainColor != nil, document.SupportsPresentationField(visualType, "gainColor")); err != nil {
 		return err
 	}
-	if err := optionSupported("lossColor", variant.LossColor != nil, visualType == document.DashboardVisualTypeCandlestick); err != nil {
+	if err := optionSupported("lossColor", variant.LossColor != nil, document.SupportsPresentationField(visualType, "lossColor")); err != nil {
 		return err
 	}
 	// Decision-context declarations are lowered separately, but their authored
@@ -122,13 +91,7 @@ func validateCanonicalCartesianPresentationApplicability(variant *document.Carte
 		{"referenceBands", variant.ReferenceBands != nil},
 		{"eventAnnotations", variant.EventAnnotations != nil},
 	} {
-		if err := optionSupported(option.name, option.present,
-			visualType == document.DashboardVisualTypeLine ||
-				visualType == document.DashboardVisualTypeArea ||
-				visualType == document.DashboardVisualTypeBar ||
-				visualType == document.DashboardVisualTypeColumn ||
-				visualType == document.DashboardVisualTypeCombo ||
-				visualType == document.DashboardVisualTypeWaterfall); err != nil {
+		if err := optionSupported(option.name, option.present, document.SupportsPresentationField(visualType, option.name)); err != nil {
 			return err
 		}
 	}

@@ -771,6 +771,12 @@ model VisualizationLabelPolicy {
 model VisualizationPresentation {
   `legend`: VisualizationLegendPosition;
   `labelPolicy`: VisualizationLabelPolicy;
+  /**
+   * Whether axes are rendered for Cartesian and point (scatter) visuals.
+   * Omission retains the renderer default; authored values on other visual
+   * families are rejected by IR validation.
+   */
+  `axisVisible`?: boolean;
   `displayUnits`?: VisualizationDisplayUnits;
   `legendTitle`?: string;
   `legendItems`?: VisualizationLegendItem[];
@@ -916,6 +922,8 @@ model GeographicVisualizationPresentation extends VisualizationPresentation {
 model VisualizationSpec {
   `kind`: string;
   `title`: string;
+  /** False hides the visual-frame title without removing its accessible name. */
+  `titleVisible`?: boolean;
   `subtitle`?: string;
   `datasets`: VisualizationDatasetSchema[];
   `dataBudget`: VisualizationDataBudget;

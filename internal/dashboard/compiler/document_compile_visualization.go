@@ -14,7 +14,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 	description := valueOrString(visual.Description, title)
 	primaryFields := canonicalResultFields(query, model)
 	datasets := append([]visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: primaryFields}}, secondarySchemas...)
-	base := visualizationir.VisualizationSpecBase{Title: title, Datasets: datasets, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 1000, RequiredCompleteness: visualizationir.VisualizationCompletenessComplete}, Accessibility: visualizationir.VisualizationAccessibility{Title: title, Description: description}, Interactions: []visualizationir.VisualizationInteraction{}}
+	base := visualizationir.VisualizationSpecBase{Title: title, TitleVisible: visual.TitleVisible, Datasets: datasets, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 1000, RequiredCompleteness: visualizationir.VisualizationCompletenessComplete}, Accessibility: visualizationir.VisualizationAccessibility{Title: title, Description: description}, Interactions: []visualizationir.VisualizationInteraction{}}
 	tooltipItems, tooltipRefs, tooltipErr := canonicalDashboardTooltip(visual, query, primaryFields)
 	if tooltipErr != nil {
 		return visualizationir.VisualizationSpec{}, tooltipErr

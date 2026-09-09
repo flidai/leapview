@@ -44,6 +44,13 @@ export function configureSecondaryComboAxis(axisOption: EChartsTranslation): voi
   if (axisOption.splitLine?.show !== true) axisOption.splitLine = { ...axisOption.splitLine, show: false }
 }
 
+export function hideCartesianAxes(option: EChartsTranslation): EChartsTranslation {
+  const hidden = (axis: unknown): unknown => Array.isArray(axis)
+    ? axis.map((value) => ({ ...(value as EChartsTranslation), show: false }))
+    : axis && typeof axis === 'object' ? { ...(axis as EChartsTranslation), show: false } : axis
+  return { ...option, xAxis: hidden(option.xAxis), yAxis: hidden(option.yAxis) }
+}
+
 export function applyPercentAxis(axisOption: EChartsTranslation, context: RendererContext): void {
   const formatter = new Intl.NumberFormat(context.locale, { maximumFractionDigits: 1 })
   axisOption.axisLabel = { ...axisOption.axisLabel, formatter: (value: unknown) => typeof value === 'number' ? `${formatter.format(value)}%` : String(value) }

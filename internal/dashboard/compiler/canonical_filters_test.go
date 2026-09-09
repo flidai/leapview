@@ -124,7 +124,7 @@ func TestCompileCanonicalDashboardFiltersRejectsPhysicalAndReservedURL(t *testin
 	// parameter before checking duplicate detection.
 	validURL := "shared"
 	doc.Spec.Filters[0].URLParameter = &validURL
-	if _, err := CompileCanonicalDashboardFilters(doc, model); err == nil || !strings.Contains(err.Error(), "used by filters") {
+	if _, err := CompileCanonicalDashboardFilters(doc, model); err == nil || !strings.Contains(err.Error(), "URL parameter") {
 		t.Fatalf("duplicate URL error = %v", err)
 	}
 }
@@ -165,11 +165,13 @@ func TestCompileCanonicalDashboardFiltersRequiresExplicitNarrowingForIncompatibl
 	if got := compiled.Bindings["status"].Targets; len(got) != 1 || got[0] != "overview/orders-card" {
 		t.Fatalf("narrowed targets = %#v", got)
 	}
-	for _, removed := range []string{"overview/orders-card", "orders-card"} {
-		doc.Spec.Filters[0].Targets = &[]string{removed}
-		if _, err := CompileCanonicalDashboardFilters(doc, model); err == nil || !strings.Contains(err.Error(), "unknown target") {
-			t.Fatalf("removed target form %q was accepted: %v", removed, err)
-		}
+	doc.Spec.Filters[0].Targets = &[]string{"overview/orders-card"}
+	if _, err := CompileCanonicalDashboardFilters(doc, model); err != nil {
+		t.Fatalf("qualified report target rejected: %v", err)
+	}
+	doc.Spec.Filters[0].Targets = &[]string{"orders-card"}
+	if _, err := CompileCanonicalDashboardFilters(doc, model); err == nil || !strings.Contains(err.Error(), "unknown target") {
+		t.Fatalf("unqualified report component target was accepted: %v", err)
 	}
 }
 
@@ -186,6 +188,152 @@ func TestCompileCanonicalDashboardFiltersRetainsOneReportBindingAcrossPageReloca
 	}
 	if len(compiled.Bindings) != 1 || compiled.Pages[0].Visuals[0].Binding != compiled.Pages[1].Visuals[0].Binding {
 		t.Fatalf("filter binding was not stable across pages: %#v", compiled.Bindings)
+	}
+}
+
+func TestCompileCanonicalDashboardFiltersCreatesFirstClassPageBinding(t *testing.T) {
+	model := canonicalFilterTestModel()
+	required, editable, pageURL := true, false, "page_status"
+	pageDefault := document.DashboardFilterExpression{Value: &document.SetDashboardFilterExpression{Type: "set", Operator: document.DashboardFilterOperatorIn, Values: []document.DashboardFilterValue{canonicalStringValue("paid")}}}
+	pageTargets := []string{"orders_card"}
+	pageBindings := []document.DashboardPageFilterBinding{{ID: "page_status", Filter: "status", Default: &pageDefault, Required: &required, ReaderEditable: &editable, Targets: &pageTargets, URLParameter: &pageURL}}
+	doc := document.DashboardDocument{Metadata: document.DashboardMetadata{ID: "dashboard:sales"}, Spec: document.DashboardSpec{
+		SemanticModel: "sales",
+		Filters:       []document.DashboardFilter{{ID: "status", Label: "Status", Dimension: "status", Control: document.DashboardFilterControl{Value: &document.SingleSelectDashboardFilterControl{Type: "singleSelect"}}}},
+		Visuals:       map[string]document.DashboardVisual{"orders": canonicalVisual("order_count")},
+		Pages: []document.DashboardPage{{ID: "overview", FilterBindings: &pageBindings, Components: []document.DashboardPageComponent{
+			{Value: &document.FilterDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "status_control", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 3, RowSpan: 1}}, Type: "filter", Filter: "status"}},
+			{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "orders_card", Placement: document.DashboardPlacement{Column: 4, Row: 1, ColumnSpan: 9, RowSpan: 4}}, Type: "visual", Visual: "orders"}},
+		}}},
+	}}
+	compiled, err := CompileCanonicalDashboardFilters(doc, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := compiled.Bindings["status"]; exists {
+		t.Fatalf("page-scoped filter retained report binding: %#v", compiled.Bindings)
+	}
+	pageBinding := compiled.Pages[0].FilterBindings["page_status"]
+	if pageBinding.Scope != dashboardfilter.ScopePage || pageBinding.PageID != "overview" || pageBinding.Filter != "status" || pageBinding.Key == "" {
+		t.Fatalf("compiled page binding = %#v", pageBinding)
+	}
+	if !pageBinding.Required || pageBinding.Editable() || pageBinding.URL.Param != pageURL || pageBinding.Default.Kind != dashboardfilter.ExpressionSet {
+		t.Fatalf("page binding overrides = %#v", pageBinding)
+	}
+	if got := pageBinding.Targets; len(got) != 1 || got[0] != "overview/orders_card" {
+		t.Fatalf("page binding targets = %#v", got)
+	}
+	if got := compiled.Pages[0].Visuals[0].Binding; got.Scope != dashboardfilter.ScopePage || got.ID != "page_status" {
+		t.Fatalf("page slicer binding = %#v", got)
+	}
+	definition := dashboarddefinition.Definition{Pages: []dashboard.Page{{ID: "overview", Visuals: []dashboard.PageVisual{{ID: "status_control", Kind: "slicer"}, {ID: "orders_card", Kind: "visual"}}}}}
+	if err := compiled.ApplyToDefinition(&definition); err != nil {
+		t.Fatal(err)
+	}
+	if got := definition.CompiledFilterBindings()[pageBinding.Key]; got.Scope != dashboardfilter.ScopePage || got.PageID != "overview" {
+		t.Fatalf("attached page binding = %#v", got)
+	}
+}
+
+func TestCompileCanonicalDashboardFiltersRequiresPageLocalComponentTargets(t *testing.T) {
+	model := canonicalFilterTestModel()
+	pageTargets := []string{"orders"}
+	pageBindings := []document.DashboardPageFilterBinding{{ID: "page_status", Filter: "status", Targets: &pageTargets}}
+	doc := document.DashboardDocument{Metadata: document.DashboardMetadata{ID: "dashboard:sales"}, Spec: document.DashboardSpec{
+		SemanticModel: "sales",
+		Filters:       []document.DashboardFilter{{ID: "status", Label: "Status", Dimension: "status", Control: document.DashboardFilterControl{Value: &document.SingleSelectDashboardFilterControl{Type: "singleSelect"}}}},
+		Visuals:       map[string]document.DashboardVisual{"orders": canonicalVisual("order_count")},
+		Pages: []document.DashboardPage{{ID: "overview", FilterBindings: &pageBindings, Components: []document.DashboardPageComponent{
+			{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "orders_card", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4}}, Type: "visual", Visual: "orders"}},
+		}}},
+	}}
+	if _, err := CompileCanonicalDashboardFilters(doc, model); err == nil || !strings.Contains(err.Error(), "outside its page") {
+		t.Fatalf("visual definition id was accepted as page-local target: %v", err)
+	}
+}
+
+func TestCompileCanonicalDashboardFiltersRejectsAmbiguousComponentTarget(t *testing.T) {
+	model := canonicalFilterTestModel()
+	pageTargets := []string{"orders_card"}
+	pageBindings := []document.DashboardPageFilterBinding{{ID: "page_status", Filter: "status", Targets: &pageTargets}}
+	doc := document.DashboardDocument{Metadata: document.DashboardMetadata{ID: "dashboard:sales"}, Spec: document.DashboardSpec{
+		SemanticModel: "sales",
+		Filters:       []document.DashboardFilter{{ID: "status", Label: "Status", Dimension: "status", Control: document.DashboardFilterControl{Value: &document.SingleSelectDashboardFilterControl{Type: "singleSelect"}}}},
+		Visuals:       map[string]document.DashboardVisual{"orders": canonicalVisual("order_count")},
+		Pages: []document.DashboardPage{{ID: "overview", FilterBindings: &pageBindings, Components: []document.DashboardPageComponent{
+			{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "orders_card", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4}}, Type: "visual", Visual: "orders"}},
+			{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "orders_copy", Placement: document.DashboardPlacement{Column: 7, Row: 1, ColumnSpan: 6, RowSpan: 4}}, Type: "visual", Visual: "orders"}},
+		}}},
+	}}
+	if _, err := CompileCanonicalDashboardFilters(doc, model); err == nil || !strings.Contains(err.Error(), "cannot have independent component state") {
+		t.Fatalf("ambiguous component target error = %v", err)
+	}
+}
+
+func TestCanonicalOptionDependenciesRequireConsumerOverlap(t *testing.T) {
+	pages := []dashboard.Page{{ID: "overview", Visuals: []dashboard.PageVisual{
+		{ID: "orders_card", Kind: "visual", Visual: "orders"},
+		{ID: "revenue_card", Kind: "visual", Visual: "revenue"},
+	}}}
+	orders := dashboardfilter.Binding{Scope: dashboardfilter.ScopePage, PageID: "overview", TargetPolicy: dashboardfilter.TargetPolicy{Include: []string{"orders_card"}}}
+	revenue := dashboardfilter.Binding{Scope: dashboardfilter.ScopePage, PageID: "overview", TargetPolicy: dashboardfilter.TargetPolicy{Include: []string{"revenue_card"}}}
+	if canonicalBindingTargetPoliciesOverlap(orders, revenue, pages) {
+		t.Fatal("disjoint page component policies produced an option dependency edge")
+	}
+	reportOrders := dashboardfilter.Binding{Scope: dashboardfilter.ScopeReport, TargetPolicy: dashboardfilter.TargetPolicy{Include: []string{"orders"}}}
+	if !canonicalBindingTargetPoliciesOverlap(orders, reportOrders, pages) {
+		t.Fatal("page component and matching report visual policy did not overlap")
+	}
+}
+
+func TestCompileCanonicalDashboardFiltersRejectsInvalidPageBindings(t *testing.T) {
+	model := canonicalFilterTestModel()
+	base := document.DashboardDocument{Metadata: document.DashboardMetadata{ID: "dashboard:sales"}, Spec: document.DashboardSpec{
+		SemanticModel: "sales",
+		Filters:       []document.DashboardFilter{{ID: "status", Label: "Status", Dimension: "status", Control: document.DashboardFilterControl{Value: &document.SingleSelectDashboardFilterControl{Type: "singleSelect"}}}},
+		Pages:         []document.DashboardPage{{ID: "overview", Components: []document.DashboardPageComponent{}}},
+	}}
+	tests := []struct {
+		name     string
+		bindings []document.DashboardPageFilterBinding
+		want     string
+	}{
+		{name: "unknown filter", bindings: []document.DashboardPageFilterBinding{{ID: "missing", Filter: "missing"}}, want: "unknown filter"},
+		{name: "duplicate filter", bindings: []document.DashboardPageFilterBinding{{ID: "one", Filter: "status"}, {ID: "two", Filter: "status"}}, want: "more than once"},
+		{name: "duplicate id", bindings: []document.DashboardPageFilterBinding{{ID: "same", Filter: "status"}, {ID: "same", Filter: "status"}}, want: "duplicate filter binding id"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			doc := base
+			doc.Spec.Pages = append([]document.DashboardPage(nil), base.Spec.Pages...)
+			doc.Spec.Pages[0].FilterBindings = &test.bindings
+			if _, err := CompileCanonicalDashboardFilters(doc, model); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("compile error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestCompileCanonicalDashboardFiltersValidatesURLParametersPerPageRoute(t *testing.T) {
+	model := canonicalFilterTestModel()
+	shared := "shared"
+	one := []document.DashboardPageFilterBinding{{ID: "page_status", Filter: "status"}}
+	two := []document.DashboardPageFilterBinding{{ID: "page_other", Filter: "other"}}
+	doc := document.DashboardDocument{Metadata: document.DashboardMetadata{ID: "dashboard:sales"}, Spec: document.DashboardSpec{
+		SemanticModel: "sales",
+		Filters: []document.DashboardFilter{
+			{ID: "status", Label: "Status", Dimension: "status", URLParameter: &shared, Control: document.DashboardFilterControl{Value: &document.TextDashboardFilterControl{Type: "text"}}},
+			{ID: "other", Label: "Other", Dimension: "status", URLParameter: &shared, Control: document.DashboardFilterControl{Value: &document.TextDashboardFilterControl{Type: "text"}}},
+		},
+		Pages: []document.DashboardPage{{ID: "one", FilterBindings: &one, Components: []document.DashboardPageComponent{}}, {ID: "two", FilterBindings: &two, Components: []document.DashboardPageComponent{}}},
+	}}
+	if _, err := CompileCanonicalDashboardFilters(doc, model); err != nil {
+		t.Fatalf("separate page URL parameters collided: %v", err)
+	}
+	combined := append(append([]document.DashboardPageFilterBinding(nil), one...), two...)
+	doc.Spec.Pages[0].FilterBindings = &combined
+	if _, err := CompileCanonicalDashboardFilters(doc, model); err == nil || !strings.Contains(err.Error(), "on page \"one\"") {
+		t.Fatalf("same-route URL collision error = %v", err)
 	}
 }
 

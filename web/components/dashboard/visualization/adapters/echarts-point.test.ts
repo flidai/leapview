@@ -1,9 +1,43 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
 import { brushSelectionCommands, echartsOption } from './echarts'
 import { CategoryColorRegistry } from './echarts/category-colors'
+
+test('ECharts point axis visibility hides axes and restores native defaults without changing data identity', () => {
+  const envelope = pointCategoricalFixture([
+    ['p-a', 'A', 1, 10],
+    ['p-b', 'B', 2, 20],
+  ]) as any
+  const defaultOption = echartsOption(envelope, defaultRendererContext) as any
+  const hidden = structuredClone(envelope)
+  hidden.spec.presentation.axisVisible = false
+  const hiddenOption = echartsOption(hidden, defaultRendererContext) as any
+
+  expect(hiddenOption.xAxis.show).toBe(false)
+  expect(hiddenOption.yAxis.show).toBe(false)
+  expect(defaultOption.xAxis.show).toBeUndefined()
+  expect(defaultOption.yAxis.show).toBeUndefined()
+  expect(pointDataSignature(hiddenOption)).toEqual(pointDataSignature(defaultOption))
+
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    chart.setOption(hiddenOption, { notMerge: true, lazyUpdate: false })
+    expect((chart.getOption() as any).xAxis[0].show).toBe(false)
+    expect((chart.getOption() as any).yAxis[0].show).toBe(false)
+
+    chart.setOption(defaultOption, { notMerge: true, lazyUpdate: false })
+    const restored = chart.getOption() as any
+    expect(restored.xAxis[0].show).toBe(true)
+    expect(restored.yAxis[0].show).toBe(true)
+    expect(restored.series.map((series: any) => series.id)).toEqual(defaultOption.series.map((series: any) => series.id))
+    expect(restored.dataset.map((dataset: any) => dataset.source)).toEqual(defaultOption.dataset.map((dataset: any) => dataset.source))
+  } finally {
+    chart.dispose()
+  }
+})
 
 test('ECharts renders deterministic categorical scatter legends without changing source rows', () => {
   const envelope = pointCategoricalFixture([
@@ -236,4 +270,11 @@ function pointCategoricalFixture(rows: unknown[][]): VisualizationEnvelope {
     dataState: { kind: 'inline', specRevision: 'sha256:point-categories', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:point-categories', dataRevision: 1, generation: 1, columns: ['id', 'category', 'x', 'y'], rows, completeness: rows.length ? 'complete' : 'empty' }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
+}
+
+function pointDataSignature(option: any): unknown {
+  return {
+    series: option.series.map((series: any) => ({ id: series.id, type: series.type, name: series.name, datasetId: series.datasetId, encode: series.encode, sourceRows: series.__lv_source_row_indices })),
+    dataset: option.dataset?.map((dataset: any) => ({ id: dataset.id, source: dataset.source, fromDatasetId: dataset.fromDatasetId, transform: dataset.transform })),
+  }
 }

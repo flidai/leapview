@@ -11,7 +11,7 @@ import { installMapLibreChromeStyles } from './maplibre/chrome'
 import { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
 import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerIDs, type TiledLayerStyleUpdate } from './maplibre/layers'
 import { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
-import { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries, type RenderedFeatureLocator } from './maplibre/overlays'
+import { mapAccessibleTableSides, mapOverlayBottom, mapOverlaysNeedStacking, mapVisibleDataSummary, mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries, type RenderedFeatureLocator } from './maplibre/overlays'
 import { applyTiledPrecisionLayerVisibility, emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, setMapStyleAndWait, tiledPrecisionLayerFamily, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
 import { MapSpatialSelectionControl } from './maplibre/spatial-selection-control'
 import { combineMapFilters, formatMapRangeValue, mapValueFilteredEnvelope, mapValueFilterExpression, mapValueRange, mapValueRangePercent, withMapValueSelection, type MapValueRange } from './maplibre/value-range'
@@ -24,49 +24,17 @@ export { mapLibreChromeCSS } from './maplibre/chrome'
 export { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
 export { applyFeatureScales, mapLayer, mapOutlineLayer, normalizeFeatureWeights, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerIDs } from './maplibre/layers'
 export { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
-export { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries } from './maplibre/overlays'
+export { mapAccessibleTableSides, mapOverlayBottom, mapOverlaysNeedStacking, mapVisibleDataSummary, mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries } from './maplibre/overlays'
 export { applyTiledPrecisionLayerVisibility, installWebGLRecovery, removeRendererFrame, setMapStyleAndWait, tiledPrecisionLayerFamily, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, waitForMapIdle, waitForMapRender } from './maplibre/lifecycle'
 export { coordinateReferenceGrid, fitMapToGeographicData, resetMapToHome } from './maplibre/viewport'
 export { mapBasemapIdentity, mapClickCanRefineCamera, mapPointerOptions } from './maplibre/update-policy'
 
 export const mapAccessibleTableStyle = 'position:absolute;z-index:3;left:10px;bottom:50px;max-width:min(520px,calc(100% - 20px));max-height:55%;overflow:auto;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary);box-shadow:0 1px 3px rgba(31,35,40,.12)'
 
-export function mapAccessibleTableSides(legendPosition: string): { left: string; right: string } {
-  return legendPosition === 'left' || legendPosition === 'bottom'
-    ? { left: '', right: '10px' }
-    : { left: '10px', right: '' }
-}
 
 export function progressiveAggregateRefinementZoom(currentZoom: number, targetZoom: number, maximumStep = 2): number {
   if (!Number.isFinite(currentZoom) || !Number.isFinite(targetZoom) || !Number.isFinite(maximumStep) || maximumStep <= 0) return targetZoom
   return targetZoom > currentZoom ? Math.min(targetZoom, currentZoom + maximumStep) : targetZoom
-}
-
-export function mapOverlayBottom(attributionHeight: number): string {
-  return `${Math.max(28, Math.ceil(attributionHeight) + 12)}px`
-}
-
-export function mapOverlaysNeedStacking(frameWidth: number, legendWidth: number, tableWidth: number): boolean {
-  // Both overlays are inset by 10px, so reserving their combined 20px edge
-  // margins is sufficient; any remaining width becomes the gap between them.
-  return legendWidth + tableWidth + 20 > frameWidth
-}
-
-export function mapVisibleDataSummary(visibleRows: number, aggregateRows: number, rawRows: number, totalRows: number): { label: string; accessibleLabel: string } {
-  const precision = aggregateRows > 0 && rawRows === 0
-    ? `${visibleRows} visible aggregate cells`
-    : rawRows > 0 && aggregateRows === 0
-      ? `${visibleRows} visible raw points`
-      : `${visibleRows} visible features: ${rawRows} raw points, ${aggregateRows} aggregate cells`
-  const count = aggregateRows > 0 && rawRows === 0
-    ? `${visibleRows} cells`
-    : rawRows > 0 && aggregateRows === 0
-      ? `${visibleRows} points`
-      : `${visibleRows} features`
-  return {
-    label: `View map data (${count})`,
-    accessibleLabel: `View visible map data (${precision}${totalRows > 0 ? `; ${totalRows} total coordinates` : ''})`,
-  }
 }
 
 export function tiledPointLabelFilter(labelField: string, aggregateMembers = false): any {

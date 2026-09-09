@@ -73,6 +73,9 @@ type Dashboard struct {
 	Status          authoring.LifecycleStatus `json:"status"`
 	Visibility      authoring.Visibility      `json:"visibility"`
 	Owner           string                    `json:"owner,omitempty"`
+	DraftID         authoring.DraftID         `json:"draftId,omitempty"`
+	PageCount       int                       `json:"pageCount"`
+	FirstPageID     string                    `json:"-"`
 	Tags            []string                  `json:"tags,omitempty"`
 	ServingIdentity graph.ServingIdentity     `json:"servingIdentity,omitempty"`
 	Revision        *RevisionEvidence         `json:"revision,omitempty"`
@@ -305,6 +308,7 @@ func projectCandidates(runtime projectruntime.Runtime, identity graph.ServingIde
 			SemanticModel: dashboard.SemanticModel, Source: SourceProject, Origin: authoring.OriginFile,
 			Status: authoring.LifecycleStatusPublished, Visibility: authoring.VisibilityOrganization,
 			Tags:            append([]string(nil), dashboard.Tags...),
+			PageCount:       dashboard.PageCount,
 			ServingIdentity: identity,
 			StableID:        stableID(SourceProject, identity.ProjectID, id.String()),
 		}
@@ -433,6 +437,9 @@ func instanceItemBase(projectID graph.ResourceID, lifecycle authoring.DashboardL
 		StableID: stableID(SourceInstance, projectID, lifecycle.ID.String()),
 		Revision: &RevisionEvidence{ID: revisionToken.RevisionID.String(), Number: revisionToken.Number, ContentHash: revisionToken.ContentHash},
 	}
+	if lifecycle.Draft != nil {
+		item.DraftID = lifecycle.Draft.ID
+	}
 	if lifecycle.Status == authoring.LifecycleStatusPublished && lifecycle.Published != nil {
 		compiled := lifecycle.Published.Compilation
 		publishedToken := lifecycle.Published.Revision
@@ -469,6 +476,10 @@ func (s *Service) enrichInstanceItem(ctx context.Context, projectID graph.Resour
 	}
 	if revision.Document.Metadata.Description != nil {
 		item.Description = *revision.Document.Metadata.Description
+	}
+	item.PageCount = len(revision.Document.Spec.Pages)
+	if len(revision.Document.Spec.Pages) > 0 {
+		item.FirstPageID = strings.TrimSpace(revision.Document.Spec.Pages[0].ID)
 	}
 	item.Revision.CreatedAt = revision.CreatedAt
 	return nil

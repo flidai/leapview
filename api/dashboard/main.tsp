@@ -48,6 +48,12 @@ scalar DashboardSemanticMember extends DashboardResultField;
 /** Dashboard visual, filter, page, component, calculation, and dataset IDs. */
 scalar DashboardObjectIdentifier extends DashboardLocalIdentifier;
 
+/** Visual definition ID or report-qualified page/component target. */
+@minLength(1)
+@maxLength(257)
+@pattern("^[A-Za-z_][A-Za-z0-9_-]*(?:/[A-Za-z_][A-Za-z0-9_-]*)?$")
+scalar DashboardFilterTarget extends string;
+
 /** The only resource version accepted by the canonical dashboard document. */
 enum DashboardApiVersion {
   v1: "leapview.dev/v1",
@@ -497,7 +503,7 @@ model DashboardFilter {
   default?: DashboardFilterExpression;
   required?: boolean;
   readerEditable?: boolean;
-  targets?: DashboardObjectIdentifier[];
+  targets?: DashboardFilterTarget[];
   urlParameter?: DashboardURLParameter;
 }
 
@@ -712,6 +718,12 @@ model DashboardEventAnnotation {
 model DashboardPresentation {
   type: string;
   conditionalFormatting?: DashboardConditionalFormat[];
+  /**
+   * Whether axes are rendered for Cartesian marks and point (scatter)
+   * visuals. Omit this field to use the renderer default; an authored value
+   * on another presentation family is invalid rather than silently ignored.
+   */
+  axisVisible?: boolean;
 }
 
 model CartesianDashboardPresentation extends DashboardPresentation {
@@ -1137,6 +1149,8 @@ model DashboardCalculationLookup {
 model DashboardVisual {
   type: DashboardVisualType;
   title?: string;
+  /** Controls whether the authored title is shown in the visual frame. */
+  titleVisible?: boolean;
   subtitle?: string;
   description?: string;
   query: DashboardQuery;
@@ -1254,10 +1268,26 @@ model HeaderDashboardPageComponent extends DashboardPageComponent {
   description?: string;
 }
 
+/**
+ * A page-scoped state binding for one governed dashboard filter definition.
+ * The binding identity is local to its page and is independent from any
+ * in-canvas filter component that presents the same filter.
+ */
+model DashboardPageFilterBinding {
+  id: DashboardObjectIdentifier;
+  filter: DashboardObjectIdentifier;
+  default?: DashboardFilterExpression;
+  required?: boolean;
+  readerEditable?: boolean;
+  targets?: DashboardObjectIdentifier[];
+  urlParameter?: DashboardURLParameter;
+}
+
 model DashboardPage {
   id: DashboardObjectIdentifier;
   title: string;
   description?: string;
   layout?: DashboardLayoutOverride;
+  filterBindings?: DashboardPageFilterBinding[];
   components: DashboardPageComponent[];
 }

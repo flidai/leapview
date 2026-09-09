@@ -36,6 +36,18 @@ func TestRuntimeMetricsPlannerAdaptsConsumerPlannerPort(t *testing.T) {
 	}
 }
 
+func TestRuntimeMetricsRejectsCompiledOptionsAfterGenerationCutover(t *testing.T) {
+	provider := &resolverTestProvider{runtime: &resolverTestRuntime{}, stateID: "state-2"}
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, ProjectID: "project_1"}).(runtimeMetrics)
+	_, err := metrics.QueryCompiledFilterOptionsForDefinitionAtGeneration(context.Background(), dashboarddefinition.Definition{}, dashboardfilter.OptionQuery{}, "state-1")
+	if err == nil || !strings.Contains(err.Error(), "generation changed") {
+		t.Fatalf("generation mismatch error = %v", err)
+	}
+	if provider.lease == nil || provider.lease.releases != 1 {
+		t.Fatalf("generation mismatch lease release = %#v", provider.lease)
+	}
+}
+
 func TestRuntimeMetricsResolverPublishedSuccessUsesOneLease(t *testing.T) {
 	compiled := moduleCompiledRevision(t, "project_1", "published", "state-1")
 	provider := &resolverTestProvider{runtime: &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}, stateID: "state-1"}

@@ -19,6 +19,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoringcatalog "github.com/flidai/leapview/internal/dashboard/authoring/catalog"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	projectview "github.com/flidai/leapview/internal/project"
@@ -78,6 +79,112 @@ func TestBoundProjectUsesActiveProjectResolver(t *testing.T) {
 	if got != want {
 		t.Fatalf("project ID = %q, want %q", got, want)
 	}
+}
+
+func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *testing.T) {
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	reader := &browserDashboardCatalogStub{result: dashboardauthoringcatalog.ListResult{Items: []dashboardauthoringcatalog.Dashboard{
+		{
+			ID: "dashboard:mine", StableID: "instance:project:test:dashboard:mine", ProjectID: "project:test", Title: "My analysis",
+			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceInstance, Owner: "alice", DraftID: "draft-mine", PageCount: 2,
+			FirstPageID: "overview",
+			Revision:    &dashboardauthoringcatalog.RevisionEvidence{ID: "revision-mine", Number: 2, ContentHash: strings.Repeat("a", 64), CreatedAt: now},
+		},
+		{
+			ID: "dashboard:managed", StableID: "project:project:test:dashboard:managed", ProjectID: "project:test", Title: "Executive sales",
+			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceProject, Owner: "analytics", PageCount: 1,
+		},
+		{
+			ID: "dashboard:pending", StableID: "instance:project:test:dashboard:pending", ProjectID: "project:test", Title: "Pending analysis",
+			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceInstance, Owner: "alice", DraftID: "draft-pending", PageCount: 1,
+			FirstPageID: "overview",
+			Revision:    &dashboardauthoringcatalog.RevisionEvidence{ID: "revision-new", Number: 3, ContentHash: strings.Repeat("c", 64), CreatedAt: now},
+			Publication: &dashboardauthoringcatalog.PublicationEvidence{Revision: dashboardauthoringcatalog.RevisionEvidence{ID: "revision-old", Number: 2, ContentHash: strings.Repeat("b", 64)}},
+		},
+	}}}
+	popularityCount := 0
+	h := &BrowserHandler{
+		DashboardCatalog: reader,
+		ActiveServingState: browserActiveServingStateStub{state: servingstate.State{
+			ProjectID: "project:test", Environment: "dev", ActivatedAt: now.Add(-time.Hour).Format(time.RFC3339),
+		}},
+		Environment: "dev",
+		DashboardPopularity: func(_ context.Context, dashboardCount int) (map[string]string, error) {
+			popularityCount = dashboardCount
+			return map[string]string{"dashboard:managed": "high"}, nil
+		},
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:      func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice", DevBypass: true}, true },
+	}
+	_, options, err := h.dashboardCatalogPage(httptest.NewRequest(stdhttp.MethodGet, "/", nil), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options.Dashboards) != 3 {
+		t.Fatalf("dashboards = %#v", options.Dashboards)
+	}
+	mine, managed, pending := options.Dashboards[0], options.Dashboards[1], options.Dashboards[2]
+	wantMineHref := "/dashboards/dashboard:mine/preview?draft=draft-mine&page=overview&revisionContentHash=" + strings.Repeat("a", 64) + "&revisionId=revision-mine&revisionNumber=2"
+	if mine.CatalogScope != "mine" || mine.Status != "private_draft" || mine.Href != wantMineHref || mine.Owner != "You" || mine.UpdatedAt != now.Format(time.RFC3339) {
+		t.Fatalf("mine = %#v", mine)
+	}
+	if managed.CatalogScope != "managed" || managed.Owner != "analytics" || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" || managed.Popularity != "high" || managed.UpdatedAt != now.Add(-time.Hour).Format(time.RFC3339) {
+		t.Fatalf("managed = %#v", managed)
+	}
+	if pending.CatalogScope != "mine" || pending.Status != "unpublished_changes" || pending.Href != "/dashboards/dashboard:pending" {
+		t.Fatalf("pending = %#v", pending)
+	}
+	if popularityCount != 3 {
+		t.Fatalf("popularity dashboard count = %d, want 3", popularityCount)
+	}
+	if len(reader.requests) != 1 || reader.requests[0].ActorID != "alice" || reader.requests[0].ProjectID != "project:test" {
+		t.Fatalf("catalog requests = %#v", reader.requests)
+	}
+}
+
+type browserActiveServingStateStub struct {
+	state servingstate.State
+	err   error
+}
+
+func (s browserActiveServingStateStub) ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
+	return s.state, servingstate.Artifact{}, s.err
+}
+
+func TestActiveServingStateUpdatedAtIsBestEffort(t *testing.T) {
+	projectID := projectgraph.ResourceID("project:test")
+	createdAt := "2026-09-01T10:00:00Z"
+	activatedAt := "2026-09-01T11:00:00Z"
+	tests := []struct {
+		name   string
+		reader ActiveServingStateReader
+		want   string
+	}{
+		{name: "activation is canonical", reader: browserActiveServingStateStub{state: servingstate.State{ProjectID: projectID, CreatedAt: createdAt, ActivatedAt: activatedAt}}, want: activatedAt},
+		{name: "creation is the fallback", reader: browserActiveServingStateStub{state: servingstate.State{ProjectID: projectID, CreatedAt: createdAt}}, want: createdAt},
+		{name: "lookup failure does not block discovery", reader: browserActiveServingStateStub{err: errors.New("unavailable")}},
+		{name: "scope mismatch is ignored", reader: browserActiveServingStateStub{state: servingstate.State{ProjectID: "project:other", ActivatedAt: activatedAt}}},
+		{name: "missing reader is supported"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := &BrowserHandler{ActiveServingState: test.reader, Environment: "dev"}
+			if got := h.activeServingStateUpdatedAt(t.Context(), projectID); got != test.want {
+				t.Fatalf("active serving state updated at = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+type browserDashboardCatalogStub struct {
+	result   dashboardauthoringcatalog.ListResult
+	err      error
+	requests []dashboardauthoringcatalog.ListRequest
+}
+
+func (s *browserDashboardCatalogStub) List(_ context.Context, request dashboardauthoringcatalog.ListRequest) (dashboardauthoringcatalog.ListResult, error) {
+	s.requests = append(s.requests, request)
+	return s.result, s.err
 }
 
 type browserGraphStub struct{ graph servingstate.AssetGraph }

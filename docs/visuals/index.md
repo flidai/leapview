@@ -124,6 +124,26 @@ presentation:
 
 ## Per-mark presentation
 
+### Axis visibility and builder format options
+
+`presentation.axisVisible` controls axis rendering for Cartesian marks and
+point (scatter) visuals. `true` or `false` is explicit; omission retains the
+renderer default. Do not author this field on proportional, hierarchy, polar,
+geographic, KPI, or table-family visuals: unsupported values fail compilation
+with the authored `presentation.axisVisible` path instead of being silently
+ignored.
+
+The dashboard builder shows only format options consumed by the selected mark.
+When switching between Cartesian marks, authored presentation fields are
+preserved as part of the same-family presentation. If a preserved field is not
+valid for the target mark, the compiler reports that field rather than silently
+discarding it. Cross-family switches carry axis visibility only to Cartesian or
+point targets; unsupported families do not inherit it.
+Map fixed-camera mode is offered only when the YAML already supplies its center
+and zoom; the builder does not author map center coordinates. Format values
+still undergo semantic validation, including numeric domains and the requirement
+for tooltip fallback when labels can be suppressed.
+
 Cartesian marks support the common `labels`, `labelPosition`, `displayUnits`, and `axes` fields where the renderer consumes those channels. Candlestick and boxplot do not render data labels, so `labels` and `labelPosition` are rejected for those marks. Mark-specific fields are scoped to the renderer paths that consume them:
 
 | Mark | Mark-specific presentation fields |

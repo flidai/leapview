@@ -365,7 +365,13 @@ func decodeDashboardFixture(content string, destination *document.DashboardDocum
 
 func auditContext(eventID, action string) context.Context {
 	metadata := `{"schemaVersion":1,"retention":"standard","payloadSchema":"dashboard.authoring.command.audit.v1","payload":{"operationId":"operation","projectId":"project:sales","dashboardId":"pending-dashboard","draftId":"pending-draft","origin":"ui"}}`
-	return authoring.WithAuditIntent(context.Background(), access.AuditIntent{EventID: eventID, Source: "dashboard.authoring", Operation: "executeDashboardAuthoringCommand", PrincipalID: "actor", Action: action, Capability: access.CapabilityResourceEdit, Outcome: "success", RequestID: eventID, CorrelationID: eventID, MetadataJSON: metadata})
+	capability := access.CapabilityResourceEdit
+	if strings.HasSuffix(action, ".published") {
+		capability = access.CapabilityResourcePublish
+	} else if strings.HasSuffix(action, ".archived") {
+		capability = access.CapabilityResourceManage
+	}
+	return authoring.WithAuditIntent(context.Background(), access.AuditIntent{EventID: eventID, Source: "dashboard.authoring", Operation: "executeDashboardAuthoringCommand", PrincipalID: "actor", Action: action, Capability: capability, Outcome: "success", RequestID: eventID, CorrelationID: eventID, MetadataJSON: metadata})
 }
 
 func commandEvidence(id, action string, provenance authoring.Provenance, at time.Time) authoring.CommandEvidence {
@@ -745,5 +751,12 @@ REVOKE UPDATE, DELETE ON event.event_log FROM leapview_control_runtime`); err !=
 	}
 	if count != 1 {
 		t.Fatalf("runtime dashboard visibility count = %d, want 1", count)
+	}
+	var locked bool
+	if err := runtime.QueryRow(t.Context(), `SELECT dashboard.lock_authoring_dashboard($1,$2)`, seed.project.String(), seed.dashboard.String()).Scan(&locked); err != nil {
+		t.Fatalf("runtime guarded dashboard lock failed: %v", err)
+	}
+	if !locked {
+		t.Fatal("runtime guarded dashboard lock did not find the created dashboard")
 	}
 }

@@ -43,6 +43,44 @@ type CandidateCheckpoint struct {
 	EvidenceDigest    string `json:"evidenceDigest,omitempty"`
 }
 
+// UnmarshalJSON accepts the pre-source-root checkpoint spelling so existing
+// CLI authoring state can be upgraded in place. The explicit field allowlist
+// preserves the store's fail-closed handling of unknown or secret-bearing
+// fields; using a permissive compatibility decoder here would weaken that
+// boundary for every subsequent read-modify-write operation.
+func (checkpoint *CandidateCheckpoint) UnmarshalJSON(data []byte) error {
+	type wireCandidateCheckpoint CandidateCheckpoint
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for name := range fields {
+		switch name {
+		case "sourceRoot", "projectPath", "targetOrigin", "targetSelector", "targetId", "environment", "projectId", "candidateId", "candidateKey", "candidateRevision", "artifactDigest", "provenanceDigest", "planId", "planDigest", "executionDigest", "evidenceDigest":
+		default:
+			return fmt.Errorf("json: unknown field %q", name)
+		}
+	}
+	var decoded wireCandidateCheckpoint
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var legacySourceRoot string
+	if encoded, ok := fields["projectPath"]; ok {
+		if err := json.Unmarshal(encoded, &legacySourceRoot); err != nil {
+			return fmt.Errorf("decode legacy projectPath: %w", err)
+		}
+	}
+	if decoded.SourceRoot != "" && legacySourceRoot != "" && decoded.SourceRoot != legacySourceRoot {
+		return fmt.Errorf("candidate checkpoint sourceRoot conflicts with legacy projectPath")
+	}
+	if decoded.SourceRoot == "" {
+		decoded.SourceRoot = legacySourceRoot
+	}
+	*checkpoint = CandidateCheckpoint(decoded)
+	return nil
+}
+
 type candidateCheckpointDocument struct {
 	Version         int                                 `json:"version"`
 	Candidates      map[string]CandidateCheckpoint      `json:"candidates"`

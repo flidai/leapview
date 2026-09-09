@@ -1,4 +1,5 @@
 import "@yacobolo/apigen";
+import "../dashboard/main.tsp";
 import "../visualization/main.tsp";
 import "./personal-settings.tsp";
 import "./product_settings.tsp";
@@ -41,6 +42,18 @@ model DashboardBuilderEnvelope {
   `runtime`: RouteRuntimeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
   `status`: DashboardStatus;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterContract" })
+  `builderFilterContract`: DashboardFilterContract;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterState" })
+  `builderFilterState`: DashboardFilterState;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterOptionPages" })
+  `builderFilterOptionPages`: Record<DashboardFilterOptionPage>;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterValidation" })
+  `builderFilterValidation`: DashboardFilterValidationResult;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterCommand" })
+  `builderFilterCommand`: DashboardFilterCommand;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterOptionRequest" })
+  `builderFilterOptionRequest`: DashboardFilterOptionRequest;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "builder", "signal"] })
@@ -51,12 +64,16 @@ model DashboardBuilderSignal {
   `draftId`: string;
   `revision`: DashboardBuilderRevisionSignal;
   `title`: string;
+  `description`?: string;
+  `appearance`: DashboardBuilderAppearanceSignal;
   `lifecycle`: "draft" | "published" | "archived";
-  `visibility`: "private" | "shared";
+  `visibility`: "private" | "restricted" | "organization";
   `hasUnpublishedChanges`: boolean;
   `origin`: DashboardBuilderOriginSignal;
   `sourceEvidence`?: DashboardBuilderSourceEvidenceSignal;
   `semanticModel`: DashboardBuilderSemanticModelSignal;
+  `visualCatalog`: DashboardBuilderVisualTypeSignal[];
+  `filters`: DashboardBuilderFilterSignal[];
   `pages`: DashboardBuilderPageSignal[];
   `selectedPageId`?: string;
   `selectedVisualId`?: string;
@@ -64,6 +81,12 @@ model DashboardBuilderSignal {
   `diagnostics`: DashboardBuilderDiagnosticSignal[];
   `preview`: DashboardBuilderPreviewStateSignal;
   `save`: DashboardBuilderSaveStateSignal;
+  `redirectTo`?: string;
+}
+
+model DashboardBuilderAppearanceSignal {
+  `icon`: string;
+  `color`: string;
 }
 
 model DashboardBuilderRevisionSignal {
@@ -105,28 +128,178 @@ model DashboardBuilderDatasetSignal {
 
 model DashboardBuilderFieldSignal {
   `id`: string;
+  /** Dataset that owns this projected field in the semantic catalog. */
+  `datasetId`?: string;
   `label`: string;
   `kind`: "dimension" | "metric";
+  `roles`: DashboardBuilderFieldRoleSignal[];
   `dataType`: string;
   `description`?: string;
+}
+
+model DashboardBuilderFilterSignal {
+  `id`: string;
+  `label`: string;
+  `description`?: string;
+  `dimension`: string;
+  `controlType`: "singleSelect" | "multiSelect" | "text" | "numericRange" | "dateRange" | "relativePeriod";
+  `required`: boolean;
+  `readerEditable`: boolean;
+  `targets`: string[];
+  `bindings`: DashboardBuilderFilterBindingSignal[];
+  `urlParameter`?: string;
+}
+
+model DashboardBuilderFilterBindingSignal {
+  `id`: string;
+  `scope`: "report" | "page";
+  `pageId`?: string;
+  `targets`: string[];
 }
 
 model DashboardBuilderPageSignal {
   `id`: string;
   `title`: string;
+  `description`?: string;
   `canvas`: DashboardPageCanvas;
   `grid`: DashboardPageGrid;
   `visuals`: DashboardBuilderVisualSignal[];
+  `filterComponents`: DashboardBuilderFilterComponentSignal[];
+  `headers`: DashboardBuilderHeaderSignal[];
+  `placeholders`: DashboardBuilderPlaceholderSignal[];
+}
+
+model DashboardBuilderHeaderSignal {
+  `id`: string;
+  `title`: string;
+  `description`?: string;
+  `placement`: DashboardPagePlacement;
+}
+
+/** Locked projection for a component whose authored definition is unavailable. */
+model DashboardBuilderPlaceholderSignal {
+  `id`: string;
+  `kind`: "visual" | "filter";
+  `referenceId`: string;
+  `title`: string;
+  `message`: string;
+  `locked`: boolean;
+  `placement`: DashboardPagePlacement;
+}
+
+model DashboardBuilderFilterComponentSignal {
+  `id`: string;
+  `filterId`: string;
+  `label`: string;
+  `controlType`: "singleSelect" | "multiSelect" | "text" | "numericRange" | "dateRange" | "relativePeriod";
+  `placement`: DashboardPagePlacement;
+}
+
+model DashboardBuilderVisualTypeSignal {
+  `type`: LeapViewDashboard.DashboardVisualType;
+  `label`: string;
+  `group`: string;
+  `referenceHref`: string;
+  `roles`: DashboardBuilderFieldRoleSignal[];
+  `roleLimits`: DashboardBuilderVisualRoleLimitSignal[];
+}
+
+model DashboardBuilderVisualRoleLimitSignal {
+  `role`: DashboardBuilderFieldRoleSignal;
+  /** Required fields for a renderable target; zero means optional. */
+  `minimum`: int32;
+  /** Accepted fields before overflow; zero means unbounded. */
+  `maximum`: int32;
+}
+
+enum DashboardBuilderFieldRoleSignal {
+  dimension: "dimension",
+  metric: "metric",
+  detail: "detail",
+}
+
+model DashboardBuilderFormatChoiceSignal {
+  `value`: string;
+  `label`: string;
+}
+
+model DashboardBuilderFormatOptionSignal {
+  `key`: string;
+  `label`: string;
+  `section`: string;
+  `control`: "toggle" | "select" | "number" | "text";
+  `value`: string;
+  `placeholder`?: string;
+  `choices`: DashboardBuilderFormatChoiceSignal[];
 }
 
 model DashboardBuilderVisualSignal {
   `id`: string;
   `visualId`: string;
   `title`: string;
-  `type`: string;
+  `titleVisible`: boolean;
+  `type`: LeapViewDashboard.DashboardVisualType;
+  /** Bound records dataset for table/map visuals once a first column resolves it. */
+  `datasetId`?: string;
+  `legendVisible`: boolean;
+  `axisVisible`: boolean;
+  `dataLabelsVisible`: boolean;
+  `formatOptions`: DashboardBuilderFormatOptionSignal[];
   `placement`: DashboardPagePlacement;
   `slots`: DashboardBuilderVisualSlotSignal[];
+  `queryOptions`: DashboardBuilderQueryOptionsSignal;
+  /** Strict draft-compile failure attributed to this visual definition. */
+  `previewError`?: string;
   `filters`: string[];
+  /**
+   * Bounded authored interaction metadata for the builder inspector. The
+   * projection is intentionally optional: unsupported or malformed authored
+   * interactions are represented only when the server can classify them
+   * without exposing the authored union to the browser.
+   */
+  `interaction`?: DashboardBuilderInteractionSignal;
+}
+
+model DashboardBuilderQueryOptionsSignal {
+  `supportsSort`: boolean;
+  `supportsLimit`: boolean;
+  @maxItems(64)
+  `sort`: DashboardBuilderSortSignal[];
+  `limit`?: int32;
+}
+
+model DashboardBuilderSortSignal {
+  `field`: string;
+  `direction`: "asc" | "desc";
+}
+
+/**
+ * Read-only interaction projection used by the visual builder. `mappings`
+ * preserve the exact authored selection mapping (or a server-inferred default
+ * for an unconfigured visual); target arrays contain visual definition IDs.
+ */
+model DashboardBuilderInteractionSignal {
+  `configured`: boolean;
+  `editable`: boolean;
+  `message`?: string;
+  `mode`?: "single" | "multiple";
+  `toggle`: boolean;
+  @maxItems(64)
+  `mappings`: DashboardBuilderInteractionMappingSignal[];
+  @maxItems(1024)
+  `targets`: string[];
+  @maxItems(1024)
+  `highlightTargets`: string[];
+  @maxItems(1024)
+  `noneTargets`: string[];
+}
+
+model DashboardBuilderInteractionMappingSignal {
+  `field`: string;
+  `value`: string;
+  `dataset`?: string;
+  `grain`?: string;
+  `label`?: string;
 }
 
 model DashboardBuilderVisualSlotSignal {
@@ -134,6 +307,8 @@ model DashboardBuilderVisualSlotSignal {
   `label`: string;
   `kind`: "dimension" | "metric" | "category" | "value" | "detail";
   `fieldId`?: string;
+  `alias`?: string;
+  `grain`?: LeapViewDashboard.DashboardTimeGrain;
   `required`: boolean;
 }
 
@@ -141,6 +316,7 @@ model DashboardBuilderCapabilitiesSignal {
   `canEdit`: boolean;
   `canShare`: boolean;
   `canPublish`: boolean;
+  `canArchive`: boolean;
   `canPreview`: boolean;
   `canExport`: boolean;
   `canAddPage`: boolean;
@@ -464,16 +640,20 @@ model AssetLineageNodeSignal {
 model CatalogDashboardSignal {
 	`appearanceColor`: string;
 	`appearanceIcon`: string;
+	`catalogScope`: "mine" | "shared" | "managed";
 	`description`?: string;
 	`dashboardId`: string;
   `href`: string;
   `id`: string;
   `lastRefreshedAt`?: string;
-  `pageCount`: int64;
-  `popularity`?: PopularityLevel;
-  `semanticModel`?: string;
-  `tags`?: string[];
-  `title`: string;
+	`owner`?: string;
+	`pageCount`: int64;
+	`popularity`?: PopularityLevel;
+	`semanticModel`?: string;
+	`status`: "private_draft" | "published" | "unpublished_changes";
+	`tags`?: string[];
+	`title`: string;
+	`updatedAt`?: string;
 }
 
 @apigen.contract(#{ kind: "ui-envelope", tags: #["catalog", "envelope"] })

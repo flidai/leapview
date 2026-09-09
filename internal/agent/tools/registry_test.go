@@ -85,6 +85,7 @@ func TestToolNamesAreTheCuratedSurface(t *testing.T) {
 		"create_dashboard_draft",
 		"docs_read",
 		"docs_search",
+		"edit_dashboard_source",
 		"execute_dashboard_command",
 		"export_dashboard_yaml",
 		"fork_dashboard",
@@ -95,6 +96,7 @@ func TestToolNamesAreTheCuratedSurface(t *testing.T) {
 		"query_dashboard_visual",
 		"query_semantic_model",
 		"query_visual",
+		"read_dashboard_source",
 		"set_dashboard_visibility",
 	}
 	if got := ToolNames(operations); !slices.Equal(got, want) {
@@ -138,17 +140,17 @@ func TestReferenceCatalogComesFromCanonicalProviderDefinitions(t *testing.T) {
 		"catalog_get": {}, "catalog_list": {"limit": 25}, "catalog_search": {"limit": 10},
 		"create_dashboard_draft": {},
 		"docs_read":              {"limit": 200, "offset": 1}, "docs_search": {"limit": 8},
-		"execute_dashboard_command": {}, "export_dashboard_yaml": {}, "fork_dashboard": {},
-		"get_dashboard": {}, "get_dashboard_draft": {}, "list_dashboards": {}, "preview_dashboard_draft": {},
+		"edit_dashboard_source": {}, "execute_dashboard_command": {}, "export_dashboard_yaml": {}, "fork_dashboard": {},
+		"get_dashboard": {}, "get_dashboard_draft": {}, "list_dashboards": {}, "preview_dashboard_draft": {}, "read_dashboard_source": {},
 		"query_dashboard_visual": {"limit": 50}, "query_semantic_model": {"limit": 25}, "query_visual": {"limit": 50},
 		"set_dashboard_visibility": {},
 	}
 	wantEffects := map[string]string{
 		"add_dashboard_page": "write", "add_dashboard_visual": "write", "assign_dashboard_field": "write",
 		"catalog_get": "read", "catalog_list": "read", "catalog_search": "read", "create_dashboard_draft": "write",
-		"docs_read": "read", "docs_search": "read", "execute_dashboard_command": "destructive", "export_dashboard_yaml": "read",
+		"docs_read": "read", "docs_search": "read", "edit_dashboard_source": "write", "execute_dashboard_command": "destructive", "export_dashboard_yaml": "read",
 		"fork_dashboard": "write", "get_dashboard": "read", "get_dashboard_draft": "read", "list_dashboards": "read",
-		"preview_dashboard_draft": "read", "query_dashboard_visual": "read", "query_semantic_model": "read", "query_visual": "read",
+		"preview_dashboard_draft": "read", "query_dashboard_visual": "read", "query_semantic_model": "read", "query_visual": "read", "read_dashboard_source": "read",
 		"set_dashboard_visibility": "write",
 	}
 	for index, tool := range reference {
