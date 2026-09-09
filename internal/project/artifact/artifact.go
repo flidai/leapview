@@ -149,15 +149,18 @@ func decodeCanonical(data []byte) (SourceBundle, error) {
 }
 
 // validateGraphManifest is the single graph/manifest consistency boundary for
-// source bundles. Resource IDs are exact map keys: names, paths, and authoring
-// metadata never provide a compatibility lookup.
+// source bundles. Resource membership uses exact IDs. Authored semantic-model
+// references may use an ID or the graph's unique project-local name; paths,
+// provenance, and ambient Project state never provide a compatibility lookup.
 func validateGraphManifest(graph projectgraph.ProjectGraph, project manifest.ResourceManifest) error {
 	if err := graph.Validate(); err != nil {
 		return fmt.Errorf("project graph: %w", err)
 	}
 	resources := make(map[projectgraph.ResourceID]projectgraph.Resource, len(graph.Resources()))
+	resourcesByName := make(map[string]projectgraph.Resource, len(graph.Resources()))
 	for _, resource := range graph.Resources() {
 		resources[resource.ID] = resource
+		resourcesByName[resource.Name] = resource
 	}
 	edges := make(map[projectgraph.ResourceID]map[projectgraph.ResourceID]struct{})
 	for _, edge := range graph.Edges() {
@@ -228,6 +231,20 @@ func validateGraphManifest(graph projectgraph.ProjectGraph, project manifest.Res
 			}
 		}
 	}
+	for _, id := range sortedManifestKeys(project.SemanticModels) {
+		semanticModel := project.SemanticModels[id]
+		if semanticModel == nil {
+			return fmt.Errorf("manifest semantic model %q is nil", id)
+		}
+		if len(semanticModel.Datasets) == 0 {
+			return fmt.Errorf("manifest semantic model %q requires datasets", id)
+		}
+		for _, datasetName := range sortedManifestKeys(semanticModel.Datasets) {
+			if err := requireManifestNamedReference(resources, resourcesByName, edges, "semantic model", id, fmt.Sprintf("dataset %q model", datasetName), semanticModel.Datasets[datasetName].Model, projectgraph.KindModel); err != nil {
+				return err
+			}
+		}
+	}
 	for id, pipeline := range project.RefreshPipelines {
 		if pipeline.ID.String() != id {
 			return fmt.Errorf("manifest refreshPipelines key %q does not match definition id %q", id, pipeline.ID)
@@ -251,6 +268,33 @@ func validateGraphManifest(graph projectgraph.ProjectGraph, project manifest.Res
 		if err := requireManifestReference(resources, edges, "dashboard", id, "semantic model", source.Document.Spec.SemanticModel, projectgraph.KindSemanticModel); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func requireManifestNamedReference(
+	resources map[projectgraph.ResourceID]projectgraph.Resource,
+	resourcesByName map[string]projectgraph.Resource,
+	edges map[projectgraph.ResourceID]map[projectgraph.ResourceID]struct{},
+	ownerKind, ownerID, field, reference string,
+	wantKind projectgraph.Kind,
+) error {
+	reference = strings.TrimSpace(reference)
+	if reference == "" {
+		return fmt.Errorf("manifest %s %q requires %s reference", ownerKind, ownerID, field)
+	}
+	resource, ok := resources[projectgraph.ResourceID(reference)]
+	if !ok {
+		resource, ok = resourcesByName[reference]
+	}
+	if !ok {
+		return fmt.Errorf("manifest %s %q %s reference %q is missing from graph", ownerKind, ownerID, field, reference)
+	}
+	if resource.Kind != wantKind {
+		return fmt.Errorf("manifest %s %q %s reference %q resolves to graph kind %q, want %q", ownerKind, ownerID, field, reference, resource.Kind, wantKind)
+	}
+	if _, ok := edges[projectgraph.ResourceID(ownerID)][resource.ID]; !ok {
+		return fmt.Errorf("manifest %s %q %s reference %q is missing its graph edge", ownerKind, ownerID, field, reference)
 	}
 	return nil
 }
