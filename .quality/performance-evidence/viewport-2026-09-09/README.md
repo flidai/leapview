@@ -3,9 +3,9 @@
 This directory retains the paired synthetic browser qualification produced by
 `task qa:viewport-qualification` on 2026-09-09.
 
-- Measured commit: `354d30f28920a18f8628cdefcd38a8a67d56fec4` (clean),
+- Measured commit: `6ce02a751e9b47b02a07d7dc570f8377ab0135ee` (clean),
   rebased onto main `c9e6482a89697ebf6426dd47a369fbd9b83202d9`.
-- Report SHA-256: `6d9329b7f2d6f86eb394dcbd8caab3f86ffe10b89ca168ebf11a8518e3c9f8a1`.
+- Report SHA-256: `04fc8b5fd952d57b59f436e922321cb73f560c48fa62636c0e2d8b8ee02963ca`.
 - Fixture: 24 visuals (8 KPI, 8 Cartesian, 8 table), 1280x820 viewport,
   `600px 0px` root/scroll margin.
 - Protocol: one discarded warmup and five measured repetitions per mode,
@@ -21,9 +21,9 @@ renderer. Median local observations were:
 
 | Metric | Eager | Deferred |
 | --- | ---: | ---: |
-| Initial readiness | 1,068.9 ms | 955.8 ms |
-| Chromium task duration | 1.016 s | 0.887 s |
-| JS heap used | 15,280,416 bytes | 12,903,908 bytes |
+| Initial readiness | 927.4 ms | 843.8 ms |
+| Chromium task duration | 0.864 s | 0.783 s |
+| JS heap used | 15,313,356 bytes | 12,974,420 bytes |
 
 These are paired measurements on the exact environment recorded in
 `report.json`. This run observed lower deferred medians and p95s, but an earlier
