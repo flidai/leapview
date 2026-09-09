@@ -336,9 +336,14 @@ func (m *Module) PublishDeliveryCandidate(w http.ResponseWriter, r *http.Request
 			return
 		}
 		candidate, candidateErr := m.deliveryReader.DeliveryCandidateByID(r.Context(), candidateID)
-		if candidateErr != nil || candidate.ProjectID.String() != project || candidate.ServingArtifactID == "" {
+		plan, planErr := m.deliveryReader.PlanByID(r.Context(), publication.PlanID)
+		if candidateErr != nil || planErr != nil || candidate.ProjectID.String() != project || candidate.ServingArtifactID == "" ||
+			plan.ID != publication.PlanID || plan.Digest != publication.PlanDigest || plan.EvidenceDigest == "" {
 			if candidateErr == nil {
-				candidateErr = fmt.Errorf("delivery approval candidate scope is invalid")
+				candidateErr = planErr
+			}
+			if candidateErr == nil {
+				candidateErr = fmt.Errorf("delivery approval candidate/plan scope is invalid")
 			}
 			m.writeDeliveryMutationError(w, r, candidateErr)
 			return
@@ -348,7 +353,7 @@ func (m *Module) PublishDeliveryCandidate(w http.ResponseWriter, r *http.Request
 			m.writeDeliveryMutationError(w, r, err)
 			return
 		}
-		if _, requestErr := m.approvals.Request(r.Context(), deployment.ApprovalRequest{ProjectID: project, DeploymentID: publication.ID, Environment: publication.Environment, RequestDigest: publication.RequestDigest, ReleaseID: candidate.ServingArtifactID, RequestedBy: actor}); requestErr != nil {
+		if _, requestErr := m.approvals.Request(r.Context(), deployment.ApprovalRequest{ProjectID: project, DeploymentID: publication.ID, Environment: publication.Environment, RequestDigest: publication.RequestDigest, ReleaseID: candidate.ServingArtifactID, PlanDigest: plan.Digest, EvidenceDigest: plan.EvidenceDigest, RequestedBy: actor}); requestErr != nil {
 			m.writeDeliveryMutationError(w, r, requestErr)
 			return
 		}
@@ -387,26 +392,32 @@ func (m *Module) canonicalPublicationScope(
 	ctx context.Context,
 	project,
 	publicationID string,
-) (deployment.DeliveryPublication, deployment.DeliveryCandidate, error) {
+) (deployment.DeliveryPublication, deployment.DeliveryCandidate, deployment.DeliveryPlan, error) {
 	if m == nil || m.deliveryReader == nil || m.approvals == nil {
-		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, apigenfailure.New("approval_unavailable", "deployment approvals are unavailable")
+		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, deployment.DeliveryPlan{}, apigenfailure.New("approval_unavailable", "deployment approvals are unavailable")
 	}
 	publication, err := m.deliveryReader.DeliveryPublicationByID(ctx, publicationID)
 	if err != nil {
-		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, fmt.Errorf("%w: publication", deployment.ErrApprovalNotFound)
+		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, deployment.DeliveryPlan{}, fmt.Errorf("%w: publication", deployment.ErrApprovalNotFound)
 	}
 	if publication.ProjectID.String() != project ||
 		(m.handlerEnvironment() != "" && publication.Environment != m.handlerEnvironment()) {
-		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, deployment.ErrApprovalScope
+		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, deployment.DeliveryPlan{}, deployment.ErrApprovalScope
 	}
 	candidate, err := m.deliveryReader.DeliveryCandidateByID(ctx, publication.CandidateID)
 	if err != nil || candidate.ProjectID != publication.ProjectID ||
 		candidate.TargetID != publication.TargetID ||
 		candidate.Environment != publication.Environment ||
 		candidate.ServingArtifactID == "" {
-		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, deployment.ErrApprovalScope
+		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, deployment.DeliveryPlan{}, deployment.ErrApprovalScope
 	}
-	return publication, candidate, nil
+	plan, err := m.deliveryReader.PlanByID(ctx, publication.PlanID)
+	if err != nil || plan.ID != publication.PlanID || plan.Digest != publication.PlanDigest ||
+		plan.TargetID != publication.TargetID || plan.ProjectID != publication.ProjectID ||
+		plan.Environment != publication.Environment || plan.EvidenceDigest == "" {
+		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, deployment.DeliveryPlan{}, deployment.ErrApprovalScope
+	}
+	return publication, candidate, plan, nil
 }
 
 func (m *Module) canonicalPublicationApproval(
@@ -415,7 +426,7 @@ func (m *Module) canonicalPublicationApproval(
 	publicationID,
 	approvalID string,
 ) (deployment.DeliveryPublication, deployment.DeliveryCandidate, deployment.Approval, error) {
-	publication, candidate, err := m.canonicalPublicationScope(ctx, project, publicationID)
+	publication, candidate, plan, err := m.canonicalPublicationScope(ctx, project, publicationID)
 	if err != nil {
 		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, deployment.Approval{}, err
 	}
@@ -429,6 +440,14 @@ func (m *Module) canonicalPublicationApproval(
 		approval.Environment != publication.Environment ||
 		approval.RequestDigest != publication.RequestDigest ||
 		approval.ReleaseID != candidate.ServingArtifactID {
+		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, deployment.Approval{}, deployment.ErrApprovalScope
+	}
+	// A historical canonical approval may predate explicit plan/evidence event
+	// references. Keep it inspectable and revocable so operators can replace it,
+	// but never synthesize evidence from the current plan. Approval and
+	// activation reject the empty pair below and at the final commit boundary.
+	if (approval.PlanDigest != "" || approval.EvidenceDigest != "") &&
+		(approval.PlanDigest != plan.Digest || approval.EvidenceDigest != plan.EvidenceDigest) {
 		return deployment.DeliveryPublication{}, deployment.DeliveryCandidate{}, deployment.Approval{}, deployment.ErrApprovalScope
 	}
 	return publication, candidate, approval, nil
@@ -452,7 +471,7 @@ func (m *Module) RequestDeliveryPublicationApproval(
 		m.writeCommandFailure(w, r, operationID, apigenfailure.New("approval_credential_required", "A bounded publication credential is required"))
 		return
 	}
-	publication, candidate, err := m.canonicalPublicationScope(r.Context(), project, publicationID)
+	publication, candidate, plan, err := m.canonicalPublicationScope(r.Context(), project, publicationID)
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
 		return
@@ -460,7 +479,8 @@ func (m *Module) RequestDeliveryPublicationApproval(
 	approval, err := m.approvals.Request(r.Context(), deployment.ApprovalRequest{
 		ProjectID: project, DeploymentID: publication.ID,
 		Environment: publication.Environment, RequestDigest: publication.RequestDigest,
-		ReleaseID: candidate.ServingArtifactID, RequestedBy: actor,
+		ReleaseID: candidate.ServingArtifactID, PlanDigest: plan.Digest,
+		EvidenceDigest: plan.EvidenceDigest, RequestedBy: actor,
 	})
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
@@ -519,9 +539,13 @@ func (m *Module) transitionDeliveryPublicationApproval(
 		m.writeCommandFailure(w, r, operationID, apigenfailure.New("approval_credential_required", "A bounded approval credential is required"))
 		return
 	}
-	publication, _, _, err := m.canonicalPublicationApproval(r.Context(), project, publicationID, approvalID)
+	publication, _, approval, err := m.canonicalPublicationApproval(r.Context(), project, publicationID, approvalID)
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
+		return
+	}
+	if decision == approvalDecisionApprove && (approval.PlanDigest == "" || approval.EvidenceDigest == "") {
+		m.writeCommandFailure(w, r, operationID, fmt.Errorf("%w: canonical approval request has no exact evidence binding", deployment.ErrApprovalScope))
 		return
 	}
 	if m.authorizeApproval != nil {
@@ -531,7 +555,6 @@ func (m *Module) transitionDeliveryPublicationApproval(
 		}
 	}
 	transition := deployment.ApprovalTransition{ProjectID: project, DeploymentID: publication.ID, ApprovalID: approvalID, ExpectedRevision: body.ExpectedRevision, Actor: actor}
-	var approval deployment.Approval
 	switch decision {
 	case approvalDecisionApprove:
 		approval, err = m.approvals.Approve(r.Context(), transition)

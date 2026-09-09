@@ -293,7 +293,7 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	if candidate.Status != deployment.DeliveryCandidateReady {
 		t.Fatalf("candidate status=%s", candidate.Status)
 	}
-	publication, err := repo.CreatePublication(t.Context(), deployment.DeliveryPublication{ID: "publication-repo-1", RequestDigest: repoDeliveryDigest('1'), TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment, PlanID: plan.ID, PlanDigest: plan.Digest, CandidateID: candidate.ID, GenerationID: "generation-repo-1", ExpectedTargetRevision: 0, CreatedAt: now.Add(6 * time.Minute)})
+	publication, err := repo.CreatePublication(t.Context(), deployment.DeliveryPublication{ID: "publication-repo-1", RequestDigest: repoDeliveryDigest('1'), TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment, PlanID: plan.ID, PlanDigest: plan.Digest, CandidateID: candidate.ID, GenerationID: "generation-repo-1", ExpectedTargetRevision: 0, CreatedAt: now.Add(5 * time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,20 +306,105 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	approval := deployment.Approval{
 		ID: "approval-publication-repo-1", ProjectID: plan.ProjectID.String(), DeploymentID: publication.ID,
 		Environment: plan.Environment, RequestDigest: publication.RequestDigest, ReleaseID: candidate.ServingArtifactID,
+		PlanDigest: plan.Digest, EvidenceDigest: plan.EvidenceDigest,
 		Status: deployment.ApprovalPending, RequestedBy: "publisher-repo-1",
 		RequestCredentialClass: deployment.CredentialClassWorkload, RequestCredentialID: "credential-repo-1",
-		RequestedAt: now.Add(6 * time.Minute), ExpiresAt: now.Add(4 * time.Hour), Revision: 1,
+		RequestedAt: now.Add(5 * time.Minute), ExpiresAt: now.Add(6 * time.Minute), Revision: 1,
 	}
-	persistedApproval, err := repo.CreateApproval(t.Context(), approval)
+	unboundApproval := approval
+	unboundApproval.ID = "approval-publication-unbound"
+	unboundApproval.PlanDigest, unboundApproval.EvidenceDigest = "", ""
+	if _, err := repo.CreateApproval(t.Context(), unboundApproval); !errors.Is(err, deployment.ErrApprovalScope) {
+		t.Fatalf("unbound canonical approval error=%v, want ErrApprovalScope", err)
+	}
+	// Simulate a canonical approval requested by the preceding binary, whose
+	// immutable event predates explicit plan/evidence fields. It may expire and
+	// be replaced, but the repository never reconstructs those missing fields
+	// from the current plan.
+	historicalApproval := approval
+	historicalApproval.PlanDigest, historicalApproval.EvidenceDigest = "", ""
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+		INSERT INTO deployment_approvals
+		(id,project_id,deployment_id,environment,request_digest,release_id,status,requested_by,request_credential_class,request_credential_id,requested_at,expires_at,revision)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, historicalApproval.ID, historicalApproval.ProjectID, historicalApproval.DeploymentID,
+		historicalApproval.Environment, historicalApproval.RequestDigest, historicalApproval.ReleaseID, string(historicalApproval.Status),
+		historicalApproval.RequestedBy, string(historicalApproval.RequestCredentialClass), historicalApproval.RequestCredentialID,
+		formatApprovalTime(historicalApproval.RequestedAt), formatApprovalTime(historicalApproval.ExpiresAt), historicalApproval.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AppendDeliveryEvent(t.Context(), deployment.DeliveryEvent{
+		ID:       deployment.DeliveryEventID(plan.TargetID, historicalApproval.RequestDigest, "approval_requested", "approval", historicalApproval.ID),
+		TargetID: plan.TargetID, ProjectID: historicalApproval.ProjectID, Environment: historicalApproval.Environment,
+		ActorID: historicalApproval.RequestedBy, EventKind: "approval_requested", ObjectKind: "approval", ObjectID: historicalApproval.ID,
+		RequestDigest: historicalApproval.RequestDigest, Outcome: "accepted", Details: map[string]any{"status": string(historicalApproval.Status)}, CreatedAt: historicalApproval.RequestedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	persistedApproval, err := repo.ApprovalByDeployment(t.Context(), publication.ID)
+	if err != nil || persistedApproval != historicalApproval {
+		t.Fatalf("historical canonical approval round trip = %#v, %v", persistedApproval, err)
+	}
+	legacyNow := persistedApproval.ExpiresAt
+	legacyService, err := deployment.NewApprovalService(repo, deployment.ApprovalServiceConfig{
+		Now: func() time.Time { return legacyNow }, Lifetime: 4 * time.Hour,
+		NewID: func() (string, error) { return "approval-publication-rebound", nil },
+	})
 	if err != nil {
-		t.Fatalf("canonical publication approval: %v", err)
+		t.Fatal(err)
 	}
-	if persistedApproval.DeploymentID != publication.ID {
-		t.Fatalf("canonical publication approval parent = %q, want %q", persistedApproval.DeploymentID, publication.ID)
+	expiredLegacy, err := legacyService.Current(t.Context(), publication.ID)
+	if err != nil || expiredLegacy.Status != deployment.ApprovalExpired || expiredLegacy.PlanDigest != "" || expiredLegacy.EvidenceDigest != "" {
+		t.Fatalf("historical approval expiry = %#v, %v", expiredLegacy, err)
 	}
-	loadedApproval, err := repo.ApprovalByDeployment(t.Context(), publication.ID)
-	if err != nil || loadedApproval != persistedApproval {
-		t.Fatalf("canonical publication approval round trip = %#v, %v", loadedApproval, err)
+	reboundApproval, err := legacyService.Request(t.Context(), deployment.ApprovalRequest{
+		ProjectID: plan.ProjectID.String(), DeploymentID: publication.ID, Environment: plan.Environment,
+		RequestDigest: publication.RequestDigest, ReleaseID: candidate.ServingArtifactID,
+		PlanDigest: plan.Digest, EvidenceDigest: plan.EvidenceDigest,
+		RequestedBy: deployment.ApprovalActor{PrincipalID: "publisher-repo-1", CredentialClass: deployment.CredentialClassWorkload, CredentialID: "credential-rebound", CredentialExpiresAt: legacyNow.Add(time.Hour)},
+	})
+	if err != nil {
+		t.Fatalf("replace expired historical approval: %v", err)
+	}
+	var requestedPlanDigest, requestedEvidenceDigest string
+	if err := store.SQLDB().QueryRowContext(t.Context(), `
+		SELECT plan_digest, result_digest FROM delivery_events
+		WHERE event_kind='approval_requested' AND object_id=?`, reboundApproval.ID).Scan(&requestedPlanDigest, &requestedEvidenceDigest); err != nil {
+		t.Fatal(err)
+	}
+	if requestedPlanDigest != plan.Digest || requestedEvidenceDigest != plan.EvidenceDigest {
+		t.Fatalf("rebound approval evidence = %s/%s, want %s/%s", requestedPlanDigest, requestedEvidenceDigest, plan.Digest, plan.EvidenceDigest)
+	}
+	approval = reboundApproval
+	persistedApproval = reboundApproval
+	// An uncommitted approval transition cannot be observed by activation. If
+	// the competing decision rolls back, the publication remains pending and
+	// activation fails closed instead of using dirty approval state.
+	approvalTx, err := store.SQLDB().BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := approvalTx.ExecContext(t.Context(), `
+		UPDATE deployment_approvals
+		SET status='approved', approved_by='reviewer-repo-1',
+		    approval_credential_class='human', approval_credential_id='approval-race',
+		    approval_credential_expires_at=?, approved_at=?, revision=2
+		WHERE id=? AND revision=1`, now.Add(4*time.Hour).Format(time.RFC3339Nano), now.Add(6*time.Minute+time.Second).Format(time.RFC3339Nano), approval.ID); err != nil {
+		_ = approvalTx.Rollback()
+		t.Fatal(err)
+	}
+	approvalRaceStarted := make(chan struct{})
+	approvalRaceDone := make(chan error, 1)
+	go func() {
+		close(approvalRaceStarted)
+		_, activationErr := repo.CommitPublication(t.Context(), publication.ID, now.Add(7*time.Minute))
+		approvalRaceDone <- activationErr
+	}()
+	<-approvalRaceStarted
+	if err := approvalTx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-approvalRaceDone; !errors.Is(err, deployment.ErrApprovalRequired) {
+		t.Fatalf("approval/activation rollback race error=%v, want ErrApprovalRequired", err)
 	}
 	approved := persistedApproval
 	approved.Status = deployment.ApprovalApproved
@@ -331,6 +416,48 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	approved.Revision = 2
 	if _, err := repo.SaveApproval(t.Context(), approved, 1); err != nil {
 		t.Fatalf("approve canonical publication: %v", err)
+	}
+	var grantedPlanDigest, grantedEvidenceDigest string
+	if err := store.SQLDB().QueryRowContext(t.Context(), `
+		SELECT plan_digest, result_digest FROM delivery_events
+		WHERE event_kind='approval_granted' AND object_id=?`, approval.ID).Scan(&grantedPlanDigest, &grantedEvidenceDigest); err != nil {
+		t.Fatal(err)
+	}
+	if grantedPlanDigest != plan.Digest || grantedEvidenceDigest != plan.EvidenceDigest {
+		t.Fatalf("granted approval evidence = %s/%s, want %s/%s", grantedPlanDigest, grantedEvidenceDigest, plan.Digest, plan.EvidenceDigest)
+	}
+	// The exact evidence event survives independently of mutable projections.
+	// A publication digest mutation therefore cannot reuse this approval.
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE delivery_publications SET request_digest=? WHERE id=?`, repoDeliveryDigest('2'), publication.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CommitPublication(t.Context(), publication.ID, now.Add(7*time.Minute)); !errors.Is(err, deployment.ErrApprovalScope) {
+		t.Fatalf("mutated publication approval error=%v, want ErrApprovalScope", err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE delivery_publications SET request_digest=? WHERE id=?`, publication.RequestDigest, publication.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The plan validator and the approval event both bind policy/graph evidence.
+	// Drift in the persisted evidence digest fails before activation commits.
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE delivery_plans SET evidence_digest=? WHERE id=?`, repoDeliveryDigest('3'), plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CommitPublication(t.Context(), publication.ID, now.Add(7*time.Minute)); !errors.Is(err, deployment.ErrDeliveryConflict) {
+		t.Fatalf("policy evidence drift error=%v, want ErrDeliveryConflict", err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE delivery_plans SET evidence_digest=? WHERE id=?`, plan.EvidenceDigest, plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	// An approval for artifact A is not reusable after the candidate is changed
+	// to artifact B, even if the publication identity itself is retained.
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE delivery_candidates SET serving_artifact_id='artifact-repo-2' WHERE id=?`, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CommitPublication(t.Context(), publication.ID, now.Add(7*time.Minute)); !errors.Is(err, deployment.ErrApprovalScope) {
+		t.Fatalf("replacement artifact approval error=%v, want ErrApprovalScope", err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE delivery_candidates SET serving_artifact_id=? WHERE id=?`, candidate.ServingArtifactID, candidate.ID); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := repo.CommitPublication(t.Context(), publication.ID, now.Add(2*time.Hour)); !errors.Is(err, deployment.ErrDeliveryPlanExpired) {
 		t.Fatalf("expired pending publication err=%v, want ErrDeliveryPlanExpired", err)

@@ -51,10 +51,16 @@ func TestSemanticActivationReadinessPreservesAuthorities(t *testing.T) {
 	publicationCommit = publicationCommit[commitStart:]
 	reservation := strings.Index(publicationCommit, "ReserveDeliveryPublicationActivation")
 	approvalRead := strings.Index(publicationCommit, "GetCurrentDeploymentApproval")
+	evidenceRead := strings.Index(publicationCommit, "approvalEvidenceFromEventTx")
+	evidenceFence := strings.Index(publicationCommit, "validateCanonicalApprovalEvidenceTx")
 	approvalCheck := strings.Index(publicationCommit, "ValidateApprovalActivation")
 	targetCAS := strings.Index(publicationCommit, "ActivateDeliveryGeneration")
-	if reservation < 0 || approvalRead < reservation || approvalCheck < approvalRead || targetCAS < approvalCheck {
-		t.Fatal("approval revocation/freshness must be revalidated under the final SQLite write reservation before target activation")
+	if reservation < 0 || approvalRead < reservation || evidenceRead < approvalRead || evidenceFence < evidenceRead || approvalCheck < evidenceFence || targetCAS < approvalCheck {
+		t.Fatal("approval revocation, freshness, and exact plan evidence must be revalidated under the final SQLite write reservation before target activation")
+	}
+	approvalRepository := readArchitectureFixture(t, root, "internal/deployment/sqlite/approval_repository.go")
+	if !strings.Contains(approvalRepository, "PlanDigest: approval.PlanDigest, ResultDigest: approval.EvidenceDigest") {
+		t.Fatal("approval decisions must reuse the immutable delivery event ledger for exact plan/evidence references")
 	}
 	if !strings.Contains(composition, "WithContractActivationFence") {
 		t.Fatal("canonical publication must reuse the identity/publication lifecycle fence")

@@ -287,7 +287,10 @@ upstream/activation ownership; it does not start FAI-649 or qualify FAI-632.
 The later [FAI-649 deadline readiness layer](semantic-access-activation-readiness-layer.md)
 implements exact semantic publication/version/baseline/graph/policy evidence
 binding to the existing delivery plan and approval for the explicitly bounded
-already-ACTIVE, unchanged-protected-contract path. Current lifecycle,
+already-ACTIVE, unchanged-protected-contract path. A focused follow-up records
+the existing plan/evidence digest pair on immutable approval request/decision
+events and revalidates that pair with the current publication/plan/candidate at
+the final target transaction; it adds no migration, store or hash. Current lifecycle,
 publication and typed-registry evidence is revalidated around the target CAS.
 First activation, restore, changed protected contracts and protected rollback
 remain rejected; standalone DataPolicy deprecation is not STR-08/ENF-06

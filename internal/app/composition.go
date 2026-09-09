@@ -2059,6 +2059,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if err := validateSealedPublicationPlanBinding(plan, binding, publication, planNow); err != nil {
 				return err
 			}
+			// The canonical plan digest binds every plan component; retain its
+			// separately validated evidence digest as the explicit approval
+			// reference so the decision cannot be replayed after graph/policy
+			// evidence drift.
+			binding.EvidenceDigest = plan.EvidenceDigest
 			if binding.Bootstrap {
 				// The activation worker has already revalidated the durable
 				// one-shot bootstrap policy. Recheck the active-generation fence

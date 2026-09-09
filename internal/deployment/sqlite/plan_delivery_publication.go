@@ -384,6 +384,16 @@ func (r *Repository) CommitPublication(ctx context.Context, id string, now time.
 		if approvalErr != nil {
 			return deployment.DeliveryPublication{}, approvalErr
 		}
+		approval, canonicalApproval, approvalErr := approvalEvidenceFromEventTx(ctx, tx, approval, "approval_requested")
+		if approvalErr != nil {
+			return deployment.DeliveryPublication{}, approvalErr
+		}
+		if !canonicalApproval || approval.PlanDigest == "" || approval.EvidenceDigest == "" {
+			return deployment.DeliveryPublication{}, fmt.Errorf("%w: activation approval has no exact evidence binding", deployment.ErrApprovalScope)
+		}
+		if _, approvalErr = validateCanonicalApprovalEvidenceTx(ctx, tx, approval); approvalErr != nil {
+			return deployment.DeliveryPublication{}, approvalErr
+		}
 		approvalNow := time.Now().UTC()
 		if r != nil && r.deliveryNow != nil {
 			approvalNow = r.deliveryNow().UTC()
@@ -391,8 +401,17 @@ func (r *Repository) CommitPublication(ctx context.Context, id string, now time.
 		if approvalErr = deployment.ValidateApprovalActivation(approval, deployment.ApprovalActivation{
 			ProjectID: p.ProjectID.String(), DeploymentID: p.ID, Environment: p.Environment,
 			RequestDigest: p.RequestDigest, ReleaseID: candidate.ServingArtifactID,
+			PlanDigest: plan.Digest, EvidenceDigest: plan.EvidenceDigest,
 		}, approvalNow); approvalErr != nil {
 			return deployment.DeliveryPublication{}, approvalErr
+		}
+		grantedApproval, grantedBound, approvalErr := approvalEvidenceFromEventTx(ctx, tx, approval, "approval_granted")
+		if approvalErr != nil {
+			return deployment.DeliveryPublication{}, approvalErr
+		}
+		if !grantedBound || grantedApproval.PlanDigest == "" || grantedApproval.EvidenceDigest == "" ||
+			grantedApproval.PlanDigest != approval.PlanDigest || grantedApproval.EvidenceDigest != approval.EvidenceDigest {
+			return deployment.DeliveryPublication{}, fmt.Errorf("%w: granted approval has no exact evidence binding", deployment.ErrApprovalScope)
 		}
 	}
 	if err := candidate.PublicationEligible(plan, active, revision, now.UTC()); err != nil {

@@ -69,11 +69,17 @@ func (actor ApprovalActor) validate(now time.Time) error {
 }
 
 type Approval struct {
-	ID                          string
-	ProjectID                   string
-	DeploymentID                string
-	Environment                 string
-	RequestDigest               string
+	ID            string
+	ProjectID     string
+	DeploymentID  string
+	Environment   string
+	RequestDigest string
+	// PlanDigest and EvidenceDigest bind a protected approval to the exact
+	// canonical delivery plan and its evidence. Both are optional together so
+	// approvals created by the legacy deployment workflow remain readable; a
+	// partially populated pair is never valid.
+	PlanDigest                  string
+	EvidenceDigest              string
 	ReleaseID                   string
 	Status                      ApprovalStatus
 	RequestedBy                 string
@@ -104,6 +110,9 @@ func (approval Approval) Validate() error {
 		approval.ExpiresAt.IsZero() ||
 		approval.Revision < 1 {
 		return fmt.Errorf("%w: approval identity is incomplete", ErrApprovalInvalid)
+	}
+	if err := validateApprovalEvidenceDigests(approval.PlanDigest, approval.EvidenceDigest); err != nil {
+		return err
 	}
 	switch approval.RequestCredentialClass {
 	case CredentialClassHuman, CredentialClassWorkload,
@@ -183,12 +192,14 @@ func (approval Approval) validateDecisionEvidence(required bool) error {
 }
 
 type ApprovalRequest struct {
-	ProjectID     string
-	DeploymentID  string
-	Environment   string
-	RequestDigest string
-	ReleaseID     string
-	RequestedBy   ApprovalActor
+	ProjectID      string
+	DeploymentID   string
+	Environment    string
+	RequestDigest  string
+	PlanDigest     string
+	EvidenceDigest string
+	ReleaseID      string
+	RequestedBy    ApprovalActor
 }
 
 type ApprovalTransition struct {
@@ -200,11 +211,13 @@ type ApprovalTransition struct {
 }
 
 type ApprovalActivation struct {
-	ProjectID     string
-	DeploymentID  string
-	Environment   string
-	RequestDigest string
-	ReleaseID     string
+	ProjectID      string
+	DeploymentID   string
+	Environment    string
+	RequestDigest  string
+	PlanDigest     string
+	EvidenceDigest string
+	ReleaseID      string
 }
 
 type ApprovalRepository interface {
@@ -270,11 +283,16 @@ func (service *ApprovalService) Request(
 	request.DeploymentID = strings.TrimSpace(request.DeploymentID)
 	request.Environment = strings.TrimSpace(request.Environment)
 	request.RequestDigest = strings.TrimSpace(request.RequestDigest)
+	request.PlanDigest = strings.TrimSpace(request.PlanDigest)
+	request.EvidenceDigest = strings.TrimSpace(request.EvidenceDigest)
 	request.ReleaseID = strings.TrimSpace(request.ReleaseID)
 	if request.ProjectID == "" || request.DeploymentID == "" ||
 		request.Environment == "" || request.RequestDigest == "" ||
 		request.ReleaseID == "" {
 		return Approval{}, fmt.Errorf("%w: approval scope is incomplete", ErrApprovalInvalid)
+	}
+	if err := validateApprovalEvidenceDigests(request.PlanDigest, request.EvidenceDigest); err != nil {
+		return Approval{}, err
 	}
 	if err := request.RequestedBy.validate(now); err != nil {
 		return Approval{}, err
@@ -285,15 +303,6 @@ func (service *ApprovalService) Request(
 	)
 	if err == nil && existing.Status != ApprovalDenied &&
 		existing.Status != ApprovalRevoked && existing.Status != ApprovalExpired {
-		if existing.ProjectID != request.ProjectID ||
-			existing.Environment != request.Environment ||
-			existing.RequestDigest != request.RequestDigest ||
-			existing.ReleaseID != request.ReleaseID ||
-			existing.RequestedBy != strings.TrimSpace(
-				request.RequestedBy.PrincipalID,
-			) {
-			return Approval{}, ErrApprovalConflict
-		}
 		if !now.Before(existing.ExpiresAt) {
 			existing.Status = ApprovalExpired
 			existing.Revision++
@@ -308,6 +317,17 @@ func (service *ApprovalService) Request(
 				return Approval{}, err
 			}
 		} else {
+			if existing.ProjectID != request.ProjectID ||
+				existing.Environment != request.Environment ||
+				existing.RequestDigest != request.RequestDigest ||
+				existing.PlanDigest != request.PlanDigest ||
+				existing.EvidenceDigest != request.EvidenceDigest ||
+				existing.ReleaseID != request.ReleaseID ||
+				existing.RequestedBy != strings.TrimSpace(
+					request.RequestedBy.PrincipalID,
+				) {
+				return Approval{}, ErrApprovalConflict
+			}
 			return existing, nil
 		}
 	}
@@ -323,6 +343,8 @@ func (service *ApprovalService) Request(
 		DeploymentID:           request.DeploymentID,
 		Environment:            request.Environment,
 		RequestDigest:          request.RequestDigest,
+		PlanDigest:             request.PlanDigest,
+		EvidenceDigest:         request.EvidenceDigest,
 		ReleaseID:              request.ReleaseID,
 		Status:                 ApprovalPending,
 		RequestedBy:            strings.TrimSpace(request.RequestedBy.PrincipalID),
@@ -474,10 +496,17 @@ func (service *ApprovalService) AuthorizeActivation(
 // ValidateApprovalActivation is the single approval decision validator used
 // both by ApprovalService and the final repository activation transaction.
 func ValidateApprovalActivation(approval Approval, request ApprovalActivation, now time.Time) error {
+	requestPlanDigest := strings.TrimSpace(request.PlanDigest)
+	requestEvidenceDigest := strings.TrimSpace(request.EvidenceDigest)
+	if err := validateApprovalEvidenceDigests(requestPlanDigest, requestEvidenceDigest); err != nil {
+		return err
+	}
 	if approval.ProjectID != strings.TrimSpace(request.ProjectID) ||
 		approval.DeploymentID != strings.TrimSpace(request.DeploymentID) ||
 		approval.Environment != strings.TrimSpace(request.Environment) ||
 		approval.RequestDigest != strings.TrimSpace(request.RequestDigest) ||
+		approval.PlanDigest != requestPlanDigest ||
+		approval.EvidenceDigest != requestEvidenceDigest ||
 		approval.ReleaseID != strings.TrimSpace(request.ReleaseID) {
 		return ErrApprovalScope
 	}
@@ -489,6 +518,25 @@ func ValidateApprovalActivation(approval Approval, request ApprovalActivation, n
 	}
 	if err := approval.Validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateApprovalEvidenceDigests enforces the compatibility boundary for
+// plan/evidence binding. Empty values are accepted only as a complete legacy
+// pair; modern approvals must carry two canonical SHA-256 identities.
+func validateApprovalEvidenceDigests(planDigest, evidenceDigest string) error {
+	if (planDigest == "") != (evidenceDigest == "") {
+		return fmt.Errorf("%w: plan and evidence digests must be supplied together", ErrApprovalInvalid)
+	}
+	if planDigest == "" {
+		return nil
+	}
+	if err := ValidateDeliveryDigest(planDigest); err != nil {
+		return fmt.Errorf("%w: plan digest: %v", ErrApprovalInvalid, err)
+	}
+	if err := ValidateDeliveryDigest(evidenceDigest); err != nil {
+		return fmt.Errorf("%w: evidence digest: %v", ErrApprovalInvalid, err)
 	}
 	return nil
 }

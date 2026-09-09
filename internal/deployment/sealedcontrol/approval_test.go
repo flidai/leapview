@@ -62,6 +62,7 @@ func newDurableApprovalVerifierFixture(t *testing.T) (*deployment.ApprovalServic
 	requested, err := service.Request(t.Context(), deployment.ApprovalRequest{
 		ProjectID: publication.ProjectID.String(), DeploymentID: publication.ID,
 		Environment: publication.Environment, RequestDigest: publication.RequestDigest,
+		PlanDigest: generation.PlanDigest, EvidenceDigest: coordinatorDigest('e'),
 		ReleaseID: "release-1",
 		RequestedBy: deployment.ApprovalActor{
 			PrincipalID: "publisher", CredentialClass: deployment.CredentialClassWorkload,
@@ -83,6 +84,7 @@ func newDurableApprovalVerifierFixture(t *testing.T) (*deployment.ApprovalServic
 	}
 	return service, &now, SealBinding{
 		Seal: seal, DeploymentID: publication.ID, CandidateID: generation.CandidateID, GenerationID: generation.ID, PlanDigest: generation.PlanDigest,
+		EvidenceDigest:    coordinatorDigest('e'),
 		ServingArtifactID: generation.ServingArtifactID, ApprovalReleaseID: "release-1",
 	}, publication
 }
@@ -121,6 +123,15 @@ func TestDurableApprovalVerifierBindsCandidatePlanAndRelease(t *testing.T) {
 			binding: func() SealBinding {
 				copy := binding
 				copy.ServingArtifactID = "artifact-2"
+				return copy
+			}(),
+			publication: publication,
+			want:        deployment.ErrApprovalScope,
+		},
+		"replacement evidence": {
+			binding: func() SealBinding {
+				copy := binding
+				copy.EvidenceDigest = coordinatorDigest('f')
 				return copy
 			}(),
 			publication: publication,
@@ -177,6 +188,11 @@ func TestDurableApprovalVerifierRequiresReleaseAndCandidateIdentity(t *testing.T
 	missingRelease.ServingArtifactID = ""
 	if err := verify(t.Context(), missingRelease, publication); !errors.Is(err, deployment.ErrApprovalScope) {
 		t.Fatalf("missing release error = %v, want %v", err, deployment.ErrApprovalScope)
+	}
+	missingEvidence := binding
+	missingEvidence.EvidenceDigest = ""
+	if err := verify(t.Context(), missingEvidence, publication); !errors.Is(err, deployment.ErrApprovalScope) {
+		t.Fatalf("missing evidence error = %v, want %v", err, deployment.ErrApprovalScope)
 	}
 	if err := DurableApprovalVerifier(nil)(t.Context(), binding, publication); !errors.Is(err, deployment.ErrApprovalRequired) {
 		t.Fatalf("nil service error = %v, want %v", err, deployment.ErrApprovalRequired)

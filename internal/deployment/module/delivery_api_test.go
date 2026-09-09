@@ -53,10 +53,14 @@ func TestDeliveryMutationErrorsUseTypedPublicContracts(t *testing.T) {
 type deliveryReadFixture struct {
 	candidate   deployment.DeliveryCandidate
 	publication deployment.DeliveryPublication
+	plan        deployment.DeliveryPlan
 }
 
-func (f deliveryReadFixture) PlanByID(context.Context, string) (deployment.DeliveryPlan, error) {
-	return deployment.DeliveryPlan{}, sql.ErrNoRows
+func (f deliveryReadFixture) PlanByID(_ context.Context, id string) (deployment.DeliveryPlan, error) {
+	if f.plan.ID == "" || f.plan.ID != id {
+		return deployment.DeliveryPlan{}, sql.ErrNoRows
+	}
+	return f.plan, nil
 }
 func (f deliveryReadFixture) DeliveryBuildAttemptByID(context.Context, string) (deployment.DeliveryBuildAttempt, error) {
 	return deployment.DeliveryBuildAttempt{}, sql.ErrNoRows
@@ -266,15 +270,19 @@ func TestCanonicalPublicationApprovalEndpointsPreservePublicationAndReleaseScope
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	planDigest := "sha256:" + strings.Repeat("a", 64)
+	evidenceDigest := "sha256:" + strings.Repeat("b", 64)
 	publication := deployment.DeliveryPublication{
 		ID: "publication-1", ProjectID: projectID, Environment: "prod", TargetID: "target-1",
-		RequestDigest: "request-digest", CandidateID: "candidate-1", GenerationID: "generation-1",
+		RequestDigest: "request-digest", PlanID: "plan-1", PlanDigest: planDigest,
+		CandidateID: "candidate-1", GenerationID: "generation-1",
 	}
 	candidate := deployment.DeliveryCandidate{
 		ID: "candidate-1", ProjectID: projectID, Environment: "prod", TargetID: "target-1",
-		ServingArtifactID: "artifact-1", Status: deployment.DeliveryCandidateReady,
+		PlanID: publication.PlanID, PlanDigest: planDigest, ServingArtifactID: "artifact-1", Status: deployment.DeliveryCandidateReady,
 	}
-	reader := &deliveryReadFixture{candidate: candidate, publication: publication}
+	plan := deployment.DeliveryPlan{ID: publication.PlanID, TargetID: publication.TargetID, ProjectID: projectID, Environment: "prod", Digest: planDigest, EvidenceDigest: evidenceDigest}
+	reader := &deliveryReadFixture{candidate: candidate, publication: publication, plan: plan}
 	repository := &canonicalApprovalRepository{}
 	approvals, err := deployment.NewApprovalService(repository, deployment.ApprovalServiceConfig{
 		Now: nowFunc(now), NewID: func() (string, error) { return "approval-1", nil }, Lifetime: time.Hour,
@@ -316,6 +324,16 @@ func TestCanonicalPublicationApprovalEndpointsPreservePublicationAndReleaseScope
 	if requested.ID != "approval-1" || requested.DeploymentID != publication.ID || requested.ReleaseID != candidate.ServingArtifactID || requested.Status != string(deployment.ApprovalPending) {
 		t.Fatalf("requested approval = %#v", requested)
 	}
+	boundPlanDigest, boundEvidenceDigest := repository.approval.PlanDigest, repository.approval.EvidenceDigest
+	repository.approval.PlanDigest, repository.approval.EvidenceDigest = "", ""
+	unboundApprove := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"expectedRevision":1}`))
+	unboundApprove.Header.Set("X-Principal", "reviewer")
+	unboundResult := httptest.NewRecorder()
+	m.ApproveDeliveryPublicationApproval(unboundResult, unboundApprove, "finance", publication.ID, requested.ID, "approve-unbound")
+	if unboundResult.Code != http.StatusNotFound {
+		t.Fatalf("historical unbound approval status = %d, want 404: %s", unboundResult.Code, unboundResult.Body.String())
+	}
+	repository.approval.PlanDigest, repository.approval.EvidenceDigest = boundPlanDigest, boundEvidenceDigest
 
 	approve := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"expectedRevision":1}`))
 	approve.Header.Set("X-Principal", "reviewer")
@@ -339,6 +357,24 @@ func TestCanonicalPublicationApprovalEndpointsPreservePublicationAndReleaseScope
 	m.DenyDeliveryPublicationApproval(denied, httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"expectedRevision":2}`)), "finance", publication.ID, requested.ID, "deny-key")
 	if denied.Code != http.StatusNotFound {
 		t.Fatalf("scope drift status = %d, want 404: %s", denied.Code, denied.Body.String())
+	}
+	reader.candidate.ServingArtifactID = candidate.ServingArtifactID
+
+	// Historical canonical approvals without explicit event references remain
+	// inspectable and revocable, but the attempt above proves they cannot be
+	// approved. This lets an operator retire and replace the stale decision.
+	repository.approval.PlanDigest, repository.approval.EvidenceDigest = "", ""
+	legacyGet := httptest.NewRecorder()
+	m.GetDeliveryPublicationApproval(legacyGet, httptest.NewRequest(http.MethodGet, "/", nil), "finance", publication.ID, requested.ID)
+	if legacyGet.Code != http.StatusOK {
+		t.Fatalf("historical unbound approval read = %d: %s", legacyGet.Code, legacyGet.Body.String())
+	}
+	revoke := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"expectedRevision":2}`))
+	revoke.Header.Set("X-Principal", "revoker")
+	revoked := httptest.NewRecorder()
+	m.RevokeDeliveryPublicationApproval(revoked, revoke, "finance", publication.ID, requested.ID, "revoke-unbound")
+	if revoked.Code != http.StatusOK || !strings.Contains(revoked.Body.String(), `"status":"revoked"`) {
+		t.Fatalf("historical unbound approval revoke = %d: %s", revoked.Code, revoked.Body.String())
 	}
 }
 
@@ -372,19 +408,24 @@ func TestCoordinatorApprovalCauseReachesPublishHandlerAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate := deployment.DeliveryCandidate{ID: generation.CandidateID, ProjectID: projectID, Environment: "prod", TargetID: "target-1", PlanID: generation.PlanID, PlanDigest: generation.PlanDigest, ServingArtifactID: seal.ServingArtifactID, Status: deployment.DeliveryCandidateReady}
-	reader := &deliveryReadFixture{candidate: candidate, publication: publication}
+	plan := deployment.DeliveryPlan{ID: generation.PlanID, TargetID: publication.TargetID, ProjectID: projectID, Environment: "prod", Digest: generation.PlanDigest, EvidenceDigest: digest('9')}
+	reader := &deliveryReadFixture{candidate: candidate, publication: publication, plan: plan}
 	approvalRepository := &canonicalApprovalRepository{}
 	approvals, err := deployment.NewApprovalService(approvalRepository, deployment.ApprovalServiceConfig{Now: nowFunc(now), Lifetime: time.Hour, NewID: func() (string, error) { return "approval-handler", nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	store := &handlerPublicationStore{}
+	durableApproval := sealedcontrol.DurableApprovalVerifier(approvals)
 	coordinator := &sealedcontrol.Coordinator{
-		Publications:     store,
-		VerifySeal:       func(context.Context, sealedcontrol.SealBinding) error { return nil },
-		Authorize:        func(context.Context, sealedcontrol.SealBinding) error { return nil },
-		ApprovalVerifier: sealedcontrol.DurableApprovalVerifier(approvals),
-		Now:              nowFunc(now),
+		Publications: store,
+		VerifySeal:   func(context.Context, sealedcontrol.SealBinding) error { return nil },
+		Authorize:    func(context.Context, sealedcontrol.SealBinding) error { return nil },
+		ApprovalVerifier: func(ctx context.Context, binding sealedcontrol.SealBinding, publication deployment.PublicationIntent) error {
+			binding.EvidenceDigest = plan.EvidenceDigest
+			return durableApproval(ctx, binding, publication)
+		},
+		Now: nowFunc(now),
 	}
 	m := deliveryTestModule(reader, true)
 	m.approvals = approvals
@@ -512,16 +553,19 @@ func TestGeneratedDeliveryRouterFlushesApprovalRequestAfterEvidenceCompletion(t 
 	}
 	now := time.Date(2026, 8, 19, 10, 0, 0, 0, time.UTC)
 	requestDigest := "sha256:" + strings.Repeat("a", 64)
+	planDigest := "sha256:" + strings.Repeat("b", 64)
+	evidenceDigest := "sha256:" + strings.Repeat("c", 64)
 	publication := deployment.DeliveryPublication{
 		ID: "publication-command", ProjectID: projectID, Environment: "prod", TargetID: "target-command",
-		RequestDigest: requestDigest, CandidateID: "candidate-command",
+		RequestDigest: requestDigest, PlanID: "plan-command", PlanDigest: planDigest, CandidateID: "candidate-command",
 	}
 	candidate := deployment.DeliveryCandidate{
 		ID: publication.CandidateID, ProjectID: projectID, Environment: "prod", TargetID: publication.TargetID,
-		ServingArtifactID: "artifact-command", Status: deployment.DeliveryCandidateReady,
+		PlanID: publication.PlanID, PlanDigest: planDigest, ServingArtifactID: "artifact-command", Status: deployment.DeliveryCandidateReady,
 	}
+	plan := deployment.DeliveryPlan{ID: publication.PlanID, ProjectID: projectID, Environment: "prod", TargetID: publication.TargetID, Digest: planDigest, EvidenceDigest: evidenceDigest}
 	reader := &deliveryEvidenceFixture{
-		deliveryReadFixture: deliveryReadFixture{candidate: candidate, publication: publication},
+		deliveryReadFixture: deliveryReadFixture{candidate: candidate, publication: publication, plan: plan},
 		byRequest: map[string]deployment.DeliveryEvent{
 			strings.Join([]string{publication.TargetID, requestDigest, "approval_requested", "approval", "approval-command"}, "\x00"): {
 				TargetID: publication.TargetID, RequestDigest: requestDigest, EventKind: "approval_requested", ObjectKind: "approval", ObjectID: "approval-command", Outcome: "accepted",

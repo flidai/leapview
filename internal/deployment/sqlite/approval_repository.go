@@ -37,6 +37,13 @@ func (r *Repository) CreateApproval(
 		return deployment.Approval{}, err
 	}
 	defer tx.Rollback()
+	canonical, err := validateCanonicalApprovalEvidenceTx(ctx, tx, approval)
+	if err != nil {
+		return deployment.Approval{}, err
+	}
+	if canonical && (approval.PlanDigest == "" || approval.EvidenceDigest == "") {
+		return deployment.Approval{}, fmt.Errorf("%w: canonical publication approval evidence is incomplete", deployment.ErrApprovalScope)
+	}
 	err = platformdb.New(tx).CreateDeploymentApproval(
 		ctx,
 		platformdb.CreateDeploymentApprovalParams{
@@ -115,7 +122,12 @@ func (r *Repository) ApprovalByDeployment(
 	if err != nil {
 		return deployment.Approval{}, err
 	}
-	return mapApproval(row)
+	approval, err := mapApproval(row)
+	if err != nil {
+		return deployment.Approval{}, err
+	}
+	approval, _, err = approvalEvidenceFromEventTx(ctx, r.db, approval, "approval_requested")
+	return approval, err
 }
 
 func (r *Repository) SaveApproval(
@@ -135,6 +147,26 @@ func (r *Repository) SaveApproval(
 		return deployment.Approval{}, err
 	}
 	defer tx.Rollback()
+	canonical, err := validateCanonicalApprovalEvidenceTx(ctx, tx, approval)
+	if err != nil {
+		return deployment.Approval{}, err
+	}
+	if canonical {
+		requested, _, evidenceErr := approvalEvidenceFromEventTx(ctx, tx, approval, "approval_requested")
+		if evidenceErr != nil {
+			return deployment.Approval{}, evidenceErr
+		}
+		if requested.PlanDigest == "" || requested.EvidenceDigest == "" {
+			// Historical canonical decisions did not carry an explicit evidence
+			// reference. They remain readable and may move only to a terminal
+			// non-activating state, but can never be approved or reused.
+			if approval.Status != deployment.ApprovalDenied && approval.Status != deployment.ApprovalRevoked && approval.Status != deployment.ApprovalExpired {
+				return deployment.Approval{}, fmt.Errorf("%w: canonical approval request has no evidence binding", deployment.ErrApprovalScope)
+			}
+		} else if approval.PlanDigest != requested.PlanDigest || approval.EvidenceDigest != requested.EvidenceDigest {
+			return deployment.Approval{}, fmt.Errorf("%w: approval decision differs from requested evidence", deployment.ErrApprovalScope)
+		}
+	}
 	count, err := platformdb.New(tx).UpdateDeploymentApproval(
 		ctx,
 		platformdb.UpdateDeploymentApprovalParams{
@@ -227,6 +259,107 @@ func approvalAuditAggregateKey(key, approvalID string) string {
 	return key + ":" + approvalID
 }
 
+// validateCanonicalApprovalEvidenceTx resolves the existing immutable
+// publication -> plan -> candidate chain. The approval's publication scope is
+// already stored in deployment_approvals; PlanDigest and EvidenceDigest are
+// the explicit references retained in the append-only delivery event ledger.
+// Legacy project-deployment approvals have no canonical publication and keep
+// their existing request-digest binding.
+func validateCanonicalApprovalEvidenceTx(ctx context.Context, q platformdb.DBTX, approval deployment.Approval) (bool, error) {
+	publication, err := deliveryPublicationByIDTx(ctx, q, approval.DeploymentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if publication.ID != approval.DeploymentID ||
+		publication.ProjectID.String() != approval.ProjectID ||
+		publication.Environment != approval.Environment ||
+		publication.RequestDigest != approval.RequestDigest {
+		return true, deployment.ErrApprovalScope
+	}
+	plan, err := deliveryPlanByIDTx(ctx, q, publication.PlanID)
+	if err != nil {
+		return true, err
+	}
+	candidate, err := deliveryCandidateByIDTx(ctx, q, publication.CandidateID)
+	if err != nil {
+		return true, err
+	}
+	if plan.ID != publication.PlanID || plan.Digest != publication.PlanDigest ||
+		plan.TargetID != publication.TargetID || plan.ProjectID != publication.ProjectID ||
+		plan.Environment != publication.Environment ||
+		candidate.ID != publication.CandidateID || candidate.PlanID != publication.PlanID ||
+		candidate.PlanDigest != publication.PlanDigest || candidate.TargetID != publication.TargetID ||
+		candidate.ProjectID != publication.ProjectID || candidate.Environment != publication.Environment ||
+		candidate.ServingArtifactID != approval.ReleaseID {
+		return true, deployment.ErrApprovalScope
+	}
+	if approval.PlanDigest == "" && approval.EvidenceDigest == "" {
+		return true, nil
+	}
+	if approval.PlanDigest != plan.Digest || approval.EvidenceDigest != plan.EvidenceDigest {
+		return true, deployment.ErrApprovalScope
+	}
+	return true, nil
+}
+
+// approvalEvidenceFromEventTx hydrates the explicit canonical evidence
+// reference without adding approval columns. The boolean reports that a
+// complete bound event was found (not merely that the parent is canonical).
+// Existing delivery events are the immutable evidence authority and are
+// written in the same transaction as the approval projection transition.
+func approvalEvidenceFromEventTx(ctx context.Context, q platformdb.DBTX, approval deployment.Approval, kind string) (deployment.Approval, bool, error) {
+	publication, err := deliveryPublicationByIDTx(ctx, q, approval.DeploymentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return approval, false, nil
+	}
+	if err != nil {
+		return deployment.Approval{}, false, err
+	}
+	if publication.ProjectID.String() != approval.ProjectID ||
+		publication.Environment != approval.Environment ||
+		publication.RequestDigest != approval.RequestDigest {
+		return deployment.Approval{}, false, deployment.ErrApprovalScope
+	}
+	row, err := platformdb.New(q).GetDeliveryEventByRequest(ctx, platformdb.GetDeliveryEventByRequestParams{
+		TargetID: publication.TargetID, RequestDigest: approval.RequestDigest,
+		EventKind: kind, ObjectKind: "approval", ObjectID: approval.ID,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return approval, false, nil
+	}
+	if err != nil {
+		return deployment.Approval{}, false, err
+	}
+	event, err := mapDeliveryEvent(row)
+	if err != nil {
+		return deployment.Approval{}, false, err
+	}
+	if event.TargetID != publication.TargetID || event.ProjectID != approval.ProjectID ||
+		event.Environment != approval.Environment || event.RequestDigest != approval.RequestDigest ||
+		event.EventKind != kind || event.ObjectKind != "approval" || event.ObjectID != approval.ID ||
+		event.Outcome != "accepted" {
+		return deployment.Approval{}, false, deployment.ErrApprovalScope
+	}
+	if event.PlanDigest == "" && event.ResultDigest == "" {
+		return approval, false, nil
+	}
+	if event.PlanDigest == "" || event.ResultDigest == "" {
+		return deployment.Approval{}, false, fmt.Errorf("%w: approval evidence event is incomplete", deployment.ErrApprovalInvalid)
+	}
+	if approval.PlanDigest != "" && (approval.PlanDigest != event.PlanDigest || approval.EvidenceDigest != event.ResultDigest) {
+		return deployment.Approval{}, false, deployment.ErrApprovalScope
+	}
+	approval.PlanDigest = event.PlanDigest
+	approval.EvidenceDigest = event.ResultDigest
+	if err := approval.Validate(); err != nil {
+		return deployment.Approval{}, false, err
+	}
+	return approval, true, nil
+}
+
 // appendApprovalEventTx bridges the deployment approval projection to the
 // delivery ledger when the deployment scope has a plan-delivery target. Older
 // legacy-only deployments have no target revision and therefore cannot satisfy
@@ -251,6 +384,7 @@ func appendApprovalEventTx(ctx context.Context, q platformdb.DBTX, approval depl
 		ID: deployment.DeliveryEventID(targetID, approval.RequestDigest, kind, "approval", approval.ID), TargetID: targetID,
 		ProjectID: approval.ProjectID, Environment: approval.Environment, ActorID: actor, EventKind: kind,
 		ObjectKind: "approval", ObjectID: approval.ID, RequestDigest: approval.RequestDigest,
+		PlanDigest: approval.PlanDigest, ResultDigest: approval.EvidenceDigest,
 		Outcome: "accepted", Details: map[string]any{"status": string(approval.Status)}, CreatedAt: at,
 	})
 	return err

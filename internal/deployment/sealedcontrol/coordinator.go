@@ -54,6 +54,7 @@ type SealBinding struct {
 	CandidateID       string
 	GenerationID      string
 	PlanDigest        string
+	EvidenceDigest    string
 	ServingArtifactID string
 	ApprovalReleaseID string
 	ActorID           string
@@ -76,8 +77,8 @@ type VerifiedSealVerifier func(context.Context, SealBinding) error
 type Authorization func(context.Context, SealBinding) error
 
 // ApprovalVerifier re-reads durable approval evidence immediately before
-// publication. Implementations must bind deployment/candidate, plan request
-// digest, serving-artifact release identity, scope, status, and expiry; a
+// publication. Implementations must bind deployment/candidate, exact
+// plan/evidence digests, serving-artifact release identity, scope, status, and expiry; a
 // verified seal alone is not approval evidence.
 type ApprovalVerifier func(context.Context, SealBinding, deployment.PublicationIntent) error
 
@@ -91,7 +92,7 @@ type ActivationApprovalAuthorizer interface {
 
 // DurableApprovalVerifier adapts the deployment approval service to this
 // boundary. Approval is looked up by the exact candidate deployment ID and
-// checked against the publication plan digest and immutable serving-artifact
+// checked against the publication plan/evidence digests and immutable serving-artifact
 // release identity on every retry, so replacement candidates/replans cannot
 // reuse an earlier approval.
 func DurableApprovalVerifier(service ActivationApprovalAuthorizer) ApprovalVerifier {
@@ -99,7 +100,10 @@ func DurableApprovalVerifier(service ActivationApprovalAuthorizer) ApprovalVerif
 		if service == nil {
 			return deployment.ErrApprovalRequired
 		}
-		if binding.DeploymentID == "" || binding.CandidateID == "" || binding.GenerationID == "" || binding.PlanDigest == "" || binding.ServingArtifactID == "" || binding.ApprovalReleaseID == "" {
+		if binding.DeploymentID == "" || binding.CandidateID == "" || binding.GenerationID == "" || binding.PlanDigest == "" || binding.EvidenceDigest == "" || binding.ServingArtifactID == "" || binding.ApprovalReleaseID == "" {
+			return deployment.ErrApprovalScope
+		}
+		if deployment.ValidateDeliveryDigest(binding.PlanDigest) != nil || deployment.ValidateDeliveryDigest(binding.EvidenceDigest) != nil {
 			return deployment.ErrApprovalScope
 		}
 		if publication.CandidateID != binding.CandidateID || publication.GenerationID != binding.GenerationID || publication.PlanDigest != binding.PlanDigest || binding.ServingArtifactID != binding.Seal.ServingArtifactID {
@@ -108,6 +112,7 @@ func DurableApprovalVerifier(service ActivationApprovalAuthorizer) ApprovalVerif
 		_, err := service.AuthorizeActivation(ctx, deployment.ApprovalActivation{
 			ProjectID: publication.ProjectID.String(), DeploymentID: binding.DeploymentID,
 			Environment: publication.Environment, RequestDigest: publication.RequestDigest,
+			PlanDigest: binding.PlanDigest, EvidenceDigest: binding.EvidenceDigest,
 			ReleaseID: binding.ApprovalReleaseID,
 		})
 		return err

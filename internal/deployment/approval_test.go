@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +103,82 @@ func TestValidateApprovalActivationRechecksExactScopeAndFreshness(t *testing.T) 
 	}
 	if err := ValidateApprovalActivation(approval, request, approval.ExpiresAt); !errors.Is(err, ErrApprovalExpired) {
 		t.Fatalf("stale approval error = %v, want ErrApprovalExpired", err)
+	}
+}
+
+func TestApprovalBindsCanonicalPlanAndEvidenceDigests(t *testing.T) {
+	now := time.Date(2026, 9, 9, 10, 0, 0, 0, time.UTC)
+	repository := newApprovalMemoryRepository()
+	service := mustApprovalService(t, repository, &now)
+	request := approvalRequest(now, ApprovalActor{
+		PrincipalID: "publisher", CredentialClass: CredentialClassWorkload,
+		CredentialID: "publisher", CredentialExpiresAt: now.Add(time.Hour),
+	})
+	request.PlanDigest = " " + approvalDigest('a') + " "
+	request.EvidenceDigest = " " + approvalDigest('b') + " "
+	approval, err := service.Request(t.Context(), request)
+	require.NoError(t, err)
+	if approval.PlanDigest != approvalDigest('a') || approval.EvidenceDigest != approvalDigest('b') {
+		t.Fatalf("approval digests = %q/%q, want trimmed canonical identities", approval.PlanDigest, approval.EvidenceDigest)
+	}
+
+	activation := ApprovalActivation{
+		ProjectID: "finance", DeploymentID: "deployment_1", Environment: "prod",
+		RequestDigest: request.RequestDigest, PlanDigest: approval.PlanDigest,
+		EvidenceDigest: approval.EvidenceDigest, ReleaseID: request.ReleaseID,
+	}
+	if err := ValidateApprovalActivation(approval, activation, now); !errors.Is(err, ErrApprovalRequired) {
+		// The request is intentionally pending; this assertion also makes sure
+		// the exact evidence pair did not produce a scope error.
+		t.Fatalf("pending exact activation error = %v, want ErrApprovalRequired", err)
+	}
+
+	changedPlan := activation
+	changedPlan.PlanDigest = approvalDigest('c')
+	if err := ValidateApprovalActivation(approval, changedPlan, now); !errors.Is(err, ErrApprovalScope) {
+		t.Fatalf("changed plan digest error = %v, want ErrApprovalScope", err)
+	}
+	changedEvidence := activation
+	changedEvidence.EvidenceDigest = approvalDigest('d')
+	if err := ValidateApprovalActivation(approval, changedEvidence, now); !errors.Is(err, ErrApprovalScope) {
+		t.Fatalf("changed evidence digest error = %v, want ErrApprovalScope", err)
+	}
+
+	request.EvidenceDigest = approvalDigest('d')
+	if _, err := service.Request(t.Context(), request); !errors.Is(err, ErrApprovalConflict) {
+		t.Fatalf("changed evidence request error = %v, want ErrApprovalConflict", err)
+	}
+}
+
+func TestApprovalRequiresCompleteCanonicalPlanEvidencePair(t *testing.T) {
+	now := time.Date(2026, 9, 9, 10, 0, 0, 0, time.UTC)
+	service := mustApprovalService(t, newApprovalMemoryRepository(), &now)
+	base := approvalRequest(now, ApprovalActor{
+		PrincipalID: "publisher", CredentialClass: CredentialClassWorkload,
+		CredentialID: "publisher", CredentialExpiresAt: now.Add(time.Hour),
+	})
+	for name, mutate := range map[string]func(*ApprovalRequest){
+		"plan without evidence": func(request *ApprovalRequest) { request.PlanDigest = approvalDigest('a') },
+		"evidence without plan": func(request *ApprovalRequest) { request.EvidenceDigest = approvalDigest('b') },
+		"noncanonical plan": func(request *ApprovalRequest) {
+			request.PlanDigest, request.EvidenceDigest = "sha256:plan", approvalDigest('b')
+		},
+		"noncanonical evidence": func(request *ApprovalRequest) {
+			request.PlanDigest, request.EvidenceDigest = approvalDigest('a'), "sha256:evidence"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := base
+			mutate(&request)
+			if _, err := service.Request(t.Context(), request); !errors.Is(err, ErrApprovalInvalid) {
+				t.Fatalf("Request() error = %v, want ErrApprovalInvalid", err)
+			}
+		})
+	}
+
+	// Empty together remains accepted for legacy approvals.
+	if _, err := service.Request(t.Context(), base); err != nil {
+		t.Fatalf("legacy request with no plan/evidence digests: %v", err)
 	}
 }
 
@@ -285,6 +362,10 @@ func approvalRequest(now time.Time, actor ApprovalActor) ApprovalRequest {
 		ProjectID: "finance", DeploymentID: "deployment_1", Environment: "prod",
 		RequestDigest: "sha256:plan", ReleaseID: "release_1", RequestedBy: actor,
 	}
+}
+
+func approvalDigest(ch byte) string {
+	return "sha256:" + strings.Repeat(string(ch), 64)
 }
 
 func approvalActivation() ApprovalActivation {
