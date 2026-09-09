@@ -206,7 +206,7 @@ async function installQualificationProbe(page: Page, deferred: boolean): Promise
     document.addEventListener('lv-visualization-observation', (event: Event) => {
       ;(window as any).__viewportQualificationObservations.push({ ...(event as CustomEvent).detail })
     })
-    if (!useDeferred) return
+    if (useDeferred) return
     const registry = window.customElements
     const originalDefine = registry.define.bind(registry)
     Object.defineProperty(registry, 'define', {
@@ -214,11 +214,16 @@ async function installQualificationProbe(page: Page, deferred: boolean): Promise
       value(name: string, constructor: CustomElementConstructor, options?: ElementDefinitionOptions) {
         if (name !== 'lv-visualization-host') return originalDefine(name, constructor, options)
         delete (registry as unknown as Record<string, unknown>).define
-        const Base = constructor as unknown as { new(): HTMLElement & { deferMount: boolean } }
-        class QualificationDeferredHost extends Base {
-          constructor() { super(); this.deferMount = true }
+        const Base = constructor as unknown as { new(): HTMLElement & { deferMount: boolean; connectedCallback(): void } }
+        class QualificationEagerHost extends Base {
+          connectedCallback(): void {
+            // The eager counterfactual must override the production dashboard's
+            // static defer-mount attribute before the host starts its lifecycle.
+            this.deferMount = false
+            super.connectedCallback()
+          }
         }
-        return originalDefine(name, QualificationDeferredHost, options)
+        return originalDefine(name, QualificationEagerHost, options)
       },
     })
   }, deferred)
@@ -273,8 +278,8 @@ async function run(): Promise<void> {
             dashboardPageSha256: await digestFile('web/components/dashboard/dashboard-page.ts'),
           },
           variants: {
-            eager: 'current commit with production default eager host mounting',
-            deferred: 'same bundle with deferMount enabled before host connection by the hashed qualification harness only',
+            eager: 'same bundle with deferMount forced false before host connection by the hashed qualification harness',
+            deferred: 'current production dashboard behavior with defer-mount enabled on visualization hosts',
           },
         },
         fixture: {

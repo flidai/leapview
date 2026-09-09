@@ -350,6 +350,7 @@ async function verifyEChartsFirstNavigation(): Promise<void> {
     if (!response?.ok()) throw new Error(`${catalogPath}: status ${response?.status() ?? 'unknown'}`)
     await page.locator(`a[href="${dashboardHref}"]`).click()
     await page.waitForURL(`**${dashboardPath}`)
+    await ensureDashboardVisualizationsMounted(page, ['revenue'])
     try {
       await page.waitForFunction(() => {
         const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
@@ -413,6 +414,21 @@ async function verifyEChartsFirstNavigation(): Promise<void> {
   } finally {
     await page.close()
   }
+}
+
+async function ensureDashboardVisualizationsMounted(page: Page, visualIDs: string[] = []): Promise<void> {
+  await page.waitForFunction((expected) => {
+    const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
+    const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as Array<HTMLElement & { envelope?: { visualID?: string } }>
+    return expected.length > 0
+      ? expected.every((visualID) => hosts.some((host) => host.envelope?.visualID === visualID))
+      : hosts.length > 0
+  }, visualIDs, { timeout: 30_000 })
+  await page.locator('lv-dashboard-page').evaluate(async (dashboard: any, expected: string[]) => {
+    const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+    const targets = expected.length > 0 ? hosts.filter((host) => expected.includes(host.envelope?.visualID)) : hosts
+    await Promise.all(targets.map((host) => host.ensureMounted()))
+  }, visualIDs)
 }
 
 async function waitForUpdatesRequest(label: string, updates: string[]): Promise<void> {
@@ -809,6 +825,7 @@ async function verifySpatialShowcaseMaps(): Promise<void> {
     const response = await page.goto(new URL(path, baseURL).toString(), { waitUntil: 'domcontentloaded', timeout: 120_000 })
     if (!response?.ok()) throw new Error(`${path}: status ${response?.status() ?? 'unknown'}`)
     await page.waitForSelector('lv-dashboard-page')
+    await ensureDashboardVisualizationsMounted(page, visualIDs)
     await page.waitForFunction((expectedVisualIDs) => {
       const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
       const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as Array<HTMLElement & { envelope?: any; shadowRoot: ShadowRoot }>
@@ -893,6 +910,7 @@ async function verifySpatialMapWindowing(): Promise<void> {
       if (!response?.ok()) throw new Error(`${path}: status ${response?.status() ?? 'unknown'}`)
       await page.waitForSelector('lv-dashboard-page')
       await waitForUpdatesRequest(path, updates)
+      await ensureDashboardVisualizationsMounted(page)
       await page.waitForFunction(() => {
         const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
         const host = dashboard?.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement & { envelope?: any }

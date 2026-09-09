@@ -419,7 +419,7 @@ The architecture applies bounds before rendering:
 - Frame construction and adapter indexing are linear in row count unless a declared algorithm documents another bound.
 - Specification and frame changes use revision identity instead of whole-payload `JSON.stringify` comparisons.
 - Pagestream patches immutable specification only when its revision changes.
-- Hosts support opt-in near-viewport mounting and reuse mounted renderers across frame updates; existing production callers remain eager.
+- Dashboard viewers mount hosts near the viewport and reuse mounted renderers across frame updates; builder, documentation, and chat-artifact callers remain eager.
 - Resize notifications are coalesced to animation frames.
 - Renderer and map code is lazy-loaded by capability.
 - Theme or selection changes do not rebuild query data.
@@ -428,9 +428,11 @@ Performance budgets are tested for initial module bytes, mount latency, update l
 
 ### Viewport lifecycle rollout (FAI-551)
 
-`lv-visualization-host` defaults to eager mounting, including dashboard, builder,
-and chat-artifact callers. The opt-in `deferMount` property delays renderer
-initialization while retaining the host shell and the latest valid signal state.
+`lv-visualization-host` defaults to eager mounting. Dashboard viewer hosts opt in
+to `deferMount`; builder, documentation, and chat-artifact callers remain eager.
+The property delays renderer initialization while retaining the host shell and
+the latest valid signal state across app, public, embed, and read-only draft
+views.
 An eligible host mounts once; scrolling away does not dispose it. Authoring
 hosts and browsers with unavailable or failing `IntersectionObserver` remain
 eager. Dashboard hosts apply the same margin to nested scrollports; browsers
@@ -443,11 +445,10 @@ qualified latency budget or a measured performance improvement.
 
 Explicit `ensureMounted()` and `snapshot()` calls can request mounting without
 an intersection callback. They reject when no envelope is available; later
-signals can still mount the eligible host. Snapshot readiness is not dashboard-wide export or
-print readiness: browser-menu printing cannot be assumed to await asynchronous
-renderer initialization. No production caller enables deferral in this stage.
-Activation still requires a reviewed print/capture policy and representative
-before/after qualification, alongside the existing interaction and route tests.
+signals can still mount the eligible host. Dashboard capture tooling calls the
+awaited `ensureVisualizationsMounted()` page seam before inspecting renderer
+output. Browser-menu printing cannot be assumed to await asynchronous renderer
+initialization, and no native print path currently exists.
 
 The reports CI shard runs the host browser lifecycle tests through
 `bun run test:dashboard-page`. Controller tests run through
@@ -455,8 +456,8 @@ The reports CI shard runs the host browser lifecycle tests through
 they do not replace runtime latency/memory qualification or prove FAI-551 complete.
 
 `task qa:viewport-qualification` produces paired, local evidence from a fixed
-24-visual dashboard fixture. It compares the production eager default with a
-test-only deferred activation from the same build, discards one warmup per mode,
+24-visual dashboard fixture. It compares the production deferred behavior with
+a test-only eager counterfactual from the same build, discards one warmup per mode,
 alternates five measured repetitions in fresh browser contexts, and records
 commit, fixture, source, lockfile, browser, toolchain, CPU, memory, viewport, raw
 samples, and aggregation. Lifecycle or missing-metric evidence fails closed.

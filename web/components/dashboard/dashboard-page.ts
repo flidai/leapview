@@ -740,6 +740,15 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     return this.signal<DashboardStatus>('status', emptyStatus)
   }
 
+  /** Explicitly prepare every visual for screenshot/export tooling. */
+  async ensureVisualizationsMounted(): Promise<void> {
+    await this.updateComplete
+    const hosts = Array.from(this.renderRoot.querySelectorAll('lv-visualization-host')) as Array<HTMLElement & {
+      ensureMounted(): Promise<void>
+    }>
+    await Promise.all(hosts.map((host) => host.ensureMounted()))
+  }
+
   private handleReportZoomState = (event: CustomEvent<{ layout?: unknown }>): void => {
     const layout = event.detail?.layout
     if ((layout === 'desktop' || layout === 'mobile') && layout !== this.reportLayout) {
@@ -1154,7 +1163,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       case 'visual': {
         const visual = this.visualFor(component)
         if (!visual) return this.missingPayload('visual')
-        return html`<lv-visualization-host .envelope=${visual} .openVisualFocus=${this.openVisualFocus}>${this.renderAskAction(askReference, referenced)}</lv-visualization-host>`
+        return html`<lv-visualization-host defer-mount .envelope=${visual} .openVisualFocus=${this.openVisualFocus}>${this.renderAskAction(askReference, referenced)}</lv-visualization-host>`
       }
       default:
         return html`<div class="unsupported">Unsupported dashboard component: ${component.kind}</div>`

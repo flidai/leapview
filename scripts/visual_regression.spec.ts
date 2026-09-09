@@ -65,25 +65,22 @@ async function openStableDashboard(page: Page, url: string, heading: string): Pr
   await page.waitForFunction(() => {
     const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & {
       status?: { loading?: boolean }
-      updateComplete?: Promise<unknown>
       shadowRoot: ShadowRoot
     }
     if (!dashboard?.shadowRoot || dashboard.status?.loading !== false) return false
     const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as Array<HTMLElement & {
       envelope?: { status?: { kind?: string } }
-      shadowRoot: ShadowRoot
-      updateComplete?: Promise<unknown>
     }>
-    return hosts.length > 0 && hosts.every((host) => {
-      const status = host.envelope?.status?.kind
-      const renderer = host.shadowRoot?.querySelector('.renderer')
-      return (status === 'ready' || status === 'partial') && (renderer?.childElementCount ?? 0) > 0
-    })
+    return hosts.length > 0 && hosts.every((host) => ['ready', 'partial'].includes(host.envelope?.status?.kind ?? ''))
   }, undefined, { timeout: 60_000 })
   await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+    await dashboard.ensureVisualizationsMounted()
     await dashboard.updateComplete
     const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
     await Promise.all(hosts.map((host) => host.updateComplete))
+    if (hosts.some((host) => (host.shadowRoot?.querySelector('.renderer')?.childElementCount ?? 0) === 0)) {
+      throw new Error('dashboard capture readiness completed with an unmounted visualization')
+    }
     const fontSample = 'LeapView dashboard table 0123456789'
     await Promise.all([
       document.fonts.load('400 16px "Inter Variable"', fontSample),
