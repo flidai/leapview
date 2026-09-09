@@ -262,6 +262,11 @@ func validateFacetContainer(set *schemaSet, parent map[string]any, path string) 
 	for _, key := range keys {
 		facet := facets[key]
 		if descriptor, known := standardDescriptor(key); known {
+			// The core schema admits BaseFacet in every container; it cannot
+			// catch an input-derived quality facet placed on an output write.
+			if field == "outputFacets" && (key == qualityAssertionsFacetKey || key == qualityMetricsFacetKey) {
+				return fmt.Errorf("%s.%s: quality evidence belongs in dataset facets, not outputFacets", path, key)
+			}
 			if err := validateFacetURL(facet, descriptor.url, path, key); err != nil {
 				return err
 			}

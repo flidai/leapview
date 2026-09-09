@@ -105,6 +105,7 @@ func newDatasetProjector(p Pipeline, r PipelineRun, namespace string, inputs, ou
 		quality:      make(map[string]datasetQuality),
 	}
 	eventInputs := datasetNameSet(inputs)
+	publicationInstanceID := ""
 
 	for _, publication := range p.ContractPublications {
 		id := publication.AuthoredID.String()
@@ -116,6 +117,11 @@ func newDatasetProjector(p Pipeline, r PipelineRun, namespace string, inputs, ou
 		}
 		if _, exists := projector.publications[id]; exists {
 			return nil, fmt.Errorf("duplicate contract publication %q", id)
+		}
+		if publicationInstanceID == "" {
+			publicationInstanceID = publication.InstanceID
+		} else if publication.InstanceID != publicationInstanceID {
+			return nil, fmt.Errorf("contract publications mix instance ids %q and %q", publicationInstanceID, publication.InstanceID)
 		}
 		decoded, err := decodeContractPublication(publication)
 		if err != nil {
@@ -254,7 +260,9 @@ func (p *datasetProjector) project(names []string, direction datasetDirection) (
 		if quality, exists := p.quality[name]; exists {
 			assertions := qualityAssertionsFacet(quality)
 			if assertions != nil {
-				directionalFacets["dataQualityAssertions"] = mustFacet(assertions)
+				// Assertions describe the validated dataset, not the write's
+				// OutputDatasetFacet. Use the standard dataset-facet placement.
+				facets["dataQualityAssertions"] = mustFacet(assertions)
 			}
 			metrics, err := qualityMetricsFacet(quality)
 			if err != nil {
@@ -304,6 +312,9 @@ func datasetNameSet(names []string) map[string]struct{} {
 }
 
 func decodeContractPublication(publication ContractPublication) (publicationSchema, error) {
+	if publication.PublishedAt.IsZero() {
+		return publicationSchema{}, fmt.Errorf("contract publication %q has no published timestamp", publication.AuthoredID)
+	}
 	if err := publication.Validate(); err != nil {
 		return publicationSchema{}, fmt.Errorf("contract publication %q is invalid: %w", publication.AuthoredID, err)
 	}

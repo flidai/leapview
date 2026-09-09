@@ -375,10 +375,18 @@ func (p Pipeline) validate() error {
 			return fmt.Errorf("%s is required", label)
 		}
 	}
-	if strings.TrimSpace(p.Namespace) == "" && (strings.TrimSpace(p.ProjectID) == "" || strings.TrimSpace(p.Environment) == "") {
-		return errors.New("namespace or project id and environment are required")
-	}
-	if p.Namespace == "" {
+	if p.Namespace != "" {
+		trimmed := strings.TrimSpace(p.Namespace)
+		if trimmed == "" {
+			return errors.New("namespace cannot be empty or whitespace")
+		}
+		if p.Namespace != trimmed {
+			return errors.New("namespace must not have leading or trailing whitespace")
+		}
+	} else {
+		if strings.TrimSpace(p.ProjectID) == "" || strings.TrimSpace(p.Environment) == "" {
+			return errors.New("namespace or project id and environment are required")
+		}
 		p.Namespace = NamespaceFor(p.ProjectID, p.Environment)
 	}
 	return nil

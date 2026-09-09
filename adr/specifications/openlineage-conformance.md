@@ -8,7 +8,7 @@ Standard: OpenLineage 2.0.2 object model and pinned standard facets
 
 Direction and level: export-only projection, document
 
-Last updated: 2026-09-03
+Last updated: 2026-09-09
 
 Governing decisions: [ADR-0014](../0014-adopt-an-asset-selected-refresh-pipeline-contract.md)
 and [ADR-0016](../0016-adopt-standards-aligned-data-contracts-and-interchange.md)
@@ -29,7 +29,7 @@ and [ADR-0016](../0016-adopt-standards-aligned-data-contracts-and-interchange.md
   lineage, nominal-time, and parent facets are populated from existing
   LeapView authorities when evidence is supplied. Contract publications reuse
   the [`contractprojection`](../../internal/project/contractprojection)
-  canonical projection and [`identityledger`](../../internal/project/identityledger)
+  canonical projection and [`contractpublication`](../../internal/project/contractpublication)
   publication evidence; gate, catalog-statistics, and PlanIR values remain
   owned by [`release`](../../internal/release),
   [`catalogstats`](../../internal/analytics/catalogstats), and
@@ -38,14 +38,20 @@ and [ADR-0016](../0016-adopt-standards-aligned-data-contracts-and-interchange.md
   schema URLs are version-pinned, and LeapView custom facet keys use the
   `leapView_` prefix with version-pinned `LeapView` facet schemas.
 - **OL-05:** The projection does not originate contract or delivery identities.
-  It uses the existing `contractprojection` authority to verify the RFC 8785
-  bytes and SHA-256 digest carried by `identityledger` publication evidence.
-  UUID-v5 run IDs are an OpenLineage identifier mapping, not a replacement
-  contract or delivery digest.
+  It uses the existing `contractprojection` and `contractpublication`
+  authorities to verify the RFC 8785 bytes and SHA-256 digest carried by
+  publication evidence. UUID-v5 run IDs are an OpenLineage identifier mapping,
+  not a replacement contract or delivery digest.
 - **OL-06:** No second lineage package, event graph, collector, network
   client, or transport is introduced. The `Exporter` interface is a narrow
   caller-owned port for a future forwarding implementation and is not a
   collector or delivery guarantee.
+
+Quality assertions are attached to the validated dataset's `facets`, alongside
+quality metrics, not to the write-specific `outputFacets` container. This follows
+the pinned upstream [dataset-facet example](https://github.com/OpenLineage/OpenLineage/blob/cfd47d6f3e1b13167136b2508768c94a2351af23/website/docs/spec/facets/dataset-facets/data_quality_assertions.md).
+The profile validator rejects quality facets in `outputFacets`; upstream's broad
+`BaseFacet` container schema alone cannot detect that placement error.
 
 ## Evidence ledger
 
@@ -55,8 +61,16 @@ and [ADR-0016](../0016-adopt-standards-aligned-data-contracts-and-interchange.md
 | OL-02 | Existing Job/Run/Dataset mapper, including Pipeline facets, invocation and nominal-time evidence, and child Model parent references. | Focused OpenLineage package tests for pipeline, scheduled, and child-run mapping; schema validation tests in the package. | Unsupported or absent caller evidence remains absent; no independent dependency graph is emitted. |
 | OL-03 | Existing contract publication, gate, catalog-statistics, and PlanIR values are projected into standard facets through exact shared contract imports. | `internal/platform/architecture/openlineage_conformance_test.go:TestOpenLineageProjectionUsesPublishedContracts`; focused package tests for publication, quality, statistics, and column-lineage facets. | Projection does not persist, acquire, or manufacture evidence; callers must provide evidence already authorized by the owning subsystem. |
 | OL-04 | Pinned OpenLineage event/facet schemas under [`internal/refresh/openlineage/schema`](../../internal/refresh/openlineage/schema) and versioned custom facet URLs in the projection. | Focused package schema/object-model tests; `internal/platform/architecture/openlineage_conformance_test.go:TestOpenLineageHasOneProjectionAndNoTransportPath`. | This is document-level projection conformance only, not transport/emission conformance. |
-| OL-05 | Contract and publication fields are consumed and verified through existing `contractprojection` and `identityledger` authorities; OpenLineage retains only its UUID-v5 run identifier mapping. | `internal/platform/architecture/openlineage_conformance_test.go:TestOpenLineageReusesExistingIdentityAuthorities`; existing contract projection and publication authority tests. | No new canonicalization profile, digest algorithm, or cross-language identity corpus is introduced here. |
+| OL-05 | Contract and publication fields are consumed and verified through existing `contractprojection` and `contractpublication` authorities; OpenLineage retains only its UUID-v5 run identifier mapping. | `internal/platform/architecture/openlineage_conformance_test.go:TestOpenLineageReusesExistingIdentityAuthorities`; existing contract projection and publication authority tests. | No new canonicalization profile, digest algorithm, or cross-language identity corpus is introduced here. |
 | OL-06 | Exact package-scoped architecture allowances and a single projection/transport guard keep lineage ownership in refresh and prohibit network/collector dependencies. | `internal/platform/architecture/openlineage_conformance_test.go`; `go test ./internal/platform/architecture -run 'OpenLineage|ProductionImportsFollowCapabilityGraph|DeclaredCapabilityGraphIsAcyclic' -count=1`. | Forwarding, collector interoperability, import, round-trip, and delivery guarantees remain future capability-gated work. |
+
+The legacy `NamespaceFor(projectID, environment)` fallback is a stable
+single-instance compatibility namespace; it does **not** qualify the RID-09
+instance boundary or claim a cross-instance/fullRID identity. For operational
+cross-instance exports, the caller must supply an instance-qualified
+`Pipeline.Namespace` after selecting and authorizing the corresponding
+publication evidence. This projection does not derive or authorize that
+namespace.
 
 The implementation therefore claims only OpenLineage 2.0.2 **projection/document**
 conformance for the supported object and facet subset. It does not claim

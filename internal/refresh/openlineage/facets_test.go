@@ -56,7 +56,7 @@ func TestEventProjectsPublishedSchemaVersionQualityAndSafeLineageFacets(t *testi
 	if version["datasetVersion"] != "1.2.3" {
 		t.Fatalf("dataset version = %v", version["datasetVersion"])
 	}
-	quality := facetValue(t, model.OutputFacets, "dataQualityAssertions")
+	quality := facetValue(t, model.Facets, "dataQualityAssertions")
 	assertions := quality["assertions"].([]any)
 	if len(assertions) != 2 {
 		t.Fatalf("quality assertions = %#v", assertions)
@@ -112,7 +112,7 @@ func TestQualityProjectionTranslatesWarningAndRejectsUnrepresentableOutcome(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertions := facetValue(t, event.Outputs[0].OutputFacets, "dataQualityAssertions")["assertions"].([]any)
+	assertions := facetValue(t, event.Outputs[0].Facets, "dataQualityAssertions")["assertions"].([]any)
 	assertion := assertions[0].(map[string]any)
 	if assertion["name"] != "amount_present" || assertion["severity"] != "warn" || assertion["success"] != false {
 		t.Fatalf("warning assertion = %#v", assertion)
@@ -165,6 +165,22 @@ func TestEventRejectsInvalidPublicationVersionAndColumnLineageFields(t *testing.
 	}})
 	if err == nil || !strings.Contains(err.Error(), "not an event input") {
 		t.Fatalf("dangling lineage input error = %v", err)
+	}
+}
+
+func TestEventRejectsUnpublishedContractPublication(t *testing.T) {
+	p := facetTestPipeline(t)
+	p.ContractPublications[0].PublishedAt = time.Time{}
+	if _, err := EventForPipelineRun(p, PipelineRun{ID: "run-unpublished"}); err == nil || !strings.Contains(err.Error(), "published timestamp") {
+		t.Fatalf("unpublished contract publication error = %v", err)
+	}
+}
+
+func TestEventRejectsContractPublicationsFromDifferentInstances(t *testing.T) {
+	p := facetTestPipeline(t)
+	p.ContractPublications[1].InstanceID = "instance:other"
+	if _, err := EventForPipelineRun(p, PipelineRun{ID: "run-mixed-instances"}); err == nil || !strings.Contains(err.Error(), "mix instance ids") {
+		t.Fatalf("mixed contract publication instance error = %v", err)
 	}
 }
 
@@ -250,6 +266,7 @@ func facetTestSourcePublication(t *testing.T) ContractPublication {
 	if err != nil {
 		t.Fatal(err)
 	}
+	publication.PublishedAt = time.Date(2026, 9, 2, 12, 1, 0, 0, time.UTC)
 	return publication
 }
 
@@ -278,6 +295,7 @@ func facetTestModelPublication(t *testing.T) ContractPublication {
 	if err != nil {
 		t.Fatal(err)
 	}
+	publication.PublishedAt = time.Date(2026, 9, 2, 12, 2, 0, 0, time.UTC)
 	return publication
 }
 
