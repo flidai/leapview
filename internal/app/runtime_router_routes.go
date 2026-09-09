@@ -3,6 +3,7 @@ package app
 import (
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
@@ -93,6 +94,31 @@ func mountRouterMiddleware(mux *chi.Mux, dependencies routerMiddlewareDependenci
 	mux.Use(apihttpmiddleware.SecurityHeadersMiddleware(dependencies.securityHeaders))
 	mux.Use(apihttpmiddleware.AllowedHosts(dependencies.allowedHosts))
 	mux.Use(apihttpmiddleware.RequestBodyLimit(dependencies.requestBodyLimit))
+	// Reject selectors at the existing shared ingress before cursor,
+	// idempotency, authorization, or domain work. This establishes no context:
+	// the durable claim and leased runtime remain the only Project authority.
+	mux.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			query, err := url.ParseQuery(r.URL.RawQuery)
+			if err != nil {
+				apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_QUERY", "The query string is invalid", nil)
+				return
+			}
+			for name := range query {
+				switch strings.ToLower(strings.ReplaceAll(name, "_", "")) {
+				case "project", "projectid", "projectuid":
+					// The generated platform-admin audit operation declares an
+					// exact `project` filter, not a serving-context selector.
+					if name == "project" && r.Method == http.MethodGet && r.URL.Path == "/api/v1/audit-events" {
+						continue
+					}
+					apitransport.WriteProblem(w, r, http.StatusBadRequest, "PROJECT_SELECTOR_UNSUPPORTED", "Project is server-bound and must not be selected in the query string", nil)
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
 }
 
 func mountPlatformRoutes(mux *chi.Mux, dependencies platformRouteDependencies) {
