@@ -34,7 +34,7 @@ import { DashboardFilterController } from './filters/filter-controller'
 import type { FilterMutationDetail, FilterOptionsNeededDetail } from './filters/filter-control'
 import './report-canvas'
 import './report-footer'
-import { type VisualActionDetail } from './visual-modal'
+import './visual-modal'
 import './visualization/host'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
 import {
@@ -1175,7 +1175,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     `
   }
 
-  private openVisualFocus = (source: HTMLElement, detail: VisualActionDetail): void => {
+  private openVisualFocus = (source: HTMLElement, detail: import('./visual-modal').VisualActionDetail): void => {
     this.renderRoot.querySelector('lv-visual-modal')?.openVisualFocus(source, detail)
   }
 
