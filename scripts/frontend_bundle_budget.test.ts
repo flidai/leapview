@@ -19,6 +19,7 @@ import {
   assertFrontendBundleWriterProvenance,
   currentGitRevision,
   frontendCommitIdentity,
+  frontendLockfileSha256,
   frontendSourceInputDigest,
 } from './frontend_bundle_identity'
 
@@ -205,7 +206,7 @@ function evidence(overrides: Partial<FrontendBundleEvidence['entries']['app']> =
       architecture: 'x64',
       packageManager: 'bun@1.3.14',
       lockfilePath: 'bun.lock',
-      lockfileSha256: 'ef842b88f7e7ab22495d84c69ca4fe76acb1e9248144195a1fe5a472b87638fa',
+      lockfileSha256: frontendLockfileSha256(),
     },
     entries: { app: measurement },
     aggregate: { ...measurement },
