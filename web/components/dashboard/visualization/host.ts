@@ -35,8 +35,9 @@ export class VisualizationHost extends LitElement {
   static styles = [visualActionStyles, css`
     :host, .surface { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; }
     :host {
-      --lv-visual-action-target: calc(max(24px, var(--lv-button-height-xs, var(--control-xsmall-size, 24px))) * var(--report-canvas-inverse-scale, 1));
-      --lv-visual-menu-target: calc(max(24px, var(--lv-button-height-sm, var(--control-small-size, 24px))) * var(--report-canvas-inverse-scale, 1));
+      --lv-visual-inverse-scale: var(--report-canvas-inverse-scale, calc(1 / var(--builder-canvas-scale, 1)));
+      --lv-visual-action-target: calc(max(24px, var(--lv-button-height-xs, var(--control-xsmall-size, 24px))) * var(--lv-visual-inverse-scale));
+      --lv-visual-menu-target: calc(max(24px, var(--lv-button-height-sm, var(--control-small-size, 24px))) * var(--lv-visual-inverse-scale));
       color: var(--lv-fg-default);
       background: var(--lv-chart-surface);
       font-family: var(--fontStack-system);
@@ -300,6 +301,7 @@ export class VisualizationHost extends LitElement {
       display: flex;
       align-items: center;
       gap: var(--base-size-8);
+      min-width: var(--lv-visual-menu-target);
       min-height: var(--lv-visual-menu-target);
       border: var(--borderWidth-default, var(--lv-border-width)) solid transparent;
       border-radius: var(--lv-radius-tight);
