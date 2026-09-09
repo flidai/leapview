@@ -822,54 +822,60 @@ test('dashboard favorites persist and rank first while dashboard opens are recor
 })
 
 test('date columns reveal exact localized date and time on hover and focus', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  try {
-    await page.clock.install({ time: new Date('2026-08-12T12:00:00Z') })
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
-    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
-      localStorage.setItem('leapview.dashboard-catalog.recents.v1', JSON.stringify({
-        'executive-sales': '2026-08-12T08:15:00Z',
-        'operations-health': '2025-12-31T19:30:00Z',
-      }))
-      element.reloadDiscoveryPreferences()
-      await element.updateComplete
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
-      await list.updateComplete
-      return Array.from(list.querySelectorAll('tbody tr')).map((row: Element) => ({
-        title: row.querySelector('.entity-list-title')?.textContent?.trim(),
-        updated: row.querySelector('.entity-list-datetime[data-column="updated"] .entity-list-datetime-value')?.textContent?.trim(),
-        updatedLabel: row.querySelector('.entity-list-datetime[data-column="updated"]')?.getAttribute('aria-label'),
-        lastOpened: row.querySelector('.entity-list-datetime[data-column="lastOpened"] .entity-list-datetime-value')?.textContent?.trim(),
-        lastOpenedLabel: row.querySelector('.entity-list-datetime[data-column="lastOpened"]')?.getAttribute('aria-label'),
-      }))
-    })
+  for (const scenario of [
+    { timezoneId: 'UTC', updatedTime: '9:42 AM', lastOpenedTime: '8:15 AM' },
+    { timezoneId: 'Europe/Berlin', updatedTime: '11:42 AM', lastOpenedTime: '10:15 AM' },
+  ]) {
+    const context = await browser.newContext({ timezoneId: scenario.timezoneId, locale: 'en-US', viewport: { width: 1280, height: 820 } })
+    const page = await context.newPage()
+    try {
+      await page.clock.install({ time: new Date('2026-08-12T12:00:00Z') })
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+      const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+        localStorage.setItem('leapview.dashboard-catalog.recents.v1', JSON.stringify({
+          'executive-sales': '2026-08-12T08:15:00Z',
+          'operations-health': '2025-12-31T19:30:00Z',
+        }))
+        element.reloadDiscoveryPreferences()
+        await element.updateComplete
+        const list = element.shadowRoot.querySelector('lv-entity-list') as any
+        await list.updateComplete
+        return Array.from(list.querySelectorAll('tbody tr')).map((row: Element) => ({
+          title: row.querySelector('.entity-list-title')?.textContent?.trim(),
+          updated: row.querySelector('.entity-list-datetime[data-column="updated"] .entity-list-datetime-value')?.textContent?.trim(),
+          updatedLabel: row.querySelector('.entity-list-datetime[data-column="updated"]')?.getAttribute('aria-label'),
+          lastOpened: row.querySelector('.entity-list-datetime[data-column="lastOpened"] .entity-list-datetime-value')?.textContent?.trim(),
+          lastOpenedLabel: row.querySelector('.entity-list-datetime[data-column="lastOpened"]')?.getAttribute('aria-label'),
+        }))
+      })
 
-    expect(state[0]).toEqual({
-      title: 'Executive Sales Dashboard',
-      updated: 'Aug 12',
-      updatedLabel: expect.stringContaining('Updated: Aug 12, 2026, 9:42 AM'),
-      lastOpened: 'Aug 12',
-      lastOpenedLabel: expect.stringContaining('Last opened: Aug 12, 2026, 8:15 AM'),
-    })
-    expect(state[1]).toEqual({
-      title: 'Operations Health',
-      updated: 'Aug 11',
-      updatedLabel: expect.stringContaining('Updated: Aug 11, 2026'),
-      lastOpened: 'Dec 31, 2025',
-      lastOpenedLabel: expect.stringContaining('Last opened: Dec 31, 2025'),
-    })
-    expect(state[2].lastOpened).toBeUndefined()
+      expect(state[0]).toEqual({
+        title: 'Executive Sales Dashboard',
+        updated: 'Aug 12',
+        updatedLabel: expect.stringContaining(`Updated: Aug 12, 2026, ${scenario.updatedTime}`),
+        lastOpened: 'Aug 12',
+        lastOpenedLabel: expect.stringContaining(`Last opened: Aug 12, 2026, ${scenario.lastOpenedTime}`),
+      })
+      expect(state[1]).toEqual({
+        title: 'Operations Health',
+        updated: 'Aug 11',
+        updatedLabel: expect.stringContaining('Updated: Aug 11, 2026'),
+        lastOpened: 'Dec 31, 2025',
+        lastOpenedLabel: expect.stringContaining('Last opened: Dec 31, 2025'),
+      })
+      expect(state[2].lastOpened).toBeUndefined()
 
-    await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="updated"]').first().hover()
-    const visibility = await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="updated"] .entity-list-hover-tooltip').first().evaluate((tooltip) => getComputedStyle(tooltip).visibility)
-    expect(visibility).toBe('visible')
-    await page.mouse.move(0, 0)
-    await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="lastOpened"]').first().focus()
-    const focusVisibility = await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="lastOpened"] .entity-list-hover-tooltip').first().evaluate((tooltip) => getComputedStyle(tooltip).visibility)
-    expect(focusVisibility).toBe('visible')
-  } finally {
-    await page.close()
+      await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="updated"]').first().hover()
+      const visibility = await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="updated"] .entity-list-hover-tooltip').first().evaluate((tooltip) => getComputedStyle(tooltip).visibility)
+      expect(visibility).toBe('visible')
+      await page.mouse.move(0, 0)
+      await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="lastOpened"]').first().focus()
+      const focusVisibility = await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="lastOpened"] .entity-list-hover-tooltip').first().evaluate((tooltip) => getComputedStyle(tooltip).visibility)
+      expect(focusVisibility).toBe('visible')
+    } finally {
+      await context.close()
+    }
   }
 })
 
