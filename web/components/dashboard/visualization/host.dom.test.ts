@@ -3,13 +3,30 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
-import { testDocument } from '../dashboard-page-test-fixtures'
+import { testVisualizationEnvelopes } from '../dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
 let browser: Browser
 const projectRoot = process.cwd()
-const fixtureRoot = join(projectRoot, '.tmp/dashboard-page-test')
+const fixtureRoot = join(projectRoot, '.tmp/visualization-host-test')
+
+function testDocument(): string {
+  // Exercise the real host and adapters without requiring dashboard/Datastar
+  // bootstrap. Route-level behavior stays covered by the dashboard suites.
+  return `<!doctype html><html><body>
+    <script type="module">
+      import '/visualization-host-under-test.js';
+      const envelopes = ${JSON.stringify(testVisualizationEnvelopes())};
+      const sources = Object.fromEntries(Object.entries(envelopes).map(([id, envelope]) => [id, { envelope }]));
+      const eager = document.createElement('lv-visualization-host');
+      eager.envelope = envelopes.orders_kpi;
+      document.body.append(eager);
+      sources.orders_kpi = eager;
+      window.__lvSourceHosts = sources;
+    </script>
+  </body></html>`
+}
 
 beforeAll(async () => {
   server = createServer(async (request, response) => {
@@ -32,6 +49,13 @@ beforeAll(async () => {
   if (!address || typeof address === 'string') throw new Error('test server did not bind')
   baseURL = `http://127.0.0.1:${address.port}`
   browser = await chromium.launch()
+  browser.on('page', (page) => {
+    page.on('pageerror', (error) => console.error('host fixture page error:', error.message))
+    page.on('response', (response) => {
+      if (response.status() >= 400) console.error('host fixture HTTP error:', response.status(), response.url())
+    })
+    page.on('requestfailed', (request) => console.error('host fixture request failed:', request.url(), request.failure()?.errorText))
+  })
 })
 
 afterAll(async () => {
@@ -59,12 +83,10 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
       Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
     })
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
-    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
-    const state = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      await dashboard.updateComplete
-      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+    const state = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_kpi
       const deferred = document.createElement('lv-visualization-host') as any
       deferred.deferMount = true
       deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
@@ -172,11 +194,10 @@ test('snapshot explicitly mounts a deferred host without an intersection callbac
       Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
     })
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
-    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    const state = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      await dashboard.updateComplete
-      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+
+    const state = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_kpi
       const deferred = document.createElement('lv-visualization-host') as any
       deferred.deferMount = true
       deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
@@ -214,11 +235,10 @@ test('eligibility before data waits for the later valid envelope', async () => {
       Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
     })
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
-    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    const mounted = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      await dashboard.updateComplete
-      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+
+    const mounted = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_kpi
       const deferred = document.createElement('lv-visualization-host') as any
       deferred.deferMount = true
       document.body.append(deferred)
@@ -257,11 +277,10 @@ test('eager invalid and unknown-renderer envelopes remain visible errors', async
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
-    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    const errors = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      await dashboard.updateComplete
-      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+
+    const errors = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_kpi
       const invalid = document.createElement('lv-visualization-host') as any
       const invalidEnvelope = JSON.parse(JSON.stringify(source.envelope))
       invalidEnvelope.dataRevision = -1
@@ -301,11 +320,10 @@ test('pending renderer loads reject stale mount promises after detach and reatta
       await route.continue()
     })
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
-    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      await dashboard.updateComplete
-      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_chart') as any
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+
+    await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_chart
       const deferred = document.createElement('lv-visualization-host') as any
       deferred.deferMount = true
       deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
@@ -376,11 +394,10 @@ test('existing and authoring hosts stay eager by default, including with no inte
       Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
     })
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
-    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    const state = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      await dashboard.updateComplete
-      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+
+    const state = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_kpi
       await source.updateComplete
       const authoring = document.createElement('lv-visualization-host') as any
       authoring.deferMount = true
@@ -419,11 +436,10 @@ test('a deferred host can be switched back to eager mounting without leaking its
       Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
     })
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
-    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    const state = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      await dashboard.updateComplete
-      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+
+    const state = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_kpi
       const deferred = document.createElement('lv-visualization-host') as any
       deferred.deferMount = true
       deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
@@ -464,11 +480,10 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
         Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: FailingIntersectionObserver })
       }, failureMode)
       await page.goto(baseURL)
-      await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-visualization-host'))
-      await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-      const mounted = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-        await dashboard.updateComplete
-        const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')).find((host: any) => host.envelope?.visualID === 'orders_kpi') as any
+      await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+
+      const mounted = await page.evaluate(async () => {
+        const source = (window as any).__lvSourceHosts.orders_kpi
         const deferred = document.createElement('lv-visualization-host') as any
         deferred.deferMount = true
         deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
