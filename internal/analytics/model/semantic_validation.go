@@ -122,6 +122,10 @@ func (m *Model) ValidateSemanticGraph() error {
 }
 
 func (m *Model) validateSemanticDefinitions() error {
+	return m.validateSemanticDefinitionsWithOptions(false)
+}
+
+func (m *Model) validateSemanticDefinitionsWithOptions(allowUnresolvedTypes bool) error {
 	for _, tableName := range m.TableNames() {
 		table := m.Tables[tableName]
 		fieldNames := make([]string, 0, len(table.Dimensions))
@@ -264,7 +268,7 @@ func (m *Model) validateSemanticDefinitions() error {
 			if err != nil {
 				return fmt.Errorf("semantic dimension %q binding for dataset %q: %w", name, dataset, err)
 			}
-			if !compatibleConformedBindingTypes(dimension, physical) {
+			if !compatibleConformedBindingTypes(dimension, physical, allowUnresolvedTypes) {
 				return fmt.Errorf("semantic dimension %q logical datatype %q is incompatible with binding %q logical datatype %q", name, dimension.Datatype, binding.Field, physical.Datatype)
 			}
 			if _, err := m.ResolveBindingPath(dataset, binding); err != nil {
@@ -442,8 +446,8 @@ func semanticFilterValues(value any) ([]any, bool) {
 
 // compatibleConformedBindingTypes requires the portable logical datatype to
 // match exactly across every dataset binding of a conformed dimension.
-func compatibleConformedBindingTypes(dimension SemanticDimension, physical MetricDimension) bool {
-	return dimension.Datatype != "" && physical.Datatype != "" && dimension.Datatype == physical.Datatype
+func compatibleConformedBindingTypes(dimension SemanticDimension, physical MetricDimension, allowUnresolvedTypes bool) bool {
+	return dimension.Datatype != "" && ((allowUnresolvedTypes && physical.Datatype == "") || dimension.Datatype == physical.Datatype)
 }
 
 func (m *Model) validateMetrics() error {

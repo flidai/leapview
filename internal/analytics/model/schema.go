@@ -59,7 +59,10 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 	if err := m.ResolveDiscoveredModelFields(); err != nil {
 		return err
 	}
-	if err := m.validateSemanticDefinitions(); err != nil {
+	// Authored Models may defer entity, check, relationship, and semantic field
+	// existence until their definition output is discovered. Re-run the whole
+	// semantic graph against the resolved columns before activation.
+	if err := m.validateSemanticGraph(); err != nil {
 		return err
 	}
 	if err := m.ValidateDiscoveredSourceSchemas(); err != nil {

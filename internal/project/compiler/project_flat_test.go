@@ -1459,6 +1459,66 @@ spec:
 	}
 }
 
+func TestLoadSourceRootAllowsSemanticReferencesOutsidePartialModelFields(t *testing.T) {
+	files := map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed, defaults: {csv: {header: true}}}
+`,
+		"sources/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:warehouse.orders, name: warehouse.orders}
+spec:
+  connection: warehouse
+  location: {type: path, path: orders.csv, format: csv}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec:
+  definition: {type: direct, source: warehouse.orders}
+  fields: {order_id: {datatype: String, label: Order ID}}
+  entities:
+    order: {type: primary, fields: [order_id]}
+    customer: {type: foreign, fields: [customer_id]}
+  grain: {entity: order}
+  checks:
+    - {id: status_values, type: accepted_values, field: status, values: [open, closed], severity: error}
+`,
+		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  datasets: {orders: {model: orders, defaultTimeDimension: order_date}}
+  dimensions:
+    order_date:
+      datatype: Date
+      bindings: {orders: {field: orders.order_date}}
+      time: {nativeGrain: day, grains: [day], calendar: iso8601}
+  metrics:
+    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}}
+`,
+	}
+	project, err := LoadSourceRoot(writeSourceFixture(t, files))
+	if err != nil {
+		t.Fatalf("LoadSourceRoot(partial Model fields): %v", err)
+	}
+	model := project.Manifest.SemanticModels["semantic-model:sales"]
+	if model == nil {
+		t.Fatal("compiled semantic model is missing")
+	}
+	table := model.Tables["orders"]
+	if len(table.AuthoredFields) != 1 || table.AuthoredFields["order_id"].Label != "Order ID" {
+		t.Fatalf("authored field overlay = %#v", table.AuthoredFields)
+	}
+	for _, field := range []string{"order_id", "customer_id", "status", "order_date", "revenue"} {
+		if _, ok := table.Dimensions[field]; !ok {
+			t.Fatalf("provisional resolved field %q is missing: %#v", field, table.Dimensions)
+		}
+	}
+}
+
 func TestBundlePlanDiffIsDeterministicAndAggregatesImpact(t *testing.T) {
 	resources := []projectgraph.Resource{
 		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},

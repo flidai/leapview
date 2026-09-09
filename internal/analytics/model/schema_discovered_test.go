@@ -118,3 +118,54 @@ func TestResolveDiscoveredModelFieldsRejectsMissingDocumentedField(t *testing.T)
 		t.Fatal("ResolveDiscoveredModelFields accepted documented field missing from DuckLake schema")
 	}
 }
+
+func TestValidateDiscoveredSchemasRevalidatesDeferredFieldReferences(t *testing.T) {
+	t.Run("check datatype", func(t *testing.T) {
+		model := &Model{
+			Datasets: map[string]SemanticDatasetSpec{"orders": {Model: "orders"}},
+			Tables: map[string]Table{"orders": {
+				ModelName:      "orders",
+				AuthoredFields: map[string]ModelFieldDeclaration{"order_id": {Datatype: DataTypeString}},
+				Dimensions: map[string]MetricDimension{
+					"order_id": {Datatype: DataTypeString},
+					"status":   {},
+				},
+				Columns:     map[string]ModelColumn{"order_id": {}, "status": {}},
+				Entities:    map[string]EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
+				GrainEntity: "order",
+				Checks:      []ModelCheck{{Type: "accepted_values", Field: "status", Values: []string{"open", "closed"}}},
+				Schema: TableSchema{Columns: []ColumnSchema{
+					{Name: "order_id", PhysicalType: "VARCHAR"},
+					{Name: "status", PhysicalType: "BIGINT"},
+				}},
+			}},
+		}
+		err := model.ValidateDiscoveredSchemas()
+		if err == nil || !strings.Contains(err.Error(), "accepted_values requires a String field") {
+			t.Fatalf("resolved check datatype error = %v", err)
+		}
+	})
+
+	t.Run("semantic binding existence", func(t *testing.T) {
+		model := &Model{
+			Datasets: map[string]SemanticDatasetSpec{"orders": {Model: "orders"}},
+			Tables: map[string]Table{"orders": {
+				ModelName:      "orders",
+				AuthoredFields: map[string]ModelFieldDeclaration{"order_id": {Datatype: DataTypeString}},
+				Dimensions:     map[string]MetricDimension{"order_id": {Datatype: DataTypeString}, "order_date": {}},
+				Columns:        map[string]ModelColumn{"order_id": {}, "order_date": {}},
+				Entities:       map[string]EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
+				GrainEntity:    "order",
+				Schema:         TableSchema{Columns: []ColumnSchema{{Name: "order_id", PhysicalType: "VARCHAR"}}},
+			}},
+			Dimensions: map[string]SemanticDimension{"order_date": {
+				Type: "date", Datatype: DataTypeDate, NativeGrain: "day", Grains: []string{"day"},
+				Bindings: map[string]DimensionBinding{"orders": {Field: "orders.order_date"}},
+			}},
+		}
+		err := model.ValidateDiscoveredSchemas()
+		if err == nil || !strings.Contains(err.Error(), `unknown field "order_date" on table "orders"`) {
+			t.Fatalf("missing resolved semantic binding error = %v", err)
+		}
+	})
+}
