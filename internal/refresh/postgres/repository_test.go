@@ -217,13 +217,46 @@ func TestPostgresRefreshConcurrentOccurrenceClaimAndFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := r.ClaimAttempt(t.Context(), "run_1", "worker-a", 1, 10*time.Millisecond)
+	first, err := r.ClaimAttempt(t.Context(), "run_1", "worker-a", 1, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Let the short lease expire before exercising takeover; direct runtime
-	// updates cannot fabricate an expired running lease.
-	time.Sleep(25 * time.Millisecond)
+	// Fabricate an expired running lease through a narrowly scoped privileged
+	// transaction; direct runtime updates cannot bypass the lifecycle guards.
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err := tx.Exec(t.Context(), `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	const expiredLease = "2000-01-01 00:00:00+00"
+	if tag, err := tx.Exec(t.Context(), `UPDATE refresh.run SET lease_expires_at=$1::timestamptz WHERE run_id=$2 AND status='running' AND lease_owner=$3 AND fence_generation=$4`, expiredLease, "run_1", first.OwnerID, first.FenceGeneration); err != nil {
+		t.Fatal(err)
+	} else if tag.RowsAffected() != 1 {
+		t.Fatalf("expired run lease update affected %d rows, want one", tag.RowsAffected())
+	}
+	if tag, err := tx.Exec(t.Context(), `UPDATE refresh.attempt SET lease_expires_at=$1::timestamptz WHERE run_id=$2 AND attempt_number=$3 AND status='running' AND owner_id=$4 AND fence_generation=$5`, expiredLease, "run_1", first.AttemptNumber, first.OwnerID, first.FenceGeneration); err != nil {
+		t.Fatal(err)
+	} else if tag.RowsAffected() != 1 {
+		t.Fatalf("expired attempt lease update affected %d rows, want one", tag.RowsAffected())
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var runExpired, attemptExpired bool
+	if err := admin.QueryRow(t.Context(), `
+		SELECT r.lease_expires_at < clock_timestamp(), a.lease_expires_at < clock_timestamp()
+		FROM refresh.run AS r
+		JOIN refresh.attempt AS a ON a.run_id = r.run_id
+		WHERE r.run_id = $1 AND a.attempt_number = $2
+	`, "run_1", first.AttemptNumber).Scan(&runExpired, &attemptExpired); err != nil {
+		t.Fatal(err)
+	}
+	if !runExpired || !attemptExpired {
+		t.Fatalf("PostgreSQL did not observe both leases expired: run=%t attempt=%t", runExpired, attemptExpired)
+	}
 	second, err := r.ClaimAttempt(t.Context(), "run_1", "worker-b", 2, time.Minute)
 	if err != nil {
 		t.Fatal(err)
