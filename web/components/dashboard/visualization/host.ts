@@ -25,10 +25,11 @@ export class VisualizationHost extends LitElement {
   get envelope(): VisualizationEnvelope | undefined { return this.envelopeValue }
   set envelope(value: VisualizationEnvelope | undefined) {
     const previous = this.envelopeValue
-    // Before an opt-in deferred host has a controller, keep only signal values
-    // that can be mounted. Eager hosts retain the existing controller boundary
-    // and error rendering for invalid envelopes.
-    if (this.deferMount && !this.authoring && !this.mountRequested) {
+    // Keep the shell and actions on the same valid revision as the renderer,
+    // both before and after a deferred host mounts. Spec revisions are opaque
+    // identities (and may legitimately revert); data revisions order one spec.
+    // Eager hosts retain their existing validation/error boundary.
+    if (this.deferMount && !this.authoring) {
       if (value && !isAcceptedEnvelope(value)) return
       if (value && previous && previous.specRevision === value.specRevision && value.dataRevision < previous.dataRevision) return
     }

@@ -15,7 +15,8 @@ function sample(variant: 'eager' | 'deferred', repetition = 1, warmup = false): 
     variant, repetition, warmup, expectedVisualIDs: ids, nearViewportVisualIDs: near,
     shellVisualIDs: ids, initialMountVisualIDs: variant === 'eager' ? ids : near,
     forcedSnapshotVisualIDs: ids, forcedMountVisualIDs: ids,
-    scrollMountVisualIDs: ids, scrollDisposeVisualIDs: [], teardownDisposeVisualIDs: ids,
+    scrollMountVisualIDs: ids, scrollNewMountVisualIDs: variant === 'eager' ? [] : ids.slice(12),
+    scrollDisposeVisualIDs: [], teardownDisposeVisualIDs: ids,
     readinessMs: 100 + repetition, taskDurationSeconds: 0.2 + repetition / 100,
     jsHeapUsedBytes: 1_000_000 + repetition, errors: [],
   }
@@ -66,6 +67,7 @@ describe('viewport qualification evidence', () => {
     invalid.initialMountVisualIDs = ids
     invalid.forcedSnapshotVisualIDs = ids.slice(1)
     invalid.scrollMountVisualIDs = [...ids, ids[0]!]
+    invalid.scrollNewMountVisualIDs = []
     invalid.scrollDisposeVisualIDs = [ids[0]!]
     invalid.teardownDisposeVisualIDs = ids.slice(0, -1)
     invalid.errors = ['500 fixture.js']
@@ -73,6 +75,7 @@ describe('viewport qualification evidence', () => {
     expect(errors).toContain('initial deferred mounts')
     expect(errors).toContain('forced snapshots')
     expect(errors).toContain('mounts after scrolling')
+    expect(errors).toContain('new mounts from scrolling')
     expect(errors).toContain('scrolling disposed renderers')
     expect(errors).toContain('teardown disposals')
     expect(errors).toContain('browser: 500 fixture.js')

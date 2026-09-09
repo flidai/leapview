@@ -13,6 +13,7 @@ export type ViewportQualificationSample = {
   forcedSnapshotVisualIDs: string[]
   forcedMountVisualIDs: string[]
   scrollMountVisualIDs: string[]
+  scrollNewMountVisualIDs: string[]
   scrollDisposeVisualIDs: string[]
   teardownDisposeVisualIDs: string[]
   readinessMs: number
@@ -78,6 +79,8 @@ export function validateViewportQualificationSample(sample: ViewportQualificatio
   exactIDs('forced snapshots', sample.forcedSnapshotVisualIDs, expected, errors)
   exactIDs('forced mounts', sample.forcedMountVisualIDs, expected, errors)
   exactIDs('mounts after scrolling', sample.scrollMountVisualIDs, expected, errors)
+  exactIDs('new mounts from scrolling', sample.scrollNewMountVisualIDs,
+    sample.variant === 'eager' ? [] : expected.filter((id) => !near.includes(id)), errors)
   exactIDs('teardown disposals', sample.teardownDisposeVisualIDs, expected, errors)
   if (sample.scrollDisposeVisualIDs.length) {
     errors.push(`scrolling disposed renderers: ${sample.scrollDisposeVisualIDs.join(', ')}`)

@@ -130,6 +130,32 @@ async function runSample(browser: Browser, baseURL: string, variant: ViewportQua
     const metrics = (await session.send('Performance.getMetrics')).metrics
     const metric = (name: string): number => metrics.find((entry) => entry.name === name)?.value ?? Number.NaN
 
+    // Exercise real later intersections before snapshot() can force mounting.
+    const scrolled = await page.evaluate(async () => {
+      const dashboard = document.querySelector('lv-dashboard-page') as any
+      const hosts = [...dashboard.shadowRoot.querySelectorAll('lv-visualization-host')] as any[]
+      const observations = (window as any).__viewportQualificationObservations as BrowserObservation[]
+      const before = observations.length
+      const settle = () => new Promise<void>((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame())))
+      for (const host of hosts) {
+        host.scrollIntoView({ block: 'center', inline: 'nearest' })
+        const deadline = performance.now() + 30_000
+        await settle()
+        while (!(host.shadowRoot?.querySelector('.renderer')?.childElementCount > 0)
+          || host.shadowRoot?.querySelector('[data-visualization-loading]')) {
+          if (performance.now() >= deadline) throw new Error(`scroll did not mount ${host.envelope?.visualID}`)
+          await settle()
+        }
+      }
+      hosts[0]?.scrollIntoView()
+      await settle()
+      return {
+        mounts: observations.filter((entry) => entry.stage === 'mount' && entry.visualID).map((entry) => entry.visualID!),
+        newMounts: observations.slice(before).filter((entry) => entry.stage === 'mount' && entry.visualID).map((entry) => entry.visualID!),
+        disposals: observations.filter((entry) => entry.stage === 'dispose' && entry.visualID).map((entry) => entry.visualID!),
+      }
+    })
+
     const forced = await page.evaluate(async () => {
       const dashboard = document.querySelector('lv-dashboard-page') as any
       const hosts = [...dashboard.shadowRoot.querySelectorAll('lv-visualization-host')] as any[]
@@ -141,21 +167,6 @@ async function runSample(browser: Browser, baseURL: string, variant: ViewportQua
       return {
         snapshots,
         mounts: observations.filter((entry) => entry.stage === 'mount' && entry.visualID).map((entry) => entry.visualID!),
-      }
-    })
-
-    const scrolled = await page.evaluate(async () => {
-      const dashboard = document.querySelector('lv-dashboard-page') as any
-      const hosts = [...dashboard.shadowRoot.querySelectorAll('lv-visualization-host')] as any[]
-      const settle = () => new Promise<void>((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame())))
-      hosts.at(-1)?.scrollIntoView()
-      await settle()
-      hosts[0]?.scrollIntoView()
-      await settle()
-      const observations = (window as any).__viewportQualificationObservations as BrowserObservation[]
-      return {
-        mounts: observations.filter((entry) => entry.stage === 'mount' && entry.visualID).map((entry) => entry.visualID!),
-        disposals: observations.filter((entry) => entry.stage === 'dispose' && entry.visualID).map((entry) => entry.visualID!),
       }
     })
 
@@ -186,6 +197,7 @@ async function runSample(browser: Browser, baseURL: string, variant: ViewportQua
       forcedSnapshotVisualIDs: forced.snapshots,
       forcedMountVisualIDs: forced.mounts,
       scrollMountVisualIDs: scrolled.mounts,
+      scrollNewMountVisualIDs: scrolled.newMounts,
       scrollDisposeVisualIDs: scrolled.disposals,
       teardownDisposeVisualIDs,
       taskDurationSeconds: metric('TaskDuration'),
@@ -258,7 +270,7 @@ async function run(): Promise<void> {
       if (evidenceErrors.length) throw new Error(evidenceErrors.join('\n'))
       const summary = aggregateViewportQualification(samples)
       const report = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         status: 'pass',
         generatedAt: new Date().toISOString(),
         identity: {
@@ -293,6 +305,7 @@ async function run(): Promise<void> {
           order: 'alternating eager/deferred order by repetition', cache: 'fresh browser context per sample; warm machine and browser process',
           readiness: 'all hosts within the viewport plus the 600px vertical margin have completed renderer mount; eager control additionally waits for all hosts',
           aggregation: 'median and nearest-rank p95 over five measured samples; warmups excluded',
+          lifecycle: 'initial readiness, sequential real scrolling through all hosts, return to first host, snapshots, teardown; scroll mount delta excludes initial mounts',
           variance: 'paired local evidence only; no cross-hardware timing limit or normalization is asserted',
         },
         scope: 'Synthetic local browser qualification, not production traffic or an installed runtime-image measurement. Timing and memory values are observations, not budgets.',

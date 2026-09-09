@@ -187,6 +187,56 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
   }
 })
 
+test('mounted deferred hosts retain current renderer, shell, and actions after stale signals', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (window as any).__lvSourceHosts)
+    const result = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.deferMount = true
+      const current = structuredClone((window as any).__lvSourceHosts.orders_chart.envelope)
+      current.dataRevision = 3
+      current.dataState.dataRevision = 3
+      current.status = { kind: 'ready' }
+      for (const dataset of current.dataState.datasets) dataset.dataRevision = 3
+      host.envelope = current
+      document.body.append(host)
+      await host.ensureMounted()
+      const stale = structuredClone(current)
+      stale.dataRevision = 2
+      stale.dataState.dataRevision = 2
+      for (const dataset of stale.dataState.datasets) dataset.dataRevision = 2
+      stale.status = { kind: 'error', message: 'Stale failure' }
+      stale.dataState.datasets[0].rows = [['obsolete', 999]]
+      host.envelope = stale
+      await host.updateComplete
+      await host.ensureMounted()
+      let action: any
+      host.addEventListener('lv-visual-action', (event: CustomEvent) => { action = event.detail })
+      host.shadowRoot.querySelector('.visual-options summary').click()
+      host.shadowRoot.querySelector('.visual-options button').click()
+      const state = {
+        signalRevision: host.envelope.dataRevision,
+        rendererRevision: host.controller.envelope.dataRevision,
+        alert: host.shadowRoot.querySelector('[role="alert"]')?.textContent ?? '',
+        fallback: host.shadowRoot.querySelector('#visualization-fallback').textContent,
+        actionRows: JSON.stringify(action?.rows),
+      }
+      host.remove()
+      return state
+    })
+    expect(result.signalRevision).toBe(3)
+    expect(result.rendererRevision).toBe(3)
+    expect(result.alert).toBe('')
+    expect(result.fallback).not.toContain('Stale failure')
+    expect(result.actionRows).toContain('delivered')
+    expect(result.actionRows).not.toContain('obsolete')
+  } finally {
+    await page.close()
+  }
+})
+
 test('snapshot explicitly mounts a deferred host without an intersection callback', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
