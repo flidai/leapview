@@ -21,8 +21,24 @@ existing MinIO test still runs in its separate external lane.
 Runner/sharder contracts passed three consecutive runs, including an inherited
 required/skip environment; tests verify per-worker required flags, discovery
 failure handling, and completion/failure propagation. Canonical generation and
-the quality budget passed. Full checkpoint and exact-head hosted validation
-remain pending. No production behavior or test timeout was changed.
+the quality budget passed. Full `task ci` passed all Go suites, including native
+application shards in 65.394s, 71.223s, 74.582s, and 86.114s. It then stopped on
+an intermittent browser-context destruction during the dashboard URL-tombstone
+test, before assertions. Three independent focused reruns and the complete
+reports shard passed; instrumentation did not evidence a product navigation
+defect. No speculative browser patch or assertion retry was added. This remains
+a browser-test reliability caveat rather than a proven fix. Generated checks
+and the chat/data shards passed separately. The site shard initially hit a
+search-status timing failure ("Searching…" between wait and assertion); a fresh
+complete site run passed all 53 tests with no source changes. Both intermittent
+browser failures remain reliability caveats. All constituent local CI stages
+have passed, but the original full invocation did not exit successfully.
+Evidence: `/tmp/fai769-native-shards-ci.log` (overall exit 201),
+`/tmp/fai769-native-shards-reports-rerun.log`, and
+`/tmp/fai769-native-shards-contracts.log`, and
+`/tmp/fai769-native-shards-site-rerun.log`.
+Exact-head hosted validation remains pending. No production behavior or test
+timeout was changed.
 The PR remains unmerged and is not yet green on GitHub.
 
 ## September 9 conflict-resolution checkpoint
