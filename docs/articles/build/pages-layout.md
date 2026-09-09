@@ -78,6 +78,10 @@ LeapView applies explicit features, automatic layout, and enforced minimums. Ren
 
 Do not solve overcrowding by shrinking every component. Split a page when readers are expected to answer distinct questions or when detail pushes primary analysis below several screenfuls.
 
+### Size pie and donut visuals for outside labels
+
+For pie and donut visuals with a bottom legend, outside labels that carry conditional icons keep the icon alongside the formatted value as the card resizes. The renderer uses measured side columns, so a compact card may wrap a label while keeping it clear of the ring and legend band. Give these visuals enough width for the label columns and enough height for the legend band. Keep `labelPosition: inside` when the chart should prioritize the ring over outside category text, and set the field format in the visual definition when values need to be compact.
+
 ## Stabilize and test the layout
 
 ### Keep IDs stable
