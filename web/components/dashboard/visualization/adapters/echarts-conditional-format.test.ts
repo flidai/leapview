@@ -275,6 +275,7 @@ test('ECharts keeps direct-IR waterfall metric before the start offset', () => {
 
 test('ECharts keeps proportional conditional icon cues visible for null, first-match, and default outcomes', () => {
   const envelope = proportionalFixture('donut') as any
+  envelope.spec.presentation.legend = 'bottom'
   envelope.spec.conditionalFormatting = [{
     id: 'value-status', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
     rule: {
@@ -297,11 +298,32 @@ test('ECharts keeps proportional conditional icon cues visible for null, first-m
   for (const context of contexts) {
     const option = echartsOption(envelope, context) as any
     const formatter = option.series[0].label.formatter
-    expect(option.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false }, minShowLabelAngle: 0 })
+    expect(option.series[0]).toMatchObject({
+      label: { show: true, overflow: 'break', position: 'outside', alignTo: 'edge', edgeDistance: 8 },
+      minShowLabelAngle: 0,
+      labelLayout: { hideOverlap: false },
+      labelLine: { show: true, length: 10, length2: 8 },
+      radius: ['54%', '76%'],
+    })
+    expect(option.graphic?.find((graphic: any) => graphic.id === 'graphic:proportional:center')).toMatchObject({ top: 'middle' })
     expect(formatter({ value: ['Missing', null] })).toBe('⚠ Missing: —')
     expect(formatter({ value: ['High', 90] })).toBe('● High: 90')
     expect(formatter({ value: ['Low', -1] })).toBe('↓ Low: -1')
   }
+
+  const titled = structuredClone(envelope)
+  titled.spec.presentation.legendTitle = 'Order status'
+  const titledOption = echartsOption(titled, defaultRendererContext) as any
+  expect(titledOption.series[0]).toMatchObject({ bottom: '12%' })
+
+  const insideEnvelope = structuredClone(envelope)
+  insideEnvelope.spec.presentation.labelPosition = 'inside'
+  const insideOption = echartsOption(insideEnvelope, defaultRendererContext) as any
+  expect(insideOption.series[0]).toMatchObject({
+    label: { show: true, overflow: 'truncate', position: 'inside' },
+    labelLayout: { hideOverlap: false },
+    labelLine: { show: false, length2: 8 },
+  })
 
   envelope.spec.mark = 'funnel'
   const funnel = echartsOption(envelope, defaultRendererContext) as any

@@ -1,4 +1,5 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
+import { proportionalConditionalCueFormat } from './proportional'
 
 export type EChartsNavigationDefaults = Readonly<{ dataZoom: boolean; roam: boolean }>
 export type EChartsViewState = Readonly<{
@@ -13,9 +14,20 @@ export function echartsNavigationDefaults(envelope: VisualizationEnvelope): ECha
   }
 }
 
-export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
-  if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 || option.grid === undefined) return {}
+export function responsiveEChartsPatchNeedsResize(envelope: VisualizationEnvelope): boolean {
+  const spec = envelope.spec
+  return spec.kind === 'proportional'
+    && (spec.mark === 'pie' || spec.mark === 'donut')
+    && spec.presentation.labelPosition !== 'inside'
+    && spec.presentation.legend === 'bottom'
+    && proportionalConditionalCueFormat(envelope, spec.value) !== undefined
+}
+
+export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number, envelope?: VisualizationEnvelope): Record<string, any> {
+  if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
   const compact = width < 480 || height < 280
+  const proportional = responsiveProportionalLayout(option, width, height, envelope)
+  if (option.grid === undefined && !proportional) return {}
   const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
   const bottomLegend = compact && hasBottomLegend(option.legend)
   const slider = compact && hasSliderDataZoom(option.dataZoom)
@@ -32,12 +44,137 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
       } : {}),
     }
   })
-  const patch: Record<string, any> = { grid: Array.isArray(option.grid) ? grid : grid[0] }
-  if (option.legend !== undefined) patch.legend = compact ? compactLegend(option.legend) : option.legend
+  const patch: Record<string, any> = option.grid === undefined ? {} : { grid: Array.isArray(option.grid) ? grid : grid[0] }
+  // The proportional branch only needs a series layout patch. Re-emitting a
+  // freshly generated legend on every resize could clear native selection
+  // state while the series itself is intentionally merged by stable id.
+  if (option.legend !== undefined && !proportional) patch.legend = compact ? compactLegend(option.legend) : option.legend
   if (option.dataZoom !== undefined) patch.dataZoom = compact
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
     : stripDataZoomNavigation(option.dataZoom)
+  if (proportional) Object.assign(patch, proportional)
   return patch
+}
+
+/**
+ * ECharts' pie overlap pass is not aware of the bottom legend's text band.
+ * Keep this narrowly scoped to the generated proportional conditional-cue
+ * branch; all other series continue through the normal responsive patch.
+ */
+function responsiveProportionalLayout(option: Record<string, any>, width: number, height: number, envelope: VisualizationEnvelope | undefined): Record<string, any> | undefined {
+  const spec = envelope?.spec
+  if (!envelope || !responsiveEChartsPatchNeedsResize(envelope) || !spec || spec.kind !== 'proportional') return undefined
+  const seriesList = Array.isArray(option.series) ? option.series : [option.series]
+  const source = seriesList.find((candidate) => candidate && typeof candidate === 'object' && !Array.isArray(candidate) && candidate.id === `series:primary:${spec.mark}`)
+  if (!source) return undefined
+  return proportionalOutsideLayout(source, envelope, width, height, spec.presentation.legendTitle !== undefined)
+}
+
+function proportionalOutsideLayout(
+  source: Record<string, any>,
+  envelope: VisualizationEnvelope,
+  width: number,
+  height: number,
+  titledLegend: boolean,
+): Record<string, any> {
+  const series = source
+  const labelLineLength = finiteNumber(series.labelLine?.length, 10)
+  const labelLineLength2 = 20
+  const edgeDistance = finiteNumber(series.label?.edgeDistance, 8)
+  const distanceToLabelLine = finiteNumber(series.label?.distanceToLabelLine, 4)
+  // Keep a substantial text column on each side, but cap it so wide cards do
+  // not turn the pie into a small center ornament. The minimum plot width is
+  // only a last-resort guard for very narrow cards; normal eight-row cards use
+  // the full ~30% per-side reservation.
+  const requestedColumn = clamp(width * 0.3, 72, 160)
+  const sideInset = Math.min(requestedColumn, Math.max(0, (width - 96) / 2))
+  const textColumn = Math.max(1, sideInset - edgeDistance * 2)
+  const legendBand = titledLegend ? 52 : 28
+  const verticalInset = Math.min(legendBand, Math.max(0, (height - 96) / 2))
+  const plotWidth = Math.max(0, width - sideInset * 2)
+  const plotHeight = Math.max(0, height - verticalInset * 2)
+  const availableRadius = Math.max(0, Math.min(plotWidth, plotHeight) / 2)
+  const radius = responsivePieRadius(source.radius, availableRadius)
+  const rowCount = proportionalInlineRowCount(envelope)
+  const slotCount = Math.max(1, rowCount)
+  const slotTop = 4
+  const slotBottom = Math.max(slotTop, height - legendBand - 4)
+  const slotHeight = (slotBottom - slotTop) / slotCount
+  const labelLayout = (params: { dataIndex?: number; align?: string; labelRect?: { x?: number; y?: number; width?: number; height?: number }; labelLinePoints?: readonly (readonly number[])[] }) => {
+    const dataIndex = typeof params.dataIndex === 'number' && Number.isFinite(params.dataIndex) ? Math.max(0, Math.floor(params.dataIndex)) : 0
+    const anchor = params.labelLinePoints?.[0]
+    const hasAnchor = anchor && Number.isFinite(anchor[0]) && Number.isFinite(anchor[1])
+    // Edge alignment reverses the native text alignment. Prefer the sector's
+    // actual anchor so legend filtering and category ordering remain truthful.
+    const right = hasAnchor ? anchor[0] >= width / 2
+      : series.label?.alignTo === 'edge' ? params.align === 'right' : params.align === 'left'
+    const x = right ? width - sideInset + edgeDistance : sideInset - edgeDistance
+    const y = slotTop + (Math.min(dataIndex, slotCount - 1) + 0.5) * slotHeight
+    const ringEdge = width / 2 + (right ? radius[1] : -radius[1])
+    const lane = (ringEdge + x) / 2
+    // Route outward from the real sector before following the label column;
+    // a direct diagonal can cross unrelated sectors after labels are moved.
+    const labelLinePoints = hasAnchor ? [
+      [anchor[0], anchor[1]], [lane, anchor[1]], [lane, y],
+      [x + (right ? -distanceToLabelLine : distanceToLabelLine), y],
+    ] : undefined
+    return {
+      hideOverlap: false,
+      x,
+      y,
+      width: textColumn,
+      align: right ? 'left' : 'right',
+      ...(labelLinePoints ? { labelLinePoints } : {}),
+    }
+  }
+  return {
+    series: [{
+      id: source.id,
+      left: sideInset,
+      right: sideInset,
+      top: verticalInset,
+      bottom: verticalInset,
+      radius,
+      labelLayout,
+      labelLine: {
+        ...(source.labelLine && typeof source.labelLine === 'object' ? source.labelLine : {}),
+        length: labelLineLength,
+        length2: labelLineLength2,
+      },
+    }],
+  }
+}
+
+function responsivePieRadius(value: unknown, availableRadius: number): [number, number] {
+  const source = Array.isArray(value) ? value : [0, value === undefined ? '50%' : value]
+  const inner = radiusPixels(source[0], availableRadius, 0)
+  const outer = Math.max(inner, radiusPixels(source[1], availableRadius, availableRadius * 0.5))
+  return [inner, outer]
+}
+
+function radiusPixels(value: unknown, availableRadius: number, fallback: number): number {
+  if (typeof value === 'string' && value.trim().endsWith('%')) {
+    const ratio = Number.parseFloat(value)
+    return Number.isFinite(ratio) ? Math.max(0, Math.min(availableRadius, availableRadius * ratio / 100)) : fallback
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.min(availableRadius, value))
+  return fallback
+}
+
+function proportionalInlineRowCount(envelope: VisualizationEnvelope): number {
+  if (envelope.dataState.kind !== 'inline') return 1
+  if (envelope.spec.kind !== 'proportional') return 1
+  const datasetID = envelope.spec.category.dataset
+  const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === datasetID)
+  return dataset?.rows.length ?? 1
+}
+
+function finiteNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.max(minimum, Math.min(maximum, value))
 }
 
 function compactInset(value: unknown, fallback: number): unknown {

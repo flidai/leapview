@@ -36,6 +36,10 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   if (conditionalCue) {
     labels.label.show = true
     labels.labelLayout = { hideOverlap: false }
+    // Keep the authored cue and formatted value together when native pie
+    // layout narrows an outside label. ECharts wraps instead of truncating,
+    // then uses the extra leader-line segment to keep the text off the ring.
+    if (outside && isPie && presentation.legend === 'bottom') labels.label.overflow = 'break'
   }
   const categoryValues = categoryIndex < 0 ? [] : (dataset?.rows ?? []).map((row) => row[categoryIndex])
   categoryColors.register(envelope, spec.category, categoryValues)
@@ -152,7 +156,7 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   }
 }
 
-function proportionalConditionalCueFormat(
+export function proportionalConditionalCueFormat(
   envelope: VisualizationEnvelope,
   value: VisualizationFieldRef,
 ): VisualizationConditionalFormat | undefined {

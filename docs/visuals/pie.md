@@ -6,6 +6,8 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 Pie presentation supports `rose`, `labelPosition`, and an optional `outerRadius`. Donut-only fields such as `centerLabel` and `innerRadius` are not part of the pie contract.
 
+With outside conditional icon cues and a bottom legend, the chart reserves label columns as the card resizes. The authored outer-radius proportion is retained within the available plot area; use a small category count to keep the cues readable.
+
 ## Basic
 
 Use one categorical dimension and one metric for a part-to-whole comparison, sorting by value to keep the largest sectors easy to find.
