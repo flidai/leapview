@@ -121,6 +121,17 @@ func (m *Model) ValidateSemanticGraph() error {
 	return m.validateSemanticGraph()
 }
 
+// ValidateAuthoringSemanticGraph validates the complete semantic graph while
+// allowing physical Model field datatypes that discovery has not resolved
+// yet. Known datatypes remain subject to the normal semantic compatibility
+// rules.
+func (m *Model) ValidateAuthoringSemanticGraph() error {
+	if m == nil {
+		return fmt.Errorf("semantic model is required")
+	}
+	return m.validateSemanticGraphAllowingUnresolvedTypes()
+}
+
 func (m *Model) validateSemanticDefinitions() error {
 	return m.validateSemanticDefinitionsWithOptions(false)
 }
