@@ -148,7 +148,7 @@ jobs:
 
       - name: Run merge-only validation
         id: merge-validation
-        run: task ci:full:extras
+        run: task ci:full:extras:hosted
 
       - name: Upload UI visual-regression failure artifacts
         if: ${{ failure() && steps.merge-validation.outcome == 'failure' }}

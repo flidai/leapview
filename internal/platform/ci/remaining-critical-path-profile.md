@@ -2,10 +2,11 @@
 
 ## Current optimization record — post-#540, 2026-09-08
 
-**Target not achieved — further work deferred pending hosted experiment evidence.**
-The latest successful merge-group candidate observation is **16m14s**. There is only one
-successful post-#540 candidate; a representative post-#540 merge p95 is **not
-established**. No projected result is treated as a measured quantile.
+**Target not achieved — further work deferred.**
+The latest eligible merge-group candidate observation is **13m19s**. Across one
+pre-#544 warm baseline and two successful post-#544 candidates, a representative
+post-#540 merge p95 is **not established**. No projected result is treated as a
+measured quantile.
 
 ### Baseline and eligibility
 
@@ -176,9 +177,7 @@ not evidence that tests executed.
 **Decision criteria:** compare exact-SHA successful hosted merge candidates with
 matching warm-cache provenance, record cold/miss runs separately, confirm every
 required lane/security/native proof, and measure PostgreSQL and total elapsed.
-If no material elapsed reduction is supported, revert the concurrency change
-rather than adding another optimization. One after run is an observation, not a
-new representative p95. Hosted result and final retain/revert decision are pending.
+One after run is an observation, not a new representative p95.
 
 **Local validation:** planner/gate/reporting and complete architecture tests passed;
 frontend workflow contracts, quality budget/exception checks, and workflow lint
@@ -188,6 +187,71 @@ source inventory is byte-identical at 54 packages after adding the contract test
 `task ci` ran generation and SQL verification, then stopped at PostgreSQL baseline
 validation because this workspace cannot access Docker. This is an environment
 blocker; real PostgreSQL execution and resource contention require hosted CI.
+
+### Hosted outcome after PR #544
+
+Two successful `merge_group` runs contain the four-worker change. Run
+[34245738076](https://github.com/flidai/leapview/actions/runs/34245738076) tested
+PR #544's merge SHA `d1bc8043939311f53f6b01708a7833992daa227e`, attempt 1.
+Run [34276117337](https://github.com/flidai/leapview/actions/runs/34276117337)
+tested `4f677d4b9e18c65085299734556eeeca390f5305`, attempt 1; GitHub's commit
+comparison reports that SHA is one commit ahead of the PR #544 merge SHA. Both
+workflows and every merge-validation job, including CI gate, completed
+successfully.
+
+Merge duration below is workflow start through CI gate completion. PostgreSQL
+duration is the hosted command interval from the conformance task marker through
+its final package result. All timestamps are UTC on 2026-09-08.
+
+| Metric | Pre-#544 warm observation | Run 34245738076 | Run 34276117337 |
+|---|---:|---:|---:|
+| Workflow start / gate completion | 14:25:05 / 14:41:19 | 15:35:32 / 15:54:25 | 20:39:47 / 20:53:06 |
+| Merge duration | **16m14s** | **18m53s** | **13m19s** |
+| Go packages job | 8m05s | 7m33s | 10m10s |
+| Go application job | 16m01s | 12m15s | 11m43s |
+| PostgreSQL conformance | 12m36s | **8m50s** | **8m03s** |
+| Full validation job | 13m22s | 18m43s | 13m07s |
+| Critical-path validation | Go application | Full validation | Full validation |
+
+The exact tested version of `scripts/postgres-conformance-tests.sh` contains
+`go test ... -p 4 -count=1` at both SHAs. Each application log has 54 unique,
+successful package result lines after the PostgreSQL conformance marker, matching
+the complete source inventory. Coverage, freshness and failure behavior therefore
+remained active in these observations.
+
+The targeted lane improved materially: PostgreSQL fell by 3m46s and 4m33s, and
+Go application fell by 3m46s and 4m18s. End-to-end merge improvement is not yet
+consistent. The first candidate was 2m39s slower because full validation expanded
+to 18m43s; the next was 2m55s faster, at 13m19s. Across only these two after runs,
+there is no representative p95 and no defensible claim of a material typical
+merge-latency reduction. Full validation replaced Go application as the blocking
+lane in both runs.
+
+**Decision:** retain the bounded concurrency result as successful for its targeted
+lane, but stop this experiment without claiming the merge p95 improved. The best
+observed merge remains 1m19s above the threshold, so the **<12m target was not
+reached**.
+
+### Experiment 2 — bounded full-validation overlap
+
+**Before:** run 34276117337 completed full validation in **13m07s**, including a
+9m44s merge-extras body. Its slowest sequential groups were UI QA at 3m30s,
+plan/GC conformance at 2m15s, and critical race qualification at 2m10s.
+
+**Implementation:** the merge workflow uses `ci:full:extras:hosted`. Desktop and
+UI QA remain serial because they build or regenerate workspace inputs and UI QA
+owns fixed `.tmp` server state. A serial `generate` barrier follows UI QA. The
+remaining work then has two concurrent Task dependency branches: a static branch
+with vet, package race, critical race and workload validation; and a runtime
+branch with PostgreSQL multinode, deployment, MinIO and plan/GC validation. The
+runtime branch remains serial so container-backed checks do not compete with one
+another. The ordinary `ci:full:extras` target retains its original sequential
+order for local and nightly execution.
+
+Every existing validation command remains present. The workflow job name, CI gate
+dependency, required checks, candidate checkout, native proof and failure-artifact
+behavior are unchanged. Hosted evidence and the retain/revert decision are
+pending.
 
 ## Historical pre-#540 profile
 

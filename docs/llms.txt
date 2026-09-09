@@ -240,6 +240,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Architecture overview](/docs/architecture): See how the monolith, contracts, storage, and browser components fit together.
 - [Runtime architecture](/docs/architecture/runtime): Follow routing, query execution, and streamed UI updates.
 - [Canonical contract projections](/docs/architecture/contract-projections): Follow sealed projection inputs, deterministic contract identity, and fail-closed coverage checks.
+- [Instance-local resource identity](/docs/architecture/resource-uid-registry): Follow activation-owned resource identity, canonical evidence, and scoped lifecycle guarantees.
 - [Semantic attribute registry and control plane](/docs/architecture/semantic-attribute-registry): Understand typed semantic attribute identity, ownership, lifecycle, and compatibility boundaries.
 - [Semantic access planner boundary](/docs/architecture/semantic-access-planner): Place typed authorization barriers before protected scans participate in relational operations.
 - [Semantic access discovery and consumers](/docs/architecture/semantic-access-consumers): Bind protected semantic discovery and execution to authoritative request evidence.

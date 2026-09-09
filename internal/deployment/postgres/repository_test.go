@@ -64,13 +64,16 @@ type testActivationLineage struct {
 	expected ActivationLineageInput
 	err      error
 	calls    int
+	mu       sync.Mutex
 }
 
 func (v *testActivationLineage) VerifyActivationLineage(_ context.Context, tx Tx, input ActivationLineageInput) error {
 	if v == nil || tx == nil {
 		return ErrInvalid
 	}
+	v.mu.Lock()
 	v.calls++
+	v.mu.Unlock()
 	if input.TargetID == "" || input.ProjectID == "" || input.GenerationID == "" || input.CompiledGraphDigest == "" {
 		return fmt.Errorf("%w: incomplete activation lineage identity", ErrConflict)
 	}

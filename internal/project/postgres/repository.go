@@ -78,6 +78,14 @@ type Repository struct{ db DBTX }
 //go:embed schema.sql
 var schemaSQL string
 
+//go:embed resource_uid_schema.sql
+var resourceUIDSchemaSQL string
+
+// ResourceUIDSchemaSQL is the additive registry capability schema. It is
+// installed after bootstrap, delivery, and serving-state schemas; the immutable
+// baseline project schema is deliberately unchanged.
+func ResourceUIDSchemaSQL() string { return resourceUIDSchemaSQL }
+
 // SchemaSQL returns the capability-owned schema without transaction control.
 func SchemaSQL() string { return schemaSQL }
 

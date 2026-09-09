@@ -42,7 +42,9 @@ candidate, then run selected APIGen, Go package/application, frontend, docs/site
 dbt, and spatial validation lanes concurrently. Unknown and cross-cutting inputs, manual
 dispatch, the `ci:full` label, and deterministic audit PRs run the full PR tier. The repository validation jobs execute `task ci:prepare`; the independent APIGen module
 does not need generated or embedded application assets and skips that preparation. The merge queue
-adds `task ci:full:extras`, and the daily schedule also runs `task ci:nightly:extras`. Local
+adds bounded overlap through `task ci:full:extras:hosted`; local and nightly full validation retain
+the sequential `task ci:full:extras` contract, and the daily schedule also runs
+`task ci:nightly:extras`. Local
 composition remains available through the tier targets; the workflow does not duplicate individual
 test commands or introduce a runner-specific container wrapper.
 
