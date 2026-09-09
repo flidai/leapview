@@ -216,12 +216,8 @@ async function installQualificationProbe(page: Page, deferred: boolean): Promise
         delete (registry as unknown as Record<string, unknown>).define
         const Base = constructor as unknown as { new(): HTMLElement & { deferMount: boolean; connectedCallback(): void } }
         class QualificationEagerHost extends Base {
-          connectedCallback(): void {
-            // The eager counterfactual must override the production dashboard's
-            // static defer-mount attribute before the host starts its lifecycle.
-            this.deferMount = false
-            super.connectedCallback()
-          }
+          // Override the production attribute before the host starts its lifecycle.
+          connectedCallback(): void { this.deferMount = false; super.connectedCallback() }
         }
         return originalDefine(name, QualificationEagerHost, options)
       },

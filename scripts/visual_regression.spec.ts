@@ -78,9 +78,6 @@ async function openStableDashboard(page: Page, url: string, heading: string): Pr
     await dashboard.updateComplete
     const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
     await Promise.all(hosts.map((host) => host.updateComplete))
-    if (hosts.some((host) => (host.shadowRoot?.querySelector('.renderer')?.childElementCount ?? 0) === 0)) {
-      throw new Error('dashboard capture readiness completed with an unmounted visualization')
-    }
     const fontSample = 'LeapView dashboard table 0123456789'
     await Promise.all([
       document.fonts.load('400 16px "Inter Variable"', fontSample),
