@@ -3,8 +3,9 @@
 This directory retains the paired synthetic browser qualification produced by
 `task qa:viewport-qualification` on 2026-09-09.
 
-- Measured commit: `1cdfb66f477d32832f7fb520e79bea92b37fe98e` (clean).
-- Report SHA-256: `85c752dc0f9b7cbe7781f6545f7079bc46cc372c7b20d48b6764b9195ef24ab0`.
+- Measured commit: `3df5af6df8ff56deac70d407daa8983c193be461` (clean),
+  rebased onto main `c9e6482a89697ebf6426dd47a369fbd9b83202d9`.
+- Report SHA-256: `9b6f5556b66155154256500c092ec74aff01414d6bdd3ec7a76b017d7daed594`.
 - Fixture: 24 visuals (8 KPI, 8 Cartesian, 8 table), 1280x820 viewport,
   `600px 0px` root/scroll margin.
 - Protocol: one discarded warmup and five measured repetitions per mode,
@@ -20,9 +21,9 @@ renderer. Median local observations were:
 
 | Metric | Eager | Deferred |
 | --- | ---: | ---: |
-| Initial readiness | 959.7 ms | 828.2 ms |
-| Chromium task duration | 0.913 s | 0.769 s |
-| JS heap used | 15,224,644 bytes | 12,924,184 bytes |
+| Initial readiness | 1,119.2 ms | 888.1 ms |
+| Chromium task duration | 1.058 s | 0.837 s |
+| JS heap used | 14,570,476 bytes | 12,926,948 bytes |
 
 These are paired measurements on the exact environment recorded in
 `report.json`. They are not production measurements, universal
