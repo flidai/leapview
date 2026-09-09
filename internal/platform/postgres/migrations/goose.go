@@ -25,7 +25,7 @@ const (
 	// CurrentRevision is the latest control-plane schema revision understood by
 	// this binary. Serving admission requires every embedded migration through
 	// this revision to be applied.
-	CurrentRevision int64 = 6
+	CurrentRevision int64 = 7
 	// AdvisoryLockKey serializes migration attempts across instances. Goose
 	// owns acquisition and release of this session-level PostgreSQL lock. The
 	// combined River+Goose path below uses the same key for one shared fence.
