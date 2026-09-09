@@ -89,13 +89,13 @@ function proportionalOutsideLayout(
   const requestedColumn = clamp(width * 0.3, 72, 160)
   const sideInset = Math.min(requestedColumn, width * 0.4)
   const boundedEdgeDistance = Math.min(edgeDistance, sideInset / 4, width / 2)
-  const textColumn = Math.max(0, sideInset - boundedEdgeDistance * 2)
   const legendBand = titledLegend ? 52 : 28
   const verticalInset = Math.min(legendBand, height / 2)
   const plotWidth = Math.max(0, width - sideInset * 2)
   const plotHeight = Math.max(0, height - verticalInset * 2)
   const availableRadius = Math.max(0, Math.min(plotWidth, plotHeight) / 2)
   const radius = responsivePieRadius(source.radius, availableRadius)
+  const textColumn = Math.max(0, width / 2 - radius[1] - boundedEdgeDistance * 2)
   const rowCount = proportionalInlineRowCount(envelope)
   const slotCount = Math.max(1, rowCount)
   const slotTop = 4
@@ -109,9 +109,9 @@ function proportionalOutsideLayout(
     // actual anchor so legend filtering and category ordering remain truthful.
     const right = hasAnchor ? anchor[0] >= width / 2
       : series.label?.alignTo === 'edge' ? params.align === 'right' : params.align === 'left'
-    const x = right ? width - sideInset + boundedEdgeDistance : sideInset - boundedEdgeDistance
-    const y = slotTop + (Math.min(dataIndex, slotCount - 1) + 0.5) * slotHeight
     const centerX = width / 2
+    const x = right ? centerX + radius[1] + boundedEdgeDistance : centerX - radius[1] - boundedEdgeDistance
+    const y = slotTop + (Math.min(dataIndex, slotCount - 1) + 0.5) * slotHeight
     const centerY = height / 2
     const vectorX = hasAnchor ? anchor[0] - centerX : 0
     const vectorY = hasAnchor ? anchor[1] - centerY : 0
