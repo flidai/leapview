@@ -133,13 +133,25 @@ func (r *SuccessorRepository) resolveTrust(ctx context.Context, setID string) (T
 	}
 	input, err := r.trust(ctx, setID)
 	if err != nil {
-		return TrustInput{}, fmt.Errorf("%w: %v", ErrSuccessorUntrusted, err)
+		return TrustInput{}, &successorTrustFailure{cause: err}
 	}
 	if !canonicalUUID(input.Generation.IncarnationID) || input.Generation.Revision <= 0 || !domainDigest.MatchString(input.Generation.PolicyDigest) || input.Evidence.VerificationTime.IsZero() {
 		return TrustInput{}, fmt.Errorf("%w: malformed independent trust", ErrSuccessorUntrusted)
 	}
 	return input, nil
 }
+
+// Trust resolver errors may contain provider credentials or other sensitive
+// details. Keep the typed cause available to errors.Is/As without including
+// an untrusted body in diagnostics.
+type successorTrustFailure struct {
+	cause error
+}
+
+func (e *successorTrustFailure) Error() string {
+	return "successor persistence trust resolution failed"
+}
+func (e *successorTrustFailure) Unwrap() []error { return []error{ErrSuccessorUntrusted, e.cause} }
 
 // InsertManifest persists the complete evidence bundle and its immutable
 // binding. It performs all exact off-host reads before opening PostgreSQL.

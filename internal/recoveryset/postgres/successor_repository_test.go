@@ -108,6 +108,34 @@ func successorRepo(pool *pgxpool.Pool, reader *successorPayloadReader, trust rec
 	return recoverypg.NewSuccessorRepository(pool, recoverypg.SuccessorOptions{Reader: reader, Trust: func(context.Context, string) (recoverypg.TrustInput, error) { return trust, nil }})
 }
 
+func TestSuccessorTrustResolverErrorIsSanitized(t *testing.T) {
+	const secret = "trust-resolver-private-test-sentinel"
+	cause := errors.New("trust resolver failed with credential=" + secret)
+	var db *pgxpool.Pool
+	repo := recoverypg.NewSuccessorRepository(db, recoverypg.SuccessorOptions{
+		Reader: successorReaderFunc(func(context.Context, recoverypg.ValidatedLocator) (io.ReadCloser, error) {
+			return nil, errors.New("reader must not be called")
+		}),
+		Trust: func(context.Context, string) (recoverypg.TrustInput, error) {
+			return recoverypg.TrustInput{}, cause
+		},
+	})
+
+	_, err := repo.CreateSet3(t.Context(), recoverypg.Set3Input{})
+	if err == nil {
+		t.Fatal("trust resolver failure was accepted")
+	}
+	if !errors.Is(err, recoverypg.ErrSuccessorUntrusted) {
+		t.Fatalf("trust resolver failure category lost: %v", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("trust resolver cause lost: %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatal("trust resolver secret leaked in diagnostic")
+	}
+}
+
 func TestSuccessorLocatorRejectsAmbiguousTransport(t *testing.T) {
 	input, _, _ := successorInputs(t, "minimal")
 	base := input.Payloads.Manifest.Locator
