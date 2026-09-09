@@ -61,12 +61,63 @@ test('responsive cue columns stay outside the ring on both sides with and withou
         expect(right).toBeLessThanOrEqual(width)
         expect(layout.labelLinePoints[0]).toEqual(anchor)
         expect(layout.labelLinePoints.flat().every(Number.isFinite)).toBe(true)
-        const lane = layout.labelLinePoints[1][0]
+        const radial = layout.labelLinePoints[1]
+        expect(Math.hypot(radial[0] - width / 2, radial[1] - height / 2)).toBeCloseTo(outer)
+        const lane = layout.labelLinePoints[2][0]
         if (side === 'right') expect(lane).toBeGreaterThanOrEqual(width / 2 + outer)
         else expect(lane).toBeLessThanOrEqual(width / 2 - outer)
+        expect(layout.labelLinePoints[2][1]).toBe(radial[1])
       }
     }
   }
+})
+
+test('responsive cue layout stays finite at narrow widths and short titled heights', () => {
+  const { envelope, spec } = cueFixture()
+  spec.presentation.legendTitle = 'Order status'
+  const narrow = responsiveEChartsPatch(echartsOption(envelope), 96, 180, envelope).series[0]
+  for (const { align, anchor } of [{ align: 'right', anchor: [12, 90] }, { align: 'left', anchor: [84, 90] }]) {
+    const layout = narrow.labelLayout({ dataIndex: 3, align, labelLinePoints: [anchor, anchor, anchor] })
+    const x = layout.x as number
+    const labelWidth = layout.width as number
+    const left = layout.align === 'right' ? x - labelWidth : x
+    const right = left + labelWidth
+    expect(Number.isFinite(x)).toBe(true)
+    expect(left).toBeGreaterThanOrEqual(0)
+    expect(right).toBeLessThanOrEqual(96)
+  }
+  const short = responsiveEChartsPatch(echartsOption(envelope), 320, 150, envelope).series[0]
+  expect(short.top).toBe(52)
+  expect(short.bottom).toBe(52)
+  expect(short.radius[1]).toBeLessThan((150 - short.top - short.bottom) / 2)
+
+  const micro = responsiveEChartsPatch(echartsOption(envelope), 1, 120, envelope).series[0]
+  for (const { align, anchor } of [{ align: 'right', anchor: [0, 60] }, { align: 'left', anchor: [1, 60] }]) {
+    const layout = micro.labelLayout({ dataIndex: 0, align, labelLinePoints: [anchor, anchor, anchor] })
+    const x = layout.x as number
+    const labelWidth = layout.width as number
+    const left = layout.align === 'right' ? x - labelWidth : x
+    const right = left + labelWidth
+    expect([x, labelWidth, left, right].every(Number.isFinite)).toBe(true)
+    expect(labelWidth).toBeGreaterThanOrEqual(0)
+    expect(left).toBeGreaterThanOrEqual(0)
+    expect(right).toBeLessThanOrEqual(1)
+  }
+})
+
+test('responsive rose cue leaders route through the overall outer-radius circle', () => {
+  const { envelope, spec } = cueFixture()
+  spec.presentation.rose = true
+  const width = 373, height = 282
+  const series = responsiveEChartsPatch(echartsOption(envelope), width, height, envelope).series[0]
+  const outer = series.radius[1]
+  const anchor = [width / 2 + outer * 0.2, height / 2 - outer * 0.2]
+  const layout = series.labelLayout({ dataIndex: 0, align: 'left', labelLinePoints: [anchor, [0, 0], [0, 0]] })
+  expect(layout.labelLinePoints).toHaveLength(5)
+  const radial = layout.labelLinePoints[1]
+  expect(Math.hypot(radial[0] - width / 2, radial[1] - height / 2)).toBeCloseTo(outer)
+  expect(layout.labelLinePoints[2][1]).toBe(radial[1])
+  expect(layout.labelLinePoints[3][0]).toBe(layout.labelLinePoints[2][0])
 })
 
 test('responsive cue radii retain the authored zero-inner and full-outer boundary', () => {

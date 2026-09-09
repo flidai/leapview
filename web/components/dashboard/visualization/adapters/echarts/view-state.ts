@@ -83,14 +83,15 @@ function proportionalOutsideLayout(
   const edgeDistance = finiteNumber(series.label?.edgeDistance, 8)
   const distanceToLabelLine = finiteNumber(series.label?.distanceToLabelLine, 4)
   // Keep a substantial text column on each side, but cap it so wide cards do
-  // not turn the pie into a small center ornament. The minimum plot width is
-  // only a last-resort guard for very narrow cards; normal eight-row cards use
-  // the full ~30% per-side reservation.
+  // not turn the pie into a small center ornament. Narrow cards may shrink
+  // the remaining center plot; normal eight-row cards use the full ~30%
+  // per-side reservation.
   const requestedColumn = clamp(width * 0.3, 72, 160)
-  const sideInset = Math.min(requestedColumn, Math.max(0, (width - 96) / 2))
-  const textColumn = Math.max(1, sideInset - edgeDistance * 2)
+  const sideInset = Math.min(requestedColumn, width * 0.4)
+  const boundedEdgeDistance = Math.min(edgeDistance, sideInset / 4, width / 2)
+  const textColumn = Math.max(0, sideInset - boundedEdgeDistance * 2)
   const legendBand = titledLegend ? 52 : 28
-  const verticalInset = Math.min(legendBand, Math.max(0, (height - 96) / 2))
+  const verticalInset = Math.min(legendBand, height / 2)
   const plotWidth = Math.max(0, width - sideInset * 2)
   const plotHeight = Math.max(0, height - verticalInset * 2)
   const availableRadius = Math.max(0, Math.min(plotWidth, plotHeight) / 2)
@@ -108,14 +109,23 @@ function proportionalOutsideLayout(
     // actual anchor so legend filtering and category ordering remain truthful.
     const right = hasAnchor ? anchor[0] >= width / 2
       : series.label?.alignTo === 'edge' ? params.align === 'right' : params.align === 'left'
-    const x = right ? width - sideInset + edgeDistance : sideInset - edgeDistance
+    const x = right ? width - sideInset + boundedEdgeDistance : sideInset - boundedEdgeDistance
     const y = slotTop + (Math.min(dataIndex, slotCount - 1) + 0.5) * slotHeight
-    const ringEdge = width / 2 + (right ? radius[1] : -radius[1])
+    const centerX = width / 2
+    const centerY = height / 2
+    const vectorX = hasAnchor ? anchor[0] - centerX : 0
+    const vectorY = hasAnchor ? anchor[1] - centerY : 0
+    const vectorLength = Math.hypot(vectorX, vectorY)
+    const radial = vectorLength > 0
+      ? [centerX + vectorX / vectorLength * radius[1], centerY + vectorY / vectorLength * radius[1]]
+      : [centerX + (right ? radius[1] : -radius[1]), centerY]
+    const ringEdge = centerX + (right ? radius[1] : -radius[1])
     const lane = (ringEdge + x) / 2
-    // Route outward from the real sector before following the label column;
-    // a direct diagonal can cross unrelated sectors after labels are moved.
+    // Route outward from the real sector through the overall circle before
+    // following the fixed label lane; a direct diagonal can cross unrelated
+    // sectors after labels are moved (especially for rose pies).
     const labelLinePoints = hasAnchor ? [
-      [anchor[0], anchor[1]], [lane, anchor[1]], [lane, y],
+      [anchor[0], anchor[1]], radial, [lane, radial[1]], [lane, y],
       [x + (right ? -distanceToLabelLine : distanceToLabelLine), y],
     ] : undefined
     return {
