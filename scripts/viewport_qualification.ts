@@ -32,7 +32,7 @@ function qualificationFixture(): string {
     if (sourceVisuals.length !== 3) throw new Error(`fixture requires three source visuals, found ${sourceVisuals.length}`)
     signals.visuals = {}
     signals.page.components = []
-    signals.page.canvas.height = 2640
+    signals.page.canvas.height = 2800
     signals.status = { ...signals.status, loading: false, error: '', progressPercent: 100 }
     signals.interactionSelections = []
     for (let index = 0; index < viewportQualificationVisualCount; index++) {
@@ -46,7 +46,10 @@ function qualificationFixture(): string {
       signals.visuals[visual.visualID] = visual
       signals.page.components.push({
         id: `cell-${index + 1}`, kind: 'visual', visual: visual.visualID,
-        x: 16 + (index % 3) * 336, y: 16 + Math.floor(index / 3) * 328,
+        // Keep rows away from the exact prefetch boundary. A zero-area edge
+        // intersection has browser-specific threshold timing and is not a
+        // representative readiness sample.
+        x: 16 + (index % 3) * 336, y: 32 + Math.floor(index / 3) * 336,
         width: 320, height: 312,
       })
     }
