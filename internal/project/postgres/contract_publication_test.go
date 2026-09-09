@@ -1,8 +1,10 @@
 package postgres
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/project/contractprojection"
 	"github.com/flidai/leapview/internal/project/contractpublication"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -59,6 +62,105 @@ func publishInTx(t *testing.T, db *pgxpool.Pool, input contractpublication.Contr
 		return contractpublication.ContractPublication{}, err
 	}
 	return publication, nil
+}
+
+func TestContractPublicationChecksRejectNullJSONEvidence(t *testing.T) {
+	db := identityTestDB(t)
+	ctx := t.Context()
+	prepared, err := contractpublication.Prepare(publicationInput(t, "1.0.0", false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name             string
+		mutateCanonical  func(map[string]any)
+		mutateValidation func(map[string]any)
+		valid            bool
+	}{
+		{name: "valid", valid: true},
+		{name: "missing apiVersion", mutateCanonical: func(document map[string]any) { delete(document, "apiVersion") }},
+		{name: "null apiVersion", mutateCanonical: func(document map[string]any) { document["apiVersion"] = nil }},
+		{name: "missing profile", mutateCanonical: func(document map[string]any) { delete(document, "profile") }},
+		{name: "null profile", mutateCanonical: func(document map[string]any) { document["profile"] = nil }},
+		{name: "missing metadata id", mutateCanonical: func(document map[string]any) { delete(document["metadata"].(map[string]any), "id") }},
+		{name: "null metadata id", mutateCanonical: func(document map[string]any) { document["metadata"].(map[string]any)["id"] = nil }},
+		{name: "missing contract version", mutateCanonical: func(document map[string]any) {
+			delete(document["metadata"].(map[string]any)["contract"].(map[string]any), "version")
+		}},
+		{name: "null contract version", mutateCanonical: func(document map[string]any) {
+			document["metadata"].(map[string]any)["contract"].(map[string]any)["version"] = nil
+		}},
+		{name: "missing validation version", mutateValidation: func(evidence map[string]any) { delete(evidence, "version") }},
+		{name: "null validation version", mutateValidation: func(evidence map[string]any) { evidence["version"] = nil }},
+		{name: "missing validation checks", mutateValidation: func(evidence map[string]any) { delete(evidence, "checks") }},
+		{name: "null validation checks", mutateValidation: func(evidence map[string]any) { evidence["checks"] = nil }},
+	}
+
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			canonical := append([]byte(nil), prepared.CanonicalBytes...)
+			digest := prepared.Digest
+			if test.mutateCanonical != nil {
+				var document map[string]any
+				if err := json.Unmarshal(canonical, &document); err != nil {
+					t.Fatal(err)
+				}
+				test.mutateCanonical(document)
+				var err error
+				canonical, err = json.Marshal(document)
+				if err != nil {
+					t.Fatal(err)
+				}
+				hash := sha256.Sum256(canonical)
+				digest = "sha256:" + fmt.Sprintf("%x", hash)
+			}
+			validation, err := json.Marshal(prepared.Validation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.mutateValidation != nil {
+				var evidence map[string]any
+				if err := json.Unmarshal(validation, &evidence); err != nil {
+					t.Fatal(err)
+				}
+				test.mutateValidation(evidence)
+				validation, err = json.Marshal(evidence)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			tx, err := db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			instanceID := fmt.Sprintf("instance:publication-null-check-%d", index)
+			if test.valid {
+				instanceID = prepared.InstanceID
+			}
+			_, err = tx.Exec(ctx, `
+				INSERT INTO project.contract_publication(
+					instance_id, authored_id, resource_kind, version, version_baseline,
+					projection_profile, canonical_bytes, canonical_digest, validation_evidence_json
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+				instanceID, prepared.AuthoredID.String(), string(prepared.ResourceKind), prepared.Version, prepared.VersionBaseline,
+				prepared.ProjectionProfile, canonical, digest, validation)
+			if test.valid {
+				if err != nil {
+					_ = tx.Rollback(ctx)
+					t.Fatal(err)
+				}
+				if err := tx.Commit(ctx); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			_ = tx.Rollback(ctx)
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+				t.Fatalf("invalid evidence error = %v, want check_violation (23514)", err)
+			}
+		})
+	}
 }
 
 func TestContractPublicationIsImmutableAndExactlyReplayable(t *testing.T) {

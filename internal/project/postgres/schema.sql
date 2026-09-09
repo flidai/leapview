@@ -95,21 +95,21 @@ CREATE TABLE IF NOT EXISTS project.contract_publication (
     CHECK (projection_profile = 'leapview.contract/v1'),
     CHECK (octet_length(canonical_bytes) BETWEEN 1 AND 16777216),
     CHECK (canonical_digest = 'sha256:' || pg_catalog.encode(pg_catalog.sha256(canonical_bytes), 'hex')),
-    CHECK (convert_from(canonical_bytes, 'UTF8')::jsonb ->> 'apiVersion' = 'leapview.dev/v1'),
-    CHECK (projection_profile = convert_from(canonical_bytes, 'UTF8')::jsonb ->> 'profile'),
-    CHECK (authored_id = convert_from(canonical_bytes, 'UTF8')::jsonb -> 'metadata' ->> 'id'),
+    CHECK ((convert_from(canonical_bytes, 'UTF8')::jsonb ->> 'apiVersion' = 'leapview.dev/v1') IS TRUE),
+    CHECK ((projection_profile = convert_from(canonical_bytes, 'UTF8')::jsonb ->> 'profile') IS TRUE),
+    CHECK ((authored_id = convert_from(canonical_bytes, 'UTF8')::jsonb -> 'metadata' ->> 'id') IS TRUE),
     CHECK (resource_kind = CASE convert_from(canonical_bytes, 'UTF8')::jsonb ->> 'kind'
         WHEN 'Source' THEN 'source'
         WHEN 'Model' THEN 'model'
         WHEN 'SemanticModel' THEN 'semantic_model'
         ELSE '' END),
-    CHECK (version = convert_from(canonical_bytes, 'UTF8')::jsonb -> 'metadata' -> 'contract' ->> 'version'),
+    CHECK ((version = convert_from(canonical_bytes, 'UTF8')::jsonb -> 'metadata' -> 'contract' ->> 'version') IS TRUE),
     CHECK (version_baseline = split_part(version, '+', 1)),
     CHECK (octet_length(validation_evidence_json) BETWEEN 1 AND 65536
-        AND jsonb_typeof(validation_evidence_json::jsonb) = 'object'
-        AND validation_evidence_json::jsonb ->> 'version' = '1'
-        AND jsonb_typeof(validation_evidence_json::jsonb -> 'checks') = 'array'
-        AND jsonb_array_length(validation_evidence_json::jsonb -> 'checks') > 0)
+        AND (jsonb_typeof(validation_evidence_json::jsonb) = 'object') IS TRUE
+        AND (validation_evidence_json::jsonb ->> 'version' = '1') IS TRUE
+        AND (jsonb_typeof(validation_evidence_json::jsonb -> 'checks') = 'array') IS TRUE
+        AND (jsonb_array_length(validation_evidence_json::jsonb -> 'checks') > 0) IS TRUE)
 );
 
 CREATE OR REPLACE FUNCTION project.reject_contract_publication_mutation()
