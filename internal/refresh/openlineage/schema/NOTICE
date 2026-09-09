@@ -1,0 +1,15 @@
+OpenLineage
+Copyright contributors to the OpenLineage project
+
+The accompanying OpenLineage.json and standard facet schemas are reproduced
+from OpenLineage release 1.52.0, peeled commit
+cfd47d6f3e1b13167136b2508768c94a2351af23, under the Apache License,
+Version 2.0. The repository LICENSE contains the full license text.
+
+Upstream:
+https://github.com/OpenLineage/OpenLineage/tree/cfd47d6f3e1b13167136b2508768c94a2351af23/spec
+
+The exact per-file SHA-256 manifest is declared in schema.go and verified by
+schema_test.go. LeapViewPipelineJobFacet.json and
+LeapViewInvocationRunFacet.json are LeapView-owned immutable copies of the
+public schemas under site/static/openlineage/facets/1-0-0.
