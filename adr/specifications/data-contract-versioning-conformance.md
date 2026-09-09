@@ -202,7 +202,7 @@ profile identifier is part of canonical bytes and conformance evidence.
 | MOD-01–MOD-03 | Model AST and quality-contract golden fixtures | Pending |
 | SEM-01–SEM-03 | Semantic and access-contract golden fixtures | Pending |
 | SER-01–SER-10 | Cross-language RFC 8785 and typed-normalization corpus | Pending |
-| VER-01–VER-06 | Publication immutability, diff, and profile-version tests | Pending |
+| VER-01–VER-06 | `internal/project/contractversion`, `internal/project/contractpublication`, and `project.contract_publication` classification, immutable append/replay, profile, digest, and evidence tests | Implemented by FAI-622; activation remains governed separately |
 
 ## Maintained verification
 

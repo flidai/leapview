@@ -152,7 +152,9 @@ BEGIN
         -- DELETE stay forbidden for these immutable identity rows.
         GRANT SELECT ON ducklake.catalog_identity TO leapview_control_runtime;
         REVOKE UPDATE, DELETE ON ducklake.catalog_identity FROM leapview_control_runtime;
-        GRANT SELECT ON ducklake.snapshot_retention TO leapview_control_runtime;
+		GRANT SELECT ON ducklake.snapshot_retention TO leapview_control_runtime;
+		GRANT SELECT, INSERT ON project.contract_publication TO leapview_control_runtime;
+		REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.contract_publication FROM leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ducklake.snapshot_retention FROM leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) TO leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE ON ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.catalog_migration, ducklake.snapshot_requalification FROM leapview_control_runtime;
@@ -209,6 +211,8 @@ BEGIN
         GRANT SELECT ON ALL TABLES IN SCHEMA release TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, physical_pool TO leapview_control_readonly;
 		GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_readonly;
+		GRANT SELECT ON project.contract_publication TO leapview_control_readonly;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.contract_publication FROM leapview_control_readonly;
 		GRANT SELECT ON ALL TABLES IN SCHEMA recovery TO leapview_control_readonly;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_readonly;
 		GRANT SELECT ON recovery.set_identity_registry, recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.successor_trust_generation, recovery.recovery_set_v3, recovery.recovery_set_v3_root TO leapview_control_readonly;
@@ -237,7 +241,8 @@ BEGIN
 		GRANT SELECT ON admin.product_identity TO leapview_control_backup;
 		GRANT SELECT ON dashboard.view_session, dashboard.view_day, dashboard.appearance_override TO leapview_control_backup;
 		GRANT SELECT ON dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts, dashboard.publications, dashboard.publication_events, dashboard.publication_streams TO leapview_control_backup;
-        GRANT SELECT ON ALL TABLES IN SCHEMA project, access, delivery, event, audit, release, ducklake, jobs, lineage, physical_pool TO leapview_control_backup;
+		GRANT SELECT ON ALL TABLES IN SCHEMA project, access, delivery, event, audit, release, ducklake, jobs, lineage, physical_pool TO leapview_control_backup;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.contract_publication FROM leapview_control_backup;
 		GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_backup;
 		GRANT SELECT ON ALL TABLES IN SCHEMA recovery TO leapview_control_backup;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_backup;
