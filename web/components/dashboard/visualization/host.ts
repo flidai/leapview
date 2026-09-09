@@ -36,8 +36,8 @@ export class VisualizationHost extends LitElement {
     :host, .surface { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; }
     :host {
       --lv-visual-inverse-scale: var(--report-canvas-inverse-scale, calc(1 / var(--builder-canvas-scale, 1)));
-      --lv-visual-action-target: calc(max(24px, var(--lv-button-height-xs, var(--control-xsmall-size, 24px))) * var(--lv-visual-inverse-scale));
-      --lv-visual-menu-target: calc(max(24px, var(--lv-button-height-sm, var(--control-small-size, 24px))) * var(--lv-visual-inverse-scale));
+      --lv-visual-action-target: calc(max(24px, var(--lv-button-height-xs, var(--control-xsmall-size, var(--base-size-24)))) * var(--lv-visual-inverse-scale));
+      --lv-visual-menu-target: calc(max(24px, var(--lv-button-height-sm, var(--control-small-size, var(--base-size-24)))) * var(--lv-visual-inverse-scale));
       color: var(--lv-fg-default);
       background: var(--lv-chart-surface);
       font-family: var(--fontStack-system);
