@@ -6,6 +6,11 @@ evidence and strictly decodes its FAI-620 canonical projection bytes into the
 generated projection DTOs. Internal compiler, graph, runtime, artifact, and
 release models are not adapter inputs.
 
+Admission reuses the publication authority to verify canonical bytes, digest,
+identity, version baseline, and retained validation/policy evidence, and requires
+a publication timestamp. Invalid evidence produces no document. The caller still
+owns authorized publication selection; this adapter does not query the ledger.
+
 The upstream schema is pinned to Bitol's `v3.1.0` tag at commit
 `b9d3ffc5aabe9e058afe4469cabe5a218fe9946d`. Its byte checksum is
 `2cb7dd6fe43344d2233e0406438622681dc3ebadcf8f0d606a15b40c8f6752c0`.

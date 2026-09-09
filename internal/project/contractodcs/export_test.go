@@ -58,6 +58,34 @@ func TestGoldenExportsAndReports(t *testing.T) {
 	}
 }
 
+func TestExportRejectsInvalidPublicationEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*contractpublication.ContractPublication)
+	}{
+		{"digest", func(p *contractpublication.ContractPublication) { p.Digest = "sha256:" + strings.Repeat("0", 64) }},
+		{"baseline", func(p *contractpublication.ContractPublication) { p.VersionBaseline = "9.0.0" }},
+		{"authored identity", func(p *contractpublication.ContractPublication) { p.AuthoredID = "source:other" }},
+		{"version", func(p *contractpublication.ContractPublication) { p.Version = "9.0.0" }},
+		{"missing checks", func(p *contractpublication.ContractPublication) { p.Validation.Checks = nil }},
+		{"failed check", func(p *contractpublication.ContractPublication) { p.Validation.Checks[0].Outcome = "failed" }},
+		{"policy evidence", func(p *contractpublication.ContractPublication) { p.Validation.PolicyEvidence = &contractpublication.PolicyEvidence{} }},
+		{"unpublished", func(p *contractpublication.ContractPublication) { p.PublishedAt = time.Time{} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			publication := sourcePublication(t)
+			test.mutate(&publication)
+			result, err := Export(publication)
+			if !errors.Is(err, ErrInvalidPublication) {
+				t.Fatalf("invalid publication was not rejected: %v", err)
+			}
+			if len(result.Document) != 0 {
+				t.Fatal("invalid publication emitted an ODCS document")
+			}
+		})
+	}
+}
+
 func TestSchemaAndExtensionValidationRejectUnsupportedFields(t *testing.T) {
 	result, err := Export(sourcePublication(t))
 	if err != nil {

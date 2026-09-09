@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/project/contractprojection"
 	"github.com/flidai/leapview/internal/project/contractpublication"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -97,9 +96,13 @@ func Export(publication contractpublication.ContractPublication) (Result, error)
 }
 
 func validatePublication(publication contractpublication.ContractPublication) (projectionEnvelope, error) {
-	if strings.TrimSpace(publication.InstanceID) == "" || publication.AuthoredID.Validate() != nil || publication.PublishedAt.IsZero() ||
-		publication.ProjectionProfile != contractprojection.Profile || len(publication.CanonicalBytes) == 0 ||
-		platformdigest.ValidateSHA256Identity(publication.Digest) != nil {
+	// The publication authority verifies canonical bytes, their digest, identity,
+	// and retained validation/policy evidence. An adapter must not replace that
+	// admission with syntactic checks of the provenance it is about to export.
+	if err := publication.Validate(); err != nil {
+		return projectionEnvelope{}, fmt.Errorf("%w: %v", ErrInvalidPublication, err)
+	}
+	if publication.PublishedAt.IsZero() {
 		return projectionEnvelope{}, ErrInvalidPublication
 	}
 	var envelope projectionEnvelope
