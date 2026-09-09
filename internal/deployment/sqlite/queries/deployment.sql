@@ -60,6 +60,11 @@ WHERE deployment_id = ?
 ORDER BY requested_at DESC, id DESC
 LIMIT 1;
 
+-- name: ReserveDeliveryPublicationActivation :execrows
+UPDATE delivery_publications
+SET status = status
+WHERE id = ? AND status IN ('pending', 'indeterminate');
+
 -- name: UpdateDeploymentApproval :execrows
 UPDATE deployment_approvals
 SET status = ?,

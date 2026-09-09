@@ -2,18 +2,21 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
+	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
 	"github.com/flidai/leapview/internal/deployment"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	identityledger "github.com/flidai/leapview/internal/project/identityledger"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/release"
 )
@@ -81,6 +84,40 @@ func TestBuildCanonicalPublishRequestUsesReadyCandidateWithoutGenerationRow(t *t
 	)
 	if request.Publication.ID != expectedPublicationID {
 		t.Fatalf("publication identity = %q, want %q", request.Publication.ID, expectedPublicationID)
+	}
+	expectedRequestDigest := deployment.CanonicalDeliveryDigest([]byte("publication:" + expectedPublicationID))
+	if request.Publication.RequestDigest != expectedRequestDigest {
+		t.Fatalf("publication request digest = %q, want recovery-stable %q", request.Publication.RequestDigest, expectedRequestDigest)
+	}
+	changedCandidate := candidate
+	changedCandidate.PlanDigest = "sha256:" + strings.Repeat("b", 64)
+	changedPlan := plan
+	changedPlan.Digest = changedCandidate.PlanDigest
+	changed, err := buildCanonicalPublishRequest(t.Context(), canonicalPublishReaderFake{candidate: changedCandidate, seal: func() deployment.CatalogSeal {
+		value := seal
+		value.PlanDigest = changedCandidate.PlanDigest
+		return value
+	}(), plan: changedPlan}, "candidate-1", "target-1")
+	if err != nil {
+		t.Fatalf("changed-plan publication request: %v", err)
+	}
+	if changed.Publication.RequestDigest != request.Publication.RequestDigest || changed.Publication.PlanDigest == request.Publication.PlanDigest {
+		t.Fatalf("changed plan did not preserve request recovery identity while changing exact plan binding: before=%#v after=%#v", request.Publication, changed.Publication)
+	}
+}
+
+func TestProtectedContractRollbackRemainsFailClosed(t *testing.T) {
+	if err := validateContractRollbackPlan(deployment.DeliveryPlan{}); err != nil {
+		t.Fatalf("unprotected rollback rejected: %v", err)
+	}
+	plan := deployment.DeliveryPlan{Evidence: deployment.DeliveryPlanEvidence{
+		ContractActivations: []identityledger.PolicyActivationReference{{Version: identityledger.PolicyActivationReferenceVersion}},
+	}}
+	if err := validateContractRollbackPlan(plan); !errors.Is(err, appruntimefactory.ErrSemanticActivationNotReady) {
+		t.Fatalf("protected rollback error=%v, want ErrSemanticActivationNotReady", err)
+	}
+	if err := validateLegacySealedContractPlan(plan, "asynchronous sealed publication"); !errors.Is(err, appruntimefactory.ErrSemanticActivationNotReady) {
+		t.Fatalf("legacy sealed publication error=%v, want ErrSemanticActivationNotReady", err)
 	}
 }
 

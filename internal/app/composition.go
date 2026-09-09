@@ -55,6 +55,7 @@ import (
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	identitymodule "github.com/flidai/leapview/internal/project/identityledger/module"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	"github.com/flidai/leapview/internal/release"
@@ -833,6 +834,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	accessModule := accessBundle.Module
 	accessRepo := accessBundle.Repository
 	authorizationInstaller := accessBundle.AuthorizationInstaller
+	if identityAuthority.Repository != nil {
+		if err := identitymodule.BindSemanticRegistryReader(identityAuthority.Repository, accessModule.ReadSemanticRegistryTx); err != nil {
+			return fail(fmt.Errorf("bind identity publication registry authority: %w", err))
+		}
+	}
 	if !production {
 		if err := accessModule.SeedLocalDeveloperPlatformAdmin(ctx); err != nil {
 			return fail(err)
@@ -1600,7 +1606,19 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 					CompatibilityDigest: generation.CompatibilityDigest, BaseCompatibilityDigest: generation.CompatibilityDigest, Deterministic: artifacts.Generation.Deterministic,
 				}
 			}
-			return appruntimefactory.PreviewCandidatePlanWithPolicyAndReuse(planCtx, deliveryLifecycle, input, artifacts, identity.Version+":"+identity.Revision, appruntimefactory.CandidateDeliveryPolicy{RequiresApproval: requiresDeliveryApproval(production, cfg.EvaluationMode, input.Operation), RollbackClass: deployment.DeliveryServingSafe, RetentionWindow: cfg.DeliveryRollbackRetention().String()}, reuse)
+			var activationReader identitymodule.LatestLifecycleEvidenceReader
+			if identityAuthority.Repository != nil {
+				activationReader, _ = any(identityAuthority.Repository).(identitymodule.LatestLifecycleEvidenceReader)
+			}
+			contractActivations, activationErr := resolveContractActivationReferences(planCtx, activationReader, instanceID, input.Candidate.Scope.BaseGenerationID, artifacts)
+			if activationErr != nil {
+				return deployment.DeliveryPlan{}, activationErr
+			}
+			requiresApproval := requiresDeliveryApproval(production, cfg.EvaluationMode, input.Operation)
+			for _, reference := range contractActivations {
+				requiresApproval = requiresApproval || reference.ApprovalState == identitymodule.PolicyApprovalRequired
+			}
+			return appruntimefactory.PreviewCandidatePlanWithPolicyAndReuse(planCtx, deliveryLifecycle, input, artifacts, identity.Version+":"+identity.Revision, appruntimefactory.CandidateDeliveryPolicy{RequiresApproval: requiresApproval, RollbackClass: deployment.DeliveryServingSafe, RetentionWindow: cfg.DeliveryRollbackRetention().String(), ContractActivations: contractActivations}, reuse)
 		}
 		publishCanonicalCandidate := func(publishCtx context.Context, project, candidate, actor string, refreshFence *deployment.RefreshPublicationFence) (deployment.DeliveryPublication, error) {
 			candidateRecord, candidateErr := sealedDelivery.DeliveryCandidateByID(publishCtx, candidate)
@@ -1624,14 +1642,28 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				request.Publication.RefreshTargetRevision = refreshFence.TargetRevision
 			}
 			request.ActorID = actor
+			activationPlan, err := sealedDelivery.PlanByID(publishCtx, request.Publication.PlanID)
+			if err != nil {
+				return deployment.DeliveryPublication{}, err
+			}
 			if _, err := sealedCoordinator.PublishWithActivation(publishCtx, request, func(activationCtx context.Context, commit func() error) error {
-				commitAndVerify := func() error {
-					if err := commit(); err != nil {
-						return err
+				activate := func(fencedCtx context.Context) error {
+					commitAndVerify := func() error {
+						if err := commit(); err != nil {
+							return err
+						}
+						return verifyCanonicalDeliveryTarget(fencedCtx, sealedDelivery, instanceID, request.Publication.ProjectID.String(), request.Publication.Environment, request.Generation.ServingStateID, request.Publication.ExpectedTargetRevision+1)
 					}
-					return verifyCanonicalDeliveryTarget(activationCtx, sealedDelivery, instanceID, request.Publication.ProjectID.String(), request.Publication.Environment, request.Generation.ServingStateID, request.Publication.ExpectedTargetRevision+1)
+					return activateCanonicalServingState(fencedCtx, runtimeHostModule, request.Generation.ServingStateID, commitAndVerify)
 				}
-				return activateCanonicalServingState(activationCtx, runtimeHostModule, request.Generation.ServingStateID, commitAndVerify)
+				if len(activationPlan.Evidence.ContractActivations) == 0 {
+					return activate(activationCtx)
+				}
+				fencer, ok := any(identityAuthority.Repository).(identitymodule.ContractActivationFencer)
+				if !ok {
+					return fmt.Errorf("contract activation lifecycle fence is unavailable")
+				}
+				return fencer.WithContractActivationFence(activationCtx, request.Generation.ID, activationPlan.Evidence.ContractActivations, activate)
 			}); err != nil {
 				if pending, readErr := sealedDelivery.DeliveryPublicationByID(publishCtx, request.Publication.ID); readErr == nil {
 					return pending, err
@@ -2221,6 +2253,9 @@ func buildSealedPublishRequest(ctx context.Context, delivery *deploymentsqlite.R
 	if plan.Digest != candidate.PlanDigest || plan.TargetID != targetID || plan.ProjectID != candidate.ProjectID || plan.Environment != candidate.Environment {
 		return sealedcontrol.PublishRequest{}, fmt.Errorf("candidate is not bound to its durable delivery plan")
 	}
+	if err := validateLegacySealedContractPlan(plan, "asynchronous sealed publication"); err != nil {
+		return sealedcontrol.PublishRequest{}, err
+	}
 	createdAt, err := parseDeploymentTime(pending.CreatedAt)
 	if err != nil {
 		return sealedcontrol.PublishRequest{}, err
@@ -2317,6 +2352,13 @@ func buildCanonicalRollbackRequest(ctx context.Context, delivery *deploymentsqli
 	if err != nil {
 		return sealedcontrol.RollbackRequest{}, err
 	}
+	plan, err := delivery.PlanByID(ctx, generation.PlanID)
+	if err != nil {
+		return sealedcontrol.RollbackRequest{}, err
+	}
+	if err := validateContractRollbackPlan(plan); err != nil {
+		return sealedcontrol.RollbackRequest{}, err
+	}
 	seal, err := delivery.DeliveryCatalogSealByID(ctx, candidate.SealID)
 	if err != nil {
 		return sealedcontrol.RollbackRequest{}, err
@@ -2335,6 +2377,17 @@ func buildCanonicalRollbackRequest(ctx context.Context, delivery *deploymentsqli
 	createdAt := time.Now().UTC()
 	request := deployment.RollbackRequest{ID: requestID, RequestDigest: deployment.CanonicalDeliveryDigest([]byte("rollback-request:" + requestID)), TargetID: targetID, ProjectID: generation.ProjectID, Environment: generation.Environment, GenerationID: generation.ID, CandidateID: candidate.ID, ExpectedBaseGenerationID: target.ActiveGenerationID, ExpectedTargetRevision: target.TargetRevision, VerifiedSeal: sealedVerifiedSeal(seal), CreatedAt: createdAt}
 	return sealedcontrol.RollbackRequest{Request: request}, nil
+}
+
+func validateContractRollbackPlan(plan deployment.DeliveryPlan) error {
+	return validateLegacySealedContractPlan(plan, "protected contract rollback")
+}
+
+func validateLegacySealedContractPlan(plan deployment.DeliveryPlan, operation string) error {
+	if len(plan.Evidence.ContractActivations) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s requires a separately qualified exact-evidence path", appruntimefactory.ErrSemanticActivationNotReady, operation)
 }
 
 // sealedRollbackEvidence carries the reviewed plan's rollback contract into
@@ -2371,6 +2424,13 @@ func buildSealedRollbackRequest(ctx context.Context, delivery *deploymentsqlite.
 	}
 	generation, err := delivery.DeliveryGenerationByID(ctx, pending.GenerationID)
 	if err != nil {
+		return sealedcontrol.RollbackRequest{}, err
+	}
+	plan, err := delivery.PlanByID(ctx, generation.PlanID)
+	if err != nil {
+		return sealedcontrol.RollbackRequest{}, err
+	}
+	if err := validateLegacySealedContractPlan(plan, "asynchronous sealed rollback"); err != nil {
 		return sealedcontrol.RollbackRequest{}, err
 	}
 	candidate, err := delivery.DeliveryCandidateByID(ctx, generation.CandidateID)

@@ -10,6 +10,7 @@ import (
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/materialize"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
@@ -20,6 +21,13 @@ import (
 type projectRuntimeFactory struct {
 	module      *Module
 	environment *analyticsducklake.Environment
+}
+
+// ModelRequiresSemanticAccess exposes the existing analytics-owned selection
+// predicate to composition without making the application import query
+// internals or create a second policy detector.
+func ModelRequiresSemanticAccess(model *semanticmodel.Model) bool {
+	return semanticquery.ModelRequiresSemanticAccess(model)
 }
 
 // SetSemanticAccessAuthority is composition-only and must precede opening

@@ -10,7 +10,9 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/deployment"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
+	"github.com/flidai/leapview/internal/project/contractversion"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/project/identityledger"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/internal/semanticvalue"
@@ -53,7 +55,7 @@ func TestCandidatePlanRejectsProtectedSemanticActivationWithoutReadiness(t *test
 			if !errors.Is(err, ErrSemanticActivationNotReady) {
 				t.Fatalf("error = %v, want ErrSemanticActivationNotReady", err)
 			}
-			if !strings.Contains(err.Error(), "retained publication/version/policy approval evidence") || !strings.Contains(err.Error(), "neutral semantic verification") {
+			if !strings.Contains(err.Error(), "exact current publication, registry, graph, and policy evidence") {
 				t.Fatalf("error = %v, want bounded missing-evidence details", err)
 			}
 		})
@@ -69,6 +71,33 @@ func TestCandidatePlanReadinessDoesNotHonorApprovalOrRegistryOverrides(t *testin
 	_, err := CandidatePlanRequestWithPolicyAndReuse(readinessPlanInput(), artifacts, "runtime:v1", CandidateDeliveryPolicy{RequiresApproval: true}, time.Now().UTC(), nil)
 	if !errors.Is(err, ErrSemanticActivationNotReady) {
 		t.Fatalf("approval policy override error = %v, want ErrSemanticActivationNotReady", err)
+	}
+}
+
+func TestCandidatePlanAcceptsExactExistingPublicationReference(t *testing.T) {
+	artifact := protectedSemanticReadinessArtifact(t)
+	reference := identityledger.PolicyActivationReference{
+		Version:      identityledger.PolicyActivationReferenceVersion,
+		Publication:  identityledger.PolicyPublicationIdentity{InstanceID: "instance-a", AuthoredID: "semantic:sales", ResourceKind: projectgraph.KindSemanticModel, Version: "1.0.0", VersionBaseline: "1.0.0", ProjectionProfile: "leapview.contract/v1", Digest: deliveryPlanDigest('b')},
+		BaselineKind: identityledger.PolicyBaselineGenesis, LifecycleSequence: 1, ActiveBundleID: "generation-base",
+		GraphDigest: artifact.Graph().Digest(), PolicyEvidenceVersion: identityledger.RegistryPolicyEvidenceVersion,
+		PolicyEvidenceDigest: deliveryPlanDigest('c'), ApprovalState: identityledger.PolicyApprovalNotRequired,
+		RegistryTypes: &contractversion.SemanticRegistryTypes{
+			InstanceID: "instance-a", ProjectID: "project:readiness", ControlRevision: 1,
+			Profile: semanticvalue.Profile, Revision: 1, Digest: deliveryPlanDigest('d'),
+			Definitions: []contractversion.RegisteredSemanticType{{
+				ID: "definition-region", Name: "region", Type: semanticvalue.TypeString,
+				Shape: "scalar", Version: 1, Enabled: true,
+			}},
+		},
+	}
+	artifacts := release.CandidateArtifactSet{Compiler: release.CandidateCompilerEvidence{Manifest: artifact.Manifest(), Artifact: artifact, Graph: artifact.Graph()}, Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataRefreshSources, DataRevision: "sources:1"}}
+	request, err := CandidatePlanRequestWithPolicyAndReuse(readinessPlanInput(), artifacts, "runtime:v1", CandidateDeliveryPolicy{ContractActivations: []identityledger.PolicyActivationReference{reference}}, time.Now().UTC(), nil)
+	if err != nil {
+		t.Fatalf("exact publication reference rejected: %v", err)
+	}
+	if len(request.Evidence.ContractActivations) != 1 || request.Evidence.ContractActivations[0].PolicyEvidenceDigest != reference.PolicyEvidenceDigest {
+		t.Fatalf("contract activation evidence was not retained: %#v", request.Evidence.ContractActivations)
 	}
 }
 

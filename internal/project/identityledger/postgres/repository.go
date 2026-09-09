@@ -36,6 +36,17 @@ type Repository struct {
 	semanticRegistryReader SemanticRegistryReader
 }
 
+// SetSemanticRegistryReader binds the existing Access-owned transactional
+// reader during composition. It must be configured before protected contract
+// publication or activation; nil leaves both paths fail closed.
+func (r *Repository) SetSemanticRegistryReader(reader SemanticRegistryReader) error {
+	if r == nil || r.db == nil || reader == nil {
+		return fmt.Errorf("semantic registry reader binding is incomplete")
+	}
+	r.semanticRegistryReader = reader
+	return nil
+}
+
 func New(db beginner, configs ...Config) (*Repository, error) {
 	if db == nil {
 		return nil, errors.New("identity ledger PostgreSQL database is required")

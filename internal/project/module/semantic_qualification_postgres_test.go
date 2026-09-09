@@ -8,6 +8,8 @@ package module
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,7 +36,181 @@ import (
 	identitypostgres "github.com/flidai/leapview/internal/project/identityledger/postgres"
 	"github.com/flidai/leapview/internal/semanticvalue"
 	"github.com/jackc/pgx/v5/pgxpool"
+	ocidigest "github.com/opencontainers/go-digest"
 )
+
+func TestContractActivationFenceUsesExactActivePublicationEvidence(t *testing.T) {
+	db := newQualificationDatabase(t)
+	if _, err := db.ledger.Activate(t.Context(), qualificationCandidate(qualificationInstance, "bundle-1", "", true)); err != nil {
+		t.Fatal(err)
+	}
+	qualificationSeedSemanticAuthority(t, db)
+	qualificationAuthorization(t, db, qualificationInstance, qualificationProject(t))
+	input := qualificationSemanticPublication(qualificationInstance, "1.0.0")
+	input.PolicyContext.ExpectedRegistry = qualificationRegistryReference(t, db, qualificationInstance)
+	publication, err := db.ledger.PublishContract(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := identityledger.NewPolicyActivationReference(publication, ocidigest.FromString("qualification-graph").String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ledger.Activate(t.Context(), qualificationCandidate(qualificationInstance, "bundle-2", "bundle-1", true)); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := db.ledger.WithContractActivationFence(t.Context(), "bundle-2", []identityledger.PolicyActivationReference{reference}, func(context.Context) error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("matching activation fence called=%t err=%v", called, err)
+	}
+	retained, err := db.ledger.ReadLatestLifecycleEvidence(t.Context(), qualificationInstance, reference.Publication.AuthoredID, reference.Publication.ResourceKind)
+	if err != nil {
+		t.Fatalf("read retained publication after successor activation: %v", err)
+	}
+	if retained.Sequence != 2 || retained.Identity.ActiveBundleID != "bundle-2" || retained.Publication.Digest != publication.Digest {
+		t.Fatalf("retained publication/current lifecycle evidence = %#v", retained)
+	}
+	nextReference, err := identityledger.NewPolicyActivationReference(retained.Publication, reference.GraphDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextReference.LifecycleSequence = retained.Sequence
+	nextReference.ActiveBundleID = retained.Identity.ActiveBundleID
+	if _, err := db.ledger.Activate(t.Context(), qualificationCandidate(qualificationInstance, "bundle-3", "bundle-2", true)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ledger.WithContractActivationFence(t.Context(), "bundle-3", []identityledger.PolicyActivationReference{nextReference}, func(context.Context) error { return nil }); err != nil {
+		t.Fatalf("retained immutable publication rejected for unchanged successor: %v", err)
+	}
+	changed := reference
+	changed.Publication.Digest = ocidigest.FromString("changed-publication").String()
+	if err := db.ledger.WithContractActivationFence(t.Context(), "bundle-3", []identityledger.PolicyActivationReference{changed}, func(context.Context) error { return nil }); !errors.Is(err, identityledger.ErrPolicyEvidenceConflict) {
+		t.Fatalf("changed publication error = %v", err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	fenceDone, mutationDone := make(chan error, 1), make(chan error, 1)
+	go func() {
+		fenceDone <- db.ledger.WithContractActivationFence(t.Context(), "bundle-3", []identityledger.PolicyActivationReference{nextReference}, func(context.Context) error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	go func() {
+		_, mutationErr := db.ledger.Activate(t.Context(), qualificationCandidate(qualificationInstance, "bundle-4", "bundle-3", false))
+		mutationDone <- mutationErr
+	}()
+	select {
+	case err := <-mutationDone:
+		t.Fatalf("lifecycle mutation crossed activation fence: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-fenceDone; err != nil {
+		t.Fatalf("activation fence: %v", err)
+	}
+	if err := <-mutationDone; err != nil {
+		t.Fatalf("serialized lifecycle mutation: %v", err)
+	}
+	if err := db.ledger.WithContractActivationFence(t.Context(), "bundle-4", []identityledger.PolicyActivationReference{nextReference}, func(context.Context) error { return nil }); !errors.Is(err, identityledger.ErrPolicyEvidenceConflict) {
+		t.Fatalf("non-active identity error = %v", err)
+	}
+}
+
+func TestContractActivationFenceSerializesConcurrentPublication(t *testing.T) {
+	db := newQualificationDatabase(t)
+	if _, err := db.ledger.Activate(t.Context(), qualificationCandidate(qualificationInstance, "bundle-1", "", true)); err != nil {
+		t.Fatal(err)
+	}
+	qualificationSeedSemanticAuthority(t, db)
+	qualificationAuthorization(t, db, qualificationInstance, qualificationProject(t))
+	input := qualificationSemanticPublication(qualificationInstance, "1.0.0")
+	input.PolicyContext.ExpectedRegistry = qualificationRegistryReference(t, db, qualificationInstance)
+	publication, err := db.ledger.PublishContract(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := identityledger.NewPolicyActivationReference(publication, ocidigest.FromString("qualification-graph").String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ledger.Activate(t.Context(), qualificationCandidate(qualificationInstance, "bundle-2", "bundle-1", true)); err != nil {
+		t.Fatal(err)
+	}
+	nextRegistry := qualificationRegistryReference(t, db, qualificationInstance)
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	fenceDone, publicationDone := make(chan error, 1), make(chan error, 1)
+	go func() {
+		fenceDone <- db.ledger.WithContractActivationFence(t.Context(), "bundle-2", []identityledger.PolicyActivationReference{reference}, func(context.Context) error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	publicationStarted := make(chan struct{})
+	go func() {
+		close(publicationStarted)
+		next := qualificationSemanticPublication(qualificationInstance, "1.1.0")
+		next.PolicyContext = &identityledger.PolicyContext{
+			BaselineKind: identityledger.PolicyBaselineExisting, Baseline: &reference.Publication,
+			ExpectedLifecycleSequence: 2, ExpectedRegistry: nextRegistry,
+		}
+		_, publicationErr := db.ledger.PublishContract(t.Context(), next)
+		publicationDone <- publicationErr
+	}()
+	<-publicationStarted
+	select {
+	case err := <-publicationDone:
+		t.Fatalf("publication crossed activation fence: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(release)
+	if err := <-fenceDone; err != nil {
+		t.Fatalf("activation fence: %v", err)
+	}
+	if err := <-publicationDone; err != nil {
+		t.Fatalf("serialized publication: %v", err)
+	}
+	if err := db.ledger.WithContractActivationFence(t.Context(), "bundle-2", []identityledger.PolicyActivationReference{reference}, func(context.Context) error { return nil }); !errors.Is(err, identityledger.ErrPolicyEvidenceConflict) {
+		t.Fatalf("superseded publication reference error=%v, want ErrPolicyEvidenceConflict", err)
+	}
+}
+
+func TestContractActivationFenceRejectsCurrentRegistryDrift(t *testing.T) {
+	db := newQualificationDatabase(t)
+	if _, err := db.ledger.Activate(t.Context(), qualificationCandidate(qualificationInstance, "bundle-1", "", true)); err != nil {
+		t.Fatal(err)
+	}
+	definition := qualificationSeedSemanticAuthority(t, db)
+	qualificationAuthorization(t, db, qualificationInstance, qualificationProject(t))
+	input := qualificationSemanticPublication(qualificationInstance, "1.0.0")
+	input.PolicyContext.ExpectedRegistry = qualificationRegistryReference(t, db, qualificationInstance)
+	publication, err := db.ledger.PublishContract(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := identityledger.NewPolicyActivationReference(publication, ocidigest.FromString("qualification-graph").String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ledger.Activate(t.Context(), qualificationCandidate(qualificationInstance, "bundle-2", "bundle-1", true)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.access.UpdateSemanticAttributeMetadata(t.Context(), access.UpdateSemanticAttributeMetadataInput{
+		Name: "region", ExpectedVersion: definition.DefinitionVersion,
+		Metadata: access.SemanticAttributeMetadata{DisplayName: "Region changed"},
+		Mutation: access.SemanticAttributeMutationContext{ActorPrincipalID: qualificationActor},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err = db.ledger.WithContractActivationFence(t.Context(), "bundle-2", []identityledger.PolicyActivationReference{reference}, func(context.Context) error { return nil })
+	if !errors.Is(err, identityledger.ErrPolicyEvidenceConflict) || !strings.Contains(err.Error(), "registry") {
+		t.Fatalf("registry drift error=%v, want policy conflict identifying registry", err)
+	}
+}
 
 const (
 	qualificationInstance  = "instance-qualification"

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/project/identityledger"
 )
 
 // DeliveryPlanStatus is intentionally small: a plan is immutable evidence;
@@ -204,6 +205,11 @@ func (plan DeliveryPlan) validateWithoutDigests() error {
 	}
 	if err := plan.Evidence.Validate(); err != nil {
 		return err
+	}
+	for _, reference := range plan.Evidence.ContractActivations {
+		if reference.ApprovalState == identityledger.PolicyApprovalRequired && !plan.Governance.RequiresApproval {
+			return fmt.Errorf("%w: contract policy evidence requires deployment approval", ErrDeliveryInvalid)
+		}
 	}
 	restore, err := NormalizeRestoreIntent(plan.Restore)
 	if err != nil || !reflect.DeepEqual(plan.Restore, restore) {

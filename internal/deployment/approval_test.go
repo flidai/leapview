@@ -82,6 +82,29 @@ func TestApprovalBindsDecisionToExactDeploymentPlan(t *testing.T) {
 	}
 }
 
+func TestValidateApprovalActivationRechecksExactScopeAndFreshness(t *testing.T) {
+	now := time.Date(2026, 9, 9, 10, 0, 0, 0, time.UTC)
+	service := mustApprovalService(t, newApprovalMemoryRepository(), &now)
+	approval := approveApproval(t, service, &now)
+	request := approvalActivation()
+	if err := ValidateApprovalActivation(approval, request, now); err != nil {
+		t.Fatalf("matching approval rejected: %v", err)
+	}
+	changed := request
+	changed.RequestDigest = "sha256:changed-plan"
+	if err := ValidateApprovalActivation(approval, changed, now); !errors.Is(err, ErrApprovalScope) {
+		t.Fatalf("changed request digest error = %v, want ErrApprovalScope", err)
+	}
+	revoked := approval
+	revoked.Status, revoked.RevokedBy, revoked.RevokedAt = ApprovalRevoked, "security-reviewer", now
+	if err := ValidateApprovalActivation(revoked, request, now); !errors.Is(err, ErrApprovalRequired) {
+		t.Fatalf("revoked approval error = %v, want ErrApprovalRequired", err)
+	}
+	if err := ValidateApprovalActivation(approval, request, approval.ExpiresAt); !errors.Is(err, ErrApprovalExpired) {
+		t.Fatalf("stale approval error = %v, want ErrApprovalExpired", err)
+	}
+}
+
 func TestApprovalThreatModelFailsClosed(t *testing.T) {
 	start := time.Date(2026, 7, 30, 9, 0, 0, 0, time.UTC)
 	tests := []struct {

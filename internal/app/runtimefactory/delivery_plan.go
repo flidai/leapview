@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	"github.com/flidai/leapview/internal/deployment"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	identityledger "github.com/flidai/leapview/internal/project/identityledger"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -187,9 +188,23 @@ type CandidateDeliveryPolicy struct {
 	RequiresApproval bool
 	RollbackClass    deployment.DeliveryRollbackClass
 	RetentionWindow  string
+	// ContractActivations must be derived from existing immutable publication
+	// rows. Supplying a reference never creates publication or approval state.
+	ContractActivations []identityledger.PolicyActivationReference
 }
 
 func (p CandidateDeliveryPolicy) normalized() (CandidateDeliveryPolicy, error) {
+	activations := make([]identityledger.PolicyActivationReference, len(p.ContractActivations))
+	for index, reference := range p.ContractActivations {
+		activations[index] = reference.Clone()
+		if err := reference.Validate(); err != nil {
+			return CandidateDeliveryPolicy{}, fmt.Errorf("contract activation reference: %w", err)
+		}
+		if reference.ApprovalState == identityledger.PolicyApprovalRequired && !p.RequiresApproval {
+			return CandidateDeliveryPolicy{}, fmt.Errorf("contract publication classification requires approval")
+		}
+	}
+	p.ContractActivations = activations
 	if p.RollbackClass == "" {
 		p.RollbackClass = deployment.DeliveryServingSafe
 	}
@@ -224,9 +239,6 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 	if input.Candidate.ID == "" || input.Candidate.TargetID == "" || input.ProjectID.Validate() != nil {
 		return deployment.DeliveryPlanRequest{}, fmt.Errorf("candidate plan scope is incomplete")
 	}
-	if err := validateSemanticActivationReadiness(artifacts); err != nil {
-		return deployment.DeliveryPlanRequest{}, err
-	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	} else {
@@ -251,6 +263,9 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 	policy, policyErr = policy.normalized()
 	if policyErr != nil {
 		return deployment.DeliveryPlanRequest{}, policyErr
+	}
+	if err := validateSemanticActivationReadiness(artifacts, policy.ContractActivations); err != nil {
+		return deployment.DeliveryPlanRequest{}, err
 	}
 	materializationDigest, digestErr := materializationIdentity(artifacts)
 	if digestErr != nil {
@@ -332,9 +347,10 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 			Materializations: []string{artifacts.Compiler.Plan.Project},
 			Estimates:        []deployment.DeliveryEstimate{{Work: "candidate catalog", LowerBound: 1, UpperBound: float64(maxInt(1, len(artifacts.Compiler.Plan.Models))), Expected: float64(maxInt(1, len(artifacts.Compiler.Plan.Models))), Unit: "relation-set", Basis: "compiled semantic model table count", Confidence: "high"}},
 		},
-		Qualification: deployment.DeliveryQualificationEvidence{Policy: "target-owned exact schema closure and admitted compatibility; core object probes and read-only attach", Steps: qualificationSteps()},
-		StalePolicy:   deployment.DeliveryStalePolicy{Mode: "reject", Description: "target revision or active base changes reject before physical work"},
-		Rollback:      deployment.DeliveryRollbackEvidence{Class: policy.RollbackClass, RetentionWindow: policy.RetentionWindow, Description: "sealed catalog remains immutable; rollback class and retention are target policy"},
+		Qualification:       deployment.DeliveryQualificationEvidence{Policy: "target-owned exact schema closure and admitted compatibility; core object probes and read-only attach", Steps: qualificationSteps()},
+		StalePolicy:         deployment.DeliveryStalePolicy{Mode: "reject", Description: "target revision or active base changes reject before physical work"},
+		Rollback:            deployment.DeliveryRollbackEvidence{Class: policy.RollbackClass, RetentionWindow: policy.RetentionWindow, Description: "sealed catalog remains immutable; rollback class and retention are target policy"},
+		ContractActivations: append([]identityledger.PolicyActivationReference(nil), policy.ContractActivations...),
 	}
 	request := deployment.DeliveryPlanRequest{
 		ID: "plan-" + input.Candidate.ID, ActorID: input.OwnerID, TargetID: input.Candidate.TargetID, ProjectID: input.ProjectID.String(), Environment: input.Candidate.Scope.Environment,

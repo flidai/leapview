@@ -193,7 +193,7 @@ func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.C
 	if err := service.validateCandidateSemanticRegistry(ctx, request.Scope.ProjectID, semanticRegistry); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	return release.CandidateArtifactSet{Artifact: release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()}, Extensions: extensions, AuthorizationFingerprint: authorizationFingerprint, Generation: release.CandidateGenerationArtifact{Identity: inspectIdentity, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: candidateRestrictions(authorizationSnapshot), BaseGateEvidence: base.gateEvidence}, Compiler: release.CandidateCompilerEvidence{SemanticRegistry: semanticRegistry, Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution}}, nil
+	return release.CandidateArtifactSet{Artifact: release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()}, Extensions: extensions, AuthorizationFingerprint: authorizationFingerprint, Generation: release.CandidateGenerationArtifact{Identity: inspectIdentity, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: candidateRestrictions(authorizationSnapshot), BaseGateEvidence: base.gateEvidence}, Compiler: release.CandidateCompilerEvidence{SemanticRegistry: semanticRegistry, Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, BaseArtifact: base.artifact, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution}}, nil
 }
 
 func shortCandidateDigest(value string) string {
@@ -483,7 +483,7 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 		Extensions:               extensions,
 		AuthorizationFingerprint: authorizationFingerprint,
 		Generation:               release.CandidateGenerationArtifact{Identity: identity, ServingArtifactID: artifact.ID, ArtifactDigest: validated.Digest, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: restrictions, BaseGateEvidence: base.gateEvidence},
-		Compiler:                 release.CandidateCompilerEvidence{SemanticRegistry: semanticRegistry, Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution},
+		Compiler:                 release.CandidateCompilerEvidence{SemanticRegistry: semanticRegistry, Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, BaseArtifact: base.artifact, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution},
 	}, nil
 }
 

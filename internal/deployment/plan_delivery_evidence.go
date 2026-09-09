@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	identityledger "github.com/flidai/leapview/internal/project/identityledger"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -230,6 +231,10 @@ type DeliveryPlanEvidence struct {
 	StalePolicy           DeliveryStalePolicy           `json:"stalePolicy,omitempty"`
 	Rollback              DeliveryRollbackEvidence      `json:"rollback,omitempty"`
 	Restatement           *DeliveryRestatementEvidence  `json:"restatement,omitempty"`
+	// ContractActivations are exact references to already-published contract
+	// and policy evidence. They are part of EvidenceDigest and therefore the
+	// existing plan/request/approval digest chain; they are not approvals.
+	ContractActivations []identityledger.PolicyActivationReference `json:"contractActivations,omitempty"`
 	// PipelinePlan is duplicated in evidence JSON so older delivery storage
 	// rows can persist the immutable refresh selection without a migration.
 	// DeliveryPlan mirrors this pointer as the execution-facing contract.
@@ -294,6 +299,24 @@ func (e DeliveryPlanEvidence) canonical() DeliveryPlanEvidence {
 	sort.Slice(e.Reuse, func(i, j int) bool { return e.Reuse[i].ResourceID < e.Reuse[j].ResourceID })
 	sort.Slice(e.Qualification.Steps, func(i, j int) bool { return e.Qualification.Steps[i].ID < e.Qualification.Steps[j].ID })
 	e.Rollback.ExternalEffects = canonicalTextList(e.Rollback.ExternalEffects)
+	activations := make([]identityledger.PolicyActivationReference, len(e.ContractActivations))
+	for index := range e.ContractActivations {
+		activations[index] = e.ContractActivations[index].Clone()
+	}
+	e.ContractActivations = activations
+	sort.Slice(e.ContractActivations, func(i, j int) bool {
+		left, right := e.ContractActivations[i].Publication, e.ContractActivations[j].Publication
+		if left.InstanceID != right.InstanceID {
+			return left.InstanceID < right.InstanceID
+		}
+		if left.AuthoredID != right.AuthoredID {
+			return left.AuthoredID < right.AuthoredID
+		}
+		if left.ResourceKind != right.ResourceKind {
+			return left.ResourceKind < right.ResourceKind
+		}
+		return left.VersionBaseline < right.VersionBaseline
+	})
 	if e.Restatement != nil {
 		r := *e.Restatement
 		r.DownstreamScope = canonicalTextList(r.DownstreamScope)
@@ -319,6 +342,21 @@ func (e DeliveryPlanEvidence) Validate() error {
 	}
 	if _, err := NormalizeRestoreIntent(e.Restore); err != nil {
 		return err
+	}
+	for index, reference := range e.ContractActivations {
+		if err := reference.Validate(); err != nil {
+			return fmt.Errorf("contract activation evidence: %w", err)
+		}
+		if index > 0 {
+			previous := e.ContractActivations[index-1].Publication
+			current := reference.Publication
+			if previous.InstanceID != current.InstanceID {
+				return fmt.Errorf("%w: contract activation references span instances", ErrDeliveryInvalid)
+			}
+			if previous.InstanceID == current.InstanceID && previous.AuthoredID == current.AuthoredID && previous.ResourceKind == current.ResourceKind && previous.VersionBaseline == current.VersionBaseline {
+				return fmt.Errorf("%w: duplicate contract activation reference", ErrDeliveryInvalid)
+			}
+		}
 	}
 	for _, group := range [][]DeliveryImpactResource{e.GraphImpact.Added, e.GraphImpact.Removed, e.GraphImpact.DirectlyModified, e.GraphImpact.IndirectlyAffected} {
 		for _, item := range group {

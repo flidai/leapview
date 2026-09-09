@@ -465,23 +465,32 @@ func (service *ApprovalService) AuthorizeActivation(
 		}
 		return Approval{}, err
 	}
+	if err := ValidateApprovalActivation(approval, request, service.now().UTC()); err != nil {
+		return Approval{}, err
+	}
+	return approval, nil
+}
+
+// ValidateApprovalActivation is the single approval decision validator used
+// both by ApprovalService and the final repository activation transaction.
+func ValidateApprovalActivation(approval Approval, request ApprovalActivation, now time.Time) error {
 	if approval.ProjectID != strings.TrimSpace(request.ProjectID) ||
 		approval.DeploymentID != strings.TrimSpace(request.DeploymentID) ||
 		approval.Environment != strings.TrimSpace(request.Environment) ||
 		approval.RequestDigest != strings.TrimSpace(request.RequestDigest) ||
 		approval.ReleaseID != strings.TrimSpace(request.ReleaseID) {
-		return Approval{}, ErrApprovalScope
+		return ErrApprovalScope
 	}
 	if approval.Status != ApprovalApproved {
-		return Approval{}, ErrApprovalRequired
+		return ErrApprovalRequired
 	}
-	if !service.now().UTC().Before(approval.ExpiresAt) {
-		return Approval{}, ErrApprovalExpired
+	if now.IsZero() || !now.UTC().Before(approval.ExpiresAt) || !now.UTC().Before(approval.ApprovalCredentialExpiresAt) {
+		return ErrApprovalExpired
 	}
 	if err := approval.Validate(); err != nil {
-		return Approval{}, err
+		return err
 	}
-	return approval, nil
+	return nil
 }
 
 func (service *ApprovalService) loadTransition(

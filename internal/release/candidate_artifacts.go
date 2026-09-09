@@ -117,6 +117,11 @@ type CandidateCompilerEvidence struct {
 	// Artifact.ProjectDigest. It is retained for model projections used by
 	// candidate materialization.
 	Artifact projectartifact.Project
+	// BaseArtifact is the exact portable artifact retained by the active
+	// generation. Activation may compare it with Artifact to prove that an
+	// existing immutable contract publication still describes the candidate.
+	// It is target-side evidence and is never serialized as contract authority.
+	BaseArtifact projectartifact.Project `json:"-"`
 }
 
 type CandidateArtifactPreparer interface {

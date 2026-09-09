@@ -9,8 +9,59 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/project/graph"
+	identityledger "github.com/flidai/leapview/internal/project/identityledger"
 	"github.com/flidai/leapview/internal/release"
 )
+
+func TestContractActivationReferenceChangesExistingPlanAndApprovalDigestChain(t *testing.T) {
+	base := deliveryTestPlan(t)
+	reference := identityledger.PolicyActivationReference{
+		Version:      identityledger.PolicyActivationReferenceVersion,
+		Publication:  identityledger.PolicyPublicationIdentity{InstanceID: "instance-1", AuthoredID: "semantic:sales", ResourceKind: graph.KindSemanticModel, Version: "1.0.0", VersionBaseline: "1.0.0", ProjectionProfile: "leapview.contract/v1", Digest: deliveryTestDigest('5')},
+		BaselineKind: identityledger.PolicyBaselineGenesis, LifecycleSequence: 4, ActiveBundleID: "generation-1", GraphDigest: deliveryTestDigest('6'),
+		PolicyEvidenceVersion: identityledger.PolicyEvidenceVersion, PolicyEvidenceDigest: deliveryTestDigest('7'), ApprovalState: identityledger.PolicyApprovalRequired,
+	}
+	base.Evidence.ContractActivations = []identityledger.PolicyActivationReference{reference}
+	base.EvidenceDigest, base.Digest = "", ""
+	bound, err := NewDeliveryPlan(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Evidence.ContractActivations[0].Publication.Digest = deliveryTestDigest('9')
+	if bound.Evidence.ContractActivations[0].Publication.Digest != reference.Publication.Digest {
+		t.Fatal("canonical plan retained mutable caller-owned activation evidence")
+	}
+	changed := bound
+	changed.Evidence.ContractActivations = append([]identityledger.PolicyActivationReference(nil), bound.Evidence.ContractActivations...)
+	changed.Evidence.ContractActivations[0].PolicyEvidenceDigest = deliveryTestDigest('8')
+	changed.EvidenceDigest, changed.Digest = "", ""
+	changed, err = NewDeliveryPlan(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.EvidenceDigest == changed.EvidenceDigest || bound.Digest == changed.Digest {
+		t.Fatal("changed contract evidence reused canonical plan digest")
+	}
+}
+
+func TestContractActivationReferenceCannotBypassRequiredApproval(t *testing.T) {
+	plan := deliveryTestPlan(t)
+	plan.Governance.RequiresApproval = false
+	plan.Evidence.ContractActivations = []identityledger.PolicyActivationReference{{
+		Version: identityledger.PolicyActivationReferenceVersion,
+		Publication: identityledger.PolicyPublicationIdentity{
+			InstanceID: "instance-1", AuthoredID: "semantic:sales", ResourceKind: graph.KindSemanticModel,
+			Version: "1.0.0", VersionBaseline: "1.0.0", ProjectionProfile: "leapview.contract/v1", Digest: deliveryTestDigest('5'),
+		},
+		BaselineKind: identityledger.PolicyBaselineGenesis, LifecycleSequence: 4, ActiveBundleID: "generation-1",
+		GraphDigest: deliveryTestDigest('6'), PolicyEvidenceVersion: identityledger.PolicyEvidenceVersion,
+		PolicyEvidenceDigest: deliveryTestDigest('7'), ApprovalState: identityledger.PolicyApprovalRequired,
+	}}
+	plan.EvidenceDigest, plan.GovernanceDigest, plan.Digest = "", "", ""
+	if _, err := NewDeliveryPlan(plan); !errors.Is(err, ErrDeliveryInvalid) {
+		t.Fatalf("required policy approval bypass error=%v, want ErrDeliveryInvalid", err)
+	}
+}
 
 func deliveryTestDigest(char byte) string {
 	return "sha256:" + strings.Repeat(string(char), 64)

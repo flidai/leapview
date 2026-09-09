@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/project/graph"
+	identityledger "github.com/flidai/leapview/internal/project/identityledger"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -183,6 +184,18 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	store, repo := openDeliveryRepository(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	plan := repoDeliveryPlan(t, now)
+	plan.Evidence.ContractActivations = []identityledger.PolicyActivationReference{{
+		Version:      identityledger.PolicyActivationReferenceVersion,
+		Publication:  identityledger.PolicyPublicationIdentity{InstanceID: "instance-repo-1", AuthoredID: "semantic:orders", ResourceKind: graph.KindSemanticModel, Version: "1.0.0", VersionBaseline: "1.0.0", ProjectionProfile: "leapview.contract/v1", Digest: repoDeliveryDigest('5')},
+		BaselineKind: identityledger.PolicyBaselineGenesis, LifecycleSequence: 1, ActiveBundleID: "generation-base", GraphDigest: repoDeliveryDigest('6'),
+		PolicyEvidenceVersion: identityledger.PolicyEvidenceVersion, PolicyEvidenceDigest: repoDeliveryDigest('7'), ApprovalState: identityledger.PolicyApprovalRequired,
+	}}
+	plan.Governance.RequiresApproval = true
+	plan.EvidenceDigest, plan.GovernanceDigest, plan.Digest = "", "", ""
+	plan, err := deployment.NewDeliveryPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
 	persisted, err := repo.CreatePlan(t.Context(), plan)
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +297,10 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO principals (id, email, display_name) VALUES ('publisher-repo-1', 'publisher-repo-1@example.test', 'Publisher')`); err != nil {
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+		INSERT INTO principals (id, email, display_name) VALUES
+			('publisher-repo-1', 'publisher-repo-1@example.test', 'Publisher'),
+			('reviewer-repo-1', 'reviewer-repo-1@example.test', 'Reviewer')`); err != nil {
 		t.Fatal(err)
 	}
 	approval := deployment.Approval{
@@ -292,7 +308,7 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 		Environment: plan.Environment, RequestDigest: publication.RequestDigest, ReleaseID: candidate.ServingArtifactID,
 		Status: deployment.ApprovalPending, RequestedBy: "publisher-repo-1",
 		RequestCredentialClass: deployment.CredentialClassWorkload, RequestCredentialID: "credential-repo-1",
-		RequestedAt: now.Add(6 * time.Minute), ExpiresAt: now.Add(time.Hour), Revision: 1,
+		RequestedAt: now.Add(6 * time.Minute), ExpiresAt: now.Add(4 * time.Hour), Revision: 1,
 	}
 	persistedApproval, err := repo.CreateApproval(t.Context(), approval)
 	if err != nil {
@@ -305,6 +321,17 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	if err != nil || loadedApproval != persistedApproval {
 		t.Fatalf("canonical publication approval round trip = %#v, %v", loadedApproval, err)
 	}
+	approved := persistedApproval
+	approved.Status = deployment.ApprovalApproved
+	approved.ApprovedBy = "reviewer-repo-1"
+	approved.ApprovalCredentialClass = deployment.CredentialClassHuman
+	approved.ApprovalCredentialID = "reviewer-credential-repo-1"
+	approved.ApprovalCredentialExpiresAt = now.Add(4 * time.Hour)
+	approved.ApprovedAt = now.Add(6*time.Minute + time.Second)
+	approved.Revision = 2
+	if _, err := repo.SaveApproval(t.Context(), approved, 1); err != nil {
+		t.Fatalf("approve canonical publication: %v", err)
+	}
 	if _, err := repo.CommitPublication(t.Context(), publication.ID, now.Add(2*time.Hour)); !errors.Is(err, deployment.ErrDeliveryPlanExpired) {
 		t.Fatalf("expired pending publication err=%v, want ErrDeliveryPlanExpired", err)
 	}
@@ -314,6 +341,61 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	}
 	if activeBefore != "" {
 		t.Fatalf("expired publication changed active pointer to %q", activeBefore)
+	}
+	repo.WithDeliveryClock(func() time.Time { return now.Add(5 * time.Hour) })
+	if _, err := repo.CommitPublication(t.Context(), publication.ID, now.Add(7*time.Minute)); !errors.Is(err, deployment.ErrApprovalExpired) {
+		t.Fatalf("commit-time stale approval error=%v, want ErrApprovalExpired", err)
+	}
+	repo.WithDeliveryClock(func() time.Time { return now.Add(7 * time.Minute) })
+	// Hold the approval revocation transaction open while activation starts.
+	// Once revocation wins the SQLite write order, activation must re-read the
+	// revoked decision in its commit transaction and fail closed.
+	revocationTx, err := store.SQLDB().BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := revocationTx.ExecContext(t.Context(), `
+		UPDATE deployment_approvals
+		SET status='revoked', revoked_by='reviewer-repo-1', revoked_at=?, revision=3
+		WHERE id=? AND revision=2`, now.Add(6*time.Minute+2*time.Second).Format(time.RFC3339Nano), approved.ID); err != nil {
+		_ = revocationTx.Rollback()
+		t.Fatal(err)
+	}
+	activationStarted := make(chan struct{})
+	activationDone := make(chan error, 1)
+	go func() {
+		close(activationStarted)
+		_, activationErr := repo.CommitPublication(t.Context(), publication.ID, now.Add(7*time.Minute))
+		activationDone <- activationErr
+	}()
+	<-activationStarted
+	if err := revocationTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-activationDone; !errors.Is(err, deployment.ErrApprovalRequired) {
+		t.Fatalf("revocation/activation race error=%v, want ErrApprovalRequired", err)
+	}
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT COALESCE(active_generation_id,'') FROM delivery_target_revisions WHERE target_id=?`, plan.TargetID).Scan(&activeBefore); err != nil {
+		t.Fatal(err)
+	}
+	if activeBefore != "" {
+		t.Fatalf("revoked activation changed active pointer to %q", activeBefore)
+	}
+	replacement := approval
+	replacement.ID = "approval-publication-repo-2"
+	replacement.RequestedAt = now.Add(6*time.Minute + 3*time.Second)
+	if _, err := repo.CreateApproval(t.Context(), replacement); err != nil {
+		t.Fatalf("replacement approval: %v", err)
+	}
+	replacement.Status = deployment.ApprovalApproved
+	replacement.ApprovedBy = "reviewer-repo-1"
+	replacement.ApprovalCredentialClass = deployment.CredentialClassHuman
+	replacement.ApprovalCredentialID = "reviewer-credential-repo-2"
+	replacement.ApprovalCredentialExpiresAt = now.Add(4 * time.Hour)
+	replacement.ApprovedAt = now.Add(6*time.Minute + 4*time.Second)
+	replacement.Revision = 2
+	if _, err := repo.SaveApproval(t.Context(), replacement, 1); err != nil {
+		t.Fatalf("approve replacement publication: %v", err)
 	}
 	committed, err := repo.CommitPublication(t.Context(), publication.ID, now.Add(7*time.Minute))
 	if err != nil {

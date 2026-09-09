@@ -87,7 +87,7 @@ var SharedContractPrefixes = map[string][]string{
 	"agent":        {"internal/project/graph"},
 	"analytics":    {"internal/project/graph", "internal/project/contracts"},
 	"dashboard":    {"internal/project/graph", "internal/project/runtime", "internal/project/schema"},
-	"deployment":   {"internal/dashboard/publication", "internal/project/graph"},
+	"deployment":   {"internal/dashboard/publication", "internal/project/graph", "internal/project/identityledger"},
 	"manageddata":  {"internal/access", "internal/project/graph"},
 	"refresh":      {"internal/project/graph", "internal/project/manifest", "internal/project/contracts/pipelineplan", "internal/project/contractprojection", "internal/project/contractversion", "internal/project/identityledger", "internal/release", "internal/analytics/catalogstats", "internal/analytics/query/planir"},
 	"release":      {"internal/project/graph"},

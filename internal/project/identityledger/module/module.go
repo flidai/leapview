@@ -26,6 +26,7 @@ type DurableReference = ledger.DurableReference
 type Identity = ledger.Identity
 type LifecycleEvidence = ledger.LifecycleEvidence
 type PolicyAffectedResource = ledger.PolicyAffectedResource
+type PolicyActivationReference = ledger.PolicyActivationReference
 type PolicyApprovalState = ledger.PolicyApprovalState
 type PolicyBaselineKind = ledger.PolicyBaselineKind
 type PolicyContext = ledger.PolicyContext
@@ -43,17 +44,22 @@ type Transition = ledger.Transition
 type TransitionOperation = ledger.TransitionOperation
 type TransitionPhase = ledger.TransitionPhase
 
+func NewPolicyActivationReference(publication ContractPublication, graphDigest string) (PolicyActivationReference, error) {
+	return ledger.NewPolicyActivationReference(publication, graphDigest)
+}
+
 const (
 	LifecycleActive     = ledger.LifecycleActive
 	LifecycleTombstoned = ledger.LifecycleTombstoned
 
-	PolicyApprovalRequired        = ledger.PolicyApprovalRequired
-	PolicyApprovalNotRequired     = ledger.PolicyApprovalNotRequired
-	PolicyBaselineGenesis         = ledger.PolicyBaselineGenesis
-	PolicyBaselineExisting        = ledger.PolicyBaselineExisting
-	PolicyEvidenceVersion         = ledger.PolicyEvidenceVersion
-	RegistryPolicyEvidenceVersion = ledger.RegistryPolicyEvidenceVersion
-	PolicyAffectedResourceScope   = ledger.PolicyAffectedResourceScope
+	PolicyApprovalRequired           = ledger.PolicyApprovalRequired
+	PolicyApprovalNotRequired        = ledger.PolicyApprovalNotRequired
+	PolicyBaselineGenesis            = ledger.PolicyBaselineGenesis
+	PolicyBaselineExisting           = ledger.PolicyBaselineExisting
+	PolicyEvidenceVersion            = ledger.PolicyEvidenceVersion
+	RegistryPolicyEvidenceVersion    = ledger.RegistryPolicyEvidenceVersion
+	PolicyAffectedResourceScope      = ledger.PolicyAffectedResourceScope
+	PolicyActivationReferenceVersion = ledger.PolicyActivationReferenceVersion
 
 	OperationPublish  = ledger.OperationPublish
 	OperationRollback = ledger.OperationRollback
@@ -129,6 +135,16 @@ type LifecycleEvidenceReader interface {
 	ReadLifecycleEvidence(context.Context, string, projectgraph.ResourceID, projectgraph.Kind, string) (LifecycleEvidence, error)
 }
 
+type LatestLifecycleEvidenceReader interface {
+	ReadLatestLifecycleEvidence(context.Context, string, projectgraph.ResourceID, projectgraph.Kind) (LifecycleEvidence, error)
+}
+
+// ContractActivationFencer holds the existing PostgreSQL identity/publication
+// lock while the delivery target performs its final activation CAS.
+type ContractActivationFencer interface {
+	WithContractActivationFence(context.Context, string, []PolicyActivationReference, func(context.Context) error) error
+}
+
 // Repository is the complete PostgreSQL identity authority contract required
 // by application composition.
 type Repository interface {
@@ -155,6 +171,19 @@ type ControlOpener func(context.Context, platformpostgres.Config) (ControlPool, 
 // caller-owned transaction and never owns its completion.
 type PostgresRepositoryConfig struct {
 	SemanticRegistryReader func(context.Context, pgx.Tx, string) (access.SemanticRegistryContext, error)
+}
+
+// BindSemanticRegistryReader connects the already-composed Access module to
+// the existing PostgreSQL identity repository without exposing its adapter to
+// application composition.
+func BindSemanticRegistryReader(repository Repository, reader func(context.Context, pgx.Tx, string) (access.SemanticRegistryContext, error)) error {
+	binder, ok := any(repository).(interface {
+		SetSemanticRegistryReader(ledgerpostgres.SemanticRegistryReader) error
+	})
+	if !ok {
+		return fmt.Errorf("identity repository does not support semantic registry binding")
+	}
+	return binder.SetSemanticRegistryReader(reader)
 }
 
 // OpenControl opens the identity ledger's PostgreSQL control authority. Pool

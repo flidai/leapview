@@ -364,6 +364,37 @@ func (r *Repository) CommitPublication(ctx context.Context, id string, now time.
 	if candidate.PlanID != p.PlanID || candidate.PlanDigest != p.PlanDigest {
 		return deployment.DeliveryPublication{}, fmt.Errorf("%w: candidate is not bound to publication plan", deployment.ErrDeliveryConflict)
 	}
+	if plan.Governance.RequiresApproval {
+		// Acquire SQLite's write reservation before reading approval. A
+		// concurrent revocation therefore either commits first and is observed,
+		// or follows this activation commit; it cannot cross the approval read.
+		if affected, fenceErr := deploydb.New(tx).ReserveDeliveryPublicationActivation(ctx, p.ID); fenceErr != nil {
+			return deployment.DeliveryPublication{}, fenceErr
+		} else if affected != 1 {
+			return deployment.DeliveryPublication{}, deployment.ErrDeliveryConflict
+		}
+		row, approvalErr := deploydb.New(tx).GetCurrentDeploymentApproval(ctx, p.ID)
+		if errors.Is(approvalErr, sql.ErrNoRows) {
+			return deployment.DeliveryPublication{}, deployment.ErrApprovalRequired
+		}
+		if approvalErr != nil {
+			return deployment.DeliveryPublication{}, approvalErr
+		}
+		approval, approvalErr := mapApproval(row)
+		if approvalErr != nil {
+			return deployment.DeliveryPublication{}, approvalErr
+		}
+		approvalNow := time.Now().UTC()
+		if r != nil && r.deliveryNow != nil {
+			approvalNow = r.deliveryNow().UTC()
+		}
+		if approvalErr = deployment.ValidateApprovalActivation(approval, deployment.ApprovalActivation{
+			ProjectID: p.ProjectID.String(), DeploymentID: p.ID, Environment: p.Environment,
+			RequestDigest: p.RequestDigest, ReleaseID: candidate.ServingArtifactID,
+		}, approvalNow); approvalErr != nil {
+			return deployment.DeliveryPublication{}, approvalErr
+		}
+	}
 	if err := candidate.PublicationEligible(plan, active, revision, now.UTC()); err != nil {
 		return deployment.DeliveryPublication{}, err
 	}
